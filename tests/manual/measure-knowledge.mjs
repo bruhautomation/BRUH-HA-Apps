@@ -603,7 +603,10 @@ for (const width of WIDTHS) {
   if (m.houseFirst !== 'kAddForm') {
     note(`${width}px`, `What it knows opens on "${m.houseFirst}", not the teach box`);
   }
-  for (const cut of ['This morning', 'Deep review', 'What brAIn has measured',
+  // (#539, a structural assertion this batch moved: Deep review left
+  // Insights for the top of Knowledge, as one folded line, and is measured
+  // in its own block below.)
+  for (const cut of ['This morning', 'What brAIn has measured',
                      "How brAIn's memory works", 'Memory document',
                      'Waiting to be filed', 'File into memory now',
                      'Edit markdown', 'Export', 'Anyone taught it',
@@ -1485,14 +1488,32 @@ for (const width of WIDTHS) {
   const at = `review ${width}px`;
   const { context, page } = await openPanel(width,
     `window.__review = ${JSON.stringify(REVIEW)};`, touch);
-  await openView(page, 'insights');
-  await page.waitForSelector('#kReview .kreviewrun', { timeout: 5000 })
-    .catch(() => note(at, 'the deep review section never rendered'));
-  const onReports = await page.evaluate(
-    () => !!document.querySelector('#viewInsights #kReview'));
-  if (!onReports) note(at, 'the deep review is not a row under the insight cards');
+  // The deep review is a folded line at the top of Memory › Knowledge
+  // (#539): its name, when it last ran and its price, and Run; the name
+  // opens what it said. (Structural assertion this batch moved: it was a
+  // row under the insight cards.)
+  await openView(page, 'memory');
+  await page.waitForSelector('#kReviewRun .kreviewrun', { timeout: 5000 })
+    .catch(() => note(at, 'the deep review line never rendered'));
+  const line = await page.evaluate(() => {
+    const fold = document.getElementById('kReviewFold');
+    const head = fold && fold.querySelector('.kfoldhead');
+    const first = document.querySelector('#viewMemory .kknow > :not(header)');
+    return { onMemory: !!document.querySelector('#viewMemory #kReviewFold'),
+             onInsights: !!document.querySelector('#viewInsights #kReview, #viewInsights #kReviewRun'),
+             top: first && first.classList.contains('kfolds'),
+             h: head ? Math.round(head.getBoundingClientRect().height) : 0,
+             meta: (document.getElementById('kReviewMeta') || {}).textContent || '',
+             closed: !!document.getElementById('kReview') && document.getElementById('kReview').hidden };
+  });
+  if (!line.onMemory || line.onInsights) note(at, 'the deep review is not on Memory › Knowledge (or is still on Insights)');
+  if (!line.top) note(at, 'the folded lines are not at the top of Knowledge');
+  if (!line.h || line.h > 64) note(at, `the deep review line is ${line.h}px, not one line`);
+  if (!line.closed) note(at, 'the deep review opens unasked');
+  await page.click('#kReviewFold .kfoldname');
+  await page.waitForTimeout(150);
   const r = await page.evaluate(() => {
-    const box = document.getElementById('kReview');
+    const box = document.getElementById('kReviewFold');
     const btn = box && box.querySelector('.kreviewrun .btn');
     const b = btn ? btn.getBoundingClientRect() : { height: 0 };
     return {
@@ -1520,19 +1541,19 @@ for (const width of WIDTHS) {
   if (r.btnH < MIN_TARGET) note(at, `the review button is ${r.btnH}px`);
   if (r.disabled) note(at, 'the review button is disabled with nothing running');
   if (r.docWidth > width + 0.5) note(at, `page scrolls sideways (${r.docWidth}px)`);
-  await page.click('#kReview .kreviewrun .btn');
+  await page.click('#kReviewRun .kreviewrun .btn');
   await page.waitForTimeout(300);
   const after = await page.evaluate(() => ({
     presses: window.__reviewPresses || 0,
-    btn: (document.querySelector('#kReview .kreviewrun .btn') || {}).textContent || '',
-    disabled: (document.querySelector('#kReview .kreviewrun .btn') || {}).disabled,
+    btn: (document.querySelector('#kReviewRun .kreviewrun .btn') || {}).textContent || '',
+    disabled: (document.querySelector('#kReviewRun .kreviewrun .btn') || {}).disabled,
     toast: (document.getElementById('toast') || {}).textContent || '',
   }));
   if (after.presses !== 1) note(at, `the press reached the server ${after.presses} times`);
   if (!/Running/.test(after.btn) || !after.disabled) {
     note(at, 'a running review does not say so on its own button');
   }
-  if (!/lands under Insights/.test(after.toast)) note(at, `the press said "${after.toast}"`);
+  if (!/lands under Memory/.test(after.toast)) note(at, `the press said "${after.toast}"`);
   console.log(`${failures.length ? 'ok? ' : 'ok  '}deep review ${String(width).padStart(4)}px`);
   await context.close();
 }

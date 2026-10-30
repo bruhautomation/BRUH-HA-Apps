@@ -19,8 +19,8 @@
 // closes), `menu` (open Home Assistant's sidebar), `features` (a switch
 // changed) and `home` (Morph's Edit, Done or YAML pressed in brAIn's
 // header). To the frame: `state` (narrow, whether the dashboard is on,
-// which is in front, Morph's theme, the phone's top safe area, and what of
-// Morph's belongs in the header), `scroll` (Morph's scroll position, so the
+// which is in front, Morph's theme, the phone's top safe area, the
+// person's 12/24-hour clock, and what of Morph's belongs in the header), `scroll` (Morph's scroll position, so the
 // header hides as the dashboard scrolls down and returns as it scrolls up;
 // the frame then reports the header's new height in `bars`) and `open` (a
 // view or a Settings section asked for from Morph). Nothing here lets a
@@ -247,7 +247,14 @@ iframe[hidden]{display:none}
     // person may edit it (or is editing it).
     const edit = !!(morph && this.morph && (c.admin || c.edit));
     this.post({ state: { narrow: !!this._v.narrow, morph, view: home ? 'home' : 'panel', theme, inset: this.inset(),
-                         home: { edit, editing: !!c.edit, yaml: !!c.yaml } } });
+                         clock: this.clock(), home: { edit, editing: !!c.edit, yaml: !!c.yaml } } });
+  }
+
+  // The person's 12- or 24-hour preference in Home Assistant, for the clock
+  // in brAIn's header; 0 is "the language's own".
+  clock() {
+    const tf = String(((this._v.hass || {}).locale || {}).time_format || '');
+    return tf === '12' ? 12 : tf === '24' ? 24 : 0;
   }
 
   post(body) {

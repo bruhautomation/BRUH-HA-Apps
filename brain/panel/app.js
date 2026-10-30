@@ -8,10 +8,10 @@
 // reads it, and one can run before that part of the file has.
 const SHELL = new URLSearchParams(location.search).get("shell") === "1"
   && window.parent !== window;
-const shellState = { morph: false, narrow: false, raised: false, home: {} };
+const shellState = { morph: false, narrow: false, raised: false, home: {}, clock: 0 };
 // The header that gets out of the way (`shellScrolled`): whether it is
 // hidden, and the scroll position the last decision was made at.
-const shellBar = { hidden: false, y: null };
+const shellBar = { hidden: false, y: null, cut: 0 };
 // Inside the shell the page is drawn in Morph's theme (dark, medium,
 // light). The shell says which on every state message; until the first,
 // the one Morph last rendered in — the frame shares Home Assistant's origin
@@ -377,6 +377,25 @@ function timeUntil(epochS) {
 // rest would be parsed as markup. Escaping `<` covers `</script`, `<script`
 // and `<!--` in one go, and `<` is still the same string to the parser.
 const jsonInScript = (v) => JSON.stringify(v).replace(/</g, "\\u003c");
+
+// A card in the dashboard's look: inside brAIn's shell the card's own
+// <html> carries the shell's theme as `data-theme` before anything in it
+// is drawn, and the card stylesheet (categories.CARD_STYLES) restates its
+// colours and font for that theme. Outside the shell nothing is written
+// and the card follows prefers-color-scheme, as it always did. Written
+// just inside <head> (or <html>, or after the doctype), never before a
+// doctype, which would put the card in quirks mode.
+function cardDoc(html) {
+  const text = String(html || "");
+  const theme = document.documentElement.dataset.theme;
+  if (!SHELL || !SHELL_THEMES.includes(theme)) return text;
+  const tag = `<script>document.documentElement.setAttribute("data-theme",${jsonInScript(theme)});<\/script>`;
+  for (const re of [/<head[^>]*>/i, /<html[^>]*>/i, /<!doctype[^>]*>/i]) {
+    const m = text.match(re);
+    if (m) return text.slice(0, m.index + m[0].length) + tag + text.slice(m.index + m[0].length);
+  }
+  return tag + text;
+}
 
 const SIZE_SNIPPET = (id) => `<script>(function(){var last=-9;function post(){var b=document.body;if(!b)return;var bottom=0,kids=b.children;for(var i=0;i<kids.length;i++){var r=kids[i].getBoundingClientRect();if(!r.width&&!r.height)continue;bottom=Math.max(bottom,Math.max(r.bottom,r.top+kids[i].scrollHeight)+(parseFloat(getComputedStyle(kids[i]).marginBottom)||0));}var cs=getComputedStyle(b);var h=bottom>0?bottom+window.scrollY+(parseFloat(cs.paddingBottom)||0):Math.max(b.offsetHeight,b.getBoundingClientRect().height);h=Math.ceil(h);if(h>=0&&Math.abs(h-last)>2){last=h;parent.postMessage({type:"bruh-size",id:${jsonInScript(id)},h:h},"*");}}try{var ro=new ResizeObserver(post);ro.observe(document.body);window.addEventListener("load",function(){for(var i=0;i<document.body.children.length;i++)ro.observe(document.body.children[i]);});}catch(e){}window.addEventListener("load",post);setTimeout(post,400);setTimeout(post,1200);})();<\/script>`;
 
@@ -1436,7 +1455,7 @@ function makeFrame(insight, live = true) {
   frame.setAttribute("loading", "lazy");
   const frameId = `${insight.id}-${state.frameSeq++}`;
   frame.dataset.frame = frameId;
-  frame.srcdoc = insight.html + SIZE_SNIPPET(frameId) + LIVE_SNIPPET(frameId);
+  frame.srcdoc = cardDoc(insight.html) + SIZE_SNIPPET(frameId) + LIVE_SNIPPET(frameId);
   wrapper.appendChild(frame);
   if (live) watchLive(frameId, insight);
   return wrapper;
@@ -2741,7 +2760,7 @@ function openModal(insight, live = true) {
   frame.dataset.frame = frameId;
   // A reused element keeps the last card's height until this one reports.
   frame.style.height = "";
-  frame.srcdoc = insight.html + SIZE_SNIPPET(frameId) + LIVE_SNIPPET(frameId);
+  frame.srcdoc = cardDoc(insight.html) + SIZE_SNIPPET(frameId) + LIVE_SNIPPET(frameId);
   openBox("#modal");
   // The expanded view is where a live card is most worth being live —
   // it is the one you sit and watch. `#modalFrame` is a reused element
@@ -3120,16 +3139,15 @@ function renderBudgetWords(value, usage) {
   const u = usage || {};
   let text;
   let warn = false;
+  // The line says what happens at the limit the label above names, never
+  // the limit again; "Asking by hand always runs" is the switch's own line.
   if (noLimit && usageRateLimited({ ...u, no_limit: true })) {
-    text = `Paused: Anthropic rate-limited brAIn until ${fmtClock(u.rate_limited_until)}. `
-      + "Asking by hand always runs.";
+    text = `Paused: Anthropic rate-limited brAIn until ${fmtClock(u.rate_limited_until)}.`;
     warn = true;
   } else if (noLimit) {
-    text = "Automatic insights keep running past 100% until Anthropic rate-limits, "
-      + "then pause until the reset. Asking by hand always runs.";
+    text = "Past 100% they keep going, then pause until the session resets.";
   } else {
-    text = `Automatic insights stop at ${pct}% of the session until it resets. `
-      + "Asking by hand always runs.";
+    text = "Past that they wait for the session to reset.";
   }
   note.textContent = text;
   note.classList.toggle("warn", warn);
@@ -3494,7 +3512,7 @@ function renderSetSummaries(data) {
     setSummary("setSumUsage", model
       + (Number.isFinite(used) ? ` · ${Math.round(used)}% of this session` : ""));
     setSummary("setSumPermissions", st.yolo_mode === true
-      ? "YOLO mode: no restrictions"
+      ? "No restrictions"
       : st.dangerously_skip_permissions === true
         ? "Acts without asking" : "Asks before it acts");
     const policy = String(st.notify_policy || "").trim();
@@ -3755,7 +3773,7 @@ function faultRows(d) {
   const rows = (d && d.faults) || [];
   if (!rows.length) {
     return [diagRow("Anything wrong?",
-      "Nothing — every check ran, every daemon is up, no run failed in the "
+      "Nothing — every check ran, every background job is running, no run failed in the "
       + "last day and the health verdict is ok.")];
   }
   const out = [diagRow("Anything wrong?",
@@ -3813,12 +3831,13 @@ function renderDiagnostics(d) {
   rows.push(diagRow("Claude sign-in",
     esc((d.auth || {}).state || "unknown"),
     (d.auth || {}).state !== "ok"));
-  // `claude_runs` is the Claude runs; `by_outcome` counts every journal
-  // line (checks passes and summary rows too), so it is labelled as such.
+  // `claude_runs` is the Claude runs; `by_outcome` counts everything brAIn
+  // recorded doing (checks passes and summary rows too), so it is its own
+  // row rather than read as a breakdown of the runs.
   rows.push(diagRow("Claude runs, last 24h",
-    `${j.claude_runs ?? j.runs ?? 0} — journal lines by outcome: `
-      + diagCounts(j.by_outcome),
+    String(j.claude_runs ?? j.runs ?? 0),
     (j.runs || 0) > 0 && ok < (j.runs || 0)));
+  rows.push(diagRow("Everything brAIn did, by result", diagCounts(j.by_outcome)));
   if (c && c.finished_at) {
     const errs = Object.keys(c.errors || {}).length;
     const skipped = Object.keys(c.skipped || {});
@@ -4037,22 +4056,26 @@ function renderDiagnostics(d) {
     // "not running" beside a verdict that says everything is fine — and
     // `expected` marks the one stopped state that is a fault: asked for,
     // and not there.
+    // Named by what it does (`what`, the server's words), never its
+    // process name; an option it waits on is "switched off", not its key.
     const items = names.sort().map((n) => {
       const row = daemons[n] || {};
+      const why = String(row.not_used || "").replace(/^not used \((.*)\)$/, "$1");
       const said = up(n) ? "running"
-        : row.not_used ? "off — " + String(row.not_used).replace(/^not used \((.*)\)$/, "$1")
+        : row.not_used ? "off — " + (/^[a-z_]+ is off$/.test(why) ? "its switch is off" : why)
         : row.expected ? "stopped — it should be running; the add-on log says why"
         : "not running";
-      return `<li><b>${esc(n)}</b> — ${esc(said)}</li>`;
+      const what = String(row.what || n.replace(/_/g, " "));
+      return `<li><b>${esc(what.charAt(0).toUpperCase() + what.slice(1))}</b> — ${esc(said)}</li>`;
     });
     // The roll-call is DESCRIPTIVE — some of these are correctly absent
     // because the option behind them is off — so a stopped one is not
     // painted as a fault here. `health.py` is what interprets it against
     // the options, and its verdict is the row at the top of this dialog.
-    rows.push(diagRow("Background daemons", `<ul>${items.join("")}</ul>`));
+    rows.push(diagRow("Background jobs", `<ul>${items.join("")}</ul>`));
   } else if (daemons) {
     // An empty roll-call is /proc unreadable, not seven dead daemons.
-    rows.push(diagRow("Background daemons", "could not read /proc"));
+    rows.push(diagRow("Background jobs", "could not be read"));
   }
   // One-off asks ("when the guests leave, turn the porch light off") are not
   // reports and not proposals: each runs once, when its trigger happens, then
@@ -5094,6 +5117,12 @@ $("#deepRun").addEventListener("click", async () => {
 // the question. Nothing is created until the second POST.
 let rehearsePoll = null;
 
+const REHEARSAL_WORDS = {
+  found: "Found, as it should be", missed: "Missed: the check did not report it",
+  clean: "Nothing reported, as it should be",
+  "false positive": "Reported, though nothing was wrong",
+};
+
 function renderRehearsal(d) {
   const last = d.last || {};
   const body = $("#rehearseBody");
@@ -5106,9 +5135,11 @@ function renderRehearsal(d) {
       `${c.found || 0} of ${c.planted || 0} planted defects found`
       + (c.extra ? `, ${c.extra} reported that were not planted` : ""),
       (c.found || 0) < (c.planted || 0) || !!c.extra));
+    // Each planted thing by what it is, and the verdict in words: the
+    // planted ids and the check ids are the record's, not the reader's.
     (c.rows || []).forEach((r) => rows.push(diagRow(
-      r.id,
-      `${esc(r.verdict)} <span class="hint">${esc(r.check || "")}</span>`,
+      r.name || "A planted test",
+      esc(REHEARSAL_WORDS[r.verdict] || r.verdict || ""),
       r.verdict === "missed" || r.verdict === "false positive", true)));
     rows.push(diagRow("Analyst", a.ran
       ? `found ${a.found || 0} of ${a.planted || 0}`
@@ -5144,7 +5175,7 @@ function renderRehearsal(d) {
         ? ` <span class="hint">took out ${esc((cleared.removed || []).join(", "))}</span>`
         : "";
       rows.push(diagRow("Cleared up since",
-        (cleared.ok ? "nothing named brain_test_* is left"
+        (cleared.ok ? "nothing the rehearsal planted is left"
           : "could not finish — " + esc((cleared.left || []).join(", ") || "?"))
         + took,
         !cleared.ok));
@@ -5494,21 +5525,22 @@ $("#setSkipPerms").addEventListener("change", async () => {
   // A refused save leaves the switch where it was, and so does the box.
   if (!data) box.checked = !on;
 });
-// YOLO mode removes every restriction brAIn has, so turning it on is
-// confirmed once in words; turning it off is never asked about.
+// No restrictions (`yolo_mode`) removes every restriction brAIn has, so
+// turning it on is confirmed once in words; turning it off is never asked
+// about.
 $("#setYolo").addEventListener("change", async () => {
   const box = $("#setYolo");
   const on = box.checked;
   if (on && !window.confirm(
-      "Turn on YOLO mode? brAIn will have no restrictions: it can do " +
+      "Turn on No restrictions? brAIn will be able to do " +
       "anything in your home and Home Assistant without asking, protected " +
       "entities and house rules included.")) {
     box.checked = false;
     return;
   }
   const data = await saveSettings({ yolo_mode: on },
-    on ? "YOLO mode is on: brAIn has no restrictions"
-       : "YOLO mode is off: the restrictions are back");
+    on ? "No restrictions is on: brAIn may do anything"
+       : "No restrictions is off: the restrictions are back");
   if (!data) box.checked = !on;
 });
 // Applied straight away rather than on the next status poll, so the Terminal
@@ -5791,19 +5823,43 @@ function takeFindings(data) {
   // press on this tab calls to keep it true.
 }
 
-// The badge count always comes from the server (findings_store owns what
-// "unsettled" means) — deriving a second answer here is how the tab and the
-// list end up disagreeing about how much is waiting.
+// THE count on this page: how many of the cards Needs you draws are
+// decisions (`todayCards`, each one `counted` unless it says otherwise).
+// The tab's badge, the section's count, the line over the insight cards
+// and the groups' own counts are all read off that one list, so none of
+// them can say 15 over groups that add to 16 (#554). Until the lists
+// behind it have arrived it is the server's number (`cases.queue_count`,
+// the same derivation), so the badge is there before Needs you is opened.
 function updateFindBadge(n) {
+  state.serverNeeds = n || 0;
+  syncNeedsCount();
+}
+
+function todayListsLoaded() {
+  try {
+    return !!(state.casesLoaded && propState.data && todayState.extrasLoaded);
+  } catch (e) {
+    return false;   // read before the lists' own state exists
+  }
+}
+
+function needsCountNow() {
+  if (!todayListsLoaded()) return state.serverNeeds || 0;
+  return todayCards().filter((c) => c.counted !== false).length;
+}
+
+function syncNeedsCount() {
+  const n = needsCountNow();
   const badge = $("#findBadge");
-  if (!badge) return;
-  badge.textContent = n ? String(n) : "";
-  badge.classList.toggle("hidden", !n);
+  if (badge) {
+    badge.textContent = n ? String(n) : "";
+    badge.classList.toggle("hidden", !n);
+  }
   const seg = $("#segNeedsCount");
   if (seg) { seg.textContent = n ? String(n) : ""; seg.hidden = !n; }
   // The line over the insight cards: the cards are what the tab opens on,
   // and a decision that only lived one press away would be one nobody saw.
-  state.needsCount = n || 0;
+  state.needsCount = n;
   renderNeedsStrip();
 }
 
@@ -5822,6 +5878,29 @@ function renderNeedsStrip() {
   $("#needsStripSub").textContent = lead ? prettyText(lead) : "Problems, questions and suggestions to decide on";
 }
 $("#needsStrip")?.addEventListener("click", () => switchView("findings"));
+
+// What an insight card is, beside the dashboard. The owner asked for "a
+// tooltip clarifying the insights dashboard, what makes those cards
+// different than the Morph UI"; a phone has no hover, so it is a line that
+// opens on a press, and the dashboard is named by its tab's own name.
+function renderAboutCards() {
+  const body = $("#aboutCards");
+  if (!body) return;
+  const on = !$("#homeTab").hidden;
+  const dash = on ? `The ${tabWords("home").label} tab` : "The Morph dashboard (switched on in ⚙ › Features)";
+  body.textContent = "An insight card is a report: one question about the house that brAIn "
+    + "answers with Claude on its own schedule — a verdict, the numbers behind it and a chart — "
+    + `and keeps up to date. ${dash} is where you run the house from: live controls, laid out `
+    + "by what matters right now. Read a card; use the dashboard.";
+  speakAll(body);
+}
+$("#aboutCardsBtn")?.addEventListener("click", () => {
+  const btn = $("#aboutCardsBtn");
+  const open = btn.getAttribute("aria-expanded") !== "true";
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+  renderAboutCards();
+  $("#aboutCards").hidden = !open;
+});
 
 // Every finding button goes through here: all six endpoints answer with the
 // same {findings, hypotheses, open}, so there is one place that knows what
@@ -6767,6 +6846,7 @@ function takeCases(data) {
   if (!data) return;
   state.cases = data.cases || [];
   state.names = data.names || {};
+  state.casesLoaded = true;
   updateFindBadge(data.open);
   renderIfChanged();
 }
@@ -7293,6 +7373,7 @@ function makeIntent(row) {
 async function refreshTodayExtras() {
   try {
     todayState.extras = await api("api/today");
+    todayState.extrasLoaded = true;
   } catch (e) {
     // Keep what we had: an empty extras list is "nothing to tidy", and a
     // fetch that failed is not that.
@@ -7552,9 +7633,12 @@ function todayHideButtons(key, title, btns, actions) {
 // list arrives in that order (`answers.feed_key`); a card no case covers
 // is placed by the same rule here, and a group is sorted stably so the
 // server's order stands wherever the two agree.
+// `waiting` holds what is set and waiting rather than waiting on you — a
+// one-off ask that is armed — so its heading carries no count: the counts
+// on the headings add up to the badge.
 const GROUP_WORDS = { problems: "Problems", questions: "Questions for you",
-  chores: "Chores and suggestions", tidy: "Tidy-ups" };
-const GROUP_ORDER = ["problems", "questions", "chores", "tidy"];
+  chores: "Chores and suggestions", tidy: "Tidy-ups", waiting: "Set to run once" };
+const GROUP_ORDER = ["problems", "questions", "chores", "tidy", "waiting"];
 const SEVERITY_RANK = { critical: 0, serious: 1, warning: 2, info: 3 };
 
 function caseGroup(c) {
@@ -7616,7 +7700,7 @@ function todayCards() {
   });
   props.forEach((r) => out.push({ id: `p:${r.ts}`, group: "chores",
     make: () => makeSuggestion(r) }));
-  intents.forEach((r) => out.push({ id: `i:${r.ts}`, group: "chores",
+  intents.forEach((r) => out.push({ id: `i:${r.ts}`, group: "waiting", counted: false,
     make: () => makeIntent(r) }));
   if (extras.tidy) out.push({ id: extras.tidy.key, group: "tidy",
     make: () => makeTidyCard(extras.tidy) });
@@ -7670,7 +7754,8 @@ function todayGroup(g, items, lead) {
   head.type = "button";
   head.setAttribute("aria-expanded", open ? "true" : "false");
   head.appendChild(el("span", "qgroupname", GROUP_WORDS[g]));
-  head.appendChild(el("span", "qgroupcount", String(items.length)));
+  const counted = items.filter((c) => c.counted !== false).length;
+  if (counted) head.appendChild(el("span", "qgroupcount", String(counted)));
   head.appendChild(el("span", "qgroupchev", ""));
   head.addEventListener("click", () => {
     todayState.groupOpen[g] = !groupIsOpen(g, lead);
@@ -7754,7 +7839,7 @@ function renderTodayChrome() {
 }
 
 function renderTodayBanner() {
-  renderNeedsStrip();
+  syncNeedsCount();
   const box = $("#todayBanner");
   if (!box) return;
   box.textContent = "";
@@ -8402,7 +8487,23 @@ function renderIdeas() {
   }
   const row = $("#ideasRow");
   if (row) row.classList.toggle("empty", !ideasState.ideas.length);
+  // The folded line says what is inside without opening it.
+  const n = ideasState.ideas.length;
+  const meta = $("#ideasMeta");
+  if (meta) {
+    meta.textContent = ideasState.running ? "Looking…"
+      : ideasState.lastError ? "The last look didn't finish"
+      : n ? `${n} to look at` : "None waiting";
+  }
 }
+
+// Memory › Knowledge's folded lines: the name opens what is under it.
+document.querySelectorAll(".kfoldname").forEach((b) => b.addEventListener("click", () => {
+  const body = document.getElementById(b.getAttribute("aria-controls"));
+  const open = b.getAttribute("aria-expanded") !== "true";
+  b.setAttribute("aria-expanded", open ? "true" : "false");
+  if (body) body.hidden = !open;
+}));
 
 
 // ------------------------------------------------------- knowledge modal
@@ -9413,8 +9514,8 @@ function renderBrief(box, data) {
   const brief = data.brief || {};
   if (!brief.enabled) {
     box.appendChild(el("p", "kbrieftext off",
-      "The morning brief is off — turn it on in the add-on's Configuration "
-      + "tab once a notify service is set."));
+      "The morning brief is off. It is switched on in Home Assistant, under "
+      + "Settings › Add-ons › brAIn › Configuration, once a phone to send it to is set."));
     return;
   }
   const text = String(brief.text || "").trim();
@@ -12067,8 +12168,6 @@ function syncTabs(name) {
     const on = b.dataset.group === group;
     b.classList.toggle("active", on);
     b.setAttribute("aria-selected", on ? "true" : "false");
-    // Inside the shell on a phone, the tab you are on opens its sections.
-    b.classList.toggle("hassecs", on && !!SEG_GROUPS[group]);
   });
   let shown = 0;
   document.querySelectorAll(".subtab").forEach((b) => {
@@ -12191,9 +12290,11 @@ function switchView(name) {
   // Same shape: draw what we have, then again once the fetch lands, so
   // opening the tab is never a blank frame. And pick the poll back up if
   // a pass started before you navigated away — a run outlives the page.
-  // Reports carries the Suggested row and the deep review, so both are
-  // read when it is opened, from what we have and again once they land.
-  if (name === "insights") {
+  // Knowledge carries the deep review and the suggested reports, folded at
+  // its top, so both are read when it is opened, from what we have and
+  // again once they land.
+  if (name === "memory") {
+    renderKnowledge();
     renderIdeas();
     refreshIdeas().then(() => {
       renderIdeas();
@@ -12201,7 +12302,6 @@ function switchView(name) {
     });
     refreshDeepReview();
   }
-  if (name === "memory") renderKnowledge();
   if (name === "archive") {
     renderHistory();
     refreshHistory().then(renderHistory);
@@ -12228,11 +12328,6 @@ document.querySelectorAll(".viewtab").forEach((b) =>
   b.addEventListener("click", () => {
     const group = b.dataset.group;
     const again = groupOf(currentView) === group;
-    // Inside the shell on a phone the sections are under their tab: the
-    // tab you are on opens them (and closes them), rather than a control
-    // that took a row of its own over every pane.
-    if (again && segMenuHere() && SEG_GROUPS[group]) { setSegMenu(!segMenuOpen()); return; }
-    setSegMenu(false);
     let target = again ? b.dataset.view : (groupLast[group] || b.dataset.view);
     // A pane switched off (Insights with `enable_insights: false`) hands
     // the press to the first pane of the group that is still there.
@@ -12247,7 +12342,7 @@ document.querySelectorAll(".viewtab").forEach((b) =>
 document.querySelectorAll(".subtab").forEach((b) =>
   b.addEventListener("click", () => switchView(b.dataset.view)));
 document.querySelectorAll("#segNav .segbtn").forEach((b) =>
-  b.addEventListener("click", () => { setSegMenu(false); switchView(b.dataset.view); }));
+  b.addEventListener("click", () => switchView(b.dataset.view)));
 $("#segNavSel")?.addEventListener("change", (ev) =>
   switchView(ev.currentTarget.value));
 syncTabs(currentView);
@@ -12383,10 +12478,10 @@ function shellBars() {
   if (!SHELL) return;
   const bar = document.querySelector(".topbar");
   const tabs = document.querySelector(".viewtabs");
-  // Hidden, the header leaves only the island strip's ground, and Home
-  // takes the rest.
+  // With the tab row slid away the header is its first row (the name, the
+  // clock, ⚙), and Home takes the rest.
   const full = bar ? Math.round(bar.getBoundingClientRect().height) : 0;
-  const top = shellBar.hidden ? Math.min(full, shellInset()) : full;
+  const top = shellBar.hidden ? Math.max(0, full - shellBar.cut) : full;
   // On a phone the tabs are a bar fixed along the bottom; the dashboard
   // ends above it.
   const fixed = tabs && getComputedStyle(tabs).position === "fixed";
@@ -12408,18 +12503,17 @@ function shellRaiseCheck() {
   shellPost({ raise: open });
 }
 
-// Morph's Edit in the one header: on Home, while the shell says the person
-// may edit the dashboard; Done (and YAML) while they are.
+// Morph's Done and YAML in the one header, on the dashboard's tab while it
+// is being edited. At rest the header carries no Edit: Morph draws a quiet
+// ✎ Edit on its own first line, under the header.
 function syncShellEdit() {
   const edit = $("#shellEdit");
   const yaml = $("#shellYaml");
   if (!edit || !yaml) return;
   const h = shellState.home || {};
-  const on = SHELL && currentView === "home" && !!h.edit;
+  const on = SHELL && currentView === "home" && !!h.edit && !!h.editing;
   edit.hidden = !on;
-  $("#shellEditText").textContent = h.editing ? "Done" : "Edit";
-  edit.classList.toggle("editing", !!h.editing);
-  yaml.hidden = !(on && h.editing);
+  yaml.hidden = !on;
   yaml.textContent = h.yaml ? "Hide YAML" : "YAML";
 }
 
@@ -12430,7 +12524,7 @@ function syncHomeTab() {
   if (!tab) return;
   const f = (state.status && state.status.features) || {};
   const on = SHELL ? shellState.morph : !!(f.morph && f.shell);
-  tab.hidden = !on;
+  if (tab.hidden !== !on) { tab.hidden = !on; renderAboutCards(); }
   const nav = $("#setNavDashboard");
   if (nav) nav.hidden = !f.morph;
   const persOff = $("#persOff");
@@ -12440,16 +12534,88 @@ function syncHomeTab() {
   applyName();
 }
 
-// ---- the header on a phone, and a header that gets out of the way -------
+// ---- the header's tabs, named and drawn the way the house chose ---------
+// The owner: "I don't like the home menu button. I think that should be the
+// dashboard name by default — you can call it Morph UI — but that should be
+// adjustable including the icons." Every tab's name and icon is a setting
+// of the dashboard's (⚙ › Dashboard › Header tabs), kept by Morph's service
+// so every device of the house agrees, and read here when the page opens.
+const TAB_ICONS = {
+  dashboard: "M4 4h7v9H4zM13 4h7v5h-7zM13 11h7v9h-7zM4 15h7v5H4z",
+  home: "M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z",
+  bulb: "M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.5 1.1 1.3 1.1 2.2h5c0-.9.4-1.7 1.1-2.2A6 6 0 0 0 12 3z",
+  chat: "M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-5 4v-4H5.5A1.5 1.5 0 0 1 4 14.5zM8 8.5h8M8 12h5",
+  brain: "M12 5.5a3 3 0 0 0-5.7-1.3A2.8 2.8 0 0 0 4 9.4a3 3 0 0 0 .4 4.8A2.9 2.9 0 0 0 7 19a3 3 0 0 0 5-1.2zM12 5.5a3 3 0 0 1 5.7-1.3A2.8 2.8 0 0 1 20 9.4a3 3 0 0 1-.4 4.8A2.9 2.9 0 0 1 17 19a3 3 0 0 1-5-1.2z",
+  sparkle: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z",
+  chart: "M4 20h16M7 16v-5M12 16V6M17 16v-8",
+  book: "M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5zM5 19.5A1.5 1.5 0 0 0 6.5 21H19",
+};
+const TAB_ICON_WORDS = { dashboard: "Dashboard", home: "House", bulb: "Light bulb",
+  chat: "Speech bubble", brain: "Brain", sparkle: "Sparkle", chart: "Chart", book: "Book" };
+const TAB_DEFAULTS = { home: ["Morph UI", "dashboard"], insights: ["Insights", "bulb"],
+  ask: ["Ask", "chat"], memory: ["Memory", "brain"] };
+let headerTabs = {};
+
+function tabWords(tab) {
+  const own = headerTabs[tab] || {};
+  const [label, icon] = TAB_DEFAULTS[tab] || ["", "dashboard"];
+  return { label: own.label || label, icon: TAB_ICONS[own.icon] ? own.icon : icon };
+}
+
+function applyHeaderTabs(tabs) {
+  if (tabs && typeof tabs === "object" && !Array.isArray(tabs)) headerTabs = tabs;
+  document.querySelectorAll(".viewtab[data-tab]").forEach((b) => {
+    const w = tabWords(b.dataset.tab);
+    const label = b.querySelector(".tablabel");
+    if (label) label.textContent = w.label;
+    const path = b.querySelector("svg.ico path");
+    if (path) path.setAttribute("d", TAB_ICONS[w.icon]);
+  });
+  renderAboutCards();
+}
+
+async function loadHeaderTabs() {
+  try {
+    const st = await api("api/morph/state");
+    applyHeaderTabs(((st && st.settings) || {}).header_tabs || {});
+  } catch (e) {
+    applyHeaderTabs(null);
+  }
+}
+setTimeout(loadHeaderTabs, 0);
+
+// ---- the clock beside ⚙ ---------------------------------------------------
+// The owner: "I think a clock should be visible all the time." h:mm, in the
+// 12- or 24-hour preference Home Assistant holds for this person when it
+// holds one (the shell sends it as `state.clock`), else the browser's.
+function syncShellClock() {
+  const c = $("#shellClock");
+  if (!c) return;
+  c.hidden = !SHELL;
+  if (!SHELL) return;
+  const now = new Date();
+  const opts = { hour: "numeric", minute: "2-digit" };
+  if (shellState.clock === 12) opts.hour12 = true;
+  if (shellState.clock === 24) opts.hourCycle = "h23";
+  const text = new Intl.DateTimeFormat([], opts).formatToParts(now)
+    .filter((p) => p.type !== "dayPeriod").map((p) => p.value).join("").trim();
+  if (c.textContent !== text) c.textContent = text;
+  c.setAttribute("datetime", `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`);
+}
+
+// ---- the header on a phone, and a tab row that gets out of the way ------
 // The owner: the header "clashes with the Dynamic Island", "I don't like
 // those menu buttons up there all the time; maybe collapsible and goes away
-// when you're not at the top", and "on a phone the shell takes about 170px
-// before any content". So inside the shell: the header's first row sits in
-// the island strip (style.css, `--safe-top`); the sections are under their
-// tab on a phone (`setSegMenu`); the search is an icon (`syncSearchBtn`);
-// and scrolling down hides the header while scrolling up or reaching the
-// top brings it back (`shellScrolled`), for this page's scroll and for
-// Morph's on Home, which the shell passes in.
+// when you're not at the top", and then "the collapsing menu was supposed
+// to be just for the home insights ask memory buttons". So inside the
+// shell on a phone: the header's first row sits in the island strip
+// (style.css, `--safe-top`) and always stays — the name, the clock, ⚙;
+// the tabs are the second row, and scrolling down slides only that row
+// away while scrolling up or reaching the top brings it back
+// (`shellScrolled`), for this page's scroll and for Morph's on Home, which
+// the shell passes in. A wider screen has one row and nothing to slide.
+// Insights' and Memory's sections are a row of segments at the top of the
+// pane, and the search is an icon (`syncSearchBtn`).
 
 // The top safe area as this page draws it (`--safe-top`), in pixels.
 function shellInset() {
@@ -12461,11 +12627,34 @@ function shellInset() {
   return Math.round(h);
 }
 
+// Two rows: a phone inside the shell, where the tabs are the second row.
+function shellTwoRows() {
+  return SHELL && window.matchMedia("(max-width: 640px)").matches;
+}
+
+// How far the header slides to leave its first row: everything under the
+// foot of ⚙ (or the name), read before it moves.
+function shellRowCut() {
+  const bar = document.querySelector(".topbar");
+  const gear = $("#settingsBtn");
+  if (!bar) return 0;
+  const top = bar.getBoundingClientRect().top;
+  const row1 = [gear, document.querySelector(".topbar .brandlink")]
+    .filter((n) => n && n.getClientRects().length)
+    .reduce((m, n) => Math.max(m, n.getBoundingClientRect().bottom - top), 0);
+  // Never above the island strip's foot: the first row lives in it.
+  const keep = Math.max(row1 + 2, shellInset());
+  return Math.max(0, Math.round(bar.getBoundingClientRect().height - keep));
+}
+
 function setBarHidden(hidden) {
   if (!SHELL || hidden === shellBar.hidden) return;
+  if (hidden) {
+    shellBar.cut = shellRowCut();
+    document.documentElement.style.setProperty("--bar-cut", shellBar.cut + "px");
+  }
   shellBar.hidden = hidden;
   document.documentElement.classList.toggle("bar-hidden", hidden);
-  if (hidden) setSegMenu(false);
   shellBars();
 }
 
@@ -12475,11 +12664,12 @@ function setBarHidden(hidden) {
 const BAR_SLACK = 8;
 function shellScrolled(y) {
   if (!SHELL) return;
+  if (!shellTwoRows()) { setBarHidden(false); return; }
   const bar = document.querySelector(".topbar");
   const full = bar ? bar.getBoundingClientRect().height : 0;
   if (shellBar.y === null) { shellBar.y = y; return; }
   const dy = y - shellBar.y;
-  const busy = segMenuOpen() || document.documentElement.classList.contains("searching")
+  const busy = document.documentElement.classList.contains("searching")
     || (bar && bar.contains(document.activeElement) && document.activeElement.tagName === "INPUT");
   if (y <= full) setBarHidden(false);
   else if (dy > BAR_SLACK && !busy) setBarHidden(true);
@@ -12491,25 +12681,8 @@ function shellScrolled(y) {
 // over (Morph's own scroll is passed in on Home).
 function shellViewChanged(name) {
   shellBar.y = name === "home" ? null : window.scrollY;
-  setSegMenu(false);
   if (name !== "insights") setSearchOpen(false);
   setBarHidden(false);
-}
-
-// The sections menu: on a phone inside the shell, `#segNav` is a menu
-// under the header that the tab you are on opens.
-function segMenuHere() {
-  return SHELL && window.matchMedia("(max-width: 640px)").matches;
-}
-function segMenuOpen() {
-  return document.documentElement.classList.contains("segopen");
-}
-function setSegMenu(open) {
-  open = !!open && segMenuHere();
-  document.documentElement.classList.toggle("segopen", open);
-  const tab = document.querySelector(".viewtab.active");
-  document.querySelectorAll(".viewtab").forEach((b) => b.removeAttribute("aria-expanded"));
-  if (tab && tab.classList.contains("hassecs")) tab.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
 // Insights' search behind an icon: shown while the pane offers a search,
@@ -12558,15 +12731,11 @@ if (SHELL) {
   $("#reportSearch")?.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape") { setSearchOpen(false); $("#searchBtn").focus(); }
   });
-  // A press anywhere else closes the sections menu.
-  document.addEventListener("click", (ev) => {
-    if (!segMenuOpen()) return;
-    const t = ev.target;
-    if (t.closest && (t.closest("#segNav") || t.closest(".viewtab.active"))) return;
-    setSegMenu(false);
-  }, true);
-  window.matchMedia("(max-width: 640px)").addEventListener?.("change", () => setSegMenu(false));
+  // Turning a phone into a wider screen leaves one row: nothing slid away.
+  window.matchMedia("(max-width: 640px)").addEventListener?.("change", () => setBarHidden(false));
   setInterval(shellRaiseCheck, 250);
+  syncShellClock();
+  setInterval(syncShellClock, 10000);
   $("#shellMenu").addEventListener("click", () => shellPost({ menu: true }));
   $("#shellEdit").addEventListener("click", () => shellPost({ home: "edit" }));
   $("#shellYaml").addEventListener("click", () => shellPost({ home: "yaml-toggle" }));
@@ -12587,7 +12756,12 @@ if (SHELL) {
       shellState.morph = !!d.state.morph;
       shellState.narrow = !!d.state.narrow;
       shellState.home = d.state.home || {};
+      shellState.clock = d.state.clock === 12 || d.state.clock === 24 ? d.state.clock : 0;
+      const themeWas = document.documentElement.dataset.theme;
       applyShellTheme(d.state.theme);
+      // The cards are drawn in the shell's theme: a new one redraws them.
+      if (themeWas && themeWas !== document.documentElement.dataset.theme) render();
+      syncShellClock();
       $("#shellMenu").hidden = !shellState.narrow;
       syncHomeTab();
       syncShellEdit();
@@ -15367,7 +15541,7 @@ async function snapChart(insight) {
   frame.style.width = `${SNAP_FRAME_WIDTH}px`;
   const frameId = `snap-${state.frameSeq++}`;
   frame.dataset.frame = frameId;
-  frame.srcdoc = insight.html + SIZE_SNIPPET(frameId) + SNAP_SNIPPET(frameId);
+  frame.srcdoc = cardDoc(insight.html) + SIZE_SNIPPET(frameId) + SNAP_SNIPPET(frameId);
   document.body.appendChild(frame);
   try {
     await new Promise((res) => {
@@ -17019,7 +17193,7 @@ async function refreshDeepReview() {
   // the tab is the one on screen: a poll behind a pane nobody is looking at
   // is a request per minute for an answer nobody will read.
   clearTimeout(reviewState.timer);
-  if (reviewState.data && reviewState.data.running && currentView === "insights") {
+  if (reviewState.data && reviewState.data.running && currentView === "memory") {
     reviewState.timer = setTimeout(refreshDeepReview, 8000);
   }
 }
@@ -17057,6 +17231,17 @@ function renderDeepReview() {
   const d = reviewState.data;
   if (!d) return;
 
+  // Run sits on the folded line, beside the name; the price and when it
+  // last ran are the line's own words, so it is weighed before the press.
+  const runHost = $("#kReviewRun");
+  if (runHost) runHost.textContent = "";
+  const meta = $("#kReviewMeta");
+  if (meta) {
+    const last = d.latest ? `Last ${reviewDate(d.latest.at)}` : "Not run yet";
+    const cost = d.running ? `started ${agoAt(d.started_at)}` : reviewCostText(d.estimate);
+    meta.textContent = d.authenticated ? [last, cost].filter(Boolean).join(" · ")
+      : `${last} · open to sign in first`;
+  }
   const run = el("div", "kreviewrun");
   const btn = el("button", "btn small", d.running ? "Running…" : "Run");
   btn.type = "button";
@@ -17068,10 +17253,7 @@ function renderDeepReview() {
       + `tokens — an estimate: ${est.basis}.` : ""));
   btn.addEventListener("click", () => runDeepReview(btn));
   run.appendChild(btn);
-  run.appendChild(el("span", "kreviewcost", d.running
-    ? `Started ${agoAt(d.started_at)}`
-    : reviewCostText(d.estimate)));
-  box.appendChild(run);
+  (runHost || box).appendChild(run);
 
   if (!d.authenticated) {
     // A press to where the sign-in is, not a path to go and find it.
@@ -17133,7 +17315,7 @@ async function runDeepReview(btn) {
       toast(body.error || `Could not start a review (HTTP ${resp.status})`);
     } else {
       reviewState.data = body;
-      toast("Reviewing the house — it lands under Insights in a few minutes");
+      toast("Reviewing the house — it lands under Memory in a few minutes");
     }
   } catch (e) {
     toast(e.message);
@@ -17778,7 +17960,7 @@ async function loadFeatures() {
 }
 
 const FEATURE_SAID = {
-  morph: ["The Home tab is on. brAIn builds the first dashboard from your floors and rooms.",
+  morph: ["The Morph UI tab is on. brAIn builds the first dashboard from your floors and rooms.",
     "The Morph dashboard is off. Its files and history are kept."],
   personality: ["brAIn speaks as the personality you gave it.",
     "brAIn is brAIn again. The personality is kept for when you switch it back on."],
@@ -17854,6 +18036,34 @@ function dashSwitch(key, title, body, on) {
     + `<span><b>${esc(title)}</b><span class="subtext">${esc(body)}</span></span></label></div></div>`;
 }
 
+// ⚙ › Dashboard › Header tabs: each tab's name and icon (`applyHeaderTabs`).
+function dashTabsHtml(own) {
+  return Object.keys(TAB_DEFAULTS).map((tab) => {
+    const [label, icon] = TAB_DEFAULTS[tab];
+    const mine = own[tab] || {};
+    const pick = TAB_ICONS[mine.icon] ? mine.icon : icon;
+    const opts = Object.keys(TAB_ICONS).map((k) =>
+      `<option value="${k}"${k === pick ? " selected" : ""}>${esc(TAB_ICON_WORDS[k])}</option>`).join("");
+    return `<div class="setgrid dashtab"><div><label for="dashTab_${tab}">${esc(label)} tab's name</label>`
+      + `<input id="dashTab_${tab}" type="text" maxlength="24" autocomplete="off" data-dash-tab="${tab}" data-part="label" value="${esc(mine.label || "")}" placeholder="${esc(label)}"></div>`
+      + `<div><label for="dashTabIcon_${tab}">Its icon</label>`
+      + `<select id="dashTabIcon_${tab}" class="sel selin" data-dash-tab="${tab}" data-part="icon">${opts}</select></div></div>`;
+  }).join("");
+}
+
+function dashTabsValue() {
+  const out = {};
+  Object.keys(TAB_DEFAULTS).forEach((tab) => {
+    const label = ($(`#dashTab_${tab}`) || {}).value || "";
+    const icon = ($(`#dashTabIcon_${tab}`) || {}).value || "";
+    const row = {};
+    if (label.trim()) row.label = label.trim();
+    if (icon && icon !== TAB_DEFAULTS[tab][1]) row.icon = icon;
+    if (Object.keys(row).length) out[tab] = row;
+  });
+  return out;
+}
+
 function renderDashboard() {
   const body = $("#dashBody");
   if (!body) return;
@@ -17890,6 +18100,8 @@ function renderDashboard() {
     + dashSwitch("fold_rooms", "Fold quiet rooms", "A room with nothing on, moving or unusual folds to its name, its scenes and its doors.", s.fold_rooms));
   parts.push(`<h4 class="sethead">Appearance</h4>` + dashPick("theme", "Theme", s.theme)
     + dashSwitch("reduce_motion", "Reduce motion", "Things move straight to where they belong instead of springing there.", s.reduce_motion));
+  parts.push(`<h4 class="sethead">Header tabs</h4>` + dashTabsHtml(s.header_tabs || {})
+    + `<p class="hint tight">The name and icon of each tab in the header, on every device of the house. A blank name is the tab's own.</p>`);
   parts.push(`<h4 class="sethead">Learning loop</h4>`
     + (learningOn ? "" : `<p class="hint">The learning loop is off in <a class="linkish" href="#" data-dash-act="features">Features</a>, so nothing below runs on its own.</p>`)
     + dashPick("learning_hours", "How often", s.learning_hours)
@@ -17905,7 +18117,7 @@ function renderDashboard() {
     + `<button type="button" class="btn small" data-dash-act="code_reset" data-v="${esc(r.name)}">Remove my change</button></div>`).join("")
     : `<p class="hint tight">None. brAIn can change any part of the dashboard's own code; ask in Edit.</p>`;
   parts.push(`<h4 class="sethead">Changes to the dashboard's own code</h4>${codeRows}`
-    + (code.some((r) => r.status === "paused") ? `<p class="hint tight">A paused change is updated from the note on the Home tab.</p>` : ""));
+    + (code.some((r) => r.status === "paused") ? `<p class="hint tight">A paused change is updated from the note on the dashboard.</p>` : ""));
   const hist = dashHist == null ? `<p class="hint tight">Reading…</p>`
     : dashHist.length ? dashHist.map((h) => `<div class="drow"><span><b>${esc(DASH_WHO[h.who] || h.who || "")}</b> · ${esc(h.message || "")} · <span class="hint">${esc(new Date(h.at * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }))}</span></span>`
       + `<span class="row"><button type="button" class="btn small" data-dash-act="undo_commit" data-v="${esc(h.sha)}">Undo</button>`
@@ -17930,6 +18142,7 @@ async function dashRequest(kind, payload) {
 
 async function loadDashboard() {
   try { dashState = await api("api/morph/state"); } catch (e) { dashState = {}; }
+  if (dashState && dashState.settings) applyHeaderTabs(dashState.settings.header_tabs || {});
   if (!featState) loadFeatures().then(renderDashboard);
   renderDashboard();
   const h = await dashRequest("history", { limit: 60 });
@@ -17948,6 +18161,17 @@ $("#dashBody").addEventListener("change", async (ev) => {
   if (t.dataset.dashPerson) {
     try { if (t.value) localStorage.setItem("morph.person", t.value); else localStorage.removeItem("morph.person"); } catch (e) { /* storage refused */ }
     toast("Saved for this browser.");
+    return;
+  }
+  if (t.dataset.dashTab) {
+    const tabs = dashTabsValue();
+    const r = await dashRequest("settings", { patch: { header_tabs: tabs } });
+    if (r.ok) {
+      dashState = { ...dashState, settings: r.settings };
+      applyHeaderTabs((r.settings || {}).header_tabs || tabs);
+      toast("Saved for every device of the house.");
+    } else toast(r.error || "Not saved.");
+    renderDashboard();
     return;
   }
   const key = t.dataset.dashSet || t.dataset.dashBool;
@@ -17975,8 +18199,8 @@ $("#dashBody").addEventListener("click", async (ev) => {
   else if (act === "undo_commit" || act === "restore") r = await dashRequest(act, { sha: v });
   else if (act === "regenerate") { dashRegenSure = false; r = await dashRequest("regenerate"); }
   b.disabled = false;
-  const said = { learn: "Learning pass started — suggestions appear on the Home tab when it answers.",
-    lessons: "Lessons saved.", code_reset: "The dashboard's own copy is back. Reload the Home tab to see it.",
+  const said = { learn: "Learning pass started — suggestions appear on the dashboard when it answers.",
+    lessons: "Lessons saved.", code_reset: "The dashboard's own copy is back. Reload the dashboard to see it.",
     undo_commit: "Put back.", restore: "Restored that version. Undo is in History.", regenerate: "Rebuilt from the house." };
   toast(r && r.ok ? said[act] : (r && r.error) || "That did not work.");
   loadDashboard();

@@ -190,6 +190,30 @@ for (const { width, touch } of CASES) {
       modal: !!document.querySelector('#convModal'),
     };
   });
+  // #553: on a phone the list's head row holds ＋, ⋯ and ⤢ as one kind of
+  // control — the same size and the same (unboxed) look, at the touch floor,
+  // inside the row rather than boxed squares standing above it.
+  if (touch) {
+    const head = await page.evaluate(() => {
+      const row = document.querySelector('#chatRail .crhead').getBoundingClientRect();
+      const one = (id) => {
+        const n = document.getElementById(id);
+        const r = n.getBoundingClientRect();
+        const cs = getComputedStyle(n);
+        if (!r.width || cs.display === 'none' || cs.visibility === 'hidden') return null;
+        return { id, t: Math.round(r.top), b: Math.round(r.bottom), w: Math.round(r.width), h: Math.round(r.height),
+                 look: [cs.borderTopWidth, cs.backgroundColor, cs.color, cs.opacity, cs.borderRadius].join(' ') };
+      };
+      return { top: Math.round(row.top), bottom: Math.round(row.bottom), ctl: ['chatRailNew', 'termMenu', 'termExpand'].map(one).filter(Boolean) };
+    });
+    if (head.ctl.length !== 3) note(where, `the list's head shows ${head.ctl.map((c) => c.id).join(', ')}, not ＋, ⋯ and ⤢`);
+    for (const c of head.ctl) {
+      if (c.w < MIN_TARGET || c.h < MIN_TARGET) note(where, `${c.id} in the list's head is ${c.w}×${c.h}`);
+      if (c.t < head.top - 1 || c.b > head.bottom + 1) note(where, `${c.id} sits at ${c.t}–${c.b}, outside the head row (${head.top}–${head.bottom})`);
+    }
+    const looks = new Set(head.ctl.map((c) => `${c.w}x${c.h} ${c.look}`));
+    if (looks.size > 1) note(where, `＋, ⋯ and ⤢ are ${looks.size} different controls: ${[...looks].join(' | ')}`);
+  }
   if (touch) {
     if (!list.onList) note(where, 'Ask did not open on the list');
     if (list.chatShown) note(where, 'the transcript is on screen behind the list');

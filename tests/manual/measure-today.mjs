@@ -30,7 +30,11 @@
 //   * the status line reads "Watching · last look 9 min ago" and its ⋯
 //     holds Recheck and the morning brief;
 //   * the safety banner shows only while something is urgent;
-//   * the badge equals the counted cards;
+//   * the badge equals the counted cards, and (#554) the badge, the line
+//     over the insight cards, the section's own count and the groups'
+//     counts are one number off one list: the armed one-off — drawn, and
+//     not a decision — sits in its own "Set to run once" group with no
+//     count, so the counts on the headings add up to the badge;
 //   * every answerable card says who acts in ONE line under its title —
 //     "brAIn can fix this." over Go ahead or Apply, "This needs you." over
 //     Add to To Do or Done, "brAIn needs an answer." over Yes — never both
@@ -192,6 +196,10 @@ for (const { width, touch, top, fits } of CASES) {
     note(where, `the first card starts at ${cards[0].top}px (budget ${top})`);
   }
   const total = COUNTED + 1;   // the armed one-off is drawn and not counted
+  // (#554, a structural assertion this batch moved: the one-off used to sit
+  // under Chores and suggestions and its heading counted it, so the groups
+  // added to 16 under a badge of 15. It is a group of its own now, with no
+  // count, and the counted headings add up to the badge.)
   // The groups, before anything is opened: four headings in order, each
   // with its count, the lead one open and the rest closed.
   const groups = await page.evaluate(() => [...document.querySelectorAll(
@@ -203,14 +211,27 @@ for (const { width, touch, top, fits } of CASES) {
     h: Math.round(g.querySelector('.qgrouphead')?.getBoundingClientRect().height || 0),
   })));
   const names = groups.map((g) => g.name).join('|');
-  if (names !== 'Problems|Questions for you|Chores and suggestions|Tidy-ups') {
+  if (names !== 'Problems|Questions for you|Chores and suggestions|Tidy-ups|Set to run once') {
     note(where, `the queue's groups read ${names || '(none)'}`);
   }
   if (groups.filter((g) => g.open).map((g) => g.group).join('|') !== 'problems') {
     note(where, `open groups: ${groups.filter((g) => g.open).map((g) => g.group).join(', ')}`);
   }
-  if (groups.reduce((n, g) => n + g.count, 0) !== total) {
-    note(where, `the group counts add to ${groups.reduce((n, g) => n + g.count, 0)}, not ${total}`);
+  const counted = groups.filter((g) => !Number.isNaN(g.count)).reduce((n, g) => n + g.count, 0);
+  if (counted !== COUNTED) note(where, `the group counts add to ${counted}, not ${COUNTED}`);
+  const waitingGroup = groups.find((g) => g.group === 'waiting');
+  if (!waitingGroup || !Number.isNaN(waitingGroup.count)) note(where, `the armed one-off is not a group of its own without a count: ${JSON.stringify(waitingGroup)}`);
+  // One list, one number: the tab's badge, the section's count and the
+  // line over the insight cards all say what the headings add up to.
+  {
+    const nums = await page.evaluate(() => ({
+      badge: document.getElementById('findBadge')?.textContent || '',
+      seg: document.getElementById('segNeedsCount')?.textContent || '',
+      strip: (document.getElementById('needsStripCount')?.textContent.match(/^(\d+)/) || [])[1] || '',
+    }));
+    for (const [k, v] of Object.entries(nums)) {
+      if (v !== String(counted)) note(where, `the ${k} says ${v || 'nothing'} where the groups add to ${counted}`);
+    }
   }
   if (touch) {
     for (const g of groups) if (g.h < MIN_TARGET) note(where, `the ${g.name} heading is ${g.h}px`);

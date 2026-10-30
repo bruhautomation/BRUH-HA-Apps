@@ -243,6 +243,19 @@ def expected_daemons(options: dict | None = None) -> frozenset[str]:
     return frozenset(out)
 
 
+# The two assist implementations are one job (`_assist_daemon`), so they
+# carry no entry in DAEMONS; their words for the Diagnostics list are here.
+_ASSIST_WORDS = {"assist_listener": "the voice listener",
+                 "assist_worker_pool": "the voice workers"}
+
+
+def daemon_words(name: str) -> str:
+    """A background process by what it does, for the Diagnostics list:
+    "the usage tracker", never `usage_tracker`."""
+    spec = DAEMONS.get(name) or {}
+    return spec.get("what") or _ASSIST_WORDS.get(name) or name.replace("_", " ")
+
+
 def not_used_reason(name: str, options: dict | None = None) -> str:
     """Why a daemon is correctly absent on this configuration, in the words
     the Diagnostics roll-call shows, or "" when it was asked for.

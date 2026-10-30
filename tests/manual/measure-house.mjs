@@ -11,8 +11,10 @@
 //
 // Buttons on a pointer and one styled select.sel on a phone, showing only
 // the current tab's sections, and on no pane of Ask. The cards pane carries
-// cards with a headline and "Updated N ago", the deep review and a
-// Suggested row — and NOT the checks/memory/runs strip, the "problems since
+// cards with a headline and "Updated N ago" — and NOT the deep review or the
+// Suggested row, which are folded lines at the top of Memory › Knowledge
+// (#539, a structural assertion this batch moved: the owner asked why they
+// were on Insights), the checks/memory/runs strip, the "problems since
 // yesterday" press, a second ask box or the tag chips. A search field
 // appears only past eight cards. Nothing scrolls sideways on a phone, and
 // every control is a 44px target on a finger.
@@ -190,8 +192,9 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
       foot: card ? card.querySelector('.foot').textContent.replace(/\s+/g, ' ').trim() : '',
       ask: card ? [...card.querySelectorAll('.card-head .actions button')]
         .map((b) => ({ t: b.textContent.trim(), h: Math.round(b.getBoundingClientRect().height) })) : [],
-      review: !!document.querySelector('#dash #kReview .kreviewrun'),
-      suggested: !!document.querySelector('#dash #ideasRow #ideasList .finding'),
+      review: !!document.querySelector('#dash #kReview, #dash #kReviewRun'),
+      suggested: !!document.querySelector('#dash #ideasRow'),
+      onMemory: !!document.querySelector('#viewMemory .kfolds #kReviewFold') && !!document.querySelector('#viewMemory .kfolds #ideasRow'),
       rowButtons: [...document.querySelectorAll('#dash .reportrow button')]
         .filter((b) => b.offsetParent)
         .map((b) => ({ t: b.textContent.trim(), h: Math.round(b.getBoundingClientRect().height) })),
@@ -209,8 +212,8 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
   if (JSON.stringify(r.ask.map((b) => b.t)) !== JSON.stringify(['Ask', '⋯'])) {
     note(at, `a card's head carries ${JSON.stringify(r.ask.map((b) => b.t))}`);
   }
-  if (!r.review) note(at, 'the deep review is not a row under the insight cards');
-  if (!r.suggested) note(at, 'the Suggested row shows no idea');
+  if (r.review || r.suggested) note(at, 'the deep review or Suggested is still under the insight cards');
+  if (!r.onMemory) note(at, 'the deep review and Suggested are not folded lines on Memory › Knowledge');
   if (touch) {
     for (const b of [...r.ask, ...r.rowButtons]) {
       if (b.h < MIN_TARGET) note(at, `"${b.t}" is ${b.h}px tall on a finger`);

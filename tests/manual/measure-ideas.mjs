@@ -1,5 +1,13 @@
-// Render House › Reports' Suggested row and assert an idea can be judged
-// from the card it is on, and that the row says nothing it does not need to.
+// Render Memory › Knowledge's Suggested reports line and assert an idea can
+// be judged from the card it is on, and that the line says nothing it does
+// not need to.
+//
+// (Structural assertions this batch moved, #539: the row was under the
+// insight cards, and the owner asked why "deep review and suggested reports
+// are on insights … those seem more like memory items to me". Both are now
+// folded lines at the top of Memory › Knowledge — the name, how many are
+// waiting, Run — so this opens Memory and the line, and Deep review's Run is
+// on its own folded line, `#kReviewRun`.)
 //
 // Ideas used to be a tab of their own with an intro paragraph, a two-
 // sentence empty state and a "Last looked…" foot. The redesign (House ›
@@ -42,7 +50,7 @@ const CASES = [
 ];
 
 // Every element id `app.js` binds a handler to on this view.
-const IDS = ['viewInsights', 'ideasRow', 'ideasRun', 'ideasList', 'ideasNote'];
+const IDS = ['viewMemory', 'ideasRow', 'ideasRun', 'ideasList', 'ideasNote'];
 
 // Prose the redesign cut from the row. None of it may come back.
 const CUT = [/Nothing here is generating/i, /hasn't looked for ideas yet/i,
@@ -176,7 +184,9 @@ const open = async (width, touch, body) => {
   page.on('pageerror', (e) => note(`${width}px`, `page error: ${e.message}`));
   await page.addInitScript(stub(body));
   await page.goto(`file://${path.join(PANEL, 'index.html')}`);
-  await openView(page, 'insights');
+  await openView(page, 'memory');
+  // Each line opens on its name.
+  await page.evaluate(() => document.querySelectorAll('#viewMemory .kfoldname[aria-expanded="false"]').forEach((b) => b.click()));
   return { context, page };
 };
 
@@ -191,7 +201,18 @@ for (const { width, touch } of CASES) {
   if (view.cards.length !== IDEAS.length) {
     note(`${width}px`, `${view.cards.length} cards for ${IDEAS.length} ideas`);
   }
-  if (!view.rowShown) note(`${width}px`, 'the Suggested row is not on Reports');
+  if (!view.rowShown) note(`${width}px`, 'the Suggested reports line is not on Memory');
+  {
+    const line = await page.evaluate(() => {
+      const head = document.querySelector('#ideasRow .kfoldhead');
+      const meta = document.querySelector('#ideasMeta');
+      return { h: head ? Math.round(head.getBoundingClientRect().height) : 0, meta: meta ? meta.textContent.trim() : '',
+               onInsights: !!document.querySelector('#viewInsights #ideasRow, #viewInsights #kReview') };
+    });
+    if (line.onInsights) note(`${width}px`, 'Suggested or Deep review is still on Insights');
+    if (!line.h || line.h > 64) note(`${width}px`, `the Suggested reports line is ${line.h}px, not one line`);
+    if (line.meta !== `${IDEAS.length} to look at`) note(`${width}px`, `the folded line does not say how many are waiting ("${line.meta}")`);
+  }
 
   for (const card of view.cards) {
     if (!card.title.trim()) note(`${width}px`, 'an idea renders no title');
@@ -242,7 +263,7 @@ for (const { width, touch } of CASES) {
   }
   // Signed out, Deep review's line is a press that opens Settings ›
   // Account, not a path to go and find.
-  await page.waitForSelector('#kReview .kreviewrun', { timeout: 5000 }).catch(() => {});
+  await page.waitForSelector('#kReviewRun .kreviewrun', { timeout: 5000 }).catch(() => {});
   const signin = page.locator('#kReview button', { hasText: /sign in/i });
   if (!(await signin.count())) {
     note(`${width}px`, `Deep review's signed-out line is not a press: "${
@@ -389,6 +410,8 @@ for (const { width, touch } of CASES) {
     window.__fetchLog = [];
     return refreshStatus().then(() => render());
   });
+  // The schedule stays under the insight cards; the ideas left for Memory.
+  await openView(page, 'insights');
   await page.waitForSelector('#schedList .scheditem', { state: 'attached' });
   // Closed, nothing it holds may sit over the presses below it: the house's
   // own photographs found a card's name lying over a Run button.

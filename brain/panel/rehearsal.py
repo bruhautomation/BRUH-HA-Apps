@@ -121,6 +121,7 @@ PLAN: list[dict] = [
     {
         "id": f"{PREFIX}dead_ref",
         "kind": "automation",
+        "name": "An automation naming a light that does not exist",
         "check": "auto.dead_ref",
         "what": "an automation whose action names light."
                 f"{PREFIX}missing — an entity that does not exist",
@@ -134,6 +135,7 @@ PLAN: list[dict] = [
     {
         "id": f"{PREFIX}dead_service",
         "kind": "automation",
+        "name": "An automation calling an action that does not exist",
         "check": "auto.dead_service",
         "what": f"an automation calling notify.{PREFIX}nowhere — a service "
                 "that is not registered",
@@ -147,6 +149,7 @@ PLAN: list[dict] = [
     {
         "id": HELPER_ID,
         "kind": "helper",
+        "name": "A healthy helper nothing should report",
         "check": "",
         "what": f"an {HELPER_ID} helper set to {HELPER_VALUE}",
         "proves": "that NOTHING fires on a healthy planted row — a check "
@@ -280,7 +283,8 @@ def score_checks(result: dict, planted: list[dict]) -> dict:
                                  f"{f.get('entity_id', '')}", row)]
             for f in hits:
                 matched.add(id(f))
-            out.append({"id": row["id"], "check": "(nothing should fire)",
+            out.append({"id": row["id"], "name": row.get("name", ""),
+                        "check": "(nothing should fire)",
                         "verdict": "clean" if not hits else "false positive",
                         "reported": [f.get("text", "") for f in hits]})
             continue
@@ -290,7 +294,8 @@ def score_checks(result: dict, planted: list[dict]) -> dict:
                               f"{f.get('entity_id', '')}", row)]
         for f in hits:
             matched.add(id(f))
-        out.append({"id": row["id"], "check": row["check"],
+        out.append({"id": row["id"], "name": row.get("name", ""),
+                    "check": row["check"],
                     "verdict": "found" if hits else "missed",
                     "reported": [f.get("text", "") for f in hits]})
     extra = [f for f in ours if id(f) not in matched]

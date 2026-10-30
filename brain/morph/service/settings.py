@@ -29,7 +29,16 @@ DEFAULTS = {
     # it (vision §4.3): {entity_id: weight}, kept here so every device of
     # the house agrees.
     "habit_weights": {},
+    # brAIn's header tabs (⚙ › Dashboard › Header tabs): a label and an
+    # icon per tab, {tab: {label, icon}}, kept here so every device of the
+    # house agrees. Empty is each tab's own name ("Morph UI" for the
+    # dashboard's).
+    "header_tabs": {},
 }
+
+TABS = ("home", "insights", "ask", "memory")
+TAB_ICONS = ("dashboard", "home", "bulb", "chat", "brain", "sparkle", "chart", "book")
+TAB_LABEL_MAX = 24
 
 HABIT_FLOOR = 1 / 16
 MAX_HABITS = 400
@@ -84,6 +93,25 @@ def clean(s: dict) -> dict:
     for key in ("tell_model", "learn_model"):
         out[key] = s.get(key) if s.get(key) in MODELS else ""
     out["habit_weights"] = clean_weights(s.get("habit_weights"))
+    out["header_tabs"] = clean_tabs(s.get("header_tabs"))
+    return out
+
+
+def clean_tabs(raw) -> dict:
+    """{tab: {label, icon}} for the four header tabs; a blank label or an
+    unknown icon is that tab's own."""
+    out: dict = {}
+    if not isinstance(raw, dict):
+        return out
+    for tab in TABS:
+        row = raw.get(tab)
+        if not isinstance(row, dict):
+            continue
+        label = " ".join(str(row.get("label") or "").split())[:TAB_LABEL_MAX]
+        icon = row.get("icon") if row.get("icon") in TAB_ICONS else ""
+        kept = {k: v for k, v in (("label", label), ("icon", icon)) if v}
+        if kept:
+            out[tab] = kept
     return out
 
 
