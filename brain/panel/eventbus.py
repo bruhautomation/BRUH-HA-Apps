@@ -588,6 +588,10 @@ class EventBus:
             # card stays where it is — so it is not a reply to look at.
             if str(payload.get("action") or "").startswith("brain.dismiss."):
                 return None
+            # A button on one of the presence loop's greetings is an answer
+            # to a greeting, read by `server._on_bus_event`; never a case.
+            if str(payload.get("action") or "").startswith("brain_presence."):
+                return None
             return signals.from_reply({**payload, "via": "notification"}, now)
         return None
 

@@ -2183,7 +2183,7 @@ same \`/config\`, with the same permissions — what differs is only how you see
   | **Answering…** | It is writing. **Stop** is the control above the composer. |
   | **Needs your OK** | It has asked to use a tool. Answer the card; an unanswered one declines itself. |
   | **(no pill)** | Paused: no process. Sending a message picks it up with its context. |
-  | **Paused to make room** | brAIn keeps \`chat_max_sessions\` chats running at once (3, settable 1–8). This one was the quietest and was stopped; sending a message picks it back up. Only an **idle** conversation is ever taken, never one that is answering. |
+  | **Paused to make room** | Memory ran short, or you set a limit (\`chat_max_sessions\`: No limit by default, settable 1–32). This one was the quietest idle one and was put to sleep; sending a message picks it back up. Only an **idle** conversation is ever taken, never one that is answering. |
   | **Context lost** | Claude Code no longer holds this conversation. You can read it; a new message starts fresh from here (**Start fresh**). |
   | **Record** | A card or fix run, kept to be read. It ran under the analyst's or the fixer's rules, so it can never be resumed — **Ask about it** opens a new chat about it instead. |
 

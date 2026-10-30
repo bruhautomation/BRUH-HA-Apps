@@ -2389,6 +2389,29 @@ body.modal-open {
 html.named .brandlink .wordmark { display: none; }
 html.named .brandname { display: block; }
 
+/* The version in the bar, wide screens only: a quiet label beside the mark
+   that opens What's new. Phones and narrow windows keep it in ⚙ alone. */
+.barver { display: none; margin: 0 0 0 4px; }
+@media (min-width: 1100px) {
+  .barver { display: inline-flex; }
+}
+#hdrFile { font-size: 16px; max-width: 100%; }
+
+/* ⚙ › Personality › Header (`applyHeader`): the choice, as a class on <html>.
+   hb-logo is the wordmark even while a name is set; hb-text, hb-img and
+   hb-both are the house's own mark. Nothing here is wider than the name was
+   (the in-shell caps below still hold). */
+.brandimg {
+  display: none; height: 28px; width: auto; max-width: 140px; object-fit: contain;
+}
+html.named.hb-logo .brandlink .wordmark { display: block; }
+html.named.hb-logo .brandname { display: none; }
+html.hb-text .brandlink .wordmark, html.hb-img .brandlink .wordmark,
+html.hb-both .brandlink .wordmark { display: none; }
+html.hb-text .brandname, html.hb-both .brandname { display: block; }
+html.hb-img .brandimg, html.hb-both .brandimg { display: block; }
+html.hb-both .brandlink { flex-direction: row; align-items: center; gap: 6px; }
+
 /* brAIn's shell (`SHELL` in app.js). ☰ is Home Assistant's sidebar, drawn
    only on a phone. On Home the Morph dashboard is drawn by the shell over
    this page, so the page under the bars is see-through and holds nothing;
@@ -2883,6 +2906,17 @@ html.shell-home.shell-raised, html.shell-home.shell-raised body { background: rg
   display: block;
   background: var(--terminal-bg);
 }
+.termstarting {
+  position: absolute;
+  inset: 40% 16px auto 16px;
+  margin: 0;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: var(--fs-body, 16px);
+  pointer-events: none;
+}
+.termstarting.hidden,
+body:not(.term-classic) .termstarting { display: none; }
 
 /* Immersive terminal — the bar folds away and the terminal takes the room.
    Two things fold it: pressing ⤢, and the software keyboard coming up (the
@@ -7034,6 +7068,22 @@ body.term-classic #chatModelPick { display: none; }
 .persdate { font-size: 12px; color: var(--ink-3); }
 .persline { font-size: 14px; color: var(--ink); overflow-wrap: anywhere; }
 .persempty { font-size: 14px; color: var(--ink-3); }
+/* How … is growing (the presence loop): one row per thing, its words over
+   their reason, its own press beside it. */
+.presbody { display: grid; gap: 6px; max-width: 600px; }
+.preshead { margin: var(--sp-2) 0 0; font-size: var(--fs-meta); font-weight: 600; color: var(--ink-2); }
+.presrow {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  padding: 6px 8px 6px 12px; background: var(--plane);
+  border: 1px solid var(--hairline); border-radius: 10px;
+}
+.prestext { flex: 1 1 220px; min-width: 0; display: grid; gap: 2px; }
+.presline { font-size: var(--fs-body); color: var(--ink); overflow-wrap: anywhere; }
+.pressub { font-size: var(--fs-meta); color: var(--ink-3); overflow-wrap: anywhere; }
+.presacts { flex: none; display: flex; gap: 8px; margin-left: auto; }
+@media (pointer: coarse) {
+  .presrow .btn { min-height: 44px; }
+}
 /* The persona as sections (`personaSections`): a plain title over its words,
    hairlines between, the whole outline readable without opening a box. */
 #setModal .perslabel {
@@ -7248,6 +7298,8 @@ html.in-shell.bar-hidden .topbar > .shelledit { opacity: 0; visibility: hidden; 
   }
   html.in-shell .topbar::before { content: ""; order: 8; flex: 0 0 100%; height: 0; }
   html.in-shell .brandname { font-size: 18px; max-width: 70px; }
+  html.in-shell .brandimg { height: 24px; max-width: 70px; }
+  html.in-shell.hb-both .brandname { display: none; }
   /* With ☰ off the edge, the name drops its side padding to stay left of the island. */
   html.in-shell .brandlink { padding: 0; margin-left: 0; }
   /* ☰ off the screen's edge (the owner: "a little jammed into the left"). */

@@ -199,6 +199,7 @@ import features
 import fixer
 import morph_service
 import personality
+import presence
 import shell_link
 import healing
 import health
@@ -245,6 +246,7 @@ import run_queue
 import run_sources
 import scenes
 import schedule_store
+import header_brand
 import settings_store
 import shadow
 import shadow_findings
@@ -1063,8 +1065,10 @@ DIAG_STATE: dict = {"published_at": 0.0}
 # running the old code until it restarts — so the add-on and the
 # integration can be a version apart for days, and the only thing that
 # said so was a Repairs entry. The integration writes what it loaded
-# (`integration_loaded.json`, at setup), run.sh writes the marker while a
-# restart is owed, and the panel reads both for the fault list.
+# (`integration_loaded.json`, at setup: version and code fingerprint),
+# run.sh writes the marker only when the code it deployed differs from the
+# code loaded (an update that moved only the version owes no restart), and
+# the panel reads both for the fault list.
 INTEGRATION_LOADED_FILE = Path(os.environ.get(
     "BRAIN_INTEGRATION_LOADED_FILE", "/config/.brain/integration_loaded.json"))
 RESTART_MARKER_FILE = Path(os.environ.get(
@@ -1086,8 +1090,15 @@ def _integration_versions() -> dict:
     marker = _read(RESTART_MARKER_FILE)
     loaded_v = str(loaded.get("version") or "") or None
     required = str((marker or {}).get("required_version") or "") or None
-    pending = marker is not None and (
-        not required or not loaded_v or required != loaded_v)
+    # By the code's fingerprint when both sides carry one (the version moves
+    # with every release, the code does not), else by version.
+    wanted_fp = str((marker or {}).get("fingerprint") or "")
+    loaded_fp = str(loaded.get("fingerprint") or "")
+    if marker is not None and wanted_fp and loaded_fp:
+        pending = wanted_fp != loaded_fp
+    else:
+        pending = marker is not None and (
+            not required or not loaded_v or required != loaded_v)
     return {"loaded": loaded_v, "required": required,
             "restart_pending": bool(pending)}
 
@@ -1765,7 +1776,8 @@ def _quiet_hours() -> tuple[int | None, int | None]:
 async def _send_notification(rows: list[dict], held: bool = False,
                              message: tuple[str, str] | None = None,
                              buttons: list[dict] | None = None, *,
-                             kind: str = "", dispatched: bool = False) -> bool:
+                             kind: str = "", dispatched: bool = False,
+                             delivery: str = "") -> bool:
     """Deliver one message. A failure is a log line, never an exception.
 
     The finding is already safe on the list before this is called, so a
@@ -1799,7 +1811,9 @@ async def _send_notification(rows: list[dict], held: bool = False,
     # The delivery's own id rides as the companion app's `tag`, which the
     # app hands back on every event about the message — the one thread
     # from a swipe on a phone to the line that sent it (`deliveries.tag_of`).
-    delivery = deliveries.new_id()
+    # A caller that must know the line it is about to write (the presence
+    # loop's touch history) names it; everybody else gets a fresh one.
+    delivery = delivery or deliveries.new_id()
     kind = kind or _delivery_kind(rows, held, _sev)
     data = {**({"actions": buttons} if buttons else {}),
             **notify_router.open_link(service, addon_options.panel_path()),
@@ -5378,6 +5392,13 @@ def _on_bus_event(event_type: str, data: dict) -> None:
     if event_type == "state_changed" and isinstance(data, dict):
         _note_live_reading(str(data.get("entity_id") or ""),
                            data.get("new_state"))
+    # A person coming home, or a button on one of the presence loop's
+    # touches. Its own try: a greeting must never cost the bus a reading.
+    if event_type in ("state_changed", "mobile_app_notification_action"):
+        try:
+            _presence_on_bus(event_type, data)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("presence could not read an event: %s", exc)
     # A Dismiss press is an answer now (it clears the card), and arrives
     # through the request drain like every other button, so only a swipe
     # is recorded here.
@@ -9486,6 +9507,8 @@ def _status_payload() -> tuple[dict | None, dict]:
         # (Personality on and a name set), for the bar and `speak`.
         "features": {**features.resolved(), "shell": shell_link.shell_fresh(),
                      "shell_url": "/" + shell_link.SHELL_URL},
+        # The header's mark: the choice, the text, the picture's address.
+        "header": header_brand.payload(settings),
     }
 
 
@@ -9646,6 +9669,7 @@ async def h_status(request: web.Request) -> web.Response:
         "integration": read["integration"],
         "devloop": read["devloop"],
         "features": read["features"],
+        "header": read["header"],
         # What brAIn did last and what it will do next. On the poll every
         # viewer already makes, because "is this thing working" is asked
         # of the top bar and not of a tab.
@@ -23704,15 +23728,67 @@ async def h_finding_discuss(request: web.Request) -> web.Response:
         return web.json_response({**out, "finding": finding,
                                   "face": "terminal"})
     prompt = await asyncio.to_thread(_discuss_prompt, finding)
+    out = await _ask_in_chat(prompt, await _json_body(request),
+                             finding_ts=int(finding["ts"]))
+    return web.json_response({**out, "finding": finding})
+
+
+async def _ask_in_chat(prompt: str, body: dict, finding_ts: int = 0) -> dict:
+    """A NEW chat conversation that starts with ``prompt``, answered at once.
+
+    The one path every ask-about takes on the chat face (Discuss, Ask on a
+    card, the hold menu, Personality's and Instructions' Ask): `new` opens
+    the conversation without spawning — the asking viewer's own empty chat
+    is reused rather than a second one opened — and the prompt is sent the
+    way the composer sends, so the request answers within ``SEND_HOLD_S``
+    with the conversation's key and the spawn's progress (or failure)
+    arrives on the stream the panel then opens on it.
+    """
     registry = _chat_registry()
+    current = registry.by_key(str(body.get("session_key") or ""))
     try:
-        await registry.new(finding_ts=int(finding["ts"]))
-        session = _chat()
-        await session.send(prompt)
+        opened = await registry.new(finding_ts=finding_ts, current=current,
+                                    spawn=False)
+        session = registry.by_key(opened["key"])
+        if session is None:
+            raise RuntimeError("the new conversation could not be opened")
+        session.model = eff_chat_model()
+        session.skip_permissions = registry.skip_permissions
+        sent = await _send_promptly(session, prompt)
+    except ValueError as exc:
+        raise web.HTTPBadRequest(reason=_refusal(exc))
     except RuntimeError as exc:
         raise web.HTTPConflict(reason=_refusal(exc))
-    return web.json_response({"ok": True, "finding": finding,
-                              "session_id": session.session_id})
+    return {"ok": True, "face": "chat", "session_id": session.session_id,
+            "key": session.key, "pending": bool(sent.get("pending"))}
+
+
+ASK_CONTEXT_MAX = 6000
+
+
+async def h_ask(request: web.Request) -> web.Response:
+    """POST {prompt[, context]}: ask brAIn about something, on the saved face.
+
+    Every ask-about used to open the TERMINAL by flipping the page's face
+    locally without saving it, so the next status poll put the saved face
+    (the chat) back and the person was left on an empty "New chat" while
+    their question ran in a hidden tmux window. One rule now, decided here
+    and nowhere else: the saved face wins. On the chat face a new chat
+    conversation starts with the prompt; on the classic face a terminal
+    window opens on it, as it always did.
+    """
+    body = await _json_body(request)
+    prompt = str(body.get("prompt") or "").strip()
+    if not prompt:
+        raise web.HTTPBadRequest(reason="nothing to ask")
+    context = str(body.get("context") or "").strip()[:ASK_CONTEXT_MAX]
+    if context:
+        prompt = f"{prompt}\n\n{context}"
+    prompt = prompt[:chat_session.MAX_TEXT_CHARS]
+    if settings_store.load().get("terminal_ui") == "classic":
+        out = await _open_terminal("", prompt)
+        return web.json_response({**out, "face": "terminal"})
+    return web.json_response(await _ask_in_chat(prompt, body))
 
 
 async def h_finding_fix(request: web.Request) -> web.Response:
@@ -26109,6 +26185,38 @@ async def h_personality_put(request: web.Request) -> web.Response:
     return web.json_response(await asyncio.to_thread(personality.payload))
 
 
+async def h_header_logo_get(request: web.Request) -> web.Response:
+    """The header's own picture, typed by its magic bytes, or a 404."""
+    got = await asyncio.to_thread(header_brand.read)
+    if got is None:
+        raise web.HTTPNotFound(text="no header picture")
+    data, ctype = got
+    return web.Response(body=data, content_type=ctype, headers={
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox"})
+
+
+async def h_header_logo_put(request: web.Request) -> web.Response:
+    """The picture as the raw body: PNG, JPEG or WebP, 256 KB at most."""
+    data = await request.read()
+    why = header_brand.refusal(data)
+    if why:
+        raise web.HTTPBadRequest(text=why)
+    try:
+        await asyncio.to_thread(header_brand.save, data)
+    except OSError:
+        log.exception("could not save the header picture")
+        raise web.HTTPInternalServerError(
+            text="brAIn could not save that; the add-on log says why.")
+    return web.json_response(header_brand.payload(settings_store.load()))
+
+
+async def h_header_logo_delete(request: web.Request) -> web.Response:
+    await asyncio.to_thread(header_brand.remove)
+    return web.json_response(header_brand.payload(settings_store.load()))
+
+
 async def h_personality_growth(request: web.Request) -> web.Response:
     """POST {text}: one dated growth entry (the `note_personality_change`
     MCP tool, from a conversation about who brAIn is)."""
@@ -26127,6 +26235,436 @@ async def h_personality_growth(request: web.Request) -> web.Response:
             text="brAIn could not record that; the add-on log says why.")
     await asyncio.to_thread(_write_terminal_prompt)
     return web.json_response({"ok": True, "entry": entry})
+
+
+# ---------------------------------------------------------------------------
+# The presence loop — how the assistant grows, and how it keeps in touch
+# ---------------------------------------------------------------------------
+#
+# `presence.py` holds the budget, the store and the strict reading of the
+# nightly answer; this is where it meets the house: the bus (an arrival,
+# a phone's button), one cheap run a night through the run queue, and
+# delivery through the household's own notify target and, when Speak first
+# is on, its own voice satellites. Off — Personality or the Learning loop
+# switched off in Features — every entry point returns before it reads
+# anything, so nothing runs and nothing is sent.
+
+PRESENCE_POLL_S = 5 * 60
+PRESENCE_FIRST_DELAY_S = 10 * 60
+# An arrival is greeted a few minutes after the tracker says home, so the
+# person is through the door and in a room when it is said.
+PRESENCE_ARRIVAL_DELAY_S = 3 * 60
+PRESENCE_STATE: dict = {"running": False, "last_error": "", "sent": 0,
+                        "last_skip": ""}
+# Tasks the bus started, held so they are not collected mid-flight.
+PRESENCE_TASKS: set = set()
+_PRESENCE_LOCK = threading.Lock()
+
+
+def _presence_tz():
+    try:
+        return baselines.house_timezone()[0]
+    except Exception:  # noqa: BLE001 — a clock we cannot read is UTC
+        return None
+
+
+def _presence_update(fn):
+    """Read, change and write the store under one lock. Returns fn's
+    answer."""
+    with _PRESENCE_LOCK:
+        state = presence.load()
+        out = fn(state)
+        presence.save(state)
+        return out
+
+
+async def _presence_read_house() -> dict:
+    """States and services, one read each. `{}` when Home Assistant cannot
+    be reached — which is "say nothing", never a guess."""
+    import aiohttp
+    import ha_data
+    try:
+        async with aiohttp.ClientSession() as session:
+            states = await ha_data._rest_get(session, "/states")
+            services = await ha_data._rest_get(session, "/services")
+    except Exception as exc:  # noqa: BLE001
+        log.info("presence could not read the house: %s", exc)
+        return {}
+    return {"states": states if isinstance(states, list) else [],
+            "services": services if isinstance(services, list) else []}
+
+
+def _presence_people(states: list[dict]) -> dict[str, dict]:
+    """`{person id: {name, home, trackers}}` off one states read."""
+    out: dict[str, dict] = {}
+    for s in states or []:
+        if not isinstance(s, dict):
+            continue
+        eid = str(s.get("entity_id") or "")
+        if not eid.startswith("person."):
+            continue
+        attrs = s.get("attributes") if isinstance(s.get("attributes"), dict) \
+            else {}
+        trackers = attrs.get("device_trackers")
+        out[eid] = {"name": str(attrs.get("friendly_name") or
+                                eid.split(".", 1)[1].replace("_", " ").title()),
+                    "home": str(s.get("state") or "") == "home",
+                    "trackers": [str(t) for t in trackers]
+                    if isinstance(trackers, list) else []}
+    return out
+
+
+def _presence_channel(pid: str, kind: str, house: dict, now: float) -> tuple:
+    """Where a touch for this person may go: `("phone", service)`,
+    `("speaker", satellite)` or `("", why not)`.
+
+    The phone only when the household's notify target IS this person's
+    own companion app (its tracker is one of theirs) — a greeting for one
+    person is never pushed to somebody else's phone. A speaker only while
+    Speak first is on (the household's yes to brAIn speaking in a room),
+    in the freshest occupied room with a satellite, never a protected
+    one, and never for a follow-up, which is about something one person
+    said."""
+    people = _presence_people(house.get("states") or [])
+    person = people.get(pid) or {}
+    service, _sev = _findings_notify_target()
+    name = str(service or "").strip().removeprefix("notify.")
+    if name.startswith("mobile_app_"):
+        device = name[len("mobile_app_"):]
+        if f"device_tracker.{device}" in person.get("trackers", []):
+            return "phone", name
+    if kind not in presence.SPOKEN_KINDS:
+        return "", "a follow-up goes only to that person's own phone"
+    if not _speak_enabled():
+        return "", "no phone of theirs is the notify target, and Speak first is off"
+    if not any(isinstance(d, dict) and d.get("domain") == "assist_satellite"
+               and "announce" in (d.get("services") or {})
+               for d in house.get("services") or []):
+        return "", "this Home Assistant has no assist_satellite.announce"
+    areas = {eid: str(row.get("area") or "") for eid, row in _NAMES.items()
+             if isinstance(row, dict)}
+    states = house.get("states") or []
+    cast = household.roster(states, areas)
+    sat = household.pick_satellite(cast, household.occupied_areas(
+        states, areas, now))
+    if sat is None:
+        return "", "nobody is in a room with a voice satellite"
+    if automation_writer.is_protected(
+            sat["entity_id"], automation_writer.protected_patterns()):
+        return "", f"{sat['entity_id']} is protected"
+    return "speaker", sat["entity_id"]
+
+
+async def _presence_deliver(pid: str, item: dict, house: dict,
+                            now: float) -> dict | None:
+    """Send one touch if the budget and a channel allow it. Returns the
+    touch kept in the history, or None (and why, in `last_skip`)."""
+    people = _presence_people(house.get("states") or [])
+    person = people.get(pid)
+    if not person:
+        PRESENCE_STATE["last_skip"] = "that person is not in the house's list"
+        return None
+    kind = str(item.get("kind") or "")
+    tz = _presence_tz()
+    with _PRESENCE_LOCK:
+        why = presence.may_touch(presence.load(), pid, kind, now, tz=tz,
+                                 quiet=_quiet_hours(), home=person["home"])
+    if why:
+        PRESENCE_STATE["last_skip"] = why
+        return None
+    channel, target = _presence_channel(pid, kind, house, now)
+    if not channel:
+        PRESENCE_STATE["last_skip"] = target
+        return None
+    words = personality.speak(str(item.get("text") or ""))
+    if not words:
+        return None
+    delivery = ""
+    touch_id = ""
+    if channel == "phone":
+        delivery = deliveries.new_id()
+        # The touch is written first so the button carries its id; a send
+        # that fails takes it back out.
+        touch = await asyncio.to_thread(_presence_update, lambda s: presence.record_touch(
+            s, pid, person["name"], item, channel, now, delivery=delivery))
+        touch_id = touch["id"]
+        ok = await _send_notification(
+            [{"source": "presence", "severity": "info"}],
+            message=(personality.assistant_name(), words),
+            buttons=presence.buttons(touch_id), kind="presence",
+            delivery=delivery)
+        if not ok:
+            await asyncio.to_thread(_presence_update, lambda s: s.update(
+                touches=[t for t in s.get("touches") or []
+                         if t.get("id") != touch_id]))
+            PRESENCE_STATE["last_skip"] = "the notification did not go"
+            return None
+    else:
+        import ha_data
+        try:
+            await ha_data.call_core_service(
+                "assist_satellite", "announce",
+                {"entity_id": target,
+                 "message": words[:household.SPOKEN_CHARS]}, timeout=15)
+        except Exception as exc:  # noqa: BLE001
+            PRESENCE_STATE["last_error"] = str(exc)[:200]
+            log.warning("could not say a greeting aloud: %s", exc)
+            return None
+        touch = await asyncio.to_thread(_presence_update, lambda s: presence.record_touch(
+            s, pid, person["name"], item, channel, now))
+    PRESENCE_STATE["sent"] += 1
+    PRESENCE_STATE["last_skip"] = ""
+    log.info("presence: a %s for %s went by %s", kind,
+             log_safe(person["name"]), channel)
+    return touch
+
+
+def _presence_on_bus(event_type: str, data: dict) -> None:
+    """A person coming home, or a button pressed on one of brAIn's
+    touches. Cheap and synchronous; anything slow is a task."""
+    if not isinstance(data, dict):
+        return
+    if event_type == "mobile_app_notification_action":
+        parsed = presence.parse_action(data.get("action"))
+        if parsed:
+            verb, touch_id = parsed
+            _presence_update(lambda s: presence.react(
+                s, touch_id, verb, time.time(), tz=_presence_tz()))
+        return
+    if event_type != "state_changed":
+        return
+    eid = str(data.get("entity_id") or "")
+    if not eid.startswith("person."):
+        return
+    new = data.get("new_state") if isinstance(data.get("new_state"), dict) \
+        else {}
+    old = data.get("old_state") if isinstance(data.get("old_state"), dict) \
+        else {}
+    was, now_state = str(old.get("state") or ""), str(new.get("state") or "")
+    if was == now_state or not was:
+        return
+    if not presence.active()[0]:
+        return
+    now = time.time()
+    if was == "home":
+        _presence_update(lambda s: presence.note_departure(s, eid, now))
+        return
+    if now_state != "home":
+        return
+    if not _presence_update(lambda s: presence.note_arrival(s, eid, now)):
+        return
+    try:
+        task = asyncio.get_running_loop().create_task(
+            _presence_arrival(eid, now))
+    except RuntimeError:
+        return
+    PRESENCE_TASKS.add(task)
+    task.add_done_callback(PRESENCE_TASKS.discard)
+
+
+async def _presence_arrival(pid: str, arrived: float) -> dict | None:
+    """Greet one arrival, once, if there is a greeting queued for them."""
+    try:
+        if PRESENCE_ARRIVAL_DELAY_S:
+            await asyncio.sleep(PRESENCE_ARRIVAL_DELAY_S)
+        if not presence.active()[0]:
+            return None
+        item = await asyncio.to_thread(
+            lambda: presence.idea_for(presence.load(), pid, "arrival",
+                                      time.time()))
+        if not item:
+            PRESENCE_STATE["last_skip"] = "no greeting was queued for them"
+            return None
+        house = await _presence_read_house()
+        if not house:
+            return None
+        return await _presence_deliver(pid, item, house, time.time())
+    except Exception as exc:  # noqa: BLE001 — a greeting is never a failure
+        PRESENCE_STATE["last_error"] = str(exc)[:200]
+        log.warning("presence: an arrival greeting failed: %s", exc)
+        return None
+
+
+def _presence_inputs(now: float, people: dict[str, str]) -> str:
+    """The nightly run's prompt, from what brAIn already has."""
+    tz = _presence_tz()
+    state = presence.load()
+    pers = personality.load()
+    growth = [g.get("text") or "" for g in pers.get("growth") or []]
+    titles: list[str] = []
+    try:
+        for row in conversations.listing(chat_session.WORK_DIR, 20, ("you",)):
+            if now - float(row.get("modified") or 0) <= 2 * 86400:
+                titles.append(str(row.get("title") or ""))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("presence could not list conversations: %s", exc)
+    answered: dict[str, int] = {}
+    for row in deliveries.fold(now) or []:
+        if now - float(row.get("at") or 0) > 7 * 86400:
+            break
+        if row.get("kind") == "presence":
+            continue
+        out = str(row.get("outcome") or "")
+        if out in ("answered", "cleared", "ignored"):
+            answered[out] = answered.get(out, 0) + 1
+    try:
+        upcoming = occasions.lines(occasions.load(), _house_date(now))
+    except Exception:  # noqa: BLE001
+        upcoming = []
+    return presence.prompt(
+        state, people, now, tz=tz, name=personality.assistant_name(pers),
+        persona_line=personality.tagline(pers.get("persona")),
+        growth=growth, titles=titles, answered=answered,
+        occasions=upcoming, now_line=_now_line(now))
+
+
+async def _presence_reflect(now: float, people: dict[str, str]) -> dict:
+    """The one cheap run a night: growth notes and tomorrow's ideas."""
+    prompt = await asyncio.to_thread(_presence_inputs, now, people)
+    result = await _claude(
+        engine.run_claude, prompt, presence.SYSTEM, eff_model(),
+        presence.REFLECT_TIMEOUT_S, presence.REFLECT_MAX_TURNS, "presence",
+        job="presence", schema=presence.SCHEMA)
+    cost = await asyncio.to_thread(_record_usage, result, "presence")
+    LEDGER.record("presence", int(cost.get("total") or 0), now,
+                  tier=_ran_tier(result, "presence"))
+    if not result.get("ok"):
+        return {"ok": False,
+                "error": str(result.get("error") or "no answer")[:200]}
+
+    def write() -> dict:
+        recent = [g.get("text") or "" for g in
+                  (personality.load().get("growth") or [])[-20:]]
+
+        def apply(state: dict) -> dict:
+            parsed = presence.parse_reflection(
+                _answer(result), people, state, recent_growth=recent)
+            ideas = presence.add_ideas(state, parsed["ideas"], people, now)
+            notes = presence.add_notes(state, parsed["notes"], people, now)
+            return {"parsed": parsed, "ideas": ideas, "notes": notes}
+
+        got = _presence_update(apply)
+        grown = presence.write_growth(got["parsed"]["growth"], now) \
+            if personality.writable() else 0
+        return {"ok": True, "growth": grown, "ideas": got["ideas"],
+                "notes": got["notes"], "refused": got["parsed"]["refused"]}
+
+    out = await asyncio.to_thread(write)
+    if out.get("growth"):
+        await asyncio.to_thread(_write_terminal_prompt)
+    log.info("presence: reflected — %d growth note(s), %d idea(s), %d "
+             "refused", out["growth"], out["ideas"], out["refused"])
+    return out
+
+
+async def _presence_pass(now: float) -> dict:
+    """One pass: read the ledger's answers, reflect when due, and send
+    what is due. Off, nothing at all."""
+    on, why = presence.active()
+    if not on:
+        return {"off": why}
+    tz = _presence_tz()
+    folded = await asyncio.to_thread(deliveries.fold, now)
+    await asyncio.to_thread(_presence_update,
+                            lambda s: presence.absorb(s, folded, now))
+    state = await asyncio.to_thread(presence.load)
+    out: dict = {}
+    reflect_now = presence.reflect_due(state, now, tz=tz)
+    due = presence.due_ideas(state, now, tz=tz)
+    if not reflect_now and not due:
+        return out
+    house = await _presence_read_house()
+    if not house:
+        return {"held": "Home Assistant could not be read"}
+    people = {pid: p["name"] for pid, p in
+              _presence_people(house["states"]).items()}
+    if reflect_now and people:
+        held = _resident_gate(await asyncio.to_thread(settings_store.load))
+        if held:
+            result = {"held": held}
+        else:
+            try:
+                result = await _presence_reflect(now, people)
+            except Exception as exc:  # noqa: BLE001
+                result = {"ok": False, "error": str(exc)[:200]}
+        await asyncio.to_thread(_presence_update, lambda s: presence.note_reflected(
+            s, now, result))
+        out["reflect"] = result
+    for pid, item in due:
+        if await _presence_deliver(pid, item, house, now):
+            out["sent"] = out.get("sent", 0) + 1
+            break   # one at a time: the house gap holds the rest anyway
+    return out
+
+
+async def _presence_loop() -> None:
+    await asyncio.sleep(PRESENCE_FIRST_DELAY_S)
+    while True:
+        _beat("presence")
+        if not PRESENCE_STATE["running"]:
+            PRESENCE_STATE["running"] = True
+            try:
+                await _presence_pass(time.time())
+                PRESENCE_STATE["last_error"] = ""
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — the loop outlives a pass
+                PRESENCE_STATE["last_error"] = str(exc)[:200]
+                log.warning("the presence pass failed: %s", exc)
+            finally:
+                PRESENCE_STATE["running"] = False
+        await asyncio.sleep(PRESENCE_POLL_S)
+
+
+async def h_presence_get(request: web.Request) -> web.Response:
+    """⚙ › Personality's "How it is growing": its own notes are in the
+    personality payload; this is the people, the queue and the history."""
+    def build() -> dict:
+        out = presence.payload_now(tz=_presence_tz())
+        out["name"] = personality.assistant_name()
+        return out
+    return web.json_response(await asyncio.to_thread(build))
+
+
+async def h_presence_post(request: web.Request) -> web.Response:
+    """POST {do, …}: skip an idea, never this kind, bring a kind back,
+    remove a note, react to a touch, or remove one of its own growth
+    notes. Each answers with the section's payload."""
+    body = await _personality_body(request)
+    do = body.get("do")
+    pid = str(body.get("person") or "")
+    now = time.time()
+    tz = _presence_tz()
+    if do == "growth_remove":
+        gone = await asyncio.to_thread(personality.remove_growth,
+                                       body.get("at"), body.get("text"))
+        if not gone:
+            raise web.HTTPNotFound(text="that note is not there any more")
+        await asyncio.to_thread(_write_terminal_prompt)
+        return web.json_response({"ok": True,
+                                  "personality": await asyncio.to_thread(
+                                      personality.payload)})
+    actions = {
+        "skip": lambda s: presence.skip_idea(s, pid, str(body.get("id") or "")),
+        "never": lambda s: (presence.retire(s, pid, str(body.get("kind") or ""),
+                                            now), True)[1]
+        if body.get("kind") in presence.KINDS else False,
+        "bring_back": lambda s: presence.unretire(s, pid,
+                                                  str(body.get("kind") or "")),
+        "note_remove": lambda s: presence.remove_note(
+            s, pid, str(body.get("id") or "")),
+        "react": lambda s: presence.react(
+            s, str(body.get("id") or ""), str(body.get("reaction") or ""),
+            now, tz=tz) is not None
+        if body.get("reaction") in presence.REACTIONS else False,
+    }
+    if do not in actions:
+        raise web.HTTPBadRequest(text="send {do: skip|never|bring_back|"
+                                      "note_remove|react|growth_remove}")
+    done = await asyncio.to_thread(_presence_update, actions[do])
+    if not done:
+        raise web.HTTPNotFound(text="that is not there any more")
+    return await h_presence_get(request)
 
 
 async def h_instructions(request: web.Request) -> web.Response:
@@ -26475,6 +27013,108 @@ def _chat() -> "chat_session.ChatSession":
     return session
 
 
+async def _chat_for(source) -> "chat_session.ChatSession":
+    """The conversation THIS viewer named, never another device's.
+
+    Every device used to act on one shared "attached" session, so a phone
+    sending into conversation A after a desktop opened B landed its message
+    in B. The panel now names its own conversation on every send, stop,
+    model pick and approval answer: ``session_key`` (the session object's
+    handle, which a fresh chat has before the CLI names it) and/or
+    ``session_id``. A named conversation the registry is not holding (a
+    restart, a trim) is held again to be read — never attached, so nobody
+    else's view moves — and the send that follows starts its process. A
+    name that matches nothing is refused rather than quietly answered by
+    some other conversation. A caller that names nothing (an older panel,
+    the CLI) keeps the old meaning: the attached one.
+    """
+    registry = _chat_registry()
+    key = str(source.get("session_key") or "").strip()
+    session_id = str(source.get("session_id") or "").strip()
+    session = registry.by_key(key) if key else None
+    if session is None and session_id:
+        session = registry.get(session_id)
+        if session is None:
+            if await asyncio.to_thread(chat_session.terminal_holds,
+                                       session_id):
+                raise web.HTTPConflict(reason=chat_session.TERMINAL_HOLDS)
+            if not chat_session.safe_id(session_id):
+                raise web.HTTPBadRequest(reason="that is not a conversation id")
+            replay = await asyncio.to_thread(
+                conversations.transcript, chat_session.WORK_DIR, session_id)
+            try:
+                session = await registry.hold(session_id, replay)
+            except ValueError as exc:
+                raise web.HTTPBadRequest(reason=_refusal(exc))
+            except RuntimeError as exc:
+                raise web.HTTPConflict(reason=_refusal(exc))
+    if session is None:
+        if key or session_id:
+            raise web.HTTPNotFound(
+                reason="that conversation is no longer open — start a new "
+                       "chat or pick it from the list")
+        return _chat()
+    session.model = eff_chat_model()
+    session.skip_permissions = registry.skip_permissions
+    return session
+
+
+# How long a send waits for its message to reach a process before it
+# answers "accepted" and lets the stream report the rest. A process that
+# is already up takes milliseconds; a spawn is watched for up to
+# START_GRACE per attempt (two or three of them on a resume that falls
+# back), which held the request 20-30 s — long enough for a proxy in front
+# of ingress to give up on it.
+SEND_HOLD_S = 3.0
+_SEND_TASKS: set = set()
+
+
+async def _deliver(session: "chat_session.ChatSession", text: str) -> dict:
+    """Room for the process, then the message — the whole of a send."""
+    await _chat_registry().room_for(session)
+    return await session.send(text)
+
+
+def _send_failed(session, text: str, exc: BaseException) -> None:
+    """A send that failed after its request had already answered: the
+    stream says so, and hands the words back so the box can refill."""
+    reason = _refusal(exc) if isinstance(exc, Exception) else "stopped"
+    session._emit({"type": "send_failed", "text": text, "reason": reason},
+                  keep=False)
+    session._emit({"type": "notice",
+                   "text": f"That message was not sent: {reason}"})
+
+
+async def _send_promptly(session, text: str) -> dict:
+    """Send, answering within ``SEND_HOLD_S`` whatever the spawn does.
+
+    The send itself runs as a task. Done in time, its own answer (or its
+    own refusal) is the response, exactly as before. Not done in time,
+    the response is ``accepted`` with the conversation's names, and the
+    task carries on: its user turn, its state and any failure arrive on
+    the stream the panel is already reading.
+    """
+    task = asyncio.create_task(_deliver(session, text))
+    _SEND_TASKS.add(task)
+
+    def _settled(t: asyncio.Task) -> None:
+        _SEND_TASKS.discard(t)
+        if t.cancelled() or getattr(t, "_brain_answered", False):
+            return
+        exc = t.exception()
+        if exc is not None:
+            log.warning("chat: a send failed after it was accepted: %s", exc)
+            _send_failed(session, text, exc)
+
+    task.add_done_callback(_settled)
+    done, _ = await asyncio.wait({task}, timeout=SEND_HOLD_S)
+    if task in done:
+        task._brain_answered = True
+        return task.result()
+    return {"ok": True, "accepted": True, "pending": True,
+            "session_id": session.session_id, "key": session.key}
+
+
 async def h_chat_stream(request: web.Request) -> web.StreamResponse:
     """Server-sent events: a snapshot, then everything as it happens.
 
@@ -26497,8 +27137,18 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
                 "state": "idle", "error": _refusal(exc)}
 
     first = None
+    # A viewer that names its own conversation (``?session_key=`` and/or
+    # ``?session_id=``) is served that one and is not moved by another
+    # device's switch; one that names nothing, or names a conversation that
+    # is gone, gets the attached one as before.
+    named = bool(request.query.get("session_key")
+                 or request.query.get("session_id"))
     try:
-        session = _chat()
+        try:
+            session = await _chat_for(request.query) if named else _chat()
+        except web.HTTPException:
+            named = False
+            session = _chat()
     except Exception as exc:   # noqa: BLE001 — see the docstring
         session, first = None, empty(exc)
     resp = web.StreamResponse(headers={
@@ -26525,7 +27175,8 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
                 first = empty(exc)
         await send(first)
         registry = chat_session.registry()
-        if session is not None and registry.attached() is not session:
+        if session is not None and not named \
+                and registry.attached() is not session:
             # Attached somewhere else between picking the session and
             # subscribing to it. The `switched` event that would have said
             # so went to the queue this stream does not hold, so it is
@@ -26533,7 +27184,8 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
             # conversation nobody is in — a narrow race, and the only one
             # whose failure is permanent.
             await send({"type": "switched",
-                        "session_id": registry.attached().session_id or ""})
+                        "session_id": registry.attached().session_id or "",
+                        "key": registry.attached().key})
         while True:
             try:
                 event = await asyncio.wait_for(
@@ -26544,8 +27196,10 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
                     # there is, the panel reconnects to it the way it does
                     # after any switch.
                     try:
+                        now = _chat()
                         await send({"type": "switched",
-                                    "session_id": _chat().session_id or ""})
+                                    "session_id": now.session_id or "",
+                                    "key": now.key})
                         break
                     except Exception:   # noqa: BLE001 — still nothing
                         pass
@@ -26558,6 +27212,11 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
                 # the response so the EventSource reconnects to a fresh
                 # snapshot, rather than idling on a queue nothing feeds.
                 break
+            if named and event.get("type") == "switched":
+                # The shared "attached" pointer moved — another device's
+                # doing. A viewer that named its own conversation stays on
+                # it; its own switches reconnect it by key.
+                continue
             await send(event)
     except (ConnectionResetError, asyncio.CancelledError):
         # The viewer closed the tab, or the task was cancelled. Either way
@@ -26612,20 +27271,28 @@ async def h_chat_send(request: web.Request) -> web.Response:
     body = await request.json()
     if not isinstance(body, dict):
         raise web.HTTPBadRequest(text="expected an object")
-    session = _chat()
+    session = await _chat_for(body)
+    text = str(body.get("text") or "").strip()
     try:
+        if not text:
+            raise ValueError("empty message")
+        if len(text) > chat_session.MAX_TEXT_CHARS:
+            raise ValueError("message too long")
         # A conversation opened to be read has no process yet; the one this
-        # message starts is counted against the cap like any other spawn.
-        await _chat_registry().room_for(session)
-        return web.json_response(await session.send(body.get("text") or ""))
+        # message starts is counted against the cap like any other spawn —
+        # and answered within SEND_HOLD_S, whatever the spawn takes.
+        out = await _send_promptly(session, text)
     except ValueError as exc:
         raise web.HTTPBadRequest(reason=_refusal(exc))
     except RuntimeError as exc:
         raise web.HTTPConflict(reason=_refusal(exc))
+    return web.json_response(
+        {**out, "session_id": session.session_id, "key": session.key})
 
 
 async def h_chat_stop(request: web.Request) -> web.Response:
-    return web.json_response(await _chat().interrupt())
+    session = await _chat_for(await _json_body(request))
+    return web.json_response(await session.interrupt())
 
 
 async def h_chat_new(request: web.Request) -> web.Response:
@@ -26635,15 +27302,22 @@ async def h_chat_new(request: web.Request) -> web.Response:
     rather than spending a slot on a second empty process — see
     ``SessionRegistry.new``.
     """
+    body = await _json_body(request)
+    registry = _chat_registry()
+    # The asking viewer's own conversation, so "reuse the empty one" reuses
+    # THEIRS and never another device's empty chat.
+    current = registry.by_key(str(body.get("session_key") or ""))
     try:
-        return web.json_response(await _chat_registry().new())
+        return web.json_response(await registry.new(current=current))
     except RuntimeError as exc:
         raise web.HTTPConflict(reason=_refusal(exc))
 
 
 async def h_chat_handoff(request: web.Request) -> web.Response:
-    """Stop the chat session and hand it to the classic terminal."""
-    return web.json_response(await _chat().handoff())
+    """Stop the chat session and hand it to the classic terminal — the
+    viewer's own conversation when it names one."""
+    session = await _chat_for(await _json_body(request))
+    return web.json_response(await session.handoff())
 
 
 async def h_chat_conversations(request: web.Request) -> web.Response:
@@ -26712,13 +27386,37 @@ async def h_chat_conversations(request: web.Request) -> web.Response:
         row["row_state"] = registry.row_state(
             row["id"], view_only=bool(row.get("view_only")))
         _discussion_row(row, registry)
+    # brAIn's terminal windows: Claude processes too, listed so they are
+    # neither invisible nor opened a second time. A row a window holds is
+    # marked, and pressing it brings that window forward instead of a
+    # second `--resume`; a window on a conversation it started itself has
+    # no row in the store yet, so it is listed on its own.
+    windows = await asyncio.to_thread(chat_session.terminal_windows)
+    held = {w["session_id"]: w for w in windows if w["session_id"]}
+    for row in rows:
+        window = held.get(row["id"])
+        if window is not None:
+            row["terminal"] = {"window_id": window["window_id"]}
     return web.json_response({
         "conversations": rows,
         "current": session.session_id,
         "sources": await asyncio.to_thread(_conversation_source_counts),
         "sessions": registry.live(),
+        "terminal": windows,
         "max_sessions": chat_session.max_sessions(),
     })
+
+
+async def h_terminal_select(request: web.Request) -> web.Response:
+    """POST {window_id}: bring one of brAIn's terminal windows forward."""
+    body = await _json_body(request)
+    window_id = str(body.get("window_id") or "")
+    selected = await asyncio.to_thread(
+        chat_session.select_terminal_window, window_id)
+    if not selected:
+        raise web.HTTPNotFound(
+            reason="that terminal window is not open any more")
+    return web.json_response({"ok": True, "window_id": window_id})
 
 
 DISCUSS_TITLE_PREFIX = "Discussing: "
@@ -26867,7 +27565,7 @@ async def h_chat_model(request: web.Request) -> web.Response:
     body = await request.json()
     if not isinstance(body, dict):
         raise web.HTTPBadRequest(text="expected an object")
-    session = _chat()
+    session = await _chat_for(body)
     if session.state == "busy":
         # Refused before anything is saved: a choice that half-applies —
         # stored but not running — reads as a picker that lies. The one
@@ -26916,7 +27614,7 @@ async def h_chat_permission(request: web.Request) -> web.Response:
                 for k, v in answers.items()):
             raise web.HTTPBadRequest(
                 text="answers must map question text to an answer string")
-    session = _chat()
+    session = await _chat_for(body)
     try:
         return web.json_response(await session.respond_permission(
             str(body.get("id") or ""), bool(body.get("allow")),
@@ -27054,6 +27752,17 @@ async def h_chat_resume(request: web.Request) -> web.Response:
     # Anything that does not say so keeps the old meaning — "Resume now"
     # and every older caller want the process up straight away.
     spawn = body.get("spawn") is not False
+    if registry.get(session_id) is None:
+        window = await asyncio.to_thread(chat_session.terminal_holds,
+                                         session_id)
+        if window is not None:
+            # A terminal window is running this conversation. A second
+            # process on it would fork it, so the answer is where it is —
+            # the panel switches to the terminal and brings it forward.
+            return web.json_response({
+                "ok": False, "in_terminal": True, "session_id": session_id,
+                "window_id": window["window_id"],
+                "message": chat_session.TERMINAL_HOLDS})
     try:
         out = await registry.open(session_id, replay, spawn=spawn)
     except ValueError as exc:
@@ -27112,8 +27821,11 @@ def _chat_snapshot(session: "chat_session.ChatSession") -> dict:
 
 
 async def h_chat_state(request: web.Request) -> web.Response:
-    """The snapshot on its own, for a client whose stream is not up yet."""
-    return web.json_response(_chat_snapshot(_chat()))
+    """The snapshot on its own, for a client whose stream is not up yet.
+
+    ``?session_key=`` / ``?session_id=`` name the viewer's own conversation,
+    as the stream's do."""
+    return web.json_response(_chat_snapshot(await _chat_for(request.query)))
 
 
 # ---------------------------------------------------------------------------
@@ -27167,6 +27879,100 @@ def note_crash(route: str, exc: BaseException, now: float | None = None) -> bool
     return True
 
 
+# The start, split in two (see `on_startup`): the gate below holds a request
+# that needs the slow half until it is done. `done` is created by
+# on_startup on the running loop; before that (an app nobody started, a
+# handler called directly) there is no gate at all.
+_STARTUP: dict = {"done": None, "error": ""}
+# How long a request waits for the start to finish before it is answered
+# "starting" instead — well under any proxy's timeout, and long enough that
+# an ordinary start (and every test's) is simply waited out.
+STARTING_WAIT_S = float(os.environ.get("BRAIN_STARTING_WAIT_S", "8"))
+STARTING_PAGE_WAIT_S = 1.5
+# What may answer before the start is done: the readiness probe, the
+# panel's own files, and the terminal (ttyd is not ours to gate).
+_STARTING_OPEN = ("/api/ready", "/terminal", "/style.css", "/app.js",
+                  "/docs.js", "/favicon.svg", "/house-layer.js")
+STARTING_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>brAIn is starting</title>
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+  font: 16px/1.5 system-ui, sans-serif; background: Canvas; color: CanvasText; }
+p { padding: 0 16px; text-align: center; }
+</style></head>
+<body data-brain-starting>
+<p>brAIn is starting… this page opens by itself in a moment.</p>
+<script>
+(function poll(delay) {
+  setTimeout(function () {
+    fetch("api/ready", { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (d && d.ready) location.reload();
+        else poll(Math.min(delay * 2, 5000));
+      })
+      .catch(function () { poll(Math.min(delay * 2, 5000)); });
+  }, delay);
+})(500);
+</script>
+</body></html>
+"""
+
+
+def startup_ready() -> bool:
+    done = _STARTUP.get("done")
+    return done is None or done.is_set()
+
+
+async def _wait_started(timeout: float) -> bool:
+    done = _STARTUP.get("done")
+    if done is None or done.is_set():
+        return True
+    try:
+        await asyncio.wait_for(asyncio.shield(done.wait()), timeout)
+    except asyncio.TimeoutError:
+        return False
+    return True
+
+
+@web.middleware
+async def starting_middleware(request: web.Request, handler):
+    """Bound first, gated until the slow half of the start is done.
+
+    A request that needs it waits up to ``STARTING_WAIT_S`` and is then
+    answered rather than held: the page's root with a small page that
+    reloads itself once ``/api/ready`` says so, and an API route with a
+    plain 503 ``{"starting": true}`` the panel can retry — never a proxy's
+    502 because nothing was listening yet.
+    """
+    if startup_ready():
+        return await handler(request)
+    path = request.path
+    if path.startswith(_STARTING_OPEN):
+        return await handler(request)
+    if path in ("/", "/index.html"):
+        if await _wait_started(STARTING_PAGE_WAIT_S):
+            return await handler(request)
+        return web.Response(text=STARTING_PAGE, content_type="text/html",
+                            headers={"Cache-Control": "no-store"})
+    if await _wait_started(STARTING_WAIT_S):
+        return await handler(request)
+    return web.json_response(
+        {"starting": True, "error": "brAIn is starting — try again in a "
+                                    "moment"},
+        status=503, headers={"Retry-After": "2", "Cache-Control": "no-store"})
+
+
+async def h_ready(request: web.Request) -> web.Response:
+    """Whether the start has finished — what the starting page polls."""
+    return web.json_response({"ready": startup_ready(),
+                              "error": _STARTUP.get("error") or ""},
+                             headers={"Cache-Control": "no-store"})
+
+
 @web.middleware
 async def crash_middleware(request: web.Request, handler):
     try:
@@ -27202,8 +28008,9 @@ def make_app() -> web.Application:
     # export — the document plus every ledger. Everything else is far
     # smaller.
     app = web.Application(client_max_size=1024 * 1024,
-                          middlewares=[crash_middleware])
+                          middlewares=[crash_middleware, starting_middleware])
     app.router.add_get("/", h_index)
+    app.router.add_get("/api/ready", h_ready)
     app.router.add_get("/style.css", _static("style.css", "text/css"))
     app.router.add_get("/app.js", _static("app.js", "application/javascript"))
     app.router.add_get("/docs.js", _static("docs.js", "application/javascript"))
@@ -27436,6 +28243,8 @@ def make_app() -> web.Application:
     app.router.add_post("/api/chat/new", h_chat_new)
     app.router.add_post("/api/chat/handoff", h_chat_handoff)
     app.router.add_post("/api/terminal/open", h_terminal_open)
+    app.router.add_post("/api/terminal/select", h_terminal_select)
+    app.router.add_post("/api/ask", h_ask)
     app.router.add_get("/api/features", h_features_get)
     app.router.add_put("/api/features", h_features_put)
     app.router.add_get("/api/morph/state", h_morph_state)
@@ -27443,6 +28252,11 @@ def make_app() -> web.Application:
     app.router.add_get("/api/personality", h_personality_get)
     app.router.add_put("/api/personality", h_personality_put)
     app.router.add_post("/api/personality/growth", h_personality_growth)
+    app.router.add_get("/api/presence", h_presence_get)
+    app.router.add_post("/api/presence", h_presence_post)
+    app.router.add_get("/header-logo", h_header_logo_get)
+    app.router.add_put("/api/header/logo", h_header_logo_put)
+    app.router.add_delete("/api/header/logo", h_header_logo_delete)
     app.router.add_get("/api/instructions", h_instructions)
     app.router.add_get("/api/instructions/{key}", h_instruction_get)
     app.router.add_put("/api/instructions/{key}", h_instruction_put)
@@ -27475,79 +28289,18 @@ def make_app() -> web.Application:
     _maint_routes(app)
 
     async def on_startup(app: web.Application) -> None:
-        # Every prompt's shipped text is captured before any override is put
-        # in force, then the overrides, then the shipped copies are written
-        # where Claude in the terminal can read them.
-        await asyncio.to_thread(instructions.apply_all)
-        await asyncio.to_thread(instructions.export_builtins)
-        # A browser left over from before the restart (report #355).
-        await asyncio.to_thread(browser_reaper.maybe_reap)
-        # The household's personality used to live in Morph's own code;
-        # read it out of Morph's copy ONCE, while brAIn has no file of its
-        # own, before the terminal's prompt is written from it. Morph's
-        # file is never written.
-        moved = await asyncio.to_thread(personality.migrate_from_morph)
-        if moved:
-            log.info("personality: %s", moved)
-        # And an earlier import that kept only the top-level strings of
-        # Morph's persona is read again, once, while nobody has edited it.
-        repaired = await asyncio.to_thread(personality.repair_from_morph)
-        if repaired:
-            log.info("personality: %s", repaired)
-        # brAIn's four switches (⚙ › Features), decided once from what the
-        # house already had and published for Morph's service, the
-        # integration and the prompts below to read.
-        await asyncio.to_thread(features.ensure)
-        await asyncio.to_thread(_write_terminal_prompt)
-        # Startup is the one moment we know nothing is in flight, so it is
-        # the only place a fix orphaned by a restart can be told apart from
-        # one that is genuinely still running.
-        orphaned = await asyncio.to_thread(
-            findings_store.reconcile_running,
-            "brAIn restarted while this fix was running, so it could not "
-            "report what it did. Check the entity before trying again.")
-        if orphaned:
-            log.warning("%d fix run(s) were interrupted by a restart", orphaned)
-        # Dismissals made before the settled ledger existed live as rows in
-        # a status the tab no longer shows; move them somewhere visible.
-        migrated = await asyncio.to_thread(findings_store.migrate_settled)
-        if migrated:
-            log.info("moved %d dismissed finding(s) into the settled ledger",
-                     migrated)
-        # One-time, marked on disk: fold one fault filed by several cards,
-        # and give rows held under the old look one fresh look.
-        repaired = await asyncio.to_thread(findings_store.migrate_folds)
-        if repaired.get("folded") or repaired.get("retriaged"):
-            log.info("findings repaired once: %d duplicate(s) folded, %d "
-                     "held row(s) sent for a fresh look",
-                     repaired["folded"], repaired["retriaged"])
-        # Republish the shared-volume mirror so the integration's findings
-        # sensor reads the current list, not the one from the last change.
-        await asyncio.to_thread(findings_store.publish_state)
-        # ...and the to-do mirror beside it, for the same reason: a boot
-        # must not serve last week's list to the To-do app.
-        await asyncio.to_thread(todo_store.publish_state)
-        # ...and the status line, so `sensor.brain_status` does not wait a
-        # minute after a boot to stop reading as the panel being down.
-        await asyncio.to_thread(publish_status)
-        # Transcripts from before the pool's reflection pass and one-shot
-        # voice fallback claimed their ids sat in the person's own Chats
-        # list. Label the backlog once, by our own shipped prompt openers
-        # (marker-guarded).
-        relabelled = await asyncio.to_thread(
-            conversations.backfill_sources, chat_session.WORK_DIR)
-        if relabelled:
-            log.info("labelled %d machine conversation(s) from before their "
-                     "callers claimed session ids", relabelled)
-        # ...and what Morph sent before the listener claimed its tasks as
-        # Morph's: filed as Automation or as the person's own (marker-guarded).
-        morphs = await asyncio.to_thread(
-            conversations.relabel_morph, chat_session.WORK_DIR)
-        if morphs:
-            log.info("listed %d conversation(s) Morph started under Morph", morphs)
-        await _options_sync()
-        _publish_permission_mode()
-        await _shell_sync()
+        """What has to be true before the port is bound — and nothing else.
+
+        aiohttp binds only after every ``on_startup`` returns, and this
+        used to hold fifteen migrations, syncs and the event bus, so Home
+        Assistant's ingress answered 502 for the whole of every start. Now
+        only what a route cannot do without runs here; the rest is
+        ``_startup_work``, a task started here and finished after the bind,
+        while the starting gate (`starting_middleware`) holds requests that
+        need it.
+        """
+        _STARTUP["done"] = asyncio.Event()
+        _STARTUP["error"] = ""
         # Every failed run of any kind becomes one readable file: hooked on
         # the journal so a new run path is covered by having recorded itself.
         journal.on_record(_journal_report_listener)
@@ -27574,6 +28327,102 @@ def make_app() -> web.Application:
         # Waiters from a loop that has gone (a test, a second app) can
         # never be woken; the run queue drops them, `_rebind_queue`'s rule.
         run_queue.QUEUE.reset()
+        # The add-on's options decide every effective setting a route
+        # answers with (and a pre-1.8 override is promoted into them), so
+        # they are synced before the first request rather than after it.
+        await _options_sync()
+        _publish_permission_mode()
+        # The findings list, put right before any route reads or writes it.
+        # Startup is the one moment we know nothing is in flight, so it is
+        # the only place a fix orphaned by a restart can be told apart from
+        # one that is genuinely still running — and a route acting on a row
+        # first would be acting on that orphan.
+        orphaned = await asyncio.to_thread(
+            findings_store.reconcile_running,
+            "brAIn restarted while this fix was running, so it could not "
+            "report what it did. Check the entity before trying again.")
+        if orphaned:
+            log.warning("%d fix run(s) were interrupted by a restart", orphaned)
+        # Dismissals made before the settled ledger existed live as rows in
+        # a status the tab no longer shows; move them somewhere visible.
+        migrated = await asyncio.to_thread(findings_store.migrate_settled)
+        if migrated:
+            log.info("moved %d dismissed finding(s) into the settled ledger",
+                     migrated)
+        # One-time, marked on disk: fold one fault filed by several cards,
+        # and give rows held under the old look one fresh look.
+        repaired = await asyncio.to_thread(findings_store.migrate_folds)
+        if repaired.get("folded") or repaired.get("retriaged"):
+            log.info("findings repaired once: %d duplicate(s) folded, %d "
+                     "held row(s) sent for a fresh look",
+                     repaired["folded"], repaired["retriaged"])
+        # The sign-in check is a task started here, not awaited: the status
+        # route reports it, so it is "checking" from the first request.
+        if engine.get_auth():
+            start_auth_check()
+        app["startup"] = asyncio.create_task(_startup_work(app))
+
+    async def _startup_work(app: web.Application) -> None:
+        try:
+            await _startup_body(app)
+        except Exception as exc:  # noqa: BLE001 — a start that failed half
+            # way must still open the gate, or every route answers 503 for
+            # ever; the fault is logged and carried by /api/ready.
+            log.exception("brAIn's startup work failed")
+            _STARTUP["error"] = _refusal(exc)
+        finally:
+            _STARTUP["done"].set()
+
+    async def _startup_body(app: web.Application) -> None:
+        # Every prompt's shipped text is captured before any override is put
+        # in force, then the overrides, then the shipped copies are written
+        # where Claude in the terminal can read them.
+        await asyncio.to_thread(instructions.apply_all)
+        await asyncio.to_thread(instructions.export_builtins)
+        # A browser left over from before the restart (report #355).
+        await asyncio.to_thread(browser_reaper.maybe_reap)
+        # The household's personality used to live in Morph's own code;
+        # read it out of Morph's copy ONCE, while brAIn has no file of its
+        # own, before the terminal's prompt is written from it. Morph's
+        # file is never written.
+        moved = await asyncio.to_thread(personality.migrate_from_morph)
+        if moved:
+            log.info("personality: %s", moved)
+        # And an earlier import that kept only the top-level strings of
+        # Morph's persona is read again, once, while nobody has edited it.
+        repaired = await asyncio.to_thread(personality.repair_from_morph)
+        if repaired:
+            log.info("personality: %s", repaired)
+        # brAIn's four switches (⚙ › Features), decided once from what the
+        # house already had and published for Morph's service, the
+        # integration and the prompts below to read.
+        await asyncio.to_thread(features.ensure)
+        await asyncio.to_thread(_write_terminal_prompt)
+        # Republish the shared-volume mirror so the integration's findings
+        # sensor reads the current list, not the one from the last change.
+        await asyncio.to_thread(findings_store.publish_state)
+        # ...and the to-do mirror beside it, for the same reason: a boot
+        # must not serve last week's list to the To-do app.
+        await asyncio.to_thread(todo_store.publish_state)
+        # ...and the status line, so `sensor.brain_status` does not wait a
+        # minute after a boot to stop reading as the panel being down.
+        await asyncio.to_thread(publish_status)
+        # Transcripts from before the pool's reflection pass and one-shot
+        # voice fallback claimed their ids sat in the person's own Chats
+        # list. Label the backlog once, by our own shipped prompt openers
+        # (marker-guarded).
+        relabelled = await asyncio.to_thread(
+            conversations.backfill_sources, chat_session.WORK_DIR)
+        if relabelled:
+            log.info("labelled %d machine conversation(s) from before their "
+                     "callers claimed session ids", relabelled)
+        # ...and what Morph sent before the listener claimed its tasks as
+        # Morph's: filed as Automation or as the person's own (marker-guarded).
+        morphs = await asyncio.to_thread(
+            conversations.relabel_morph, chat_session.WORK_DIR)
+        if morphs:
+            log.info("listed %d conversation(s) Morph started under Morph", morphs)
+        await _shell_sync()
         # Every long-lived loop is supervised: a done-callback says at
         # warning when one stops, and `/api/diagnostics` carries whether
         # each is alive and when the ones that beat last went round —
@@ -27598,6 +28447,9 @@ def make_app() -> web.Application:
         # a glob of a folder nearly always empty, every second.
         app["morph"] = _supervise("morph", _morph_loop(), stall_after_s=120)
         app["notify_learn"] = _supervise("notify_learn", _notify_learn_loop())
+        # The presence loop (⚙ › Personality's "How it is growing"): idle
+        # unless Personality and the Learning loop are both on.
+        app["presence"] = _supervise("presence", _presence_loop())
         # The first thing in brAIn that is watched rather than polled, and
         # the loop that reads it. The bus files nothing and asks nothing —
         # its only output is a signal on the queue — and `_resident_loop`
@@ -27639,10 +28491,15 @@ def make_app() -> web.Application:
             log.warning("could not publish the tripwire file: %s", exc)
         if addon_options.available():
             app["options"] = _supervise("options", _options_poller())
-        if engine.get_auth():
-            start_auth_check()
 
     async def on_cleanup(app: web.Application) -> None:
+        task = app.get("startup")
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001 — cancelled on the way out
+                pass
         # The chat session is a child process of ours; leaving it running
         # after the panel goes down orphans a Claude that nothing will ever
         # read from again.

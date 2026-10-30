@@ -296,7 +296,7 @@ const hass = {
     // ingress session the way Home Assistant's ingress view asks for it.
     if (t === 'brain/shell') return { admin: ${o.notAdmin ? 'false' : 'true'}, features: { morph: ${o.morph === false ? 'false' : 'true'}, personality: true, learning_loop: true, development_loop: false, name: 'Juniper' }, ingress_url: '/api/hassio_ingress/abcdefghijkl/', slug: 'x_brain' };
     if (t === 'supervisor/api') return msg.endpoint === '/ingress/session' ? { session: 'sess-test' } : {};
-    if (t === 'morph/load') return { mirror: { revision: rev, dashboard: dash, problems: [], card_modules: window.__cardModules || [] }, state: F.state, brain: F.brain, admin: true, now: Date.now() / 1000, code: window.__code || '${STAMP}', integration: window.__integration || '${VERSION}' };
+    if (t === 'morph/load') return { mirror: { revision: rev, dashboard: dash, problems: [], card_modules: window.__cardModules || [] }, state: F.state, brain: F.brain, admin: true, now: Date.now() / 1000, code: window.__code || '${STAMP}', integration: window.__integration || '${VERSION}', ...(typeof window.__restart === 'boolean' ? { restart: window.__restart } : {}) };
     if (t === 'morph/request') {
       const p = msg.payload || {};
       if (msg.kind === 'save') { if (p.base && p.base !== rev) return { ok: false, conflict: true, error: 'changed' }; dash = p.dashboard; rev = 'r' + (++seq + 1); return { ok: true, commit: 'abc' + seq, revision: rev }; }

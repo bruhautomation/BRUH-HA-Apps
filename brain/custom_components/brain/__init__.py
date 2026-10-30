@@ -116,6 +116,11 @@ except (OSError, json.JSONDecodeError):
     # which is exactly what the restart check treats as "cannot tell".
     pass
 
+# And the fingerprint of the code itself (fingerprint.py), taken at the same
+# moment: the version moves with every add-on release, the code does not,
+# so whether a restart is owed is asked of this, not of the version.
+from .fingerprint import LOADED_FINGERPRINT as _LOADED_FINGERPRINT  # noqa: E402
+
 SEND_PROMPT_SCHEMA = vol.Schema(
     {
         vol.Required("prompt"): str,
@@ -571,11 +576,7 @@ async def _check_restart_required(hass: HomeAssistant) -> None:
 
     required_version = marker.get("required_version", "")
 
-    # Use the version captured at import time — NOT the on-disk manifest,
-    # which the add-on may have already overwritten with the newer version.
-    loaded_version = _LOADED_VERSION
-
-    if required_version and required_version == loaded_version:
+    if _restart_done(marker):
         # The restart already happened — we're running the new version
         await hass.async_add_executor_job(_remove_file, marker_path)
         ir.async_delete_issue(hass, DOMAIN, "restart_required")
@@ -611,15 +612,38 @@ async def _check_restart_required(hass: HomeAssistant) -> None:
         _LOGGER.debug("Could not dismiss the old restart notification")
 
 
+def _restart_done(marker: dict) -> bool:
+    """Whether the code this Home Assistant loaded is the code the marker
+    waits for. By fingerprint when the marker carries one (run.sh writes
+    it), else by the version captured at import time — NOT the on-disk
+    manifest, which the add-on may already have overwritten."""
+    wanted = marker.get("fingerprint")
+    if wanted:
+        return bool(_LOADED_FINGERPRINT) and wanted == _LOADED_FINGERPRINT
+    required_version = marker.get("required_version", "")
+    loaded_version = _LOADED_VERSION
+    return bool(required_version) and required_version == loaded_version
+
+
 def _write_loaded_version(path: str) -> None:
-    """Record which integration version this Home Assistant has LOADED, for
-    the add-on panel's fault list. Best effort: a read-only /config is a
-    panel that cannot say so, never a setup that fails."""
+    """Record which integration this Home Assistant has LOADED — its
+    version and the fingerprint of its code — for run.sh (which asks for a
+    restart only when the code it deploys differs) and the add-on panel's
+    fault list. An update that changed no code leaves Home Assistant on the
+    code it has and run.sh moves the record's version on; that version is
+    kept while the fingerprint is the same. Best effort: a read-only
+    /config is a panel that cannot say so, never a setup that fails."""
+    version = _LOADED_VERSION
+    before = _read_json(path) or {}
+    if (_LOADED_FINGERPRINT and before.get("fingerprint") == _LOADED_FINGERPRINT
+            and before.get("version")):
+        version = str(before["version"])
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = f"{path}.tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump({"version": _LOADED_VERSION, "at": int(time.time())}, fh)
+            json.dump({"version": version, "fingerprint": _LOADED_FINGERPRINT,
+                       "at": int(time.time())}, fh)
         os.replace(tmp, path)
     except OSError:
         _LOGGER.debug("Could not record the loaded integration version")

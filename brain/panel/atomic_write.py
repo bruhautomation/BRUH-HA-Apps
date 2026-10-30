@@ -240,7 +240,12 @@ def _scratch(directory: Path, name: str) -> tuple[int, str]:
             continue        # 64 bits collided; ask for another name
 
 
-def write_text(path, text: str, *, encoding: str = "utf-8",
+def write_bytes(path, data: bytes, *, mode: int | None = None) -> None:
+    """``write_text`` for bytes (an uploaded image): same guarantees."""
+    write_text(path, data, mode=mode)
+
+
+def write_text(path, text: str | bytes, *, encoding: str = "utf-8",
                mode: int | None = None) -> None:
     """Replace ``path``'s contents with ``text``, atomically.
 
@@ -260,7 +265,9 @@ def write_text(path, text: str, *, encoding: str = "utf-8",
         uid, gid = _inherited(path.parent)
     fd, tmp = _scratch(path.parent, path.name)
     try:
-        with os.fdopen(fd, "w", encoding=encoding) as handle:
+        binary = isinstance(text, (bytes, bytearray))
+        with os.fdopen(fd, "wb" if binary else "w",
+                       **({} if binary else {"encoding": encoding})) as handle:
             handle.write(text)
             # Durability, not atomicity: os.replace orders the rename, not
             # the data behind it, so without this a power cut can leave the

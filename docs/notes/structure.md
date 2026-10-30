@@ -63,6 +63,7 @@ BRUH-HA-Apps/
 │   │   ├── deliveries.py        # What was sent to a phone, and what happened to it
 │   │   ├── notify_learn.py      # A pattern in what somebody swipes, asked as a question
 │   │   ├── household.py         # Speak first: the room somebody is in, and the refusals
+│   │   ├── presence.py          # The presence loop: nightly growth notes, small touches per person, a hard budget
 │   │   ├── interpret.py         # What somebody's words mean on the surface they were typed into
 │   │   ├── corrections.py       # How far a correction reaches, and for how long
 │   │   ├── decision_trail.py    # Why brAIn said nothing, written by the code that chose
@@ -168,6 +169,7 @@ BRUH-HA-Apps/
 │           ├── sensor.py        # Anthropic usage-limit sensors
 │           ├── bridge.py        # File-based IPC with the add-on
 │           ├── repairs.py       # "Restart required" repair flow
+│           ├── fingerprint.py   # The code's fingerprint: a restart only when it moved (every integration's copy)
 │           ├── todo.py          # todo.brain: the open findings, as HA's own to-do items
 │           ├── ai_task.py       # brAIn as HA's AI Task entity, read-only and validated twice
 │           ├── llm_api.py       # brAIn's measurements, for other agents, through HA's LLM API

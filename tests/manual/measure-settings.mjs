@@ -189,7 +189,8 @@ const WEEKLY = [
 const DIAG_URLS = ['api/diagnostics', 'api/reports', 'api/doctor/deep',
                    'api/sre', 'api/access', 'api/knowledge/house'];
 const DEV_URLS = ['api/capture', 'api/doctor/rehearse'];
-const LAZY_URLS = [...DIAG_URLS, ...DEV_URLS, 'api/instructions', 'api/personality'];
+const LAZY_URLS = [...DIAG_URLS, ...DEV_URLS, 'api/instructions', 'api/personality',
+                   'api/presence'];
 
 const CUT = ['Copy selected', 'Copy all', 'Write a report now',
              'Copy for a bug report', 'File into memory now', 'Check it now',
@@ -268,10 +269,41 @@ window.fetch = async (url, opts) => {
     return answer({ set: true, name: 'Juniper', persona,
       summary: 'Juniper · The evening star of the house, steady and a little wry.',
       cut_at_old_limit: !sent && !!window.__personaCut,
-      growth: [{ date: '2026-09-20', text: 'Stopped announcing the heating twice.' },
+      growth: [{ date: '2026-10-29', at: 1793336400, by: 'self',
+                 text: 'Keeps evening messages to one line; the longer ones went unanswered.' },
+               { date: '2026-09-20', text: 'Stopped announcing the heating twice.' },
                { date: '2026-08-02', text: 'Calls the side door the garden door.' }],
       updated_at: ${NOW}, path: '/config/.brain/personality.json',
       limits: { name: 60, persona: 32000, growth: 500 } });
+  }
+  if (p.includes('api/presence')) {
+    // The presence loop's section (⚙ › Personality › How … is growing):
+    // two invented people, an idea each, a note, a retired kind and two
+    // touches it sent with their reasons.
+    if (opts && opts.method === 'POST') {
+      (window.__presencePosts = window.__presencePosts || []).push(JSON.parse(opts.body));
+    }
+    return answer({ on: true, why: '', name: 'Juniper', reflected: 'Today 03:12',
+      budget: { per_day: 1, per_week: 3, house_day: 3, hours: '08:00–21:00' },
+      people: [
+        { person: 'person.wren', name: 'Wren', paused: false,
+          ideas: [{ id: 'a1b2', kind: 'evening', kind_label: 'Evening check-in',
+                    text: 'Evening, Wren — the bins go out tonight.',
+                    reason: 'Wren asked when the bins go out on Monday.' }],
+          notes: [{ id: 'n1', text: 'Likes a heads-up about the bins.' }],
+          retired: [{ kind: 'morning', kind_label: 'Morning check-in' }] },
+        { person: 'person.ilo_long_named_person', name: 'Ilo Marguerite-Okonkwo', paused: true,
+          ideas: [{ id: 'c3d4', kind: 'arrival', kind_label: 'Welcome home',
+                    text: 'Welcome back, Ilo. The heating came on twenty minutes ago so the house is warm.',
+                    reason: 'Ilo said on Tuesday the hall is cold when they get in.' }],
+          notes: [], retired: [] }],
+      touches: [
+        { id: 'e5f6', name: 'Wren', kind_label: 'Welcome home', when: 'Yesterday 17:42',
+          text: 'Welcome back, Wren — the porch light is on.', channel: 'phone',
+          reason: 'Wren asked for the porch light at dusk.', reaction: 'thanks', reaction_label: 'Thanks' },
+        { id: 'a7b8', name: 'Ilo Marguerite-Okonkwo', kind_label: 'Morning check-in', when: 'Tuesday 08:30',
+          text: 'Morning, Ilo. Rain from eleven, the washing is better inside.', channel: 'speaker',
+          reason: 'Ilo hangs washing out on Tuesdays.', reaction: 'spoken', reaction_label: 'Said aloud' }] });
   }
   if (p.includes('api/settings') && opts && opts.method === 'PUT') {
     (window.__puts = window.__puts || []).push(JSON.parse(opts.body));
@@ -1640,6 +1672,83 @@ for (const width of WIDTHS) {
     await page.evaluate(() => { window.__personaCut = false; });
   } catch (e) {
     note(where, `driving the personality failed: ${String(e.message).split('\n')[0]}`);
+  }
+
+  // ---- Personality › How … is growing (the presence loop) -----------------
+  // Its own notes are here and not in the growth list above (nothing twice),
+  // every idea, note, retired kind and touch has its one press, every press
+  // clears the touch floor on a finger, no person's id is in the words, and
+  // a press sends the right request.
+  try {
+    await showSection(page, 'personality');
+    await page.waitForFunction(() => document.querySelectorAll('#presBody .presrow').length > 0,
+      null, { timeout: 4000 });
+    const pres = await page.evaluate(() => {
+      const box = document.querySelector('#presBody');
+      const rows = [...box.querySelectorAll('.presrow')];
+      return {
+        head: document.querySelector('#presHead').textContent,
+        what: document.querySelector('#presWhat').textContent,
+        rows: rows.length,
+        text: box.innerText,
+        growth: [...document.querySelectorAll('#persGrowth .persline')].map((x) => x.textContent),
+        buttons: [...box.querySelectorAll('button')].map((b) => ({
+          // offsetHeight, not the rect: the section slides in under a
+          // transform, and a rect read mid-slide is the button scaled.
+          label: b.textContent, h: b.offsetHeight,
+          right: Math.round(b.getBoundingClientRect().right) })),
+        fonts: [...box.querySelectorAll('.presline, .pressub, .preshead')]
+          .map((n) => parseFloat(getComputedStyle(n).fontSize)),
+        sideways: document.documentElement.scrollWidth > window.innerWidth + 1,
+        // A full-page screenshot earlier in the run (PERSONA_SHOT_DIR) drops
+        // the touch emulation; the finger check is only honest while it holds.
+        coarse: matchMedia('(pointer: coarse)').matches,
+      };
+    });
+    if (pres.head !== 'How Juniper is growing') note(where, `the presence heading reads "${pres.head}"`);
+    if (!/one message a person a day/.test(pres.what)) note(where, `the presence line reads "${pres.what}"`);
+    if (!pres.text.includes('Keeps evening messages to one line')) note(where, 'its own growth note is not under How … is growing');
+    if (pres.growth.some((g) => /Keeps evening messages/.test(g))) note(where, 'its own growth note is listed twice');
+    if (/person\.|[a-z_]+\.[a-z0-9_]{3,}/.test(pres.text)) note(where, 'an id is in the presence section\'s words');
+    for (const words of ['the bins go out tonight', 'Likes a heads-up about the bins', 'Less like this: Morning check-in',
+                         'Not now', 'Said aloud', 'Wren asked for the porch light']) {
+      if (!pres.text.includes(words)) note(where, `the presence section leaves out "${words}"`);
+    }
+    const labels = new Set(pres.buttons.map((b) => b.label));
+    for (const want of ['Remove', 'Skip', 'Never', 'Restore', 'Less like this']) {
+      if (!labels.has(want)) note(where, `the presence section has no ${want}`);
+    }
+    if (touch && pres.coarse) {
+      pres.buttons.filter((b) => b.h < MIN_TARGET)
+        .forEach((b) => note(where, `the presence button "${b.label}" is ${b.h}px on a finger`));
+    }
+    pres.buttons.filter((b) => b.right > width + 1)
+      .forEach((b) => note(where, `the presence button "${b.label}" runs off the page`));
+    if (pres.fonts.some((f) => f < 12)) note(where, `presence text is ${Math.min(...pres.fonts)}px`);
+    if (pres.sideways) note(where, 'the presence section scrolls the page sideways');
+    // PRESENCE_SHOT_DIR=<dir>: pictures of the section (run it without
+    // PERSONA_SHOT_DIR, whose full-page shot drops the touch emulation).
+    if (process.env.PRESENCE_SHOT_DIR) {
+      await page.locator('#presHead').evaluate((n) => n.scrollIntoView({ block: 'start' }));
+      await page.screenshot({ path: `${process.env.PRESENCE_SHOT_DIR}/presence-${width}.png` });
+      await page.locator('#presBody .presrow').last().evaluate((n) => n.scrollIntoView({ block: 'end' }));
+      await page.screenshot({ path: `${process.env.PRESENCE_SHOT_DIR}/presence-${width}-end.png` });
+    }
+    await page.locator('#presBody button', { hasText: 'Skip' }).first().click();
+    await page.waitForFunction(() => (window.__presencePosts || []).length > 0, null, { timeout: 4000 });
+    const post = await page.evaluate(() => window.__presencePosts[0]);
+    if (post.do !== 'skip' || post.person !== 'person.wren' || post.id !== 'a1b2') {
+      note(where, `Skip sent ${JSON.stringify(post)}`);
+    }
+    await page.locator('#presBody button', { hasText: 'Less like this' }).first().click();
+    await page.waitForFunction(() => (window.__presencePosts || []).length > 1, null, { timeout: 4000 });
+    const less = await page.evaluate(() => window.__presencePosts[1]);
+    if (less.do !== 'react' || less.reaction !== 'less' || less.id !== 'e5f6') {
+      note(where, `Less like this sent ${JSON.stringify(less)}`);
+    }
+    await page.evaluate(() => { window.__presencePosts = []; });
+  } catch (e) {
+    note(where, `driving How … is growing failed: ${String(e.message).split('\n')[0]}`);
   }
 
   // ---- Guide: eight groups, and it opens the docs -------------------------

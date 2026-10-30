@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import voluptuous as vol
 
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
@@ -10,6 +12,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv, device_registry as dr, service
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType
 
 from .api import BRANDS, BrevilleClient, Tokens
@@ -28,8 +31,10 @@ from .const import (
     SERVICE_START_COOK,
 )
 from .coordinator import BrevilleCoordinator
+from .fingerprint import record_loaded
 from .frontend import (
     async_add_entry_panel,
+    async_follow_bundle,
     async_forget_entry_panel,
     async_remove_entry_panel,
     async_setup_frontend,
@@ -66,9 +71,17 @@ PLATFORMS = [
 
 BrevilleConfigEntry = ConfigEntry[BrevilleCoordinator]
 
+# Where this Home Assistant records the code it loaded (fingerprint.py), for
+# the add-on's run.sh: it says a restart is needed only when the code it
+# deploys differs from this.
+LOADED_FILE = ".bruh_cooking/integration.json"
+# How often the sidebar panel's URL is checked against the bundle on disk.
+BUNDLE_FOLLOW = timedelta(seconds=60)
+
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Register the services, the sidebar panel and its websocket API."""
+    await hass.async_add_executor_job(record_loaded, hass.config.path(LOADED_FILE))
     _register_services(hass)
     async_setup_frontend(hass)
     async_setup_panel_api(hass)
@@ -109,6 +122,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: BrevilleConfigEntry) -> 
     coordinator.async_start_websocket()
     # The sidebar panel, best effort: every entity works without it.
     await async_add_entry_panel(hass, entry)
+
+    async def _follow(_now) -> None:
+        await async_follow_bundle(hass)
+
+    entry.async_on_unload(
+        async_track_time_interval(hass, _follow, BUNDLE_FOLLOW, cancel_on_shutdown=True)
+    )
     async_panel_entry_set_up(hass, entry)
     return True
 

@@ -10,5 +10,5 @@
   "issue_tracker": "https://github.com/bruhautomation/BRUH-HA-Apps/issues",
   "loggers": ["custom_components.bruh_cooking"],
   "requirements": [],
-  "version": "0.1.0"
+  "version": "0.1.1"
 }

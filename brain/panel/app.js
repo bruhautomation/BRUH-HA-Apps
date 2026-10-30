@@ -219,12 +219,25 @@ const state = {
 // ---------------------------------------------------------------- helpers
 
 async function api(path, opts = {}) {
-  const resp = await fetch(path.replace(/^\//, ""), {
-    headers: { "Content-Type": "application/json" },
-    ...opts,
-  });
-  if (!resp.ok) throw new Error((await resp.text()) || `HTTP ${resp.status}`);
-  return resp.json();
+  // A 503 carrying `starting` is the panel's own starting gate: the route
+  // never ran, so the request is simply asked again a moment later —
+  // a POST included — rather than shown to somebody as an error.
+  for (let attempt = 0, wait = 1000; ; attempt++, wait *= 2) {
+    const resp = await fetch(path.replace(/^\//, ""), {
+      headers: { "Content-Type": "application/json" },
+      ...opts,
+    });
+    if (resp.status === 503 && attempt < 5) {
+      let starting = false;
+      try { starting = !!(await resp.clone().json()).starting; } catch (e) { /* not ours */ }
+      if (starting) {
+        await new Promise((r) => setTimeout(r, wait));
+        continue;
+      }
+    }
+    if (!resp.ok) throw new Error((await resp.text()) || `HTTP ${resp.status}`);
+    return resp.json();
+  }
 }
 
 // ------------------------------------------------------- modal scroll lock
@@ -1715,7 +1728,7 @@ function makeCard(catInfo, insight, fallbackId) {
     ask.disabled = active;
     ask.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      askAboutReport(id, catInfo, shown || insight);
+      askAboutReport(id, catInfo, shown || insight, ask);
     });
     actions.appendChild(ask);
   }
@@ -2608,6 +2621,14 @@ function paintVersion() {
   a.title = pending ? restart : `What changed in brAIn ${v}`;
   a.setAttribute("aria-label", `brAIn ${v}: what's new (the changelog)`
     + (pending ? `. ${restart}` : ""));
+  const bar = $("#barVersion");
+  if (bar) {
+    bar.querySelector(".vertext").textContent = "v" + v;
+    bar.href = a.href;
+    bar.classList.toggle("pending", pending);
+    bar.title = a.title;
+    bar.setAttribute("aria-label", a.getAttribute("aria-label"));
+  }
 }
 
 // What's new: the version opens the release notes INSIDE the panel, read
@@ -2693,7 +2714,7 @@ async function openWhatsNew() {
   prefSet(WHATS_NEW_SEEN, sections[0].version);
 }
 
-$("#versionChip").addEventListener("click", (ev) => {
+for (const link of [$("#versionChip"), $("#barVersion")]) link.addEventListener("click", (ev) => {
   // A modified press keeps the link's own meaning (a new tab, a window).
   if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button) return;
   ev.preventDefault();
@@ -3232,7 +3253,17 @@ function renderSettingsForm(data) {
   $("#setEnabled").checked = data.settings.auto_enabled !== false;
   $("#setCapture").checked = data.settings.capture === true;
   $("#setTerminalUi").value = data.settings.terminal_ui || "chat";
-  $("#setChatSessions").value = String(data.settings.chat_max_sessions || 3);
+  {
+    // Null is "No limit", the default. A number somebody set by hand that
+    // the list does not offer still shows as itself rather than as blank.
+    const cap = data.settings.chat_max_sessions;
+    const sel = $("#setChatSessions");
+    const want = cap ? String(cap) : "";
+    if (want && ![...sel.options].some((o) => o.value === want)) {
+      sel.add(new Option(want, want));
+    }
+    sel.value = want;
+  }
   // Only an explicit true ticks it: a value that arrived missing or
   // malformed is asking, which is what the terminal and the chat will do.
   $("#setSkipPerms").checked = data.settings.dangerously_skip_permissions === true;
@@ -5496,9 +5527,11 @@ $("#setRefreshMode").addEventListener("change", async () => {
 });
 // Applies to the next switch rather than immediately: lowering it does not
 // go round shutting conversations down, it means the next one you open
-// closes the oldest idle one to make room.
-$("#setChatSessions").addEventListener("change", () =>
-  saveSettings({ chat_max_sessions: Number($("#setChatSessions").value) }));
+// closes the oldest idle one to make room. "" is No limit (null).
+$("#setChatSessions").addEventListener("change", () => {
+  const v = $("#setChatSessions").value;
+  saveSettings({ chat_max_sessions: v ? Number(v) : null });
+});
 // One switch with two doors: saving it writes the add-on's own
 // `dangerously_skip_permissions` option, so the Configuration tab moves with
 // it, and the server republishes it to the file a terminal session reads
@@ -5658,14 +5691,75 @@ async function renderRefineKept() {
 // message — the same handoff a right-click "Ask brAIn about this" makes
 // (`askPrompt`, `openInTerminal`), so there is one way a thing on screen
 // becomes a conversation.
-function askAboutReport(id, catInfo, insight) {
+function askAboutReport(id, catInfo, insight, btn) {
   const name = (insight && insight.title) || (catInfo && catInfo.title) || "this report";
   const about = (catInfo && catInfo.title) || (insight && insight.eyebrow) || "";
   const text = [about && about !== name ? `${about}: ${name}` : name,
     insight && insight.summary ? String(insight.summary) : ""]
     .filter(Boolean).join("\n").slice(0, ASK_TEXT_MAX);
-  openInTerminal({ prompt: askPrompt(
-    { where: "Insights › Reports", text, ids: [`insight=${id}`] }, "") });
+  askAbout(askPrompt(
+    { where: "Insights › Reports", text, ids: [`insight=${id}`] }, ""), btn);
+}
+
+// Ask brAIn about something: ONE rule for every ask-about (a report's Ask,
+// the press-and-hold box, Personality's and Instructions' Ask) — it follows
+// the SAVED face. The server decides (POST api/ask): on the chat face a new
+// chat conversation starts with the prompt and this viewer is moved onto
+// it by its key; on the classic face a terminal window opens on it. The
+// face is never flipped locally — a local flip is undone by the next
+// status refresh, which put people on an empty "New chat" while their
+// question ran in a hidden terminal. The button is held while the POST is
+// in flight, so a double tap is one conversation.
+async function askAbout(prompt, btn) {
+  if (btn) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+  }
+  try {
+    switchView("terminal");
+    if (chatState.session === "classic") showTerminalFrame();
+    else askShow("chat");
+    const out = await chatSwitching(() => api("api/ask", {
+      method: "POST", body: JSON.stringify({ prompt, ...chatWho() }) }));
+    if (out && out.face === "terminal") {
+      if (chatState.session !== "classic") {
+        // The server's saved face is the terminal and this page had not
+        // caught up: follow the saved one, which is what the next status
+        // refresh would do anyway.
+        applyTermMode("classic");
+      }
+      showTerminalFrame();
+      if (out.opened === false) toast("Starting the terminal…");
+      return out;
+    }
+    if (out && out.key) {
+      setChatFinding(null);
+      chatReconnect(out.key, out.session_id);
+      askShow("chat");
+    }
+    return out;
+  } catch (e) {
+    toast(e.message);
+    return null;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// A terminal window brAIn opened, brought forward on the classic face —
+// the saved face, so the next status refresh agrees with it.
+async function openTerminalWindow(windowId) {
+  if (chatState.session !== "classic") {
+    setTermMode("classic", "Ask now opens as the classic terminal");
+  }
+  switchView("terminal");
+  showTerminalFrame();
+  try {
+    await api("api/terminal/select", {
+      method: "POST", body: JSON.stringify({ window_id: windowId }) });
+  } catch (e) {
+    toast(e.message);
+  }
 }
 
 function openRefine(id, catInfo, insight) {
@@ -6132,14 +6226,17 @@ async function discussFinding(f, btns) {
     switchView("terminal");
     // Ask on a card opens the conversation about it, not the list.
     askShow("chat");
-    if (chatState.session !== "classic") chatConnect();
-    const out = await api(`api/finding/${f.ts}/discuss`, { method: "POST" });
+    const out = await chatSwitching(() => api(`api/finding/${f.ts}/discuss`, {
+      method: "POST", body: JSON.stringify(chatWho()) }));
     if (out && out.face === "terminal") {
       // Claude Code's own terminal: the server opened a window whose first
       // message is the card. The card's presses stay on the card.
       showTerminalFrame();
       toast("Opened in the terminal");
     } else {
+      // The new conversation is this viewer's by its key, not by whichever
+      // conversation another device attached last.
+      if (out && out.key) chatReconnect(out.key, out.session_id);
       setChatFinding(f);
     }
   } catch (e) {
@@ -12295,9 +12392,8 @@ function switchView(name) {
   }
   if (name === "terminal") {
     if (chatState.session === "classic") {
-      const frame = $("#termFrame");
       // Lazy: don't start a shell session for someone who never opens the tab.
-      if (frame.getAttribute("src") === "about:blank") frame.src = "terminal/";
+      loadTerminalFrame();
       refreshChatRail();
     } else {
       chatConnect();
@@ -12560,6 +12656,7 @@ function syncHomeTab() {
   if (typeof f.morph === "boolean") setSummary("setSumFeatures", featSummary(f));
   if (!on && currentView === "home") switchView("insights");
   applyName();
+  applyHeader();
 }
 
 // ---- the header's tabs, named and drawn the way the house chose ---------
@@ -12829,6 +12926,42 @@ function applyName() {
   speakAll(document.body, was);
 }
 
+// The top bar's mark (⚙ › Personality › Header): the wordmark, the
+// assistant's name, or the house's own text and/or picture. Unset means what
+// the page always did: the name while Personality is on, else the logo. This
+// changes the mark only; how the page refers to brAIn is `applyName`'s.
+function headerMark() {
+  const st = state.status || {};
+  const f = st.features || {};
+  const h = st.header || {};
+  const named = !!(f.personality && f.name);
+  let mode = h.brand || (named ? "name" : "logo");
+  if (mode === "name" && !named) mode = "logo";
+  const text = String(h.text || "").trim();
+  if (mode === "custom") {
+    if (h.image && text) return { cls: "hb-both", text, image: h.image };
+    if (h.image) return { cls: "hb-img", text: "", image: h.image };
+    if (text) return { cls: "hb-text", text, image: null };
+    mode = named && !h.brand ? "name" : "logo";
+  }
+  if (mode === "name") return { cls: "hb-text", text: f.name, image: null, isName: true };
+  return { cls: "hb-logo", text: "", image: null };
+}
+
+function applyHeader() {
+  const m = headerMark();
+  const root = document.documentElement;
+  for (const c of ["hb-logo", "hb-text", "hb-img", "hb-both"]) root.classList.toggle(c, c === m.cls);
+  const nameEl = $("#brandName");
+  if (nameEl && m.text) nameEl.textContent = m.text;
+  else if (nameEl && !root.classList.contains("named")) nameEl.textContent = "";
+  const img = $("#brandImg");
+  if (img) {
+    if (m.image) { if (img.getAttribute("src") !== m.image) img.setAttribute("src", m.image); } else img.removeAttribute("src");
+    img.hidden = !m.image;
+  }
+}
+
 const SPEAK_SKIP = new Set(["TEXTAREA", "INPUT", "CODE", "PRE", "SCRIPT", "STYLE", "SELECT"]);
 const SPEAK_ATTRS = ["placeholder", "aria-label", "title", "data-tip", "alt"];
 
@@ -12844,7 +12977,7 @@ function speakAll(root, from = "brAIn") {
       return;
     }
     if (node.nodeType !== 1 || SPEAK_SKIP.has(node.tagName) || node.isContentEditable) return;
-    if (node.closest && node.closest(".wordmark")) return;
+    if (node.closest && node.closest(".wordmark, .brandlink")) return;
     for (const a of SPEAK_ATTRS) {
       const v = node.getAttribute && node.getAttribute(a);
       if (v && v.includes(from)) node.setAttribute(a, speakText(v, from));
@@ -12862,7 +12995,7 @@ function speakAll(root, from = "brAIn") {
       if (rec.type === "characterData") {
         const n = rec.target;
         const p = n.parentElement;
-        if (n.nodeValue.includes("brAIn") && p && !SPEAK_SKIP.has(p.tagName) && !p.closest("code, pre, textarea")) {
+        if (n.nodeValue.includes("brAIn") && p && !SPEAK_SKIP.has(p.tagName) && !p.closest("code, pre, textarea, .brandlink")) {
           n.nodeValue = speakText(n.nodeValue, "brAIn");
         }
       } else if (rec.type === "attributes") {
@@ -12908,6 +13041,8 @@ const chatState = {
   session: "chat",   // "chat" | "classic"
   runState: "idle",
   sessionId: null,   // the CLI's id for this conversation — what `--resume` takes
+  key: null,         // the server's handle on THIS viewer's session (ChatSession.key)
+  switching: 0,      // this viewer is moving itself; a `switched` now is ours
   info: {},          // model, cwd, version, api_key_source, from the CLI itself
   context: {},       // {tokens, window} — how full the conversation is
   models: [],        // the same choices ⚙ offers, for the chat's own picker
@@ -13341,7 +13476,8 @@ function chatStatusForPermission(ev) {
 // second answer to a question nobody is asking.
 function chatPermissionPost(body, buttons, rearm) {
   buttons.forEach((b) => { b.disabled = true; });
-  api("api/chat/permission", { method: "POST", body: JSON.stringify(body) })
+  api("api/chat/permission", { method: "POST",
+    body: JSON.stringify({ ...body, ...chatWho() }) })
     .catch((e) => {
       toast(e.message);
       if (rearm) rearm(); else buttons.forEach((b) => { b.disabled = false; });
@@ -13671,13 +13807,26 @@ function chatRender(ev) {
       renderChatRail();
       break;
     case "switched":
-      // The view moved to another conversation. Reconnect rather than
-      // patching this stream: the first frame of the new one is the new
-      // session's snapshot, which is the contract the stream has always
-      // had — no client has to stitch "what it was" onto "what happened
-      // next".
-      chatDisconnect();
-      chatConnect();
+      // The shared "attached" conversation moved. Followed only when this
+      // viewer moved it (or has no conversation of its own yet): another
+      // device opening a chat must not pull this one's view — that is how
+      // a phone's message ended up in a desktop's newer conversation.
+      // Reconnect rather than patching this stream: the first frame of the
+      // new one is the new session's snapshot.
+      if (chatState.switching || !chatState.key) {
+        chatReconnect(ev.key || null, ev.session_id || null);
+      }
+      break;
+    case "send_failed":
+      // A message accepted while Claude was starting did not get through:
+      // put the words back rather than losing them.
+      chatState.pendingSend = 0;
+      chatStatusClear();
+      if (ev.text && !$("#chatInput").value) {
+        $("#chatInput").value = ev.text;
+        chatGrow();
+      }
+      toast(ev.reason ? `Not sent: ${ev.reason}` : "That message was not sent");
       break;
     case "session_asks": {
       // A conversation nobody is looking at is waiting on an approval, and
@@ -13785,6 +13934,40 @@ function chatSetState(runState, error) {
   chatComposerOnState(runState);
 }
 
+// Which conversation THIS viewer is in, named on every send, stop, model
+// pick and approval answer. Every device used to act on one shared
+// "attached" session, so a phone's message landed in whichever
+// conversation a desktop had opened last. The key is the server's handle on
+// the session object (a fresh chat has one before the CLI names it).
+function chatWho() {
+  const out = {};
+  if (chatState.key) out.session_key = chatState.key;
+  if (chatState.sessionId) out.session_id = chatState.sessionId;
+  return out;
+}
+
+function chatWhoQuery() {
+  const q = new URLSearchParams(chatWho()).toString();
+  return q ? `?${q}` : "";
+}
+
+// Move THIS viewer's stream to a conversation (null: the attached one).
+function chatReconnect(key, sessionId) {
+  chatState.key = key || null;
+  chatState.sessionId = sessionId || null;
+  chatDisconnect();
+  if (chatState.session !== "classic") chatConnect();
+}
+
+// Run a switch this viewer asked for: a `switched` that arrives while it is
+// in flight is this viewer's own and is followed; any other is another
+// device moving ITS view, and is not ours to follow.
+async function chatSwitching(run) {
+  chatState.switching += 1;
+  try { return await run(); }
+  finally { setTimeout(() => { chatState.switching = Math.max(0, chatState.switching - 1); }, 1500); }
+}
+
 // One stream, reopened on drop. EventSource retries by itself, but only
 // while the page believes the connection died — an ingress that closes it
 // cleanly looks like a finished response, so the close handler re-arms.
@@ -13792,7 +13975,7 @@ function chatConnect() {
   if (chatState.es) return;
   let es;
   try {
-    es = new EventSource("api/chat/stream");
+    es = new EventSource("api/chat/stream" + chatWhoQuery());
   } catch (e) {
     return;
   }
@@ -13806,6 +13989,7 @@ function chatConnect() {
       // the CLI announces them once, at startup, and a viewer who connected
       // afterwards would otherwise never see them.
       chatState.sessionId = ev.session_id || null;
+      chatState.key = ev.key || chatState.key;
       chatState.info = ev.info || {};
       chatState.context = ev.context || {};
       chatState.commands = ev.commands || [];
@@ -13876,7 +14060,10 @@ async function chatSend(text) {
   chatState.pendingSend = Date.now();
   chatStatus("Sending…");
   try {
-    await api("api/chat/send", { method: "POST", body: JSON.stringify({ text }) });
+    const out = await api("api/chat/send", {
+      method: "POST", body: JSON.stringify({ text, ...chatWho() }) });
+    if (out && out.key) chatState.key = out.key;
+    if (out && out.pending) chatStatus("Starting Claude…");
   } catch (e) {
     chatState.pendingSend = 0;
     chatStatusClear();
@@ -13998,7 +14185,7 @@ if (window.visualViewport) {
 }
 
 $("#chatStop").addEventListener("click", async () => {
-  try { await api("api/chat/stop", { method: "POST" }); }
+  try { await api("api/chat/stop", { method: "POST", body: JSON.stringify(chatWho()) }); }
   catch (e) { toast(e.message); }
 });
 
@@ -14012,7 +14199,7 @@ $("#chatNew").addEventListener("click", async () => {
   if (!askOnList() && chatLog().childElementCount && !window.confirm(
     "Start a new chat? This one is kept — you can reopen it from your "
     + "chats.")) return;
-  try { await api("api/chat/new", { method: "POST" }); }
+  try { await chatNewHere(); }
   catch (e) { toast(e.message); return; }
   askShow("chat");
   refreshChatRail();
@@ -14129,9 +14316,18 @@ $("#chatStateAct").addEventListener("click", () => {
 // whether you are sure about leaving a conversation Claude still holds,
 // and this one it does not.
 async function startFresh() {
-  try { await api("api/chat/new", { method: "POST" }); }
+  try { await chatNewHere(); }
   catch (e) { toast(e.message); }
   refreshChatRail();
+}
+
+// A new conversation for THIS viewer (its own empty one reused), and the
+// stream moved onto it by its key rather than by a broadcast.
+async function chatNewHere() {
+  const out = await chatSwitching(() => api("api/chat/new", {
+    method: "POST", body: JSON.stringify(chatWho()) }));
+  if (out && out.key) chatReconnect(out.key, out.session_id);
+  return out;
 }
 
 // Ask about it: a record cannot be continued, so the honest offer is a
@@ -14142,7 +14338,7 @@ async function askAboutRecord() {
   if (!rec) return;
   closeBox("#convViewModal");
   chatState.record = null;
-  try { await api("api/chat/new", { method: "POST" }); }
+  try { await chatNewHere(); }
   catch (e) { toast(e.message); return; }
   refreshChatRail();
   const input = $("#chatInput");
@@ -14593,6 +14789,8 @@ async function deleteConversation(c, btn) {
       }
       await api(`api/chat/session/${encodeURIComponent(c.id)}/close`,
                 { method: "POST" });
+      // Closing the one on screen lands this viewer on a fresh chat.
+      if (c.id === chatState.sessionId) chatReconnect(null, null);
       out = await remove();
     }
     toast("Conversation deleted", out.undo);
@@ -14625,6 +14823,7 @@ async function refreshChatRail() {
   try {
     const data = await api(convQuery());
     chatState.convs = data.conversations || [];
+    chatState.termWindows = data.terminal || [];
     chatState.convSources = data.sources || [];
   } catch (e) {
     return;  // transient: the rail keeps whatever it last showed
@@ -14731,7 +14930,7 @@ function renderChatRail() {
     btn.type = "button";
     btn.appendChild(el("span", "ctitle", c.title));
     const foot = el("div", "crfoot");
-    const mark = convMark(c);
+    const mark = c.terminal ? el("span", "crlive", "In the terminal") : convMark(c);
     if (mark) foot.appendChild(mark);
     foot.appendChild(el("span", "cwhen", c.age));
     btn.appendChild(foot);
@@ -14739,6 +14938,10 @@ function renderChatRail() {
     if (c.view_only) {
       // A card or fix run: a record to read, never a place to type.
       btn.addEventListener("click", () => viewConversation(c));
+    } else if (c.terminal && chatState.session !== "classic") {
+      // A terminal window is running it: a second process would fork it,
+      // so the row takes you to that window instead.
+      btn.addEventListener("click", () => openTerminalWindow(c.terminal.window_id));
     } else if (chatState.session === "classic") {
       // Claude Code's own terminal: the conversation opens in a new window
       // there, resumed, and whatever the terminal was doing stays put.
@@ -14754,6 +14957,24 @@ function renderChatRail() {
     if (!c.view_only) row.appendChild(convRowMenu(c));
     list.appendChild(row);
   });
+  // brAIn's terminal windows on a conversation the list has no row for
+  // yet (one a card's Ask started there): Claude processes too, so they
+  // are listed rather than running out of sight.
+  const listed = new Set(chatState.convs.map((c) => c.id));
+  (chatState.termWindows || [])
+    .filter((w) => !w.session_id || !listed.has(w.session_id))
+    .forEach((w) => {
+      const row = el("div", "crrow");
+      const btn = el("button", "critem");
+      btn.type = "button";
+      btn.appendChild(el("span", "ctitle", "A conversation in the terminal"));
+      const foot = el("div", "crfoot");
+      foot.appendChild(el("span", "crlive", "In the terminal"));
+      btn.appendChild(foot);
+      btn.addEventListener("click", () => openTerminalWindow(w.window_id));
+      row.appendChild(btn);
+      list.appendChild(row);
+    });
 }
 
 $("#chatRailNew").addEventListener("click", () => $("#chatNew").click());
@@ -14814,9 +15035,15 @@ async function resumeConversation(conv) {
     // `spawn: false`: opening a conversation is reading it. Its transcript
     // comes over now and the Claude process starts with the first message
     // you send — not one per conversation you happened to look at.
-    const out = await api("api/chat/resume", {
+    const out = await chatSwitching(() => api("api/chat/resume", {
       method: "POST",
-      body: JSON.stringify({ session_id: conv.id, spawn: false }) });
+      body: JSON.stringify({ session_id: conv.id, spawn: false }) }));
+    if (out && out.in_terminal) {
+      // A terminal window is running it: that is where it carries on.
+      await openTerminalWindow(out.window_id);
+      return;
+    }
+    if (out && out.key) chatReconnect(out.key, out.session_id);
     // The row's state rides back so the composer line is right before the
     // reconnect's snapshot lands — and a fallback is a state on the line
     // ("Context lost") rather than only the toast below, which vanishes.
@@ -15057,7 +15284,7 @@ async function pickChatModel(id) {
   closeChipPop();
   try {
     const out = await api("api/chat/model", {
-      method: "POST", body: JSON.stringify({ model: id || null }) });
+      method: "POST", body: JSON.stringify({ model: id || null, ...chatWho() }) });
     chatState.chatModel = out.chat_model || "";
     // The meta line is the only confirmation a pick landed, and the event
     // that would refresh it (init → info) does not arrive until the next
@@ -15089,7 +15316,8 @@ $("#chatModelPick").addEventListener("click", () =>
 async function chatHandoff() {
   let out;
   try {
-    out = await api("api/chat/handoff", { method: "POST" });
+    out = await api("api/chat/handoff", {
+      method: "POST", body: JSON.stringify(chatWho()) });
   } catch (e) {
     toast(e.message);
     return;
@@ -15116,7 +15344,11 @@ async function chatHandoff() {
 // That Claude is left running: it is somebody's shell.
 async function chatAdopt() {
   try {
-    return await api("api/chat/adopt", { method: "POST" });
+    const out = await chatSwitching(() => api("api/chat/adopt", { method: "POST" }));
+    // Adopt opens the terminal's conversation as the attached one; this
+    // viewer follows it there.
+    chatReconnect(null, null);
+    return out;
   } catch (e) {
     // Never block the switch on it. The renderer changing is the thing that
     // was asked for; not finding a conversation to carry is a worse chat,
@@ -15321,16 +15553,79 @@ document.addEventListener("click", (ev) => {
 // The terminal frame, loaded on first need. ttyd attaches to the one tmux
 // session, so a window the server just opened is what it shows.
 function showTerminalFrame() {
-  const frame = $("#termFrame");
-  if (frame && frame.getAttribute("src") === "about:blank") frame.src = "terminal/";
+  loadTerminalFrame();
   document.body.classList.remove("ask-list");
 }
+
+// The frame, loaded only once the terminal answers. A frame pointed at
+// `terminal/` while the panel or ttyd was (re)starting caught the proxy's
+// 502 page and kept it — nothing ever loaded it again. So the terminal is
+// probed first (ttyd's small `token` route, through the panel's proxy),
+// and a frame that lands on an error page anyway is retried, with a short
+// backoff and a line saying what is happening.
+const termLoad = { timer: null, delay: 1000 };
+
+function termStarting(on) {
+  const p = $("#termStarting");
+  if (p) p.classList.toggle("hidden", !on);
+}
+
+function termRetry() {
+  if (termLoad.timer) return;
+  termStarting(true);
+  termLoad.timer = setTimeout(() => {
+    termLoad.timer = null;
+    loadTerminalFrame(true);
+  }, termLoad.delay);
+  termLoad.delay = Math.min(termLoad.delay * 2, 10000);
+}
+
+async function loadTerminalFrame(force) {
+  const frame = $("#termFrame");
+  if (!frame) return;
+  if (!force && frame.getAttribute("src") !== "about:blank") return;
+  let up = false;
+  try {
+    const r = await fetch("terminal/token", { cache: "no-store" });
+    up = r.ok;
+  } catch (e) {
+    up = false;
+  }
+  if (!up) { termRetry(); return; }
+  termLoad.delay = 1000;
+  termStarting(false);
+  frame.src = "terminal/";
+}
+
+// What a proxy's error page looks like from here: same origin, so its text
+// is readable, and ttyd's own page always carries its terminal element.
+function termFrameIsError(frame) {
+  try {
+    const doc = frame.contentDocument;
+    if (!doc || !doc.body) return false;
+    if (doc.querySelector(".xterm, #terminal-container")) return false;
+    if (doc.body.hasAttribute("data-terminal-starting")) return true;
+    return /\b50[234]\b|Bad Gateway|not responding yet/i.test(doc.body.innerText || "");
+  } catch (e) {
+    return false;
+  }
+}
+
+$("#termFrame").addEventListener("load", () => {
+  const frame = $("#termFrame");
+  if (frame.getAttribute("src") === "about:blank") return;
+  if (termFrameIsError(frame)) termRetry();
+  else termStarting(false);
+});
 
 // Open Claude Code in the terminal: on a conversation, with a first message,
 // or both. Every way into a conversation from the panel ends here — a row,
 // New, Discuss on a card, and pressing and holding anything.
 async function openInTerminal(body) {
-  if (chatState.session !== "classic") applyTermMode("classic");
+  // No local face flip here: a face the server has not saved is put back by
+  // the next status refresh (`syncTermMode`), which is how Ask on a card
+  // used to land people on an empty chat. Asking goes through `askAbout`,
+  // which follows the saved face; this is the classic face's own door.
   switchView("terminal");
   showTerminalFrame();
   try {
@@ -17693,9 +17988,11 @@ function openAskAbout(el, x, y) {
   go.className = "btn small primary";
   go.textContent = "Ask";
   const send = () => {
+    if (go.disabled) return;
     const prompt = askPrompt(ctx, input.value.trim());
+    go.disabled = true;
     closeAskAbout();
-    openInTerminal({ prompt });
+    askAbout(prompt);
   };
   go.addEventListener("click", send);
   cancel.addEventListener("click", closeAskAbout);
@@ -17901,14 +18198,16 @@ function renderPersonality() {
   // cards quote it (`personality.identity`).
   if ($("#persVoice")) $("#persVoice").value = d.voice || "";
   renderPersonaSections(d.persona, !!d.cut_at_old_limit);
+  renderHeaderChoice();
   $("#persCut").hidden = !d.cut_at_old_limit;
   setPersonaEditing(false);
   const list = $("#persGrowth");
   list.textContent = "";
-  const growth = Array.isArray(d.growth) ? d.growth : [];
+  // The assistant's own overnight notes are listed under "How … is
+  // growing" with a Remove each; this list is what the household settled.
+  const growth = (Array.isArray(d.growth) ? d.growth : []).filter((g) => g.by !== "self");
   if (!growth.length) {
     list.appendChild(el("li", "persempty", "Nothing yet."));
-    return;
   }
   growth.forEach((g) => {
     const li = el("li", "persentry");
@@ -17916,7 +18215,180 @@ function renderPersonality() {
     li.appendChild(el("span", "persline", g.text || ""));
     list.appendChild(li);
   });
+  loadPresence();
 }
+
+// ---- ⚙ › Personality › How … is growing ------------------------------------
+//
+// The presence loop (presence.py, /api/presence): once a night the assistant
+// notes how it is doing and thinks of a few small ways to keep in touch with
+// each person; a hard budget decides what is ever sent. Everything it noted,
+// has in mind or sent is here, each with the one press that takes it back:
+// Remove, Skip, Never (this kind), Restore, Less like this.
+const presState = { data: null };
+
+async function loadPresence() {
+  const body = $("#presBody");
+  if (!body) return;
+  try {
+    presState.data = await api("api/presence");
+  } catch (e) {
+    body.textContent = "";
+    body.appendChild(el("p", "persempty", `Could not read this: ${e.message}`));
+    return;
+  }
+  renderPresence();
+}
+
+async function presencePost(payload, said) {
+  try {
+    const out = await api("api/presence", { method: "POST", body: JSON.stringify(payload) });
+    if (out.personality) {
+      persState.data = out.personality;
+      renderPersonality();
+    } else {
+      presState.data = out;
+      renderPresence();
+    }
+    if (said) toast(said);
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+function presButton(label, aria, onClick) {
+  const b = el("button", "btn ghost", label);
+  b.type = "button";
+  b.setAttribute("aria-label", aria);
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+function presRow(main, sub, buttons) {
+  const row = el("div", "presrow");
+  const words = el("div", "prestext");
+  words.appendChild(el("span", "presline", main));
+  if (sub) words.appendChild(el("span", "pressub", sub));
+  row.appendChild(words);
+  if ((buttons || []).length) {
+    const acts = el("div", "presacts");
+    buttons.forEach((b) => acts.appendChild(b));
+    row.appendChild(acts);
+  }
+  return row;
+}
+
+function presCount(n, word) {
+  const words = ["no", "one", "two", "three", "four", "five"];
+  return `${words[n] || n} ${word}${n === 1 ? "" : "s"}`;
+}
+
+function renderPresence() {
+  const d = presState.data || {};
+  const p = persState.data || {};
+  const name = d.name || p.name || "brAIn";
+  $("#presHead").textContent = `How ${name} is growing`;
+  const b = d.budget || {};
+  $("#presWhat").textContent = d.on
+    ? `Once a night ${name} notes how it is doing and thinks of small ways to keep in touch. `
+      + `At most ${presCount(b.per_day || 1, "message")} a person a day and ${b.per_week || 3} a week, `
+      + `${b.hours || "08:00–21:00"}, never in quiet hours or to anyone away.`
+    : `Off: it needs Personality and the Learning loop on in Features.`;
+  const body = $("#presBody");
+  body.textContent = "";
+  const mine = (Array.isArray(p.growth) ? p.growth : []).filter((g) => g.by === "self");
+  if (mine.length) {
+    body.appendChild(el("p", "preshead", "Its own notes"));
+    mine.slice(0, 6).forEach((g) => body.appendChild(presRow(g.text || "", g.date || "", [
+      presButton("Remove", `Remove: ${g.text || ""}`, () => presencePost(
+        { do: "growth_remove", at: g.at, text: g.text }, "Removed")),
+    ])));
+  }
+  (d.people || []).forEach((who) => {
+    const rows = [];
+    (who.ideas || []).forEach((i) => rows.push(presRow(`${i.kind_label}: ${i.text}`, i.reason, [
+      presButton("Skip", `Skip: ${i.text}`, () => presencePost(
+        { do: "skip", person: who.person, id: i.id }, "Skipped")),
+      presButton("Never", `Never a ${i.kind_label.toLowerCase()} for ${who.name}`, () => presencePost(
+        { do: "never", person: who.person, kind: i.kind }, `No more of those for ${who.name}`)),
+    ])));
+    (who.notes || []).forEach((n) => rows.push(presRow(n.text, "Noted from how they answered", [
+      presButton("Remove", `Remove: ${n.text}`, () => presencePost(
+        { do: "note_remove", person: who.person, id: n.id }, "Removed")),
+    ])));
+    (who.retired || []).forEach((r) => rows.push(presRow(`Less like this: ${r.kind_label}`, "", [
+      presButton("Restore", `Bring back ${r.kind_label.toLowerCase()} for ${who.name}`, () => presencePost(
+        { do: "bring_back", person: who.person, kind: r.kind }, "Brought back")),
+    ])));
+    if (who.paused) rows.push(presRow("Not now — nothing more today", "", []));
+    if (!rows.length) return;
+    body.appendChild(el("p", "preshead", who.name));
+    rows.forEach((r) => body.appendChild(r));
+  });
+  const sent = d.touches || [];
+  if (sent.length) {
+    body.appendChild(el("p", "preshead", "Lately"));
+    sent.forEach((t) => {
+      const meta = [t.when, t.name, t.kind_label, t.reaction_label].filter(Boolean).join(" · ");
+      const btns = ["less", "not_now"].includes(t.reaction) ? [] : [
+        presButton("Less like this", `Less like this: ${t.text}`, () => presencePost(
+          { do: "react", id: t.id, reaction: "less" }, "Fewer of those")),
+      ];
+      body.appendChild(presRow(t.text, `${meta}. ${t.reason}`, btns));
+    });
+  }
+  if (!body.childElementCount) {
+    body.appendChild(el("p", "persempty", d.on ? "Nothing yet: it reflects overnight." : "Nothing yet."));
+  }
+}
+
+// ---- Header: what the top bar shows --------------------------------------
+function renderHeaderChoice() {
+  const st = state.status || {};
+  const f = st.features || {};
+  const h = st.header || {};
+  const named = !!(f.personality && f.name);
+  const opt = $("#hdrOptName");
+  if (opt) opt.hidden = opt.disabled = !named;
+  const cur = h.brand || (named ? "name" : "logo");
+  $("#hdrBrand").value = cur === "name" && !named ? "logo" : cur;
+  $("#hdrText").value = h.text || "";
+  $("#hdrCustom").hidden = $("#hdrBrand").value !== "custom";
+  $("#hdrClear").hidden = !h.image;
+}
+
+async function saveHeader(extra) {
+  const brand = $("#hdrBrand").value;
+  const text = $("#hdrText").value;
+  await api("api/settings", { method: "PUT", body: JSON.stringify({ header_brand: brand, header_text: text }) });
+  state.status = state.status || {};
+  state.status.header = { ...(state.status.header || {}), brand, text: text.trim().slice(0, 24), ...(extra || {}) };
+  applyHeader();
+  renderHeaderChoice();
+}
+
+$("#hdrBrand").addEventListener("change", () => { $("#hdrCustom").hidden = $("#hdrBrand").value !== "custom"; });
+$("#hdrSave").addEventListener("click", async () => {
+  try { await saveHeader(); toast("Saved."); } catch (e) { toast(e.message); }
+});
+$("#hdrFile").addEventListener("change", async (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  ev.target.value = "";
+  if (!file) return;
+  if (file.size > 256 * 1024) { toast("The picture is at most 256 KB."); return; }
+  try {
+    const r = await api("api/header/logo", { method: "PUT", body: file });
+    await saveHeader({ image: r.image });
+    toast("Saved.");
+  } catch (e) { toast(e.message); }
+});
+$("#hdrClear").addEventListener("click", async () => {
+  try {
+    await api("api/header/logo", { method: "DELETE" });
+    await saveHeader({ image: null });
+    toast("Picture deleted.");
+  } catch (e) { toast(e.message); }
+});
 
 $("#persEdit").addEventListener("click", () => setPersonaEditing(true));
 $("#persCancel").addEventListener("click", () => {
@@ -17958,7 +18430,7 @@ $("#persAsk").addEventListener("click", () => {
     + "When we settle a change to how you speak or behave, record it with "
     + "note_personality_change in one sentence, and if the persona itself should "
     + "change, tell me what to put in ⚙ › Personality.");
-  openInTerminal({ prompt: lines.join("\n") });
+  askAbout(lines.join("\n"), $("#persAsk"));
 });
 
 // ------------------------------------------------- ⚙ › Instructions
@@ -18089,7 +18561,7 @@ $("#instrAsk").addEventListener("click", () => {
   }
   lines.push("", "Read it, tell me what it makes brAIn do, and help me change it.");
   leaveSettings();
-  openInTerminal({ prompt: lines.join("\n") });
+  askAbout(lines.join("\n"), $("#instrAsk"));
 });
 
 // -------------------------------------------------------- ⚙ › Features

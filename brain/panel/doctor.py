@@ -417,7 +417,7 @@ async def stage_chat(hooks: Hooks) -> dict:
     """
     live = [s for s in chat_session.registry().sessions() if s.alive()]
     cap = chat_session.max_sessions()
-    if len(live) >= cap:
+    if cap is not None and len(live) >= cap:
         busy = sum(1 for s in live if s.state == "busy")
         return _skip(
             f"{len(live)} chat session(s) are already open and brAIn keeps "

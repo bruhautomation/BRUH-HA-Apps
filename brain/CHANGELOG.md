@@ -2,6 +2,39 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.24
+
+### Changed
+
+- **An update asks for a restart only when it needs one.** brAIn now fingerprints the integration code Home Assistant actually loaded and compares it with what was just installed: an update that only moves the version number no longer asks for a restart, and the health status, the Repairs issue and the Morph banner all give the same answer. Screen-only changes need just a page reload. The first update with this change still asks once, because the integration running now never recorded what it loaded.
+
+## 4.0.23
+
+### Changed
+
+- **No limit on conversations running at once.** Every conversation, in the chat or the terminal, can be working at the same time; nothing is refused or made to wait for a slot. ⚙ › Model & usage's limit defaults to "No limit" (a number you choose still applies), and an install that had the old default of 3 saved is moved to no limit once. When the box runs low on memory, the quietest idle conversations are put to sleep and pick up where they left off when you go back; a conversation that is working is never stopped.
+- **Each device keeps its own conversation.** A message, Stop or model change from your phone goes to the conversation on your phone, even if another screen has opened a different one, and another device switching conversations no longer moves yours.
+- **Terminal conversations are visible.** Conversations brAIn opened in the terminal show in the list as "In the terminal", and pressing one brings that window to the front instead of starting a second copy.
+
+### Fixed
+
+- **Asking about a card no longer flips back to an empty chat.** Ask on an insight card, "Ask brAIn about this", and the Personality and Instructions Ask buttons follow the face you chose: on the chat they open a new conversation holding the question, on the terminal they open the terminal, and the page stays there. A double tap starts one conversation, not two.
+- **Fewer "502" pages.** The panel answers as soon as it starts ("brAIn is starting…", and it reloads itself) instead of only after its start-up work; the terminal is restarted if it stops, and its frame retries while it starts; sending, Ask and Discuss answer within a few seconds while Claude starts in the background.
+- **Two quick Asks in the terminal both arrive**, and Ask opens even when the terminal starts on the menu instead of Claude.
+
+## 4.0.22
+
+### Added
+
+- **The assistant grows, and keeps in touch — gently.** With Personality and the Learning loop both on, once a night it looks back at how the household answered it and writes at most two short notes about how to be (never touching the persona you wrote), and queues a few small ways to keep in touch with each person: a welcome home, a morning or evening check-in, a follow-up on something they said, an occasion from a calendar you shared. A message goes to that person's own phone, or is said aloud in an occupied room when Speak first is on. It is hard-capped: one a day and three a week per person, three a day for the whole house, 08:00–21:00, never in quiet hours or to someone who is away. "Not now" stops it for that person for the day, "Less like this" retires that kind of message, and kinds nobody answers retire themselves. ⚙ › Personality › "How <name> is growing" shows its own notes, the ideas waiting, what it has learned, and every message it sent with the reason, each removable.
+
+## 4.0.21
+
+### Added
+
+- **Choose what the top bar shows.** ⚙ › Personality › Header: the brAIn logo (the default), the assistant's name, or your own text and/or picture (PNG, JPEG or WebP up to 256 KB). Nothing changes until you choose: with Personality on the name is shown as before.
+- **The version is in the header on a wide screen.** From about 1100px wide a small version number sits beside the mark and opens What's new; a phone does not show it.
+
 ## 4.0.20
 
 ### Fixed

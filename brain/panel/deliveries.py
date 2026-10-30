@@ -61,9 +61,11 @@ DELIVERIES_FILE = Path(os.environ.get("BRAIN_DELIVERIES",
 # somebody accepted is now running, and `notice` is Home Assistant's own
 # persistent notification, which the safety lane raises when no phone is
 # configured: neither is about a problem anybody could be asked to hear
-# less of, so neither is counted by a learned suggestion either.
+# less of, so neither is counted by a learned suggestion either. `presence`
+# is one of the presence loop's touches (a greeting, a check-in): not about
+# a problem, read back by that loop alone (`presence.absorb`).
 KINDS = ("notify", "escalate", "held", "reminder", "brief", "weekly", "reply",
-         "accepted", "notice")
+         "accepted", "notice", "presence")
 # What happened to it, as `fold` reports it.
 OUTCOMES = ("answered", "cleared", "ignored", "pending", "failed")
 

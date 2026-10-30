@@ -1,7 +1,7 @@
 ---
 name: "GardenRX"
 description: "A spray decision engine for a home orchard and garden — crops, phenology, weather, treatments, tank mixes, inventory and harvests — in the sidebar, with harvest, spray and stock cards for your dashboards"
-version: "0.1.3"
+version: "0.1.4"
 slug: "gardenrx"
 init: false
 

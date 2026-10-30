@@ -36,10 +36,36 @@ if [ ! -r "$perms_lib" ]; then
     perms_lib="$(dirname "${BASH_SOURCE[0]}")/brain-permissions.sh"
 fi
 
+# `--handoff <path>`: the one request this window was opened for. The panel
+# writes one file per request (terminal-handoff-<nonce>.json) and names it
+# here, so two Asks in quick succession each open on their own words — a
+# single fixed file was a race between them. Only a file of that name beside
+# the fixed one is taken; anything else is ignored and the fixed file (what
+# a terminal opened directly, or an older panel, leaves) is read instead.
 args=()
+handoff_arg=""
+expect_handoff=0
 for arg in "$@"; do
-    [ "$arg" = "--dangerously-skip-permissions" ] || args+=("$arg")
+    if [ "$expect_handoff" = 1 ]; then
+        handoff_arg="$arg"
+        expect_handoff=0
+        continue
+    fi
+    case "$arg" in
+        --handoff) expect_handoff=1 ;;
+        --dangerously-skip-permissions) ;;
+        *) args+=("$arg") ;;
+    esac
 done
+if [ -n "$handoff_arg" ]; then
+    case "$(basename -- "$handoff_arg")" in
+        terminal-handoff-*.json)
+            if [ "$(dirname -- "$handoff_arg")" = "$(dirname -- "$HANDOFF_FILE")" ]; then
+                HANDOFF_FILE="$handoff_arg"
+            fi
+            ;;
+    esac
+fi
 # No library is no flag: a session that cannot ask the switch asks you.
 if [ -r "$perms_lib" ]; then
     # shellcheck disable=SC1090
