@@ -45,6 +45,7 @@ BRUH-HA-Apps/
 │   │   ├── habit_lookup.py      # The join over the three ledgers for one entity (never inside habits: the ledgers import it)
 │   │   ├── circular.py          # Clock arithmetic around midnight — a leaf, re-exported by rhythm
 │   │   ├── facts_store.py       # Facts with provenance under memory.md: subjects, source, run, exceptions
+│   │   ├── context_map.py       # What each kind of run is handed and may look up, measured (Knowledge › What brAIn brings)
 │   │   ├── ideas.py             # Cards brAIn thinks this house is missing, before you agree
 │   ├── episodes.py          # What HAPPENED, rather than every value that changed
 │   │   ├── esphome.py           # ESPHome: the device files here, the builds on the dashboard

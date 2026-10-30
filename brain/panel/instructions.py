@@ -175,7 +175,7 @@ FILES: dict[str, tuple[str, str, str, str, bool]] = {
     "memory": (
         "Memory", "Conversation",
         "What brAIn knows about this house. One writer (the consolidator), so " +
-        "it is read here and changed by telling brAIn or through Memory.",
+        "it is read here and changed by telling brAIn or in Memory › Knowledge.",
         "/config/.brain/memory/memory.md", False),
     "morph_agents": (
         "Morph: how to change the dashboard", "Conversation",

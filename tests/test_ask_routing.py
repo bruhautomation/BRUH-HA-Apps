@@ -162,6 +162,15 @@ class _Routes(unittest.IsolatedAsyncioTestCase):
         await self.client.start_server()
 
     async def asyncTearDown(self):
+        # The panel runs its slow start-up work after it binds; let that
+        # finish before the temporary directory it writes into is removed,
+        # or cleanup races its last write ("Directory not empty").
+        startup = self.client.server.app.get("startup")
+        if startup is not None and not startup.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(startup), 30)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
         await self.client.close()
         await self.chat_session.registry().stop_all()
         (findings_store.FINDINGS_FILE, findings_store.SETTLED_FILE,

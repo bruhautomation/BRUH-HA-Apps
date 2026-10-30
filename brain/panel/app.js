@@ -3300,7 +3300,7 @@ function renderSettingsForm(data) {
 // answer null (an ingress iframe may be refused storage), so Account is the
 // fallback.
 const SET_SECTIONS = ["features", "dashboard", "account", "usage", "permissions", "notifications",
-                      "sources", "memory", "personality", "instructions",
+                      "sources", "personality", "instructions",
                       "diagnostics", "developer", "guide"];
 const SET_SECTION_KEY = "brain.set.section";
 // Where the list sits beside the section rather than in front of it. The
@@ -3318,7 +3318,6 @@ const SET_LOADERS = {
   dashboard: () => loadDashboard(),
   permissions: () => loadSetHouseRules(),
   sources: () => { loadCameras(); loadSetCalendars(); },
-  memory: () => loadSetMemory(),
   personality: () => loadPersonality(),
   instructions: () => loadInstructions(),
   diagnostics: () => loadAdvanced(),
@@ -3339,6 +3338,9 @@ function savedSettingsSection() {
 // Show one section: its pane, its row marked on the list, remembered, and
 // its readings fetched the first time it is shown this visit.
 function showSettingsSection(name, load = true) {
+  // ⚙ › Memory moved to Memory › Knowledge: a link or a shell message that
+  // still names it opens the document there.
+  if (name === "memory") { openKnowledgeFold("kDocFold"); return; }
   if (!SET_SECTIONS.includes(name)) name = "account";
   setSection = name;
   const root = $("#setModal");
@@ -8610,12 +8612,20 @@ function renderIdeas() {
   }
 }
 
-// Memory › Knowledge's folded lines: the name opens what is under it.
+// The memory document fold and the context map (both further down, with
+// their loaders), declared here because a fold or Knowledge itself can be
+// opened before the script has reached them.
+const kDoc = { text: "", editing: false, dirty: false };
+const ctxState = { data: null, run: "conversation" };
+
+// Memory › Knowledge's folded lines: the name opens what is under it. The
+// memory document is read the first time its fold opens, each visit.
 document.querySelectorAll(".kfoldname").forEach((b) => b.addEventListener("click", () => {
   const body = document.getElementById(b.getAttribute("aria-controls"));
   const open = b.getAttribute("aria-expanded") !== "true";
   b.setAttribute("aria-expanded", open ? "true" : "false");
   if (body) body.hidden = !open;
+  if (open && body && body.id === "kDocBody" && !kDoc.editing) loadKnowledgeDoc();
 }));
 
 
@@ -9288,11 +9298,13 @@ if ($("#kCleanup")) {
 
 async function renderKnowledge() {
   // What it knows is one list: the facts, searched and filtered on the
-  // server. The memory document and its filing queue are brAIn's own
-  // machinery and are read only where they are mounted (⚙ › Memory), so
-  // the knowledge payload is fetched only when that markup is present.
+  // server. The memory document and its filing queue are a
+  // fold on Knowledge, read when it is opened (`loadKnowledgeDoc`); the
+  // folds' lines are filled from the context map, which is names and sizes.
   loadFacts(true);
   loadCleanup();
+  loadContextMap();
+  if (!$("#kDocBody").hidden && !kDoc.editing) loadKnowledgeDoc();
   if (!$("#kMemView") && !$("#kFacts")) return;
   let data;
   try {
@@ -17244,88 +17256,228 @@ $("#diagOvernightRun").addEventListener("click", () => runDiagUpkeep(
 $("#diagAccessRun").addEventListener("click", () => runDiagUpkeep(
   $("#diagAccessRun"), "api/access/run", "Reviewing…"));
 
-// --------------------------------------------------------- ⚙ → Memory
-// The memory document and the queue waiting to be filed into it. The queue
-// files itself once a day (sooner when it grows), so there is no button
-// to force a pass here — only a read-only list and its count, read in one
-// call so the two cannot disagree. The document is edited in place: Edit
-// opens it as text and Save writes it back, and a pass that lands while
-// you are editing never overwrites the box.
-const setMem = { text: "", editing: false, dirty: false };
+// ------------------------------------------ Memory › Knowledge: the document
+// The memory document and the queue waiting to be filed into it. They were
+// ⚙ › Memory — a second place for what brAIn remembers beside Knowledge,
+// and the owner could not tell the two apart — so they are a fold on
+// Knowledge now. The queue files itself once a day (sooner when it grows),
+// so there is no button to force a pass here — only a read-only list and
+// its count, read in one call so the two cannot disagree. The document is
+// edited in place: Edit opens it as text and Save writes it back, and a
+// pass that lands while you are editing never overwrites the box. Read
+// when the fold opens, never before: it is the whole document.
+// `kDoc` is declared with the fold handlers above, which can run first.
 
-async function loadSetMemory() {
+async function loadKnowledgeDoc() {
   let data;
   try {
     data = await api("api/knowledge");
   } catch (e) {
-    $("#setMemView").textContent = "Could not read memory: " + e.message;
+    $("#kDocView").textContent = "Could not read memory: " + e.message;
     return;
   }
   const items = data.inbox || [];
   const pending = Number(data.inbox_pending);
   const count = Number.isFinite(pending) ? pending : items.length;
-  $("#setMemCount").textContent = String(count);
-  const queue = $("#setMemQueue");
+  $("#kDocCount").textContent = String(count);
+  const queue = $("#kDocQueue");
   queue.textContent = "";
   if (!items.length) {
     queue.appendChild(el("p", "hint tight", "Nothing waiting."));
   }
   items.slice().reverse().forEach((f) => {
-    const row = el("div", "setmemitem");
-    row.appendChild(el("span", "setmemtext", f.text || ""));
-    if (f.source) row.appendChild(el("span", "hint", ` ${f.source}`));
+    const row = el("div", "kdocitem");
+    row.appendChild(el("span", "kdoctext", f.text || ""));
+    if (f.source) row.appendChild(el("span", "hint", ` ${kSourceLabel(f.source)}`));
     queue.appendChild(row);
   });
   const hidden = Math.max(0, count - items.length);
   if (hidden) queue.appendChild(el("p", "hint tight", `…and ${hidden} more waiting.`));
-  if (setMem.editing) return;
-  setMem.text = data.shared_memory || "";
-  const view = $("#setMemView");
-  if (setMem.text.trim()) {
-    view.innerHTML = mdToHtml(setMem.text);
+  if (kDoc.editing) return;
+  kDoc.text = data.shared_memory || "";
+  const view = $("#kDocView");
+  if (kDoc.text.trim()) {
+    view.innerHTML = mdToHtml(kDoc.text);
   } else {
     view.textContent = "Nothing learned yet. Edit starts the document.";
   }
 }
 
-function setMemEditing(on) {
-  setMem.editing = on;
-  setMem.dirty = false;
-  $("#setMemTa").classList.toggle("hidden", !on);
-  $("#setMemView").classList.toggle("hidden", on);
-  $("#setMemEdit").classList.toggle("hidden", on);
-  $("#setMemSave").classList.toggle("hidden", !on);
-  $("#setMemCancel").classList.toggle("hidden", !on);
+function kDocEditing(on) {
+  kDoc.editing = on;
+  kDoc.dirty = false;
+  $("#kDocTa").classList.toggle("hidden", !on);
+  $("#kDocView").classList.toggle("hidden", on);
+  $("#kDocEdit").classList.toggle("hidden", on);
+  $("#kDocExport").classList.toggle("hidden", on);
+  $("#kDocSave").classList.toggle("hidden", !on);
+  $("#kDocCancel").classList.toggle("hidden", !on);
 }
 
-$("#setMemEdit").addEventListener("click", () => {
-  $("#setMemTa").value = setMem.text.trim() ? setMem.text
+$("#kDocEdit").addEventListener("click", () => {
+  $("#kDocTa").value = kDoc.text.trim() ? kDoc.text
     : (typeof MEM_TEMPLATE === "string" ? MEM_TEMPLATE : "# Home Memory\n");
-  setMemEditing(true);
-  $("#setMemTa").focus();
+  kDocEditing(true);
+  $("#kDocTa").focus();
 });
-$("#setMemTa").addEventListener("input", () => { setMem.dirty = true; });
-$("#setMemCancel").addEventListener("click", () => {
-  if (setMem.dirty && !window.confirm("Discard your unsaved memory edits?")) return;
-  setMemEditing(false);
-  loadSetMemory();
+$("#kDocTa").addEventListener("input", () => { kDoc.dirty = true; });
+$("#kDocCancel").addEventListener("click", () => {
+  if (kDoc.dirty && !window.confirm("Discard your unsaved memory edits?")) return;
+  kDocEditing(false);
+  loadKnowledgeDoc();
 });
-$("#setMemSave").addEventListener("click", async () => {
-  const text = $("#setMemTa").value;
-  const btn = $("#setMemSave");
+$("#kDocSave").addEventListener("click", async () => {
+  const text = $("#kDocTa").value;
+  const btn = $("#kDocSave");
   btn.disabled = true;
   try {
     await api("api/memory", { method: "PUT", body: JSON.stringify({ text }) });
-    setMem.text = text;
-    setMemEditing(false);
+    kDoc.text = text;
+    kDocEditing(false);
     toast("Memory saved");
-    loadSetMemory();
+    loadKnowledgeDoc();
+    loadContextMap();
   } catch (e) {
     toast(e.message);
   } finally {
     btn.disabled = false;
   }
 });
+
+// ------------------------------- Memory › Knowledge: what brAIn brings
+// The owner: "It's not clear to me what is imported on each new
+// conversation vs what's in knowledge." /api/memory/context answers it from
+// the builders that make each run (context_map.py): per kind of run, what it
+// is handed at the start, what it is handed with each message, and what it
+// may look up. Sizes are what they are right now; "up to" is a cap the
+// builder holds to. The page only draws what came back — no sentence here
+// names a size or a tool of its own, so nothing drifts from the code.
+// `ctxState` is declared with the fold handlers above.
+
+function ctxSize(p) {
+  const kb = p.bytes >= 1024 ? `${(p.bytes / 1024).toFixed(1)} KB` : `${p.bytes} bytes`;
+  if (!p.bytes && !p.upto) return "nothing";
+  return `${p.upto ? "up to " : ""}${kb} · about ${p.tokens.toLocaleString()} tokens`;
+}
+
+async function loadContextMap() {
+  try {
+    ctxState.data = await api("api/memory/context");
+  } catch (e) {
+    ctxState.data = { error: e.message };
+  }
+  paintContextMap();
+}
+
+function paintContextMap() {
+  const d = ctxState.data;
+  const meta = $("#kDocMeta");
+  if (d && d.memory && meta) {
+    const m = d.memory;
+    const kb = `${(m.document_bytes / 1024).toFixed(1)} KB`;
+    meta.textContent = m.document_bytes
+      ? `${kb} · ${m.waiting} waiting to be filed`
+      : `Empty · ${m.waiting} waiting to be filed`;
+  }
+  const box = $("#kCtxRun");
+  const kinds = $("#kCtxKinds");
+  if (!box || !kinds) return;
+  box.textContent = "";
+  kinds.textContent = "";
+  if (!d) { box.appendChild(el("p", "hint", "Reading…")); return; }
+  if (d.error) { box.appendChild(el("p", "hint", "Could not read it: " + d.error)); return; }
+  const runs = d.runs || [];
+  if (!runs.some((r) => r.key === ctxState.run)) ctxState.run = (runs[0] || {}).key;
+  runs.forEach((r) => {
+    const b = el("button", "pill", r.title);
+    b.type = "button";
+    b.setAttribute("role", "tab");
+    b.dataset.run = r.key;
+    b.setAttribute("aria-selected", r.key === ctxState.run ? "true" : "false");
+    b.classList.toggle("active", r.key === ctxState.run);
+    b.addEventListener("click", () => { ctxState.run = r.key; paintContextMap(); });
+    kinds.appendChild(b);
+  });
+  const run = runs.find((r) => r.key === ctxState.run);
+  if (!run) return;
+  box.appendChild(el("p", "kctxwhen", run.when));
+  const list = (title, parts) => {
+    if (!parts.length) return;
+    box.appendChild(el("h4", "kctxhead", title));
+    const ul = el("ul", "kctxparts");
+    parts.forEach((p) => {
+      const li = el("li", "kctxpart");
+      li.dataset.part = p.key;
+      const top = el("div", "kctxtop");
+      top.appendChild(el("span", "kctxlabel", p.label));
+      top.appendChild(el("span", "kctxsize", ctxSize(p)));
+      li.appendChild(top);
+      let about = p.about || "";
+      if (p.only === "chat" && d.memory && d.memory.face !== "chat") {
+        about += " Only in the chat: Ask opens as a terminal here, which has no per-message hook.";
+      }
+      const line = el("p", "kctxabout", about);
+      if (p.sec === "knowledge") {
+        line.appendChild(document.createTextNode(" "));
+        const a = el("a", "linkish", "Open the document");
+        a.href = "#";
+        a.addEventListener("click", (ev) => { ev.preventDefault(); openKnowledgeFold("kDocFold"); });
+        line.appendChild(a);
+      } else if (p.sec && p.change) {
+        line.appendChild(document.createTextNode(" Changed in "));
+        const a = el("a", "linkish", p.change);
+        a.href = "#";
+        a.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          openSettings().then(() => showSettingsSection(p.sec)).catch(() => {});
+        });
+        line.appendChild(a);
+        line.appendChild(document.createTextNode("."));
+      }
+      li.appendChild(line);
+      ul.appendChild(li);
+    });
+    box.appendChild(ul);
+  };
+  list("Given at the start", run.given || []);
+  list(run.key === "voice" ? "With each request" : "With each message", run.each_time || []);
+  box.appendChild(el("h4", "kctxhead", "Looks up while it works"));
+  box.appendChild(el("p", "kctxabout", run.looks_up.summary));
+  if ((run.looks_up.groups || []).length) {
+    const tools = el("ul", "kctxtools");
+    run.looks_up.groups.forEach((g) => {
+      const li = el("li", "kctxtool", `${g.label} (${g.count})`);
+      li.title = g.tools.join(", ");
+      tools.appendChild(li);
+    });
+    box.appendChild(tools);
+  }
+  const m = d.memory || {};
+  const facts = $("#kCtxFacts");
+  if (facts) {
+    facts.textContent = `The ${Number(m.facts || 0).toLocaleString()} facts below are what `
+      + "brAIn looks things up in: a card, a first look and an investigation are handed "
+      + "the facts about what they are about, the chat is handed the ones that match each "
+      + "message, and every run with tools can search them with recall. What brAIn "
+      + "learns waits to be filed, is written into the memory document once a day and "
+      + "is kept as a fact; a fact whose line you delete from the document is forgotten.";
+  }
+}
+
+// Open one of Knowledge's folds and bring it into view — the way in from a
+// link elsewhere (⚙ › Memory's old address, Ask's ⋯).
+function openKnowledgeFold(id, run) {
+  if (run) ctxState.run = run;
+  if (currentView !== "memory") switchView("memory");
+  const fold = document.getElementById(id);
+  const name = fold && fold.querySelector(".kfoldname");
+  if (!name) return;
+  if (name.getAttribute("aria-expanded") !== "true") name.click();
+  if (id === "kCtxFold") paintContextMap();
+  fold.scrollIntoView({ block: "start" });
+}
+
+$("#chatBrings")?.addEventListener("click", () => openKnowledgeFold("kCtxFold", "conversation"));
 
 // ------------------------------------------------- ⚙ → Cameras & calendars: calendars
 // Which calendars brAIn may read for what is coming up. Off until somebody

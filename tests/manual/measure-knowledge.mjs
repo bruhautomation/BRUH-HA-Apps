@@ -29,12 +29,20 @@
 //     which is a report now, on House › Reports, priced on its Run as a
 //     share of a session and dated "4 Oct" with no model or token count.
 //
+// Knowledge is also the one home of everything brAIn remembers (it was split
+// with ⚙ › Memory, and the owner could not tell the two apart): the memory
+// document with Edit and Export and the queue waiting to be filed, and
+// "What brAIn brings to a run" — what each kind of run is handed and may
+// look up. Its payload is made by the panel's own `context_map.report`
+// (run through python3 below), so the shape measured is the route's.
+//
 // Like measure-activity.mjs, this drives the panel's REAL renderers behind a
 // stubbed fetch. A copy of renderHouse in this file would only ever agree
 // with itself.
 import { chromium } from 'playwright';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { openView } from './tabs.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -274,6 +282,7 @@ window.EventSource = function () {
 };
 window.fetch = async (url, opts) => {
   const p = String(url);
+  (window.__fetched = window.__fetched || []).push(p);
   const answer = (body, status) => new Response(JSON.stringify(body), {
     status: status || 200, headers: { 'Content-Type': 'application/json' } });
   // Memory clean-up: a proposal to review, and the presses recorded.
@@ -383,6 +392,7 @@ window.fetch = async (url, opts) => {
       memory_state: { merging: false, running: false, stale_hours: 0, error: '' },
     });
   }
+  if (p.includes('api/memory/context')) return answer(window.__ctx || {});
   if (p.includes('api/memory/state')) {
     return answer({ memory_state: { merging: false, running: false } });
   }
@@ -606,10 +616,13 @@ for (const width of WIDTHS) {
   // (#539, a structural assertion this batch moved: Deep review left
   // Insights for the top of Knowledge, as one folded line, and is measured
   // in its own block below.)
+  // (Moved by the one-home-for-memory change: 'Memory document', 'Waiting
+  // to be filed' and 'Export' came BACK to Knowledge from ⚙ › Memory, folded
+  // at its top, and are asserted present in the "memory home" block below;
+  // the button that forced a filing pass stays cut.)
   for (const cut of ['This morning', 'What brAIn has measured',
-                     "How brAIn's memory works", 'Memory document',
-                     'Waiting to be filed', 'File into memory now',
-                     'Edit markdown', 'Export', 'Anyone taught it',
+                     "How brAIn's memory works", 'File into memory now',
+                     'Edit markdown', 'Anyone taught it',
                      'Newest first']) {
     if (m.house.includes(cut)) note(`${width}px`, `"${cut}" is back on What it knows`);
   }
@@ -1555,6 +1568,141 @@ for (const width of WIDTHS) {
   }
   if (!/lands under Memory/.test(after.toast)) note(at, `the press said "${after.toast}"`);
   console.log(`${failures.length ? 'ok? ' : 'ok  '}deep review ${String(width).padStart(4)}px`);
+  await context.close();
+}
+
+// ------------------------------------------- the one home for memory
+// Memory › Knowledge holds the memory document (Edit, Export, the queue and
+// its count) and "What brAIn brings to a run"; ⚙ holds neither (asserted in
+// measure-settings.mjs, which also drives ⚙ › Memory's old address here).
+// The context payload is `context_map.report` over a fixed set of sources —
+// the real module's shape, not a copy of it.
+const CTX = JSON.parse(execFileSync('python3', ['-c', `
+import json, sys
+sys.path.insert(0, ${JSON.stringify(PANEL)})
+import context_map
+src = dict(identity='x' * 5200, personality='y' * 310, house_now='z' * 240,
+           claude_md='a' * 9000 + '\\n## Learned Home Knowledge\\n' + 'm' * 8000
+                     + '\\n## Available Directories\\n',
+           terminal_ui='classic', chat_hook=True, chat_context_chars=1500,
+           analyst_tools=['mcp__home-assistant__recall', 'mcp__home-assistant__get_history'],
+           mcp_tools=['recall', 'get_history', 'call_service', 'control_light'],
+           gather_mode='search', card_rules='r' * 9000, card_memory_cap=3000,
+           card_memory_head=600, card_context_chars=4000, house_chars=2000,
+           learned='l' * 900, findings='f' * 2100, guesses='', retrieval_chars=1500,
+           memory_head_chars=800, first_look_rules='q' * 4000,
+           investigate_rules='i' * 6000, overnight_rules='o' * 3000,
+           document_bytes=21400, facts=412, waiting=1, voice_summary=True,
+           voice_memory=1830, voice_map=9800, voice_personality='v' * 300,
+           voice_rules=3900, voice_request_cap=3120)
+print(json.dumps(context_map.report(src)))
+`], { encoding: 'utf8' }));
+const RUN_TITLES = CTX.runs.map((r) => r.title);
+
+for (const width of WIDTHS) {
+  const touch = width < 800;
+  const at = `memory home ${width}px`;
+  const { context, page } = await openPanel(width, `window.__ctx = ${JSON.stringify(CTX)};`, touch);
+  await openView(page, 'memory');
+  await page.waitForFunction(() => /20\.9 KB/.test(document.getElementById('kDocMeta').textContent),
+    null, { timeout: 4000 }).catch(() => note(at, 'the document fold does not say its size'));
+  const early = await page.evaluate(() => window.__fetched
+    ? window.__fetched.filter((u) => /api\/knowledge($|\?)/.test(u)).length : 0);
+  // Open both folds the way a person does: their names.
+  await page.click('#kDocFold .kfoldname');
+  await page.waitForFunction(() => document.getElementById('kDocCount').textContent !== '',
+    null, { timeout: 4000 }).catch(() => note(at, 'the queue count never filled'));
+  await page.click('#kCtxFold .kfoldname');
+  await page.waitForSelector('#kCtxRun .kctxpart', { timeout: 4000 })
+    .catch(() => note(at, 'what brAIn brings never rendered'));
+  const m = await page.evaluate(() => {
+    const vis = (n) => !!n && n.offsetParent !== null;
+    const h = (n) => Math.round(n.getBoundingClientRect().height);
+    const doc = document.getElementById('kDocBody');
+    return {
+      docMeta: document.getElementById('kDocMeta').textContent,
+      doc: document.getElementById('kDocView').textContent,
+      buttons: [...doc.querySelectorAll('button, a.btn')].filter(vis).map((b) => b.textContent.trim()),
+      exportHref: document.getElementById('kDocExport').getAttribute('href'),
+      count: document.getElementById('kDocCount').textContent,
+      queue: [...document.querySelectorAll('#kDocQueue .kdocitem')].map((r) => r.textContent),
+      kinds: [...document.querySelectorAll('#kCtxKinds .pill')].map((b) => ({ t: b.textContent, h: h(b) })),
+      parts: [...document.querySelectorAll('#kCtxRun .kctxpart')].map((li) => ({
+        key: li.dataset.part, text: li.textContent,
+        right: Math.round(li.getBoundingClientRect().right) })),
+      heads: [...document.querySelectorAll('#kCtxRun .kctxhead')].map((x) => x.textContent),
+      tools: [...document.querySelectorAll('#kCtxRun .kctxtool')].map((x) => x.textContent),
+      facts: document.getElementById('kCtxFacts').textContent,
+      foldH: [...document.querySelectorAll('.kfoldname')].filter(vis).map(h),
+      docBtnH: [...doc.querySelectorAll('.kdocrow .btn')].filter(vis).map(h),
+      small: [...document.querySelectorAll('#kDocBody, #kCtxBody')].flatMap((b) =>
+        [...b.querySelectorAll('*')].filter((n) => vis(n) && n.childNodes.length
+          && [...n.childNodes].some((c) => c.nodeType === 3 && c.textContent.trim()))
+          .map((n) => parseFloat(getComputedStyle(n).fontSize))),
+      docWidth: document.documentElement.scrollWidth,
+    };
+  });
+  if (early) note(at, 'Knowledge read the whole document before its fold was opened');
+  if (!/waiting to be filed/.test(m.docMeta)) note(at, `the document's line reads "${m.docMeta}"`);
+  if (!/hall light/.test(m.doc)) note(at, 'the memory document did not render');
+  if (m.buttons.join('|') !== 'Edit|Export') note(at, `the document offers ${m.buttons.join(', ')}`);
+  if (m.exportHref !== 'api/memory/export') note(at, 'Export does not link the export');
+  if (m.count !== '1') note(at, `the queue count reads "${m.count}", not 1`);
+  if (m.queue.length !== 1 || !/garage fridge/.test(m.queue[0])) note(at, 'the queued line is not listed');
+  if (m.kinds.map((k) => k.t).join('|') !== RUN_TITLES.join('|')) {
+    note(at, `the kinds of run read ${m.kinds.map((k) => k.t).join(', ')}`);
+  }
+  const keys = m.parts.map((p) => p.key);
+  for (const want of ['identity', 'personality', 'claude_md', 'memory_excerpt', 'facts_for_message']) {
+    if (!keys.includes(want)) note(at, `a conversation does not list ${want}`);
+  }
+  for (const p of m.parts) {
+    if (!/\d/.test(p.text) && !/nothing/.test(p.text)) note(at, `${p.key} carries no size`);
+    if (p.right > width + 0.5) note(at, `${p.key} hangs off the side`);
+  }
+  if (!m.parts.some((p) => p.key === 'facts_for_message' && /Only in the chat/.test(p.text))) {
+    note(at, 'a terminal house is not told the per-message facts are the chat\'s');
+  }
+  if (m.heads.join('|') !== 'Given at the start|With each message|Looks up while it works') {
+    note(at, `the run's headings read ${m.heads.join(', ')}`);
+  }
+  if (!m.tools.some((t) => /What brAIn remembers \(1\)/.test(t))) note(at, 'recall is not named as a lookup');
+  if (!/recall/.test(m.facts) || !/412/.test(m.facts)) note(at, 'the facts store\'s part is not said');
+  if (touch) {
+    for (const k of m.kinds) if (k.h < MIN_TARGET) note(at, `the "${k.t}" pill is ${k.h}px`);
+    for (const x of m.foldH) if (x < MIN_TARGET) note(at, `a fold's name is ${x}px tall`);
+    for (const x of m.docBtnH) if (x < MIN_TARGET) note(at, `a document button is ${x}px tall`);
+  }
+  if (m.small.some((f) => f < 12)) note(at, `text under 12px: ${Math.min(...m.small)}px`);
+  if (m.docWidth > width + 0.5) note(at, `page scrolls sideways (${m.docWidth}px)`);
+  // A run with no tools says so and lists none.
+  await page.evaluate(() => [...document.querySelectorAll('#kCtxKinds .pill')]
+    .find((b) => b.dataset.run === 'overnight').click());
+  const night = await page.evaluate(() => ({
+    tools: document.querySelectorAll('#kCtxRun .kctxtool').length,
+    text: document.getElementById('kCtxRun').textContent,
+  }));
+  if (night.tools || !/Nothing/.test(night.text)) note(at, 'the overnight check is drawn as looking things up');
+  // Edit opens the document as text, Cancel puts it back.
+  await page.click('#kDocEdit');
+  const editing = await page.evaluate(() => !document.getElementById('kDocTa').classList.contains('hidden')
+    && /hall light/.test(document.getElementById('kDocTa').value));
+  if (!editing) note(at, 'Edit does not open the document as text');
+  await page.click('#kDocCancel');
+  // Ask's ⋯ › What brAIn brings opens this, on a conversation.
+  await page.evaluate(() => { ctxState.run = 'card'; switchView('terminal'); });
+  await page.evaluate(() => document.getElementById('chatBrings').click());
+  const back = await page.evaluate(() => ({
+    view: currentView, open: !document.getElementById('kCtxBody').hidden,
+    run: (document.querySelector('#kCtxKinds .pill.active') || {}).textContent || '',
+  }));
+  if (back.view !== 'memory' || !back.open || back.run !== RUN_TITLES[0]) {
+    note(at, `Ask's ⋯ › What brAIn brings opened ${JSON.stringify(back)}`);
+  }
+  if (process.env.KNOWLEDGE_SHOT_DIR) {
+    await page.screenshot({ path: `${process.env.KNOWLEDGE_SHOT_DIR}/knowledge-${width}.png`, fullPage: true });
+  }
+  console.log(`${failures.length ? 'ok? ' : 'ok  '}memory home ${String(width).padStart(4)}px`);
   await context.close();
 }
 

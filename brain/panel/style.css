@@ -1738,11 +1738,33 @@ body.modal-open {
 .usagedetail .pwhen { margin-left: 6px; color: var(--ink-3); }
 .usagedetail .pnote { margin: 6px 0 0; font-size: var(--fs-meta); color: var(--ink-2); }
 
-/* ⚙ → Memory: the document as it reads, and the queue as a plain list. */
-.setmemrow { margin: 4px 0 8px; }
-.setmemview { max-height: 360px; overflow: auto; }
-.setmemqueue { display: grid; gap: 4px; }
-.setmemitem { font-size: var(--fs-meta); padding: 4px 0; border-bottom: 1px solid var(--hairline); }
+/* Memory › Knowledge › Memory document: the document as it reads, and the
+   queue as a plain list (it was ⚙ › Memory). */
+.kdocrow { margin: 4px 0 8px; display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.kdocrow .btn { min-height: 44px; }
+.kdocview { max-height: 360px; overflow: auto; }
+.kdochead { margin: var(--sp-4) 0 2px; font-size: var(--fs-body); font-weight: 600; }
+.kdocqueue { display: grid; gap: 4px; }
+.kdocitem { font-size: var(--fs-meta); padding: 4px 0; border-bottom: 1px solid var(--hairline);
+  overflow-wrap: anywhere; }
+
+/* Memory › Knowledge › What brAIn brings: one kind of run at a time, each
+   part a name and its size on one line with what it is under it. */
+.kctxkinds { margin: var(--sp-2) 0 var(--sp-3); }
+.kctxwhen { margin: 0 0 var(--sp-2); color: var(--ink-2); }
+.kctxhead { margin: var(--sp-3) 0 var(--sp-1); font-size: var(--fs-body); font-weight: 600; }
+.kctxparts { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.kctxpart { padding: var(--sp-2) 0; border-bottom: 1px solid var(--hairline); min-width: 0; }
+.kctxtop { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px var(--sp-3); }
+.kctxlabel { font-weight: 500; color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
+.kctxsize { color: var(--ink-3); font-size: var(--fs-meta); font-variant-numeric: tabular-nums; }
+.kctxabout { margin: 2px 0 0; color: var(--ink-2); font-size: var(--fs-meta);
+  line-height: var(--lh-meta); overflow-wrap: anywhere; }
+.kctxtools { list-style: none; margin: var(--sp-2) 0 0; padding: 0; display: flex;
+  flex-wrap: wrap; gap: var(--sp-2); }
+.kctxtool { padding: 2px 10px; border-radius: 999px; background: var(--surface-2, var(--surface));
+  border: 1px solid var(--hairline); color: var(--ink-2); font-size: var(--fs-meta); }
+.kctxfacts { margin-top: var(--sp-4); }
 
 /* ⚙ → Diagnostics → Runs: one disclosure per kind of run, a count, and
    the newest of them as links. */
@@ -7388,4 +7410,11 @@ html.in-shell.bar-hidden .topbar > .shelledit { opacity: 0; visibility: hidden; 
   }
   body:not(.term-classic).ask-list .crhead { min-height: 52px; padding-top: 4px; padding-bottom: 4px; }
   .crhead .btn.icon { width: 44px; height: 44px; }
+}
+
+/* Memory › Knowledge › What brAIn brings, on a touch screen: after the
+   16px floor block, which has to stay the first coarse block. */
+@media (pointer: coarse) {
+  .kctxkinds .pill { min-height: 44px; }
+  .kctxabout .linkish { display: inline-flex; align-items: center; min-height: 44px; }
 }

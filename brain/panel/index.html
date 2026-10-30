@@ -831,6 +831,12 @@
     <!-- The same picker the meta line's model name opens: before the first
          turn there is no meta line yet, and a choice you can only make
          after a message is a choice made one message too late. -->
+    <!-- What a conversation starts with and may look up: Memory ›
+         Knowledge › What brAIn brings, opened on a conversation. -->
+    <button id="chatBrings" class="tmitem" role="menuitem">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"/><circle cx="18" cy="17" r="3"/></svg>
+      <span>What brAIn brings</span>
+    </button>
     <button id="chatModelPick" class="tmitem" role="menuitem">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M18.5 15.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z"/></svg>
       <span>Model…</span>
@@ -856,10 +862,11 @@
      identical to one that had, and a baseline pass that stopped running
      looked exactly like a quiet house. Every row says which of those it is. -->
 <div id="viewMemory" class="view">
-  <!-- What it knows: tell it something, and every fact it holds, one per
-       row. The morning brief, the measurements, the memory document and its
-       filing queue used to live here too; the brief is linked from Today's
-       status line and the rest is brAIn's own machinery, which is ⚙'s. -->
+  <!-- Everything brAIn remembers, in one place: the memory document and
+       what is waiting to be filed into it, what each kind of run is handed,
+       the two reports, a box to teach it, and every fact it holds, one per
+       row. The brief is linked from Today's status line and the
+       measurements are ⚙ › Diagnostics'. -->
   <section class="ksec kknow">
     <header class="panehead">
       <div>
@@ -877,6 +884,54 @@
          have no idea why deep review and suggested reports are on
          insights… those seem more like memory items to me"). -->
     <div class="kfolds">
+      <!-- The memory document and what is waiting to be filed into it. They
+           were ⚙ › Memory, a second place for what brAIn remembers beside
+           this one (the owner: "no idea what the difference is"); one home
+           now. The queue files itself once a day, so there is no button to
+           force a pass. -->
+      <div class="kfold" id="kDocFold">
+        <div class="kfoldhead">
+          <button type="button" class="kfoldname" aria-expanded="false" aria-controls="kDocBody">
+            <span class="kfoldtitle">Memory document</span><span id="kDocMeta" class="kfoldmeta"></span></button>
+        </div>
+        <div id="kDocBody" class="kfoldbody" hidden>
+          <p class="reportrowhint">brAIn's own notes about this house. What it learns waits
+            below and is written in once a day. Every conversation starts with as much
+            of it as fits; the other runs are handed the facts they need instead.</p>
+          <div class="row kdocrow">
+            <button id="kDocEdit" class="btn" type="button">Edit</button>
+            <!-- A real link, not a fetch: the server sets
+                 Content-Disposition and the browser does the rest, which
+                 survives the ingress iframe where a scripted blob download
+                 may not. -->
+            <a id="kDocExport" class="btn" href="api/memory/export" download>Export</a>
+            <button id="kDocSave" class="btn primary hidden" type="button">Save</button>
+            <button id="kDocCancel" class="btn ghost hidden" type="button">Cancel</button>
+          </div>
+          <div id="kDocView" class="kmd kdocview">Loading the document…</div>
+          <textarea id="kDocTa" class="kmemedit hidden" rows="14" maxlength="100000"
+            spellcheck="false" aria-label="Memory document"></textarea>
+          <h3 class="kdochead">Waiting to be filed <span id="kDocCount" class="kcount"></span></h3>
+          <p class="hint tight">Filed into the document once a day, or sooner when the list
+            gets long.</p>
+          <div id="kDocQueue" class="kdocqueue"></div>
+        </div>
+      </div>
+      <!-- What each kind of run is handed and may look up, measured off the
+           builders that make it (/api/memory/context, context_map.py). -->
+      <div class="kfold" id="kCtxFold">
+        <div class="kfoldhead">
+          <button type="button" class="kfoldname" aria-expanded="false" aria-controls="kCtxBody">
+            <span class="kfoldtitle">What brAIn brings to a run</span><span id="kCtxMeta" class="kfoldmeta">A conversation, a card, voice, its checks</span></button>
+        </div>
+        <div id="kCtxBody" class="kfoldbody" hidden>
+          <p class="reportrowhint">What Claude is handed when each kind of run starts, how big
+            it is right now, and what it can look up while it works.</p>
+          <div id="kCtxKinds" class="kctxkinds pillseg" role="tablist" aria-label="Kind of run"></div>
+          <div id="kCtxRun" class="kctxrun"></div>
+          <p id="kCtxFacts" class="hint kctxfacts"></p>
+        </div>
+      </div>
       <div class="kfold" id="kReviewFold">
         <div class="kfoldhead">
           <button type="button" class="kfoldname" aria-expanded="false" aria-controls="kReview">
@@ -1024,8 +1079,6 @@
         <span class="setnavname">Notifications</span><span class="setnavsum" id="setSumNotify">What reaches your phone</span></button>
       <button type="button" class="setnavbtn" data-sec="sources" role="tab" aria-controls="setsecSources">
         <span class="setnavname">Cameras &amp; calendars</span><span class="setnavsum" id="setSumSources">What brAIn may look at</span></button>
-      <button type="button" class="setnavbtn" data-sec="memory" role="tab" aria-controls="setsecMemory">
-        <span class="setnavname">Memory</span><span class="setnavsum" id="setSumMemory">What brAIn knows about your home</span></button>
       <button type="button" class="setnavbtn" data-sec="personality" role="tab" aria-controls="setsecPersonality">
         <span class="setnavname">Personality</span><span class="setnavsum" id="setSumPersonality">Who brAIn is in this house</span></button>
       <button type="button" class="setnavbtn" data-sec="instructions" role="tab" aria-controls="setsecInstructions">
@@ -1105,7 +1158,7 @@
 
           <p class="hint">What brAIn learns about your home — facts, memory — is not
             self-improvement and is under
-            <a class="linkish" href="#" data-open-sec="memory">Memory</a>.</p>
+            <a class="linkish" href="#" data-open-sec="memory">Memory › Knowledge</a>.</p>
           <p id="featNote" class="hint tight" role="status"></p>
         </div>
       </section>
@@ -1398,37 +1451,6 @@
           <p class="hint" id="setCalendarsNote">Only what is ticked is read, once or twice a day,
             for the next three days. What it says is treated as information, never as an
             instruction.</p>
-        </div>
-      </section>
-
-      <!-- The memory document and what is waiting to be filed into it. The
-           queue files itself once a day; there is deliberately no button to
-           force it here. -->
-      <section class="setsec" id="setsecMemory" data-sec="memory" role="tabpanel" hidden>
-        <header class="setsechead">
-          <button type="button" class="setback" aria-label="All settings">‹ Settings</button>
-          <h2 class="setsecname">Memory</h2>
-        </header>
-        <div class="setsecbody">
-          <div class="row setmemrow">
-            <button id="setMemEdit" class="btn">Edit</button>
-            <!-- A real link, not a fetch: the server sets
-                 Content-Disposition and the browser does the rest, which
-                 survives the ingress iframe where a scripted blob download
-                 may not. -->
-            <a id="setMemExport" class="btn" href="api/memory/export" download>Export</a>
-            <button id="setMemSave" class="btn primary hidden">Save</button>
-            <button id="setMemCancel" class="btn ghost hidden">Cancel</button>
-          </div>
-          <div id="setMemView" class="kmd setmemview">Open this section to load the
-            document.</div>
-          <textarea id="setMemTa" class="kmemedit hidden" rows="14" maxlength="100000"
-            spellcheck="false" aria-label="Memory document"></textarea>
-          <h4 class="sethead">Waiting to be filed <span id="setMemCount"
-            class="kcount"></span></h4>
-          <p class="hint tight">Filed into the document once a day, or sooner when the list
-            gets long.</p>
-          <div id="setMemQueue" class="setmemqueue"></div>
         </div>
       </section>
 
