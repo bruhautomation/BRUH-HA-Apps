@@ -18,7 +18,6 @@ TESTS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(TESTS_DIR.parent / "brain" / "panel"))
 sys.path.insert(0, str(TESTS_DIR))
 
-import corrections  # noqa: E402
 import findings_store  # noqa: E402
 from test_scoped_corrections import RouteCase  # noqa: E402
 
