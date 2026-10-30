@@ -2,6 +2,15 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.16
+
+### Fixed
+
+- **"Is this fixed now?" waits for the fix to be running, and asks once per change.** brAIn asks whether a fix worked only when Home Assistant has loaded the release that carries it (after its restart), and reports from the same release and place are one question that lists what changed. One answer covers them all (#535).
+- **A card's what-to-do is one step.** brAIn settles an "either this or that" or an "also confirm" from what it can read before it writes the step, and a written step that still hands you a choice, or a "restore it if asked", is not kept (#536).
+- **A finding brAIn's own look says is over or ordinary is held.** When the look finds the problem has already come back, or that it is just the normal state of the thing (a TV that is simply switched off), the card is held instead of shown beside a note that contradicts it (#537).
+- **Passing over a row that an open card already covers is no longer counted as a miss.** Rows folded into the connectivity card no longer teach brAIn that its first look was too quiet (#547, #548, #549).
+
 ## 4.0.15
 
 ### Fixed
