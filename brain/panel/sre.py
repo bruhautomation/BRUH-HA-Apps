@@ -2042,7 +2042,7 @@ def _judge_log(rec: dict, dig: dict) -> tuple[str, str] | None:
         known = [health[e] for e in rec.get("entities") or [] if e in health]
         if known and all(h.get("state") not in _DOWN for h in known):
             return ("transient", "everything the failed calls were aimed "
-                    "at answers now")
+                    + "at answers now")
         return None
     if (domain in RULE_DOMAINS or _from_frontend(rec)
             or (not domain and logger.startswith("homeassistant"))):
