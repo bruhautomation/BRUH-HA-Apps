@@ -19028,16 +19028,24 @@ async def _devloop_verify_pass(now: float | None = None) -> int:
         live = {int(f.get("ts") or 0)
                 for f in await asyncio.to_thread(findings_store.list_all)
                 if f.get("source") == devloop.verify.SOURCE}
-        entries = devloop.verify.due(data["items"], str(data.get("version") or ""),
-                                     state, live, data.get("products"))
+        # brAIn's RUNNING release: a fix in the integration is not live
+        # until Home Assistant restarts onto it, and asking before then is
+        # a question nobody can answer (#535).
+        running = devloop.verify.live_version(
+            str(data.get("version") or ""),
+            await asyncio.to_thread(_integration_versions))
+        groups = devloop.verify.due_groups(data["items"], running, state, live,
+                                           data.get("products"))
         asked = 0
-        for entry in entries:
+        for group in groups:
             row = await asyncio.to_thread(
-                findings_store.add_case, devloop.verify.question_row(entry), when=now)
+                findings_store.add_case, devloop.verify.group_row(group), when=now)
             if row:
-                devloop.verify.record_asked(state, entry["fp"], int(row["ts"]),
-                                            str(entry["fixed_in"]), now,
-                                            text=str(row.get("text") or ""))
+                for entry in group:
+                    devloop.verify.record_asked(
+                        state, entry["fp"], int(row["ts"]),
+                        str(entry["fixed_in"]), now,
+                        text=str(row.get("text") or ""))
                 asked += 1
         if asked:
             await asyncio.to_thread(devloop.verify.save, state)
@@ -19063,31 +19071,53 @@ async def _devloop_verify_settle(now: float | None = None) -> dict:
         rows = [f for f in await asyncio.to_thread(findings_store.list_all)
                 if f.get("source") == devloop.verify.SOURCE
                 and f.get("status") in findings_store.LIVE_STATUSES]
+        # A fix is proven against the release that is RUNNING (#535).
+        running = devloop.verify.live_version(
+            str(data.get("version") or ""),
+            await asyncio.to_thread(_integration_versions))
+        measured = {**data, "version": running}
         for row in rows:
-            fp = devloop.verify.fp_for_finding(state, row)
-            if not fp:
+            # A question can cover several reports (`verify.group_row`): it
+            # is answered for brAIn only when every one is proven, and
+            # withdrawn only when every one is moot.
+            fps = [fp for fp in devloop.verify.fps_for_finding(state, row)
+                   if not (state.get(fp) or {}).get("answer")]
+            if not fps:
                 continue
-            entry = data["items"].get(fp)
-            stream = str((entry or {}).get("stream") or "")
-            looked = bool(stream) and await asyncio.to_thread(
-                devloop.stream_on, stream)
-            said = devloop.verify.proof(entry, state.get(fp), data,
-                                        looked=looked)
-            if said is None:
+            said = []
+            for fp in fps:
+                entry = data["items"].get(fp)
+                stream = str((entry or {}).get("stream") or "")
+                looked = bool(stream) and await asyncio.to_thread(
+                    devloop.stream_on, stream)
+                said.append(devloop.verify.proof(entry, state.get(fp),
+                                                 measured, looked=looked))
+            if any(s is None for s in said):
                 continue
-            kind, words = said
-            if kind == "held":
+            kinds = {s[0] for s in said}
+            words = said[0][1] if len(said) == 1 else "; ".join(
+                dict.fromkeys(s[1] for s in said))
+            if "held" in kinds:
+                moot = [fp for fp, s in zip(fps, said) if s[0] != "held"]
+                if moot:
+                    def drop(moot=moot) -> None:
+                        st = devloop.verify.load()
+                        for fp in moot:
+                            devloop.verify.record_moot(st, fp, now)
+                        devloop.verify.save(st)
+                    await asyncio.to_thread(drop)
                 await _end_devloop_verify(
                     row, {"label": "accepted"},
                     f"brAIn checked: {words}", by="brain")
                 done["answered"] += 1
             else:
-                def withdraw(ts=row["ts"], fp=fp, words=words) -> None:
+                def withdraw(ts=row["ts"], fps=fps, words=words) -> None:
                     findings_store.settle_and_clear(
                         ts, "not_applicable",
                         note=f"Withdrawn by brAIn: {words}")
                     st = devloop.verify.load()
-                    devloop.verify.record_moot(st, fp, now)
+                    for fp in fps:
+                        devloop.verify.record_moot(st, fp, now)
                     devloop.verify.save(st)
                 await asyncio.to_thread(withdraw)
                 done["withdrawn"] += 1
@@ -19107,13 +19137,16 @@ async def _end_devloop_verify(finding: dict, spec: dict,
     typed. Neither writes a memory line: it is a fact about brAIn. ``by``
     is ``brain`` when brAIn answered from what it measured."""
     state = await asyncio.to_thread(devloop.verify.load)
-    fp = devloop.verify.fp_for_finding(state, finding)
+    # Every report the question covers that is still waiting for an answer.
+    fps = [fp for fp in devloop.verify.fps_for_finding(state, finding)
+           if (state.get(fp) or {}).get("answer") != "moot"]
     accept = spec.get("label") == "accepted"
 
     def settle() -> dict:
-        if fp:
+        for fp in fps:
             devloop.upstream.owner_answer(fp, accept, note, by=by)
             devloop.verify.record_answer(state, fp, accept, time.time(), by=by)
+        if fps:
             devloop.verify.save(state)
         # Settled under the kind no scorecard counts: the answer is about
         # a fix to brAIn, and must not read as this producer being right
@@ -19130,10 +19163,12 @@ def _devloop_verify_undo(entry: dict) -> None:
         return
     try:
         state = devloop.verify.load()
-        fp = devloop.verify.fp_for_finding(state, finding)
-        if fp:
+        fps = [fp for fp in devloop.verify.fps_for_finding(state, finding)
+               if (state.get(fp) or {}).get("answer") != "moot"]
+        for fp in fps:
             devloop.upstream.forget_owner_answer(fp)
             devloop.verify.forget_answer(state, fp)
+        if fps:
             devloop.verify.save(state)
     except Exception as exc:  # noqa: BLE001
         log.debug("could not undo a fix question: %s", exc)
