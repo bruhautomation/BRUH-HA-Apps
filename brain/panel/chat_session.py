@@ -58,6 +58,7 @@ import re
 import shutil
 import subprocess
 import time
+import uuid
 from pathlib import Path
 
 import engine
@@ -939,6 +940,12 @@ class ChatSession:
         self.proc: asyncio.subprocess.Process | None = None
         self.session_id: str | None = session_id if session_id \
             and safe_id(session_id) else None
+        # This session OBJECT's handle, for a viewer to name it by. A fresh
+        # conversation has no CLI id until its first answer, and "the
+        # attached one" is shared by every device, so a viewer that sent
+        # nothing more specific landed in whatever another device opened
+        # last. The key never changes for the life of the object.
+        self.key = uuid.uuid4().hex
         # What the CLI says about itself at startup: the model it resolved,
         # the directory it considers the project (which is what
         # `claude --resume` keys conversations by), its version, and whether
@@ -1143,6 +1150,7 @@ class ChatSession:
             "state": self.state,
             "error": self.error,
             "session_id": self.session_id,
+            "key": self.key,
             "info": self.info,
             "commands": self.commands,
             "context": self.context,
@@ -2180,7 +2188,7 @@ class ChatSession:
             return {"ok": True, "model": model, "model_label": label,
                     "restarted": True}
 
-    async def reset(self, finding_ts: int = 0) -> dict:
+    async def reset(self, finding_ts: int = 0, spawn: bool = True) -> dict:
         """Start a genuinely new conversation.
 
         Drops the resume id as well as the transcript — keeping the id would
@@ -2200,8 +2208,10 @@ class ChatSession:
             self._seq = 0
             self._persist()
             self._emit({"type": "cleared"}, keep=False)
-            await self.start()
-            return {"ok": True, "session_id": self.session_id}
+            if spawn:
+                await self.start()
+            return {"ok": True, "session_id": self.session_id,
+                    "key": self.key}
 
 
 # ---------------------------------------------------------------------------
@@ -2434,22 +2444,154 @@ TERMINAL_START = os.environ.get("BRAIN_TERMINAL_START",
 TERMINAL_PROMPT_MAX = 6000
 
 
+# The tmux session ttyd shows when Claude is not launched on its own
+# (`auto_launch_claude: false`): the session picker. run.sh exports which one
+# ttyd attaches to as BRAIN_TMUX_SESSION; the picker's is looked for as well,
+# so Ask opens a window wherever the person is actually looking.
+PICKER_SESSION = "claude-picker"
+# Whether the panel may START the terminal's tmux session when none exists
+# yet. Only run.sh says yes (the add-on, where ttyd attaches to that session
+# with `new-session -A`); anywhere else — a developer machine, a test — an
+# absent session means the handoff file waits for the terminal's first
+# launch, which is what it always did.
+TERMINAL_CREATE = os.environ.get("BRAIN_TERMINAL_CREATE") == "1"
+# A brAIn window is tagged with tmux user options, so the panel can tell
+# its windows from somebody's own shell: which conversation it resumed (if
+# any) and the request that opened it.
+WINDOW_SESSION_OPT = "@brain_session"
+WINDOW_NONCE_OPT = "@brain_nonce"
+# A terminal window nobody has typed into or read output from for this long
+# is idle, and may be closed when memory is short or a person's own cap is
+# reached — after every idle chat process, and never a window brAIn did not
+# open. Claude Code keeps the conversation; the list reopens it.
+TERMINAL_IDLE_S = float(os.environ.get("BRAIN_TERMINAL_IDLE_S", "900"))
+TERMINAL_HOLDS = ("This conversation is open in the terminal. Switch to the "
+                  "terminal to carry on there — Claude Code runs one process "
+                  "per conversation, and a second one would fork it.")
+_WINDOW_FIELDS = ("#{session_name}\t#{window_id}\t#{window_index}\t"
+                  "#{" + WINDOW_SESSION_OPT + "}\t#{" + WINDOW_NONCE_OPT
+                  + "}\t#{window_active}\t#{window_activity}\t"
+                  "#{pane_current_command}")
+
+
+def _tmux(args: list[str], timeout: float = 5) -> subprocess.CompletedProcess | None:
+    """One tmux command as the terminal's user; None when it could not run."""
+    try:
+        return subprocess.run(_tmux_argv() + args, capture_output=True,
+                              text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _tmux_sessions() -> list[str]:
+    proc = _tmux(["list-sessions", "-F", "#{session_name}"])
+    if proc is None or proc.returncode != 0:
+        return []
+    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+
+def _tmux_target() -> str | None:
+    """The tmux session a new window should open in: the one ttyd attaches
+    to, else the picker's, else the plain one — whichever exists."""
+    sessions = _tmux_sessions()
+    for name in (TMUX_SESSION, PICKER_SESSION, "claude"):
+        if name in sessions:
+            return name
+    return None
+
+
+def terminal_windows() -> list[dict]:
+    """brAIn's windows in the terminal, read off tmux itself.
+
+    Only windows brAIn opened (they carry a nonce): somebody's own shell is
+    theirs, and is never listed, counted or closed. ``session_id`` is the
+    conversation the window resumed, empty for one that started a new
+    conversation with a first message.
+    """
+    proc = _tmux(["list-windows", "-a", "-F", _WINDOW_FIELDS])
+    if proc is None or proc.returncode != 0:
+        return []
+    out = []
+    now = time.time()
+    for line in proc.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 8 or not parts[4]:
+            continue
+        try:
+            activity = float(parts[6] or 0)
+        except ValueError:
+            activity = 0.0
+        sid = parts[3] if safe_id(parts[3]) else ""
+        out.append({"tmux_session": parts[0], "window_id": parts[1],
+                    "index": parts[2], "session_id": sid, "nonce": parts[4],
+                    "active": parts[5] == "1", "activity": activity,
+                    "idle_s": max(0.0, now - activity) if activity else 0.0,
+                    "command": parts[7]})
+    return out
+
+
+def terminal_holds(session_id: str) -> dict | None:
+    """The terminal window running this conversation, if one is."""
+    if not session_id:
+        return None
+    return next((w for w in terminal_windows()
+                 if w["session_id"] == session_id), None)
+
+
+def select_terminal_window(window_id: str) -> bool:
+    """Bring one of brAIn's windows to the front of its tmux session."""
+    if not re.fullmatch(r"@\d+", window_id or ""):
+        return False
+    if not any(w["window_id"] == window_id for w in terminal_windows()):
+        return False
+    proc = _tmux(["select-window", "-t", window_id])
+    return proc is not None and proc.returncode == 0
+
+
+def close_terminal_window(window_id: str) -> bool:
+    """Close one of brAIn's windows (never anybody else's)."""
+    if not any(w["window_id"] == window_id for w in terminal_windows()):
+        return False
+    proc = _tmux(["kill-window", "-t", window_id])
+    return proc is not None and proc.returncode == 0
+
+
+def handoff_path(nonce: str) -> Path:
+    """Where ONE request's handoff lives: beside the old fixed file."""
+    return Path(HANDOFF_FILE).with_name(f"terminal-handoff-{nonce}.json")
+
+
 def _open_in_terminal(session_id: str = "", prompt: str = "") -> bool:
-    """Leave the conversation where the terminal will pick it up, and — if
-    the terminal is already running — open it there now.
+    """Open a conversation in the terminal — or bring it forward if a window
+    already holds it.
 
-    The file is the contract and always written: ``brain-terminal-start``
-    reads it on launch, so even a terminal that has never been opened comes
-    up inside the conversation. The tmux window is the nicety on top, for
-    when the terminal is already attached and waiting; a new window rather
-    than keystrokes into whatever happens to be in front, and the existing
-    session is left alone in its own window.
+    **One file per request** (``terminal-handoff-<nonce>.json``), handed to
+    the new window as ``brain-terminal-start --handoff <path>`` and read and
+    deleted by that window alone. A single fixed file was a race: two Asks
+    in quick succession wrote over each other, and the second window opened
+    on the first one's words or on nothing. When no window can be opened
+    (no terminal yet), the request's file becomes the old fixed one, which
+    the terminal's first launch reads — the contract it always had.
 
-    Returns whether the window was opened. Everything here is best effort:
+    **A conversation is in one window at most**: an id a brAIn window
+    already resumed is selected, never ``--resume``d a second time beside
+    it. The window is tagged with tmux user options (the conversation and
+    the request's nonce), which is how the panel lists and counts brAIn's
+    windows without touching anybody's own shell.
+
+    Returns whether a window was opened or selected. Best effort throughout:
     the file alone is enough to be correct, just not instant.
     """
+    if session_id:
+        held = terminal_holds(session_id)
+        if held is not None:
+            _LAST_HANDOFF.clear()
+            _LAST_HANDOFF.update({"session_id": session_id,
+                                  "ts": int(time.time())})
+            return select_terminal_window(held["window_id"])
     stamp = int(time.time())
-    record = {"ts": stamp}
+    nonce = uuid.uuid4().hex[:16]
+    record = {"ts": stamp, "nonce": nonce}
     if session_id:
         record["session_id"] = session_id
     if prompt:
@@ -2462,15 +2604,13 @@ def _open_in_terminal(session_id: str = "", prompt: str = "") -> bool:
     _LAST_HANDOFF.clear()
     if session_id:
         _LAST_HANDOFF.update({"session_id": session_id, "ts": stamp})
+    path = handoff_path(nonce)
     try:
-        path = Path(HANDOFF_FILE)
         atomic_write.write_text(path, payload, mode=0o600)
         # The terminal runs as the claude user and this file is written by
         # the panel, which is root — so hand it over rather than opening it
-        # up. 0o666 did the job by making it world-writable, which is a
-        # wider grant than the one user that needs it, and removing it was
-        # never the file's permission to give: unlinking is governed by the
-        # directory, which the claude user already owns.
+        # up. Unlinking is governed by the directory, which the claude user
+        # already owns.
         try:
             os.chown(path, CLAUDE_UID, CLAUDE_GID)
             os.chmod(path, 0o600)
@@ -2481,13 +2621,31 @@ def _open_in_terminal(session_id: str = "", prompt: str = "") -> bool:
     except OSError:
         return False
 
-    argv = _tmux_argv() + [
-        "new-window", "-t", TMUX_SESSION, "-c", WORK_DIR, TERMINAL_START]
-    try:
-        proc = subprocess.run(argv, capture_output=True, timeout=10)
-        return proc.returncode == 0
-    except (OSError, subprocess.SubprocessError):
+    command = [TERMINAL_START, "--handoff", str(path)]
+    target = _tmux_target()
+    if target is not None:
+        proc = _tmux(["new-window", "-P", "-F", "#{window_id}", "-t",
+                      target, "-c", WORK_DIR] + command, timeout=10)
+    elif TERMINAL_CREATE:
+        proc = _tmux(["new-session", "-d", "-P", "-F", "#{window_id}", "-s",
+                      TMUX_SESSION, "-c", WORK_DIR] + command, timeout=10)
+    else:
+        proc = None
+    window = (proc.stdout.strip() if proc is not None
+              and proc.returncode == 0 else "")
+    if not window:
+        # Nothing opened: the request waits where the terminal's first
+        # launch looks, which is the one place a fixed name is right.
+        try:
+            os.replace(path, HANDOFF_FILE)
+        except OSError:
+            pass
         return False
+    _tmux(["set-option", "-w", "-t", window, WINDOW_NONCE_OPT, nonce])
+    if session_id:
+        _tmux(["set-option", "-w", "-t", window, WINDOW_SESSION_OPT,
+               session_id])
+    return True
 
 
 # The panel's own copy of the last handoff. The file is the terminal's
@@ -2674,6 +2832,36 @@ class SessionRegistry:
         return next((s for s in self._sessions if s.session_id == session_id),
                     None)
 
+    def by_key(self, key: str) -> ChatSession | None:
+        """The held session with this viewer handle (``ChatSession.key``)."""
+        if not key:
+            return None
+        return next((s for s in self._sessions if s.key == key), None)
+
+    async def hold(self, session_id: str, replay: list[dict]) -> ChatSession:
+        """Hold this conversation WITHOUT moving anybody's view to it.
+
+        What a viewer's own send/stop/model/answer goes through when the
+        conversation it names is not held (a restart, a trim): it is opened
+        to be read — transcript, no process — and the send that follows
+        starts the process through ``room_for`` like any other. Unlike
+        ``open`` it never attaches, so another device's view is not moved.
+        """
+        if not session_id:
+            raise ValueError("no conversation given")
+        async with self._lock:
+            existing = self.get(session_id)
+            if existing is not None:
+                return existing
+            session = self._adopt(ChatSession())
+            try:
+                await session.resume(session_id, list(replay), spawn=False)
+            except BaseException:
+                if session in self._sessions:
+                    self._sessions.remove(session)
+                raise
+            return session
+
     def attached(self) -> ChatSession:
         """The session the view is on, created on first use.
 
@@ -2827,11 +3015,20 @@ class SessionRegistry:
         whose answer only changes when something else already had an event
         to send.
         """
-        attached = self._attached
-        if attached is None:
-            return
-        attached._emit({"type": "sessions", "sessions": self.live()},
-                       keep=False)
+        rows = None
+        for session in self._watched():
+            if rows is None:
+                rows = self.live()
+            session._emit({"type": "sessions", "sessions": rows}, keep=False)
+
+    def _watched(self) -> list[ChatSession]:
+        """Every held session somebody's stream is on — the attached one,
+        and any a viewer opened by its own key. Each device has its own
+        view now, so the listing goes to each of them."""
+        out = [s for s in self._sessions if s._subs]
+        if self._attached is not None and self._attached not in out:
+            out.append(self._attached)
+        return out
 
     def _announce_ask(self, session: ChatSession) -> None:
         """A background session is waiting on a person.
@@ -2841,16 +3038,16 @@ class SessionRegistry:
         question that declined itself while nobody was told is the silent
         failure the approval card exists to prevent.
         """
-        attached = self._attached
-        if attached is None or session is attached:
-            return
         pending = session.pending_permission or {}
-        attached._emit({
-            "type": "session_asks",
-            "session_id": session.session_id or "",
-            "title": session.title(),
-            "tool": pending.get("tool") or "",
-        }, keep=False)
+        for viewer in self._watched():
+            if viewer is session:
+                continue
+            viewer._emit({
+                "type": "session_asks",
+                "session_id": session.session_id or "",
+                "title": session.title(),
+                "tool": pending.get("tool") or "",
+            }, keep=False)
 
     # -- switching -------------------------------------------------------
 
@@ -2864,7 +3061,8 @@ class SessionRegistry:
             # session's snapshot, which is the contract the stream has had
             # since it was written.
             old._emit({"type": "switched",
-                       "session_id": session.session_id or ""}, keep=False)
+                       "session_id": session.session_id or "",
+                       "key": session.key}, keep=False)
         self._broadcast()
 
     async def attach(self, session_id: str) -> dict:
@@ -2895,6 +3093,29 @@ class SessionRegistry:
         victim._emit({"type": "notice", "text": text})
         victim._persist()
 
+    async def _close_idle_window(self, windows: list[dict],
+                                 why: str) -> bool:
+        """Close the quietest IDLE brAIn terminal window, if there is one.
+
+        Idle is "nothing in or out for ``TERMINAL_IDLE_S``": tmux cannot see
+        whether Claude is mid-thought, so a window that printed anything
+        recently is treated as busy and left alone. Only windows brAIn
+        opened are ever candidates. The conversation stays Claude Code's,
+        and the list reopens it.
+        """
+        idle = [w for w in windows if w["idle_s"] >= TERMINAL_IDLE_S]
+        if not idle:
+            return False
+        victim = max(idle, key=lambda w: w["idle_s"])
+        closed = await asyncio.to_thread(close_terminal_window,
+                                         victim["window_id"])
+        if closed:
+            self._evicted += 1
+            log.info("chat: closed an idle terminal window (%s, %s) for %s",
+                     victim["window_id"], victim["session_id"] or "new",
+                     why)
+        return closed
+
     async def _make_room(self, target: ChatSession) -> None:
         """Make way for ``target``'s process.
 
@@ -2910,10 +3131,16 @@ class SessionRegistry:
         cap = max_sessions()
         while cap is not None:
             others, idle = self._idle_others(target)
-            if len(others) < cap:
+            # brAIn's terminal windows are Claude processes too, and count
+            # against a person's cap like any chat.
+            windows = await asyncio.to_thread(terminal_windows) \
+                if len(others) < cap else []
+            if len(others) + len(windows) < cap:
                 break
             if not idle:
-                raise SessionCapReached(len(others), cap)
+                if await self._close_idle_window(windows, f"the cap of {cap}"):
+                    continue
+                raise SessionCapReached(len(others) + len(windows), cap)
             await self._evict(
                 min(idle, key=lambda s: s.last_activity),
                 "brAIn closed this chat's session to make room for "
@@ -2926,6 +3153,10 @@ class SessionRegistry:
             if free is None or free >= MEM_FLOOR_MB:
                 return
             others, idle = self._idle_others(target)
+            if not idle and await self._close_idle_window(
+                    await asyncio.to_thread(terminal_windows),
+                    f"memory ({free} MB available, floor {MEM_FLOOR_MB} MB)"):
+                continue
             if not idle:
                 log.warning(
                     "chat: memory is short (%d MB available, floor %d MB) "
@@ -2963,6 +3194,7 @@ class SessionRegistry:
                 if not spawn and not existing.alive():
                     self._attach_locked(existing)
                     return {"ok": True, "session_id": existing.session_id,
+                            "key": existing.key,
                             "resumed": None, "events": len(existing.events),
                             "attached": True, "spawned": False}
                 await self._make_room(existing)
@@ -2983,6 +3215,7 @@ class SessionRegistry:
                     spawned = True
                 self._attach_locked(existing)
                 return {"ok": True, "session_id": existing.session_id,
+                        "key": existing.key,
                         "resumed": not existing.resume_fell_back,
                         "events": len(existing.events), "attached": True,
                         "spawned": spawned}
@@ -3002,6 +3235,7 @@ class SessionRegistry:
             self._attach_locked(session)
             out["attached"] = True
             out["spawned"] = spawn
+            out["key"] = session.key
             return out
 
     async def room_for(self, session: ChatSession) -> None:
@@ -3018,7 +3252,9 @@ class SessionRegistry:
             await self._make_room(session)
             self._evicted_ids.pop(session.session_id or "", None)
 
-    async def new(self, finding_ts: int = 0) -> dict:
+    async def new(self, finding_ts: int = 0,
+                  current: ChatSession | None = None,
+                  spawn: bool = True, attach: bool = True) -> dict:
         """Start a conversation, leaving whatever else is open alone.
 
         ``finding_ts`` is the Discuss route's: the new conversation is about
@@ -3028,23 +3264,33 @@ class SessionRegistry:
         approval card — to make room for a question about something else.
         """
         async with self._lock:
-            current = self._attached
+            # The asking viewer's own conversation when it named one: the
+            # globally attached one may be another device's empty chat, and
+            # reusing that would put two devices in one conversation.
+            current = current if current in self._sessions else self._attached
             if current is not None and not current.events \
                     and current.state != "busy":
                 # Nothing was ever said in the one on screen. Spending a
                 # slot on a second empty chat is a process for nothing.
-                return await current.reset(finding_ts)
+                return await current.reset(finding_ts, spawn=spawn)
             session = self._adopt(ChatSession())
             session.about(finding_ts)
-            try:
-                await self._make_room(session)
-                await session.start()
-            except BaseException:
-                if session in self._sessions:
-                    self._sessions.remove(session)
-                raise
-            self._attach_locked(session)
-            return {"ok": True, "session_id": session.session_id}
+            if spawn:
+                # ``spawn=False`` is the prompt-answering path (Ask, Discuss):
+                # the request returns at once with the key, and the send that
+                # follows in the background starts the process through
+                # ``room_for`` — so no request waits out START_GRACE.
+                try:
+                    await self._make_room(session)
+                    await session.start()
+                except BaseException:
+                    if session in self._sessions:
+                        self._sessions.remove(session)
+                    raise
+            if attach:
+                self._attach_locked(session)
+            return {"ok": True, "session_id": session.session_id,
+                    "key": session.key}
 
     async def close(self, session_id: str) -> bool:
         """Stop one conversation's process. The conversation is the CLI's.

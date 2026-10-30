@@ -26394,6 +26394,108 @@ def _chat() -> "chat_session.ChatSession":
     return session
 
 
+async def _chat_for(source) -> "chat_session.ChatSession":
+    """The conversation THIS viewer named, never another device's.
+
+    Every device used to act on one shared "attached" session, so a phone
+    sending into conversation A after a desktop opened B landed its message
+    in B. The panel now names its own conversation on every send, stop,
+    model pick and approval answer: ``session_key`` (the session object's
+    handle, which a fresh chat has before the CLI names it) and/or
+    ``session_id``. A named conversation the registry is not holding (a
+    restart, a trim) is held again to be read — never attached, so nobody
+    else's view moves — and the send that follows starts its process. A
+    name that matches nothing is refused rather than quietly answered by
+    some other conversation. A caller that names nothing (an older panel,
+    the CLI) keeps the old meaning: the attached one.
+    """
+    registry = _chat_registry()
+    key = str(source.get("session_key") or "").strip()
+    session_id = str(source.get("session_id") or "").strip()
+    session = registry.by_key(key) if key else None
+    if session is None and session_id:
+        session = registry.get(session_id)
+        if session is None:
+            if await asyncio.to_thread(chat_session.terminal_holds,
+                                       session_id):
+                raise web.HTTPConflict(reason=chat_session.TERMINAL_HOLDS)
+            if not chat_session.safe_id(session_id):
+                raise web.HTTPBadRequest(reason="that is not a conversation id")
+            replay = await asyncio.to_thread(
+                conversations.transcript, chat_session.WORK_DIR, session_id)
+            try:
+                session = await registry.hold(session_id, replay)
+            except ValueError as exc:
+                raise web.HTTPBadRequest(reason=_refusal(exc))
+            except RuntimeError as exc:
+                raise web.HTTPConflict(reason=_refusal(exc))
+    if session is None:
+        if key or session_id:
+            raise web.HTTPNotFound(
+                reason="that conversation is no longer open — start a new "
+                       "chat or pick it from the list")
+        return _chat()
+    session.model = eff_chat_model()
+    session.skip_permissions = registry.skip_permissions
+    return session
+
+
+# How long a send waits for its message to reach a process before it
+# answers "accepted" and lets the stream report the rest. A process that
+# is already up takes milliseconds; a spawn is watched for up to
+# START_GRACE per attempt (two or three of them on a resume that falls
+# back), which held the request 20-30 s — long enough for a proxy in front
+# of ingress to give up on it.
+SEND_HOLD_S = 3.0
+_SEND_TASKS: set = set()
+
+
+async def _deliver(session: "chat_session.ChatSession", text: str) -> dict:
+    """Room for the process, then the message — the whole of a send."""
+    await _chat_registry().room_for(session)
+    return await session.send(text)
+
+
+def _send_failed(session, text: str, exc: BaseException) -> None:
+    """A send that failed after its request had already answered: the
+    stream says so, and hands the words back so the box can refill."""
+    reason = _refusal(exc) if isinstance(exc, Exception) else "stopped"
+    session._emit({"type": "send_failed", "text": text, "reason": reason},
+                  keep=False)
+    session._emit({"type": "notice",
+                   "text": f"That message was not sent: {reason}"})
+
+
+async def _send_promptly(session, text: str) -> dict:
+    """Send, answering within ``SEND_HOLD_S`` whatever the spawn does.
+
+    The send itself runs as a task. Done in time, its own answer (or its
+    own refusal) is the response, exactly as before. Not done in time,
+    the response is ``accepted`` with the conversation's names, and the
+    task carries on: its user turn, its state and any failure arrive on
+    the stream the panel is already reading.
+    """
+    task = asyncio.create_task(_deliver(session, text))
+    _SEND_TASKS.add(task)
+
+    def _settled(t: asyncio.Task) -> None:
+        _SEND_TASKS.discard(t)
+        if t.cancelled() or getattr(t, "_brain_answered", False):
+            return
+        exc = t.exception()
+        if exc is not None:
+            log.warning("chat: a send failed after it was accepted: %s", exc)
+            _send_failed(session, text, exc)
+
+    task.add_done_callback(_settled)
+    done, _ = await asyncio.wait({task}, timeout=SEND_HOLD_S)
+    if task in done:
+        task._brain_answered = True
+        return task.result()
+    return {"ok": True, "accepted": True, "pending": True,
+            "session_id": session.session_id, "key": session.key}
+
+
 async def h_chat_stream(request: web.Request) -> web.StreamResponse:
     """Server-sent events: a snapshot, then everything as it happens.
 
@@ -26416,8 +26518,18 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
                 "state": "idle", "error": _refusal(exc)}
 
     first = None
+    # A viewer that names its own conversation (``?session_key=`` and/or
+    # ``?session_id=``) is served that one and is not moved by another
+    # device's switch; one that names nothing, or names a conversation that
+    # is gone, gets the attached one as before.
+    named = bool(request.query.get("session_key")
+                 or request.query.get("session_id"))
     try:
-        session = _chat()
+        try:
+            session = await _chat_for(request.query) if named else _chat()
+        except web.HTTPException:
+            named = False
+            session = _chat()
     except Exception as exc:   # noqa: BLE001 — see the docstring
         session, first = None, empty(exc)
     resp = web.StreamResponse(headers={
@@ -26444,7 +26556,8 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
                 first = empty(exc)
         await send(first)
         registry = chat_session.registry()
-        if session is not None and registry.attached() is not session:
+        if session is not None and not named \
+                and registry.attached() is not session:
             # Attached somewhere else between picking the session and
             # subscribing to it. The `switched` event that would have said
             # so went to the queue this stream does not hold, so it is
@@ -26452,7 +26565,8 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
             # conversation nobody is in — a narrow race, and the only one
             # whose failure is permanent.
             await send({"type": "switched",
-                        "session_id": registry.attached().session_id or ""})
+                        "session_id": registry.attached().session_id or "",
+                        "key": registry.attached().key})
         while True:
             try:
                 event = await asyncio.wait_for(
@@ -26463,8 +26577,10 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
                     # there is, the panel reconnects to it the way it does
                     # after any switch.
                     try:
+                        now = _chat()
                         await send({"type": "switched",
-                                    "session_id": _chat().session_id or ""})
+                                    "session_id": now.session_id or "",
+                                    "key": now.key})
                         break
                     except Exception:   # noqa: BLE001 — still nothing
                         pass
@@ -26531,20 +26647,37 @@ async def h_chat_send(request: web.Request) -> web.Response:
     body = await request.json()
     if not isinstance(body, dict):
         raise web.HTTPBadRequest(text="expected an object")
-    session = _chat()
+    session = await _chat_for(body)
+    text = str(body.get("text") or "").strip()
     try:
+        if not text:
+            raise ValueError("empty message")
+        if len(text) > chat_session.MAX_TEXT_CHARS:
+            raise ValueError("message too long")
         # A conversation opened to be read has no process yet; the one this
-        # message starts is counted against the cap like any other spawn.
-        await _chat_registry().room_for(session)
-        return web.json_response(await session.send(body.get("text") or ""))
+        # message starts is counted against the cap like any other spawn —
+        # and answered within SEND_HOLD_S, whatever the spawn takes.
+        out = await _send_promptly(session, text)
     except ValueError as exc:
         raise web.HTTPBadRequest(reason=_refusal(exc))
     except RuntimeError as exc:
         raise web.HTTPConflict(reason=_refusal(exc))
+    return web.json_response(
+        {**out, "session_id": session.session_id, "key": session.key})
+
+
+async def _chat_body(request: web.Request) -> dict:
+    """A JSON body that may be absent (the old Stop sent none)."""
+    try:
+        body = await request.json()
+    except (ValueError, UnicodeDecodeError):
+        return {}
+    return body if isinstance(body, dict) else {}
 
 
 async def h_chat_stop(request: web.Request) -> web.Response:
-    return web.json_response(await _chat().interrupt())
+    session = await _chat_for(await _chat_body(request))
+    return web.json_response(await session.interrupt())
 
 
 async def h_chat_new(request: web.Request) -> web.Response:
@@ -26554,8 +26687,13 @@ async def h_chat_new(request: web.Request) -> web.Response:
     rather than spending a slot on a second empty process — see
     ``SessionRegistry.new``.
     """
+    body = await _chat_body(request)
+    registry = _chat_registry()
+    # The asking viewer's own conversation, so "reuse the empty one" reuses
+    # THEIRS and never another device's empty chat.
+    current = registry.by_key(str(body.get("session_key") or ""))
     try:
-        return web.json_response(await _chat_registry().new())
+        return web.json_response(await registry.new(current=current))
     except RuntimeError as exc:
         raise web.HTTPConflict(reason=_refusal(exc))
 
@@ -26631,13 +26769,37 @@ async def h_chat_conversations(request: web.Request) -> web.Response:
         row["row_state"] = registry.row_state(
             row["id"], view_only=bool(row.get("view_only")))
         _discussion_row(row, registry)
+    # brAIn's terminal windows: Claude processes too, listed so they are
+    # neither invisible nor opened a second time. A row a window holds is
+    # marked, and pressing it brings that window forward instead of a
+    # second `--resume`; a window on a conversation it started itself has
+    # no row in the store yet, so it is listed on its own.
+    windows = await asyncio.to_thread(chat_session.terminal_windows)
+    held = {w["session_id"]: w for w in windows if w["session_id"]}
+    for row in rows:
+        window = held.get(row["id"])
+        if window is not None:
+            row["terminal"] = {"window_id": window["window_id"]}
     return web.json_response({
         "conversations": rows,
         "current": session.session_id,
         "sources": await asyncio.to_thread(_conversation_source_counts),
         "sessions": registry.live(),
+        "terminal": windows,
         "max_sessions": chat_session.max_sessions(),
     })
+
+
+async def h_terminal_select(request: web.Request) -> web.Response:
+    """POST {window_id}: bring one of brAIn's terminal windows forward."""
+    body = await _chat_body(request)
+    window_id = str(body.get("window_id") or "")
+    selected = await asyncio.to_thread(
+        chat_session.select_terminal_window, window_id)
+    if not selected:
+        raise web.HTTPNotFound(
+            reason="that terminal window is not open any more")
+    return web.json_response({"ok": True, "window_id": window_id})
 
 
 DISCUSS_TITLE_PREFIX = "Discussing: "
@@ -26786,7 +26948,7 @@ async def h_chat_model(request: web.Request) -> web.Response:
     body = await request.json()
     if not isinstance(body, dict):
         raise web.HTTPBadRequest(text="expected an object")
-    session = _chat()
+    session = await _chat_for(body)
     if session.state == "busy":
         # Refused before anything is saved: a choice that half-applies —
         # stored but not running — reads as a picker that lies. The one
@@ -26835,7 +26997,7 @@ async def h_chat_permission(request: web.Request) -> web.Response:
                 for k, v in answers.items()):
             raise web.HTTPBadRequest(
                 text="answers must map question text to an answer string")
-    session = _chat()
+    session = await _chat_for(body)
     try:
         return web.json_response(await session.respond_permission(
             str(body.get("id") or ""), bool(body.get("allow")),
@@ -26973,6 +27135,17 @@ async def h_chat_resume(request: web.Request) -> web.Response:
     # Anything that does not say so keeps the old meaning — "Resume now"
     # and every older caller want the process up straight away.
     spawn = body.get("spawn") is not False
+    if registry.get(session_id) is None:
+        window = await asyncio.to_thread(chat_session.terminal_holds,
+                                         session_id)
+        if window is not None:
+            # A terminal window is running this conversation. A second
+            # process on it would fork it, so the answer is where it is —
+            # the panel switches to the terminal and brings it forward.
+            return web.json_response({
+                "ok": False, "in_terminal": True, "session_id": session_id,
+                "window_id": window["window_id"],
+                "message": chat_session.TERMINAL_HOLDS})
     try:
         out = await registry.open(session_id, replay, spawn=spawn)
     except ValueError as exc:
@@ -27031,8 +27204,11 @@ def _chat_snapshot(session: "chat_session.ChatSession") -> dict:
 
 
 async def h_chat_state(request: web.Request) -> web.Response:
-    """The snapshot on its own, for a client whose stream is not up yet."""
-    return web.json_response(_chat_snapshot(_chat()))
+    """The snapshot on its own, for a client whose stream is not up yet.
+
+    ``?session_key=`` / ``?session_id=`` name the viewer's own conversation,
+    as the stream's do."""
+    return web.json_response(_chat_snapshot(await _chat_for(request.query)))
 
 
 # ---------------------------------------------------------------------------
@@ -27354,6 +27530,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/chat/new", h_chat_new)
     app.router.add_post("/api/chat/handoff", h_chat_handoff)
     app.router.add_post("/api/terminal/open", h_terminal_open)
+    app.router.add_post("/api/terminal/select", h_terminal_select)
     app.router.add_get("/api/features", h_features_get)
     app.router.add_put("/api/features", h_features_put)
     app.router.add_get("/api/morph/state", h_morph_state)
