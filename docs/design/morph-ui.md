@@ -33,14 +33,18 @@ Each of these came from looking at the prototype and saying "no, not like
 that". They are the acceptance criteria.
 
 1. **Nothing floats over anything.** No popups, no sheets, no overlays. Things
-   open in place, and the rest of the page moves around them.
+   open in place, and the rest of the page moves around them. The one
+   exception is the room rail held open: while a finger holds it, it is a
+   little wider over the page's edge with the floor names beside it, and it
+   is gone the moment the finger lifts (the owner asked for that look).
 2. **One grammar.** **Tap** does the main thing (toggle, play, lock). **Slide**
    sets a level (brightness, fan speed, blind position). **Hold** opens the card
    in place with its options and its history. In **Edit**, **tap** edits and
    **hold** talks to brAIn (§7). A short **pull left** on the room rail at a
    touch screen's right edge is an *opening* gesture, not a slide: it sets no
-   level, it opens the room index (then up or down goes room to room), and a
-   vertical swipe there is an ordinary scroll.
+   level, it opens the rail of room notches (then, without lifting, up or down
+   goes room to room and lifting lands there), and a vertical swipe there is
+   an ordinary scroll.
 3. **No chrome.** No Done buttons, tabs, chevrons, instruction rows, hold rings
    or drag handles in normal use. A small hint pill on hover is the most a card
    gets.
