@@ -912,6 +912,14 @@ async def collect(now: float | None = None) -> dict:
     except Exception as exc:  # noqa: BLE001
         log.debug("could not read the scoped corrections: %s", exc)
 
+    # What the household already answered about each entity, per check, off
+    # the settled ledger: `House.answered_off` reads it before a card is made.
+    try:
+        import findings_store  # noqa: PLC0415
+        snap["answers"] = findings_store.answered_checks()
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not read the settled answers: %s", exc)
+
     # What each entity IS (`world_model`): the readings whose fingerprint
     # still matches the registry this pass fetched. Read, never built —
     # the nightly pass reads the house and a checks pass picks up what it

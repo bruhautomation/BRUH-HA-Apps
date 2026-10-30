@@ -3372,7 +3372,7 @@ def _for_now_routes(said: str, routes: list[dict] | None,
     the snooze; a reply that asked for something else (a fix, To Do, a
     question back, a time of its own) is left as it was read.
     """
-    if finding is None or not corrections.temporary(said):
+    if finding is None or not corrections.puts_off(said):
         return routes
     if not _for_now(finding, FINDING_VERBS["wrong"], said):
         return routes
@@ -20756,8 +20756,8 @@ _FOR_NOW_SOURCES = (findings_store.RESIDENT_SOURCE, findings_store.MORPH_SOURCE)
 
 
 def _for_now(finding: dict, spec: dict, note: str) -> bool:
-    """A Wrong whose reason says the thing is out of use for now
-    (`corrections.temporary`), on a row that can sleep."""
+    """A Wrong whose reason says the thing is out of use for now, or asks
+    not to be reminded (`corrections.puts_off`), on a row that can sleep."""
     if spec.get("kind") != "ignored" or not str(note or "").strip():
         return False
     source = str(finding.get("source") or "")
@@ -20765,7 +20765,7 @@ def _for_now(finding: dict, spec: dict, note: str) -> bool:
         return False
     if corrections.is_offer(finding):
         return False
-    return corrections.temporary(note)
+    return corrections.puts_off(note)
 
 
 def _wake_entities(finding: dict) -> list[str]:
@@ -20786,8 +20786,10 @@ async def _snooze_for_now(finding: dict, note: str) -> tuple[dict, str]:
     memory line, no label: a light somebody is repairing is not a fact
     about the house, and a rule would outlive the repair. The undo token
     wakes it (`_undo_finding`)."""
-    until = int(time.time() + corrections.temporary_days(note) * 86400)
-    wake = _wake_entities(finding)
+    until = int(time.time() + corrections.snooze_days(note) * 86400)
+    # "Out of use for now" is over when the thing reports again; "don't
+    # remind me" is over when its time is, and not before.
+    wake = _wake_entities(finding) if corrections.temporary(note) else []
 
     def sleep() -> dict:
         findings_store.snooze(int(finding["ts"]), until, wake=wake)

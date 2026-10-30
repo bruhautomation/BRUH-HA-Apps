@@ -324,6 +324,10 @@ Rules:
   reason says why you think it is nothing.
 - """ + prompt_kit.PRIVACY + """ If the only thing that makes a signal
   interesting is a person rather than the house, ignore it.
+- A reading on a signal was taken once, when the rule filed it, and the
+  time beside it says when. Quote that value with its time; if you know a
+  newer one, say both with their times rather than a second "now" that
+  disagrees with the row.
 - "why" is one plain sentence naming what made you decide. It is read by
   the person who maintains this and it is the only record of your
   reasoning, so "looks fine" is not an answer. The numbers on the signals

@@ -311,6 +311,13 @@ def _names_room(name: str, area: str) -> bool:
 # replace, a reading stuck on one value, a device not answering. An answer to
 # one of them about one entity of a device is an answer about the device.
 DEVICE_QUIET = frozenset({"dev.battery_low", "dev.frozen", "dev.unavailable"})
+# The checks that say a device reads wrong or has gone quiet: the ones a
+# person's "I don't use it any more" or "that sensor is broken" settles for
+# good (`House.answered_off`).
+DEVICE_FINISHED = DEVICE_QUIET | {"dev.implausible"}
+# How many times a row may be marked Wrong before the check stops filing
+# it for that entity.
+WRONG_LIMIT = 2
 
 
 
@@ -581,6 +588,45 @@ class House:
             return {**hit, "scope": "check"}
         return None
 
+    def answered_off(self, entity_id: str, check_id: str) -> dict | None:
+        """The household's own earlier answers that close this check for
+        this entity, read off the settled ledger (`snap["answers"]`), or None.
+
+        Two things close it, both read before a card is made: the same row
+        marked Wrong `WRONG_LIMIT` times (a rule that was written and still
+        did not hold is not a reason to ask a third time), and a reason that
+        says the device is finished with — retired, not used, broken
+        (`corrections.gone_for_good`) — for a check that is about the device
+        reading wrong or going quiet (`DEVICE_FINISHED`), on this entity or
+        another of its device. A different check is a different kind of
+        fault and is not closed by either. Never a pair `_never_covered`
+        names: a smoke or leak sensor is asked about whatever was said.
+        """
+        answers = self.snap.get("answers")
+        if not isinstance(answers, dict) or not answers:
+            return None
+        if self._never_covered(entity_id, check_id):
+            return None
+        finished = check_id in DEVICE_FINISHED
+        try:
+            import corrections  # noqa: PLC0415 — lazy: it imports the stores
+            gone = corrections.gone_for_good
+        except Exception:  # noqa: BLE001
+            gone = None
+        own = (answers.get(entity_id) or {}).get(check_id)
+        if isinstance(own, dict) and int(own.get("wrong") or 0) >= WRONG_LIMIT:
+            return {"text": f"you marked this wrong {int(own['wrong'])} times",
+                    "scope": "answers"}
+        if not (finished and gone):
+            return None
+        for eid in [entity_id, *self.siblings(entity_id)]:
+            for cid in sorted(DEVICE_FINISHED):
+                row = (answers.get(eid) or {}).get(cid)
+                for note in (row or {}).get("notes") or ():
+                    if gone(note):
+                        return {"text": str(note), "scope": "answers"}
+        return None
+
     def should_report(self, entity_id: str, check_id: str) -> bool:
         """May this check file a row about this entity? The one question.
 
@@ -593,7 +639,8 @@ class House:
         said so is the one silence a person can ask about and deserves the
         sentence they gave.
         """
-        rule = self.withheld_by(entity_id, check_id)
+        rule = self.withheld_by(entity_id, check_id) \
+            or self.answered_off(entity_id, check_id)
         if rule is None:
             return True
         self._note({"kind": "exception", "subject": entity_id,

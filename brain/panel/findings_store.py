@@ -3300,6 +3300,12 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
         # Wrong for weeks on the fault list (`scorecard`'s `last_wrong_ts`).
         **({"wrong_at": _wrong_at(prior) or stamp} if kind == "ignored"
            else {}),
+        # How many times this exact key was answered Wrong. The entry is
+        # replaced on every answer, so without this a third Wrong is
+        # indistinguishable from the first (`answered_checks`).
+        **({"wrong_count": (int(prior.get("wrong_count") or 1)
+                            if _wrong_at(prior) else 0) + 1}
+           if kind == "ignored" else {}),
         "note": str(note or "").strip()[:MAX_NOTE],
         # Who raised it. An ending is a label — "I did it" says the report
         # was right, "Wrong" says it was not — and without the producer on
@@ -3319,6 +3325,41 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
            if clean_items(shaped.get("items")) else {}),
     })
     _write_settled(ledger[-MAX_SETTLED:])
+
+
+def answered_checks() -> dict[str, dict[str, dict]]:
+    """What the household has already said about each entity, per check:
+    ``{entity_id: {check_id: {"wrong": n, "notes": [reason, …]}}}``.
+
+    Read off the settled ledger for the rows a house check filed, under the
+    entity the row was about and every item it named. A check asks this
+    (`House.answered_off`) before it files, so a device somebody answered
+    Wrong twice, or said they no longer use, is not filed again in new
+    words whether or not the rule written then still holds. Never raises.
+    """
+    out: dict[str, dict[str, dict]] = {}
+    try:
+        ledger = _load_settled()
+    except Exception:  # noqa: BLE001
+        return out
+    for e in ledger:
+        source = str(e.get("source") or "")
+        if not source.startswith("check:"):
+            continue
+        check = source[len("check:"):]
+        subjects = [str(e.get("entity_id") or "")] + list(
+            clean_items(e.get("items")))
+        wrong = 0
+        if e.get("kind") == "ignored":
+            wrong = max(1, int(e.get("wrong_count") or 1))
+        note = str(e.get("note") or "").strip()
+        for subject in dict.fromkeys(s for s in subjects if s):
+            row = out.setdefault(subject, {}).setdefault(
+                check, {"wrong": 0, "notes": []})
+            row["wrong"] += wrong
+            if note and note not in row["notes"]:
+                row["notes"].append(note)
+    return out
 
 
 def _wrong_at(entry: dict | None) -> int:
