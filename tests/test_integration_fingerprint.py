@@ -35,9 +35,8 @@ import sys
 import tempfile
 import types
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -367,7 +366,7 @@ class TestBrainIntegrationAndPanelAgree(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         (self.tmp / ".brain").mkdir()
         self.pkg = env.load_integration()
-        self.pkg.ir = MagicMock(name="issue_registry")
+        self.pkg.ir = unittest.mock.MagicMock(name="issue_registry")
         self.pkg._LOADED_VERSION = "4.0.20"
         self.pkg._LOADED_FINGERPRINT = "f1-aaaaaaaaaaaaaaaa"
         self.hass = _Hass(self.tmp)
@@ -380,8 +379,8 @@ class TestBrainIntegrationAndPanelAgree(unittest.TestCase):
 
     def panel(self) -> dict:
         server = importlib.import_module("server")
-        with mock.patch.object(server, "INTEGRATION_LOADED_FILE", self.tmp / ".brain" / "integration_loaded.json"), \
-                mock.patch.object(server, "RESTART_MARKER_FILE", self.tmp / ".brain" / "restart_required"):
+        with unittest.mock.patch.object(server, "INTEGRATION_LOADED_FILE", self.tmp / ".brain" / "integration_loaded.json"), \
+                unittest.mock.patch.object(server, "RESTART_MARKER_FILE", self.tmp / ".brain" / "restart_required"):
             return server._integration_versions()
 
     def morph_restart(self) -> bool:
@@ -466,10 +465,10 @@ class TestBambuPanelFollowsTheCode(unittest.TestCase):
         (self.tmp / "shared").mkdir()
         for name, value in (("DEPLOYED", self.deployed), ("SHARED", self.tmp / "shared"),
                             ("NOTIFIED", self.tmp / "notified")):
-            p = mock.patch.object(self.ha_setup, name, value)
+            p = unittest.mock.patch.object(self.ha_setup, name, value)
             p.start()
             self.addCleanup(p.stop)
-        e = mock.patch.dict(os.environ, {"SUPERVISOR_TOKEN": "t", "ENABLE_HA_INTEGRATION": "true"})
+        e = unittest.mock.patch.dict(os.environ, {"SUPERVISOR_TOKEN": "t", "ENABLE_HA_INTEGRATION": "true"})
         e.start()
         self.addCleanup(e.stop)
         self.calls = []
@@ -479,7 +478,7 @@ class TestBambuPanelFollowsTheCode(unittest.TestCase):
             if path.startswith("/core/api/config/config_entries/entry"):
                 return 200, [{"domain": "bruh_bambu", "state": "loaded", "entry_id": "e"}]
             return 200, []
-        p = mock.patch.object(self.ha_setup, "_call", side_effect=call)
+        p = unittest.mock.patch.object(self.ha_setup, "_call", side_effect=call)
         p.start()
         self.addCleanup(p.stop)
 
@@ -537,7 +536,7 @@ class _AutoModule(types.ModuleType):
             return lambda func: func
         stub = type(name, (), {"__init__": lambda self, *a, **k: None,
                                "__class_getitem__": classmethod(lambda cls, item: cls)}) \
-            if name.endswith(_BASES) else MagicMock(name=f"{self.__name__}.{name}")
+            if name.endswith(_BASES) else unittest.mock.MagicMock(name=f"{self.__name__}.{name}")
         setattr(self, name, stub)
         return stub
 
@@ -589,8 +588,8 @@ class TestCardsFollowTheirFile(unittest.TestCase):
         card.write_text("const CARD = 1;\n")
         frontend = _Frontend()
         hass = _CardHass()
-        with mock.patch.object(module, "CARD_FILE", card), \
-                mock.patch.dict(sys.modules, {"homeassistant.components.frontend": frontend}):
+        with unittest.mock.patch.object(module, "CARD_FILE", card), \
+                unittest.mock.patch.dict(sys.modules, {"homeassistant.components.frontend": frontend}):
             module._CARD["url"] = None
             asyncio.run(module._follow_card(hass))
             self.assertEqual([], frontend.urls, "nothing registered is nothing to follow")
@@ -644,10 +643,10 @@ class TestBambuCardRetryRunsOnTheLoop(unittest.TestCase):
         async def register(hass, tries=0):
             seen.append((tries, threading.current_thread() is threading.main_thread()))
 
-        with mock.patch.object(module, "HassJob", _Job), \
-                mock.patch.object(module, "async_call_later",
+        with unittest.mock.patch.object(module, "HassJob", _Job), \
+                unittest.mock.patch.object(module, "async_call_later",
                                   side_effect=lambda hass, delay, job: scheduled.append((delay, job))), \
-                mock.patch.object(module, "_register_card", register):
+                unittest.mock.patch.object(module, "_register_card", register):
             module._schedule_card_retry(_CardHass(), 2)
             self.assertEqual(1, len(scheduled))
             delay, job = scheduled[0]
@@ -661,8 +660,8 @@ class TestBambuCardRetryRunsOnTheLoop(unittest.TestCase):
 
     def test_a_missing_card_schedules_the_retry_this_way(self):
         module = load_stubbed("bruh-bambu-studio")
-        with mock.patch.object(module, "CARD_FILE", Path(tempfile.gettempdir()) / "bruh-bambu-no-such-card.js"), \
-                mock.patch.object(module, "_schedule_card_retry") as retry:
+        with unittest.mock.patch.object(module, "CARD_FILE", Path(tempfile.gettempdir()) / "bruh-bambu-no-such-card.js"), \
+                unittest.mock.patch.object(module, "_schedule_card_retry") as retry:
             asyncio.run(module._register_card(_CardHass()))
         retry.assert_called_once()
         source = (integration_dir("bruh-bambu-studio") / "__init__.py").read_text()
