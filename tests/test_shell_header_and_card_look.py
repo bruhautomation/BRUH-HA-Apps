@@ -54,7 +54,7 @@ class TestTheCardLooksLikeTheDashboard(unittest.TestCase):
 
     def test_the_prompt_defaults_to_the_dashboards_look(self):
         contract = categories._CARD_CONTRACT
-        self.assertIn("the dashboard's look unless the person asked for another", contract)
+        self.assertIn("the dashboard's look unless asked otherwise", contract)
 
     def test_an_older_sheet_is_served_as_this_one(self):
         old = ('<!doctype html><html><head><style data-brain="card-styles">'
