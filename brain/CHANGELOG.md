@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.20
+
+### Fixed
+
+- **Cards say whole sentences.** A long detail, what-to-do or look reason is shortened at the last whole sentence, and a long list keeps whole items and ends "and N more", instead of stopping mid-thought with "…". When a card's Details is open, its text is shown in full, on brAIn's panel and on Morph's cases (#560).
+- **brAIn talks to you, not about "the homeowner".** One rule across the prompts says to address the household as "you", and a written "the homeowner", or a sentence starting "The owner said…", is turned into "you" before it is shown (#562).
+- **Developer details stay out of the card's words.** File paths, tool names, error codes and firmware build strings in what brAIn writes move into a "Technical details" list under Details instead of the sentence, and a note about brAIn's own setup is not filed again while a question about it is already waiting for you (#563).
+
 ## 4.0.19
 
 ### Fixed

@@ -129,7 +129,7 @@ section.sec[data-state="asleep"] .mtile{opacity:1}
 .case .caseask{font-size:14px;line-height:1.45;color:var(--muted)}
 .casechip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.01em}
 .casechip i{width:7px;height:7px;border-radius:50%;background:var(--chip,var(--amber));flex-shrink:0}
-.case .casebody{font-size:14px;line-height:1.45;color:var(--muted);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.case .casebody{font-size:14px;line-height:1.45;color:var(--muted)}
 .caseplan{display:flex;flex-direction:column;gap:2px;padding:6px 0}
 .thread{display:flex;flex-direction:column;gap:4px;padding:2px 0}
 .turnline{font-size:14px;line-height:1.45}
