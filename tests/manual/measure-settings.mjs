@@ -9,17 +9,19 @@
 // "Diagnostics › Developer": the owner's words were "really bulky, hard to
 // navigate sections, stuff is buried under collapsible sections".
 //
-// So ⚙ is a LIST of eleven sections — Account, Model & usage, Permissions,
-// Notifications, Cameras & calendars, Memory, Personality, Instructions,
+// So ⚙ is a LIST of ten sections — Account, Model & usage, Permissions,
+// Notifications, Cameras & calendars, Personality, Instructions,
 // Diagnostics, Developer, Guide (Personality moved here from Morph's own
-// Settings, because everybody uses brAIn and not everybody uses Morph) —
+// Settings, because everybody uses brAIn and not everybody uses Morph;
+// Memory moved OUT, to Memory › Knowledge, because a second place for what
+// brAIn remembers was a place nobody could tell from the first) —
 // each row saying what it is set to now, beside the section in front on a
 // wide screen and as the page itself on a phone. The checks:
 //
 //   * the page's height at OPEN time is under a budget per width (the list
 //     on a phone, the list beside Account on a desktop).
-//   * there are exactly eleven sections (Personality and then Instructions
-//     after Memory), named and ordered as above, one row
+//   * there are exactly ten sections (Personality and then Instructions
+//     after Cameras & calendars), named and ordered as above, one row
 //     each on the list, every row clearing the touch floor and carrying a
 //     second line; the list's lines say what the weekly answers ARE at open
 //     time — signed in, the model, whether brAIn asks — with no press.
@@ -50,8 +52,11 @@
 //     (⚙ is the way back) AND across a reload.
 //   * the Diagnostics and Developer loaders do not run until that section
 //     is opened, and opening it fills every block.
-//   * Memory shows the document with Edit and Export, and the queue as a
-//     read-only list with its count — and no "File into memory now".
+//   * ⚙ has no Memory section, and ⚙ › Memory's old address (a link or a
+//     shell message naming the section) opens Memory › Knowledge's memory
+//     document instead — the document, Edit, Export and the queue are
+//     asserted there, in measure-knowledge.mjs. Opening ⚙ still reads no
+//     memory, and "File into memory now" is still cut.
 //   * Cameras & calendars reads them only when it opens.
 //   * Guide lists eight groups and opens the docs, whose nav is eight
 //     headings with no emoji.
@@ -143,8 +148,7 @@ const IDS = [
   'setNotifyPolicy', 'setNotifyLearned', 'setSpeakFirst',
   'setSkipPerms', 'setSkipPermsRow', 'setSkipPermsNote', 'setSkipPermsCaveat',
   'setHouseRules', 'setHouseRulesSave', 'setCameras', 'setCalendars',
-  'setCalendarsNote', 'setMemView', 'setMemEdit', 'setMemExport', 'setMemTa',
-  'setMemQueue', 'setMemCount', 'diagAccuracy', 'diagMeasures', 'diagOvernight',
+  'setCalendarsNote', 'diagAccuracy', 'diagMeasures', 'diagOvernight',
   'diagOvernightRun', 'diagAccess', 'diagAccessRun', 'setGuide',
   'setSearch', 'setSearchResults', 'versionChip', 'versionText',
   'whatsNewModal', 'whatsNewBody', 'whatsNewClose', 'whatsNewRestart',
@@ -162,7 +166,6 @@ const SECTIONS = [
   { sec: 'permissions', name: 'Permissions', open: false },
   { sec: 'notifications', name: 'Notifications', open: false },
   { sec: 'sources', name: 'Cameras & calendars', open: false },
-  { sec: 'memory', name: 'Memory', open: false },
   { sec: 'personality', name: 'Personality', open: false },
   { sec: 'instructions', name: 'Instructions', open: false },
   { sec: 'diagnostics', name: 'Diagnostics', open: false },
@@ -1018,36 +1021,30 @@ for (const width of WIDTHS) {
     (document.querySelector('#setModal').innerText.match(/\b\d{1,2}:\d{2}:\d{2}\b/g) || []));
   if (seconds.length) note(where, `a time is shown to the second: ${seconds.join(', ')}`);
 
-  // ---- Memory: the document, Edit, Export, the queue and its count -------
+  // ---- Memory moved to Knowledge: ⚙ has none, and its address goes there ---
+  // The document, Edit, Export and the queue are measured where they live
+  // now (measure-knowledge.mjs); what is asserted HERE is that ⚙ no longer
+  // holds them and that the old way in still arrives somewhere.
   try {
     const before = await page.evaluate(
       () => window.__fetched.filter((u) => /api\/knowledge($|\?)/.test(u)).length);
-    if (before) note(where, 'opening ⚙ read the memory before Memory was opened');
-    await showSection(page, 'memory');
-    await page.waitForFunction(() => document.querySelector('#setMemCount').textContent !== '',
-      null, { timeout: 4000 });
-    const mem = await page.evaluate(() => ({
-      count: document.querySelector('#setMemCount').textContent,
-      rows: document.querySelectorAll('#setMemQueue .setmemitem').length,
-      more: document.querySelector('#setMemQueue').textContent,
-      doc: document.querySelector('#setMemView').textContent,
-      exportHref: document.querySelector('#setMemExport').getAttribute('href'),
-      buttons: [...document.querySelectorAll('#setsecMemory button, #setsecMemory a')]
-        .filter((b) => b.offsetParent !== null && !b.classList.contains('setback')).map((b) => b.textContent.trim()),
+    if (before) note(where, 'opening ⚙ read the memory');
+    const left = await page.evaluate(() => ({
+      row: !!document.querySelector('#setNav .setnavbtn[data-sec="memory"]'),
+      sec: !!document.querySelector('#setModal .setsec[data-sec="memory"]'),
+      ids: ['setMemView', 'setMemEdit', 'setMemExport', 'setMemQueue']
+        .filter((id) => document.getElementById(id)),
     }));
-    if (mem.count !== '5') note(where, `the queue count reads "${mem.count}", not 5`);
-    if (mem.rows !== 2) note(where, `${mem.rows} queued lines rendered, not 2`);
-    if (!/3 more/.test(mem.more)) note(where, 'the queue does not say what it is not showing');
-    if (!/garage fridge/.test(mem.doc)) note(where, 'the memory document did not render');
-    if (mem.exportHref !== 'api/memory/export') note(where, 'Export does not link the export');
-    if (mem.buttons.join('|') !== 'Edit|Export') note(where, `Memory offers ${mem.buttons.join(', ')}`);
-    await page.click('#setMemEdit');
-    const editing = await page.evaluate(() => !document.querySelector('#setMemTa').classList.contains('hidden')
-      && /garage fridge/.test(document.querySelector('#setMemTa').value));
-    if (!editing) note(where, 'Edit does not open the document as text');
-    await page.click('#setMemCancel');
+    if (left.row || left.sec) note(where, '⚙ still has a Memory section');
+    if (left.ids.length) note(where, `⚙'s memory controls are still on the page: ${left.ids.join(', ')}`);
+    await page.evaluate(() => showSettingsSection('memory'));
+    await page.waitForFunction(() => currentView === 'memory'
+      && !document.querySelector('#kDocBody').hidden, null, { timeout: 4000 });
+    await page.waitForFunction(() => /garage fridge/.test(document.querySelector('#kDocView').textContent),
+      null, { timeout: 4000 });
+    await page.evaluate(() => openSettings());
   } catch (e) {
-    note(where, `driving Memory failed: ${String(e.message).split('\n')[0]}`);
+    note(where, `⚙ › Memory's old address did not open the document: ${String(e.message).split('\n')[0]}`);
   }
 
   // ---- Diagnostics is lazy, and opening it fills every block -------------

@@ -174,6 +174,7 @@ import closures
 import checks
 import cli_commands
 import conditions
+import context_map
 import conversations
 import camera_policy
 import corrections
@@ -26336,6 +26337,86 @@ async def h_chat_context(request: web.Request) -> web.Response:
     return web.json_response({"context": text})
 
 
+# ---- Memory › Knowledge › What brAIn brings ---------------------------
+#
+# What each kind of run is handed and may look up, read off the builders
+# that make it (`context_map`). Texts go to `context_map.report` to be
+# measured and never leave this process: the route answers with names,
+# sizes and where each thing is changed. Nothing here calls Home
+# Assistant or Claude — the measured-house block is reported by its cap.
+
+def _context_sources() -> dict:
+    import ha_data  # noqa: PLC0415 — the server imports it where it is used
+    import categories  # noqa: PLC0415
+    src: dict = {}
+
+    def read(fn, default=""):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 — a part that will not read
+            log.debug("context map: %s", exc)   # is a part of size nothing
+            return default
+
+    src["identity"] = CHAT_IDENTITY + "\n\n" + (
+        DEVELOPMENT_MODE_ON if development_mode() else DEVELOPMENT_MODE_OFF) + (
+        "\n\n" + YOLO_MODE_ON if yolo_mode() else "")
+    src["personality"] = _personality_lines()
+    src["house_now"] = "; ".join(read(_chat_house_lines, []))
+    src["claude_md"] = read(lambda: Path(ha_data.CONTEXT_FILE).read_text(
+        encoding="utf-8", errors="replace"))
+    src["terminal_ui"] = read(lambda: settings_store.load().get("terminal_ui"))
+    src["chat_hook"] = os.path.isfile(chat_session.CONTEXT_HOOK)
+    src["chat_context_chars"] = CHAT_CONTEXT_CHARS
+    src["mcp_tools"] = context_map.mcp_tool_names()
+    src["analyst_tools"] = list(engine.ANALYST_TOOLS)
+    src["gather_mode"] = read(eff_gather_mode, "search")
+    src["card_rules"] = (ANALYST_SYSTEM if src["gather_mode"] == "search"
+                         else SYSTEM_PROMPT)
+    src["card_memory_cap"] = read(lambda: min(
+        ha_data.memory_budget(), facts_store.RETRIEVAL_CHARS * 2), 0)
+    src["card_memory_head"] = ha_data.FACTS_HEAD_CHARS
+    src["card_context_chars"] = ha_data.CONTEXT_CHARS
+    src["house_chars"] = categories.HOUSE_CHARS
+    src["learned"] = (read(knowledge_store.prompt_block) + "\n\n"
+                      + read(personality.identity_line)).strip()
+    src["findings"] = read(findings_store.prompt_block)
+    src["guesses"] = read(hypotheses.prompt_block)
+    src["retrieval_chars"] = facts_store.RETRIEVAL_CHARS
+    src["memory_head_chars"] = MEMORY_HEAD_CHARS
+    src["first_look_rules"] = resident.FIRST_LOOK_SYSTEM
+    src["investigate_rules"] = read(resident.investigate_system)
+    src["overnight_rules"] = sre.SYSTEM
+    src["document_bytes"] = context_map.size(_read_shared_memory())
+    src["facts"] = read(facts_store.count, 0)
+    src["waiting"] = read(_inbox_pending, 0)
+    src["filed_at"] = read(_last_consolidated, 0)
+    # The voice worker's prompt, from its own builder and the files the
+    # pool reads (`assist-worker-pool.py` refresh_memory / get_area_map).
+    voice = context_map.voice_module()
+    memory_dir = SHARED_MEMORY_FILE.parent
+    summary = memory_dir / "voice.md"
+    src["voice_summary"] = context_map.read_size(summary) > 0
+    src["voice_memory"] = context_map.read_size(
+        summary if src["voice_summary"] else SHARED_MEMORY_FILE,
+        context_map.VOICE_MEMORY_BYTES)
+    src["voice_map"] = context_map.read_size(
+        Path(os.environ.get("BRAIN_SHARED_DIR", "/config/.brain"))
+        / "cache" / "area_map.txt", context_map.VOICE_MAP_BYTES)
+    if voice is not None:
+        src["voice_personality"] = read(voice.household_personality)
+        src["voice_rules"] = context_map.size(read(lambda: voice.system_prompt(
+            learning=True, household="")))
+        src["voice_request_cap"] = (voice.PROMPT_MAX + voice.NAME_MAX * 4
+                                    + voice.PRIOR_MAX * voice.PRIOR_TURNS)
+    return src
+
+
+async def h_memory_context(request: web.Request) -> web.Response:
+    """What brAIn brings to each kind of run (`context_map.report`)."""
+    src = await asyncio.to_thread(_context_sources)
+    return web.json_response(context_map.report(src))
+
+
 async def h_own(request: web.Request) -> web.Response:
     """Hand files under /config to the claude user — `brain own` and the
     edit hook ask here, so nobody is ever asked to run sudo chown.
@@ -27333,6 +27414,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/memory/consolidate", h_memory_consolidate)
     app.router.add_get("/api/memory/state", h_memory_state)
     app.router.add_get("/api/memory/export", h_memory_export)
+    app.router.add_get("/api/memory/context", h_memory_context)
     app.router.add_post("/api/memory/import", h_memory_import)
     app.router.add_post("/api/knowledge/fact", h_knowledge_fact_add)
     app.router.add_delete("/api/memory/inbox/{id}", h_inbox_delete)

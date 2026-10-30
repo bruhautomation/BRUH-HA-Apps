@@ -2996,7 +2996,7 @@ and ☰ in the header opens Home Assistant's sidebar.
 | **Home** | The [Morph dashboard](#the-morph-dashboard), while it is switched on in ⚙ › Features. Experimental. |
 | **Insights** | What brAIn has to tell you, in three sections. **Insights** (where the panel opens) is your insight cards, each a headline and how long ago it was updated, with the deep review and suggested cards under them — and, above them, a line saying how many things need you. **Needs you** is the one screen for deciding: a banner only while something is urgent, the status line (**Watching · last look 9 min ago**) with **Recheck** and this morning's brief under its **⋯**, the queue — every problem, question, suggestion, name tidy and assessed update as the same card — and **To Do**. Every card leads with one press (**Plan**, **Apply**, **Add to To Do**, **Yes** or **Done**) beside **Snooze** and **Ignore**; a problem also has **Check again** and **Dismiss** for a card that is old or no longer true. **History** is everything you've already answered — snoozed, ignored, done, or set aside by brAIn — with **Restore** on every row and **Delete** (the bin) on every row but a snooze. Deleting clears the record only: your answer stands, so brAIn does not raise it again. The count on the tab is how many cards are waiting on you. |
 | **Ask** | Full Claude Code, served through the panel — no second sidebar entry, no second login. Two faces: **Chat** (the default: the same session rendered as messages) and **Classic** (ttyd + tmux). Switch with ⋯ on the tab (the choice is saved), or in ⚙ Settings. Press ⤢ to give either the whole screen. |
-| **Memory** | What brAIn holds about the house. **Knowledge** is a box to teach brAIn something and every fact it holds, browsable by room and device (a list beside the facts on a wide screen, a picker on a phone), searchable, filterable by kind and by who taught it, with a bin on every fact. **Timeline** opens on what the house is doing now, then what happened and what caused it — searchable by device and narrowed by room, kind of thing, cause and window (6 hours to 2 days), each filter counted under the others with **Clear all**, fetched fresh every visit and never cached. **House book** is how this house works, chapter by chapter, with **Add info**, an Edit and Delete on every line, and sharing behind ⋯. |
+| **Memory** | What brAIn holds about the house. **Knowledge** is everything brAIn remembers: the memory document (with **Edit**, **Export** and what is waiting to be filed into it), **What brAIn brings to a run**, a box to teach brAIn something and every fact it holds, browsable by room and device (a list beside the facts on a wide screen, a picker on a phone), searchable, filterable by kind and by who taught it, with a bin on every fact. **Timeline** opens on what the house is doing now, then what happened and what caused it — searchable by device and narrowed by room, kind of thing, cause and window (6 hours to 2 days), each filter counted under the others with **Clear all**, fetched fresh every visit and never cached. **House book** is how this house works, chapter by chapter, with **Add info**, an Edit and Delete on every line, and sharing behind ⋯. |
 
 This guide is ⚙ → Guide. Older links that name a pane that has moved — the
 Findings, To-do, Proposals or Upkeep tab — open Insights → Needs you, one that
@@ -3046,8 +3046,6 @@ section is one press away and nothing inside one is folded away.
   how many looks it has used today), and which calendars it may read. A robot
   vacuum's floor map is published as a camera too; those are left out unless
   one is already ticked.
-* **Memory** — the memory document, with **Edit** and **Export**, and what is
-  waiting to be filed into it. The queue files itself once a day.
 * **Diagnostics** — opens on **Run all tests**: one press runs every
   self-test (the deep check, below) and the result reads "6 of 6 passed · 2
   skipped", one row per test with pass, fail or skipped, the reason in plain
@@ -3261,8 +3259,8 @@ live line at all. A past run is a record of what the card said then, so brAIn do
 overlay today's readings on it.
 
 **⚙ Settings** is a page of its own: press ⚙ to open it and ⚙ again to go back.
-Its nine sections — Account, Model & usage, Permissions, Notifications,
-Cameras & calendars, Memory, Diagnostics, Developer and Guide — are a list
+Its sections — Account, Model & usage, Permissions, Notifications,
+Cameras & calendars, Diagnostics, Developer and Guide — are a list
 beside the section in front (the list first, on a phone), and the page
 remembers which one you were on.
 
@@ -3322,7 +3320,7 @@ The difference between the two loops, in one line each: **self-improvement**
 is brAIn changing itself on this house and nothing leaving it;
 **development** is brAIn reporting back to the repository its code comes
 from, so everybody's brAIn gets the fix. What brAIn learns about your *home*
-— facts, the memory document — is neither, and is under ⚙ › Memory.
+— facts, the memory document — is neither, and is under Memory › Knowledge.
 
 A house that upgraded from 3.x starts with the switches matching what it
 had: the Morph dashboard on if the Morph app was installed, Personality on if
@@ -3731,7 +3729,28 @@ kept in each browser, as before.
 
 **Memory → Knowledge** is what brAIn knows about your house, as opposed to what it
 thinks is broken (Needs you), what it would like to change (Proposals) or what
-happened (What happened). It is three things.
+happened (What happened). It is everything brAIn remembers, in one place.
+
+**Memory document.** brAIn's own notes about the house, the document every
+conversation starts with (as much of it as fits in the house summary file,
+8 KB by default). **Edit** opens it as text, **Export** downloads it, and
+under it is what is **waiting to be filed** — what brAIn learned since the
+last filing, written in once a day or sooner when the list gets long. A link
+to the old ⚙ › Memory opens it here.
+
+**What brAIn brings to a run.** For each kind of run — a conversation in Ask,
+an insight card, a voice request, a first look, an investigation and the
+overnight check — what it is handed when it starts, with its size right now,
+what it is handed with each message, and what it can look up while it works.
+It is read from the code that builds each run, so it is never out of date.
+In short: a conversation starts with brAIn's rules, your personality, a line
+on how the house stands and the house summary file (which carries the memory
+document); the chat face is also handed the facts that match each message.
+A card, a first look and an investigation are handed the facts about what
+they are about instead of the whole document. Voice gets a short summary of
+the document and never the house summary file. The overnight check gets
+neither. Every run with tools can search the facts with **recall**. Ask's
+**⋯ → What brAIn brings** opens it on a conversation.
 
 **Tell brAIn something.** Type a fact about the house and press **Send**; it is filed
 into memory like anything else brAIn learns.
@@ -3755,9 +3774,8 @@ told brAIn yourself, corrections, and the rules your Ignore presses set are neve
 offered for removal. **Discard** throws the list away. It costs one Claude run,
 pressed by you, never on a timer.
 
-The seven measurements, the morning brief and the memory document with its filing
-queue are brAIn's own machinery rather than something you read every day, so they are
-not on this pane.
+The seven measurements and the morning brief are brAIn's own machinery rather than
+something you read every day, so they are not on this pane.
 
 There is no badge on this pane. Nothing on it is waiting on a person, and a badge
 counting work nobody has to do is how the badge next to it stops being read.
