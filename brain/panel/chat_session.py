@@ -2639,6 +2639,8 @@ def _open_in_terminal(session_id: str = "", prompt: str = "") -> bool:
         try:
             os.replace(path, HANDOFF_FILE)
         except OSError:
+            # The request's own file is still there; the panel's copy of
+            # the handoff (_LAST_HANDOFF) answers adopt either way.
             pass
         return False
     _tmux(["set-option", "-w", "-t", window, WINDOW_NONCE_OPT, nonce])

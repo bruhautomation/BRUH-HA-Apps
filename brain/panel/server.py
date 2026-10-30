@@ -26645,6 +26645,11 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
                 # the response so the EventSource reconnects to a fresh
                 # snapshot, rather than idling on a queue nothing feeds.
                 break
+            if named and event.get("type") == "switched":
+                # The shared "attached" pointer moved — another device's
+                # doing. A viewer that named its own conversation stays on
+                # it; its own switches reconnect it by key.
+                continue
             await send(event)
     except (ConnectionResetError, asyncio.CancelledError):
         # The viewer closed the tab, or the task was cancelled. Either way
@@ -27754,6 +27759,34 @@ def make_app() -> web.Application:
         # they are synced before the first request rather than after it.
         await _options_sync()
         _publish_permission_mode()
+        # The findings list, put right before any route reads or writes it.
+        # Startup is the one moment we know nothing is in flight, so it is
+        # the only place a fix orphaned by a restart can be told apart from
+        # one that is genuinely still running — and a route acting on a row
+        # first would be acting on that orphan.
+        orphaned = await asyncio.to_thread(
+            findings_store.reconcile_running,
+            "brAIn restarted while this fix was running, so it could not "
+            "report what it did. Check the entity before trying again.")
+        if orphaned:
+            log.warning("%d fix run(s) were interrupted by a restart", orphaned)
+        # Dismissals made before the settled ledger existed live as rows in
+        # a status the tab no longer shows; move them somewhere visible.
+        migrated = await asyncio.to_thread(findings_store.migrate_settled)
+        if migrated:
+            log.info("moved %d dismissed finding(s) into the settled ledger",
+                     migrated)
+        # One-time, marked on disk: fold one fault filed by several cards,
+        # and give rows held under the old look one fresh look.
+        repaired = await asyncio.to_thread(findings_store.migrate_folds)
+        if repaired.get("folded") or repaired.get("retriaged"):
+            log.info("findings repaired once: %d duplicate(s) folded, %d "
+                     "held row(s) sent for a fresh look",
+                     repaired["folded"], repaired["retriaged"])
+        # The sign-in check is a task started here, not awaited: the status
+        # route reports it, so it is "checking" from the first request.
+        if engine.get_auth():
+            start_auth_check()
         app["startup"] = asyncio.create_task(_startup_work(app))
 
     async def _startup_work(app: web.Application) -> None:
@@ -27792,28 +27825,6 @@ def make_app() -> web.Application:
         # integration and the prompts below to read.
         await asyncio.to_thread(features.ensure)
         await asyncio.to_thread(_write_terminal_prompt)
-        # Startup is the one moment we know nothing is in flight, so it is
-        # the only place a fix orphaned by a restart can be told apart from
-        # one that is genuinely still running.
-        orphaned = await asyncio.to_thread(
-            findings_store.reconcile_running,
-            "brAIn restarted while this fix was running, so it could not "
-            "report what it did. Check the entity before trying again.")
-        if orphaned:
-            log.warning("%d fix run(s) were interrupted by a restart", orphaned)
-        # Dismissals made before the settled ledger existed live as rows in
-        # a status the tab no longer shows; move them somewhere visible.
-        migrated = await asyncio.to_thread(findings_store.migrate_settled)
-        if migrated:
-            log.info("moved %d dismissed finding(s) into the settled ledger",
-                     migrated)
-        # One-time, marked on disk: fold one fault filed by several cards,
-        # and give rows held under the old look one fresh look.
-        repaired = await asyncio.to_thread(findings_store.migrate_folds)
-        if repaired.get("folded") or repaired.get("retriaged"):
-            log.info("findings repaired once: %d duplicate(s) folded, %d "
-                     "held row(s) sent for a fresh look",
-                     repaired["folded"], repaired["retriaged"])
         # Republish the shared-volume mirror so the integration's findings
         # sensor reads the current list, not the one from the last change.
         await asyncio.to_thread(findings_store.publish_state)
@@ -27904,8 +27915,6 @@ def make_app() -> web.Application:
             log.warning("could not publish the tripwire file: %s", exc)
         if addon_options.available():
             app["options"] = _supervise("options", _options_poller())
-        if engine.get_auth():
-            start_auth_check()
 
     async def on_cleanup(app: web.Application) -> None:
         task = app.get("startup")
