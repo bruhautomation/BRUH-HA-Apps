@@ -241,8 +241,36 @@ async function comingUp(p, name, narrow) {
 
   // Drag the timeline left, in steps: it moves under the finger, the
   // readout follows, and nothing rebuilds it mid-drag.
-  const startX = s.l + s.w * 0.75;
-  await p.mouse.move(startX, s.y);
+  //
+  // Press only once the strip has stopped moving and is what is under the
+  // press point. The checks before this one (a reply that removes a case,
+  // a room that opens, a Tell's panel closing) leave the layout springing,
+  // and a runner that is slower than a laptop is still springing when the
+  // measure reaches here: the press then lands on whatever has moved under
+  // it, the strip never hears it, and all five checks below fail with a
+  // message about the drag rather than about the press. Two reads in a row
+  // that agree, and the strip under the point, before the finger goes down.
+  const underPoint = () => p.evaluate(() => {
+    const root = window.__panel.shadowRoot;
+    const vp = root.querySelector('[data-upc-vp]'); if (!vp) return null;
+    vp.scrollIntoView({ block: 'center' });
+    const r = vp.getBoundingClientRect();
+    const x = r.left + r.width * 0.75, y = r.top + r.height / 2;
+    const hit = root.elementFromPoint(x, y);
+    return { x, y, top: r.top, left: r.left, width: r.width, ok: !!(hit && vp.contains(hit)), hit: hit ? `${hit.tagName.toLowerCase()}.${String(hit.className || '').trim().split(/\s+/).join('.')}` : 'nothing' };
+  });
+  let press = await underPoint(); let calm = 0;
+  for (let i = 0; i < 60 && press && calm < 2; i++) {
+    await p.waitForTimeout(100);
+    const next = await underPoint();
+    calm = next && next.ok && Math.abs(next.top - press.top) < 0.5 && Math.abs(next.left - press.left) < 0.5 && Math.abs(next.width - press.width) < 0.5 ? calm + 1 : 0;
+    press = next;
+  }
+  if (!press || !press.ok) fail(where, `the press point is not on the strip after 6s of waiting for the layout to settle (it is on ${press ? press.hit : 'nothing'})`);
+  const startX = press ? press.x : s.l + s.w * 0.75;
+  const startY = press ? press.y : s.y;
+  s = { ...s, y: startY };
+  await p.mouse.move(startX, startY);
   await p.mouse.down();
   const seen = new Set([s.name]); const tfs = new Set([s.tf]);
   for (let i = 1; i <= 16; i++) {
