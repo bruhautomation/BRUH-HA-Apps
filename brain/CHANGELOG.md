@@ -2,6 +2,22 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.17
+
+### Changed
+
+- **brAIn's header is calmer and stays put.** A clock sits beside ⚙ all the time; the status dot shows only when there is something to do (signed out); on a phone, scrolling hides only the row of tabs while the name, clock and ⚙ stay; ☰ has room at the edge; and Morph's Edit is a small pencil under the header, with Done and YAML in the header only while editing (#539, #540).
+- **The first tab is called Morph UI, and every tab can be renamed.** ⚙ › Dashboard › Header tabs sets each tab's name and icon (#539).
+- **Insights explains itself, and its sections are a row.** A line that opens on a press says how insight cards differ from the dashboard; on a phone the sections are a row of buttons instead of a menu under the tab (#539).
+- **Deep review and Suggested moved to Memory.** They are one-line folds at the top of Memory › Knowledge (when it last ran or how many are waiting, and Run) instead of large blocks on Insights (#539).
+- **Insight cards follow the dashboard's look.** Their colours and fonts match Morph in the dark, medium and light themes, cards saved earlier are shown with the current look, and new cards are written that way unless you ask otherwise (#539).
+- **Settings say each thing once, in plain words.** Model & usage states the session limit and "asking by hand always runs" once, without a second "Model" heading, and the list's summaries wrap instead of being cut off (#555); the second permissions switch is called No restrictions and says how it goes further than acting without asking (#556); Diagnostics and Developer name background jobs by what they do and no longer mention journals, daemons or internal names (#557).
+
+### Fixed
+
+- **The Insights badge, banner and groups agree.** They all count one list; a one-off set to run once has its own group and is not counted as something that needs you (#554).
+- **Ask's chat list buttons match.** New chat, ⋯ and full screen are one style inside the "Your chats" row, each a full-size tap target (#553).
+
 ## 4.0.16
 
 ### Fixed
