@@ -627,6 +627,21 @@ class House:
                         return {"text": str(note), "scope": "answers"}
         return None
 
+    def answered_since(self, key: str, check_id: str, since) -> dict | None:
+        """The household's Wrong on this check about ``key`` (an entity, or
+        `entry:<id>` for a config entry), given at or after ``since`` — when
+        the thing last changed state — or None. An answer holds until the
+        state it was given about changes: a plug that came back and went
+        again, an integration that loaded and failed again, is news."""
+        answers = self.snap.get("answers")
+        row = ((answers or {}).get(key) or {}).get(check_id) \
+            if isinstance(answers, dict) else None
+        if not isinstance(row, dict) or int(row.get("wrong") or 0) < 1:
+            return None
+        if since is not None and int(row.get("at") or 0) < float(since):
+            return None
+        return row
+
     def should_report(self, entity_id: str, check_id: str) -> bool:
         """May this check file a row about this entity? The one question.
 

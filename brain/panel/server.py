@@ -11343,7 +11343,7 @@ SRE_SET_ASIDE_CHECKS = ("dev.unavailable", "dev.zwave_dead", "dev.zha_unseen",
                         "net.zwave_silent", "net.zigbee_silent")
 
 
-def _sre_set_aside(now: float) -> set[str]:
+def _sre_set_aside(now: float, states: dict | None = None) -> set[str]:
     """The entities the owner set aside on an offline check: a rule they
     wrote by answering Wrong (an exception for that check or for the whole
     entity), a row of it they snoozed, or one they ignored."""
@@ -11363,11 +11363,19 @@ def _sre_set_aside(now: float) -> set[str]:
                 out.add(str(row["entity_id"]))
                 # The connectivity card names every device it lists.
                 out |= set(findings_store.clean_items(row.get("items")))
-        for entry in findings_store.settled_listing():
+        settled = findings_store.settled_listing()
+        for entry in settled:
             if (entry.get("kind") == "ignored"
                     and entry.get("source") in sources
                     and entry.get("entity_id")):
                 out.add(str(entry["entity_id"]))
+        # The overnight check's own cards answered ("expected, they are
+        # unplugged") hold while the thing is still down.
+        out |= sre.answered_down(
+            [r for r in findings_store.list_all()
+             if r.get("source") == sre.SOURCE],
+            [e for e in settled if e.get("kind") == "ignored"],
+            states, now)
     except Exception as exc:  # noqa: BLE001
         log.debug("sre: findings unread: %s", exc)
     return out
@@ -11379,7 +11387,8 @@ async def _run_sre(reason: str = "schedule") -> None:
     async with aiohttp.ClientSession() as session:
         collected = await sre.collect(session)
     dig = sre.digest(collected, now,
-                     set_aside=await asyncio.to_thread(_sre_set_aside, now))
+                     set_aside=await asyncio.to_thread(
+                         _sre_set_aside, now, collected.get("states")))
     state = await asyncio.to_thread(sre.load)
     summary = {"at": int(now), "reason": reason,
                "records": len(dig["records"]), "available": dig["available"],
@@ -15761,6 +15770,7 @@ async def run_checks(reason: str = "schedule") -> dict:
             # check that no longer finds it clears it this pass, and Morph's
             # suggestion to remove that thing's card ends as kept.
             if (snapshot.get("available") or {}).get("states"):
+                findings_store.wake_worse(snapshot.get("states") or {}, started)
                 for woke in findings_store.wake_returned(
                         snapshot.get("states") or {}, started):
                     if woke.get("source") == findings_store.MORPH_SOURCE:
@@ -20808,6 +20818,11 @@ def _for_now(finding: dict, spec: dict, note: str) -> bool:
     return corrections.puts_off(note)
 
 
+# The checks whose "I'll handle it" answer ends early when the reading falls
+# to this level (clearly under the check's own 15) or the device goes quiet.
+_WORSE_BELOW = {"check:dev.battery_low": 10}
+
+
 def _wake_entities(finding: dict) -> list[str]:
     """The entities whose return ends a "for now" snooze: the row's own and
     every item it names that is an entity."""
@@ -20830,9 +20845,16 @@ async def _snooze_for_now(finding: dict, note: str) -> tuple[dict, str]:
     # "Out of use for now" is over when the thing reports again; "don't
     # remind me" is over when its time is, and not before.
     wake = _wake_entities(finding) if corrections.temporary(note) else []
+    # "It's on my list" on a card whose thing can get worse stays away for
+    # its whole period, unless it does (`findings_store.wake_worse`).
+    worse = None
+    if not wake and finding.get("source") in _WORSE_BELOW:
+        worse = {"entities": _wake_entities(finding),
+                 "below": _WORSE_BELOW[finding["source"]]}
 
     def sleep() -> dict:
-        findings_store.snooze(int(finding["ts"]), until, wake=wake)
+        findings_store.snooze(int(finding["ts"]), until, wake=wake,
+                              worse=worse)
         return _findings_payload()
 
     payload = await asyncio.to_thread(sleep)

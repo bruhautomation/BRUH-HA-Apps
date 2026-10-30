@@ -919,6 +919,28 @@ def _friendly_names(states: dict) -> dict[str, str]:
     return out
 
 
+def answered_down(snoozed, ignored, states, now: float) -> set[str]:
+    """The entities a card of this check was answered about and that are
+    still down: ``snoozed`` rows asleep, ``ignored`` ledger entries answered
+    Wrong ("expected, they are unplugged"). The answer holds while the plug
+    stays out; the day it reports again it is a different situation and the
+    answer is spent. ``states`` is the house as the pass read it; without
+    it nothing is held, because "still down" is not something to guess."""
+    if not isinstance(states, dict) or not states:
+        return set()
+    out: set[str] = set()
+    rows = [r for r in snoozed or () if float(r.get("snoozed_until") or 0) > now]
+    for row in [*rows, *(ignored or ())]:
+        if row.get("source") != SOURCE:
+            continue
+        for eid in [row.get("entity_id"), *(row.get("items") or ()),
+                    *(row.get("about") or ())]:
+            st = states.get(str(eid or ""))
+            if isinstance(st, dict) and str(st.get("state") or "") in _DOWN:
+                out.add(str(eid))
+    return out
+
+
 def digest(collected: dict, now: float, set_aside=frozenset()) -> dict:
     """The records a pass reasons over, with ids.
 
@@ -2012,7 +2034,17 @@ def _judge_log(rec: dict, dig: dict) -> tuple[str, str] | None:
     None when it is one — or is not a record this can judge."""
     logger = str(rec.get("logger") or "")
     domain = str(rec.get("owner") or rec.get("integration") or "")
-    if (rec.get("called_by") or domain in RULE_DOMAINS or _from_frontend(rec)
+    if rec.get("called_by"):
+        # "It is unavailable, and these still try to control it" is a claim
+        # about the house now: read it again. Every entity the line names
+        # answering means the calls work, whatever the log last said.
+        health = dig.get("health") or {}
+        known = [health[e] for e in rec.get("entities") or [] if e in health]
+        if known and all(h.get("state") not in _DOWN for h in known):
+            return ("transient", "everything the failed calls were aimed "
+                    "at answers now")
+        return None
+    if (domain in RULE_DOMAINS or _from_frontend(rec)
             or (not domain and logger.startswith("homeassistant"))):
         # Calls to a missing entity, an automation's or a template's error,
         # the browser: somebody's own configuration, which no reconnect
