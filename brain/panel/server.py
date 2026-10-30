@@ -23718,15 +23718,67 @@ async def h_finding_discuss(request: web.Request) -> web.Response:
         return web.json_response({**out, "finding": finding,
                                   "face": "terminal"})
     prompt = await asyncio.to_thread(_discuss_prompt, finding)
+    out = await _ask_in_chat(prompt, await _json_body(request),
+                             finding_ts=int(finding["ts"]))
+    return web.json_response({**out, "finding": finding})
+
+
+async def _ask_in_chat(prompt: str, body: dict, finding_ts: int = 0) -> dict:
+    """A NEW chat conversation that starts with ``prompt``, answered at once.
+
+    The one path every ask-about takes on the chat face (Discuss, Ask on a
+    card, the hold menu, Personality's and Instructions' Ask): `new` opens
+    the conversation without spawning — the asking viewer's own empty chat
+    is reused rather than a second one opened — and the prompt is sent the
+    way the composer sends, so the request answers within ``SEND_HOLD_S``
+    with the conversation's key and the spawn's progress (or failure)
+    arrives on the stream the panel then opens on it.
+    """
     registry = _chat_registry()
+    current = registry.by_key(str(body.get("session_key") or ""))
     try:
-        await registry.new(finding_ts=int(finding["ts"]))
-        session = _chat()
-        await session.send(prompt)
+        opened = await registry.new(finding_ts=finding_ts, current=current,
+                                    spawn=False)
+        session = registry.by_key(opened["key"])
+        if session is None:
+            raise RuntimeError("the new conversation could not be opened")
+        session.model = eff_chat_model()
+        session.skip_permissions = registry.skip_permissions
+        sent = await _send_promptly(session, prompt)
+    except ValueError as exc:
+        raise web.HTTPBadRequest(reason=_refusal(exc))
     except RuntimeError as exc:
         raise web.HTTPConflict(reason=_refusal(exc))
-    return web.json_response({"ok": True, "finding": finding,
-                              "session_id": session.session_id})
+    return {"ok": True, "face": "chat", "session_id": session.session_id,
+            "key": session.key, "pending": bool(sent.get("pending"))}
+
+
+ASK_CONTEXT_MAX = 6000
+
+
+async def h_ask(request: web.Request) -> web.Response:
+    """POST {prompt[, context]}: ask brAIn about something, on the saved face.
+
+    Every ask-about used to open the TERMINAL by flipping the page's face
+    locally without saving it, so the next status poll put the saved face
+    (the chat) back and the person was left on an empty "New chat" while
+    their question ran in a hidden tmux window. One rule now, decided here
+    and nowhere else: the saved face wins. On the chat face a new chat
+    conversation starts with the prompt; on the classic face a terminal
+    window opens on it, as it always did.
+    """
+    body = await _json_body(request)
+    prompt = str(body.get("prompt") or "").strip()
+    if not prompt:
+        raise web.HTTPBadRequest(reason="nothing to ask")
+    context = str(body.get("context") or "").strip()[:ASK_CONTEXT_MAX]
+    if context:
+        prompt = f"{prompt}\n\n{context}"
+    prompt = prompt[:chat_session.MAX_TEXT_CHARS]
+    if settings_store.load().get("terminal_ui") == "classic":
+        out = await _open_terminal("", prompt)
+        return web.json_response({**out, "face": "terminal"})
+    return web.json_response(await _ask_in_chat(prompt, body))
 
 
 async def h_finding_fix(request: web.Request) -> web.Response:
@@ -26871,6 +26923,108 @@ def _chat() -> "chat_session.ChatSession":
     return session
 
 
+async def _chat_for(source) -> "chat_session.ChatSession":
+    """The conversation THIS viewer named, never another device's.
+
+    Every device used to act on one shared "attached" session, so a phone
+    sending into conversation A after a desktop opened B landed its message
+    in B. The panel now names its own conversation on every send, stop,
+    model pick and approval answer: ``session_key`` (the session object's
+    handle, which a fresh chat has before the CLI names it) and/or
+    ``session_id``. A named conversation the registry is not holding (a
+    restart, a trim) is held again to be read — never attached, so nobody
+    else's view moves — and the send that follows starts its process. A
+    name that matches nothing is refused rather than quietly answered by
+    some other conversation. A caller that names nothing (an older panel,
+    the CLI) keeps the old meaning: the attached one.
+    """
+    registry = _chat_registry()
+    key = str(source.get("session_key") or "").strip()
+    session_id = str(source.get("session_id") or "").strip()
+    session = registry.by_key(key) if key else None
+    if session is None and session_id:
+        session = registry.get(session_id)
+        if session is None:
+            if await asyncio.to_thread(chat_session.terminal_holds,
+                                       session_id):
+                raise web.HTTPConflict(reason=chat_session.TERMINAL_HOLDS)
+            if not chat_session.safe_id(session_id):
+                raise web.HTTPBadRequest(reason="that is not a conversation id")
+            replay = await asyncio.to_thread(
+                conversations.transcript, chat_session.WORK_DIR, session_id)
+            try:
+                session = await registry.hold(session_id, replay)
+            except ValueError as exc:
+                raise web.HTTPBadRequest(reason=_refusal(exc))
+            except RuntimeError as exc:
+                raise web.HTTPConflict(reason=_refusal(exc))
+    if session is None:
+        if key or session_id:
+            raise web.HTTPNotFound(
+                reason="that conversation is no longer open — start a new "
+                       "chat or pick it from the list")
+        return _chat()
+    session.model = eff_chat_model()
+    session.skip_permissions = registry.skip_permissions
+    return session
+
+
+# How long a send waits for its message to reach a process before it
+# answers "accepted" and lets the stream report the rest. A process that
+# is already up takes milliseconds; a spawn is watched for up to
+# START_GRACE per attempt (two or three of them on a resume that falls
+# back), which held the request 20-30 s — long enough for a proxy in front
+# of ingress to give up on it.
+SEND_HOLD_S = 3.0
+_SEND_TASKS: set = set()
+
+
+async def _deliver(session: "chat_session.ChatSession", text: str) -> dict:
+    """Room for the process, then the message — the whole of a send."""
+    await _chat_registry().room_for(session)
+    return await session.send(text)
+
+
+def _send_failed(session, text: str, exc: BaseException) -> None:
+    """A send that failed after its request had already answered: the
+    stream says so, and hands the words back so the box can refill."""
+    reason = _refusal(exc) if isinstance(exc, Exception) else "stopped"
+    session._emit({"type": "send_failed", "text": text, "reason": reason},
+                  keep=False)
+    session._emit({"type": "notice",
+                   "text": f"That message was not sent: {reason}"})
+
+
+async def _send_promptly(session, text: str) -> dict:
+    """Send, answering within ``SEND_HOLD_S`` whatever the spawn does.
+
+    The send itself runs as a task. Done in time, its own answer (or its
+    own refusal) is the response, exactly as before. Not done in time,
+    the response is ``accepted`` with the conversation's names, and the
+    task carries on: its user turn, its state and any failure arrive on
+    the stream the panel is already reading.
+    """
+    task = asyncio.create_task(_deliver(session, text))
+    _SEND_TASKS.add(task)
+
+    def _settled(t: asyncio.Task) -> None:
+        _SEND_TASKS.discard(t)
+        if t.cancelled() or getattr(t, "_brain_answered", False):
+            return
+        exc = t.exception()
+        if exc is not None:
+            log.warning("chat: a send failed after it was accepted: %s", exc)
+            _send_failed(session, text, exc)
+
+    task.add_done_callback(_settled)
+    done, _ = await asyncio.wait({task}, timeout=SEND_HOLD_S)
+    if task in done:
+        task._brain_answered = True
+        return task.result()
+    return {"ok": True, "accepted": True, "pending": True,
+            "session_id": session.session_id, "key": session.key}
+
+
 async def h_chat_stream(request: web.Request) -> web.StreamResponse:
     """Server-sent events: a snapshot, then everything as it happens.
 
@@ -26893,8 +27047,18 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
                 "state": "idle", "error": _refusal(exc)}
 
     first = None
+    # A viewer that names its own conversation (``?session_key=`` and/or
+    # ``?session_id=``) is served that one and is not moved by another
+    # device's switch; one that names nothing, or names a conversation that
+    # is gone, gets the attached one as before.
+    named = bool(request.query.get("session_key")
+                 or request.query.get("session_id"))
     try:
-        session = _chat()
+        try:
+            session = await _chat_for(request.query) if named else _chat()
+        except web.HTTPException:
+            named = False
+            session = _chat()
     except Exception as exc:   # noqa: BLE001 — see the docstring
         session, first = None, empty(exc)
     resp = web.StreamResponse(headers={
@@ -26921,7 +27085,8 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
                 first = empty(exc)
         await send(first)
         registry = chat_session.registry()
-        if session is not None and registry.attached() is not session:
+        if session is not None and not named \
+                and registry.attached() is not session:
             # Attached somewhere else between picking the session and
             # subscribing to it. The `switched` event that would have said
             # so went to the queue this stream does not hold, so it is
@@ -26929,7 +27094,8 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
             # conversation nobody is in — a narrow race, and the only one
             # whose failure is permanent.
             await send({"type": "switched",
-                        "session_id": registry.attached().session_id or ""})
+                        "session_id": registry.attached().session_id or "",
+                        "key": registry.attached().key})
         while True:
             try:
                 event = await asyncio.wait_for(
@@ -26940,8 +27106,10 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
                     # there is, the panel reconnects to it the way it does
                     # after any switch.
                     try:
+                        now = _chat()
                         await send({"type": "switched",
-                                    "session_id": _chat().session_id or ""})
+                                    "session_id": now.session_id or "",
+                                    "key": now.key})
                         break
                     except Exception:   # noqa: BLE001 — still nothing
                         pass
@@ -26954,6 +27122,11 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
                 # the response so the EventSource reconnects to a fresh
                 # snapshot, rather than idling on a queue nothing feeds.
                 break
+            if named and event.get("type") == "switched":
+                # The shared "attached" pointer moved — another device's
+                # doing. A viewer that named its own conversation stays on
+                # it; its own switches reconnect it by key.
+                continue
             await send(event)
     except (ConnectionResetError, asyncio.CancelledError):
         # The viewer closed the tab, or the task was cancelled. Either way
@@ -27008,20 +27181,28 @@ async def h_chat_send(request: web.Request) -> web.Response:
     body = await request.json()
     if not isinstance(body, dict):
         raise web.HTTPBadRequest(text="expected an object")
-    session = _chat()
+    session = await _chat_for(body)
+    text = str(body.get("text") or "").strip()
     try:
+        if not text:
+            raise ValueError("empty message")
+        if len(text) > chat_session.MAX_TEXT_CHARS:
+            raise ValueError("message too long")
         # A conversation opened to be read has no process yet; the one this
-        # message starts is counted against the cap like any other spawn.
-        await _chat_registry().room_for(session)
-        return web.json_response(await session.send(body.get("text") or ""))
+        # message starts is counted against the cap like any other spawn —
+        # and answered within SEND_HOLD_S, whatever the spawn takes.
+        out = await _send_promptly(session, text)
     except ValueError as exc:
         raise web.HTTPBadRequest(reason=_refusal(exc))
     except RuntimeError as exc:
         raise web.HTTPConflict(reason=_refusal(exc))
+    return web.json_response(
+        {**out, "session_id": session.session_id, "key": session.key})
 
 
 async def h_chat_stop(request: web.Request) -> web.Response:
-    return web.json_response(await _chat().interrupt())
+    session = await _chat_for(await _json_body(request))
+    return web.json_response(await session.interrupt())
 
 
 async def h_chat_new(request: web.Request) -> web.Response:
@@ -27031,15 +27212,22 @@ async def h_chat_new(request: web.Request) -> web.Response:
     rather than spending a slot on a second empty process — see
     ``SessionRegistry.new``.
     """
+    body = await _json_body(request)
+    registry = _chat_registry()
+    # The asking viewer's own conversation, so "reuse the empty one" reuses
+    # THEIRS and never another device's empty chat.
+    current = registry.by_key(str(body.get("session_key") or ""))
     try:
-        return web.json_response(await _chat_registry().new())
+        return web.json_response(await registry.new(current=current))
     except RuntimeError as exc:
         raise web.HTTPConflict(reason=_refusal(exc))
 
 
 async def h_chat_handoff(request: web.Request) -> web.Response:
-    """Stop the chat session and hand it to the classic terminal."""
-    return web.json_response(await _chat().handoff())
+    """Stop the chat session and hand it to the classic terminal — the
+    viewer's own conversation when it names one."""
+    session = await _chat_for(await _json_body(request))
+    return web.json_response(await session.handoff())
 
 
 async def h_chat_conversations(request: web.Request) -> web.Response:
@@ -27108,13 +27296,37 @@ async def h_chat_conversations(request: web.Request) -> web.Response:
         row["row_state"] = registry.row_state(
             row["id"], view_only=bool(row.get("view_only")))
         _discussion_row(row, registry)
+    # brAIn's terminal windows: Claude processes too, listed so they are
+    # neither invisible nor opened a second time. A row a window holds is
+    # marked, and pressing it brings that window forward instead of a
+    # second `--resume`; a window on a conversation it started itself has
+    # no row in the store yet, so it is listed on its own.
+    windows = await asyncio.to_thread(chat_session.terminal_windows)
+    held = {w["session_id"]: w for w in windows if w["session_id"]}
+    for row in rows:
+        window = held.get(row["id"])
+        if window is not None:
+            row["terminal"] = {"window_id": window["window_id"]}
     return web.json_response({
         "conversations": rows,
         "current": session.session_id,
         "sources": await asyncio.to_thread(_conversation_source_counts),
         "sessions": registry.live(),
+        "terminal": windows,
         "max_sessions": chat_session.max_sessions(),
     })
+
+
+async def h_terminal_select(request: web.Request) -> web.Response:
+    """POST {window_id}: bring one of brAIn's terminal windows forward."""
+    body = await _json_body(request)
+    window_id = str(body.get("window_id") or "")
+    selected = await asyncio.to_thread(
+        chat_session.select_terminal_window, window_id)
+    if not selected:
+        raise web.HTTPNotFound(
+            reason="that terminal window is not open any more")
+    return web.json_response({"ok": True, "window_id": window_id})
 
 
 DISCUSS_TITLE_PREFIX = "Discussing: "
@@ -27263,7 +27475,7 @@ async def h_chat_model(request: web.Request) -> web.Response:
     body = await request.json()
     if not isinstance(body, dict):
         raise web.HTTPBadRequest(text="expected an object")
-    session = _chat()
+    session = await _chat_for(body)
     if session.state == "busy":
         # Refused before anything is saved: a choice that half-applies —
         # stored but not running — reads as a picker that lies. The one
@@ -27312,7 +27524,7 @@ async def h_chat_permission(request: web.Request) -> web.Response:
                 for k, v in answers.items()):
             raise web.HTTPBadRequest(
                 text="answers must map question text to an answer string")
-    session = _chat()
+    session = await _chat_for(body)
     try:
         return web.json_response(await session.respond_permission(
             str(body.get("id") or ""), bool(body.get("allow")),
@@ -27450,6 +27662,17 @@ async def h_chat_resume(request: web.Request) -> web.Response:
     # Anything that does not say so keeps the old meaning — "Resume now"
     # and every older caller want the process up straight away.
     spawn = body.get("spawn") is not False
+    if registry.get(session_id) is None:
+        window = await asyncio.to_thread(chat_session.terminal_holds,
+                                         session_id)
+        if window is not None:
+            # A terminal window is running this conversation. A second
+            # process on it would fork it, so the answer is where it is —
+            # the panel switches to the terminal and brings it forward.
+            return web.json_response({
+                "ok": False, "in_terminal": True, "session_id": session_id,
+                "window_id": window["window_id"],
+                "message": chat_session.TERMINAL_HOLDS})
     try:
         out = await registry.open(session_id, replay, spawn=spawn)
     except ValueError as exc:
@@ -27508,8 +27731,11 @@ def _chat_snapshot(session: "chat_session.ChatSession") -> dict:
 
 
 async def h_chat_state(request: web.Request) -> web.Response:
-    """The snapshot on its own, for a client whose stream is not up yet."""
-    return web.json_response(_chat_snapshot(_chat()))
+    """The snapshot on its own, for a client whose stream is not up yet.
+
+    ``?session_key=`` / ``?session_id=`` name the viewer's own conversation,
+    as the stream's do."""
+    return web.json_response(_chat_snapshot(await _chat_for(request.query)))
 
 
 # ---------------------------------------------------------------------------
@@ -27563,6 +27789,100 @@ def note_crash(route: str, exc: BaseException, now: float | None = None) -> bool
     return True
 
 
+# The start, split in two (see `on_startup`): the gate below holds a request
+# that needs the slow half until it is done. `done` is created by
+# on_startup on the running loop; before that (an app nobody started, a
+# handler called directly) there is no gate at all.
+_STARTUP: dict = {"done": None, "error": ""}
+# How long a request waits for the start to finish before it is answered
+# "starting" instead — well under any proxy's timeout, and long enough that
+# an ordinary start (and every test's) is simply waited out.
+STARTING_WAIT_S = float(os.environ.get("BRAIN_STARTING_WAIT_S", "8"))
+STARTING_PAGE_WAIT_S = 1.5
+# What may answer before the start is done: the readiness probe, the
+# panel's own files, and the terminal (ttyd is not ours to gate).
+_STARTING_OPEN = ("/api/ready", "/terminal", "/style.css", "/app.js",
+                  "/docs.js", "/favicon.svg", "/house-layer.js")
+STARTING_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>brAIn is starting</title>
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+  font: 16px/1.5 system-ui, sans-serif; background: Canvas; color: CanvasText; }
+p { padding: 0 16px; text-align: center; }
+</style></head>
+<body data-brain-starting>
+<p>brAIn is starting… this page opens by itself in a moment.</p>
+<script>
+(function poll(delay) {
+  setTimeout(function () {
+    fetch("api/ready", { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (d && d.ready) location.reload();
+        else poll(Math.min(delay * 2, 5000));
+      })
+      .catch(function () { poll(Math.min(delay * 2, 5000)); });
+  }, delay);
+})(500);
+</script>
+</body></html>
+"""
+
+
+def startup_ready() -> bool:
+    done = _STARTUP.get("done")
+    return done is None or done.is_set()
+
+
+async def _wait_started(timeout: float) -> bool:
+    done = _STARTUP.get("done")
+    if done is None or done.is_set():
+        return True
+    try:
+        await asyncio.wait_for(asyncio.shield(done.wait()), timeout)
+    except asyncio.TimeoutError:
+        return False
+    return True
+
+
+@web.middleware
+async def starting_middleware(request: web.Request, handler):
+    """Bound first, gated until the slow half of the start is done.
+
+    A request that needs it waits up to ``STARTING_WAIT_S`` and is then
+    answered rather than held: the page's root with a small page that
+    reloads itself once ``/api/ready`` says so, and an API route with a
+    plain 503 ``{"starting": true}`` the panel can retry — never a proxy's
+    502 because nothing was listening yet.
+    """
+    if startup_ready():
+        return await handler(request)
+    path = request.path
+    if path.startswith(_STARTING_OPEN):
+        return await handler(request)
+    if path in ("/", "/index.html"):
+        if await _wait_started(STARTING_PAGE_WAIT_S):
+            return await handler(request)
+        return web.Response(text=STARTING_PAGE, content_type="text/html",
+                            headers={"Cache-Control": "no-store"})
+    if await _wait_started(STARTING_WAIT_S):
+        return await handler(request)
+    return web.json_response(
+        {"starting": True, "error": "brAIn is starting — try again in a "
+                                    "moment"},
+        status=503, headers={"Retry-After": "2", "Cache-Control": "no-store"})
+
+
+async def h_ready(request: web.Request) -> web.Response:
+    """Whether the start has finished — what the starting page polls."""
+    return web.json_response({"ready": startup_ready(),
+                              "error": _STARTUP.get("error") or ""},
+                             headers={"Cache-Control": "no-store"})
+
+
 @web.middleware
 async def crash_middleware(request: web.Request, handler):
     try:
@@ -27598,8 +27918,9 @@ def make_app() -> web.Application:
     # export — the document plus every ledger. Everything else is far
     # smaller.
     app = web.Application(client_max_size=1024 * 1024,
-                          middlewares=[crash_middleware])
+                          middlewares=[crash_middleware, starting_middleware])
     app.router.add_get("/", h_index)
+    app.router.add_get("/api/ready", h_ready)
     app.router.add_get("/style.css", _static("style.css", "text/css"))
     app.router.add_get("/app.js", _static("app.js", "application/javascript"))
     app.router.add_get("/docs.js", _static("docs.js", "application/javascript"))
@@ -27831,6 +28152,8 @@ def make_app() -> web.Application:
     app.router.add_post("/api/chat/new", h_chat_new)
     app.router.add_post("/api/chat/handoff", h_chat_handoff)
     app.router.add_post("/api/terminal/open", h_terminal_open)
+    app.router.add_post("/api/terminal/select", h_terminal_select)
+    app.router.add_post("/api/ask", h_ask)
     app.router.add_get("/api/features", h_features_get)
     app.router.add_put("/api/features", h_features_put)
     app.router.add_get("/api/morph/state", h_morph_state)
@@ -27875,79 +28198,18 @@ def make_app() -> web.Application:
     _maint_routes(app)
 
     async def on_startup(app: web.Application) -> None:
-        # Every prompt's shipped text is captured before any override is put
-        # in force, then the overrides, then the shipped copies are written
-        # where Claude in the terminal can read them.
-        await asyncio.to_thread(instructions.apply_all)
-        await asyncio.to_thread(instructions.export_builtins)
-        # A browser left over from before the restart (report #355).
-        await asyncio.to_thread(browser_reaper.maybe_reap)
-        # The household's personality used to live in Morph's own code;
-        # read it out of Morph's copy ONCE, while brAIn has no file of its
-        # own, before the terminal's prompt is written from it. Morph's
-        # file is never written.
-        moved = await asyncio.to_thread(personality.migrate_from_morph)
-        if moved:
-            log.info("personality: %s", moved)
-        # And an earlier import that kept only the top-level strings of
-        # Morph's persona is read again, once, while nobody has edited it.
-        repaired = await asyncio.to_thread(personality.repair_from_morph)
-        if repaired:
-            log.info("personality: %s", repaired)
-        # brAIn's four switches (⚙ › Features), decided once from what the
-        # house already had and published for Morph's service, the
-        # integration and the prompts below to read.
-        await asyncio.to_thread(features.ensure)
-        await asyncio.to_thread(_write_terminal_prompt)
-        # Startup is the one moment we know nothing is in flight, so it is
-        # the only place a fix orphaned by a restart can be told apart from
-        # one that is genuinely still running.
-        orphaned = await asyncio.to_thread(
-            findings_store.reconcile_running,
-            "brAIn restarted while this fix was running, so it could not "
-            "report what it did. Check the entity before trying again.")
-        if orphaned:
-            log.warning("%d fix run(s) were interrupted by a restart", orphaned)
-        # Dismissals made before the settled ledger existed live as rows in
-        # a status the tab no longer shows; move them somewhere visible.
-        migrated = await asyncio.to_thread(findings_store.migrate_settled)
-        if migrated:
-            log.info("moved %d dismissed finding(s) into the settled ledger",
-                     migrated)
-        # One-time, marked on disk: fold one fault filed by several cards,
-        # and give rows held under the old look one fresh look.
-        repaired = await asyncio.to_thread(findings_store.migrate_folds)
-        if repaired.get("folded") or repaired.get("retriaged"):
-            log.info("findings repaired once: %d duplicate(s) folded, %d "
-                     "held row(s) sent for a fresh look",
-                     repaired["folded"], repaired["retriaged"])
-        # Republish the shared-volume mirror so the integration's findings
-        # sensor reads the current list, not the one from the last change.
-        await asyncio.to_thread(findings_store.publish_state)
-        # ...and the to-do mirror beside it, for the same reason: a boot
-        # must not serve last week's list to the To-do app.
-        await asyncio.to_thread(todo_store.publish_state)
-        # ...and the status line, so `sensor.brain_status` does not wait a
-        # minute after a boot to stop reading as the panel being down.
-        await asyncio.to_thread(publish_status)
-        # Transcripts from before the pool's reflection pass and one-shot
-        # voice fallback claimed their ids sat in the person's own Chats
-        # list. Label the backlog once, by our own shipped prompt openers
-        # (marker-guarded).
-        relabelled = await asyncio.to_thread(
-            conversations.backfill_sources, chat_session.WORK_DIR)
-        if relabelled:
-            log.info("labelled %d machine conversation(s) from before their "
-                     "callers claimed session ids", relabelled)
-        # ...and what Morph sent before the listener claimed its tasks as
-        # Morph's: filed as Automation or as the person's own (marker-guarded).
-        morphs = await asyncio.to_thread(
-            conversations.relabel_morph, chat_session.WORK_DIR)
-        if morphs:
-            log.info("listed %d conversation(s) Morph started under Morph", morphs)
-        await _options_sync()
-        _publish_permission_mode()
-        await _shell_sync()
+        """What has to be true before the port is bound — and nothing else.
+
+        aiohttp binds only after every ``on_startup`` returns, and this
+        used to hold fifteen migrations, syncs and the event bus, so Home
+        Assistant's ingress answered 502 for the whole of every start. Now
+        only what a route cannot do without runs here; the rest is
+        ``_startup_work``, a task started here and finished after the bind,
+        while the starting gate (`starting_middleware`) holds requests that
+        need it.
+        """
+        _STARTUP["done"] = asyncio.Event()
+        _STARTUP["error"] = ""
         # Every failed run of any kind becomes one readable file: hooked on
         # the journal so a new run path is covered by having recorded itself.
         journal.on_record(_journal_report_listener)
@@ -27974,6 +28236,102 @@ def make_app() -> web.Application:
         # Waiters from a loop that has gone (a test, a second app) can
         # never be woken; the run queue drops them, `_rebind_queue`'s rule.
         run_queue.QUEUE.reset()
+        # The add-on's options decide every effective setting a route
+        # answers with (and a pre-1.8 override is promoted into them), so
+        # they are synced before the first request rather than after it.
+        await _options_sync()
+        _publish_permission_mode()
+        # The findings list, put right before any route reads or writes it.
+        # Startup is the one moment we know nothing is in flight, so it is
+        # the only place a fix orphaned by a restart can be told apart from
+        # one that is genuinely still running — and a route acting on a row
+        # first would be acting on that orphan.
+        orphaned = await asyncio.to_thread(
+            findings_store.reconcile_running,
+            "brAIn restarted while this fix was running, so it could not "
+            "report what it did. Check the entity before trying again.")
+        if orphaned:
+            log.warning("%d fix run(s) were interrupted by a restart", orphaned)
+        # Dismissals made before the settled ledger existed live as rows in
+        # a status the tab no longer shows; move them somewhere visible.
+        migrated = await asyncio.to_thread(findings_store.migrate_settled)
+        if migrated:
+            log.info("moved %d dismissed finding(s) into the settled ledger",
+                     migrated)
+        # One-time, marked on disk: fold one fault filed by several cards,
+        # and give rows held under the old look one fresh look.
+        repaired = await asyncio.to_thread(findings_store.migrate_folds)
+        if repaired.get("folded") or repaired.get("retriaged"):
+            log.info("findings repaired once: %d duplicate(s) folded, %d "
+                     "held row(s) sent for a fresh look",
+                     repaired["folded"], repaired["retriaged"])
+        # The sign-in check is a task started here, not awaited: the status
+        # route reports it, so it is "checking" from the first request.
+        if engine.get_auth():
+            start_auth_check()
+        app["startup"] = asyncio.create_task(_startup_work(app))
+
+    async def _startup_work(app: web.Application) -> None:
+        try:
+            await _startup_body(app)
+        except Exception as exc:  # noqa: BLE001 — a start that failed half
+            # way must still open the gate, or every route answers 503 for
+            # ever; the fault is logged and carried by /api/ready.
+            log.exception("brAIn's startup work failed")
+            _STARTUP["error"] = _refusal(exc)
+        finally:
+            _STARTUP["done"].set()
+
+    async def _startup_body(app: web.Application) -> None:
+        # Every prompt's shipped text is captured before any override is put
+        # in force, then the overrides, then the shipped copies are written
+        # where Claude in the terminal can read them.
+        await asyncio.to_thread(instructions.apply_all)
+        await asyncio.to_thread(instructions.export_builtins)
+        # A browser left over from before the restart (report #355).
+        await asyncio.to_thread(browser_reaper.maybe_reap)
+        # The household's personality used to live in Morph's own code;
+        # read it out of Morph's copy ONCE, while brAIn has no file of its
+        # own, before the terminal's prompt is written from it. Morph's
+        # file is never written.
+        moved = await asyncio.to_thread(personality.migrate_from_morph)
+        if moved:
+            log.info("personality: %s", moved)
+        # And an earlier import that kept only the top-level strings of
+        # Morph's persona is read again, once, while nobody has edited it.
+        repaired = await asyncio.to_thread(personality.repair_from_morph)
+        if repaired:
+            log.info("personality: %s", repaired)
+        # brAIn's four switches (⚙ › Features), decided once from what the
+        # house already had and published for Morph's service, the
+        # integration and the prompts below to read.
+        await asyncio.to_thread(features.ensure)
+        await asyncio.to_thread(_write_terminal_prompt)
+        # Republish the shared-volume mirror so the integration's findings
+        # sensor reads the current list, not the one from the last change.
+        await asyncio.to_thread(findings_store.publish_state)
+        # ...and the to-do mirror beside it, for the same reason: a boot
+        # must not serve last week's list to the To-do app.
+        await asyncio.to_thread(todo_store.publish_state)
+        # ...and the status line, so `sensor.brain_status` does not wait a
+        # minute after a boot to stop reading as the panel being down.
+        await asyncio.to_thread(publish_status)
+        # Transcripts from before the pool's reflection pass and one-shot
+        # voice fallback claimed their ids sat in the person's own Chats
+        # list. Label the backlog once, by our own shipped prompt openers
+        # (marker-guarded).
+        relabelled = await asyncio.to_thread(
+            conversations.backfill_sources, chat_session.WORK_DIR)
+        if relabelled:
+            log.info("labelled %d machine conversation(s) from before their "
+                     "callers claimed session ids", relabelled)
+        # ...and what Morph sent before the listener claimed its tasks as
+        # Morph's: filed as Automation or as the person's own (marker-guarded).
+        morphs = await asyncio.to_thread(
+            conversations.relabel_morph, chat_session.WORK_DIR)
+        if morphs:
+            log.info("listed %d conversation(s) Morph started under Morph", morphs)
+        await _shell_sync()
         # Every long-lived loop is supervised: a done-callback says at
         # warning when one stops, and `/api/diagnostics` carries whether
         # each is alive and when the ones that beat last went round —
@@ -28042,10 +28400,15 @@ def make_app() -> web.Application:
             log.warning("could not publish the tripwire file: %s", exc)
         if addon_options.available():
             app["options"] = _supervise("options", _options_poller())
-        if engine.get_auth():
-            start_auth_check()
 
     async def on_cleanup(app: web.Application) -> None:
+        task = app.get("startup")
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001 — cancelled on the way out
+                pass
         # The chat session is a child process of ours; leaving it running
         # after the panel goes down orphans a Claude that nothing will ever
         # read from again.

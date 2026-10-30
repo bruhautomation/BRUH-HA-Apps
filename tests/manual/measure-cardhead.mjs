@@ -206,7 +206,9 @@ window.fetch = async (url, opts) => {
                                             output: 1000, cached: 0 } } },
     ] });
   }
-  if (p.includes('api/terminal/open')) {
+  // Ask posts api/ask (it follows the saved face); the terminal's own route
+  // is still recorded the same way.
+  if (p.includes('api/terminal/open') || p.endsWith('api/ask')) {
     window.__opened = (window.__opened || []).concat([JSON.parse(opts.body || '{}')]);
     return answer({ opened: true });
   }

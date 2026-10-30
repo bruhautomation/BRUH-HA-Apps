@@ -781,6 +781,10 @@
        Talk button, which hands the phone's mic to Claude Code's /voice. -->
   <iframe id="termFrame" title="Terminal" src="about:blank"
           allow="clipboard-read; clipboard-write; microphone"></iframe>
+  <!-- Over the frame while the terminal is not answering yet (a restart, a
+       ttyd that is being started again): the frame is retried with a short
+       backoff rather than left on a proxy's 502 page. -->
+  <p id="termStarting" class="termstarting hidden" role="status">The terminal is starting…</p>
 
   <!-- Two buttons, not five. These float over somebody's output, and a
        column of five translucent squares sitting on top of the text is
@@ -1328,16 +1332,20 @@
           <p class="hint tight">How Ask opens. ⋯ on Ask switches it too.</p>
           <label for="setChatSessions">Conversations kept running at once</label>
           <select id="setChatSessions" class="sel selin">
+            <option value="">No limit (default)</option>
             <option value="1">1 — one at a time</option>
             <option value="2">2</option>
-            <option value="3">3 (default)</option>
+            <option value="3">3</option>
             <option value="4">4</option>
-            <option value="5">5</option>
             <option value="6">6</option>
             <option value="8">8</option>
+            <option value="12">12</option>
+            <option value="16">16</option>
+            <option value="24">24</option>
+            <option value="32">32</option>
           </select>
-          <p class="hint tight">You can have as many conversations as you like; this is how many
-            stay running.</p>
+          <p class="hint tight">With no limit every conversation can be working at once. When
+            memory runs short brAIn puts the quietest idle one to sleep; a message wakes it.</p>
         </div>
       </section>
 

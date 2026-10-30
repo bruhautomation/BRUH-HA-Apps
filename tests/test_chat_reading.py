@@ -32,6 +32,45 @@ FAKE = Path(__file__).resolve().parent / "fake_claude_chat.py"
 
 sys.path.insert(0, str(PANEL))
 
+
+# The chat writes the run journal, the run-source ledger and the usage
+# nudge as it goes; every one of them defaults to the real /data. Pointed at
+# a directory of this file's own for the whole module (conftest's
+# RealDataWrite), with the module attributes patched as well as the
+# variables, because the modules read them once at import.
+_DATA_ISOLATION = (
+    ("BRAIN_JOURNAL_FILE", "journal", "JOURNAL_FILE", "journal.jsonl", str),
+    ("BRAIN_RUN_SOURCES", "run_sources", "LEDGER", "run-sources.jsonl", Path),
+    ("BRAIN_USAGE_NUDGE", "usage_store", "NUDGE_FILE", "usage-nudge", str),
+    ("BRAIN_USAGE_FILE", "usage_store", "USAGE_FILE", "usage.json", str),
+)
+_DATA_SAVED: list = []
+_DATA_TMP = None
+
+
+def setUpModule():
+    global _DATA_TMP
+    _DATA_TMP = tempfile.TemporaryDirectory()
+    for env, module_name, attr, leaf, kind in _DATA_ISOLATION:
+        module = importlib.import_module(module_name)
+        _DATA_SAVED.append((env, os.environ.get(env), module, attr,
+                            getattr(module, attr)))
+        path = os.path.join(_DATA_TMP.name, leaf)
+        os.environ[env] = path
+        setattr(module, attr, kind(path))
+
+
+def tearDownModule():
+    for env, value, module, attr, original in reversed(_DATA_SAVED):
+        if value is None:
+            os.environ.pop(env, None)
+        else:
+            os.environ[env] = value
+        setattr(module, attr, original)
+    _DATA_SAVED.clear()
+    if _DATA_TMP is not None:
+        _DATA_TMP.cleanup()
+
 # Shaped like the one in the report: one line of XML, the result itself
 # JSON-escaped (literal backslash-n), with an entity in it.
 NOTIFICATION = (

@@ -266,10 +266,14 @@ async def handle(request: web.Request) -> web.StreamResponse:
         return web.Response(
             status=502,
             content_type="text/html",
+            # The panel's frame recognises this page by its marker and
+            # loads the terminal again with a backoff, so nobody has to
+            # reload the tab by hand.
             text="<!doctype html><meta charset=utf-8>"
-                 "<p style='font:16px system-ui;padding:2rem'>The terminal isn't "
-                 "responding yet. It usually takes a few seconds after a restart — "
-                 "reload the tab.</p>",
+                 "<body data-terminal-starting>"
+                 "<p style='font:16px system-ui;padding:2rem'>The terminal is "
+                 "starting… It usually takes a few seconds after a restart, "
+                 "and this page tries again on its own.</p></body>",
         )
 
 

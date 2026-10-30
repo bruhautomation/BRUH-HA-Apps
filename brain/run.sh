@@ -2289,6 +2289,15 @@ get_claude_launch_command() {
     local auto_launch_claude
     auto_launch_claude=$(bashio::config 'auto_launch_claude' 'true')
 
+    # The panel opens Ask's windows in the session ttyd attaches to: the
+    # picker's when Claude is not launched on its own, or Ask would open a
+    # window in a session nobody is looking at.
+    if [ "$auto_launch_claude" = "true" ] || [ ! -f /usr/local/bin/brain-menu ]; then
+        export BRAIN_TMUX_SESSION="claude"
+    else
+        export BRAIN_TMUX_SESSION="claude-picker"
+    fi
+
     if [ "$auto_launch_claude" = "true" ]; then
         # brain-terminal-start, not claude-run directly: it checks whether the
         # chat tab has handed a conversation over and resumes it if so, and it
@@ -2366,8 +2375,14 @@ start_web_terminal() {
     bashio::log.info "  HA MCP Server: $(bashio::config 'enable_ha_mcp_server' 'true')"
     bashio::log.info "  Act without asking (terminal + chat): $(bashio::config 'dangerously_skip_permissions' 'false')"
 
+    # Not in a $( ) subshell: it exports which tmux session ttyd attaches
+    # to, for the panel (BRAIN_TMUX_SESSION).
+    get_claude_launch_command >/dev/null
     local launch_command
     launch_command=$(get_claude_launch_command)
+    # The panel may start that session itself when Ask opens a window before
+    # anybody has opened the terminal tab: ttyd attaches to it with -A.
+    export BRAIN_TERMINAL_CREATE=1
 
     local auto_launch_claude
     auto_launch_claude=$(bashio::config 'auto_launch_claude' 'true')
@@ -2420,7 +2435,38 @@ start_web_terminal() {
     local ttyd_debug=3
     [ "$(bashio::config 'log_level' 'info')" = "debug" ] && ttyd_debug=7
 
-    ttyd \
+    # Supervised: ttyd was started once and never again, so one crash left
+    # the terminal tab on HA's 502 page until the add-on was restarted. It
+    # is restarted with a backoff (2s, doubling to 60s; reset once it has
+    # stayed up a minute), and every restart is logged.
+    (
+        trap 'kill "${ttyd_pid:-}" 2>/dev/null; exit 0' TERM INT
+        local delay=2 started code
+        while true; do
+            started=${SECONDS}
+            start_ttyd "${port}" "${ttyd_debug}" "${launch_command}" "${index_arg[@]}" &
+            ttyd_pid=$!
+            wait "${ttyd_pid}"
+            code=$?
+            [ $((SECONDS - started)) -ge 60 ] && delay=2
+            bashio::log.warning "Terminal (ttyd) exited with status ${code}; restarting it in ${delay}s"
+            sleep "${delay}"
+            delay=$((delay * 2))
+            [ "${delay}" -gt 60 ] && delay=60
+        done
+    ) &
+
+    TTYD_PID=$!
+    bashio::log.info "  Terminal ready (proxied at /terminal/)"
+    bashio::log.info "  Direct access on :${port} needs a password — see the panel's Settings, or /data/terminal-credential"
+}
+
+# One ttyd, in the foreground of its caller: the supervisor above waits on it.
+# Arguments: port, debug mask, launch command, then any --index arguments.
+start_ttyd() {
+    local port="$1" ttyd_debug="$2" launch_command="$3"
+    shift 3
+    exec ttyd \
         --port "${port}" \
         --interface 0.0.0.0 \
         --credential "${TTYD_CREDENTIAL}" \
@@ -2432,12 +2478,8 @@ start_web_terminal() {
         --client-option reconnectInterval=5 \
         --client-option 'fontFamily=SF Mono, Menlo, Consolas, monospace' \
         --client-option 'theme={"background":"#1a1613","foreground":"#e8ddd4","cursor":"#d97757","cursorAccent":"#1a1613","selectionBackground":"#d9775766"}' \
-        "${index_arg[@]}" \
-        bash -c "$launch_command" &
-
-    TTYD_PID=$!
-    bashio::log.info "  Terminal ready (proxied at /terminal/)"
-    bashio::log.info "  Direct access on :${port} needs a password — see the panel's Settings, or /data/terminal-credential"
+        "$@" \
+        bash -c "$launch_command"
 }
 
 # ============================================================================

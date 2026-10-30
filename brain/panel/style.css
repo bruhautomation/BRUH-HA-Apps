@@ -2884,6 +2884,17 @@ html.shell-home.shell-raised, html.shell-home.shell-raised body { background: rg
   display: block;
   background: var(--terminal-bg);
 }
+.termstarting {
+  position: absolute;
+  inset: 40% 16px auto 16px;
+  margin: 0;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: var(--fs-body, 16px);
+  pointer-events: none;
+}
+.termstarting.hidden,
+body:not(.term-classic) .termstarting { display: none; }
 
 /* Immersive terminal — the bar folds away and the terminal takes the room.
    Two things fold it: pressing ⤢, and the software keyboard coming up (the
