@@ -1995,8 +1995,8 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
             detail = _with_source(logs, dig, detail)
         causes.append({
             "title": title,
-            "detail": textclip.clip(detail, MAX_DETAIL),
-            "fix": textclip.clip(fix, MAX_FIX),
+            "detail": textclip.shorten(detail, MAX_DETAIL),
+            "fix": textclip.shorten(fix, MAX_FIX),
             "severity": severity if severity in SEVERITIES else "warning",
             "records": real,
             "anchor": real[0],

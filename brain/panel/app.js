@@ -2621,6 +2621,14 @@ function paintVersion() {
   a.title = pending ? restart : `What changed in brAIn ${v}`;
   a.setAttribute("aria-label", `brAIn ${v}: what's new (the changelog)`
     + (pending ? `. ${restart}` : ""));
+  const bar = $("#barVersion");
+  if (bar) {
+    bar.querySelector(".vertext").textContent = "v" + v;
+    bar.href = a.href;
+    bar.classList.toggle("pending", pending);
+    bar.title = a.title;
+    bar.setAttribute("aria-label", a.getAttribute("aria-label"));
+  }
 }
 
 // What's new: the version opens the release notes INSIDE the panel, read
@@ -2706,7 +2714,7 @@ async function openWhatsNew() {
   prefSet(WHATS_NEW_SEEN, sections[0].version);
 }
 
-$("#versionChip").addEventListener("click", (ev) => {
+for (const link of [$("#versionChip"), $("#barVersion")]) link.addEventListener("click", (ev) => {
   // A modified press keeps the link's own meaning (a new tab, a window).
   if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button) return;
   ev.preventDefault();
@@ -6679,6 +6687,21 @@ function caseDetailsBody(box, row) {
   }
   const seen = triageLine(caseTriageRow(row));
   if (seen) box.appendChild(seen);
+  qTechnical(box, row.technical);
+}
+
+// The paths, tool names and codes a model wrote, taken out of the card's
+// sentences and kept here, under Details, for whoever wants them (#563).
+function qTechnical(box, items) {
+  if (!(items || []).length) return;
+  qDetailLine(box, "Technical details", " ");
+  const list = el("ul", "qtechlist");
+  items.slice(0, 8).forEach((t) => {
+    const li = el("li", null);
+    li.appendChild(el("code", "qdid", String(t)));
+    list.appendChild(li);
+  });
+  box.appendChild(list);
 }
 
 // A case in the shape `triageLine` reads.
@@ -7229,6 +7252,7 @@ function makeLooseFinding(f) {
   if (f.entity_id) more.appendChild(el("code", "qdid", f.entity_id));
   const seen = triageLine(f);
   if (seen) more.appendChild(seen);
+  qTechnical(more, f.technical);
   card.appendChild(more);
   const actions = el("div", "card-actions");
   const btns = [];
@@ -12620,6 +12644,7 @@ function syncHomeTab() {
   if (typeof f.morph === "boolean") setSummary("setSumFeatures", featSummary(f));
   if (!on && currentView === "home") switchView("insights");
   applyName();
+  applyHeader();
 }
 
 // ---- the header's tabs, named and drawn the way the house chose ---------
@@ -12889,6 +12914,42 @@ function applyName() {
   speakAll(document.body, was);
 }
 
+// The top bar's mark (⚙ › Personality › Header): the wordmark, the
+// assistant's name, or the house's own text and/or picture. Unset means what
+// the page always did: the name while Personality is on, else the logo. This
+// changes the mark only; how the page refers to brAIn is `applyName`'s.
+function headerMark() {
+  const st = state.status || {};
+  const f = st.features || {};
+  const h = st.header || {};
+  const named = !!(f.personality && f.name);
+  let mode = h.brand || (named ? "name" : "logo");
+  if (mode === "name" && !named) mode = "logo";
+  const text = String(h.text || "").trim();
+  if (mode === "custom") {
+    if (h.image && text) return { cls: "hb-both", text, image: h.image };
+    if (h.image) return { cls: "hb-img", text: "", image: h.image };
+    if (text) return { cls: "hb-text", text, image: null };
+    mode = named && !h.brand ? "name" : "logo";
+  }
+  if (mode === "name") return { cls: "hb-text", text: f.name, image: null, isName: true };
+  return { cls: "hb-logo", text: "", image: null };
+}
+
+function applyHeader() {
+  const m = headerMark();
+  const root = document.documentElement;
+  for (const c of ["hb-logo", "hb-text", "hb-img", "hb-both"]) root.classList.toggle(c, c === m.cls);
+  const nameEl = $("#brandName");
+  if (nameEl && m.text) nameEl.textContent = m.text;
+  else if (nameEl && !root.classList.contains("named")) nameEl.textContent = "";
+  const img = $("#brandImg");
+  if (img) {
+    if (m.image) { if (img.getAttribute("src") !== m.image) img.setAttribute("src", m.image); } else img.removeAttribute("src");
+    img.hidden = !m.image;
+  }
+}
+
 const SPEAK_SKIP = new Set(["TEXTAREA", "INPUT", "CODE", "PRE", "SCRIPT", "STYLE", "SELECT"]);
 const SPEAK_ATTRS = ["placeholder", "aria-label", "title", "data-tip", "alt"];
 
@@ -12904,7 +12965,7 @@ function speakAll(root, from = "brAIn") {
       return;
     }
     if (node.nodeType !== 1 || SPEAK_SKIP.has(node.tagName) || node.isContentEditable) return;
-    if (node.closest && node.closest(".wordmark")) return;
+    if (node.closest && node.closest(".wordmark, .brandlink")) return;
     for (const a of SPEAK_ATTRS) {
       const v = node.getAttribute && node.getAttribute(a);
       if (v && v.includes(from)) node.setAttribute(a, speakText(v, from));
@@ -12922,7 +12983,7 @@ function speakAll(root, from = "brAIn") {
       if (rec.type === "characterData") {
         const n = rec.target;
         const p = n.parentElement;
-        if (n.nodeValue.includes("brAIn") && p && !SPEAK_SKIP.has(p.tagName) && !p.closest("code, pre, textarea")) {
+        if (n.nodeValue.includes("brAIn") && p && !SPEAK_SKIP.has(p.tagName) && !p.closest("code, pre, textarea, .brandlink")) {
           n.nodeValue = speakText(n.nodeValue, "brAIn");
         }
       } else if (rec.type === "attributes") {
@@ -17985,14 +18046,16 @@ function renderPersonality() {
   // cards quote it (`personality.identity`).
   if ($("#persVoice")) $("#persVoice").value = d.voice || "";
   renderPersonaSections(d.persona, !!d.cut_at_old_limit);
+  renderHeaderChoice();
   $("#persCut").hidden = !d.cut_at_old_limit;
   setPersonaEditing(false);
   const list = $("#persGrowth");
   list.textContent = "";
-  const growth = Array.isArray(d.growth) ? d.growth : [];
+  // The assistant's own overnight notes are listed under "How … is
+  // growing" with a Remove each; this list is what the household settled.
+  const growth = (Array.isArray(d.growth) ? d.growth : []).filter((g) => g.by !== "self");
   if (!growth.length) {
     list.appendChild(el("li", "persempty", "Nothing yet."));
-    return;
   }
   growth.forEach((g) => {
     const li = el("li", "persentry");
@@ -18000,7 +18063,180 @@ function renderPersonality() {
     li.appendChild(el("span", "persline", g.text || ""));
     list.appendChild(li);
   });
+  loadPresence();
 }
+
+// ---- ⚙ › Personality › How … is growing ------------------------------------
+//
+// The presence loop (presence.py, /api/presence): once a night the assistant
+// notes how it is doing and thinks of a few small ways to keep in touch with
+// each person; a hard budget decides what is ever sent. Everything it noted,
+// has in mind or sent is here, each with the one press that takes it back:
+// Remove, Skip, Never (this kind), Restore, Less like this.
+const presState = { data: null };
+
+async function loadPresence() {
+  const body = $("#presBody");
+  if (!body) return;
+  try {
+    presState.data = await api("api/presence");
+  } catch (e) {
+    body.textContent = "";
+    body.appendChild(el("p", "persempty", `Could not read this: ${e.message}`));
+    return;
+  }
+  renderPresence();
+}
+
+async function presencePost(payload, said) {
+  try {
+    const out = await api("api/presence", { method: "POST", body: JSON.stringify(payload) });
+    if (out.personality) {
+      persState.data = out.personality;
+      renderPersonality();
+    } else {
+      presState.data = out;
+      renderPresence();
+    }
+    if (said) toast(said);
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+function presButton(label, aria, onClick) {
+  const b = el("button", "btn ghost", label);
+  b.type = "button";
+  b.setAttribute("aria-label", aria);
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+function presRow(main, sub, buttons) {
+  const row = el("div", "presrow");
+  const words = el("div", "prestext");
+  words.appendChild(el("span", "presline", main));
+  if (sub) words.appendChild(el("span", "pressub", sub));
+  row.appendChild(words);
+  if ((buttons || []).length) {
+    const acts = el("div", "presacts");
+    buttons.forEach((b) => acts.appendChild(b));
+    row.appendChild(acts);
+  }
+  return row;
+}
+
+function presCount(n, word) {
+  const words = ["no", "one", "two", "three", "four", "five"];
+  return `${words[n] || n} ${word}${n === 1 ? "" : "s"}`;
+}
+
+function renderPresence() {
+  const d = presState.data || {};
+  const p = persState.data || {};
+  const name = d.name || p.name || "brAIn";
+  $("#presHead").textContent = `How ${name} is growing`;
+  const b = d.budget || {};
+  $("#presWhat").textContent = d.on
+    ? `Once a night ${name} notes how it is doing and thinks of small ways to keep in touch. `
+      + `At most ${presCount(b.per_day || 1, "message")} a person a day and ${b.per_week || 3} a week, `
+      + `${b.hours || "08:00–21:00"}, never in quiet hours or to anyone away.`
+    : `Off: it needs Personality and the Learning loop on in Features.`;
+  const body = $("#presBody");
+  body.textContent = "";
+  const mine = (Array.isArray(p.growth) ? p.growth : []).filter((g) => g.by === "self");
+  if (mine.length) {
+    body.appendChild(el("p", "preshead", "Its own notes"));
+    mine.slice(0, 6).forEach((g) => body.appendChild(presRow(g.text || "", g.date || "", [
+      presButton("Remove", `Remove: ${g.text || ""}`, () => presencePost(
+        { do: "growth_remove", at: g.at, text: g.text }, "Removed")),
+    ])));
+  }
+  (d.people || []).forEach((who) => {
+    const rows = [];
+    (who.ideas || []).forEach((i) => rows.push(presRow(`${i.kind_label}: ${i.text}`, i.reason, [
+      presButton("Skip", `Skip: ${i.text}`, () => presencePost(
+        { do: "skip", person: who.person, id: i.id }, "Skipped")),
+      presButton("Never", `Never a ${i.kind_label.toLowerCase()} for ${who.name}`, () => presencePost(
+        { do: "never", person: who.person, kind: i.kind }, `No more of those for ${who.name}`)),
+    ])));
+    (who.notes || []).forEach((n) => rows.push(presRow(n.text, "Noted from how they answered", [
+      presButton("Remove", `Remove: ${n.text}`, () => presencePost(
+        { do: "note_remove", person: who.person, id: n.id }, "Removed")),
+    ])));
+    (who.retired || []).forEach((r) => rows.push(presRow(`Less like this: ${r.kind_label}`, "", [
+      presButton("Restore", `Bring back ${r.kind_label.toLowerCase()} for ${who.name}`, () => presencePost(
+        { do: "bring_back", person: who.person, kind: r.kind }, "Brought back")),
+    ])));
+    if (who.paused) rows.push(presRow("Not now — nothing more today", "", []));
+    if (!rows.length) return;
+    body.appendChild(el("p", "preshead", who.name));
+    rows.forEach((r) => body.appendChild(r));
+  });
+  const sent = d.touches || [];
+  if (sent.length) {
+    body.appendChild(el("p", "preshead", "Lately"));
+    sent.forEach((t) => {
+      const meta = [t.when, t.name, t.kind_label, t.reaction_label].filter(Boolean).join(" · ");
+      const btns = ["less", "not_now"].includes(t.reaction) ? [] : [
+        presButton("Less like this", `Less like this: ${t.text}`, () => presencePost(
+          { do: "react", id: t.id, reaction: "less" }, "Fewer of those")),
+      ];
+      body.appendChild(presRow(t.text, `${meta}. ${t.reason}`, btns));
+    });
+  }
+  if (!body.childElementCount) {
+    body.appendChild(el("p", "persempty", d.on ? "Nothing yet: it reflects overnight." : "Nothing yet."));
+  }
+}
+
+// ---- Header: what the top bar shows --------------------------------------
+function renderHeaderChoice() {
+  const st = state.status || {};
+  const f = st.features || {};
+  const h = st.header || {};
+  const named = !!(f.personality && f.name);
+  const opt = $("#hdrOptName");
+  if (opt) opt.hidden = opt.disabled = !named;
+  const cur = h.brand || (named ? "name" : "logo");
+  $("#hdrBrand").value = cur === "name" && !named ? "logo" : cur;
+  $("#hdrText").value = h.text || "";
+  $("#hdrCustom").hidden = $("#hdrBrand").value !== "custom";
+  $("#hdrClear").hidden = !h.image;
+}
+
+async function saveHeader(extra) {
+  const brand = $("#hdrBrand").value;
+  const text = $("#hdrText").value;
+  await api("api/settings", { method: "PUT", body: JSON.stringify({ header_brand: brand, header_text: text }) });
+  state.status = state.status || {};
+  state.status.header = { ...(state.status.header || {}), brand, text: text.trim().slice(0, 24), ...(extra || {}) };
+  applyHeader();
+  renderHeaderChoice();
+}
+
+$("#hdrBrand").addEventListener("change", () => { $("#hdrCustom").hidden = $("#hdrBrand").value !== "custom"; });
+$("#hdrSave").addEventListener("click", async () => {
+  try { await saveHeader(); toast("Saved."); } catch (e) { toast(e.message); }
+});
+$("#hdrFile").addEventListener("change", async (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  ev.target.value = "";
+  if (!file) return;
+  if (file.size > 256 * 1024) { toast("The picture is at most 256 KB."); return; }
+  try {
+    const r = await api("api/header/logo", { method: "PUT", body: file });
+    await saveHeader({ image: r.image });
+    toast("Saved.");
+  } catch (e) { toast(e.message); }
+});
+$("#hdrClear").addEventListener("click", async () => {
+  try {
+    await api("api/header/logo", { method: "DELETE" });
+    await saveHeader({ image: null });
+    toast("Picture deleted.");
+  } catch (e) { toast(e.message); }
+});
 
 $("#persEdit").addEventListener("click", () => setPersonaEditing(true));
 $("#persCancel").addEventListener("click", () => {

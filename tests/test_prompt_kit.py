@@ -58,6 +58,11 @@ PROMPTS = [
     ("onboarding", "RECOMMEND_SYSTEM", True, False),
     ("outcomes", "REFLECT_SYSTEM", True, True),
     ("playbooks", "SYSTEM", True, False),
+    # Not person-facing in the kit's sense, for occasions' reason: a
+    # greeting is about one person by design, so it carries its own
+    # narrower rule (nothing sensitive, nowhere anybody went, no
+    # judgement) and code refuses what breaks it (`presence.refusal_of`).
+    ("presence", "SYSTEM", False, True),
     ("scenes", "SYSTEM", True, False),
     ("situation", "SYSTEM", True, True),
     ("sre", "SYSTEM", True, True),

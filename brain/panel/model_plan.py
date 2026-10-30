@@ -68,6 +68,10 @@ JOBS: dict[str, tuple[str, str, bool, bool]] = {
     "entity_model":    ("haiku",  "low",    False, False),
     "situation":       ("haiku",  "low",    False, False),
     "occasions":       ("haiku",  "low",    False, False),
+    # The presence loop's one nightly reflection: a growth note or two and
+    # a few small touches, every field checked in code. The cheapest tier
+    # and never stepped up — a stronger model on a greeting is spend.
+    "presence":        ("haiku",  "low",    False, False),
     # Who hears what, when, in what words — one tool-less call over a batch
     # of notify-tier findings and the household's own sentence. A timing
     # and wording decision with a closed vocabulary, checked in code, and

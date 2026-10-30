@@ -2,6 +2,27 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.22
+
+### Added
+
+- **The assistant grows, and keeps in touch — gently.** With Personality and the Learning loop both on, once a night it looks back at how the household answered it and writes at most two short notes about how to be (never touching the persona you wrote), and queues a few small ways to keep in touch with each person: a welcome home, a morning or evening check-in, a follow-up on something they said, an occasion from a calendar you shared. A message goes to that person's own phone, or is said aloud in an occupied room when Speak first is on. It is hard-capped: one a day and three a week per person, three a day for the whole house, 08:00–21:00, never in quiet hours or to someone who is away. "Not now" stops it for that person for the day, "Less like this" retires that kind of message, and kinds nobody answers retire themselves. ⚙ › Personality › "How <name> is growing" shows its own notes, the ideas waiting, what it has learned, and every message it sent with the reason, each removable.
+
+## 4.0.21
+
+### Added
+
+- **Choose what the top bar shows.** ⚙ › Personality › Header: the brAIn logo (the default), the assistant's name, or your own text and/or picture (PNG, JPEG or WebP up to 256 KB). Nothing changes until you choose: with Personality on the name is shown as before.
+- **The version is in the header on a wide screen.** From about 1100px wide a small version number sits beside the mark and opens What's new; a phone does not show it.
+
+## 4.0.20
+
+### Fixed
+
+- **Cards say whole sentences.** A long detail, what-to-do or look reason is shortened at the last whole sentence, and a long list keeps whole items and ends "and N more", instead of stopping mid-thought with "…". When a card's Details is open, its text is shown in full, on brAIn's panel and on Morph's cases (#560).
+- **brAIn talks to you, not about "the homeowner".** One rule across the prompts says to address the household as "you", and a written "the homeowner", or a sentence starting "The owner said…", is turned into "you" before it is shown (#562).
+- **Developer details stay out of the card's words.** File paths, tool names, error codes and firmware build strings in what brAIn writes move into a "Technical details" list under Details instead of the sentence, and a note about brAIn's own setup is not filed again while a question about it is already waiting for you (#563).
+
 ## 4.0.19
 
 ### Fixed

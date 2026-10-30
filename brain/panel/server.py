@@ -198,6 +198,7 @@ import features
 import fixer
 import morph_service
 import personality
+import presence
 import shell_link
 import healing
 import health
@@ -244,6 +245,7 @@ import run_queue
 import run_sources
 import scenes
 import schedule_store
+import header_brand
 import settings_store
 import shadow
 import shadow_findings
@@ -1764,7 +1766,8 @@ def _quiet_hours() -> tuple[int | None, int | None]:
 async def _send_notification(rows: list[dict], held: bool = False,
                              message: tuple[str, str] | None = None,
                              buttons: list[dict] | None = None, *,
-                             kind: str = "", dispatched: bool = False) -> bool:
+                             kind: str = "", dispatched: bool = False,
+                             delivery: str = "") -> bool:
     """Deliver one message. A failure is a log line, never an exception.
 
     The finding is already safe on the list before this is called, so a
@@ -1798,7 +1801,9 @@ async def _send_notification(rows: list[dict], held: bool = False,
     # The delivery's own id rides as the companion app's `tag`, which the
     # app hands back on every event about the message — the one thread
     # from a swipe on a phone to the line that sent it (`deliveries.tag_of`).
-    delivery = deliveries.new_id()
+    # A caller that must know the line it is about to write (the presence
+    # loop's touch history) names it; everybody else gets a fresh one.
+    delivery = delivery or deliveries.new_id()
     kind = kind or _delivery_kind(rows, held, _sev)
     data = {**({"actions": buttons} if buttons else {}),
             **notify_router.open_link(service, addon_options.panel_path()),
@@ -5377,6 +5382,13 @@ def _on_bus_event(event_type: str, data: dict) -> None:
     if event_type == "state_changed" and isinstance(data, dict):
         _note_live_reading(str(data.get("entity_id") or ""),
                            data.get("new_state"))
+    # A person coming home, or a button on one of the presence loop's
+    # touches. Its own try: a greeting must never cost the bus a reading.
+    if event_type in ("state_changed", "mobile_app_notification_action"):
+        try:
+            _presence_on_bus(event_type, data)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("presence could not read an event: %s", exc)
     # A Dismiss press is an answer now (it clears the card), and arrives
     # through the request drain like every other button, so only a swipe
     # is recorded here.
@@ -9485,6 +9497,8 @@ def _status_payload() -> tuple[dict | None, dict]:
         # (Personality on and a name set), for the bar and `speak`.
         "features": {**features.resolved(), "shell": shell_link.shell_fresh(),
                      "shell_url": "/" + shell_link.SHELL_URL},
+        # The header's mark: the choice, the text, the picture's address.
+        "header": header_brand.payload(settings),
     }
 
 
@@ -9645,6 +9659,7 @@ async def h_status(request: web.Request) -> web.Response:
         "integration": read["integration"],
         "devloop": read["devloop"],
         "features": read["features"],
+        "header": read["header"],
         # What brAIn did last and what it will do next. On the poll every
         # viewer already makes, because "is this thing working" is asked
         # of the top bar and not of a tab.
@@ -26160,6 +26175,38 @@ async def h_personality_put(request: web.Request) -> web.Response:
     return web.json_response(await asyncio.to_thread(personality.payload))
 
 
+async def h_header_logo_get(request: web.Request) -> web.Response:
+    """The header's own picture, typed by its magic bytes, or a 404."""
+    got = await asyncio.to_thread(header_brand.read)
+    if got is None:
+        raise web.HTTPNotFound(text="no header picture")
+    data, ctype = got
+    return web.Response(body=data, content_type=ctype, headers={
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox"})
+
+
+async def h_header_logo_put(request: web.Request) -> web.Response:
+    """The picture as the raw body: PNG, JPEG or WebP, 256 KB at most."""
+    data = await request.read()
+    why = header_brand.refusal(data)
+    if why:
+        raise web.HTTPBadRequest(text=why)
+    try:
+        await asyncio.to_thread(header_brand.save, data)
+    except OSError:
+        log.exception("could not save the header picture")
+        raise web.HTTPInternalServerError(
+            text="brAIn could not save that; the add-on log says why.")
+    return web.json_response(header_brand.payload(settings_store.load()))
+
+
+async def h_header_logo_delete(request: web.Request) -> web.Response:
+    await asyncio.to_thread(header_brand.remove)
+    return web.json_response(header_brand.payload(settings_store.load()))
+
+
 async def h_personality_growth(request: web.Request) -> web.Response:
     """POST {text}: one dated growth entry (the `note_personality_change`
     MCP tool, from a conversation about who brAIn is)."""
@@ -26178,6 +26225,436 @@ async def h_personality_growth(request: web.Request) -> web.Response:
             text="brAIn could not record that; the add-on log says why.")
     await asyncio.to_thread(_write_terminal_prompt)
     return web.json_response({"ok": True, "entry": entry})
+
+
+# ---------------------------------------------------------------------------
+# The presence loop — how the assistant grows, and how it keeps in touch
+# ---------------------------------------------------------------------------
+#
+# `presence.py` holds the budget, the store and the strict reading of the
+# nightly answer; this is where it meets the house: the bus (an arrival,
+# a phone's button), one cheap run a night through the run queue, and
+# delivery through the household's own notify target and, when Speak first
+# is on, its own voice satellites. Off — Personality or the Learning loop
+# switched off in Features — every entry point returns before it reads
+# anything, so nothing runs and nothing is sent.
+
+PRESENCE_POLL_S = 5 * 60
+PRESENCE_FIRST_DELAY_S = 10 * 60
+# An arrival is greeted a few minutes after the tracker says home, so the
+# person is through the door and in a room when it is said.
+PRESENCE_ARRIVAL_DELAY_S = 3 * 60
+PRESENCE_STATE: dict = {"running": False, "last_error": "", "sent": 0,
+                        "last_skip": ""}
+# Tasks the bus started, held so they are not collected mid-flight.
+PRESENCE_TASKS: set = set()
+_PRESENCE_LOCK = threading.Lock()
+
+
+def _presence_tz():
+    try:
+        return baselines.house_timezone()[0]
+    except Exception:  # noqa: BLE001 — a clock we cannot read is UTC
+        return None
+
+
+def _presence_update(fn):
+    """Read, change and write the store under one lock. Returns fn's
+    answer."""
+    with _PRESENCE_LOCK:
+        state = presence.load()
+        out = fn(state)
+        presence.save(state)
+        return out
+
+
+async def _presence_read_house() -> dict:
+    """States and services, one read each. `{}` when Home Assistant cannot
+    be reached — which is "say nothing", never a guess."""
+    import aiohttp
+    import ha_data
+    try:
+        async with aiohttp.ClientSession() as session:
+            states = await ha_data._rest_get(session, "/states")
+            services = await ha_data._rest_get(session, "/services")
+    except Exception as exc:  # noqa: BLE001
+        log.info("presence could not read the house: %s", exc)
+        return {}
+    return {"states": states if isinstance(states, list) else [],
+            "services": services if isinstance(services, list) else []}
+
+
+def _presence_people(states: list[dict]) -> dict[str, dict]:
+    """`{person id: {name, home, trackers}}` off one states read."""
+    out: dict[str, dict] = {}
+    for s in states or []:
+        if not isinstance(s, dict):
+            continue
+        eid = str(s.get("entity_id") or "")
+        if not eid.startswith("person."):
+            continue
+        attrs = s.get("attributes") if isinstance(s.get("attributes"), dict) \
+            else {}
+        trackers = attrs.get("device_trackers")
+        out[eid] = {"name": str(attrs.get("friendly_name") or
+                                eid.split(".", 1)[1].replace("_", " ").title()),
+                    "home": str(s.get("state") or "") == "home",
+                    "trackers": [str(t) for t in trackers]
+                    if isinstance(trackers, list) else []}
+    return out
+
+
+def _presence_channel(pid: str, kind: str, house: dict, now: float) -> tuple:
+    """Where a touch for this person may go: `("phone", service)`,
+    `("speaker", satellite)` or `("", why not)`.
+
+    The phone only when the household's notify target IS this person's
+    own companion app (its tracker is one of theirs) — a greeting for one
+    person is never pushed to somebody else's phone. A speaker only while
+    Speak first is on (the household's yes to brAIn speaking in a room),
+    in the freshest occupied room with a satellite, never a protected
+    one, and never for a follow-up, which is about something one person
+    said."""
+    people = _presence_people(house.get("states") or [])
+    person = people.get(pid) or {}
+    service, _sev = _findings_notify_target()
+    name = str(service or "").strip().removeprefix("notify.")
+    if name.startswith("mobile_app_"):
+        device = name[len("mobile_app_"):]
+        if f"device_tracker.{device}" in person.get("trackers", []):
+            return "phone", name
+    if kind not in presence.SPOKEN_KINDS:
+        return "", "a follow-up goes only to that person's own phone"
+    if not _speak_enabled():
+        return "", "no phone of theirs is the notify target, and Speak first is off"
+    if not any(isinstance(d, dict) and d.get("domain") == "assist_satellite"
+               and "announce" in (d.get("services") or {})
+               for d in house.get("services") or []):
+        return "", "this Home Assistant has no assist_satellite.announce"
+    areas = {eid: str(row.get("area") or "") for eid, row in _NAMES.items()
+             if isinstance(row, dict)}
+    states = house.get("states") or []
+    cast = household.roster(states, areas)
+    sat = household.pick_satellite(cast, household.occupied_areas(
+        states, areas, now))
+    if sat is None:
+        return "", "nobody is in a room with a voice satellite"
+    if automation_writer.is_protected(
+            sat["entity_id"], automation_writer.protected_patterns()):
+        return "", f"{sat['entity_id']} is protected"
+    return "speaker", sat["entity_id"]
+
+
+async def _presence_deliver(pid: str, item: dict, house: dict,
+                            now: float) -> dict | None:
+    """Send one touch if the budget and a channel allow it. Returns the
+    touch kept in the history, or None (and why, in `last_skip`)."""
+    people = _presence_people(house.get("states") or [])
+    person = people.get(pid)
+    if not person:
+        PRESENCE_STATE["last_skip"] = "that person is not in the house's list"
+        return None
+    kind = str(item.get("kind") or "")
+    tz = _presence_tz()
+    with _PRESENCE_LOCK:
+        why = presence.may_touch(presence.load(), pid, kind, now, tz=tz,
+                                 quiet=_quiet_hours(), home=person["home"])
+    if why:
+        PRESENCE_STATE["last_skip"] = why
+        return None
+    channel, target = _presence_channel(pid, kind, house, now)
+    if not channel:
+        PRESENCE_STATE["last_skip"] = target
+        return None
+    words = personality.speak(str(item.get("text") or ""))
+    if not words:
+        return None
+    delivery = ""
+    touch_id = ""
+    if channel == "phone":
+        delivery = deliveries.new_id()
+        # The touch is written first so the button carries its id; a send
+        # that fails takes it back out.
+        touch = await asyncio.to_thread(_presence_update, lambda s: presence.record_touch(
+            s, pid, person["name"], item, channel, now, delivery=delivery))
+        touch_id = touch["id"]
+        ok = await _send_notification(
+            [{"source": "presence", "severity": "info"}],
+            message=(personality.assistant_name(), words),
+            buttons=presence.buttons(touch_id), kind="presence",
+            delivery=delivery)
+        if not ok:
+            await asyncio.to_thread(_presence_update, lambda s: s.update(
+                touches=[t for t in s.get("touches") or []
+                         if t.get("id") != touch_id]))
+            PRESENCE_STATE["last_skip"] = "the notification did not go"
+            return None
+    else:
+        import ha_data
+        try:
+            await ha_data.call_core_service(
+                "assist_satellite", "announce",
+                {"entity_id": target,
+                 "message": words[:household.SPOKEN_CHARS]}, timeout=15)
+        except Exception as exc:  # noqa: BLE001
+            PRESENCE_STATE["last_error"] = str(exc)[:200]
+            log.warning("could not say a greeting aloud: %s", exc)
+            return None
+        touch = await asyncio.to_thread(_presence_update, lambda s: presence.record_touch(
+            s, pid, person["name"], item, channel, now))
+    PRESENCE_STATE["sent"] += 1
+    PRESENCE_STATE["last_skip"] = ""
+    log.info("presence: a %s for %s went by %s", kind,
+             log_safe(person["name"]), channel)
+    return touch
+
+
+def _presence_on_bus(event_type: str, data: dict) -> None:
+    """A person coming home, or a button pressed on one of brAIn's
+    touches. Cheap and synchronous; anything slow is a task."""
+    if not isinstance(data, dict):
+        return
+    if event_type == "mobile_app_notification_action":
+        parsed = presence.parse_action(data.get("action"))
+        if parsed:
+            verb, touch_id = parsed
+            _presence_update(lambda s: presence.react(
+                s, touch_id, verb, time.time(), tz=_presence_tz()))
+        return
+    if event_type != "state_changed":
+        return
+    eid = str(data.get("entity_id") or "")
+    if not eid.startswith("person."):
+        return
+    new = data.get("new_state") if isinstance(data.get("new_state"), dict) \
+        else {}
+    old = data.get("old_state") if isinstance(data.get("old_state"), dict) \
+        else {}
+    was, now_state = str(old.get("state") or ""), str(new.get("state") or "")
+    if was == now_state or not was:
+        return
+    if not presence.active()[0]:
+        return
+    now = time.time()
+    if was == "home":
+        _presence_update(lambda s: presence.note_departure(s, eid, now))
+        return
+    if now_state != "home":
+        return
+    if not _presence_update(lambda s: presence.note_arrival(s, eid, now)):
+        return
+    try:
+        task = asyncio.get_running_loop().create_task(
+            _presence_arrival(eid, now))
+    except RuntimeError:
+        return
+    PRESENCE_TASKS.add(task)
+    task.add_done_callback(PRESENCE_TASKS.discard)
+
+
+async def _presence_arrival(pid: str, arrived: float) -> dict | None:
+    """Greet one arrival, once, if there is a greeting queued for them."""
+    try:
+        if PRESENCE_ARRIVAL_DELAY_S:
+            await asyncio.sleep(PRESENCE_ARRIVAL_DELAY_S)
+        if not presence.active()[0]:
+            return None
+        item = await asyncio.to_thread(
+            lambda: presence.idea_for(presence.load(), pid, "arrival",
+                                      time.time()))
+        if not item:
+            PRESENCE_STATE["last_skip"] = "no greeting was queued for them"
+            return None
+        house = await _presence_read_house()
+        if not house:
+            return None
+        return await _presence_deliver(pid, item, house, time.time())
+    except Exception as exc:  # noqa: BLE001 — a greeting is never a failure
+        PRESENCE_STATE["last_error"] = str(exc)[:200]
+        log.warning("presence: an arrival greeting failed: %s", exc)
+        return None
+
+
+def _presence_inputs(now: float, people: dict[str, str]) -> str:
+    """The nightly run's prompt, from what brAIn already has."""
+    tz = _presence_tz()
+    state = presence.load()
+    pers = personality.load()
+    growth = [g.get("text") or "" for g in pers.get("growth") or []]
+    titles: list[str] = []
+    try:
+        for row in conversations.listing(chat_session.WORK_DIR, 20, ("you",)):
+            if now - float(row.get("modified") or 0) <= 2 * 86400:
+                titles.append(str(row.get("title") or ""))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("presence could not list conversations: %s", exc)
+    answered: dict[str, int] = {}
+    for row in deliveries.fold(now) or []:
+        if now - float(row.get("at") or 0) > 7 * 86400:
+            break
+        if row.get("kind") == "presence":
+            continue
+        out = str(row.get("outcome") or "")
+        if out in ("answered", "cleared", "ignored"):
+            answered[out] = answered.get(out, 0) + 1
+    try:
+        upcoming = occasions.lines(occasions.load(), _house_date(now))
+    except Exception:  # noqa: BLE001
+        upcoming = []
+    return presence.prompt(
+        state, people, now, tz=tz, name=personality.assistant_name(pers),
+        persona_line=personality.tagline(pers.get("persona")),
+        growth=growth, titles=titles, answered=answered,
+        occasions=upcoming, now_line=_now_line(now))
+
+
+async def _presence_reflect(now: float, people: dict[str, str]) -> dict:
+    """The one cheap run a night: growth notes and tomorrow's ideas."""
+    prompt = await asyncio.to_thread(_presence_inputs, now, people)
+    result = await _claude(
+        engine.run_claude, prompt, presence.SYSTEM, eff_model(),
+        presence.REFLECT_TIMEOUT_S, presence.REFLECT_MAX_TURNS, "presence",
+        job="presence", schema=presence.SCHEMA)
+    cost = await asyncio.to_thread(_record_usage, result, "presence")
+    LEDGER.record("presence", int(cost.get("total") or 0), now,
+                  tier=_ran_tier(result, "presence"))
+    if not result.get("ok"):
+        return {"ok": False,
+                "error": str(result.get("error") or "no answer")[:200]}
+
+    def write() -> dict:
+        recent = [g.get("text") or "" for g in
+                  (personality.load().get("growth") or [])[-20:]]
+
+        def apply(state: dict) -> dict:
+            parsed = presence.parse_reflection(
+                _answer(result), people, state, recent_growth=recent)
+            ideas = presence.add_ideas(state, parsed["ideas"], people, now)
+            notes = presence.add_notes(state, parsed["notes"], people, now)
+            return {"parsed": parsed, "ideas": ideas, "notes": notes}
+
+        got = _presence_update(apply)
+        grown = presence.write_growth(got["parsed"]["growth"], now) \
+            if personality.writable() else 0
+        return {"ok": True, "growth": grown, "ideas": got["ideas"],
+                "notes": got["notes"], "refused": got["parsed"]["refused"]}
+
+    out = await asyncio.to_thread(write)
+    if out.get("growth"):
+        await asyncio.to_thread(_write_terminal_prompt)
+    log.info("presence: reflected — %d growth note(s), %d idea(s), %d "
+             "refused", out["growth"], out["ideas"], out["refused"])
+    return out
+
+
+async def _presence_pass(now: float) -> dict:
+    """One pass: read the ledger's answers, reflect when due, and send
+    what is due. Off, nothing at all."""
+    on, why = presence.active()
+    if not on:
+        return {"off": why}
+    tz = _presence_tz()
+    folded = await asyncio.to_thread(deliveries.fold, now)
+    await asyncio.to_thread(_presence_update,
+                            lambda s: presence.absorb(s, folded, now))
+    state = await asyncio.to_thread(presence.load)
+    out: dict = {}
+    reflect_now = presence.reflect_due(state, now, tz=tz)
+    due = presence.due_ideas(state, now, tz=tz)
+    if not reflect_now and not due:
+        return out
+    house = await _presence_read_house()
+    if not house:
+        return {"held": "Home Assistant could not be read"}
+    people = {pid: p["name"] for pid, p in
+              _presence_people(house["states"]).items()}
+    if reflect_now and people:
+        held = _resident_gate(await asyncio.to_thread(settings_store.load))
+        if held:
+            result = {"held": held}
+        else:
+            try:
+                result = await _presence_reflect(now, people)
+            except Exception as exc:  # noqa: BLE001
+                result = {"ok": False, "error": str(exc)[:200]}
+        await asyncio.to_thread(_presence_update, lambda s: presence.note_reflected(
+            s, now, result))
+        out["reflect"] = result
+    for pid, item in due:
+        if await _presence_deliver(pid, item, house, now):
+            out["sent"] = out.get("sent", 0) + 1
+            break   # one at a time: the house gap holds the rest anyway
+    return out
+
+
+async def _presence_loop() -> None:
+    await asyncio.sleep(PRESENCE_FIRST_DELAY_S)
+    while True:
+        _beat("presence")
+        if not PRESENCE_STATE["running"]:
+            PRESENCE_STATE["running"] = True
+            try:
+                await _presence_pass(time.time())
+                PRESENCE_STATE["last_error"] = ""
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — the loop outlives a pass
+                PRESENCE_STATE["last_error"] = str(exc)[:200]
+                log.warning("the presence pass failed: %s", exc)
+            finally:
+                PRESENCE_STATE["running"] = False
+        await asyncio.sleep(PRESENCE_POLL_S)
+
+
+async def h_presence_get(request: web.Request) -> web.Response:
+    """⚙ › Personality's "How it is growing": its own notes are in the
+    personality payload; this is the people, the queue and the history."""
+    def build() -> dict:
+        out = presence.payload_now(tz=_presence_tz())
+        out["name"] = personality.assistant_name()
+        return out
+    return web.json_response(await asyncio.to_thread(build))
+
+
+async def h_presence_post(request: web.Request) -> web.Response:
+    """POST {do, …}: skip an idea, never this kind, bring a kind back,
+    remove a note, react to a touch, or remove one of its own growth
+    notes. Each answers with the section's payload."""
+    body = await _personality_body(request)
+    do = body.get("do")
+    pid = str(body.get("person") or "")
+    now = time.time()
+    tz = _presence_tz()
+    if do == "growth_remove":
+        gone = await asyncio.to_thread(personality.remove_growth,
+                                       body.get("at"), body.get("text"))
+        if not gone:
+            raise web.HTTPNotFound(text="that note is not there any more")
+        await asyncio.to_thread(_write_terminal_prompt)
+        return web.json_response({"ok": True,
+                                  "personality": await asyncio.to_thread(
+                                      personality.payload)})
+    actions = {
+        "skip": lambda s: presence.skip_idea(s, pid, str(body.get("id") or "")),
+        "never": lambda s: (presence.retire(s, pid, str(body.get("kind") or ""),
+                                            now), True)[1]
+        if body.get("kind") in presence.KINDS else False,
+        "bring_back": lambda s: presence.unretire(s, pid,
+                                                  str(body.get("kind") or "")),
+        "note_remove": lambda s: presence.remove_note(
+            s, pid, str(body.get("id") or "")),
+        "react": lambda s: presence.react(
+            s, str(body.get("id") or ""), str(body.get("reaction") or ""),
+            now, tz=tz) is not None
+        if body.get("reaction") in presence.REACTIONS else False,
+    }
+    if do not in actions:
+        raise web.HTTPBadRequest(text="send {do: skip|never|bring_back|"
+                                      "note_remove|react|growth_remove}")
+    done = await asyncio.to_thread(_presence_update, actions[do])
+    if not done:
+        raise web.HTTPNotFound(text="that is not there any more")
+    return await h_presence_get(request)
 
 
 async def h_instructions(request: web.Request) -> web.Response:
@@ -27684,6 +28161,11 @@ def make_app() -> web.Application:
     app.router.add_get("/api/personality", h_personality_get)
     app.router.add_put("/api/personality", h_personality_put)
     app.router.add_post("/api/personality/growth", h_personality_growth)
+    app.router.add_get("/api/presence", h_presence_get)
+    app.router.add_post("/api/presence", h_presence_post)
+    app.router.add_get("/header-logo", h_header_logo_get)
+    app.router.add_put("/api/header/logo", h_header_logo_put)
+    app.router.add_delete("/api/header/logo", h_header_logo_delete)
     app.router.add_get("/api/instructions", h_instructions)
     app.router.add_get("/api/instructions/{key}", h_instruction_get)
     app.router.add_put("/api/instructions/{key}", h_instruction_put)
@@ -27874,6 +28356,9 @@ def make_app() -> web.Application:
         # a glob of a folder nearly always empty, every second.
         app["morph"] = _supervise("morph", _morph_loop(), stall_after_s=120)
         app["notify_learn"] = _supervise("notify_learn", _notify_learn_loop())
+        # The presence loop (⚙ › Personality's "How it is growing"): idle
+        # unless Personality and the Learning loop are both on.
+        app["presence"] = _supervise("presence", _presence_loop())
         # The first thing in brAIn that is watched rather than polled, and
         # the loop that reads it. The bus files nothing and asks nothing —
         # its only output is a signal on the queue — and `_resident_loop`

@@ -583,6 +583,10 @@ def _from_finding(row: dict, snoozes: dict[str, int]) -> dict:
     # in words, under Questions for you.
     if row.get("asked") is True:
         case["asked"] = True
+    # What only a developer reads, kept out of the sentences (#563): the
+    # card lists it under Details.
+    if row.get("technical"):
+        case["technical"] = [str(t) for t in row["technical"]][:8]
     # What was said about it — a reply typed under the card (the panel's
     # Respond box, Morph's reply line) and brAIn's account of what it did.
     # Absent rather than empty, so a row nobody replied to is the case it

@@ -249,7 +249,14 @@ DEFAULTS = {
     # See the module docstring and `camera_policy`. Empty: no camera is
     # looked at unattended until somebody ticks it.
     "camera_confirm": [],
+    # The header's mark (`header_brand.py`): "logo", "name" or "custom";
+    # None is "never chose" — the name while Personality is on, else the
+    # logo, which is what every install did before this existed.
+    "header_brand": None,
+    "header_text": "",
 }
+HEADER_BRANDS = ("logo", "name", "custom")
+HEADER_TEXT_MAX = 24
 
 # An entity id, and nothing else: this one is read by the nightly pass
 # and compared against the states, so it has no business holding prose.
@@ -384,6 +391,10 @@ def load() -> dict:
                      != CHAT_SESSIONS_VERSION):
         out["chat_max_sessions"] = sessions
     out["chat_max_sessions_v"] = CHAT_SESSIONS_VERSION
+    if data.get("header_brand") in HEADER_BRANDS:
+        out["header_brand"] = data["header_brand"]
+    if isinstance(data.get("header_text"), str):
+        out["header_text"] = _one_line(data["header_text"], HEADER_TEXT_MAX)
     try:
         out["occasion_calendars"] = clean_calendars(
             data.get("occasion_calendars"))
@@ -526,6 +537,15 @@ def save(fields: dict) -> dict:
             if not isinstance(value, bool):
                 raise ValueError("upgrade_advice_auto must be a boolean")
             clean[key] = value
+        elif key == "header_brand":
+            if value is not None and value not in HEADER_BRANDS:
+                raise ValueError(
+                    f"header_brand must be one of {', '.join(HEADER_BRANDS)}")
+            clean[key] = value
+        elif key == "header_text":
+            if not isinstance(value, str):
+                raise ValueError("header_text must be text")
+            clean[key] = _one_line(value, HEADER_TEXT_MAX)
         elif key == "muted_sources":
             clean[key] = clean_sources(value)
         elif key == "occasion_calendars":
