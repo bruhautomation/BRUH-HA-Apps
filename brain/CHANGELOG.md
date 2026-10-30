@@ -2,6 +2,20 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.23
+
+### Changed
+
+- **No limit on conversations running at once.** Every conversation, in the chat or the terminal, can be working at the same time; nothing is refused or made to wait for a slot. ⚙ › Model & usage's limit defaults to "No limit" (a number you choose still applies), and an install that had the old default of 3 saved is moved to no limit once. When the box runs low on memory, the quietest idle conversations are put to sleep and pick up where they left off when you go back; a conversation that is working is never stopped.
+- **Each device keeps its own conversation.** A message, Stop or model change from your phone goes to the conversation on your phone, even if another screen has opened a different one, and another device switching conversations no longer moves yours.
+- **Terminal conversations are visible.** Conversations brAIn opened in the terminal show in the list as "In the terminal", and pressing one brings that window to the front instead of starting a second copy.
+
+### Fixed
+
+- **Asking about a card no longer flips back to an empty chat.** Ask on an insight card, "Ask brAIn about this", and the Personality and Instructions Ask buttons follow the face you chose: on the chat they open a new conversation holding the question, on the terminal they open the terminal, and the page stays there. A double tap starts one conversation, not two.
+- **Fewer "502" pages.** The panel answers as soon as it starts ("brAIn is starting…", and it reloads itself) instead of only after its start-up work; the terminal is restarted if it stops, and its frame retries while it starts; sending, Ask and Discuss answer within a few seconds while Claude starts in the background.
+- **Two quick Asks in the terminal both arrive**, and Ask opens even when the terminal starts on the menu instead of Claude.
+
 ## 4.0.22
 
 ### Added
