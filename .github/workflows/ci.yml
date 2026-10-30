@@ -44,6 +44,7 @@ jobs:
     # answers the question and adding a dependency is a person's decision.
     name: Decide what this change can affect
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       pytest_args: ${{ steps.scope.outputs.pytest_args }}
       bright: ${{ steps.scope.outputs.bright }}
@@ -206,6 +207,7 @@ jobs:
     name: GardenRX app
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       RUNS: ${{ needs.changes.outputs.gardenrx || 'true' }}
     defaults:
@@ -273,6 +275,7 @@ jobs:
     name: BRUH Cooking integration and panel
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       RUNS: ${{ needs.changes.outputs.cooking || 'true' }}
     steps:
@@ -323,6 +326,7 @@ jobs:
     name: Python tests
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -360,6 +364,7 @@ jobs:
   ruff:
     name: Python lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -406,6 +411,7 @@ jobs:
     name: Layout measures (${{ matrix.group }})
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       # One group failing must not cancel the others: a layout regression
       # in one panel says nothing about the rest, and a run that stopped at
@@ -810,6 +816,7 @@ jobs:
   hassfest:
     name: HA integration validation
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -842,6 +849,7 @@ jobs:
   apparmor:
     name: AppArmor profiles
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -869,6 +877,7 @@ jobs:
   yamllint:
     name: YAML lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -903,6 +912,7 @@ jobs:
   shellcheck:
     name: Shellcheck
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -984,6 +994,7 @@ jobs:
   hadolint:
     name: Dockerfile lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -1035,6 +1046,7 @@ jobs:
   manifest-versions:
     name: Manifest version consistency
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -1161,6 +1173,7 @@ jobs:
     name: Version bump on addon changes
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:

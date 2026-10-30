@@ -22,6 +22,7 @@ jobs:
   analyze:
     name: Analyze
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Code scanning is free on public repositories and a paid add-on
     # (GitHub Code Security) on private ones. While this repo is private
     # the analysis runs fine and finds nothing, then fails uploading its
