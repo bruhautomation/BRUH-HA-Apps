@@ -12,7 +12,9 @@ drive the real route over a temporary memory document, a temporary
   * a conversation is given the memory document (inside CLAUDE.md, measured
     off the real file) and the personality, sized as the builders size them;
   * the facts store's part in each run is said as the code does it: per
-    message on the chat face only, by `recall` where there are tools, and
+    message on either face of Ask (the chat and the terminal carry the
+    same hook, and the report is the same whichever face is saved), by
+    `recall` where there are tools, and
     not at all in the first look or the overnight check;
   * nothing secret leaves: no document text, no CLAUDE.md text, no token;
   * the numbers context_map names for other processes match their source.
@@ -24,6 +26,7 @@ import re
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -123,11 +126,28 @@ class TestTheRoute(unittest.TestCase):
         identity = self.server.CHAT_IDENTITY
         self.assertGreater(conv["identity"]["bytes"], len(identity.encode()) - 1)
         self.assertEqual(conv["identity"]["sec"], "instructions")
-        # The per-message facts are a cap, and only the chat face has them.
+        # The per-message facts are a cap, and both faces have them: the
+        # part names no face (it used to say `only: "chat"`).
         [each] = body["runs"][0]["each_time"]
         self.assertEqual(each["bytes"], self.server.CHAT_CONTEXT_CHARS)
         self.assertTrue(each["upto"])
-        self.assertEqual(each["only"], "chat")
+        self.assertNotIn("only", each)
+
+    def test_the_chat_and_the_terminal_are_reported_identically(self):
+        """Saving either face changes nothing the page says: both faces of
+        Ask are launched with the same prompt, settings and hook."""
+        import settings_store
+        bodies = {}
+        with tempfile.TemporaryDirectory() as tmp, unittest.mock.patch.object(
+                settings_store, "SETTINGS_FILE", Path(tmp) / "settings.json"):
+            for face in ("chat", "classic"):
+                settings_store.save({"terminal_ui": face})
+                body, _ = self.fetch()
+                bodies[face] = body
+        self.assertEqual(bodies["classic"], bodies["chat"])
+        mem = bodies["chat"]["memory"]
+        self.assertNotIn("face", mem)
+        self.assertNotIn("face", bodies["chat"]["runs"][0])
 
     def test_what_each_run_may_look_up_is_the_code_s_own_list(self):
         body, _ = self.fetch()

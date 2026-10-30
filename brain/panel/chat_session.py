@@ -531,12 +531,16 @@ PERMISSION_TIMEOUT = float(os.environ.get("BRAIN_CHAT_PERMISSION_TIMEOUT", "600"
 #
 # **A `UserPromptSubmit` hook** (`CONTEXT_HOOK`) that asks the panel for the
 # facts relevant to the message being sent and hands them to the turn as
-# context. It is wired here, in the chat's own `--settings`, and nowhere
-# else: the project settings file is read by voice and the listeners too,
-# and a synchronous hook on every voice turn is latency somebody can hear.
-# It is only named when the script exists, because Python answers a missing
-# file with exit 2 and **exit 2 from this hook blocks the prompt** — a
-# dev checkout with no `/opt/scripts` would otherwise refuse every message.
+# context. It is defined ONCE, in `conversation_settings`, which both faces
+# of Ask read: the chat puts it in its own `--settings`, and the panel
+# writes it for the terminal (`server.TERMINAL_SETTINGS_FILE`, which
+# brain-terminal-start passes as `--settings`) — so a message typed in the
+# terminal is handed the same facts as the same message in the chat. It is
+# NOT in the project settings file: that is read by voice and the listeners
+# too, and a synchronous hook on every voice turn is latency somebody can
+# hear. It is only named when the script exists, because Python answers a
+# missing file with exit 2 and **exit 2 from this hook blocks the prompt** —
+# a dev checkout with no `/opt/scripts` would otherwise refuse every message.
 #
 # **A discussion asks before it acts** (`DISCUSS_ASK`). The Discuss button
 # said "without changing anything" and only a sentence in the prompt held
@@ -552,6 +556,24 @@ CONTEXT_HOOK = os.environ.get("BRAIN_CHAT_CONTEXT_HOOK",
 # Seconds. The hook's own budget is far smaller (it gives up on the panel
 # well inside this); this is the CLI's ceiling on a hook that hung.
 CONTEXT_HOOK_TIMEOUT = 5
+
+
+
+def conversation_settings() -> dict:
+    """What every conversation in Ask carries in its own settings, on
+    either face: the per-message context hook, named only when its script
+    is there. The chat adds a discussion's rules on top (`_settings`); the
+    terminal's file adds its model and the platform deny-list
+    (`server._terminal_settings`). Empty when there is nothing to add."""
+    hook = CONTEXT_HOOK or ""
+    if not (hook and os.path.isfile(hook)):
+        return {}
+    return {"hooks": {"UserPromptSubmit": [{"hooks": [{
+        "type": "command",
+        "command": f"python3 {hook}",
+        "timeout": CONTEXT_HOOK_TIMEOUT,
+    }]}]}}
+
 
 # Installed by the server: ``fn(session) -> str``, the system prompt a
 # fresh process is spawned with. None (a test, or this module on its own)
@@ -1319,14 +1341,7 @@ class ChatSession:
     def _settings(self) -> dict:
         """The chat's own `--settings`: the context hook, and a discussion's
         ask rules. Empty when there is nothing to add."""
-        out: dict = {}
-        hook = CONTEXT_HOOK or ""
-        if hook and os.path.isfile(hook):
-            out["hooks"] = {"UserPromptSubmit": [{"hooks": [{
-                "type": "command",
-                "command": f"python3 {hook}",
-                "timeout": CONTEXT_HOOK_TIMEOUT,
-            }]}]}
+        out: dict = conversation_settings()
         if self.finding_ts:
             out["permissions"] = self._discuss_rules()
         return out

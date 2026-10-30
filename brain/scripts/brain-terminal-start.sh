@@ -42,9 +42,13 @@ fi
 # single fixed file was a race between them. Only a file of that name beside
 # the fixed one is taken; anything else is ignored and the fixed file (what
 # a terminal opened directly, or an older panel, leaves) is read instead.
+# `--no-handoff`: the session picker's launches. A window a person started
+# from the picker is not the one an Ask was waiting for, so it leaves the
+# waiting request where the window opened for it will look.
 args=()
 handoff_arg=""
 expect_handoff=0
+no_handoff=0
 for arg in "$@"; do
     if [ "$expect_handoff" = 1 ]; then
         handoff_arg="$arg"
@@ -53,6 +57,7 @@ for arg in "$@"; do
     fi
     case "$arg" in
         --handoff) expect_handoff=1 ;;
+        --no-handoff) no_handoff=1 ;;
         --dangerously-skip-permissions) ;;
         *) args+=("$arg") ;;
     esac
@@ -83,12 +88,25 @@ prompt_file="${BRAIN_TERMINAL_PROMPT_FILE:-/data/brain-terminal-prompt.md}"
 if [ -s "$prompt_file" ] && [ -r "$prompt_file" ]; then
     args+=(--append-system-prompt "$(cat "$prompt_file")")
 fi
+# The same settings the chat's process is spawned with
+# (server.TERMINAL_SETTINGS_FILE, written beside the prompt from the one
+# definition the chat reads): the UserPromptSubmit hook that hands each
+# message the facts matching it, the chat's model and the platform
+# deny-list. Passed only when it parses — a CLI handed settings it cannot
+# read refuses to start, and a terminal that does not open is worse than one
+# without the facts.
+settings_file="${BRAIN_TERMINAL_SETTINGS_FILE:-/data/brain-terminal-settings.json}"
+if [ -s "$settings_file" ] && [ -r "$settings_file" ] \
+        && python3 -c 'import json, sys; json.load(open(sys.argv[1]))' \
+            "$settings_file" >/dev/null 2>&1; then
+    args+=(--settings "$(cat "$settings_file")")
+fi
 set -- ${args[@]+"${args[@]}"}
 
 resume_id=""
 first_prompt=""
 
-if [ -r "$HANDOFF_FILE" ]; then
+if [ "$no_handoff" = 0 ] && [ -r "$HANDOFF_FILE" ]; then
     # Consume it first, whatever happens next: a handoff that fails to
     # launch must not be retried forever.
     handoff=$(cat "$HANDOFF_FILE" 2>/dev/null)

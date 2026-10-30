@@ -10,10 +10,13 @@ Code's own ``UserPromptSubmit`` hook: the CLI pipes ``{session_id,
 transcript_path, cwd, hook_event_name, prompt}`` in on stdin and adds
 whatever the hook prints as ``additionalContext`` to the turn.
 
-It is wired in the CHAT's own ``--settings`` (``chat_session._settings``)
-and nowhere else — the project settings file is read by voice and the
-listeners too, and a synchronous hook ahead of every voice turn is latency
-somebody can hear.
+It is wired in both faces of Ask — the chat's own ``--settings`` and the
+terminal's (``chat_session.conversation_settings``, the one definition;
+``server.TERMINAL_SETTINGS_FILE`` carries it to brain-terminal-start) — and
+nowhere else: the project settings file is read by voice and the listeners
+too, and a synchronous hook ahead of every voice turn is latency somebody
+can hear. The interactive CLI's input adds ``permission_mode``; nothing here
+reads it, so a terminal message is answered exactly as a chat one.
 
 Three rules.
 

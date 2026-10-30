@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.26
+
+### Changed
+
+- **The chat and the terminal behave the same.** A conversation in the terminal now gets the same facts about what you just typed that the chat gets, from one shared definition, along with the same model, instructions, personality, house summary, tools and protections. Picking a model in the chat sets it for the next terminal conversation too, and the terminal's session menu starts Claude the same way. What still differs is only how things are shown: the chat asks permission with a card while the terminal asks in its own prompt, and a Discuss in the terminal has no buttons. "What brAIn brings to a run" now shows both the same.
+
 ## 4.0.25
 
 ### Changed

@@ -49,6 +49,15 @@ if [ -r "$PERMS_LIB" ]; then
     source "$PERMS_LIB"
 fi
 
+# A conversation the picker starts is a terminal conversation, so it starts
+# the way every other one does: through brain-terminal-start, which reads
+# the permission switch as the session starts and adds brAIn's appended
+# prompt and the chat's settings (the per-message facts hook, the model).
+# `--no-handoff` leaves a request an Ask is waiting on for the window opened
+# for it. A command typed into "Custom" and a background task are the
+# person's own `claude-run` and stay that.
+TERMINAL_START="${BRAIN_TERMINAL_START:-/usr/local/bin/brain-terminal-start}"
+
 current_perms() {
     PERMS_FLAG=""
     if declare -F brain_perms_flag >/dev/null 2>&1; then
@@ -149,7 +158,6 @@ attach_existing_session() {
 }
 
 launch_claude_new() {
-    current_perms
     echo "Starting new Claude session..."
 
     if check_existing_session; then
@@ -158,11 +166,10 @@ launch_claude_new() {
     fi
 
     sleep 1
-    exec tmux new-session -s "$TMUX_SESSION_NAME" -c "$CLAUDE_PROJECT_DIR" "claude-run ${PERMS_FLAG}"
+    exec tmux new-session -s "$TMUX_SESSION_NAME" -c "$CLAUDE_PROJECT_DIR" "${TERMINAL_START} --no-handoff"
 }
 
 launch_claude_continue() {
-    current_perms
     echo "Continuing most recent conversation..."
 
     if check_existing_session; then
@@ -170,11 +177,10 @@ launch_claude_continue() {
     fi
 
     sleep 1
-    exec tmux new-session -s "$TMUX_SESSION_NAME" -c "$CLAUDE_PROJECT_DIR" "claude-run ${PERMS_FLAG} -c"
+    exec tmux new-session -s "$TMUX_SESSION_NAME" -c "$CLAUDE_PROJECT_DIR" "${TERMINAL_START} --no-handoff -c"
 }
 
 launch_claude_resume() {
-    current_perms
     echo "Opening conversation list..."
 
     if check_existing_session; then
@@ -182,7 +188,7 @@ launch_claude_resume() {
     fi
 
     sleep 1
-    exec tmux new-session -s "$TMUX_SESSION_NAME" -c "$CLAUDE_PROJECT_DIR" "claude-run ${PERMS_FLAG} -r"
+    exec tmux new-session -s "$TMUX_SESSION_NAME" -c "$CLAUDE_PROJECT_DIR" "${TERMINAL_START} --no-handoff -r"
 }
 
 launch_claude_custom() {
@@ -215,15 +221,14 @@ launch_claude_custom() {
 }
 
 launch_new_window() {
-    current_perms
     if ! check_existing_session; then
         echo "No existing session. Starting new session..."
         sleep 1
-        exec tmux new-session -s "$TMUX_SESSION_NAME" -c "$CLAUDE_PROJECT_DIR" "claude-run ${PERMS_FLAG}"
+        exec tmux new-session -s "$TMUX_SESSION_NAME" -c "$CLAUDE_PROJECT_DIR" "${TERMINAL_START} --no-handoff"
     fi
 
     echo "Opening new Claude window in existing session..."
-    tmux new-window -t "$TMUX_SESSION_NAME" -c "$CLAUDE_PROJECT_DIR" "claude-run ${PERMS_FLAG}"
+    tmux new-window -t "$TMUX_SESSION_NAME" -c "$CLAUDE_PROJECT_DIR" "${TERMINAL_START} --no-handoff"
     sleep 1
     exec tmux attach-session -t "$TMUX_SESSION_NAME"
 }

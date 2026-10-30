@@ -69,13 +69,13 @@ def size(text) -> int:
 
 
 def part(key: str, label: str, about: str, nbytes: int, *, upto: bool = False,
-         change: str = "", sec: str = "", only: str = "") -> dict:
+         change: str = "", sec: str = "") -> dict:
     """One thing a run is handed. `upto` marks a cap rather than a reading;
     `change` says where a person changes it, `sec` the ⚙ section that is."""
     nbytes = max(0, int(nbytes or 0))
     return {"key": key, "label": label, "about": about, "bytes": nbytes,
             "tokens": round(nbytes / CHARS_PER_TOKEN), "upto": bool(upto),
-            "change": change, "sec": sec, "only": only}
+            "change": change, "sec": sec}
 
 
 def claude_md_split(text: str) -> dict:
@@ -219,10 +219,12 @@ def report(src: dict) -> dict:
     facts = int(s.get("facts") or 0)
     claude_md = s.get("claude_md") or ""
     split = claude_md_split(claude_md)
-    face = "terminal" if s.get("terminal_ui") == "classic" else "chat"
     all_tools = group_tools(s.get("mcp_tools") or mcp_tool_names())
     read_only = group_tools(s.get("analyst_tools") or ())
-    hook = bool(s.get("chat_hook"))
+    # One hook for both faces of Ask (`chat_session.conversation_settings`):
+    # the chat's own settings and the terminal's carry the same one, so
+    # what a conversation is handed does not depend on the face.
+    hook = bool(s.get("context_hook"))
 
     def facts_or_doc(key: str, cap: int, head: int, label: str) -> dict:
         # `_memory_block` and `ha_data._memory_for`: the facts about this
@@ -275,10 +277,8 @@ def report(src: dict) -> dict:
                  "brAIn looks up the facts that match your message and hands "
                  "them over with it, each fact once per conversation."
                  + ("" if hook else " Not wired on this install."),
-                 int(s.get("chat_context_chars") or 0), upto=True,
-                 only="chat"),
+                 int(s.get("chat_context_chars") or 0), upto=True),
         ],
-        "face": face,
         "looks_up": {
             "summary": "Every Home Assistant tool brAIn has — reading and "
                        "changing — plus the files and the shell in /config. "
@@ -437,8 +437,7 @@ def report(src: dict) -> dict:
             "waiting": int(s.get("waiting") or 0),
             "filed_at": int(s.get("filed_at") or 0),
             "facts": facts,
-            "face": face,
-            "chat_hook": hook,
+            "context_hook": hook,
         },
     }
 
