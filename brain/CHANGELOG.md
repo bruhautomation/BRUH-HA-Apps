@@ -2,6 +2,15 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.15
+
+### Fixed
+
+- **A declined emergency playbook stays declined.** A smoke, leak or freeze playbook is now known by its kind and the detectors that set it off, not by every light, thermostat and blind it would act on, so adding or removing one of those no longer brings back a playbook you already turned down. Declines made before this still count. A camera's sound detection is no longer taken for a smoke or carbon monoxide detector (#538).
+- **A device you said is retired, unused or broken stops getting cards.** The battery, frozen, offline and impossible-reading checks read your earlier answer before they make a card, for that sensor and the rest of its device; and a row you have marked Wrong twice is not raised a third time unless it is a different kind of fault. Smoke and leak sensors are always asked about (#532, #533).
+- **"Don't remind me" is a snooze.** A reason like "stop reminding me", "it's on my to-do list" or "I'm aware, don't bring this up again" now puts the card to sleep for the time it names, or a month, instead of being kept as a correction while the same thing comes back (#534).
+- **A weak Zigbee router card is about one device and its last two days.** It names the device's own link quality and how often it dropped out in the past 48 hours, and a router that stayed connected all that time is not reported (#531).
+
 ## 4.0.14
 
 ### Changed
