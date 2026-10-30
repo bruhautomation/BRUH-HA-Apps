@@ -345,6 +345,11 @@ def _redo_part(name: str, version: str, history: list[str] | None, row: dict) ->
                  "make-room-first delays, the theme backgrounds, type sizes), a second Now, a second list of "
                  "brAIn's cases, or hover tooltips, with no such reason behind it, is drift: leave Morph's new "
                  "code as it is there and name what you dropped in your answer.")
+    # #541: a merge swapped an import of a house module for Morph's built-in
+    # one and said nothing; the house's component simply stopped being used.
+    lines.append("Never replace a component of this house's with Morph's own equivalent (for example, swapping "
+                 "an import of a house module for a built-in one, or a house card for Morph's card) unless your "
+                 "summary says so, naming both. Keep the house's component when you are unsure.")
     said = [m for m in (history or []) if m][:6]
     if said:
         lines.append(f"Commits that changed {mine}, newest first:")

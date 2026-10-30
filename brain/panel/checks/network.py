@@ -116,6 +116,10 @@ ZWAVE_MIN_COMMANDS = 5
 
 # Zigbee: a router under this link quality weakens everything behind it.
 ZIGBEE_WEAK_LQI = 40
+# A weak router is only worth a card if it has also dropped out lately: the
+# window its availability is read over, and how many routers are asked about.
+ZIGBEE_DROPOUT_HOURS = 48
+ZIGBEE_FETCH_MAX = 30
 ZIGBEE_MAINS_QUIET_S = 6 * 3600
 ZIGBEE_BATTERY_QUIET_S = 26 * 3600
 # A device quieter than this has dropped off the mesh: `dev.zha_unseen`'s.
@@ -672,6 +676,33 @@ def zigbee_quiet_devices(snap, now: float) -> set[str]:
             if reg and zigbee_quiet(d, now)}
 
 
+def zigbee_history_candidates(snap: dict) -> list[str]:
+    """The entity each plugged-in Zigbee device's availability is read off:
+    what the collector fetches and `zigbee_weak` reads, so they agree."""
+    house = House(snap)
+    return [entity for dev, _reg, entity in zigbee_devices(house)
+            if entity and _zha_mains(dev)][:ZIGBEE_FETCH_MAX]
+
+
+def _dropouts(snap: dict, entity: str, now: float) -> list[float] | None:
+    """When this entity went unavailable inside the window, or None when the
+    recorder was not asked / would not answer (the check then goes on what
+    the device reports now, as it always did)."""
+    hist = snap.get("zigbee_history")
+    if not isinstance(hist, dict) or entity not in (hist.get("entities") or {}):
+        return None
+    rows = _rows(hist["entities"], entity)
+    start = now - ZIGBEE_DROPOUT_HOURS * 3600
+    out = _went_down(rows)
+    # Already unavailable when the window opened and back since is a drop too.
+    before = [st for ts, st in rows if ts < start]
+    inside = [t for t in out if t >= start]
+    if before and before[-1] == "unavailable" and any(
+            ts >= start and st != "unavailable" for ts, st in rows):
+        inside.append(start)
+    return sorted(inside)
+
+
 def zigbee_weak(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     rows = []
@@ -686,13 +717,23 @@ def zigbee_weak(snap: dict, now: float) -> list[dict]:
             continue
         if entity and not house.should_report(entity, "net.zigbee_weak"):
             continue
+        # A router that has held its link for two days is not a router with
+        # a problem, whatever its quality number says now.
+        drops = _dropouts(snap, entity, now) if entity else None
+        if drops is not None and not drops:
+            continue
+        # The name and the entity both come from this one device record.
+        name = zigbee_name(dev, reg, house)
+        seen = ("" if drops is None else
+                f" It dropped out {len(drops)} time"
+                f"{'' if len(drops) == 1 else 's'} in the past "
+                f"{ZIGBEE_DROPOUT_HOURS} hours, last {when(drops[-1])}.")
         rows.append({
-            "text": f"{zigbee_name(dev, reg, house)} is a Zigbee router with "
-                    "a weak link",
-            "detail": (f"Its link quality is {lqi:g} out of 255 (under "
-                       f"{ZIGBEE_WEAK_LQI} is weak). Other Zigbee devices "
-                       "route through a plugged-in one, so a weak router "
-                       "weakens everything behind it."),
+            "text": f"{name} is a Zigbee router with a weak link",
+            "detail": (f"{name}'s link quality is {lqi:g} out of 255 (under "
+                       f"{ZIGBEE_WEAK_LQI} is weak)." + seen +
+                       " Other Zigbee devices route through a plugged-in "
+                       "one, so a weak router weakens everything behind it."),
             "fix": ("Move it or the coordinator closer, put the coordinator "
                     "on a USB extension cable away from USB 3 ports and the "
                     "Wi-Fi router, or add another plugged-in Zigbee device "

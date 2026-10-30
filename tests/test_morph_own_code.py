@@ -352,6 +352,14 @@ class TestMakingAPausedChangeAgain(unittest.TestCase):
         self.assertIn("brAIn: Put a light/dark switch in the header", words)
         self.assertNotIn("First", words, "only commits that touched the file")
 
+    def test_the_merge_never_swaps_a_house_component_for_morphs_own_silently(self):
+        # #541: a merge swapped an import of a house module for upstream's.
+        for words in (self.env.morphcode.redo_words("styles.js", "0.5.2", []),
+                      self.env.morphcode.redo_all_words(["styles.js"], "0.5.2")):
+            self.assertIn("Never replace a component of this house's with Morph's own equivalent", words)
+            self.assertIn("swapping an import of a house module for a built-in one", words)
+            self.assertIn("unless your summary says so", words)
+
     def test_without_a_kept_original_brain_is_told_not_to_copy_the_old_file_over(self):
         (self.code / ".base" / "styles.js").unlink()
         self.assertIsNone(self.env.morphcode.kept_base("styles.js"))

@@ -7,7 +7,7 @@ in `docs/notes/` as well (in `CLAUDE.md` only when it applies to every
 change in the repository).
 
 Last retro: 2026-10-27
-Last UX audit: 2026-10-18
+Last UX audit: 2026-10-30
 
 ## Lessons
 

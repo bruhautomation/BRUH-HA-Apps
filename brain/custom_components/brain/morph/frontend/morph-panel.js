@@ -325,7 +325,7 @@ class MorphPanel extends HTMLElement {
     then.setOnData(() => this.schedule());
     this.bindEvents();
     // The room rail on a touch screen's right edge (rail.js): a column of
-    // the page beside the content, opened by a short pull to the left.
+    // notches beside the content, opened by a short pull to the left.
     this.rail = new Rail(this.$('[data-rail]'), this);
     // Inside brAIn's shell the scroll is also the shell's to hear: brAIn's
     // header hides while the dashboard scrolls down and returns as it
@@ -1674,9 +1674,9 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
     this.setHtml(head, `<div class="secbroken" style="flex:1;min-width:0"><h2>${esc(sec.title || '')}</h2><p class="sm" style="margin:2px 0 0;color:var(--muted)">Morph could not draw this room. The fault has been reported.</p></div>`);
   }
 
-  // The room rail's words and colours for a room on the board.
-  railTitle(id) { const sec = this.sectionById(id); return sec ? String(sec.title || '') : ''; }
+  // The room rail's colour for a room on the board, and a floor's name.
   railColor(id) { const sec = this.sectionById(id); return sec ? mix(hue(sec.color), 80) : 'var(--quiet)'; }
+  railFloor(id) { const fl = ((this.dash && this.dash.floors) || []).find((f) => String(f.id) === String(id)); return fl ? String(fl.title || '') : ''; }
 
   sectionById(id) { let hit = null; this.eachSection((s) => { if (s.id === id) hit = s; }); return hit; }
 
