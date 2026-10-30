@@ -14,6 +14,8 @@ and a module they all import may import none of them.
 
 from __future__ import annotations
 
+import re
+
 ELLIPSIS = "…"
 
 # How much of the budget a boundary has to keep before it is preferred over
@@ -61,6 +63,73 @@ def clip(text, limit: int) -> str:
     return head.rstrip(_TRAILING) + ELLIPSIS
 
 
+# A sentence's own end, which `shorten` cuts after and never marks: a whole
+# sentence is not a cut one. "; " is not among them — inside a list it is
+# where an item ends, and `_listed` says how many more there were.
+_FULL_STOPS = (". ", "! ", "? ", ".\n", "!\n", "?\n")
+# "…" straight after a sentence's end ("…malformed-event errors.…") says
+# a whole sentence was cut, which it was not.
+_STOP_ELLIPSIS = re.compile(r"([.!?][\"'”’)]?)\s*…(?=\s|$)")
+# A list needs this many items before "and N more" reads as one.
+_LIST_MIN = 3
+
+
+def _listed(s: str, begin: int, limit: int) -> str:
+    """``s`` up to the sentence starting at ``begin``, with that sentence's
+    list kept to whole items and the rest counted ("A; B; and 6 more."),
+    within ``limit`` — or "" when that sentence is no list or no item fits.
+    A list is three or more items split by "; ", or by ", " after a colon."""
+    rest = s[begin:]
+    body_at = begin + len(rest) - len(rest.lstrip())
+    body = s[body_at:]
+    ends = [i for i in (body.find(e) for e in _FULL_STOPS) if i >= 0]
+    if ends:
+        body = body[:min(ends) + 1]
+    body = body.rstrip(" .!?\n")
+    lead, sep, items = "", "; ", body.split("; ")
+    if len(items) < _LIST_MIN and ": " in body:
+        intro, tail = body.split(": ", 1)
+        lead, sep, items = intro + ": ", ", ", tail.split(", ")
+    if len(items) < _LIST_MIN:
+        return ""
+    for keep in range(len(items) - 1, 0, -1):
+        more = len(items) - keep
+        out = (s[:body_at] + lead + sep.join(items[:keep]).rstrip(" ,;:")
+               + f"{sep}and {more} more.")
+        if len(out) <= limit:
+            return out
+    return ""
+
+
+def shorten(text, limit: int) -> str:
+    """``text`` within ``limit`` characters for a card, cut by WHOLE
+    sentence or WHOLE list item, never mid-clause where it can be helped.
+
+    A finding's detail, what-to-do and a look's conclusion ended "…from its
+    device page.…", "…last 29 Oct;…" and "…will be settled by your…" (#560):
+    `clip` keeps most of the budget, and a card would rather lose a sentence
+    than end in half of one. So the cut is the last whole sentence that
+    fits (unmarked: it is a whole sentence), or — when the sentence being
+    cut is a list — its whole items and how many more ("and 6 more."),
+    whichever keeps more. Only text with neither (one sentence longer than
+    the budget) falls back to `clip`'s word and "…". A "…" left after a
+    full stop by an older cut is taken off. Text that fits is unchanged.
+    """
+    s = "" if text is None else str(text)
+    if limit <= 0:
+        return ""
+    if "…" in s:
+        s = _STOP_ELLIPSIS.sub(r"\1", s)
+    if len(s) <= limit:
+        return s
+    head = s[:limit + 1]
+    stop = max(head.rfind(e) for e in _FULL_STOPS)
+    whole = s[:stop + 1].rstrip() if stop >= 0 else ""
+    listed = _listed(s, stop + 1 if stop >= 0 else 0, limit)
+    best = max(whole, listed, key=len)
+    return best if best else clip(s, limit)
+
+
 # Below this budget a display copy is one line — a button's label, a chip's
 # summary, an option's description — and a second line saying how much was
 # hidden would be longer than what it describes. Above it the copy is a
@@ -105,4 +174,4 @@ def shown(text, limit: int) -> str:
             f"{len(s):,} characters shown here — Claude has the full text.")
 
 
-__all__ = ["ELLIPSIS", "NOTE_FROM", "clip", "shown"]
+__all__ = ["ELLIPSIS", "NOTE_FROM", "clip", "shorten", "shown"]
