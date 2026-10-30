@@ -340,6 +340,7 @@ Rules:
   them — how urgent it is, why it can wait, what would make it matter —
   never about where the row is listed ("already in front of the
   homeowner", "already on the list" says nothing).
+- """ + prompt_kit.ADDRESS + """
 - A device that something USES is not a device with nothing behind it.
   When the prompt says what an entity is used by, or what brAIn knows
   about it, judge its failure by what stops with it — never write "no
@@ -616,7 +617,7 @@ def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
                 # then a skipped one, which is watched and says so.
                 continue
             said[idx] = {"verdict": verdict,
-                         "why": textclip.clip(strip_signal_refs(
+                         "why": textclip.shorten(strip_signal_refs(
                              str(row.get("why") or "").strip()), MAX_WHY),
                          "forced": False}
             already = str(row.get("already") or "").strip().lower()
@@ -652,7 +653,7 @@ def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
             # A floor outranks `already` too: "the same leak as the other
             # card" is not a reason a tripped detector may be set aside on.
             answer = {"verdict": floor,
-                      "why": textclip.clip(
+                      "why": textclip.shorten(
                           (FORCED.format(why=why) + " " + answer["why"]).strip(),
                           MAX_WHY),
                       "forced": True,
@@ -857,6 +858,7 @@ Rules that matter more than anything about style:
   and say the other in "detail".
 - Write about brAIn as "brAIn", never "I", and never name its
   internal parts (the Resident, the first look, an investigation).
+- """ + prompt_kit.ADDRESS + """
 - Never refer to brAIn's own bookkeeping in anything the homeowner reads:
   no "signal 7", "row 3", "finding #12", case ids or timestamps used as
   ids. Name the device and the time instead.
@@ -1283,7 +1285,7 @@ def parse_dismissal(obj) -> str | None:
         return None
     if str(obj.get("claim") or "").strip():
         return None
-    why = textclip.clip(str(obj.get("detail") or "").strip(), MAX_WHY)
+    why = textclip.shorten(str(obj.get("detail") or "").strip(), MAX_WHY)
     return why or "An investigation looked and found nothing worth showing."
 
 
@@ -1349,7 +1351,7 @@ def watch(signal: dict, why: str = "", now: float | None = None) -> dict:
     rows[subject] = {
         "subject": subject,
         "kind": str((signal or {}).get("kind") or ""),
-        "why": textclip.clip(str(why or "").strip(), MAX_WATCH_WHY),
+        "why": textclip.shorten(str(why or "").strip(), MAX_WATCH_WHY),
         "at": int(now),
         "seen": 0,
     }

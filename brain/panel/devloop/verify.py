@@ -259,6 +259,8 @@ def question_row(entry: dict) -> dict:
         what = _plain_sentences(title).rstrip(" .")
     look = place or (product if product != "brAIn" or not title
                      or _DEVELOPER_RE.search(title) else title)
+    # "Where to look: brAIn" on brAIn's own screen names no place (#562).
+    look = "" if look == "brAIn" else look
     detail = " ".join(p for p in (
         f"{what}." if what else "",
         f"The {product} update installed here was meant to fix it.",
@@ -309,7 +311,7 @@ def group_row(entries: list[dict]) -> dict:
     quoted = [f"“{clip(t, 70)}”" for t in titles[:2]]
     named = (" and ".join(quoted) if len(titles) == 2 else
              f"{quoted[0]}, {quoted[1]} and {len(titles) - 2} more")
-    look = place or product
+    look = place or ("" if product == "brAIn" else product)
     detail = " ".join(p for p in (
         f"The {product} update installed here was meant to fix these: "
         f"{listed}.",
