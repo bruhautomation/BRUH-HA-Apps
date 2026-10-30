@@ -444,6 +444,10 @@ jobs:
         if: matrix.group == 'static-a'
         run: node tests/manual/measure-topbar.mjs
 
+      - name: Measure the header mark
+        if: matrix.group == 'static-a'
+        run: node tests/manual/measure-header-brand.mjs
+
       - name: Measure the card head
         if: matrix.group == 'static-a'
         run: node tests/manual/measure-cardhead.mjs

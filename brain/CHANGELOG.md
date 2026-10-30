@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.21
+
+### Added
+
+- **Choose what the top bar shows.** ⚙ › Personality › Header: the brAIn logo (the default), the assistant's name, or your own text and/or picture (PNG, JPEG or WebP up to 256 KB). Nothing changes until you choose: with Personality on the name is shown as before.
+- **The version is in the header on a wide screen.** From about 1100px wide a small version number sits beside the mark and opens What's new; a phone does not show it.
+
 ## 4.0.20
 
 ### Fixed

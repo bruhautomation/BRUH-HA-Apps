@@ -245,6 +245,7 @@ import run_queue
 import run_sources
 import scenes
 import schedule_store
+import header_brand
 import settings_store
 import shadow
 import shadow_findings
@@ -9496,6 +9497,8 @@ def _status_payload() -> tuple[dict | None, dict]:
         # (Personality on and a name set), for the bar and `speak`.
         "features": {**features.resolved(), "shell": shell_link.shell_fresh(),
                      "shell_url": "/" + shell_link.SHELL_URL},
+        # The header's mark: the choice, the text, the picture's address.
+        "header": header_brand.payload(settings),
     }
 
 
@@ -9656,6 +9659,7 @@ async def h_status(request: web.Request) -> web.Response:
         "integration": read["integration"],
         "devloop": read["devloop"],
         "features": read["features"],
+        "header": read["header"],
         # What brAIn did last and what it will do next. On the poll every
         # viewer already makes, because "is this thing working" is asked
         # of the top bar and not of a tab.
@@ -26119,6 +26123,38 @@ async def h_personality_put(request: web.Request) -> web.Response:
     return web.json_response(await asyncio.to_thread(personality.payload))
 
 
+async def h_header_logo_get(request: web.Request) -> web.Response:
+    """The header's own picture, typed by its magic bytes, or a 404."""
+    got = await asyncio.to_thread(header_brand.read)
+    if got is None:
+        raise web.HTTPNotFound(text="no header picture")
+    data, ctype = got
+    return web.Response(body=data, content_type=ctype, headers={
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox"})
+
+
+async def h_header_logo_put(request: web.Request) -> web.Response:
+    """The picture as the raw body: PNG, JPEG or WebP, 256 KB at most."""
+    data = await request.read()
+    why = header_brand.refusal(data)
+    if why:
+        raise web.HTTPBadRequest(text=why)
+    try:
+        await asyncio.to_thread(header_brand.save, data)
+    except OSError:
+        log.exception("could not save the header picture")
+        raise web.HTTPInternalServerError(
+            text="brAIn could not save that; the add-on log says why.")
+    return web.json_response(header_brand.payload(settings_store.load()))
+
+
+async def h_header_logo_delete(request: web.Request) -> web.Response:
+    await asyncio.to_thread(header_brand.remove)
+    return web.json_response(header_brand.payload(settings_store.load()))
+
+
 async def h_personality_growth(request: web.Request) -> web.Response:
     """POST {text}: one dated growth entry (the `note_personality_change`
     MCP tool, from a conversation about who brAIn is)."""
@@ -27804,6 +27840,9 @@ def make_app() -> web.Application:
     app.router.add_post("/api/personality/growth", h_personality_growth)
     app.router.add_get("/api/presence", h_presence_get)
     app.router.add_post("/api/presence", h_presence_post)
+    app.router.add_get("/header-logo", h_header_logo_get)
+    app.router.add_put("/api/header/logo", h_header_logo_put)
+    app.router.add_delete("/api/header/logo", h_header_logo_delete)
     app.router.add_get("/api/instructions", h_instructions)
     app.router.add_get("/api/instructions/{key}", h_instruction_get)
     app.router.add_put("/api/instructions/{key}", h_instruction_put)
