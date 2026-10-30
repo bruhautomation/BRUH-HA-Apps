@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2
+
+### Fixed
+
+- **Restart Home Assistant no longer says it failed while Home Assistant is restarting.** Home Assistant often stops before it answers the restart request, and the panel read that silence as an error after 15 seconds; it now says Home Assistant is restarting, and says it failed only when the request never reached Home Assistant (#550).
+
 ## 0.4.1
 
 ### Changed
