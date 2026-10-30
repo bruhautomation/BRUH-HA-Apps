@@ -242,6 +242,26 @@ class TestAskFollowsTheSavedFace(_Routes):
         self.assertNotEqual(a["key"], b["key"])
         self.assertEqual(self._users(session_a), ["first thing"])
 
+    async def test_two_discussions_at_once_are_two_conversations(self):
+        """Both answer before either prompt has landed, so the first one's
+        conversation still looks empty when the second asks."""
+        e1, _ = findings_store.add("Porch light never comes on",
+                                   entity_id="light.porch",
+                                   source="check:auto.dead_ref")
+        e2, _ = findings_store.add("Freezer drifting warm",
+                                   source="check:base.unusual")
+        r1, r2 = await asyncio.gather(
+            self.client.post(f"/api/finding/{e1['ts']}/discuss"),
+            self.client.post(f"/api/finding/{e2['ts']}/discuss"))
+        o1, o2 = await r1.json(), await r2.json()
+        self.assertNotEqual(o1["key"], o2["key"])
+        s1 = self.registry().by_key(o1["key"])
+        s2 = self.registry().by_key(o2["key"])
+        self.assertEqual({s1.finding_ts, s2.finding_ts}, {e1["ts"], e2["ts"]})
+        for session in (s1, s2):
+            self.assertTrue(await self._until(lambda: len(self._users(session)) == 1))
+        self.assertIn("Porch", self._users(s1 if s1.finding_ts == e1["ts"] else s2)[0])
+
     async def test_an_empty_ask_is_refused(self):
         resp = await self.client.post("/api/ask", json={"prompt": "  "})
         self.assertEqual(resp.status, 400)

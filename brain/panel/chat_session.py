@@ -3270,12 +3270,19 @@ class SessionRegistry:
             # globally attached one may be another device's empty chat, and
             # reusing that would put two devices in one conversation.
             current = current if current in self._sessions else self._attached
-            if current is not None and not current.events \
+            if current is not None and not getattr(current, "_claimed", False) \
+                    and not current.events \
                     and current.state != "busy":
                 # Nothing was ever said in the one on screen. Spending a
                 # slot on a second empty chat is a process for nothing.
+                if not spawn:
+                    # Claimed for the prompt about to be sent into it: until
+                    # that lands it still looks empty, and a second Ask in
+                    # the same moment must not reuse it too.
+                    current._claimed = True
                 return await current.reset(finding_ts, spawn=spawn)
             session = self._adopt(ChatSession())
+            session._claimed = not spawn
             session.about(finding_ts)
             if spawn:
                 # ``spawn=False`` is the prompt-answering path (Ask, Discuss):
