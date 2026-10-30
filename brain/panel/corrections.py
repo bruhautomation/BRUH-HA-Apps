@@ -446,6 +446,70 @@ def temporary(note: str) -> bool:
     return bool(_TEMPORARY_RE.search(text)) and not _FOR_GOOD_RE.search(text)
 
 
+# A reason that says the device itself is finished with: nobody uses it any
+# more, it was retired or thrown out, or the sensor is simply broken. That
+# is about the DEVICE, so it stands down every check that would say the
+# device has gone quiet or reads wrong (`House.answered_off`) — and it is
+# not a deferral, nor a for-now.
+_GONE_RE = re.compile(
+    r"\b(?:(?:no longer|never)\s+(?:use|using|used|need|needed)\b|"
+    r"(?:don'?t|do not|doesn'?t|did not|didn'?t|not)\s+(?:use|using|need)\s+"
+    r"(?:it|them|(?:this|that|these|those|the)(?:\s+\w+)?)\s+any ?more|"
+    r"(?:don'?t|do not|doesn'?t|not)\s+(?:use|using)\s+(?:it|them|"
+    r"(?:this|that|these|those|the)(?:\s+\w+)?)\b|"
+    r"(?:not|no longer) in use|not used(?! to)\b|retired|"
+    r"decommission(?:ed)?|thrown (?:out|away)|got rid of|gave (?:it|them) "
+    r"away|binned|scrapped|"
+    r"(?:is|are|it'?s)\s+(?:completely |totally |just )?"
+    r"(?:broken|faulty|defective|dead for good|junk|a dud)|"
+    r"(?:sensor|device|remote|unit)\s+(?:is\s+)?(?:broken|faulty))", re.I)
+
+
+def gone_for_good(note: str) -> bool:
+    """Whether a reason says the device is retired, unused or broken."""
+    text = str(note or "")
+    return bool(_GONE_RE.search(text)) and not temporary(text)
+
+
+# A reason that asks not to be reminded: "don't remind me", "it's on my to
+# do list, stop reminding me", "I am aware, don't bring this up again". It is
+# not a statement that the report is wrong (a rule would be for ever) and
+# not a statement the thing is out of use (that is `temporary`): it is a
+# request to be left alone about it for a while.
+_DEFERRAL_RE = re.compile(
+    r"\b(?:(?:don'?t|do not|stop|quit|no need to|please don'?t|no more)\s+"
+    r"(?:\w+\s+){0,2}?(?:remind(?:ing)?|nag(?:ging)?|bother(?:ing)?|"
+    r"bring(?:ing)? (?:this|it|that) up|mention(?:ing)? (?:this|it|that))"
+    r"|(?:i'?m|i am|we'?re|we are|already)\s+(?:well\s+)?aware|"
+    r"(?:on|in) (?:my|our|the) (?:to[- ]?do|todo|task) list|"
+    r"already (?:on|in) (?:my|our) (?:list|plan)|i know about (?:it|this|that)|"
+    r"i'?ll (?:deal with|handle|take care of|sort) (?:it|this|that)|"
+    r"leave (?:it|this|that) (?:with|to) me)\b", re.I)
+# How long a deferral keeps a card closed when the reason names no period.
+DEFERRAL_DAYS = 30
+
+
+def deferral(note: str) -> bool:
+    """Whether a reason asks not to be reminded for a while."""
+    text = str(note or "")
+    return (bool(_DEFERRAL_RE.search(text)) and not temporary(text)
+            and not gone_for_good(text))
+
+
+def puts_off(note: str) -> bool:
+    """A reason that is a snooze however it was worded: out of use for now,
+    or "don't remind me"."""
+    return temporary(note) or deferral(note)
+
+
+def snooze_days(note: str) -> int:
+    """How long a `puts_off` reason keeps the card closed: the period it
+    names, else the repair's two weeks or a deferral's month."""
+    if temporary(note) or _PERIOD_RE.search(str(note or "")):
+        return temporary_days(note)
+    return DEFERRAL_DAYS
+
+
 def temporary_days(note: str) -> int:
     """The quiet a 'for now' reason asks for: the period it names, clamped
     to `TEMPORARY_MAX_DAYS`, else `TEMPORARY_DAYS`."""

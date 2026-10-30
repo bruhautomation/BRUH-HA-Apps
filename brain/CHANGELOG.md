@@ -2,6 +2,24 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.16
+
+### Fixed
+
+- **"Is this fixed now?" waits for the fix to be running, and asks once per change.** brAIn asks whether a fix worked only when Home Assistant has loaded the release that carries it (after its restart), and reports from the same release and place are one question that lists what changed. One answer covers them all (#535).
+- **A card's what-to-do is one step.** brAIn settles an "either this or that" or an "also confirm" from what it can read before it writes the step, and a written step that still hands you a choice, or a "restore it if asked", is not kept (#536).
+- **A finding brAIn's own look says is over or ordinary is held.** When the look finds the problem has already come back, or that it is just the normal state of the thing (a TV that is simply switched off), the card is held instead of shown beside a note that contradicts it (#537).
+- **Passing over a row that an open card already covers is no longer counted as a miss.** Rows folded into the connectivity card no longer teach brAIn that its first look was too quiet (#547, #548, #549).
+
+## 4.0.15
+
+### Fixed
+
+- **A declined emergency playbook stays declined.** A smoke, leak or freeze playbook is now known by its kind and the detectors that set it off, not by every light, thermostat and blind it would act on, so adding or removing one of those no longer brings back a playbook you already turned down. Declines made before this still count. A camera's sound detection is no longer taken for a smoke or carbon monoxide detector (#538).
+- **A device you said is retired, unused or broken stops getting cards.** The battery, frozen, offline and impossible-reading checks read your earlier answer before they make a card, for that sensor and the rest of its device; and a row you have marked Wrong twice is not raised a third time unless it is a different kind of fault. Smoke and leak sensors are always asked about (#532, #533).
+- **"Don't remind me" is a snooze.** A reason like "stop reminding me", "it's on my to-do list" or "I'm aware, don't bring this up again" now puts the card to sleep for the time it names, or a month, instead of being kept as a correction while the same thing comes back (#534).
+- **A weak Zigbee router card is about one device and its last two days.** It names the device's own link quality and how often it dropped out in the past 48 hours, and a router that stayed connected all that time is not reported (#531).
+
 ## 4.0.14
 
 ### Changed

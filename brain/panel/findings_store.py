@@ -594,11 +594,18 @@ def _plain_row(row: dict, keys=("claim", "detail", "fix", "todo_text")) -> dict:
             if key in PLACEHOLDER_REFUSED and house_words.placeholder(
                     out[key]):
                 out[key] = ""
+            # So is a step that hands the choice back ("either … or",
+            # "also confirm …", "if asked", #536): the account in `detail`
+            # may weigh two causes, the step a person carries out may not.
+            if key in FORK_REFUSED and house_words.fork(out[key]):
+                out[key] = ""
     return out
 
 
 # The fields a placeholder is refused in.
 PLACEHOLDER_REFUSED = ("detail", "fix", "todo_text")
+# The fields an unresolved fork is refused in: the steps.
+FORK_REFUSED = ("fix", "todo_text")
 
 
 def _queue_now(now: float) -> int | None:
@@ -3001,7 +3008,8 @@ def nobody_has_touched(entry: dict) -> bool:
     """An open row no person has answered, replied under or put back, and
     no run is planning or fixing — the one kind a look may still set aside
     once it is on screen, and only when the look said the row is not news
-    (`resident.ALREADY`: already answered, marked wrong before, a duplicate).
+    (`resident.ALREADY`: already answered, marked wrong before, a duplicate,
+    already over, or the thing's ordinary state).
 
     "A row on screen never vanishes into a run" is about a run overruling
     somebody; a row nobody has done anything with, under a look that says
@@ -3300,6 +3308,12 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
         # Wrong for weeks on the fault list (`scorecard`'s `last_wrong_ts`).
         **({"wrong_at": _wrong_at(prior) or stamp} if kind == "ignored"
            else {}),
+        # How many times this exact key was answered Wrong. The entry is
+        # replaced on every answer, so without this a third Wrong is
+        # indistinguishable from the first (`answered_checks`).
+        **({"wrong_count": (int(prior.get("wrong_count") or 1)
+                            if _wrong_at(prior) else 0) + 1}
+           if kind == "ignored" else {}),
         "note": str(note or "").strip()[:MAX_NOTE],
         # Who raised it. An ending is a label — "I did it" says the report
         # was right, "Wrong" says it was not — and without the producer on
@@ -3319,6 +3333,41 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
            if clean_items(shaped.get("items")) else {}),
     })
     _write_settled(ledger[-MAX_SETTLED:])
+
+
+def answered_checks() -> dict[str, dict[str, dict]]:
+    """What the household has already said about each entity, per check:
+    ``{entity_id: {check_id: {"wrong": n, "notes": [reason, …]}}}``.
+
+    Read off the settled ledger for the rows a house check filed, under the
+    entity the row was about and every item it named. A check asks this
+    (`House.answered_off`) before it files, so a device somebody answered
+    Wrong twice, or said they no longer use, is not filed again in new
+    words whether or not the rule written then still holds. Never raises.
+    """
+    out: dict[str, dict[str, dict]] = {}
+    try:
+        ledger = _load_settled()
+    except Exception:  # noqa: BLE001
+        return out
+    for e in ledger:
+        source = str(e.get("source") or "")
+        if not source.startswith("check:"):
+            continue
+        check = source[len("check:"):]
+        subjects = [str(e.get("entity_id") or "")] + list(
+            clean_items(e.get("items")))
+        wrong = 0
+        if e.get("kind") == "ignored":
+            wrong = max(1, int(e.get("wrong_count") or 1))
+        note = str(e.get("note") or "").strip()
+        for subject in dict.fromkeys(s for s in subjects if s):
+            row = out.setdefault(subject, {}).setdefault(
+                check, {"wrong": 0, "notes": []})
+            row["wrong"] += wrong
+            if note and note not in row["notes"]:
+                row["notes"].append(note)
+    return out
 
 
 def _wrong_at(entry: dict | None) -> int:
@@ -3836,7 +3885,8 @@ def set_fix(ts: int, fix: str, by: str) -> dict | None:
     # Every author on `FIX_AUTHORS` is a model, so its sentence is stored
     # in the house's words.
     fix = textclip.clip(plain(str(fix or "").strip()), MAX_FIX)
-    if not fix or by not in FIX_AUTHORS or house_words.placeholder(fix):
+    if (not fix or by not in FIX_AUTHORS or house_words.placeholder(fix)
+            or house_words.fork(fix)):
         return None
     items = _load()
     for entry in items:

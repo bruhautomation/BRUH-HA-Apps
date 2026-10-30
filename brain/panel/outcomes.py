@@ -70,6 +70,7 @@ import findings_store
 import prompt_kit
 import resident
 import signals
+import triage
 
 # ---------------------------------------------------------------------------
 # Where things live
@@ -268,6 +269,7 @@ def record_look(batch: list[dict], verdicts: dict, run_id: str = "",
                 "why": str(answer.get("why") or "")[:MAX_WHY],
                 "forced": bool(answer.get("forced")),
                 "fallback": bool(answer.get("fallback")),
+                "already": str(answer.get("already") or ""),
                 "finding_ts": ts,
                 "key": findings_store.normalize(row["text"]) if row else "",
                 "flags": _flags(signal),
@@ -372,13 +374,36 @@ def classify(row: dict) -> str:
     return "unjudged"
 
 
-def _agree(klass: str, outcome: str):
+def covered(row: dict) -> bool:
+    """Whether a look set this row aside as ANOTHER open card's problem.
+
+    The look's `already` word says so; a row logged before the word was
+    kept says it in its reason, which `parse_first_look` reads the same
+    way. "Another card has this" is not "this is nothing": when the
+    household then folds the row into that card, or confirms the card,
+    the look was right (#547).
+    """
+    if row.get("stage") != "look":
+        return False
+    if "already" in row:
+        return row.get("already") == "duplicate"
+    return triage.says_duplicate(row.get("why"))
+
+
+def _agree(klass: str, outcome: str, covered_by_card: bool = False):
     """Whether a verdict agreed with what the household did. None is "no
-    label": a row nobody answered grades nothing either way."""
+    label": a row nobody answered grades nothing either way.
+
+    A row passed over as another open card's problem agrees with that
+    problem being real — it was confirmed THROUGH the card it named. Only
+    a person pulling the held row back out says it was its own problem.
+    """
     if klass == "surfaced":
         return {"confirmed": True, "wrong": False}.get(outcome)
     if klass == "dismissed":
         if outcome == "wrong":
+            return True
+        if covered_by_card and outcome == "confirmed":
             return True
         if outcome in ("confirmed", "put_back", "missed"):
             return False
@@ -500,19 +525,23 @@ def grade(rows: list[dict], findings: list[dict], settled: list[dict],
             # Gone, with nobody saying anything: the check stopped
             # reporting it or the case aged out. Not a label.
             outcome = "cleared"
+        by_card = klass == "dismissed" and covered(row)
         if klass == "dismissed" and outcome in ("pending", "cleared"):
             # Passed over, and nothing has contradicted it yet — unless the
-            # same thing became a confirmed case inside the window.
+            # same thing became a confirmed case inside the window. A row
+            # set aside as another card's problem is not: that card being
+            # confirmed is the look's own reason coming true.
             subjects = {s for s in (row.get("subject"), row.get("entity")) if s}
-            hit = [t for s in subjects for t in confirmed_at.get(s, ())
-                   if at < t <= at + MISSED_WINDOW_S]
+            hit = [] if by_card else [
+                t for s in subjects for t in confirmed_at.get(s, ())
+                if at < t <= at + MISSED_WINDOW_S]
             if hit:
                 outcome, ended_at = "missed", min(hit)
             elif outcome == "pending" and now - at > STOOD_AFTER_S:
                 outcome = "stood"
         graded = dict(row)
         graded.update({"class": klass, "outcome": outcome,
-                       "agree": _agree(klass, outcome),
+                       "agree": _agree(klass, outcome, by_card),
                        "ended_at": ended_at, "note": note})
         out.append(graded)
     return out

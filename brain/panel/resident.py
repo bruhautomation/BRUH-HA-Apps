@@ -106,13 +106,17 @@ _RANK = {word: i for i, word in enumerate(VERDICTS)}
 
 # What a look may say a row ALREADY is, in a word rather than in its
 # sentence: something the house already answers, something the household
-# has marked wrong before, or the same thing as another open card. A row
+# has marked wrong before, the same thing as another open card, a problem
+# that has already ended, or the ordinary state of a thing (a device that
+# is switched off). The last two are #537: "the TV has been off since the
+# evening" and "all the plugs are connected now" were looks saying there
+# was nothing to do, beside a card still asking somebody to do it. A row
 # the look says one of these about is not news, whatever verdict came
 # beside it, and it is held rather than shown — "the household marked this
 # wrong before" under a card on the list was the look being right and the
 # loop not listening. A word and not a reading of the reason, because
 # prose is what gets reworded.
-ALREADY = ("answered", "marked_wrong", "duplicate")
+ALREADY = ("answered", "marked_wrong", "duplicate", "recovered", "explained")
 
 # One sentence per signal, shown on nothing and read in the log and the
 # diagnostics — long enough to say what was read, short enough that a
@@ -225,8 +229,7 @@ FIRST_LOOK_SCHEMA = {
                                          "act"]},
                     "why": {"type": "string"},
                     "already": {"type": "string",
-                                "enum": ["", "answered", "marked_wrong",
-                                         "duplicate"]},
+                                "enum": ["", *ALREADY]},
                 },
                 "required": ["id", "verdict", "why"],
                 "additionalProperties": False,
@@ -324,6 +327,10 @@ Rules:
   reason says why you think it is nothing.
 - """ + prompt_kit.PRIVACY + """ If the only thing that makes a signal
   interesting is a person rather than the house, ignore it.
+- A reading on a signal was taken once, when the rule filed it, and the
+  time beside it says when. Quote that value with its time; if you know a
+  newer one, say both with their times rather than a second "now" that
+  disagrees with the row.
 - "why" is one plain sentence naming what made you decide. It is read by
   the person who maintains this and it is the only record of your
   reasoning, so "looks fine" is not an answer. The numbers on the signals
@@ -341,8 +348,13 @@ Rules:
 - "already" says, in one word, that a row is not news: "answered" (the
   house or memory already answers it), "marked_wrong" (the household has
   marked this report, or one just like it, wrong before), "duplicate" (it
-  is the same problem as another open card or row). Leave it out
-  otherwise. A row you give one of these is set aside whatever verdict
+  is the same problem as another open card or row), "recovered" (the
+  problem has already ended: the device answers again, the reading is back
+  in its range), "explained" (what the row reports is the ordinary state
+  of the thing: the device is switched off, the room is not in use, the
+  season). Leave it out otherwise. When your reason says there is nothing
+  for anybody to do, it needs one of these words — a reason like that
+  beside a card that stays on the list contradicts the card. A row you give one of these is set aside whatever verdict
   you write, so never use it to dismiss something you would investigate
   for any other reason — and your "why" names what already answers it.
 - Judge each signal on what you were given. You cannot look anything up
@@ -757,7 +769,8 @@ Answer with ONE JSON object and nothing else. What it means:
 - "stakes" — how much it matters if you are right: "low", "medium", "high".
 - "fix" — ONE action, in one sentence, specific to this house: the
   entity, the integration, the automation, the setting. Never a category,
-  never generic advice restated and never a list of things to try. If you
+  never generic advice restated and never a list of things to try.
+  """ + prompt_kit.ONE_STEP + """ If you
   concluded it is normal here or nothing is needed, say that nothing is
   needed and why. Never tell the person to press a button on the card
   (Ignore, Snooze) — those are always there. Never tell the
@@ -887,6 +900,7 @@ rewrite it or dismiss it, and you never file beside it.
   wording, so write them for this house, not for the rule that filed it —
   the device by its friendly name, the hub or integration it reports
   through, the time in local time, and the one thing to do.
+  """ + prompt_kit.ONE_STEP + """
 
 A GOOD DISMISSAL — the row said "Hall motion sensor has been unavailable":
   "claim": "", "dismiss": true,
@@ -1122,9 +1136,9 @@ def parse_case(obj, *, read_entities=None) -> dict | None:
         "confidence": confidence,
         "stakes": stakes,
         "severity": SEVERITY_BY_STAKES[stakes],
-        "fix": _no_placeholder(obj.get("fix")),
+        "fix": _one_step(obj.get("fix")),
         "fix_by": "resident",
-        "todo_text": _no_placeholder(obj.get("todo_text")),
+        "todo_text": _one_step(obj.get("todo_text")),
         "evidence": evidence,
         "actions": actions,
         "memory_hint": str(obj.get("memory_hint") or "").strip(),
@@ -1243,6 +1257,13 @@ def _no_placeholder(value) -> str:
     (#446) — the row then keeps the sentence it had."""
     text = str(value or "").strip()
     return "" if house_words.placeholder(text) else text
+
+
+def _one_step(value) -> str:
+    """A reply's step, or "" when it holds a placeholder or hands the
+    choice back to the person ("either … or", "also confirm", #536)."""
+    text = _no_placeholder(value)
+    return "" if house_words.fork(text) else text
 
 
 def parse_dismissal(obj) -> str | None:
