@@ -7220,7 +7220,7 @@ html.in-shell.bar-hidden .topbar > .shelledit { opacity: 0; visibility: hidden; 
     align-content: flex-start;
   }
   html.in-shell .topbar::before { content: ""; order: 8; flex: 0 0 100%; height: 0; }
-  html.in-shell .brandname { font-size: 18px; max-width: 70px; }
+  html.in-shell .brandname { font-size: 18px; max-width: 66px; }
   /* ☰ off the screen's edge (the owner: "a little jammed into the left"). */
   html.in-shell .btn.shellmenu { margin-left: 6px; }
   html.in-shell .viewtabs {
