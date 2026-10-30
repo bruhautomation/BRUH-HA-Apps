@@ -19,24 +19,36 @@ export const CSS = `
 .disp{font-family:'Bricolage Grotesque','Manrope',sans-serif}
 .wrap{max-width:1440px;margin:0 auto;padding:22px clamp(14px,3vw,44px) 120px;display:flex;flex-direction:column;gap:30px}
 /* The scroller holds the page and, on a touch screen, the room rail beside
-   it (rail.js): a column of the page, never over it (rule 1). Its tips are
-   vertical words inside it, beside the finger. */
+   it (rail.js): a slim column of notches, one per room, grouped by floor.
+   A pull left widens it over the page's edge with the floor names beside
+   it, and it is still while open (the owner's request: the notched rail
+   itself, a bit wider; no lean, no pop). Its tips are vertical words inside
+   it, beside the finger. */
 .scroll{display:flex;align-items:flex-start}
 .scroll>.wrap{flex:1 1 auto;min-width:0}
 .srail{display:none}
 @media (any-pointer:coarse){
 .scroll>.wrap{padding-right:4px}
-.srail{display:block;position:sticky;top:0;flex:0 0 28px;width:28px;height:var(--morph-h,100vh);overflow:hidden;touch-action:pan-y;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;border-radius:14px 0 0 14px;transition:background .2s ease}
-.srail.engaged{background:var(--chip)}
-.srail.open{background:color-mix(in oklab,var(--violet) 14%,var(--surface))}
-.srline{position:absolute;top:8px;bottom:8px;right:9px;width:2px;border-radius:1px;background:var(--line)}
-.srdots i{position:absolute;right:7px;width:6px;height:6px;margin-top:-3px;border-radius:50%;opacity:.75;transition:transform .15s ease}
-.srdots i.on{transform:scale(1.7);opacity:1}
-.srfill{position:absolute;right:2px;height:4px;border-radius:2px;background:var(--violet)}
+.srail{display:block;position:sticky;top:0;z-index:6;flex:0 0 28px;width:28px;height:var(--morph-h,100vh);touch-action:pan-y;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.srpanel{position:absolute;top:0;right:0;bottom:0;width:28px;border-radius:14px 0 0 14px;transition:background .2s ease}
+.srail.engaged .srpanel{background:var(--chip)}
+.srail.open .srpanel{background:color-mix(in oklab,var(--text) 7%,var(--surface));box-shadow:-1px 0 0 var(--line)}
+.srnotches i{position:absolute;right:9px;width:5px;border-radius:2px;opacity:.4}
+.srnotches i.on{opacity:1}
+.srail.open .srnotches i{opacity:.55}
+.srail.open .srnotches i.on{opacity:1;box-shadow:0 0 0 1.5px var(--surface),0 0 0 3px currentColor;color:var(--line2)}
+.srfloors span{position:absolute;right:50px;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;line-height:20px;padding:0 8px;border-radius:10px;color:var(--muted);background:var(--surface);box-shadow:0 0 0 1px var(--line);white-space:nowrap;pointer-events:none}
 .srtip{position:absolute;left:1px;writing-mode:vertical-rl;font-size:12px;font-weight:600;line-height:13px;color:var(--text);white-space:nowrap;pointer-events:none}
 .srtip span{display:block}
 .srtip .srsub{color:var(--muted);font-weight:500}
-.srail.open .srtip{font-size:13px;color:var(--violet)}
+/* The room the rail is on: ringed and lit in its own colour (--rc), its
+   title tinted, the other rooms dimmed. The engine writes opacity inline on
+   every room and a room's state paints its own inset edge, so the dim and
+   the ring are !important; the ring is inset because a room clips. */
+.morph.railing section.sec[data-sec]:not(.railon){opacity:.55!important;transition:opacity .2s ease}
+.morph section.sec.railon>.secbg{box-shadow:inset 0 0 0 1.5px color-mix(in oklab,var(--rc) 70%,transparent),inset 0 0 36px color-mix(in oklab,var(--rc) 16%,transparent)!important}
+.morph section.sec.railon .sechead h2,.morph section.sec.railon .sechead .sectitle svg{color:var(--rc)}
+.morph section.sec .sechead h2{transition:color .3s ease}
 }
 .bar{display:flex;align-items:center;gap:10px;min-height:44px}
 .brand{font-weight:700;font-size:12px;letter-spacing:.24em;display:inline-flex;align-items:center;gap:8px}
@@ -436,5 +448,5 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(2px)}}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .reduce *,.reduce *::before,.reduce *::after{animation:none!important;transition:none!important}
-@media (prefers-reduced-motion:reduce){.rise,.holdbar,.nowdot,.w,.spin,.breathe,.wave,.bob,.pulse,.mprog{animation:none}.mtile,.cu-track.glide,.cu-dot,.cu-lens,.cu-bar,.todorow,.thenrule{transition:none}.form-night section.sec,.form-night .flh{transition:none}}
+@media (prefers-reduced-motion:reduce){.srpanel,.morph.railing section.sec[data-sec],.morph section.sec .sechead h2,.secbg{transition:none!important}.rise,.holdbar,.nowdot,.w,.spin,.breathe,.wave,.bob,.pulse,.mprog{animation:none}.mtile,.cu-track.glide,.cu-dot,.cu-lens,.cu-bar,.todorow,.thenrule{transition:none}.form-night section.sec,.form-night .flh{transition:none}}
 `;
