@@ -297,7 +297,7 @@ import typed_fix
 # statement as the public names rather than a bare `import categories`
 # beside it — one module imported two ways is a CodeQL alert and, more to
 # the point, two spellings of one dependency.
-from categories import (ANALYST_SYSTEM, CARD_SCHEMA, CATEGORIES, SYSTEM_PROMPT,
+from categories import (ANALYST_SYSTEM, CARD_SCHEMA, CATEGORIES, HOUSE_CHARS, SYSTEM_PROMPT,
                         _CARD_CONTRACT, _previous_block,
                         build_orientation_prompt, build_prompt,
                         document_lines, get_category, house_block,
@@ -26885,7 +26885,6 @@ async def h_chat_context(request: web.Request) -> web.Response:
 
 def _context_sources() -> dict:
     import ha_data  # noqa: PLC0415 — the server imports it where it is used
-    import categories  # noqa: PLC0415
     src: dict = {}
 
     def read(fn, default=""):
@@ -26914,7 +26913,7 @@ def _context_sources() -> dict:
         ha_data.memory_budget(), facts_store.RETRIEVAL_CHARS * 2), 0)
     src["card_memory_head"] = ha_data.FACTS_HEAD_CHARS
     src["card_context_chars"] = ha_data.CONTEXT_CHARS
-    src["house_chars"] = categories.HOUSE_CHARS
+    src["house_chars"] = HOUSE_CHARS
     src["learned"] = (read(knowledge_store.prompt_block) + "\n\n"
                       + read(personality.identity_line)).strip()
     src["findings"] = read(findings_store.prompt_block)

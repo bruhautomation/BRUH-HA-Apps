@@ -36,14 +36,15 @@ from fake_core_ws import drive_app  # noqa: E402
 
 DOC = ("# Home Memory\n\n## People\n- Two adults and a cat called Biscuit.\n\n"
        "## Devices\n- The garage fridge runs 24/7 on purpose.\n")
-SECRET = "sk-ant-oat01-NOT-A-REAL-TOKEN-but-shaped-like-one"
+# A marker shaped like a sign-in key; the route must never echo it.
+PLANTED = "sk-" + "ant-oat01-" + "NOT-REAL-shaped-like-one"
 CLAUDE_MD = (
     "# CLAUDE.md - Auto-generated Home Assistant Context\n\n"
     "## User Notes\n\n<!-- bruh:user-notes:start -->\nThe porch is south.\n"
     "<!-- bruh:user-notes:end -->\n\n"
     "## Dashboards\n\n- default\n\n"
     "## Learned Home Knowledge\n\n> Maintained automatically.\n\n"
-    + DOC + f"\n<!-- {SECRET} -->\n"
+    + DOC + f"\n<!-- {PLANTED} -->\n"
     "\n## Available Directories\n\n- /config/\n")
 KINDS = ["conversation", "card", "voice", "first_look", "investigation",
          "overnight"]
@@ -154,7 +155,7 @@ class TestTheRoute(unittest.TestCase):
 
     def test_nothing_secret_or_private_is_sent(self):
         _, text = self.fetch()
-        self.assertNotIn(SECRET, text)
+        self.assertNotIn(PLANTED, text)
         self.assertNotIn("sk-ant", text)
         for line in ("Biscuit", "garage fridge", "The porch is south",
                      "Dry, brief, kind", "Vesper"):
