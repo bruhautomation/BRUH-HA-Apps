@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.18
+
+### Fixed
+
+- **A machine an automation starts is not called idle or broken while it is waiting.** Before brAIn says a dehumidifier (or any device an automation switches on at a reading) is not running, it reads the automation's sensor and threshold and what that sensor says now; while the threshold is not met, nothing is filed, and the dehumidifier chore says nothing either. Once the sensor passes the threshold and the machine stays off, it is still reported (#558).
+- **brAIn does not ask what the house already says.** A "where is…" question about something that already has a room, and a "how is it disarmed / unlocked / opened" question that an automation already answers, are not asked, by the house book or by an investigation. A question nothing in the house answers is still asked (#561).
+
 ## 4.0.17
 
 ### Changed
