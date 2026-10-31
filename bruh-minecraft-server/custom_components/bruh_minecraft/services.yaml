@@ -357,7 +357,7 @@ vesper_engine:
 
 set_family:
   name: Set the family
-  description: Who plays and how Vesper treats them. A list of {person, role (child or reader), players (in-game names)}.
+  description: Who plays and how Vesper treats them. A list of people, each with a person name, a role (child or reader) and their in-game player names.
   fields:
     people:
       name: People
