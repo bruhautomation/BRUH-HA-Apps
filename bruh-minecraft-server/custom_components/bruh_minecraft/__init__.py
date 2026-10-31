@@ -71,8 +71,10 @@ from .const import (
     SERVICE_RENAME_WORLD,
     SERVICE_VESPER,
     SERVICE_VESPER_ASK,
+    SERVICE_VESPER_BUILD,
     SERVICE_VESPER_ENGINE,
     SERVICE_VESPER_FAMILY,
+    SERVICE_VESPER_SAY,
     SERVICE_VESPER_UNDO,
     SERVICE_VESPER_ZONE,
     SERVICE_WEATHER,
@@ -318,7 +320,18 @@ def _register_services(hass: HomeAssistant) -> None:
 
     async def handle_vesper_engine(call: ServiceCall) -> dict[str, Any]:
         return _strip(await _ask("vesper_engine", {
-            k: call.data[k] for k in ("on", "bedtime_entity", "daily_actions") if k in call.data}))
+            k: call.data[k] for k in ("on", "bedtime_entity", "daily_actions", "daily_chats")
+            if k in call.data}))
+
+    async def handle_vesper_say(call: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("vesper_say", {
+            "to": call.data.get("to", "family"), "message": _one_line(call.data["message"]),
+            "by": call.data.get("by", "Home Assistant")}))
+
+    async def handle_vesper_build(call: ServiceCall) -> dict[str, Any]:
+        payload = {k: call.data[k] for k in ("blocks", "player", "dimension", "title", "by")
+                   if k in call.data}
+        return _strip(await _ask("vesper_build", payload, timeout=60.0))
 
     async def handle_vesper_family(call: ServiceCall) -> dict[str, Any]:
         return _strip(await _ask("vesper_family", {"people": call.data["people"]}))
@@ -417,6 +430,23 @@ def _register_services(hass: HomeAssistant) -> None:
         vol.Optional("on"): bool,
         vol.Optional("bedtime_entity"): cv.string,
         vol.Optional("daily_actions"): vol.All(vol.Coerce(int), vol.Range(0, 1000)),
+        vol.Optional("daily_chats"): vol.All(vol.Coerce(int), vol.Range(0, 200)),
+    })
+    vesper_say_schema = vol.Schema({
+        vol.Optional("to", default="family"): vol.All(cv.string, vol.Length(min=1, max=40)),
+        vol.Required("message"): vol.All(cv.string, vol.Length(min=1, max=640)),
+        vol.Optional("by"): vol.All(cv.string, vol.Length(max=40)),
+    })
+    block_schema = vol.Schema({
+        vol.Required("x"): vol.Coerce(int), vol.Required("y"): vol.Coerce(int),
+        vol.Required("z"): vol.Coerce(int), vol.Required("block"): cv.string,
+    })
+    vesper_build_schema = vol.Schema({
+        vol.Required("blocks"): vol.All([block_schema], vol.Length(min=1, max=64)),
+        vol.Optional("player"): vol.All(cv.string, vol.Length(min=1, max=40)),
+        vol.Optional("dimension"): cv.string,
+        vol.Optional("title"): vol.All(cv.string, vol.Length(max=60)),
+        vol.Optional("by"): vol.All(cv.string, vol.Length(max=40)),
     })
     vesper_family_schema = vol.Schema({vol.Required("people"): [dict]})
     vesper_zone_schema = vol.Schema({
@@ -466,6 +496,8 @@ def _register_services(hass: HomeAssistant) -> None:
     register(SERVICE_VESPER_ENGINE, handle_vesper_engine, vesper_engine_schema, optional)
     register(SERVICE_VESPER_FAMILY, handle_vesper_family, vesper_family_schema, optional)
     register(SERVICE_VESPER_ZONE, handle_vesper_zone, vesper_zone_schema, optional)
+    register(SERVICE_VESPER_SAY, handle_vesper_say, vesper_say_schema, optional)
+    register(SERVICE_VESPER_BUILD, handle_vesper_build, vesper_build_schema, optional)
     register(SERVICE_RENAME_WORLD, handle_rename_world, rename_world_schema, optional)
     register(SERVICE_BACKUP, handle_backup, empty_schema, optional)
     register(SERVICE_RESTART, handle_restart, empty_schema, optional)

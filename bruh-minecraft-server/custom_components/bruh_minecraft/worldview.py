@@ -164,7 +164,23 @@ def vesper_state(world: dict[str, Any]) -> str:
         return "off"
     if not v.get("enabled"):
         return "off"
+    if v.get("paused"):
+        return "paused"
     return str(v.get("state") or "idle")
+
+
+MAX_LEARNED = 40
+
+
+def _learned(v: dict[str, Any]) -> list[dict[str, Any]]:
+    """What Vesper learned about each person, for brAIn's facts store
+    (brAIn's panel files one fact per person and key off this attribute)."""
+    out = []
+    for row in (v.get("learned") or [])[:MAX_LEARNED]:
+        if isinstance(row, dict) and row.get("person") and row.get("key") and row.get("text"):
+            out.append({"person": _clip(row["person"], 40), "key": _clip(row["key"], 20),
+                        "text": _clip(row["text"], 300)})
+    return out
 
 
 def vesper_attrs(world: dict[str, Any]) -> dict[str, Any]:
@@ -172,6 +188,9 @@ def vesper_attrs(world: dict[str, Any]) -> dict[str, Any]:
     last = v.get("last_action") or None
     q = v.get("open_question") or None
     return {"enabled": bool(v.get("enabled")), "paused": bool(v.get("paused")),
+            "name": _clip(v.get("name") or "Vesper", 16),
+            "chat_commands": v.get("commands") or "on",
+            "vesper_learned": _learned(v),
             "budget": v.get("budget") or {},
             "queued_questions": v.get("queued_questions", 0),
             "open_question": ({"id": q.get("id"), "person": _clip(q.get("person"), 40),

@@ -200,7 +200,7 @@ async def world(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 VESPER_KINDS = ("vesper", "vesper_ask", "vesper_undo", "vesper_engine", "vesper_family",
-                "vesper_zone", "rename_world")
+                "vesper_zone", "vesper_say", "vesper_build", "rename_world")
 
 
 async def vesper(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -217,8 +217,16 @@ async def vesper(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
             return {"ok": False, "error": f"'{action_id}' is not one of Vesper's action ids."}
         return await asyncio.to_thread(_panel, "POST", f"/api/vesper/actions/{action_id}/undo",
                                        {}, 60)
+    if kind == "vesper_say":
+        body = {k: payload[k] for k in ("to", "message", "by") if k in payload}
+        return await asyncio.to_thread(_panel, "POST", "/api/vesper/say", body, 15)
+    if kind == "vesper_build":
+        body = {k: payload[k] for k in ("blocks", "player", "dimension", "title", "by")
+                if k in payload}
+        return await asyncio.to_thread(_panel, "POST", "/api/vesper/build", body, 60)
     if kind == "vesper_engine":
-        body = {k: payload[k] for k in ("on", "bedtime_entity", "daily_actions") if k in payload}
+        body = {k: payload[k] for k in ("on", "bedtime_entity", "daily_actions", "daily_chats")
+                if k in payload}
         return await asyncio.to_thread(_panel, "POST", "/api/vesper/engine", body, 15)
     if kind == "vesper_family":
         return await asyncio.to_thread(_panel, "PUT", "/api/vesper/family",

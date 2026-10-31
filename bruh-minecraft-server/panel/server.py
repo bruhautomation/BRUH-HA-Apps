@@ -31,6 +31,8 @@ POST /api/vesper/engine     — {"on", "bedtime_entity", "daily_actions"}: Vespe
 GET  /api/vesper/entities   — Home Assistant's on/off entities, for the bedtime switch list
 POST /api/vesper/ask        — pose a two-picture choice-pad question to a child
 POST /api/vesper/actions/<id>/undo — put back what one action changed
+POST /api/vesper/say        — {"to", "message", "by"}: Vesper says it in the game
+POST /api/vesper/build      — {"blocks", "player", "dimension", "title", "by"}: a small undoable build
 PUT  /api/vesper/family     — the roster; POST/DELETE /api/vesper/zones — named places
 
 Runs as the `minecraft` user on 0.0.0.0:8099. The HA supervisor proxies the
@@ -3259,6 +3261,56 @@ def _vesper_modern() -> bool:
     return vesper.modern_text(version)
 
 
+# brAIn, where Vesper's words and a grown-up's requests in chat go. The one
+# door is Home Assistant's `brain.ask` (the brAIn integration's service),
+# called through the Supervisor's Core API with the narrow `minecraft` tool
+# scope: the game world's tools and read-only house context, nothing that
+# reaches a house service (brAIn's listener, MCP server and action gate each
+# hold that scope). No brAIn installed, not running or refusing is a
+# BrainUnavailable, which Vesper answers with a short canned line.
+BRAIN_SHARED = Path(os.environ.get("BRAIN_SHARED_DIR", "/config/.brain"))
+
+
+def _vesper_brain(request: dict) -> dict:
+    import urllib.error
+    body = {"question": str(request.get("prompt") or "")[:4000],
+            "schema": request.get("schema") or {},
+            "tools": str(request.get("tools") or "read_only"),
+            "timeout": max(10, min(600, int(request.get("timeout") or 60)))}
+    try:
+        answer = _core_api("POST", "/services/brain/ask?return_response", body,
+                           timeout=body["timeout"] + 15)
+    except urllib.error.HTTPError as exc:
+        try:
+            said = exc.read().decode(errors="replace")[:200]
+        except Exception:  # noqa: BLE001 — the status says enough
+            said = ""
+        raise vesper.BrainUnavailable(
+            f"brAIn answered HTTP {exc.code}" + (f": {said}" if said else "")) from None
+    except Exception as exc:  # noqa: BLE001 — Home Assistant or brAIn away
+        raise vesper.BrainUnavailable(f"brAIn could not be asked: {type(exc).__name__}") from None
+    if answer is None:
+        raise vesper.BrainUnavailable("not running under Home Assistant (no Supervisor token)")
+    response = answer.get("service_response") if isinstance(answer, dict) else None
+    if not isinstance(response, dict):
+        raise vesper.BrainUnavailable("brAIn sent no answer")
+    data = response.get("data") if isinstance(response.get("data"), dict) else {}
+    reply = str(data.get("reply") or response.get("response") or "")
+    learned = data.get("learned") if isinstance(data.get("learned"), list) else []
+    return {"reply": reply, "learned": learned}
+
+
+def _vesper_persona() -> str:
+    """The house's name for its assistant (brAIn's ⚙ › Personality), when
+    Personality is on and a name is set; else Vesper."""
+    features = _read_json(BRAIN_SHARED / "features.json", {})
+    if isinstance(features, dict) and features.get("personality") is False:
+        return "Vesper"
+    data = _read_json(BRAIN_SHARED / "personality.json", {})
+    name = data.get("name") if isinstance(data, dict) else ""
+    return str(name or "").strip() or "Vesper"
+
+
 _VESPER: dict = {"engine": None}
 
 
@@ -3267,7 +3319,8 @@ def _vesper() -> "vesper.Engine":
     col = _world()
     if engine is None or engine.col is not col:
         engine = vesper.Engine(col, bedtime=_vesper_bedtime, emit=_vesper_emit,
-                               snapshot=_vesper_snapshot, modern=_vesper_modern)
+                               snapshot=_vesper_snapshot, modern=_vesper_modern,
+                               brain=_vesper_brain, persona=_vesper_persona)
         col.extra = lambda: {"vesper": engine.brief()}
         _VESPER["engine"] = engine
     return engine
@@ -3319,14 +3372,15 @@ async def api_vesper_entities(_: web.Request) -> web.Response:
 
 
 async def api_vesper_engine(request: web.Request) -> web.Response:
-    """`{"on": bool, "bedtime_entity": str, "daily_actions": int}`, any of them."""
+    """`{"on": bool, "bedtime_entity": str, "daily_actions": int,
+    "daily_chats": int}`, any of them."""
     body = await _json_body(request)
     if "on" in body and not isinstance(body["on"], bool):
         return web.json_response({"error": "on is true or false."}, status=400)
     try:
         status = await asyncio.to_thread(
             _vesper().configure, body.get("on"), body.get("bedtime_entity"),
-            body.get("daily_actions"))
+            body.get("daily_actions"), body.get("daily_chats"))
     except vesper.VesperError as exc:
         return web.json_response({"error": str(exc)}, status=400)
     _world().write()
@@ -3344,6 +3398,33 @@ async def api_vesper_ask(request: web.Request) -> web.Response:
     return web.json_response({"question": q, "note": (
         f"Vesper will put two pads beside {q['person']} now." if online else
         f"{q['person']} is not on; Vesper asks the next time they play.")}, status=201)
+
+
+async def api_vesper_say(request: web.Request) -> web.Response:
+    """`{"to": person|player|"family", "message", "by"}`: Vesper says it in the
+    game, through the engine's `say` (never one child's news to another)."""
+    body = await _json_body(request)
+    try:
+        result = await asyncio.to_thread(_vesper().say, body.get("to"), body.get("message"),
+                                         str(body.get("by") or "brAIn"))
+    except vesper.VesperError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response(result)
+
+
+async def api_vesper_build(request: web.Request) -> web.Response:
+    """`{"blocks": [{x, y, z, block}], "player", "dimension", "title", "by"}`:
+    a small build through the engine's guarded, undoable `place_blocks`."""
+    body = await _json_body(request)
+    try:
+        act = await asyncio.to_thread(_vesper().build, body.get("blocks"), body.get("player"),
+                                      body.get("dimension"), body.get("title"),
+                                      str(body.get("by") or "brAIn"))
+    except vesper.VesperError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    _world().write()
+    return web.json_response({"action": act, "note": (
+        f"Built {len(act.get('cells') or [])} blocks. Undo with its id: {act['id']}.")})
 
 
 async def api_vesper_undo(request: web.Request) -> web.Response:
@@ -3478,6 +3559,8 @@ def build_app() -> web.Application:
     app.router.add_get("/api/vesper/entities", api_vesper_entities)
     app.router.add_post("/api/vesper/ask", api_vesper_ask)
     app.router.add_post("/api/vesper/actions/{id}/undo", api_vesper_undo)
+    app.router.add_post("/api/vesper/say", api_vesper_say)
+    app.router.add_post("/api/vesper/build", api_vesper_build)
     app.router.add_get("/api/vesper/family", api_vesper_family)
     app.router.add_put("/api/vesper/family", api_vesper_family)
     app.router.add_post("/api/vesper/zones", api_vesper_zone_save)

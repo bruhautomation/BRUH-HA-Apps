@@ -74,6 +74,10 @@ SERVICE_VESPER_UNDO = "vesper_undo"
 SERVICE_VESPER_ENGINE = "vesper_engine"
 SERVICE_VESPER_FAMILY = "set_family"
 SERVICE_VESPER_ZONE = "set_zone"
+# brAIn and automations reaching the game through Vesper: words to a person
+# or the family, and a small undoable build.
+SERVICE_VESPER_SAY = "vesper_say"
+SERVICE_VESPER_BUILD = "vesper_build"
 SERVICE_RENAME_WORLD = "rename_world"
 # Fired by the add-on for each moment worth a decision (join, idle, death,
 # achievement, a favourite place, a parent asking in chat, an answer).

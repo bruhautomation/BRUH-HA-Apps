@@ -326,10 +326,10 @@ class TestTheGreeting(EngineBase):
         self.assertEqual([e for e in self.world.entities if "vesper_eold" in e["tags"]], [])
         self.assertEqual(len(self.world.entities), 1)     # this run's greeting
 
-    def test_a_reader_and_a_guest_get_no_body(self):
-        self.join(DAD)
+    def test_a_guest_gets_no_body(self):
         self.join("Stranger1")
         self.assertEqual(self.world.entities, [])
+        self.assertFalse(any("Stranger1" in c for c in self.world.engine_commands()))
 
     def test_no_second_greeting_within_the_cooldown(self):
         self.join(KAZ)
