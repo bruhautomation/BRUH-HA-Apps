@@ -136,6 +136,14 @@ def task_words() -> list[str]:
     return [text[:MAX_WORD_CHARS]] if text else []
 
 
+def speaker(chan: str) -> dict | None:
+    """The player and person a `minecraft_trusted` task was asked by."""
+    if chan != "minecraft_trusted":
+        return None
+    return {"player": os.environ.get("BRAIN_MINECRAFT_PLAYER", "")[:17],
+            "person": os.environ.get("BRAIN_MINECRAFT_PERSON", "")[:40]}
+
+
 def _texts(content) -> list[str]:
     """The person's own text in one user message's content."""
     if isinstance(content, str):
@@ -249,6 +257,11 @@ def main(stdin=None) -> int:
             "contract": agreed,
             "intervention": os.environ.get("BRAIN_INTERVENTION_ID", "")[:64],
             "exposed_only": os.environ.get("BRAIN_EXPOSED_ONLY", "") == "1",
+            # Who asked, for a trusted grown-up's request from Minecraft's
+            # chat: a house change held for approval is answered back to
+            # them in the game. Set by the automation listener, never by a
+            # run.
+            "speaker": speaker(chan),
         }).encode()
         req = urllib.request.Request(
             f"{PANEL_URL}/api/gate", data=body, method="POST",

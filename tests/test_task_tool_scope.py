@@ -284,6 +284,7 @@ class TestTheBridgeWritesIt(unittest.TestCase):
             "timeout": 300, "notify_entity": None,
             "model": None, "tools": None, "schema": None,
             "memory": False, "scheduled": False, "cameras": False, "effort": None,
+            "speaker": None, "re": __import__("re"),
         }
         scope.update(kw)
         exec(compile(snippet.replace("\n        ", "\n"), "<bridge>", "exec"),
@@ -298,6 +299,15 @@ class TestTheBridgeWritesIt(unittest.TestCase):
     def test_the_default_puts_the_same_json_on_disk_it_always_did(self):
         self.assertNotIn("tools", self._task(tools="full"))
         self.assertNotIn("tools", self._task(tools=None))
+
+    def test_who_asked_rides_only_for_a_plain_player_name(self):
+        """A trusted grown-up's request from Minecraft carries who asked, so a
+        house change held for approval can be answered in the game."""
+        got = self._task(speaker={"person": "Dad", "player": "DadCraft42"})
+        self.assertEqual(got["speaker"], {"person": "Dad", "player": "DadCraft42"})
+        self.assertNotIn("speaker", self._task())
+        self.assertNotIn("speaker", self._task(speaker={"person": "Dad",
+                                                        "player": "x; rm -rf /"}))
 
     def test_a_narrower_scope_rides_in_the_file(self):
         self.assertEqual(self._task(tools="read_only")["tools"], "read_only")

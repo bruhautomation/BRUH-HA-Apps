@@ -1799,12 +1799,15 @@ for (const width of WIDTHS) {
       if (String(url).includes('api/minecraft')) {
         return new Response(JSON.stringify({
           present: true, name: 'Juniper', wake_words: ['Juniper', 'brain'],
-          settings: { enabled: true, greet: true, people: [{ person: 'Kaz', role: 'child', players: ['.Kaz8044'], nicknames: [] }],
+          settings: { enabled: true, greet: true, people: [
+                        { person: 'Kaz', role: 'child', players: ['.Kaz8044'], nicknames: [], trusted: false },
+                        { person: 'Dad', role: 'reader', players: ['Ben13765'], nicknames: [], trusted: true }],
                       bedtime_entity: '', budgets: { daily_turns: 0, daily_actions: 0, per_session: 0 },
                       chat_model: '', chat_effort: '', build_model: '', build_effort: '' },
           defaults: { chat: { model: 'haiku', effort: 'low' }, build: { model: 'sonnet', effort: 'medium' } },
           model_choices: ['', 'haiku', 'sonnet', 'opus'], efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-          today: { turns: 2, actions: 1 }, paused: false, talks: [], actions: [] }),
+          today: { turns: 2, actions: 1 }, paused: false, talks: [], actions: [],
+          accounts: { java: false, bedrock: true }, approvals: [] }),
           { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
       return inner(url, opts);
@@ -1825,6 +1828,21 @@ for (const width of WIDTHS) {
     for (const want of ['For answering in chat', 'For building', 'Replies and greetings a day']) {
       if (!labels.some((t) => t.includes(want))) note(where, `no "${want}" control`);
     }
+    // "Can ask for anything" is on the grown-up's row only, and a row whose
+    // names the server does not check says the setting is not used.
+    const toggles = await page.$$eval('#mcPeople .mcperson', (rows) => rows.map((r) => ({
+      role: r.querySelector('[data-k="role"]').value,
+      toggle: !!r.querySelector('[data-k="trusted"]'),
+      warned: r.textContent.includes("isn't used") })));
+    if (JSON.stringify(toggles) !== JSON.stringify([{ role: 'child', toggle: false, warned: false },
+                                                     { role: 'reader', toggle: true, warned: true }])) {
+      note(where, `the "Can ask for anything" toggle is drawn as ${JSON.stringify(toggles)}`);
+    }
+    // Turning the child into a grown-up draws it; back again takes it away.
+    await page.selectOption('#mcRole0', 'reader');
+    if (!(await page.$('#mcTrusted0'))) note(where, 'a row made a grown-up has no toggle');
+    await page.selectOption('#mcRole0', 'child');
+    if (await page.$('#mcTrusted0')) note(where, 'a row made a child keeps the toggle');
   } catch (e) {
     note(where, `the Minecraft section did not appear: ${String(e.message).split('\n')[0]}`);
   }

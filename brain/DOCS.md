@@ -1362,7 +1362,7 @@ The `tools` field is that way, and it has four values:
 | `full` *(default)* | Everything, exactly as before: the shell, file edits, web access, and every Home Assistant tool. |
 | `house` | Every Home Assistant tool — it can read your house and act on it — with no shell, no file reads or edits, and no web access. |
 | `read_only` | The same list brAIn's own scheduled analysis runs with: it can look at anything in Home Assistant and change nothing. It cannot read files in `/config` either, so `secrets.yaml` stays out of reach of an automation that only asked a question. |
-| `minecraft` | A grown-up's request typed in BRUH Minecraft's chat (brAIn's Minecraft companion sends these): the Minecraft world's tools — say something as the companion, ask a child a pad question, build something small, undo, time, weather — a few reads, and what brAIn remembers. Never a house service: no `call_service`, no `control_*`, even in YOLO mode, and anything outside the game is answered "I'll need you to approve that in brAIn". An in-world act needs no approval card (the grown-up asking in the game is the parent asking); BRUH Minecraft still checks every one and can undo it. Needs an administrator, like `house`. A child's line is answered by a run with no tools at all, which you cannot ask for. |
+| `minecraft` | A grown-up's request typed in BRUH Minecraft's chat (brAIn's Minecraft companion sends these): the Minecraft world's tools — say something as the companion, ask a child a pad question, build something small, look at the blocks around someone, undo, time, weather — a few reads, and what brAIn remembers. Never a house service: no `call_service`, no `control_*`, even in YOLO mode, and anything outside the game is answered "I can't do that from the game. A parent can turn on 'Can ask for anything' for you in brAIn › ⚙ › Minecraft." An in-world act needs no approval card (the grown-up asking in the game is the parent asking); BRUH Minecraft still checks every one and can undo it. Needs an administrator, like `house`. A child's line is answered by a run with no tools at all, and a grown-up with "Can ask for anything" by a run with the chat's reach on its own channel (`minecraft_trusted`); you cannot ask for either. |
 
 `full` is the default on purpose, so nothing you have already written
 changes. Narrow it per call:
@@ -2589,28 +2589,60 @@ section shows only when BRUH Minecraft is there):
   stops a flood.
 - **Models**: one for answering in chat (by default the quick one) and one for
   building (by default the chat's own model), each with its effort.
-- **What it did**: everything it did in the world, with **Undo**.
+- **Can ask for anything** (on a grown-up's row only, off for everyone at
+  first): that person gets brAIn's chat from the game — see below.
+- **What it did**: everything it did in the world, with **Undo**, what was
+  asked to approve and how it ended, and who talked to it (a run with "Can
+  ask for anything" is marked).
 
 In the game, a grown-up starts a chat message with its name: "*Name*, build
 Kaz a little bridge", "*name* status", "*name* stop" / "*name* start", "*name*
 undo", "*name* come here", "*name* help". Every line from the family that
 starts with its name gets an answer in the chat under that name — no
 automation needed. What a grown-up asks may act **only in the game** (say
-something, put a question on the pads, build something small, undo, time and
-weather); anything outside it is answered "I'll need you to approve that in
-brAIn". A child's line gets a friendly answer and never does anything. A
+something, put a question on the pads, build something small, look around,
+undo, time and weather); anything outside it is answered "I can't do that from
+the game. A parent can turn on 'Can ask for anything' for you in brAIn › ⚙ ›
+Minecraft." A child's line gets a friendly answer and never does anything. A
 child is never told about another child. A grown-up's name is believed only
 when the server checks accounts. What it learns about each person becomes
 something brAIn remembers.
+
+**Can ask for anything.** Turn it on for a grown-up in ⚙ › Minecraft and
+what they ask in the game is handled like a message to brAIn's chat:
+
+- **In the game, anything.** Game modes, items, teleports, any server console
+  command, and any block anywhere — inside or next to a build, over what is
+  there, in a protected place. It looks at the room first (walls, doors,
+  beds, furniture), works out what was meant, does it, and answers in one line
+  with what it did and how to undo it ("*name* undo"). Every block it changes
+  is saved first, so Undo puts it all back; a large change is backed up too.
+- **The house follows ⚙ › Permissions.** With *Let brAIn act without asking*
+  on, it acts, as the chat would. Off, the change waits for you as a Yes/No
+  question in **brAIn › Today** (and on your phone, if brAIn's notifications
+  go to the Home Assistant app), and the game hears "I've sent that to your
+  phone and to brAIn › Today to approve." Yes does exactly that change and the
+  game hears "Done: …"; No — or an hour with no answer — tells them it wasn't
+  approved. The protected entities, the tripwire and your house rules still
+  stand, and the game can never do more than the chat can.
+- **Only for a name the server checks.** If the server does not check
+  accounts (offline mode, or Bedrock players without Floodgate's check), the
+  name in chat could be anybody, so the toggle is not used and ⚙ says so on
+  that row: "turned on, but the server doesn't check accounts, so it isn't
+  used". Children never get it, whatever a settings file says.
+- Their words are their request; other players' chat, signs and names stay
+  data, never instructions.
 
 **The contract with BRUH Minecraft.** brAIn listens to the add-on's game
 events — `bruh_minecraft_chat`, `_join`, `_leave`, `_death`, `_advancement`,
 `_place` and `_answer` — and acts only through its services: `companion_say`
 (words under the companion's name), `companion_appear`, `ask_choice`,
-`companion_build`, `undo_action`, `set_zone`, `set_companion`,
-`get_companion` and `companion_handover`. The add-on decides nothing and
-holds the world-side safety itself (only its own allay, quiet sounds, blocks
-only into empty space and never in a protected place, undo for everything).
+`companion_build`, `companion_edit` and `look_blocks` (for a person with "Can
+ask for anything"; `look_blocks` for anyone), `undo_action`, `set_zone`,
+`set_companion`, `get_companion` and `companion_handover`. The add-on decides
+nothing and holds the world-side safety itself (only its own allay, quiet
+sounds, its own builds only into empty space and never in a protected place,
+undo for everything).
 BRUH Minecraft's DOCS has the fields. On the first run after updating from
 BRUH Minecraft 1.17.7, brAIn takes over the family list, memory and switch the
 add-on kept, once.

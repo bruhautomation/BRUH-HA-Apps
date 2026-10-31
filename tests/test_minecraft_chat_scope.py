@@ -188,7 +188,9 @@ class TestTheChannelHoldsCallService(Base):
                 ("bruh_minecraft", "give", {"player": "Ben", "item": "diamond"}),
                 ("bruh_minecraft", "rename_world", {"name": "x"})):
             got = m.call_service(domain, service, data)
-            self.assertIn("approve that in brAIn", got.get("error", ""), (domain, service))
+            self.assertIn("A parent can turn on 'Can ask for anything'", got.get("error", ""),
+                          (domain, service))
+            self.assertNotIn("approve", got.get("error", "").lower(), (domain, service))
         self.assertEqual(self.core.acted(), [])
 
     def test_yolo_does_not_lift_it(self):
@@ -298,7 +300,9 @@ class TestTheGateOnTheGameChannel(GateCase):
                            (PFX + "minecraft_world", {"action": "rename", "value": "x"})):
             out = self.ask(tool, args, ["please"], channel="minecraft")
             self.assertEqual(out["decision"], "deny", tool)
-            self.assertIn("approve that in brAIn", out["reason"])
+            self.assertIn("Can ask for anything", out["reason"])
+            self.assertNotIn("approve it", out["reason"])
+            self.assertNotIn("approve that", out["reason"])
         self.assertEqual(self.model_calls, [])
 
     def test_the_same_call_elsewhere_still_meets_the_model(self):

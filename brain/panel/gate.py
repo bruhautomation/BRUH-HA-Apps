@@ -144,10 +144,45 @@ def interactive(channel: str) -> bool:
 # the sentence the game says back.
 MINECRAFT_CHANNEL = "minecraft"
 MINECRAFT_WORLD_TOOL = "minecraft_world"
-MINECRAFT_CHAT_ACTIONS = frozenset({"time", "weather", "say", "ask", "undo", "build"})
+MINECRAFT_CHAT_ACTIONS = frozenset({"time", "weather", "say", "ask", "undo", "build",
+                                    "look"})
+# There is nothing to approve on this channel, so the sentence says who can
+# change that and where (minecraft_rules.CANNED["outside"], spelled here too
+# because the gate does not load the integration's rules).
+MINECRAFT_OUTSIDE_LINE = ("I can't do that from the game. A parent can turn on 'Can ask for "
+                          "anything' for you in brAIn › ⚙ › Minecraft.")
 MINECRAFT_OUTSIDE = ("this request came from the game's chat, which may act only in the "
-                     "Minecraft world; anything else needs approval in brAIn — say "
-                     "\"I'll need you to approve that in brAIn.\"")
+                     "Minecraft world, and nothing waits anywhere for a yes. Reply exactly: \""
+                     + MINECRAFT_OUTSIDE_LINE + "\" Do not retry or look for another route.")
+
+# A grown-up with "Can ask for anything" (⚙ › Minecraft) whose name the
+# server checked: the `minecraft_trusted` task scope, on its own channel.
+# Decided in code, never by the model and never cached:
+#   * every Minecraft tool passes — full control of the server is what the
+#     toggle grants, and BRUH Minecraft snapshots every trusted edit for undo;
+#   * anything else meets the chat's rules: YOLO and the floors first, the
+#     person's house rules, then "Let brAIn act without asking" — on, it
+#     acts; off, it waits in brAIn › Today as an approval (never the model:
+#     the owner's rule is that the switch decides, as it does in the chat).
+MINECRAFT_TRUSTED_CHANNEL = "minecraft_trusted"
+MINECRAFT_TOOL_PREFIX = "minecraft_"
+
+
+def minecraft_trusted_channel(channel: str) -> bool:
+    return str(channel or "") == MINECRAFT_TRUSTED_CHANNEL
+
+
+def minecraft_tool(tool: str) -> bool:
+    """A BRUH Minecraft tool (minecraft_world, _player, _command, …)."""
+    return str(tool or "").rsplit("__", 1)[-1].startswith(MINECRAFT_TOOL_PREFIX)
+
+
+def approval_reason(line: str) -> str:
+    """The deny reason for a house change sent for a person's approval: what
+    the run says back in the game, word for word."""
+    return ("this house change was sent for a person's approval and has not "
+            "happened yet. Reply exactly: \"" + line + "\" brAIn tells them in "
+            "the game when it is approved. Do not retry or look for another route.")
 
 
 def minecraft_channel(channel: str) -> bool:
