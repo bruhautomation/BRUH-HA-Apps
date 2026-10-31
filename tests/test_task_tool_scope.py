@@ -287,8 +287,10 @@ class TestTheBridgeWritesIt(unittest.TestCase):
             "speaker": None, "re": __import__("re"),
         }
         scope.update(kw)
-        exec(compile(snippet.replace("\n        ", "\n"), "<bridge>", "exec"),
-             {}, scope)
+        # One namespace, not separate globals and locals: before Python 3.12
+        # a comprehension in exec'd code cannot see names in a locals dict,
+        # so bridge.py's `{k: speaker.get(k) ...}` raised NameError on 3.11.
+        exec(compile(snippet.replace("\n        ", "\n"), "<bridge>", "exec"), scope)
         return scope["task"]
 
     def test_an_effort_rides_only_when_it_is_one_the_cli_takes(self):
