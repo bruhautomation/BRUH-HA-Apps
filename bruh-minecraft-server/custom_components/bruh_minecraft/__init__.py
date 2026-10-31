@@ -412,7 +412,7 @@ def _register_services(hass: HomeAssistant) -> None:
         vol.Optional("by"): cv.string,
     })
     vesper_undo_schema = vol.Schema({vol.Required("id"): cv.string})
-    vesper_engine_schema = vol.Schema({vol.Required("on"): cv.boolean})
+    vesper_engine_schema = vol.Schema({vol.Required("on"): bool})
     vesper_family_schema = vol.Schema({vol.Required("people"): [dict]})
     vesper_zone_schema = vol.Schema({
         vol.Required("name"): cv.string,
@@ -420,9 +420,9 @@ def _register_services(hass: HomeAssistant) -> None:
         vol.Optional("z"): vol.Coerce(float),
         vol.Optional("radius"): vol.All(vol.Coerce(int), vol.Range(1, 512)),
         vol.Optional("dimension"): cv.string,
-        vol.Optional("protect"): cv.boolean,
+        vol.Optional("protect"): bool,
         vol.Optional("kind"): vol.In(["family", "vesper"]),
-        vol.Optional("delete"): cv.boolean,
+        vol.Optional("delete"): bool,
     })
     rename_world_schema = vol.Schema({
         vol.Required("name"): vol.All(cv.string, vol.Length(min=1, max=60))})

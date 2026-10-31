@@ -593,6 +593,100 @@ day and weather, who is on and where, what Vesper is building with pictures
 of what it finished, the feed, and when the world was last saved and backed
 up. No TPS, no latency, no buttons.
 
+### Vesper in the game
+
+Vesper can play in the world with the family — appear when a child joins, and
+ask a child (who cannot read) a question they answer by **standing on a
+picture**. It is off until you switch on **Vesper in the game**
+(`vesper_engine`) in the add-on options, and it never sends the server
+anything while nobody is online. Everything goes through RCON: no plugin, and
+it works for Bedrock/iPad players through Geyser (whose names start with a dot).
+
+**Who is who.** Tell Vesper the family once — in brAIn ("Kaz plays as
+.Kaz8044 and is a child; I'm Ben13765"), or with `bruh_minecraft.set_family`:
+
+```yaml
+action: bruh_minecraft.set_family
+data:
+  people:
+    - {person: Kaz, role: child, players: [".Kaz8044"]}
+    - {person: Lev, role: child, players: [".Lev6398"]}
+    - {person: Dad, role: reader, players: ["Ben13765"]}
+```
+
+A **child** gets Vesper in the world; a **reader** (a parent) gets words in
+chat; anybody else is a guest Vesper leaves alone. Name places with
+`bruh_minecraft.set_zone` (x, z, radius); a **protected** zone (the default
+for family zones) is one Vesper never builds in.
+
+**What a child sees.**
+- *Hello* — when a child joins, a named allay called Vesper appears in front
+  of them with a three-note chime and sparkles, hops (its wave), and leaves
+  again after about 25 seconds, or when they leave.
+- *Choice pads* — a question asked through brAIn ("ask Kaz if he wants a
+  castle or a farm") or `bruh_minecraft.vesper_ask` builds two 2×2 carpets
+  beside the child, green and red, with a fence post and a picture block
+  behind each (the question can choose the pictures, and a gift for each
+  answer). Standing on one for two seconds is the answer: a chime and a burst
+  of sparkles, the other picture disappears, any gift is given, and a few
+  seconds later the pads are gone. The answer goes into that child's memory.
+  Pads go only on flat, natural ground (grass, dirt, sand, stone, gravel,
+  snow) where every block is empty, never in a protected zone or on or next
+  to a build in the build log. No answer in three minutes, or the child
+  leaving, takes them away.
+- *Goodnight* — set **Bedtime switch** (`vesper_bedtime_entity`) to an
+  entity, e.g. `input_boolean.kids_bedtime`, or an entity and the state that
+  means bedtime, `binary_sensor.boys_door=off`. At bedtime Vesper puts
+  "Goodnight!" on the children's screens with a soft chime, takes away
+  anything it has out, and does nothing more until bedtime ends. If the
+  switch cannot be read, Vesper starts nothing new.
+
+**Hard rules.** Vesper only ever summons an allay; only plays gentle chimes,
+never louder than 0.8; only removes or moves its own entities (all tagged
+`vesper`); speaks to one named player at a time and never names one child to
+another; changes blocks only by placing into empty space with `setblock …
+keep`, after a backup when a change is large (64 blocks or more). It does
+at most **Vesper's actions a day** (`vesper_daily_actions`, 120) things a
+day, at most 4 for one child in one session, greets a child at most every 20
+minutes, and sends Home Assistant at most 40 moments a day.
+
+**Seeing and undoing it.** The panel's Dashboard has a **Vesper** card: what
+Vesper did (with **Undo** on anything still in the world), the questions and
+their answers, and a Pause button. An undo puts back only the blocks that
+still hold what Vesper placed (a block a child changed since is left), and
+removes the action's entities. The same is `bruh_minecraft.vesper_undo` and
+brAIn's "undo that". The `sensor.*_vesper` entity says what the engine is
+doing (off, idle, acting, asking, bedtime, waiting) with its last action.
+
+**Memory.** Per person, in the world folder (`.bruh-world/vesper/people.json`):
+sessions and time played, the places they keep going back to, what they chose
+(likes and dislikes) and which moments happened. The day's journal also sums
+each person (`GET /api/world/journal?day=` → `summary.people`). It is for the
+parent and brAIn; it is never said to another player.
+
+**Moments and brAIn.** Vesper notices joins, a child standing still for a
+minute, a death, an advancement, returning to a favourite place, a parent
+saying "Vesper" in chat, and an answer. Each has a cooldown, and the ones
+worth a decision are fired as a Home Assistant event,
+`bruh_minecraft_moment` (`kind`, `player`, `person`, `role`, `score`,
+`world`, and `said`/`answer`/`place` where they apply) — brAIn, or an
+automation, can listen for it and act with the services above. Vesper itself
+calls no model.
+
+**Renaming the world.** `bruh_minecraft.rename_world` (or asking brAIn to
+"rename the world to Vesper World") renames the active world: the folder
+takes a safe form of the name (`Vesper_World` — a folder holds letters,
+digits, `_` and `-`), the server list shows the name as said (the MOTD), the
+backups move with it, and the add-on restarts.
+
+Panel API: `GET /api/vesper`, `POST /api/vesper/engine` (`{"on": bool}`),
+`POST /api/vesper/ask` (`{"player", "text", "options"}`),
+`POST /api/vesper/actions/<id>/undo`, `GET|PUT /api/vesper/family`,
+`POST /api/vesper/zones`, `DELETE /api/vesper/zones/<name>`,
+`POST /api/world/rename` (`{"name"}`). Files: `.bruh-world/vesper/`
+(`family.json`, `people.json`, `actions.json`, `questions.json`,
+`budget.json`, `engine.json`) and `.bruh-world/places.json` for zones.
+
 ### Example automations
 
 **Nightly backup at 04:00:**
