@@ -2972,6 +2972,15 @@ def _job_id(request: web.Request) -> str:
     return job_id
 
 
+def _picture_path(job_id: str) -> Path:
+    """Where a job's picture lives, refused unless it is directly inside MC_WWW_DIR."""
+    base = MC_WWW_DIR.resolve()
+    path = (base / f"{job_id}.png").resolve()
+    if not _JOB_ID.match(job_id) or path.parent != base:
+        raise ValueError(f"not a job id: {job_id!r}")
+    return path
+
+
 async def _json_body(request: web.Request) -> dict:
     try:
         body = await request.json()
@@ -3043,7 +3052,7 @@ async def api_builds_delete(request: web.Request) -> web.Response:
     if not await asyncio.to_thread(col.builds.delete, job_id):
         return web.json_response({"error": "No such job."}, status=404)
     try:
-        (MC_WWW_DIR / f"{job_id}.png").unlink()
+        _picture_path(job_id).unlink()
     except OSError:
         # The job had no picture; the job itself is what was asked to go.
         pass
@@ -3068,7 +3077,7 @@ def _render_job(job_id: str, save_first: bool = False) -> dict:
             time.sleep(3)
         except Exception:  # noqa: BLE001 — draw what is on disk
             pass
-    out = MC_WWW_DIR / f"{job_id}.png"
+    out = _picture_path(job_id)
     try:
         result = mcmap.render_bounds(MC_SERVER_DIR / _level_name(), job["bounds"], out)
     except OSError as exc:

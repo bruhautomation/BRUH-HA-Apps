@@ -819,21 +819,27 @@ class WorldCollector:
     def _poll_weather(self, now: float) -> None:
         state = None
         if now - self.weather_rcon_refused_at > WEATHER_RETRY:
-            try:
-                thunder = parse_test(self.session.command(
-                    'minecraft:execute if predicate {condition:"minecraft:weather_check",thundering:true}'))
-                rain = parse_test(self.session.command(
-                    'minecraft:execute if predicate {condition:"minecraft:weather_check",raining:true}'))
-            except Exception:  # noqa: BLE001
-                thunder = rain = None
-            if thunder is None or rain is None:
+            state = self._weather_from_server()
+            if state is None:
                 # Inline predicates are 1.20.5+; an older server says no.
                 self.weather_rcon_refused_at = now
             else:
-                state = "thunder" if thunder else "rain" if rain else "clear"
                 self.weather = {"state": state, "source": "server", "as_of": int(now)}
                 return
         self.weather = self._weather_from_save() or self.weather
+
+    def _weather_from_server(self) -> str | None:
+        """clear, rain or thunder as the server says it now; None when it cannot say."""
+        try:
+            thunder = parse_test(self.session.command(
+                'minecraft:execute if predicate {condition:"minecraft:weather_check",thundering:true}'))
+            rain = parse_test(self.session.command(
+                'minecraft:execute if predicate {condition:"minecraft:weather_check",raining:true}'))
+        except Exception:  # noqa: BLE001
+            return None
+        if thunder is None or rain is None:
+            return None
+        return "thunder" if thunder else "rain" if rain else "clear"
 
     def _weather_from_save(self) -> dict[str, Any] | None:
         """The weather as of the last save, from level.dat."""
