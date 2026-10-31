@@ -2974,11 +2974,11 @@ def _job_id(request: web.Request) -> str:
 
 def _picture_path(job_id: str) -> Path:
     """Where a job's picture lives, refused unless it is directly inside MC_WWW_DIR."""
-    base = MC_WWW_DIR.resolve()
-    path = (base / f"{job_id}.png").resolve()
-    if not _JOB_ID.match(job_id) or path.parent != base:
+    base = os.path.realpath(MC_WWW_DIR)
+    full = os.path.normpath(os.path.join(base, f"{job_id}.png"))
+    if not _JOB_ID.match(job_id) or not full.startswith(base + os.sep):
         raise ValueError(f"not a job id: {job_id!r}")
-    return path
+    return Path(full)
 
 
 async def _json_body(request: web.Request) -> dict:
