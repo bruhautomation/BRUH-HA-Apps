@@ -794,6 +794,15 @@ run_server_loop() {
         write_state "stopped"
         bashio::log.warning "Minecraft server exited with code ${rc}"
 
+        # A world rename holds the relaunch while it moves folders under the
+        # stopped server; the panel then restarts the whole add-on.
+        local held=0
+        while [ -f "${MC_PANEL_STATE}/hold_restart" ] && [ "${held}" -lt 600 ]; do
+            sleep 1
+            held=$((held + 1))
+        done
+        rm -f "${MC_PANEL_STATE}/hold_restart"
+
         # Honour an explicit "no_restart" request from the panel / HA bridge.
         # The flag is cleared after we act on it so future lifecycle events work.
         if [ -f "${MC_PANEL_STATE}/no_restart" ]; then

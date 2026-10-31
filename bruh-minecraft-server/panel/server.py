@@ -1680,6 +1680,97 @@ async def api_worlds_switch(request: web.Request) -> web.Response:
     })
 
 
+async def _wait_for_jvm_exit(timeout: float = 90.0) -> bool:
+    """True once the launcher has gone (the JVM has saved and exited)."""
+    pid_file = MC_PANEL_STATE / "launcher.pid"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not pid_file.is_file():
+            return True
+        try:
+            os.kill(int(pid_file.read_text().strip()), 0)
+        except (OSError, ValueError):
+            return True
+        await asyncio.sleep(0.5)
+    return False
+
+
+async def api_worlds_rename(request: web.Request) -> web.Response:
+    """Rename a world. `{"new_name": "..."}`.
+
+    The world manager moves the folders (world, level folders, level-name,
+    backups, the /config/minecraft link) and undoes itself on a failure. The
+    active world is also open in the running server, so the server is stopped
+    first, run.sh is told to hold its restart (`hold_restart`) while the move
+    happens, the `active_world` add-on option is pointed at the new name, and
+    the whole add-on restarts so every path is read afresh."""
+    old = request.match_info["name"]
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    new = str((body or {}).get("new_name") or "").strip() if isinstance(body, dict) else ""
+    if not VALID_WORLD_NAME.match(old):
+        return web.json_response({"error": "invalid name"}, status=400)
+    if not VALID_WORLD_NAME.match(new):
+        return web.json_response({
+            "error": "The new name must be 1-32 characters: letters, digits, _ and -."},
+            status=400)
+    if new == old:
+        return web.json_response({"error": "That is already the name."}, status=400)
+    if not _under(MC_WORLDS_DIR, old).is_dir():
+        return web.json_response({"error": f"There is no world called '{old}'."}, status=404)
+    if _under(MC_WORLDS_DIR, new).exists():
+        return web.json_response({"error": f"A world called '{new}' already exists."}, status=409)
+
+    rc, active = await _run_world_manager("active")
+    is_active = rc == 0 and active.strip() == old
+    hold = MC_PANEL_STATE / "hold_restart"
+    if is_active:
+        # Hold run.sh's relaunch, then stop the server and wait for it to exit.
+        hold.write_text("1")
+        try:
+            await _rcon_command("save-all flush")
+            await _rcon_command("stop")
+        except Exception:  # noqa: BLE001 — a server that is not running is fine
+            pass
+        if not await _wait_for_jvm_exit():
+            hold.unlink(missing_ok=True)
+            return web.json_response({
+                "error": "The server did not stop in time, so nothing was renamed."},
+                status=500)
+
+    rc, out = await _run_world_manager("rename", old, new)
+    if rc != 0:
+        hold.unlink(missing_ok=True)
+        status = 409 if "already exists" in out else 400 if rc == 2 else 500
+        return web.json_response({"error": out.strip()[-400:]}, status=status)
+
+    if not is_active:
+        return web.json_response({"ok": True, "message": f"Renamed '{old}' to '{new}'."})
+
+    err = await _persist_option("active_world", new)
+    if err:
+        # The add-on option still names the old world, so put the folders back.
+        undo_rc, undo_out = await _run_world_manager("rename", new, old)
+        hold.unlink(missing_ok=True)
+        tail = "" if undo_rc == 0 else f" Putting it back also failed: {undo_out.strip()[-200:]}"
+        return web.json_response({
+            "error": f"Could not save the new name in the add-on options ({err}), "
+                     f"so the world was not renamed.{tail}"}, status=500)
+    restart_err = await _supervisor_restart_self()
+    if restart_err:
+        hold.unlink(missing_ok=True)
+        return web.json_response({
+            "ok": True,
+            "warning": f"Renamed '{old}' to '{new}', but the add-on could not restart itself "
+                       f"({restart_err}). Restart the add-on from its Home Assistant page."})
+    return web.json_response({
+        "ok": True,
+        "message": f"Renamed '{old}' to '{new}'. The add-on is restarting now - "
+                   "this panel will be unreachable for about 30 seconds."})
+
+
 async def _persist_option(option_key: str, value) -> str | None:
     """Write a single add-on option (e.g. memory_mb) via the Supervisor API.
     Returns None on success or a short error string.
@@ -2837,6 +2928,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/worlds/import", api_worlds_import)
     app.router.add_get("/api/worlds/{name}/export", api_worlds_export)
     app.router.add_post("/api/worlds/{name}/switch", api_worlds_switch)
+    app.router.add_post("/api/worlds/{name}/rename", api_worlds_rename)
     app.router.add_delete("/api/worlds/{name}", api_worlds_delete)
     # Curated / featured worlds (one-click installs, e.g. Drehmal)
     app.router.add_get("/api/curated-worlds", api_curated_list)
