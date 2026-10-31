@@ -761,10 +761,12 @@ check_backup_tools() {
 # Run the Minecraft server with auto-restart on crash
 # ----------------------------------------------------------------------------
 run_server_loop() {
-    local max_crash_restarts=5
-    local crash_window_seconds=300
-    local crash_count=0
-    local crash_window_start=0
+    # Restarts after a crash back off (10 s, 30 s, 1 min, 2 min, then 5 min) and
+    # are capped per hour, so a server that dies on every start does not spin
+    # forever, and one that was killed once comes straight back.
+    local max_restarts_per_hour=10
+    local backoff_seconds=(10 30 60 120 300)
+    local crash_times=()
     local first_iteration=1
 
     while true; do
@@ -787,9 +789,12 @@ run_server_loop() {
         write_state "starting"
         bashio::log.info "Launching Minecraft server"
 
-        # Launch server; script exits with the JVM's exit code
-        su-exec minecraft "${SCRIPTS_DIR}/server-launcher.sh"
-        local rc=$?
+        # Launch server; script exits with the JVM's exit code. The `|| rc=$?`
+        # matters: bashio runs with errexit, and a bare non-zero exit here
+        # (a killed JVM is 137) ended run.sh itself, so the loop below never
+        # ran and the add-on stayed down (#585).
+        local rc=0
+        su-exec minecraft "${SCRIPTS_DIR}/server-launcher.sh" || rc=$?
 
         write_state "stopped"
         bashio::log.warning "Minecraft server exited with code ${rc}"
@@ -817,29 +822,39 @@ run_server_loop() {
         fi
 
         # Clean exits (0) restart automatically — this is the code path the
-        # "Restart" button uses (RCON stop = rc 0). Crashes (non-zero) also
-        # restart but are rate-limited by the crash-window logic below.
+        # "Restart" button uses (RCON stop = rc 0). Any non-zero exit is a
+        # crash: it restarts too, with a backoff and the hourly cap.
         if [ "${rc}" -eq 0 ]; then
             bashio::log.info "Clean exit — restarting in 3s"
             sleep 3
             continue
         fi
 
-        local now
-        now=$(date +%s)
-        if [ $((now - crash_window_start)) -gt "${crash_window_seconds}" ]; then
-            crash_window_start=${now}
-            crash_count=0
-        fi
-        crash_count=$((crash_count + 1))
+        case "${rc}" in
+            137) bashio::log.warning "The Java process was killed from outside (exit 137, SIGKILL) with no crash report. This is most likely Linux ending it because the host ran out of memory - lower 'memory_mb' if this repeats." ;;
+            143) bashio::log.warning "The Java process was stopped by a signal (exit 143, SIGTERM) that did not come from this add-on." ;;
+            *)   bashio::log.warning "The Java process crashed (exit ${rc})." ;;
+        esac
 
-        if [ "${crash_count}" -ge "${max_crash_restarts}" ]; then
-            bashio::log.fatal "Server crashed ${crash_count} times in ${crash_window_seconds}s; giving up"
+        local now kept=() t
+        now=$(date +%s)
+        for t in "${crash_times[@]}"; do
+            [ $((now - t)) -lt 3600 ] && kept+=("${t}")
+        done
+        kept+=("${now}")
+        crash_times=("${kept[@]}")
+        local crash_count=${#crash_times[@]}
+
+        if [ "${crash_count}" -gt "${max_restarts_per_hour}" ]; then
+            bashio::log.fatal "Server stopped ${crash_count} times within an hour (more than ${max_restarts_per_hour} restarts per hour); giving up. Fix the cause, then start the add-on again."
             return "${rc}"
         fi
 
-        bashio::log.warning "Restarting in 10s (crash ${crash_count}/${max_crash_restarts})"
-        sleep 10
+        local idx=$((crash_count - 1))
+        [ "${idx}" -ge "${#backoff_seconds[@]}" ] && idx=$((${#backoff_seconds[@]} - 1))
+        local delay=${backoff_seconds[${idx}]}
+        bashio::log.warning "Restarting in ${delay}s (restart ${crash_count} of ${max_restarts_per_hour} allowed per hour)"
+        sleep "${delay}"
     done
 }
 
