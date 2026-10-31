@@ -154,3 +154,30 @@ def building_attrs(world: dict[str, Any]) -> dict[str, Any]:
             "current": current,
             "queued": builds.get("queued", 0),
             "recent": [_job(j) for j in (builds.get("recent") or [])[:MAX_RECENT_JOBS]]}
+
+
+# -- Vesper in the game (panel/vesper.py) ------------------------------------
+def vesper_state(world: dict[str, Any]) -> str:
+    """off, paused, idle, acting, asking, bedtime or waiting."""
+    v = world.get("vesper") or {}
+    if not v:
+        return "off"
+    if not v.get("enabled"):
+        return "off"
+    return str(v.get("state") or "idle")
+
+
+def vesper_attrs(world: dict[str, Any]) -> dict[str, Any]:
+    v = world.get("vesper") or {}
+    last = v.get("last_action") or None
+    q = v.get("open_question") or None
+    return {"enabled": bool(v.get("enabled")), "paused": bool(v.get("paused")),
+            "budget": v.get("budget") or {},
+            "queued_questions": v.get("queued_questions", 0),
+            "open_question": ({"id": q.get("id"), "person": _clip(q.get("person"), 40),
+                               "text": _clip(q.get("text"), 200)} if q else None),
+            "last_action": ({"id": last.get("id"), "kind": last.get("kind"),
+                             "person": _clip(last.get("person"), 40),
+                             "text": _clip(last.get("text"), 200), "status": last.get("status"),
+                             "when": _when(last.get("t")).isoformat() if _when(last.get("t")) else None}
+                            if last else None)}

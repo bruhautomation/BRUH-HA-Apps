@@ -1200,7 +1200,9 @@ VOICE_UNTARGETED = {
         "get_status", "teleport", "set_gamemode", "give", "set_time",
         "set_weather", "say", "list_addons", "search_addons",
         # Reading the world and the build log; writing the log is typed.
-        "get_world", "list_builds"}),
+        "get_world", "list_builds",
+        # Reading Vesper's engine (its log, questions and memory).
+        "get_vesper"}),
     "bruh_print": frozenset({"get_status", "print_text", "print_template"}),
     "bright": frozenset({"get_status", "start_show", "start_party",
                          "party_mode", "stop_show"}),
@@ -2788,7 +2790,11 @@ VOICE_ADMIN_SERVICES = frozenset({
     ("bruh_minecraft", s) for s in (
         "rcon_command", "op_player", "deop_player", "kick_player", "ban_player",
         "pardon_player", "whitelist_add", "whitelist_remove", "restart_server",
-        "stop_server", "install_addon", "remove_addon")
+        "stop_server", "install_addon", "remove_addon",
+        # Vesper in the game: renaming the world restarts the server, an undo
+        # changes the world, and a question builds pads beside a child.
+        "rename_world", "vesper_undo", "vesper_engine", "vesper_ask", "set_family",
+        "set_zone")
 } | {("bright", "import_show")} | {
     # Voice may design a part and start a print (the owner's rule since
     # 3.9); stopping one cannot be undone, G-code is anything at all, and a
@@ -2898,9 +2904,9 @@ def _mc_online():
     return [str(p) for p in status.get("players") or []], ""
 
 
-def minecraft_status(builds=False):
+def minecraft_status(builds=False, vesper=False):
     """Who is on the Minecraft server, what is going on in the world, and
-    (with `builds`) Vesper's build log."""
+    (with `builds`) Vesper's build log, (with `vesper`) Vesper's engine."""
     status = _addon_call("bruh_minecraft", "get_status")
     if status.get("error"):
         return status
@@ -2924,7 +2930,26 @@ def minecraft_status(builds=False):
                          else _tag_text({"jobs": listed.get("jobs") or [],
                                          "current": listed.get("current")},
                                         ("title", "part", "notes")))
+    if vesper:
+        out["vesper_engine"] = _mc_vesper()
     return out
+
+
+MC_VESPER_KEYS = ("enabled", "paused", "state", "note", "budget", "family", "zones",
+                  "moments", "questions", "actions", "memory", "open_question", "last_action")
+
+
+def _mc_vesper():
+    """Vesper in the game (bruh_minecraft.get_vesper): whether it is on, the
+    family, the zones, recent moments, questions, the action log (each
+    undoable one has an id for minecraft_world undo) and what Vesper
+    remembers about each person. Questions, chat a parent typed and action
+    text are words from outside."""
+    v = _addon_call("bruh_minecraft", "get_vesper")
+    if v.get("error"):
+        return {"note": v["error"]}
+    return _tag_text({k: v.get(k) for k in MC_VESPER_KEYS if k in v},
+                     ("text", "said", "question", "note", "undo_note"))
 
 
 MC_FEED_FOR_MODEL = 15
@@ -3050,10 +3075,17 @@ def minecraft_player(player, action, value=None, amount=None):
             "server_reply": _reply(result)}
 
 
-def minecraft_world(action, value=None):
-    """The world everyone is in: time of day, weather, or a chat message."""
+MC_VESPER_ACTIONS = ("rename", "ask", "undo")
+
+
+def minecraft_world(action, value=None, player=None, options=None):
+    """The world everyone is in: time of day, weather, a chat message; and
+    Vesper's part of it: rename the world, ask a child a choice-pad
+    question, undo one of Vesper's actions."""
     action = str(action or "").strip().lower()
     value = "" if value is None else str(value).strip()
+    if action in MC_VESPER_ACTIONS:
+        return _mc_vesper_action(action, value, player, options)
     if action == "time":
         spoken = {"morning": "day", "sunrise": "day", "evening": "night",
                   "sunset": "night", "dusk": "night", "dawn": "day"}
@@ -3069,11 +3101,60 @@ def minecraft_world(action, value=None):
             return {"error": "Nothing to say."}
         result = _addon_call("bruh_minecraft", "say", {"message": value[:256]})
     else:
-        return {"error": "Use time (day/night/noon/midnight or ticks), weather (clear/rain/thunder) or say."}
+        return {"error": "Use time (day/night/noon/midnight or ticks), weather "
+                         "(clear/rain/thunder), say, rename, ask or undo."}
     if result.get("error"):
         return result
     return {"done": True, "action": action, "value": value,
             "server_reply": _reply(result)}
+
+
+def _mc_vesper_action(action, value, player, options):
+    """rename, ask and undo: each one service, each refused to voice."""
+    refusal = _voice_admin_refusal({"rename": "Renaming the Minecraft world",
+                                    "ask": "Asking a child a question in Minecraft",
+                                    "undo": "Undoing Vesper's action in Minecraft"}[action])
+    if refusal:
+        return refusal
+    if action == "rename":
+        if not value:
+            return {"error": "Give the new name, e.g. 'Vesper World'."}
+        result = _addon_call("bruh_minecraft", "rename_world", {"name": value[:60]})
+        if result.get("error"):
+            if "did not answer" in result["error"]:
+                return {"error": result["error"], "note": (
+                    "Renaming the active world restarts the add-on, which can drop its "
+                    "answer. Check minecraft_status in a minute before saying it failed.")}
+            return result
+        return {"done": True, "action": "rename", "folder": result.get("folder"),
+                "name": result.get("display_name") or value,
+                "message": result.get("message") or result.get("warning") or ""}
+    if action == "ask":
+        if not player:
+            return {"error": "Name the child to ask (their name, or their Minecraft name)."}
+        if not value:
+            return {"error": "Give the question (value); the child sees the two pictures."}
+        data = {"player": str(player), "question": value[:200]}
+        if options:
+            if isinstance(options, str):
+                try:
+                    options = json.loads(options)
+                except ValueError:
+                    options = [o.strip() for o in options.split(",") if o.strip()]
+            data["options"] = options
+        result = _addon_call("bruh_minecraft", "vesper_ask", data)
+        if result.get("error"):
+            return result
+        return _tag_text({"done": True, "action": "ask", "question": result.get("question"),
+                          "note": result.get("note", "")}, ("text",))
+    if not value:
+        return {"error": "Give the action id to undo (minecraft_status vesper=true lists them)."}
+    result = _addon_call("bruh_minecraft", "vesper_undo", {"id": value})
+    if result.get("error"):
+        return result
+    return _tag_text({"done": True, "action": "undo", "restored": result.get("restored"),
+                      "changed_since": result.get("changed"), "note": result.get("note", ""),
+                      "undone": result.get("action")}, ("text",))
 
 
 def minecraft_command(command):
@@ -6560,11 +6641,20 @@ TOOLS = [
             "change a job in the build log, call_service bruh_minecraft.save_build "
             "(title, part, status queued/building/done/failed, progress, bounds "
             "{x1,z1,x2,z2,y1,y2,dimension}, notes; give id to change one) or "
-            "delete_build (id); a job marked done with bounds gets a picture."
+            "delete_build (id); a job marked done with bounds gets a picture. "
+            "vesper=true adds Vesper in the game: whether the engine is on, the "
+            "family roster, zones, recent moments, choice-pad questions and "
+            "answers, the action log (ids to undo) and what Vesper remembers about "
+            "each person — for the parent; never tell one child about another. "
+            "The roster and zones are set with call_service bruh_minecraft."
+            "set_family / set_zone; Vesper is switched on or off, and its bedtime "
+            "switch and daily budget set, with bruh_minecraft.vesper_engine."
         ),
         "inputSchema": {"type": "object", "properties": {
             "builds": {"type": "boolean",
-                       "description": "Also list Vesper's build log (newest 20)."}}},
+                       "description": "Also list Vesper's build log (newest 20)."},
+            "vesper": {"type": "boolean",
+                       "description": "Also read Vesper's engine, action log and memory."}}},
     },
     {
         "name": "minecraft_teleport",
@@ -6607,11 +6697,23 @@ TOOLS = [
         "description": (
             "The Minecraft world everyone shares: set the time (day, night, "
             "noon, midnight or ticks), the weather (clear, rain, thunder), or "
-            "say a message in chat to every player."
+            "say a message in chat to every player. Vesper's part (not for a "
+            "voice-level agent): rename (value: the name as said, e.g. 'Vesper "
+            "World'; the folder becomes Vesper_World, the server list shows the "
+            "name, and the server restarts); ask (player: the child; value: the "
+            "question for the parent's record; options: two of label or {label, "
+            "picture: a block id, gift: an item} — the child answers by standing "
+            "on a green or red pad, so pictures matter more than words; leave out "
+            "for yes/no); undo (value: an action id from minecraft_status "
+            "vesper=true)."
         ),
         "inputSchema": {"type": "object", "properties": {
-            "action": {"type": "string", "enum": ["time", "weather", "say"]},
-            "value": {"type": "string"}},
+            "action": {"type": "string",
+                       "enum": ["time", "weather", "say", "rename", "ask", "undo"]},
+            "value": {"type": "string"},
+            "player": {"type": "string", "description": "ask: the child to ask."},
+            "options": {"type": "array", "description": "ask: the two choices.",
+                        "items": {"anyOf": [{"type": "string"}, {"type": "object"}]}}},
             "required": ["action", "value"]},
     },
     {
@@ -9277,6 +9379,13 @@ _ALWAYS = {"anthropic/alwaysLoad": True}
 # agent may play and may not administer, and an enum that offers ban and
 # whitelist only invites a call that is refused.
 VOICE_TOOL_VARIANTS = {
+    "minecraft_world": {
+        "description": (
+            "The Minecraft world everyone shares: set the time (day, night, "
+            "noon, midnight or ticks), the weather (clear, rain, thunder), or "
+            "say a message in chat to every player."),
+        "enum": ["time", "weather", "say"],
+    },
     "minecraft_player": {
         "description": (
             "Do one thing to one Minecraft player: gamemode (value: survival, "

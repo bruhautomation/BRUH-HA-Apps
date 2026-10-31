@@ -553,6 +553,20 @@
           </form>
           <pre id="cmd-reply" class="reply"></pre>
         </div>
+        <div class="card wide" id="vesper-card">
+          <h2>Vesper <span id="vesper-state" class="muted">—</span></h2>
+          <p id="vesper-note" class="muted">Vesper in the game: greetings and choice pads for the children. Everything it does is listed here and can be undone.</p>
+          <button id="vesper-toggle" class="btn btn-ghost" type="button">Switch Vesper on</button>
+          <form id="f-vesper" class="inline-form">
+            <input id="vesper-bedtime" type="text" placeholder="Bedtime switch, e.g. input_boolean.kids_bedtime or binary_sensor.boys_door=off" maxlength="120" />
+            <input id="vesper-daily" type="number" min="0" max="1000" title="Things Vesper may do in a day" />
+            <button class="btn btn-primary">Save</button>
+          </form>
+          <h3>What Vesper did</h3>
+          <ul id="vesper-actions" class="vesper-list"></ul>
+          <h3>Questions</h3>
+          <ul id="vesper-questions" class="vesper-list"></ul>
+        </div>
       </div>
     </section>
 

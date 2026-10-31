@@ -164,6 +164,14 @@ SENSORS: tuple[BruhSensorDescription, ...] = (
         world_fn=worldview.building_state,
         world_attrs_fn=worldview.building_attrs,
     ),
+    # Vesper in the game (#572): what the engine is doing and its last act.
+    BruhSensorDescription(
+        key="vesper",
+        name="Vesper",
+        icon="mdi:creation",
+        world_fn=worldview.vesper_state,
+        world_attrs_fn=worldview.vesper_attrs,
+    ),
 )
 
 

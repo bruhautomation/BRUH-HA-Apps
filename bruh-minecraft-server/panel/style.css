@@ -931,3 +931,8 @@ footer {
 @media (pointer: coarse) {
   .software-actions .btn, .software-head .btn, .software-row .btn { min-height: 44px; }
 }
+
+/* Vesper in the game: the action log and questions */
+.vesper-list { list-style: none; padding: 0; margin: 0 0 12px; }
+.vesper-list li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border, rgba(127,127,127,.2)); flex-wrap: wrap; }
+.vesper-list li span { overflow-wrap: anywhere; }

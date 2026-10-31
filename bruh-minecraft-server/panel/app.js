@@ -169,6 +169,54 @@
   refreshStatus();
 
   // ------------------------------------------------------------------
+  // Vesper in the game: the parent's quiet view and undo (vesper.py)
+  // ------------------------------------------------------------------
+  const fmtWhen = (t) => (t ? new Date(t * 1000).toLocaleString() : '');
+  async function refreshVesper() {
+    const v = await api('api/vesper');
+    if (!v || v.error || v._raw) return;
+    const settings = v.settings || {};
+    $('#vesper-state').textContent = `· ${v.enabled ? v.state : 'off'}`;
+    const toggle = $('#vesper-toggle');
+    toggle.textContent = v.enabled ? 'Switch Vesper off' : 'Switch Vesper on';
+    toggle.dataset.on = v.enabled ? 'false' : 'true';
+    if (document.activeElement !== $('#vesper-bedtime')) $('#vesper-bedtime').value = settings.bedtime_entity || '';
+    if (document.activeElement !== $('#vesper-daily')) $('#vesper-daily').value = settings.daily_actions ?? 120;
+    if (v.note) $('#vesper-note').textContent = v.note;
+    $('#vesper-actions').innerHTML = (v.actions || []).slice(0, 15).map((a) => `
+      <li><span>${esc(fmtWhen(a.t))} · ${esc(a.text || a.kind)} <span class="muted">(${esc(a.status)})</span>
+        ${a.undo_note ? `<span class="muted">${esc(a.undo_note)}</span>` : ''}</span>
+        ${a.undoable ? `<button class="btn btn-ghost" data-vesper-undo="${esc(a.id)}">Undo</button>` : ''}</li>`).join('')
+      || '<li class="muted">Nothing yet.</li>';
+    $('#vesper-questions').innerHTML = (v.questions || []).slice(0, 10).map((q) => `
+      <li><span>${esc(q.person)}: ${esc(q.text)} <span class="muted">(${(q.options || []).map((o) => esc(o.label)).join(' or ')})</span></span>
+        <span class="muted">${esc(q.status)}${q.answer ? ` — ${esc(q.answer)}` : ''}${q.note ? ` · ${esc(q.note)}` : ''}</span></li>`).join('')
+      || '<li class="muted">No questions.</li>';
+    $$('#vesper-actions button[data-vesper-undo]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('Undo this? Blocks that changed since are left alone.')) return;
+      b.disabled = true;
+      const r = await api(`api/vesper/actions/${encodeURIComponent(b.dataset.vesperUndo)}/undo`, { method: 'POST' });
+      if (r && r.error) alert(r.error);
+      refreshVesper();
+    }));
+  }
+  $('#f-vesper')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const r = await api('api/vesper/engine', { method: 'POST', body: JSON.stringify({
+      bedtime_entity: $('#vesper-bedtime').value.trim(),
+      daily_actions: Number($('#vesper-daily').value || 0),
+    }) });
+    if (r && r.error) alert(r.error);
+    refreshVesper();
+  });
+  $('#vesper-toggle')?.addEventListener('click', async () => {
+    await api('api/vesper/engine', { method: 'POST', body: JSON.stringify({ on: $('#vesper-toggle').dataset.on === 'true' }) });
+    refreshVesper();
+  });
+  setInterval(refreshVesper, 15000);
+  refreshVesper();
+
+  // ------------------------------------------------------------------
   // Quick chat / command
   // ------------------------------------------------------------------
   $('#f-say').addEventListener('submit', async (e) => {

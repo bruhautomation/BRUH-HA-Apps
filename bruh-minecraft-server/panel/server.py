@@ -24,6 +24,13 @@ GET  /api/world/journal     — the days journalled, or ?day=YYYY-MM-DD's events
 GET  /api/builds            — Vesper's build log, newest first (?status=)
 POST /api/builds            — add a job;  GET/PATCH/DELETE /api/builds/<id>
 POST /api/builds/<id>/render — draw the job's box from above into its picture
+POST /api/world/rename      — rename the active world to a name as said ("Vesper World")
+GET  /api/vesper            — Vesper's engine: state, budget, family, zones, moments,
+                              questions, the action log and per-person memory
+POST /api/vesper/engine     — {"on", "bedtime_entity", "daily_actions"}: Vesper's settings
+POST /api/vesper/ask        — pose a two-picture choice-pad question to a child
+POST /api/vesper/actions/<id>/undo — put back what one action changed
+PUT  /api/vesper/family     — the roster; POST/DELETE /api/vesper/zones — named places
 
 Runs as the `minecraft` user on 0.0.0.0:8099. The HA supervisor proxies the
 ingress URL into /api/hassio_ingress/<token>/...; we therefore use only
@@ -101,6 +108,9 @@ addons = _load_addons()
 # Vesper's build log) and the top-down renderer of a build's box.
 mcworld = _load_beside("bruh_mc_world", "mcworld.py")
 mcmap = _load_beside("bruh_mc_map", "mcmap.py")
+# Vesper in the game (#572): attention, a body, choice pads and an undoable
+# action log, on top of the world's senses.
+vesper = _load_beside("bruh_mc_vesper", "vesper.py")
 
 # ---------------------------------------------------------------------------
 # Paths / constants
@@ -1724,6 +1734,12 @@ async def api_worlds_rename(request: web.Request) -> web.Response:
     except ValueError:
         body = {}
     new = str((body or {}).get("new_name") or "").strip() if isinstance(body, dict) else ""
+    return await _rename_world(old, new)
+
+
+async def _rename_world(old: str, new: str, display: str = "") -> web.Response:
+    """The rename itself; `display`, when given, becomes the world's MOTD
+    (the name the server list shows), which may hold what a folder cannot."""
     if not VALID_WORLD_NAME.match(old):
         return web.json_response({"error": "invalid name"}, status=400)
     if not VALID_WORLD_NAME.match(new):
@@ -1760,8 +1776,14 @@ async def api_worlds_rename(request: web.Request) -> web.Response:
         status = 409 if "already exists" in out else 400 if rc == 2 else 500
         return web.json_response({"error": out.strip()[-400:]}, status=status)
 
+    if display:
+        try:
+            _set_property_in(_under(MC_WORLDS_DIR, new, "server.properties"), "motd", display)
+        except OSError as exc:
+            logging.warning("rename: could not set the MOTD: %s", _for_log(str(exc)))
     if not is_active:
-        return web.json_response({"ok": True, "message": f"Renamed '{old}' to '{new}'."})
+        return web.json_response({"ok": True, "folder": new, "display_name": display or new,
+                                  "message": f"Renamed '{old}' to '{new}'."})
 
     err = await _persist_option("active_world", new)
     if err:
@@ -1780,9 +1802,73 @@ async def api_worlds_rename(request: web.Request) -> web.Response:
             "warning": f"Renamed '{old}' to '{new}', but the add-on could not restart itself "
                        f"({restart_err}). Restart the add-on from its Home Assistant page."})
     return web.json_response({
-        "ok": True,
+        "ok": True, "folder": new, "display_name": display or new,
         "message": f"Renamed '{old}' to '{new}'. The add-on is restarting now - "
                    "this panel will be unreachable for about 30 seconds."})
+
+
+def world_folder_name(name: str) -> str:
+    """A folder name for a world name a person said: 'Vesper World' is
+    'Vesper_World', because a world folder holds letters, digits, _ and -
+    only (world-manager.sh, the active_world option's schema)."""
+    folder = re.sub(r"[^A-Za-z0-9_-]+", "_", str(name or "").strip()).strip("_-")
+    return folder[:32]
+
+
+def _set_property_in(path: Path, key: str, value: str) -> None:
+    """Set one key in a server.properties, keeping every other line."""
+    value = str(value).replace("\n", " ").replace("\r", " ").strip()[:120]
+    try:
+        lines = path.read_text().splitlines()
+    except FileNotFoundError:
+        lines = []
+    out, done = [], False
+    for line in lines:
+        if line.split("=", 1)[0].strip() == key and not line.startswith("#"):
+            if not done:
+                out.append(f"{key}={value}")
+                done = True
+            continue
+        out.append(line)
+    if not done:
+        out.append(f"{key}={value}")
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".server.properties.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write("\n".join(out) + "\n")
+        try:
+            os.chmod(tmp, path.stat().st_mode & 0o7777)
+        except FileNotFoundError:
+            pass  # a new file keeps mkstemp's owner-only mode
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+async def api_world_rename(request: web.Request) -> web.Response:
+    """Rename the ACTIVE world to a name a person said (`{"name": "Vesper
+    World"}`): the folder gets a safe form of it and the MOTD the name as
+    said. brAIn's `minecraft_world(rename)` reaches this through the
+    integration's `rename_world` service."""
+    body = await _json_body(request)
+    name = str(body.get("name") or "").replace("\n", " ").strip()[:60]
+    folder = world_folder_name(name)
+    if not folder:
+        return web.json_response({"error": "Give the world a name with at least one letter "
+                                           "or digit."}, status=400)
+    rc, active = await _run_world_manager("active")
+    active = active.strip()
+    if rc != 0 or not VALID_WORLD_NAME.match(active):
+        return web.json_response({"error": "Could not tell which world is active."}, status=500)
+    if folder == active:
+        await asyncio.to_thread(_set_property_in, _under(MC_WORLDS_DIR, active,
+                                                         "server.properties"), "motd", name)
+        return web.json_response({"ok": True, "folder": active, "display_name": name,
+                                  "message": f"The world is already '{active}'; its name in the "
+                                             f"server list is now '{name}' (shown after the "
+                                             "next restart)."})
+    return await _rename_world(active, folder, display=name)
 
 
 async def _persist_option(option_key: str, value) -> str | None:
@@ -2927,11 +3013,16 @@ def _world() -> "mcworld.WorldCollector":
 
 def _world_loop(stop) -> None:
     col = _world()
-    while not stop.wait(mcworld.LOG_INTERVAL):
+    engine = _vesper()
+    while not stop.wait(engine.interval(mcworld.LOG_INTERVAL)):
         try:
             col.step()
         except Exception as exc:  # noqa: BLE001 — one bad beat is not the end
             logging.warning("world collector: %s", _for_log(exc))
+        try:
+            engine.step()
+        except Exception as exc:  # noqa: BLE001 — nor is one bad beat of Vesper's
+            logging.warning("vesper: %s", _for_log(str(exc)))
     col.close()
 
 
@@ -2960,7 +3051,9 @@ async def api_world_journal(request: web.Request) -> web.Response:
     if not re.fullmatch(r"\d{4}-\d\d-\d\d", day):
         return web.json_response({"error": "day is YYYY-MM-DD."}, status=400)
     events = await asyncio.to_thread(col.journal.events, day)
-    summary = await asyncio.to_thread(col.journal.summary, day, dict(col.sessions))
+    roster = _vesper().roster
+    summary = await asyncio.to_thread(col.journal.summary, day, dict(col.sessions),
+                                      lambda name: roster.who(name)["person"])
     return web.json_response({"day": day, "summary": summary, "events": events})
 
 
@@ -3102,6 +3195,164 @@ async def api_builds_render(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Vesper in the game (vesper.py). The engine lives beside the collector and
+# steps on its thread; it acts only while somebody is on, only once it has
+# been switched on (its own settings, per world: the panel's Vesper card or
+# bruh_minecraft.vesper_engine), and never at bedtime.
+# ---------------------------------------------------------------------------
+_BEDTIME: dict = {"at": 0.0, "value": False, "key": ""}
+bedtime_rule = vesper.bedtime_rule
+
+
+def _core_api(method: str, path: str, body: dict | None = None, timeout: float = 3) -> dict | None:
+    """Home Assistant's REST API through the Supervisor (homeassistant_api)."""
+    import urllib.request
+    token = os.environ.get("SUPERVISOR_TOKEN", "")
+    if not token:
+        return None
+    base = os.environ.get("HA_BASE_URL", "http://supervisor/core/api")
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(base + path, data=data, method=method, headers={
+        "Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        text = resp.read().decode() or "{}"
+    answer = json.loads(text)
+    return answer if isinstance(answer, dict) else {"result": answer}
+
+
+def _vesper_bedtime(rule: tuple[str, str]) -> bool | None:
+    """True at bedtime, False otherwise, None when the switch cannot be read."""
+    key = "=".join(rule)
+    now = time.monotonic()
+    if _BEDTIME["key"] == key and now - _BEDTIME["at"] < vesper.BEDTIME_STALE:
+        return _BEDTIME["value"]
+    try:
+        state = (_core_api("GET", f"/states/{rule[0]}") or {}).get("state")
+        value = None if state in (None, "unknown", "unavailable") else state == rule[1]
+    except Exception:  # noqa: BLE001 — Home Assistant restarting: unknown, not "awake"
+        value = None
+    _BEDTIME.update(at=now, value=value, key=key)
+    return value
+
+
+def _vesper_emit(kind: str, data: dict) -> None:
+    _core_api("POST", f"/events/{kind}", data)
+
+
+def _vesper_snapshot() -> str | None:
+    """A backup before a large change: None when it worked, else why not."""
+    import subprocess
+    try:
+        proc = subprocess.run([str(SCRIPTS_DIR / "backup.sh")], capture_output=True,
+                              text=True, timeout=900)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return str(exc)[:200]
+    return None if proc.returncode == 0 else (proc.stdout or proc.stderr or "")[-200:]
+
+
+def _vesper_modern() -> bool:
+    meta = _read_json(MC_SERVER_DIR / ".server-meta.json", {})
+    version = meta.get("version") if isinstance(meta, dict) else None
+    if not version:
+        version = _read_json(MC_PANEL_STATE / "stats.json", {}).get("version")
+    return vesper.modern_text(version)
+
+
+_VESPER: dict = {"engine": None}
+
+
+def _vesper() -> "vesper.Engine":
+    engine = _VESPER["engine"]
+    col = _world()
+    if engine is None or engine.col is not col:
+        engine = vesper.Engine(col, bedtime=_vesper_bedtime, emit=_vesper_emit,
+                               snapshot=_vesper_snapshot, modern=_vesper_modern)
+        col.extra = lambda: {"vesper": engine.brief()}
+        _VESPER["engine"] = engine
+    return engine
+
+
+def _action_id(request: web.Request) -> str:
+    action_id = request.match_info["id"]
+    if not _JOB_ID.match(action_id):
+        raise web.HTTPNotFound(text=json.dumps({"error": "No such action."}),
+                               content_type="application/json")
+    return action_id
+
+
+async def api_vesper(_: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_vesper().status))
+
+
+async def api_vesper_engine(request: web.Request) -> web.Response:
+    """`{"on": bool, "bedtime_entity": str, "daily_actions": int}`, any of them."""
+    body = await _json_body(request)
+    if "on" in body and not isinstance(body["on"], bool):
+        return web.json_response({"error": "on is true or false."}, status=400)
+    try:
+        status = await asyncio.to_thread(
+            _vesper().configure, body.get("on"), body.get("bedtime_entity"),
+            body.get("daily_actions"))
+    except vesper.VesperError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    _world().write()
+    return web.json_response(status)
+
+
+async def api_vesper_ask(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    try:
+        q = await asyncio.to_thread(_vesper().ask, body.get("player"), body.get("text"),
+                                    body.get("options"), body.get("by") or "brAIn")
+    except vesper.VesperError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    online = q["player"] in _world().sessions
+    return web.json_response({"question": q, "note": (
+        f"Vesper will put two pads beside {q['person']} now." if online else
+        f"{q['person']} is not on; Vesper asks the next time they play.")}, status=201)
+
+
+async def api_vesper_undo(request: web.Request) -> web.Response:
+    action_id = _action_id(request)
+    try:
+        result = await asyncio.to_thread(_vesper().undo, action_id)
+    except KeyError:
+        return web.json_response({"error": "No such action."}, status=404)
+    except vesper.VesperError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    _world().write()
+    return web.json_response(result)
+
+
+async def api_vesper_family(request: web.Request) -> web.Response:
+    engine = _vesper()
+    if request.method == "GET":
+        return web.json_response({"people": engine.roster.people()})
+    body = await _json_body(request)
+    try:
+        people = await asyncio.to_thread(engine.roster.save, body.get("people"))
+    except vesper.VesperError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response({"people": people})
+
+
+async def api_vesper_zone_save(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    try:
+        zone = await asyncio.to_thread(_vesper().zones.save, body)
+    except vesper.VesperError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response({"zone": zone, "zones": _vesper().zones.list()})
+
+
+async def api_vesper_zone_delete(request: web.Request) -> web.Response:
+    name = request.match_info["name"]
+    if not await asyncio.to_thread(_vesper().zones.delete, name):
+        return web.json_response({"error": "No such zone."}, status=404)
+    return web.json_response({"zones": _vesper().zones.list()})
+
+
+# ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
 def build_app() -> web.Application:
@@ -3186,6 +3437,16 @@ def build_app() -> web.Application:
     app.router.add_post("/api/builds/{id}", api_builds_update)
     app.router.add_delete("/api/builds/{id}", api_builds_delete)
     app.router.add_post("/api/builds/{id}/render", api_builds_render)
+    app.router.add_post("/api/world/rename", api_world_rename)
+    # Vesper in the game (vesper.py)
+    app.router.add_get("/api/vesper", api_vesper)
+    app.router.add_post("/api/vesper/engine", api_vesper_engine)
+    app.router.add_post("/api/vesper/ask", api_vesper_ask)
+    app.router.add_post("/api/vesper/actions/{id}/undo", api_vesper_undo)
+    app.router.add_get("/api/vesper/family", api_vesper_family)
+    app.router.add_put("/api/vesper/family", api_vesper_family)
+    app.router.add_post("/api/vesper/zones", api_vesper_zone_save)
+    app.router.add_delete("/api/vesper/zones/{name}", api_vesper_zone_delete)
     return app
 
 

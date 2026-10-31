@@ -375,6 +375,56 @@ class TestTheBridgeAsksThePanelForAddons(TestTheBridgeAnswersStatus):
         self.assertIn("cannot load plugins", got["error"])
 
 
+class TestVesperServices(Base):
+    """Vesper in the game (#572): each service carries one request to the
+    panel and answers with what the engine did."""
+
+    def test_each_service_and_what_it_sends(self):
+        self.answer = {"ok": True, "question": {"id": "q"}, "note": "soon"}
+        got = self.call("vesper_ask", player="Kaz", question="Castle or farm?",
+                        options=["castle", "farm"])
+        self.assertEqual(got, {"question": {"id": "q"}, "note": "soon"})
+        self.assertEqual(self.sent[-1], ("vesper_ask", {"player": "Kaz", "text": "Castle or farm?",
+                                                        "options": ["castle", "farm"]}))
+        self.call("vesper_undo", id="20261031-abcdef")
+        self.assertEqual(self.sent[-1], ("vesper_undo", {"id": "20261031-abcdef"}))
+        self.call("vesper_engine", on=False)
+        self.assertEqual(self.sent[-1], ("vesper_engine", {"on": False}))
+        asyncio.run(self.handlers["rename_world"][0](Call({"name": "Vesper World"})))
+        self.assertEqual(self.sent[-1], ("rename_world", {"name": "Vesper World"}))
+        self.call("set_family", people=[{"person": "Kaz"}])
+        self.assertEqual(self.sent[-1][0], "vesper_family")
+        asyncio.run(self.handlers["set_zone"][0](Call({"name": "Spawn", "x": 0, "z": 0,
+                                                        "protect": True})))
+        self.assertEqual(self.sent[-1], ("vesper_zone", {"name": "Spawn", "x": 0, "z": 0,
+                                                         "protect": True}))
+        self.assertEqual(self.handlers["get_vesper"][1], "only")
+
+    def test_a_refusal_from_the_engine_is_an_error(self):
+        self.answer = {"ok": False, "error": "Vesper's engine is off (the add-on's vesper_engine option)."}
+        with self.assertRaises(HAError) as ctx:
+            self.call("vesper_ask", player="Kaz", question="?")
+        self.assertIn("vesper_engine", str(ctx.exception))
+
+
+class TestTheBridgeCarriesVesper(TestTheBridgeAsksThePanelForAddons):
+    def test_rename_and_undo_reach_the_panel(self):
+        url, seen = self.serve(200, {"ok": True, "folder": "Vesper_World"})
+        with tempfile.TemporaryDirectory() as tmp:
+            mod = self.load(tmp, "")
+            mod.PANEL_URL = url
+            got = asyncio.run(mod.handle({"kind": "rename_world",
+                                          "payload": {"name": "Vesper World"}}))
+            self.assertEqual(got["folder"], "Vesper_World")
+            asyncio.run(mod.handle({"kind": "vesper_undo", "payload": {"id": "20261031-abcdef"}}))
+            bad = asyncio.run(mod.handle({"kind": "vesper_undo", "payload": {"id": "../x"}}))
+        self.assertEqual(seen[0][:2], ("POST", "/api/world/rename"))
+        self.assertEqual(json.loads(seen[0][2]), {"name": "Vesper World"})
+        self.assertEqual(seen[1][:2], ("POST", "/api/vesper/actions/20261031-abcdef/undo"))
+        self.assertFalse(bad["ok"])
+        self.assertEqual(len(seen), 2)
+
+
 class TestTheCatalogAgrees(unittest.TestCase):
     def test_every_registered_service_is_documented_in_both_files(self):
         import yaml

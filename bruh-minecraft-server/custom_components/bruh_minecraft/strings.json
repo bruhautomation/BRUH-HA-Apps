@@ -72,6 +72,9 @@
       },
       "vesper_building": {
         "name": "Vesper building"
+      },
+      "vesper": {
+        "name": "Vesper"
       }
     },
     "binary_sensor": {
@@ -321,6 +324,118 @@
         "id": {
           "name": "Project id",
           "description": "The Modrinth project id."
+        }
+      }
+    },
+    "get_vesper": {
+      "name": "Vesper's engine",
+      "description": "Vesper in the game — whether it is on, the family roster, named zones, recent moments, questions, the action log (each undoable action) and what Vesper remembers about each person. Returns response data."
+    },
+    "vesper_ask": {
+      "name": "Ask with choice pads",
+      "description": "Put a two-picture question to a child. Vesper builds a green and a red pad beside them with a picture above each; standing on one for two seconds is the answer, which goes into their memory. Asked the next time they play if they are not on.",
+      "fields": {
+        "player": {
+          "name": "Player or person",
+          "description": "The in-game name (Bedrock names keep their dot) or the person's name from the roster."
+        },
+        "question": {
+          "name": "Question",
+          "description": "The question in words, kept for the parent; the child sees the pictures."
+        },
+        "options": {
+          "name": "Options",
+          "description": "Two options, each either a label, or an object with a label, a picture (a block id), a gift (an item) and a gift_count. Leave out for yes and no."
+        },
+        "by": {
+          "name": "Asked by",
+          "description": "Asked by."
+        }
+      }
+    },
+    "vesper_undo": {
+      "name": "Undo Vesper's action",
+      "description": "Put back what one of Vesper's actions changed in the world (blocks that still hold what Vesper placed, and its entities).",
+      "fields": {
+        "id": {
+          "name": "Action id",
+          "description": "Action id."
+        }
+      }
+    },
+    "vesper_engine": {
+      "name": "Vesper's settings",
+      "description": "Switch Vesper in the game on or off (it is off until switched on), name the bedtime switch, and set how many things it may do a day. Each field is optional.",
+      "fields": {
+        "on": {
+          "name": "On",
+          "description": "Let Vesper appear, greet the children and ask choice-pad questions."
+        },
+        "bedtime_entity": {
+          "name": "Bedtime switch",
+          "description": "An entity that means bedtime (input_boolean.kids_bedtime, bedtime while on), or an entity and the state to match (binary_sensor.boys_door=off). Empty for none."
+        },
+        "daily_actions": {
+          "name": "Actions a day",
+          "description": "The most things Vesper may do in the world in one day."
+        }
+      }
+    },
+    "set_family": {
+      "name": "Set the family",
+      "description": "Who plays and how Vesper treats them. A list of people, each with a person name, a role (child or reader) and their in-game player names.",
+      "fields": {
+        "people": {
+          "name": "People",
+          "description": "People."
+        }
+      }
+    },
+    "set_zone": {
+      "name": "Set a zone",
+      "description": "Name a place in the world (x, z, radius). A protected zone is one Vesper never builds in; delete removes it.",
+      "fields": {
+        "name": {
+          "name": "Name",
+          "description": "Name."
+        },
+        "x": {
+          "name": "X",
+          "description": "X."
+        },
+        "z": {
+          "name": "Z",
+          "description": "Z."
+        },
+        "radius": {
+          "name": "Radius",
+          "description": "Radius."
+        },
+        "dimension": {
+          "name": "Dimension",
+          "description": "Dimension."
+        },
+        "protect": {
+          "name": "Protect",
+          "description": "Protect."
+        },
+        "kind": {
+          "name": "Kind",
+          "description": "Kind."
+        },
+        "delete": {
+          "name": "Delete",
+          "description": "Delete."
+        }
+      }
+    },
+    "rename_world": {
+      "name": "Rename the world",
+      "description": "Rename the active world to a name as said (\"Vesper World\"). The folder takes a safe form of it (Vesper_World) and the server list shows the name as said. Stops the server, keeps the backups, and restarts the add-on.",
+      "fields": {
+        "name": {
+          "name": "Name",
+          "description": "Name."
         }
       }
     }
