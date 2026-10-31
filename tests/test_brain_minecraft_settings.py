@@ -118,14 +118,18 @@ class TestTheView(SettingsCase):
 
 
 class TestThePanelPage(unittest.TestCase):
-    def test_the_section_is_in_settings_and_shown_only_with_bruh_minecraft(self):
+    def test_the_section_is_made_only_when_bruh_minecraft_answers(self):
         html = (REPO / "brain" / "panel" / "index.html").read_text()
         js = (REPO / "brain" / "panel" / "app.js").read_text()
-        self.assertIn('id="setNavMinecraft" hidden', html)
-        self.assertIn('id="setsecMinecraft" data-sec="minecraft"', html)
-        self.assertIn('"minecraft", "instructions"', js)
+        # Not in the page: a house without BRUH Minecraft keeps its twelve
+        # rows (measure-settings.mjs counts them, and drives the present case).
+        self.assertNotIn("setsecMinecraft", html)
+        self.assertNotIn('data-sec="minecraft"', html)
+        sync = js[js.index("async function syncMinecraftNav()"):]
+        sync = sync[:sync.index("\n}\n")]
+        self.assertLess(sync.index("if (!d.present)"), sync.index("ensureMinecraftSection()"))
+        self.assertIn('if (name === "minecraft" && !$("#setsecMinecraft")) name = "account";', js)
         self.assertIn("minecraft: () => loadMinecraft(),", js)
-        self.assertIn("nav.hidden = !d.present;", js)
         for label in ("For answering in chat", "For building", "Effort for answering",
                       "Replies and greetings a day", "0 means no limit"):
             self.assertIn(label, js)

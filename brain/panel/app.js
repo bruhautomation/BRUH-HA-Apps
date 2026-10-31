@@ -3343,6 +3343,8 @@ function showSettingsSection(name, load = true) {
   // still names it opens the document there.
   if (name === "memory") { openKnowledgeFold("kDocFold"); return; }
   if (!SET_SECTIONS.includes(name)) name = "account";
+  // Remembered from a visit while BRUH Minecraft was there, and it is not now.
+  if (name === "minecraft" && !$("#setsecMinecraft")) name = "account";
   setSection = name;
   const root = $("#setModal");
   if (root) root.classList.remove("setindex");
@@ -18858,12 +18860,49 @@ const MC_BUDGETS = [
   ["per_session", "Things it does for one player in one sitting", "Counted from when they join."],
 ];
 
+// The row and the section are not in the page until BRUH Minecraft's
+// integration answers: a house without it has the same ⚙ as before, row
+// for row (tests/manual/measure-settings.mjs counts them).
+function ensureMinecraftSection() {
+  if ($("#setsecMinecraft")) return $("#setNavMinecraft");
+  const after = document.querySelector('#setNav .setnavbtn[data-sec="personality"]');
+  const secAfter = $("#setsecPersonality");
+  if (!after || !secAfter) return null;
+  const nav = document.createElement("button");
+  nav.type = "button";
+  nav.className = "setnavbtn";
+  nav.dataset.sec = "minecraft";
+  nav.id = "setNavMinecraft";
+  nav.setAttribute("role", "tab");
+  nav.setAttribute("aria-controls", "setsecMinecraft");
+  nav.innerHTML = '<span class="setnavname">Minecraft</span><span class="setnavsum" id="setSumMinecraft">The companion that plays with your family</span>';
+  nav.addEventListener("click", () => showSettingsSection("minecraft"));
+  after.after(nav);
+  const sec = document.createElement("section");
+  sec.className = "setsec";
+  sec.id = "setsecMinecraft";
+  sec.dataset.sec = "minecraft";
+  sec.setAttribute("role", "tabpanel");
+  sec.hidden = true;
+  sec.innerHTML = '<header class="setsechead"><button type="button" class="setback" aria-label="All settings">‹ Settings</button>'
+    + '<h2 class="setsecname">Minecraft</h2></header>'
+    + '<div class="setsecbody"><div id="mcBody">Open this section to load the Minecraft companion.</div></div>';
+  sec.querySelector(".setback").addEventListener("click", () => showSettingsIndex());
+  secAfter.after(sec);
+  return nav;
+}
+
 async function syncMinecraftNav() {
-  const nav = $("#setNavMinecraft");
-  if (!nav) return;
   try {
     const d = await api("api/minecraft");
     mcState.data = d;
+    if (!d.present) {
+      const old = $("#setNavMinecraft");
+      if (old) old.hidden = true;
+      return;
+    }
+    const nav = ensureMinecraftSection();
+    if (!nav) return;
     nav.hidden = !d.present;
     if (d.present) {
       setSummary("setSumMinecraft", d.settings.enabled
@@ -18871,7 +18910,8 @@ async function syncMinecraftNav() {
         : "Off");
     }
   } catch (e) {
-    nav.hidden = true;
+    const nav = $("#setNavMinecraft");
+    if (nav) nav.hidden = true;
   }
 }
 

@@ -1783,6 +1783,54 @@ for (const width of WIDTHS) {
   await context.close();
 }
 
+// ---- ⚙ › Minecraft appears only where BRUH Minecraft is -----------------
+// Above, the house has no BRUH Minecraft (api/minecraft is not answered), so
+// the list is the twelve rows. Here its integration answers: one row more,
+// right after Personality, and its section opens on the settings.
+{
+  const where = 'minecraft present';
+  const context = await browser.newContext({ viewport: { width: 1200, height: 900 } });
+  const page = await context.newPage();
+  page.on('pageerror', (e) => note(where, `page error: ${e.message}`));
+  await page.addInitScript(STUB);
+  await page.addInitScript(() => {
+    const inner = window.fetch;
+    window.fetch = async (url, opts) => {
+      if (String(url).includes('api/minecraft')) {
+        return new Response(JSON.stringify({
+          present: true, name: 'Juniper', wake_words: ['Juniper', 'brain'],
+          settings: { enabled: true, greet: true, people: [{ person: 'Kaz', role: 'child', players: ['.Kaz8044'], nicknames: [] }],
+                      bedtime_entity: '', budgets: { daily_turns: 0, daily_actions: 0, per_session: 0 },
+                      chat_model: '', chat_effort: '', build_model: '', build_effort: '' },
+          defaults: { chat: { model: 'haiku', effort: 'low' }, build: { model: 'sonnet', effort: 'medium' } },
+          model_choices: ['', 'haiku', 'sonnet', 'opus'], efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+          today: { turns: 2, actions: 1 }, paused: false, talks: [], actions: [] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return inner(url, opts);
+    };
+  });
+  await page.goto(`file://${path.join(PANEL, 'index.html')}`);
+  await page.click('#settingsBtn');
+  await page.waitForSelector('#setModal.open');
+  try {
+    await page.waitForSelector('#setNavMinecraft:not([hidden])', { timeout: 6000 });
+    const order = await page.evaluate(() => [...document.querySelectorAll('#setNav .setnavbtn:not([hidden])')]
+      .map((b) => b.dataset.sec));
+    const at = order.indexOf('minecraft');
+    if (at < 1 || order[at - 1] !== 'personality') note(where, `the Minecraft row sits at ${JSON.stringify(order)}`);
+    await showSection(page, 'minecraft');
+    await page.waitForSelector('#mcEnabled', { timeout: 4000 });
+    const labels = await page.$$eval('#mcBody label', (l) => l.map((x) => x.textContent));
+    for (const want of ['For answering in chat', 'For building', 'Replies and greetings a day']) {
+      if (!labels.some((t) => t.includes(want))) note(where, `no "${want}" control`);
+    }
+  } catch (e) {
+    note(where, `the Minecraft section did not appear: ${String(e.message).split('\n')[0]}`);
+  }
+  await context.close();
+}
+
 await browser.close();
 
 if (failures.length) {
