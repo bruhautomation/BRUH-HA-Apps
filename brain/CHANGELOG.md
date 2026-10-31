@@ -2,6 +2,28 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.30
+
+### Added
+
+- **"Can ask for anything", per grown-up, in ⚙ › Minecraft.** Turn it on for a grown-up and what they ask brAIn in the game is handled like a message to brAIn's chat: the house, and full control of the Minecraft server — game modes, items, teleports and any server command. It is off for everyone to start with, children never get it, and it is only used when the server checks accounts; if it doesn't, the person's row says the setting is on but not used.
+- **brAIn can change anything in the world for that person, and see it first.** It looks at the room (walls, doors, beds, furniture), works out what was meant, does the whole job — replacing a bed, building inside or next to a build, in protected places — and answers in one line with what it did and how to undo it. Every block it changes is saved first, so "*name* undo" puts it all back.
+- **⚙ › Minecraft lists what was sent for approval and how it ended**, and marks the conversations from someone who can ask for anything.
+
+### Changed
+
+- **A house change asked for in the game follows "Let brAIn act without asking".** On, brAIn does it, as in its chat. Off, it waits as a Yes/No question in brAIn › Today and on your phone, the game hears "I've sent that to your phone and to brAIn › Today to approve.", and after you answer it hears "Done: …" or that it wasn't approved. Nobody answering within an hour counts as no.
+- **A grown-up without the setting hears where to change it.** A request outside the game is answered "I can't do that from the game. A parent can turn on 'Can ask for anything' for you in brAIn › ⚙ › Minecraft."
+- **Any grown-up's request can look at the blocks around them** before building.
+
+### Fixed
+
+- **Vesper said to approve things in brAIn when there was nothing to approve.** Nothing waited anywhere; now a request either really waits in Today, or the answer says which setting to change.
+
+### Security
+
+- **The trusted path takes three things at once**: the toggle on a grown-up's row, a name the server checked, and brAIn's own Minecraft companion sending the request. A house change still meets the protected entities, the tripwire and your house rules, and an approved change is carried out exactly as it was asked, through the same checks. Other players' chat is never an instruction.
+
 ## 4.0.29
 
 ### Added

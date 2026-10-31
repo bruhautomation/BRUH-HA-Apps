@@ -81,6 +81,8 @@ SHAPES = {
     # A note brAIn filed for a person to read: news, answered with Got it.
     "acknowledge": case(kind="change", source="personality",
                         informational=True),
+    # A house change a trusted grown-up asked for in Minecraft: Yes / No.
+    "approval": case(kind="question", source="minecraft_approval"),
 }
 
 

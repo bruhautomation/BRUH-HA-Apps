@@ -188,6 +188,7 @@ import energy
 import engine
 import facts_store
 import garden_facts
+import minecraft_approvals
 import minecraft_companion
 import minecraft_facts
 import episodes
@@ -4565,6 +4566,12 @@ async def _requests_loop():
             raise
         except Exception as exc:  # noqa: BLE001
             log.warning("intent request pass failed: %s", exc)
+        try:
+            await _expire_minecraft_approvals()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Minecraft approval expiry failed: %s", exc)
         await asyncio.sleep(REQUESTS_POLL_S)
 
 
@@ -7670,6 +7677,11 @@ async def _gate_decide(body: dict) -> dict:
     # fix's contract — and a Discuss session's ask rules are the CLI's,
     # which an allow from here (the hook printing nothing) never reaches.
     # It rides in the cache key, so flipping it is not answered from before.
+    if gate.minecraft_trusted_channel(channel):
+        # A trusted grown-up's request from the game: the chat's rules,
+        # decided in code, and a house change the chat would have asked
+        # about waits in Today instead (`_gate_minecraft_trusted`).
+        return await _gate_minecraft_trusted(body, tool, args, channel)
     if gate.minecraft_channel(channel):
         # A request from the game's chat: decided in code, never by the
         # model and never cached — in-world acts pass (the owner's policy;
@@ -7764,6 +7776,175 @@ async def _gate_decide(body: dict) -> dict:
     out = ruled(verdict, why, "model")
     gate.remember(key, out)
     return out
+
+
+async def _gate_minecraft_trusted(body: dict, tool: str, args: dict,
+                                  channel: str) -> dict:
+    """A gated call on the `minecraft_trusted` channel: a grown-up with "Can
+    ask for anything" asking in the game. Never the model, never cached.
+
+    Every Minecraft tool passes (full control of the server is what the
+    toggle grants). Anything else meets the chat's own order: the floors
+    (tripwire, protected entities), then the person's house rules, then
+    "Let brAIn act without asking" — on, it acts; off, the chat would have
+    shown an approval card, and here that is a question in brAIn › Today
+    and on the phone (`minecraft_approvals`), with the run told the exact
+    sentence to say back in the game."""
+    gate.STATE["minecraft_trusted"] = gate.STATE.get("minecraft_trusted", 0) + 1
+    if gate.minecraft_tool(tool):
+        return gate._out("allow", "a grown-up who can ask for anything, in the game",
+                         channel, "minecraft_trusted")
+    try:
+        view = await asyncio.wait_for(_gate_view(tool, args, False, states=False),
+                                      GATE_TIMEOUT_S)
+    except Exception as exc:  # noqa: BLE001 — undecided, never allow
+        return gate.undecided(channel, f"could not read the house: "
+                                       f"{type(exc).__name__}")
+    cons = consequence.resolve(tool, args, view)
+    floor = gate.floors(cons, channel, False)
+    if floor:
+        gate.STATE["floor"] += 1
+        return gate._out(floor[0], floor[1], channel, "floor")
+    rule = house_rules.check(cons, (await asyncio.to_thread(
+        house_rules.load))["rules"], _local_minute())
+    switch = eff_skip_permissions()
+    verdict, changed = house_rules.tighten("allow" if switch else "ask", rule)
+    if verdict == "allow":
+        gate.STATE["switch"] = gate.STATE.get("switch", 0) + 1
+        return gate._out("allow", "\"Let brAIn act without asking\" is on",
+                         channel, "switch")
+    if verdict == "deny":
+        return gate._out("deny", rule[1] if changed and rule else "refused",
+                         channel, "house_rule")
+    said = await _minecraft_approval_file(tool, args, body.get("speaker"))
+    return gate._out("deny", gate.approval_reason(said), channel, "minecraft_approval")
+
+
+_MC_APPROVAL_TASKS: set = set()
+
+
+def _clean_speaker(raw) -> dict:
+    raw = raw if isinstance(raw, dict) else {}
+    player = str(raw.get("player") or "")
+    person = " ".join(str(raw.get("person") or "").split())[:40]
+    if not re.fullmatch(r"[A-Za-z0-9_.*]{1,17}", player):
+        player = ""
+    return {"player": player, "person": person}
+
+
+async def _minecraft_approval_file(tool: str, args: dict, speaker) -> str:
+    """File one approval (or find the one already waiting for this exact
+    call) and send it to the phone. Returns the sentence for the game."""
+    who = _clean_speaker(speaker)
+    now = time.time()
+    service, _sev = _findings_notify_target()
+    said = minecraft_approvals.line("sent_phone" if service else "sent_today")
+
+    def store() -> dict | None:
+        for row in findings_store.list_all():
+            if minecraft_approvals.same_call(row, tool, args, who["player"]) \
+                    and not minecraft_approvals.expired(row, now):
+                return None
+        row = minecraft_approvals.as_row(tool, args, who, now,
+                                         personality.assistant_name())
+        filed = findings_store.add_case(row, when=now)
+        if filed:
+            ask = filed.get("minecraft_approval") or {}
+            minecraft_approvals.record({
+                "ts": filed.get("ts"), "person": ask.get("person"),
+                "player": ask.get("player"), "what": ask.get("what"),
+                "status": "waiting", "asked_at": ask.get("asked_at")})
+        return filed
+
+    try:
+        filed = await asyncio.to_thread(store)
+    except Exception as exc:  # noqa: BLE001 — refused either way; said why in the log
+        log.warning("could not file a Minecraft approval: %s", exc)
+        return minecraft_approvals.rules.CANNED["error"]
+    if filed and service:
+        task = asyncio.get_running_loop().create_task(_send_notification(
+            [filed], message=(f"{filed['minecraft_approval']['person']} asked in Minecraft",
+                              f"{filed['minecraft_approval']['what']} — approve or deny."),
+            kind="approval"))
+        _MC_APPROVAL_TASKS.add(task)
+        task.add_done_callback(_MC_APPROVAL_TASKS.discard)
+    return said
+
+
+async def _minecraft_tell(player: str, text: str) -> bool:
+    """A line from the companion to one player in the game, under the
+    house's name for brAIn. Best effort: the game may be gone."""
+    import ha_data  # noqa: PLC0415 — deferred, as everywhere in this module
+    if not player:
+        return False
+    rules = minecraft_approvals.rules
+    try:
+        settings = await asyncio.to_thread(minecraft_companion.load)
+        name = await asyncio.to_thread(rules.persona_name, minecraft_companion.SHARED_DIR)
+        await ha_data.call_with_response("bruh_minecraft", "companion_say", {
+            "to": [player], "message": text[:640], "name": name,
+            "colour": settings.get("colour") or rules.DEFAULT_COLOUR,
+            "chime": False, "by": "brAIn"}, 15)
+    except Exception as exc:  # noqa: BLE001 — a game that went away
+        log.debug("could not tell a player how an approval ended: %s", exc)
+        return False
+    return True
+
+
+async def _minecraft_approval_end(finding: dict, outcome: str) -> None:
+    """Say how it ended in the game and keep the record."""
+    ask = finding.get("minecraft_approval") or {}
+    what = str(ask.get("what") or "that")
+    await _minecraft_tell(str(ask.get("player") or ""),
+                          minecraft_approvals.line(outcome, what))
+    try:
+        await asyncio.to_thread(minecraft_approvals.record, {
+            "ts": finding.get("ts"), "person": ask.get("person"),
+            "player": ask.get("player"), "what": what, "status": outcome,
+            "asked_at": ask.get("asked_at"), "ended_at": int(time.time())})
+    except OSError as exc:
+        log.debug("could not record a Minecraft approval: %s", exc)
+
+
+async def _end_minecraft_approval(finding: dict, spec: dict,
+                                  note: str) -> tuple[dict, str]:
+    """Approve runs exactly the call that was asked for, and the game hears
+    "Done"; any other answer — or an hour without one — is "not approved".
+    No memory line: an approval is not a fact about the house."""
+    ask = finding.get("minecraft_approval") or {}
+    if minecraft_approvals.expired(finding, time.time()):
+        outcome = "expired"
+    elif spec.get("label") == "accepted":
+        ok = await asyncio.to_thread(minecraft_approvals.run_call,
+                                     str(ask.get("tool") or ""),
+                                     ask.get("input") if isinstance(ask.get("input"), dict)
+                                     else {})
+        outcome = "done" if ok else "failed"
+        log.info("minecraft approval: %s", "carried out" if ok else "did not work")
+    else:
+        outcome = "denied"
+
+    def settle() -> dict:
+        findings_store.settle_and_clear(finding["ts"], spec.get("kind") or "ignored",
+                                        note=note)
+        return _findings_payload()
+
+    payload = await asyncio.to_thread(settle)
+    await _minecraft_approval_end(finding, outcome)
+    return payload, ""
+
+
+async def _expire_minecraft_approvals(now: float | None = None) -> int:
+    """Approvals nobody answered within the hour: off the list, and the
+    person in the game told. Returns how many."""
+    now = time.time() if now is None else now
+    rows = [r for r in await asyncio.to_thread(findings_store.list_all)
+            if minecraft_approvals.expired(r, now)]
+    for row in rows:
+        await asyncio.to_thread(findings_store.settle_and_clear, row["ts"],
+                                "not_applicable")
+        await _minecraft_approval_end(row, "expired")
+    return len(rows)
 
 
 def _local_minute(now: float | None = None) -> int:
@@ -20829,6 +21010,10 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
     if finding.get("source") == mute_offer.SOURCE:
         # "Stop raising this rule?": Yes is the mute, No is remembered.
         return await _end_mute_offer(finding, spec, note)
+    if finding.get("source") == minecraft_approvals.SOURCE:
+        # A house change a trusted grown-up asked for in Minecraft: Approve
+        # runs exactly that call; anything else tells them it was not.
+        return await _end_minecraft_approval(finding, spec, note)
     if finding.get("source") == self_care.SOURCE:
         # "Shall brAIn take that line out?": Yes is brAIn doing its own
         # upkeep; neither answer is a fact about the house.

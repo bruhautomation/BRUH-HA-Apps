@@ -167,6 +167,7 @@ def view(shared_dir: str | None = None) -> dict[str, Any]:
     talks = rules.read_json(_path(rules.TALKS, base), {}).get("talks") or []
     memory = rules.read_json(_path(rules.PEOPLE, base), {})
     handover = rules.read_json(_path(rules.HANDOVER, base), {})
+    approvals = rules.read_json(_path(rules.APPROVALS, base), {}).get("approvals") or []
     name = rules.persona_name(base)
     return {"settings": settings, "name": name, "wake_words": list(rules.wake_words(name)),
             "defaults": resolved_models(), "model_choices": list(MODEL_CHOICES),
@@ -177,7 +178,10 @@ def view(shared_dir: str | None = None) -> dict[str, Any]:
             "people": {p: {"sessions": r.get("sessions", 0), "seconds": r.get("seconds", 0),
                            "favourite_places": rules.favourites(r)}
                        for p, r in memory.items() if isinstance(r, dict)},
-            "handed_over": bool(handover)}
+            "handed_over": bool(handover),
+            # House changes a grown-up who can ask for anything asked for in
+            # the game, that waited for a person (minecraft_approvals.py).
+            "approvals": [r for r in approvals if isinstance(r, dict)][:10]}
 
 
 def learned(shared_dir: str | None = None) -> list[dict[str, Any]] | None:

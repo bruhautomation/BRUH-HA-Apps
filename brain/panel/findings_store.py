@@ -491,7 +491,10 @@ HOUSE_TZ = None
 # Model-written sources whose words are left alone: a person's correction is
 # their words, and the safety lane and the tripwire are written by code
 # (the tripwire's card must never name its entity).
-PLAIN_EXEMPT = frozenset({"correction", "safety", "security", "self_care"})
+# A Minecraft approval (`minecraft_approvals.py`) is written by code from
+# the call it holds, and its words name that call.
+PLAIN_EXEMPT = frozenset({"correction", "safety", "security", "self_care",
+                          "minecraft_approval"})
 # Who brAIn is here, the one stored answer (`personality.identity`):
 # `IDENTITY() -> {"name", "voice"}`, handed in by the panel. A model's
 # sentence about brAIn's voice reads it (`house_words.self_said`); unset,
@@ -1565,6 +1568,12 @@ def _shape(entry: dict) -> dict:
     if isinstance(edit, dict) and edit.get("key") and edit.get("line"):
         out["self_edit"] = {"key": str(edit["key"])[:48],
                             "line": str(edit["line"])[:2000]}
+    # A house change asked for in Minecraft that waits for a person
+    # (`minecraft_approvals`): the exact call its Yes runs, who asked, and
+    # when it stops waiting. Absent on every other row.
+    ask = _clean_minecraft_approval(entry.get("minecraft_approval"))
+    if ask:
+        out["minecraft_approval"] = ask
     # When a row brAIn fixed was reopened because its check still saw the
     # fault (`_came_back`). Absent on every other row, for the same reason.
     if entry.get("came_back"):
@@ -1580,6 +1589,28 @@ def _shape(entry: dict) -> dict:
     if triage.waiting_too_long({**entry, "status": status}):
         out["waiting_look"] = True
     return out
+
+
+def _clean_minecraft_approval(raw) -> dict | None:
+    """The approval's call and its speaker, as `minecraft_approvals.as_row`
+    wrote them; None for anything else. The call's arguments are kept whole
+    (capped as JSON) because a Yes runs exactly them."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("input"), dict):
+        return None
+    tool = str(raw.get("tool") or "")[:120]
+    if not tool:
+        return None
+    try:
+        if len(json.dumps(raw["input"])) > 8000:
+            return None
+    except (TypeError, ValueError):
+        return None
+    return {"tool": tool, "input": raw["input"],
+            "player": str(raw.get("player") or "")[:17],
+            "person": str(raw.get("person") or "")[:40],
+            "what": str(raw.get("what") or "")[:160],
+            "asked_at": int(raw.get("asked_at") or 0),
+            "expires_at": int(raw.get("expires_at") or 0)}
 
 
 # ---------------------------------------------------------------------------
@@ -1890,6 +1921,9 @@ def coerce(obj: dict) -> dict | None:
     items = clean_items(obj.get("items"))
     if items:
         entry["items"] = items
+    ask = _clean_minecraft_approval(obj.get("minecraft_approval"))
+    if ask:
+        entry["minecraft_approval"] = ask
     entry.update(_subject_fields(obj))
     return entry
 
@@ -1930,7 +1964,7 @@ def _prune(items: list[dict]) -> list[dict]:
 SUBJECT_FOLD_EXCLUDED = frozenset({
     "safety", "security", "correction", "notify_policy",
     "house_book", "healing", "followup", "fix", "doctor", "condition",
-    "scene", "morph", "devloop_verify"})
+    "scene", "morph", "devloop_verify", "minecraft_approval"})
 
 
 def _folds_by_subject(entry: dict) -> tuple[str, str] | None:

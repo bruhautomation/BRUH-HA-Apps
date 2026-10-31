@@ -91,6 +91,14 @@ REPLY_LINES = 4               # chat lines one `say` may take
 REPLY_LINE_CHARS = 160
 BUILD_MAX = 64                # blocks in one build
 BUILD_REACH = 48              # relative offsets, and how far from a player an absolute one may be
+# A trusted edit (`edit`): what a grown-up who "can ask for anything" asks
+# for through brAIn. Not a guard on size — a ceiling on one request so the
+# snapshot that makes it undoable fits in the action log — and a fill this
+# big is one `fill` command (Minecraft's own limit).
+EDIT_MAX = 32768
+EDIT_REACH = 128              # relative offsets in a trusted edit
+LOOK_DEFAULT = (16, 8, 16)    # a look's box, x by y by z
+LOOK_MAX = (32, 16, 32)
 ACCOUNT_STALE = 60            # seconds the account check is trusted
 NAME_MAX = 16
 
@@ -119,6 +127,15 @@ _FORBIDDEN = re.compile(
     r"sculk|powder_snow|wither|dragon|barrier|bedrock|end_crystal|respawn_anchor|"
     r"spawn_egg|flint_and_steel|fire_charge|potion|arrow|trident|sword|axe|bow")
 _BLOCK_ID = re.compile(r"^(minecraft:)?[a-z0-9_]{1,48}$")
+# A block state for a trusted edit: any id, with its properties —
+# `minecraft:red_bed[facing=east,part=head]`.
+_BLOCK_STATE = re.compile(
+    r"^([a-z0-9_.\-]{1,32}:)?[a-z0-9_/.]{1,64}(\[[a-z0-9_]{1,32}=[a-z0-9_]{1,32}"
+    r"(,[a-z0-9_]{1,32}=[a-z0-9_]{1,32}){0,15}\])?$")
+# A block whose neighbour is part of the same thing (a bed's other half, a
+# door's other half, a tall plant): replacing one breaks the other, so an
+# edit's snapshot takes these neighbours too and an undo puts them back.
+_MULTI_PART = re.compile(r"[\[,](part|half)=")
 _ACTION_ID = re.compile(r"^[0-9]{8}-[0-9a-f]{6}$")
 _UNQUOTED = re.compile(r"^[0-9A-Za-z_\-.+]+$")
 _PLAYER = re.compile(r"^[A-Za-z0-9_.*]{1,17}$")
@@ -184,6 +201,18 @@ def parse_test(reply: str) -> bool | None:
 def bare(name: str) -> str:
     """A name as people mean it: no Bedrock prefix, no case."""
     return re.sub(r"^[.*]", "", str(name or "").strip()).lower()
+
+
+def block_state(value: Any) -> str:
+    """A block state a trusted edit may place (any block, with its
+    properties), with its namespace — or a refusal."""
+    text = str(value or "").strip().lower().replace(" ", "_")
+    if text in ("", "remove", "none"):
+        text = "minecraft:air"
+    if not _BLOCK_STATE.match(text):
+        raise CompanionError("A block is an id like minecraft:oak_planks, with any "
+                             "properties in brackets: minecraft:oak_door[facing=north,half=lower].")
+    return text if ":" in text.split("[", 1)[0] else f"minecraft:{text}"
 
 
 def block_id(value: Any, default: str | None = None) -> str:
@@ -644,8 +673,13 @@ class Companion:
                  snapshot: Callable[[], str | None] | None = None,
                  modern: Callable[[], bool] = lambda: True,
                  accounts: Callable[[], dict] | None = None,
+                 reader: Callable[[str, tuple], dict | None] | None = None,
                  clock: Callable[[], float] = time.time):
         self.col = collector
+        # The world's blocks as saved (the panel's: `save-all flush`, then
+        # mcmap's region reader): `reader(dimension, (x1, y1, z1, x2, y2, z2))`
+        # → {(x, y, z): block state} or None when it could not be read.
+        self.reader = reader
         self.clock = clock
         self.emit_fn = emit or (lambda kind, data: None)
         self.snapshot_fn = snapshot
@@ -1070,8 +1104,254 @@ class Companion:
         self.actions.put(act)
         return ""
 
+    # -- a trusted edit: anything, anywhere, undoable -----------------------------
+    def _raw(self, cmd: str) -> str | None:
+        """A command for a trusted edit or its undo. Not the companion's own
+        act, so not `check_command`'s: one line, and the server's answer."""
+        if "\n" in cmd or "\r" in cmd:
+            raise GuardError("one line only")
+        try:
+            return self.col.session.command(cmd)
+        except Exception:  # noqa: BLE001 — a server that went away
+            return None
+
+    def _box_of(self, player: Any, x: Any, y: Any, z: Any, size: Any,
+                dimension: Any) -> tuple[str, tuple[int, ...], str | None, list[int] | None]:
+        sx, sy, sz = LOOK_DEFAULT
+        if isinstance(size, (list, tuple)) and len(size) == 3:
+            try:
+                sx, sy, sz = (max(1, int(v)) for v in size)
+            except (TypeError, ValueError):
+                raise CompanionError("size is [x, y, z] in blocks.") from None
+        sx, sy, sz = min(sx, LOOK_MAX[0]), min(sy, LOOK_MAX[1]), min(sz, LOOK_MAX[2])
+        who, feet = None, None
+        if player:
+            who = self._online(str(player))
+            if not who:
+                raise CompanionError("That player is not in the game right now.")
+            here = self._pos(who)
+            if not here:
+                raise CompanionError("Where that player is is not known yet.")
+            pos, dim = here
+            feet = [math.floor(c) for c in pos]
+            cx, cy, cz = feet
+            y1 = cy - 2
+        else:
+            try:
+                cx, cy, cz = int(x), int(y), int(z)
+            except (TypeError, ValueError):
+                raise CompanionError("Give a player, or x, y and z.") from None
+            dim = str(dimension or "minecraft:overworld")
+            y1 = cy - sy // 2
+        if not re.fullmatch(r"[a-z0-9_.\-]+:[a-z0-9_./\-]+", dim):
+            raise CompanionError("dimension is an id like minecraft:overworld.")
+        x1, z1 = cx - sx // 2, cz - sz // 2
+        return dim, (x1, y1, z1, x1 + sx - 1, y1 + sy - 1, z1 + sz - 1), who, feet
+
+    def look(self, player: Any = None, x: Any = None, y: Any = None, z: Any = None,
+             size: Any = None, dimension: Any = None) -> dict[str, Any]:
+        """What is in a box around a player (or a point): every block that is
+        not air, by block state, as runs along x — walls, doors, beds,
+        furniture — so a room can be understood before it is changed. Read
+        from the world as saved, after a save; at most 32 × 16 × 32."""
+        dim, box, who, feet = self._box_of(player, x, y, z, size, dimension)
+        if self.reader is None:
+            raise CompanionError("The world's blocks cannot be read here.")
+        states = self.reader(dim, box)
+        if states is None:
+            raise CompanionError("Part of that area is not saved on disk yet, or is stored in a "
+                                 "way that cannot be read, so it was not looked at.")
+        blocks: dict[str, list[list[int]]] = {}
+        for (bx, by, bz), st in states.items():
+            if st.split("[", 1)[0] in ("minecraft:air", "minecraft:cave_air", "minecraft:void_air"):
+                continue
+            blocks.setdefault(st, []).append([bx, by, bz])
+        runs: dict[str, list[list[int]]] = {}
+        for st, cells in sorted(blocks.items()):
+            out: list[list[int]] = []
+            for bx, by, bz in sorted(cells, key=lambda c: (c[1], c[2], c[0])):
+                last = out[-1] if out else None
+                if last and last[1] == by and last[2] == bz and last[0] + last[3] == bx:
+                    last[3] += 1
+                else:
+                    out.append([bx, by, bz, 1])
+            runs[st] = out
+        return {"dimension": dim, "box": dict(zip(("x1", "y1", "z1", "x2", "y2", "z2"), box)),
+                "player": who, "feet": feet, "blocks": runs,
+                "note": "Runs are [x, y, z, length] along +x; everything else in the box is air."}
+
+    def _edit_targets(self, blocks: Any, fills: Any, base: list[int] | None
+                      ) -> tuple[dict[tuple[int, int, int], str], list[tuple]]:
+        """{cell: new state} for every cell the edit sets, and the fill boxes
+        (applied first, as one `fill` each)."""
+        def at(item: dict, keys: tuple[str, ...]) -> list[int]:
+            try:
+                vals = [int(item[k]) for k in keys]
+            except (KeyError, TypeError, ValueError):
+                raise CompanionError("Coordinates are whole numbers.") from None
+            if base is not None:
+                if any(abs(v) > EDIT_REACH for v in vals):
+                    raise CompanionError(f"Offsets are at most {EDIT_REACH} blocks.")
+                vals = [v + base[i % 3] for i, v in enumerate(vals)]
+            for i in range(1, len(vals), 3):
+                if not -64 <= vals[i] <= 319:
+                    raise CompanionError("That is outside the world's height.")
+            return vals
+
+        targets: dict[tuple[int, int, int], str] = {}
+        boxes: list[tuple] = []
+        for f in (fills or []) if isinstance(fills, list) else []:
+            if not isinstance(f, dict):
+                raise CompanionError("Each fill is {x1, y1, z1, x2, y2, z2, block}.")
+            x1, y1, z1, x2, y2, z2 = at(f, ("x1", "y1", "z1", "x2", "y2", "z2"))
+            x1, x2 = sorted((x1, x2))
+            y1, y2 = sorted((y1, y2))
+            z1, z2 = sorted((z1, z2))
+            st = block_state(f.get("block"))
+            if (x2 - x1 + 1) * (y2 - y1 + 1) * (z2 - z1 + 1) + len(targets) > EDIT_MAX:
+                raise CompanionError(f"At most {EDIT_MAX} blocks in one edit; split it in two.")
+            boxes.append((x1, y1, z1, x2, y2, z2, st))
+            for bx in range(x1, x2 + 1):
+                for by in range(y1, y2 + 1):
+                    for bz in range(z1, z2 + 1):
+                        targets[(bx, by, bz)] = st
+        for b in (blocks or []) if isinstance(blocks, list) else []:
+            if not isinstance(b, dict):
+                raise CompanionError("Each block is {x, y, z, block}.")
+            bx, by, bz = at(b, ("x", "y", "z"))
+            remove = str(b.get("mode") or "").lower() == "remove"
+            targets[(bx, by, bz)] = block_state("air" if remove else b.get("block"))
+            if len(targets) > EDIT_MAX:
+                raise CompanionError(f"At most {EDIT_MAX} blocks in one edit; split it in two.")
+        if not targets:
+            raise CompanionError("Give blocks ({x, y, z, block}) or fills "
+                                 "({x1, y1, z1, x2, y2, z2, block}).")
+        return targets, boxes
+
+    def _snapshot_states(self, dim: str, cells: list[tuple[int, int, int]]
+                         ) -> dict[tuple[int, int, int], str] | None:
+        """The saved states of these cells (and their neighbours), read per
+        chunk column; None when any part cannot be read."""
+        groups: dict[tuple[int, int], list[tuple[int, int, int]]] = {}
+        for c in cells:
+            groups.setdefault((c[0] >> 4, c[2] >> 4), []).append(c)
+        out: dict[tuple[int, int, int], str] = {}
+        for group in groups.values():
+            xs = [c[0] for c in group]
+            ys = [c[1] for c in group]
+            zs = [c[2] for c in group]
+            box = (min(xs) - 1, max(min(ys) - 1, -64), min(zs) - 1,
+                   max(xs) + 1, min(max(ys) + 1, 319), max(zs) + 1)
+            got = self.reader(dim, box) if self.reader else None
+            if got is None:
+                return None
+            out.update(got)
+        return out
+
+    def edit(self, blocks: Any = None, fills: Any = None, player: Any = None,
+             dimension: Any = None, title: Any = "", by: str = "",
+             name: Any = None) -> dict[str, Any]:
+        """A trusted edit: what a grown-up who can ask for anything asked for
+        through brAIn. Any block, anywhere — over existing blocks, inside or
+        next to a build, in a protected place — placed, replaced or removed
+        (`mode: "remove"`, or block air), and boxes filled. None of
+        `place_blocks`' rules: those hold the companion's OWN acts.
+
+        What makes it safe is the undo. Before anything changes, the world is
+        saved and every cell's block state is read (with the other half of a
+        bed or a door beside one), and the action records each before and
+        after; an edit whose before cannot be read is not made. A large one
+        is backed up first; a backup that fails is said, never a refusal."""
+        with self._lock:
+            speaker, _ = self._speaker(name, None)
+            base = None
+            beside = None
+            if player:
+                beside = self._online(str(player))
+                if not beside:
+                    raise CompanionError("That player is not in the game right now.")
+                here = self._pos(beside)
+                if not here:
+                    raise CompanionError("Where that player is is not known yet.")
+                pos, dim = here
+                base = [math.floor(c) for c in pos]
+            else:
+                dim = str(dimension or "minecraft:overworld")
+                if not re.fullmatch(r"[a-z0-9_.\-]+:[a-z0-9_./\-]+", dim):
+                    raise CompanionError("dimension is an id like minecraft:overworld.")
+            targets, boxes = self._edit_targets(blocks, fills, base)
+            before = self._snapshot_states(dim, list(targets))
+            if before is None:
+                raise CompanionError("That part of the world is not saved on disk in a way that "
+                                     "can be read, so the change could not be made undoable and "
+                                     "was not made.")
+            changed = [(c, st) for c, st in targets.items()
+                       if before.get(c, "minecraft:air") != st]
+            touched = {c for c, _ in changed}
+            neighbours: list[tuple[int, int, int]] = []
+            for (cx, cy, cz), _st in changed:
+                for d in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)):
+                    n = (cx + d[0], cy + d[1], cz + d[2])
+                    if n in touched or n in neighbours:
+                        continue
+                    if _MULTI_PART.search(before.get(n, "")):
+                        neighbours.append(n)
+            backup_note = ""
+            if len(changed) >= LARGE_CHANGE:
+                note = self.snapshot_fn() if self.snapshot_fn else "no backup is available"
+                if note:
+                    backup_note = "No world backup was made first (it failed); Undo still covers it."
+            title = " ".join(str(title or "").split())[:60] or f"{len(changed)} blocks"
+            who = str(by or "")[:40]
+            text = f"{speaker} changed {title}" + (f" beside {beside}" if beside else "") + \
+                (f" (asked by {who})" if who else "")
+            act = self.actions.start("edit", beside, text, by=who, name=speaker, trusted=True)
+            cells = [{"x": c[0], "y": c[1], "z": c[2], "dim": dim, "before": before.get(
+                c, "minecraft:air"), "after": st, "placed": True} for c, st in changed]
+            cells += [{"x": n[0], "y": n[1], "z": n[2], "dim": dim, "before": before[n],
+                       "after": None, "placed": True} for n in neighbours]
+            # Recorded before anything is set: a server that goes away half
+            # way leaves an action Undo can still put back.
+            act["cells"] = cells
+            self.actions.put(act)
+            failed = ""
+            for x1, y1, z1, x2, y2, z2, st in boxes:
+                reply = self._raw(f"minecraft:execute in {dim} run minecraft:fill "
+                                  f"{x1} {y1} {z1} {x2} {y2} {z2} {st} replace")
+                if reply is None or not re.search(r"filled|no blocks were filled", reply, re.I):
+                    failed = f"The server would not fill a box: {(reply or 'no answer')[:120]}"
+                    break
+            singles = {c: st for c, st in changed}
+            for box in boxes:
+                for c in list(singles):
+                    if (box[0] <= c[0] <= box[3] and box[1] <= c[1] <= box[4]
+                            and box[2] <= c[2] <= box[5] and singles[c] == box[6]):
+                        singles.pop(c)
+            if not failed:
+                for (x, y, z), st in singles.items():
+                    reply = self._raw(f"minecraft:execute in {dim} run minecraft:setblock "
+                                      f"{x} {y} {z} {st} replace")
+                    if reply is None or not re.search(r"changed the block", reply, re.I):
+                        failed = ("The server would not place a block: "
+                                  f"{(reply or 'no answer')[:120]}")
+                        break
+            now = self.clock()
+            if failed:
+                self._restore(act)
+                act.update(status="failed", ended_at=int(now), note=failed[:200])
+                self.actions.put(act)
+                raise CompanionError(failed)
+            act.update(status="done", ended_at=int(now), note=backup_note)
+            self.actions.put(act)
+            self.col.record({"kind": "companion", "player": beside,
+                             "action": act["id"], "text": text[:240]})
+            return dict(act, cells=len(cells), changed=len(changed), undoable=undoable(act),
+                        backup_note=backup_note)
+
     def _restore(self, act: dict[str, Any]) -> dict[str, int]:
         """Put back each cell that still holds what was placed."""
+        if act.get("trusted"):
+            return self._restore_edit(act)
         restored = changed = 0
         loaded: set[tuple[str, int, int]] = set()
         offline = not self.col.sessions
@@ -1098,6 +1378,42 @@ class Companion:
         for dim, cx, cz in loaded:
             self._try(f"minecraft:execute in {dim} run minecraft:forceload remove "
                       f"{cx * 16} {cz * 16}", placing=True)
+        return {"restored": restored, "changed": changed}
+
+    def _restore_edit(self, act: dict[str, Any]) -> dict[str, int]:
+        """A trusted edit's undo: every cell that still holds what the edit
+        set goes back to its saved state, then the neighbours it broke (the
+        other half of a bed or door) are put back where they are missing."""
+        restored = changed = 0
+        cells = act.get("cells") or []
+        for c in sorted(cells, key=lambda c: c.get("after") is None):
+            if not c.get("placed"):
+                continue
+            dim = c.get("dim") or "minecraft:overworld"
+            where = f"{c['x']} {c['y']} {c['z']}"
+            if c.get("after") is None:
+                same = self._raw(f"minecraft:execute in {dim} if block {where} {c['before']}")
+                if same is not None and parse_test(same) is False:
+                    self._raw(f"minecraft:execute in {dim} run minecraft:setblock {where} "
+                              f"{c['before']} replace")
+                c["placed"] = False
+                continue
+            still = self._raw(f"minecraft:execute in {dim} if block {where} {c['after']}")
+            verdict = None if still is None else parse_test(still)
+            if verdict is False and _MULTI_PART.search(c["after"]):
+                # Half of a bed or door this edit set, which fell when its
+                # other half was put back a moment ago: gone, not changed.
+                gone = self._raw(f"minecraft:execute in {dim} if block {where} minecraft:air")
+                verdict = True if gone is not None and parse_test(gone) else verdict
+            if verdict:
+                self._raw(f"minecraft:execute in {dim} run minecraft:setblock {where} "
+                          f"{c['before']} replace")
+                restored += 1
+            elif verdict is False:
+                changed += 1
+            else:
+                continue          # the server did not answer: try again on the next undo
+            c["placed"] = False
         return {"restored": restored, "changed": changed}
 
     # -- choice pads -----------------------------------------------------------

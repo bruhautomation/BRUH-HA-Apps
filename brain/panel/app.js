@@ -18929,8 +18929,30 @@ function mcPersonRow(p, i) {
     <label for="mcNicks${i}">Nicknames in chat</label>
     <input id="mcNicks${i}" type="text" maxlength="120" data-k="nicknames" value="${esc((p.nicknames || []).join(", "))}">
     <p class="hint">What a server script shows instead of the in-game name, if anything.</p>
+    ${p.role === "reader" ? mcTrustedToggle(p, i) : ""}
     <button type="button" class="btn mcremove" data-i="${i}">Remove ${esc(p.person || "this person")}</button>
   </fieldset>`;
+}
+
+// "Can ask for anything": a grown-up's row only (a child's never shows it,
+// and the rules read a child's flag as off). It is used only for a name the
+// server checks, so a row that has it on says so when the server does not.
+function mcAccountsChecked(p) {
+  const acc = (mcState.data && mcState.data.accounts) || null;
+  if (!acc || !Object.keys(acc).length) return null;
+  const names = p.players || [];
+  if (!names.length) return null;
+  return names.some((n) => (/^[.*]/.test(n) ? acc.bedrock : acc.java));
+}
+
+function mcTrustedToggle(p, i) {
+  const checked = mcAccountsChecked(p);
+  const warn = p.trusted && checked === false
+    ? `<p class="hint featwarn">Turned on, but the server doesn't check accounts for ${esc(p.person || "this person")}'s names, so it isn't used — anyone could type as them. Their requests stay in the game.</p>`
+    : "";
+  return `<label class="check"><input id="mcTrusted${i}" class="tog" type="checkbox" data-k="trusted"${p.trusted ? " checked" : ""}>
+      <span><b>Can ask for anything</b><span class="subtext">The house and full control of the server, like talking to brAIn's chat. A house change follows ⚙ › Permissions: it waits for your Yes in Today (and on your phone) unless brAIn may act without asking.</span></span></label>
+    ${warn}`;
 }
 
 function mcModelSelect(id, value, defaults) {
@@ -18987,16 +19009,25 @@ function renderMinecraft() {
     <p id="mcMsg" class="hint" role="status" aria-live="polite"></p>
     <h3 class="setsubhead">What it did</h3>
     <ul class="mcacts">${(d.actions || []).slice(0, 20).map((a) => `<li><span>${esc(new Date((a.t || 0) * 1000).toLocaleString())} · ${esc(a.text || a.kind)} <span class="hint">(${esc(a.status)})</span></span>${a.undoable ? ` <button type="button" class="btn" data-mcundo="${esc(a.id)}">Undo</button>` : ""}</li>`).join("") || '<li class="hint">Nothing yet.</li>'}</ul>
+    ${(d.approvals || []).length ? `<h3 class="setsubhead">Asked to approve</h3>
+    <ul class="mcacts">${d.approvals.map((a) => `<li><span>${esc(a.person || "")}: ${esc(a.what || "")}</span> <span class="hint">${esc(MC_APPROVAL_WORDS[a.status] || a.status || "")}</span></li>`).join("")}</ul>` : ""}
     <h3 class="setsubhead">Talked with</h3>
-    <ul class="mcacts">${(d.talks || []).slice(0, 12).map((t) => `<li><span>${esc(t.person || t.player || "")}${t.said ? `: “${esc(t.said)}”` : ""}</span> <span class="hint">${t.reply ? `→ ${esc(t.reply)}` : ""}</span></li>`).join("") || '<li class="hint">Nobody has talked to it yet.</li>'}</ul>`;
+    <ul class="mcacts">${(d.talks || []).slice(0, 12).map((t) => `<li><span>${esc(t.person || t.player || "")}${t.trusted ? ' <span class="hint">(can ask for anything)</span>' : ""}${t.said ? `: “${esc(t.said)}”` : ""}</span> <span class="hint">${t.reply ? `→ ${esc(t.reply)}` : ""}</span></li>`).join("") || '<li class="hint">Nobody has talked to it yet.</li>'}</ul>`;
 }
+
+const MC_APPROVAL_WORDS = {
+  waiting: "waiting in Today", done: "approved and done", failed: "approved, didn't work",
+  denied: "not approved", expired: "nobody answered in time",
+};
 
 function mcReadPeople() {
   return [...document.querySelectorAll("#mcPeople .mcperson")].map((f) => {
     const v = (k) => (f.querySelector(`[data-k="${k}"]`) || {}).value || "";
+    const trusted = f.querySelector('[data-k="trusted"]');
     return { person: v("person").trim(), role: v("role"),
              players: v("players").split(/[,\s]+/).filter(Boolean),
-             nicknames: v("nicknames").split(",").map((n) => n.trim()).filter(Boolean) };
+             nicknames: v("nicknames").split(",").map((n) => n.trim()).filter(Boolean),
+             trusted: v("role") === "reader" && !!(trusted && trusted.checked) };
   });
 }
 
@@ -19053,5 +19084,12 @@ document.addEventListener("click", async (ev) => {
     }
     loadMinecraft();
   }
+});
+// A row's role decides whether it has "Can ask for anything": redrawn on a
+// change, so a child's row never carries the toggle.
+document.addEventListener("change", (ev) => {
+  const t = ev.target;
+  if (!(t instanceof Element) || !t.closest("#mcPeople") || t.dataset.k !== "role") return;
+  $("#mcPeople").innerHTML = mcReadPeople().map(mcPersonRow).join("");
 });
 setTimeout(syncMinecraftNav, 2500);

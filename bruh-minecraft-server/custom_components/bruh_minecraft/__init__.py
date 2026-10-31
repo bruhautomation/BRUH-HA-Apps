@@ -73,6 +73,8 @@ from .const import (
     SERVICE_COMPANION,
     SERVICE_COMPANION_APPEAR,
     SERVICE_COMPANION_BUILD,
+    SERVICE_COMPANION_EDIT,
+    SERVICE_LOOK_BLOCKS,
     SERVICE_COMPANION_HANDOVER,
     SERVICE_COMPANION_SAY,
     SERVICE_SET_COMPANION,
@@ -337,6 +339,18 @@ def _register_services(hass: HomeAssistant) -> None:
                                              "by") if k in call.data}
         return _strip(await _ask("companion_build", payload, timeout=60.0))
 
+    async def handle_companion_edit(call: ServiceCall) -> dict[str, Any]:
+        payload = {k: call.data[k] for k in ("blocks", "fills", "player", "dimension", "title",
+                                             "name", "by") if k in call.data}
+        if not payload.get("blocks") and not payload.get("fills"):
+            raise HomeAssistantError("Give blocks or fills to change.")
+        return _strip(await _ask("companion_edit", payload, timeout=180.0))
+
+    async def handle_look_blocks(call: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("companion_look", {
+            k: call.data[k] for k in ("player", "x", "y", "z", "size", "dimension")
+            if k in call.data}, timeout=60.0))
+
     async def handle_undo_action(call: ServiceCall) -> dict[str, Any]:
         return _strip(await _ask("companion_undo", {"id": call.data.get("id") or "last"},
                                  timeout=60.0))
@@ -481,6 +495,33 @@ def _register_services(hass: HomeAssistant) -> None:
         vol.Optional("name"): speaker,
         vol.Optional("by"): by_schema,
     })
+    edit_block_schema = vol.Schema({
+        vol.Required("x"): vol.Coerce(int), vol.Required("y"): vol.Coerce(int),
+        vol.Required("z"): vol.Coerce(int), vol.Optional("block", default=""): cv.string,
+        vol.Optional("mode"): vol.In(["set", "replace", "remove"]),
+    })
+    fill_schema = vol.Schema({
+        vol.Required("x1"): vol.Coerce(int), vol.Required("y1"): vol.Coerce(int),
+        vol.Required("z1"): vol.Coerce(int), vol.Required("x2"): vol.Coerce(int),
+        vol.Required("y2"): vol.Coerce(int), vol.Required("z2"): vol.Coerce(int),
+        vol.Required("block"): cv.string,
+    })
+    companion_edit_schema = vol.Schema({
+        vol.Optional("blocks"): vol.All([edit_block_schema], vol.Length(max=4096)),
+        vol.Optional("fills"): vol.All([fill_schema], vol.Length(max=64)),
+        vol.Optional("player"): player_name,
+        vol.Optional("dimension"): cv.string,
+        vol.Optional("title"): vol.All(cv.string, vol.Length(max=60)),
+        vol.Optional("name"): speaker,
+        vol.Optional("by"): by_schema,
+    })
+    look_blocks_schema = vol.Schema({
+        vol.Optional("player"): player_name,
+        vol.Optional("x"): vol.Coerce(int), vol.Optional("y"): vol.Coerce(int),
+        vol.Optional("z"): vol.Coerce(int),
+        vol.Optional("size"): vol.All([vol.Coerce(int)], vol.Length(min=3, max=3)),
+        vol.Optional("dimension"): cv.string,
+    })
     undo_action_schema = vol.Schema({vol.Optional("id"): cv.string})
     set_zone_schema = vol.Schema({
         vol.Required("name"): cv.string,
@@ -530,6 +571,8 @@ def _register_services(hass: HomeAssistant) -> None:
     register(SERVICE_COMPANION_APPEAR, handle_companion_appear, companion_appear_schema, optional)
     register(SERVICE_ASK_CHOICE, handle_ask_choice, ask_choice_schema, optional)
     register(SERVICE_COMPANION_BUILD, handle_companion_build, companion_build_schema, optional)
+    register(SERVICE_COMPANION_EDIT, handle_companion_edit, companion_edit_schema, optional)
+    register(SERVICE_LOOK_BLOCKS, handle_look_blocks, look_blocks_schema, only)
     register(SERVICE_UNDO_ACTION, handle_undo_action, undo_action_schema, optional)
     register(SERVICE_SET_ZONE, handle_set_zone, set_zone_schema, optional)
     register(SERVICE_COMPANION_HANDOVER, handle_companion_handover, handover_schema, only)

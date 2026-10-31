@@ -5,6 +5,17 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.17.9
+
+### Added
+
+- **A trusted edit (`bruh_minecraft.companion_edit`).** For a person the companion's caller trusts to ask for anything (brAIn's "Can ask for anything"): any block anywhere — placed, replaced, removed or filled in boxes, over what is there, inside or next to a build, in a protected place. Every block's state is saved before it changes (and the other half of a bed or door beside one), so Undo puts it all back. A change of 64 blocks or more is backed up first; if the backup fails the answer says so instead of refusing.
+- **A look at the blocks (`bruh_minecraft.look_blocks`).** The blocks in a box around a player or a point (up to 32 × 16 × 32), with their states, read from the saved world, so a room's walls, doors and beds can be understood before it is changed.
+
+### Changed
+
+- **The companion's own building keeps its rules.** Its own builds still go only into empty space on natural ground, never in a protected place or next to a build; the trusted edit is the only way past them.
+
 ## 1.17.8
 
 This release turns the add-on's own game companion into a plain set of game events and actions that brAIn (or your own automations) drives. With brAIn installed, the companion is now part of brAIn: it goes by the name you gave brAIn, answers in its words, and is set up in brAIn's ⚙ › Minecraft. Without brAIn, BRUH Minecraft is simply a server again, with no companion and nothing about one in the log.

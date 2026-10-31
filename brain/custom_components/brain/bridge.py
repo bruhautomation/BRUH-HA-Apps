@@ -20,6 +20,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import uuid
 
@@ -505,6 +506,7 @@ class ClaudeBridge:
         scheduled: bool = False,
         cameras: bool = False,
         effort: str | None = None,
+        speaker: dict | None = None,
     ) -> dict:
         """Send a task and wait for the whole result: ``{"text", "data"}``.
 
@@ -566,6 +568,15 @@ class ClaudeBridge:
         # daily count at the MCP server; this only lets the run ask.
         if cameras:
             task["cameras"] = True
+        # Who asked, for a request a trusted grown-up typed in Minecraft's
+        # chat (`minecraft_trusted`): the listener hands it to the action
+        # gate, so a house change that waits for approval can be answered
+        # back to them in the game. Plain names only; anything else is
+        # dropped rather than carried.
+        if isinstance(speaker, dict):
+            who = {k: str(speaker.get(k) or "")[:40] for k in ("person", "player")}
+            if re.fullmatch(r"[A-Za-z0-9_.*]{1,17}", who["player"]) and who["person"]:
+                task["speaker"] = who
 
         task_file = os.path.join(self.tasks_dir, f"{task_id}.json")
         result_file = os.path.join(self.task_results_dir, f"{task_id}.json")

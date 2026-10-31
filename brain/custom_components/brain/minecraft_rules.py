@@ -26,6 +26,8 @@ The files, all under `/config/.brain/minecraft/`:
 * `state.json` — the listener's: today's counts, paused, bedtime said.
 * `people.json` — what the companion remembers about each person.
 * `talks.json` — what was said to it and what it answered.
+* `approvals.json` — the panel's: house changes a trusted grown-up asked
+  for in the game that waited for a person's approval, and how each ended.
 """
 from __future__ import annotations
 
@@ -42,6 +44,7 @@ HANDOVER = "handover.json"
 STATE = "state.json"
 PEOPLE = "people.json"
 TALKS = "talks.json"
+APPROVALS = "approvals.json"
 
 ROLES = ("child", "reader")
 DEFAULT_NAME = "brAIn"
@@ -95,7 +98,27 @@ CANNED = {
     "error": "Something went wrong on my side. Try again?",
     "goodnight": "Goodnight! See you tomorrow.",
     "kept": "I'd better not say that one here.",
+    # What a grown-up without "Can ask for anything" hears for a request
+    # outside the game: there is nothing to approve, so it says who can
+    # change that and where — never "approve it in brAIn".
+    "outside": ("I can't do that from the game. A parent can turn on 'Can ask for anything' "
+                "for you in brAIn › ⚙ › Minecraft."),
 }
+# A grown-up the family trusts ("Can ask for anything", ⚙ › Minecraft) asks
+# for a house change while "Let brAIn act without asking" is off: the change
+# waits as a question in brAIn › Today (and on the phone, where brAIn's
+# notifications have a phone), and the game hears where it went, then how
+# it ended. The panel files it and says the ending; the words are here so
+# the prompt, the gate and the panel say the same sentence.
+APPROVAL_LINES = {
+    "sent_phone": "I've sent that to your phone and to brAIn › Today to approve.",
+    "sent_today": "I've put that in brAIn › Today for you to approve.",
+    "done": "Done: {what}.",
+    "failed": "That was approved, but it didn't work: {what}.",
+    "denied": "That wasn't approved in brAIn: {what}.",
+    "expired": "Nobody approved that in brAIn in time, so I didn't do it: {what}.",
+}
+APPROVAL_TTL = 60 * 60            # an approval nobody answered expires after this
 HELP_LINES = (
     "{n} stop · {n} start — pause me and bring me back",
     "{n} undo — take back the last thing I did",
@@ -282,8 +305,9 @@ class RulesError(ValueError):
 
 
 def clean_people(people: Any) -> list[dict[str, Any]]:
-    """The family list: each person, their role, their in-game names and
-    the nicknames a server script may show for them in chat."""
+    """The family list: each person, their role, their in-game names, the
+    nicknames a server script may show for them in chat, and — for a
+    grown-up only — whether they "can ask for anything" (`trusted`)."""
     if not isinstance(people, list):
         raise RulesError("The family is a list of people.")
     out, seen = [], set()
@@ -314,7 +338,13 @@ def clean_people(people: Any) -> list[dict[str, Any]]:
         if isinstance(nicks, str):
             nicks = [n for n in nicks.split(",") if n.strip()]
         nicknames = [" ".join(str(n).split())[:40] for n in nicks[:6] if str(n).strip()]
-        out.append({"person": person, "role": role, "players": names, "nicknames": nicknames})
+        # "Can ask for anything": a grown-up's alone. A child's row with the
+        # flag set (a hand-edited file, an old save) is read as off, so the
+        # one place every reader takes the family from cannot hand a child
+        # the house.
+        trusted = role == "reader" and p.get("trusted") is True
+        out.append({"person": person, "role": role, "players": names, "nicknames": nicknames,
+                    "trusted": trusted})
     return out
 
 
@@ -430,9 +460,12 @@ class Roster:
                 keys = ([bare(n) for n in p.get("players") or []]
                         + [bare(n) for n in p.get("nicknames") or []] + [bare(p["person"])])
                 if want in keys:
-                    return {"person": p["person"], "role": p.get("role") or "child",
-                            "player": player or (p.get("players") or [None])[0]}
-        return {"person": str(player or shown or "?"), "role": "guest", "player": player}
+                    role = p.get("role") or "child"
+                    return {"person": p["person"], "role": role,
+                            "player": player or (p.get("players") or [None])[0],
+                            "trusted": role == "reader" and p.get("trusted") is True}
+        return {"person": str(player or shown or "?"), "role": "guest", "player": player,
+                "trusted": False}
 
     def player_name(self, target: Any) -> str | None:
         """A person's (or a player's) Minecraft name: the first one listed,

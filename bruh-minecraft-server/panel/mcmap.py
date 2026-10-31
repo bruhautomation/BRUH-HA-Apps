@@ -163,6 +163,10 @@ class Chunk:
     def __init__(self, root: dict[str, Any]):
         level = root.get("Level") if isinstance(root.get("Level"), dict) else root
         self.sections: dict[int, tuple[list[str], tuple, int]] = {}
+        # The full block state of each palette entry ("minecraft:oak_door[
+        # facing=north,half=lower,…]"), for `state`: what a box read and an
+        # undo snapshot need, where a picture needs only the name.
+        self.states: dict[int, list[str]] = {}
         for sec in level.get("sections") or level.get("Sections") or []:
             if not isinstance(sec, dict) or "Y" not in sec:
                 continue
@@ -176,6 +180,7 @@ class Chunk:
                 continue
             bits = max(4, (len(names) - 1).bit_length())
             self.sections[int(sec["Y"])] = (names, tuple(data), bits)
+            self.states[int(sec["Y"])] = [_state(p) for p in palette]
         self.top_section = max(self.sections) if self.sections else None
         self.bottom_section = min(self.sections) if self.sections else None
 
@@ -193,6 +198,29 @@ class Chunk:
             return "air"
         v = (data[word] >> ((idx % per) * bits)) & ((1 << bits) - 1)
         return names[v] if v < len(names) else "air"
+
+    def _index(self, lx: int, y: int, lz: int) -> int | None:
+        sec = self.sections.get(y >> 4)
+        if sec is None:
+            return None
+        names, data, bits = sec
+        if len(names) == 1 or not data:
+            return 0
+        idx = ((y & 15) * 16 + lz) * 16 + lx
+        per = 64 // bits
+        word = idx // per
+        if word >= len(data):
+            return None
+        v = (data[word] >> ((idx % per) * bits)) & ((1 << bits) - 1)
+        return v if v < len(names) else None
+
+    def state(self, lx: int, y: int, lz: int) -> str:
+        """The block's full state, e.g. `minecraft:red_bed[facing=east,
+        occupied=false,part=head]`; `minecraft:air` where nothing is."""
+        v = self._index(lx, y, lz)
+        if v is None:
+            return "minecraft:air"
+        return self.states[y >> 4][v]
 
     def top(self, lx: int, lz: int, y_top: int, y_bottom: int) -> tuple[str, int] | None:
         """The highest non-air block in the column between the two heights."""
@@ -213,6 +241,50 @@ class Chunk:
 
 def _short(name: str) -> str:
     return name.split(":", 1)[1] if ":" in name else name
+
+
+def _state(entry: Any) -> str:
+    """A palette entry as the block state a command takes."""
+    if not isinstance(entry, dict):
+        return "minecraft:air"
+    name = str(entry.get("Name") or "minecraft:air")
+    if ":" not in name:
+        name = "minecraft:" + name
+    props = entry.get("Properties")
+    if isinstance(props, dict) and props:
+        name += "[" + ",".join(f"{k}={props[k]}" for k in sorted(props)) + "]"
+    return name
+
+
+# A box read (`box_states`) is held to this many cells: the companion reads a
+# room or a small build, never a landscape.
+BOX_MAX = 32 * 32 * 32
+
+
+def box_states(region: Path, x1: int, y1: int, z1: int, x2: int, y2: int,
+               z2: int, limit: int | None = BOX_MAX) -> dict[tuple[int, int, int], str] | None:
+    """Every cell's block state in the box (inclusive corners), air
+    included. None when any chunk the box touches cannot be read (not on
+    disk yet, or LZ4): a partial answer would be a wrong one."""
+    x1, x2 = sorted((int(x1), int(x2)))
+    y1, y2 = sorted((int(y1), int(y2)))
+    z1, z2 = sorted((int(z1), int(z2)))
+    if limit is not None and (x2 - x1 + 1) * (y2 - y1 + 1) * (z2 - z1 + 1) > limit:
+        raise ValueError(f"at most {limit} blocks in one read")
+    chunks: dict[tuple[int, int], Chunk | None] = {}
+    out: dict[tuple[int, int, int], str] = {}
+    for x in range(x1, x2 + 1):
+        for z in range(z1, z2 + 1):
+            key = (x >> 4, z >> 4)
+            if key not in chunks:
+                root = read_chunk(region, *key)
+                chunks[key] = Chunk(root) if root else None
+            chunk = chunks[key]
+            if chunk is None:
+                return None
+            for y in range(y1, y2 + 1):
+                out[(x, y, z)] = chunk.state(x & 15, y, z & 15)
+    return out
 
 
 def region_dir(world_dir: Path, dimension: str) -> Path:
@@ -405,4 +477,5 @@ def render_bounds(world_dir: Path, bounds: dict[str, Any], out: Path) -> dict[st
 
 
 __all__ = ["read_nbt", "read_nbt_file", "read_chunk", "Chunk", "region_dir", "colour",
-           "top_blocks", "paint", "write_png", "render_bounds", "NbtError"]
+           "top_blocks", "paint", "write_png", "render_bounds", "NbtError", "box_states",
+           "BOX_MAX"]

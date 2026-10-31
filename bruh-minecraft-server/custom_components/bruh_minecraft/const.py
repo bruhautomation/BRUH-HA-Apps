@@ -76,6 +76,11 @@ SERVICE_COMPANION_SAY = "companion_say"
 SERVICE_COMPANION_APPEAR = "companion_appear"
 SERVICE_ASK_CHOICE = "ask_choice"
 SERVICE_COMPANION_BUILD = "companion_build"
+# A trusted edit (anything, anywhere, snapshotted for Undo) and a look at the
+# blocks in a box: what a companion uses for a person it trusts to ask for
+# anything, and to understand a room before changing it.
+SERVICE_COMPANION_EDIT = "companion_edit"
+SERVICE_LOOK_BLOCKS = "look_blocks"
 SERVICE_UNDO_ACTION = "undo_action"
 SERVICE_SET_ZONE = "set_zone"
 SERVICE_COMPANION_HANDOVER = "companion_handover"

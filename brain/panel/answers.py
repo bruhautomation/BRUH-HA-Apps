@@ -86,6 +86,9 @@ SITUATIONS = (
     "tidy", "gap",
     # A note brAIn filed for a person to read (`triage.is_note`): one press.
     "acknowledge",
+    # A house change a trusted grown-up asked for in Minecraft, waiting for
+    # a person (`minecraft_approvals.py`): Yes does exactly it, No does not.
+    "approval",
 )
 
 # Which check ids read as which situation. Keyed on the id and never on
@@ -118,6 +121,10 @@ CHECK_SITUATIONS = {
 # The house book files its gap questions under this source; their answer is
 # typed, never a bare Yes.
 HOUSE_BOOK_SOURCE = "house_book"
+# A house change asked for in Minecraft that waits for approval
+# (`minecraft_approvals.SOURCE`, spelled here because answers imports no
+# panel module).
+APPROVAL_SOURCE = "minecraft_approval"
 # Every `auto.*` check is an automation problem, whatever its id.
 AUTOMATION_PREFIX = "auto."
 
@@ -245,6 +252,8 @@ def situation(case: dict) -> str:
         return "chore_done" if status == "done" else "chore"
     if case.get("informational") is True and fstatus != "fixed":
         return "acknowledge"
+    if case.get("source") == APPROVAL_SOURCE and store == "findings":
+        return "approval"
     if kind == "question" and (case.get("source") == HOUSE_BOOK_SOURCE
                                or case.get("asked") is True):
         return "gap"
@@ -579,6 +588,17 @@ def answers(case: dict) -> list[dict]:
             "house's own style, as one card to review. Nothing changes "
             "until you press Apply on it.", route="/api/tidy/run",
             primary=True, done="Suggesting — they arrive as one card here"))
+
+    if sit == "approval":
+        return [
+            _answer("yes", "Yes", "Approve it: brAIn does exactly this now, and tells "
+                    "them in the game when it is done.", route=f"/api/case/{cid}/do",
+                    request="confirm", primary=True, done="Approved"),
+            _snooze(cid),
+            _answer("no", "No", "Don't do it. They are told in the game that it "
+                    "wasn't approved.", route=f"/api/case/{cid}/wrong",
+                    request="wrong", done="Not approved"),
+        ]
 
     if sit == "question":
         return [

@@ -331,6 +331,16 @@ claim_task_session() {
 #   minecraft_talk  a child's line in the game's chat: words only. Every
 #              tool the two lists name is denied and none is allowed, so a
 #              child's words can never be an instruction that does anything.
+#   minecraft_trusted  a grown-up with "Can ask for anything" (⚙ › Minecraft)
+#              whose name the server checked: the chat's reach, decided in
+#              process_task by the chat's own switch. With "Let brAIn act
+#              without asking" on it is the chat's widening (the full grant,
+#              bypassPermissions); off, it is exactly `house` — every MCP
+#              tool, no shell, no file, no web — because the chat would ASK
+#              before each of those and a headless run has nobody to ask.
+#              Either way it runs on the `minecraft_trusted` channel, where
+#              the action gate lets the Minecraft tools through and holds a
+#              house change for a person's approval in brAIn › Today.
 #
 # A scoping that cannot be read REFUSES the run rather than widening it: a
 # task asked for read-only that runs with Bash is worse than a task that
@@ -345,7 +355,7 @@ task_tool_flags() {
 
     case "$mode" in
         ''|full) return 0 ;;
-        house|read_only|minecraft|minecraft_talk) ;;
+        house|read_only|minecraft|minecraft_talk|minecraft_trusted) ;;
         *) return 1 ;;
     esac
 
@@ -408,6 +418,11 @@ PYTOOLS
     elif [ "$mode" = "minecraft" ]; then
         allow=$(printf '%s' "$lists" | sed -n '5p')
         deny=$(printf '%s' "$lists" | sed -n '6p')
+    elif [ "$mode" = "minecraft_trusted" ]; then
+        # Read on its own (process_task normally resolves it first): the
+        # narrow answer, `house`, never the full grant.
+        allow=$(printf '%s' "$lists" | sed -n '3p')
+        deny=$(printf '%s' "$lists" | sed -n '4p')
     elif [ "$mode" = "minecraft_talk" ]; then
         # Nothing allowed: only the deny list is passed.
         deny=$(printf '%s' "$lists" | sed -n '7p')
@@ -760,9 +775,33 @@ process_task() {
         unset BRAIN_PERSON_WORDS
     fi
 
-    # Somebody asked for this and the switch is on: the chat's reach.
+    # A trusted grown-up's request from the game (`minecraft_trusted`): the
+    # chat's reach on the game's own channel. The switch decides it here,
+    # once, as it does for the chat: on, the full grant without prompts;
+    # off, `house` (every MCP tool, nothing the chat would ask a person
+    # about first) and the gate holds a house change for approval. Who
+    # asked rides to the gate so the approval can be answered in the game.
     local task_acts=""
+    if [ "$task_tools" = "minecraft_trusted" ]; then
+        export BRAIN_CHANNEL=minecraft_trusted
+        unset BRAIN_PERSON_WORDS
+        local mc_player mc_person
+        mc_player=$(jq -r 'if (.speaker.player | type) == "string" then .speaker.player else empty end' "$work_file" 2>/dev/null | tr -cd 'A-Za-z0-9_.*' | cut -c1-17)
+        mc_person=$(jq -r 'if (.speaker.person | type) == "string" then .speaker.person else empty end' "$work_file" 2>/dev/null | tr -cd "A-Za-z0-9 _.'-" | cut -c1-40)
+        export BRAIN_MINECRAFT_PLAYER="$mc_player" BRAIN_MINECRAFT_PERSON="$mc_person"
+        if command -v brain_perms_flag > /dev/null 2>&1 && [ -n "$(brain_perms_flag)" ]; then
+            task_acts=true
+            task_tools=""
+        else
+            task_tools="house"
+        fi
+    else
+        unset BRAIN_MINECRAFT_PLAYER BRAIN_MINECRAFT_PERSON
+    fi
+
+    # Somebody asked for this and the switch is on: the chat's reach.
     if person_task_acts "$task_conversation" "$task_words" \
+            && [ "$BRAIN_CHANNEL" != "minecraft_trusted" ] \
             && [ "$task_tools" != "minecraft" ] && [ "$task_tools" != "minecraft_talk" ]; then
         task_acts=true
         task_tools=""
@@ -825,7 +864,7 @@ process_task() {
     fi
     if ! tool_flags_out=$(task_tool_flags "$task_tools" "$task_cameras"); then
         bashio::log.error "Task [$task_id] asked for tools='${task_tools}' and it could not be honoured"
-        write_task_result "$task_id" "brAIn refused this task: tools='${task_tools}' is not one of full, house, read_only, minecraft or minecraft_talk, or the analyst's tool lists could not be read from the panel. A task that cannot be scoped is not run with the full grant." "" refused
+        write_task_result "$task_id" "brAIn refused this task: tools='${task_tools}' is not one of full, house, read_only, minecraft, minecraft_talk or minecraft_trusted, or the analyst's tool lists could not be read from the panel. A task that cannot be scoped is not run with the full grant." "" refused
         journal_task error 0 "" "${task_model:-}" "tools scope could not be honoured" "$task_scheduled"
         return
     fi

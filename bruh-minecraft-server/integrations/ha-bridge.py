@@ -200,7 +200,8 @@ async def world(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 COMPANION_KINDS = ("companion", "companion_identity", "companion_say", "companion_appear",
-                   "companion_ask", "companion_build", "companion_undo", "companion_zone",
+                   "companion_ask", "companion_build", "companion_edit", "companion_look",
+                   "companion_undo", "companion_zone",
                    "companion_legacy", "companion_legacy_retire", "rename_world")
 
 
@@ -229,6 +230,12 @@ async def companion(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
     if kind == "companion_build":
         return await asyncio.to_thread(_panel, "POST", "/api/companion/build", _pick(
             payload, ("blocks", "player", "dimension", "title", "name", "by")), 60)
+    if kind == "companion_edit":
+        return await asyncio.to_thread(_panel, "POST", "/api/companion/edit", _pick(
+            payload, ("blocks", "fills", "player", "dimension", "title", "name", "by")), 170)
+    if kind == "companion_look":
+        return await asyncio.to_thread(_panel, "POST", "/api/companion/look", _pick(
+            payload, ("player", "x", "y", "z", "size", "dimension")), 55)
     if kind == "companion_undo":
         action_id = str(payload.get("id") or "last")
         if action_id != "last" and not _JOB_ID.match(action_id):
