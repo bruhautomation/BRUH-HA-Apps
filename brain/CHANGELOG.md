@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.28
+
+### Added
+
+- **brAIn can play with Vesper in Minecraft.** With BRUH Minecraft 1.17.6 or later, brAIn can ask a child a yes-or-no question in the game, undo something Vesper did, and rename the world (to "Vesper World", say). Each goes through the same approval as any other change. Asking about Minecraft also tells brAIn what Vesper has done, the questions asked and answered, and what each child likes. Voice can read all of this but cannot ask, undo or rename.
+
 ## 4.0.27
 
 ### Added

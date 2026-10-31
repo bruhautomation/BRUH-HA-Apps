@@ -5,6 +5,27 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.17.6
+
+### Added
+
+- **Vesper in the game.** Vesper can now play in the world with the family. It is off until you switch it on in the panel's Vesper card (or the `vesper_engine` service), and it is set per world.
+  - **A greeting.** When a child on the family list joins, Vesper appears beside them as a named allay, chimes, sparkles and waves, then goes after a little while.
+  - **Questions without reading.** brAIn or a parent can ask a child a yes-or-no question. Two coloured pads with a picture behind each appear beside them; standing on one for two seconds is the answer, confirmed with a chime and sparkles, and it is remembered for that child.
+  - **The family list.** Each player name, including Bedrock names with a leading dot, is mapped to a person and marked as a child, a reader or a guest. Named places can be protected so Vesper never builds there.
+  - **Moments.** Joining, standing still for a while, dying, an advancement, returning to a favourite place, a parent saying "Vesper" in chat and an answer each fire a `bruh_minecraft_moment` event for automations and brAIn.
+  - **A `vesper` sensor** says what Vesper is doing, and new services ask a question, undo an action, set the family and places, switch Vesper on or off, and rename the world.
+- **Rename the running world from brAIn or a service.** "Vesper World" becomes the folder `Vesper_World`, with "Vesper World" as the name in the server list.
+
+### Security
+
+- **Vesper's limits are enforced in code**:
+  - It only ever summons its own allay and only plays gentle sounds, quietly, to one player.
+  - It never places a block over anything, never builds in a protected place or next to a build, and backs up the world before anything large.
+  - Every action it takes is logged and can be undone from the panel; an undo leaves anything a child has changed since.
+  - A child is never told about another child.
+  - It does nothing while nobody is online, stops with a goodnight when a bedtime switch you choose turns on, and has a daily limit.
+
 ## 1.17.5
 
 ### Added
