@@ -5,6 +5,19 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.17.7
+
+### Changed
+
+- **The Vesper card is a setup you can follow.**
+  - At the top, one line says what Vesper is doing and why it is waiting: switched off, nobody on the family list, bedtime, or today's limit reached.
+  - **Family:** add people by name, choose Child or Grown-up, and type their in-game names, or tap a player who has been in the game to add them.
+  - **Bedtime:** pick a switch from a list and choose whether bedtime is when it is on or off.
+  - **Daily limit:** shows how much of today's limit is used.
+  - **Protected places:** add one from where someone is standing.
+  - **Ask a question:** choose who to ask and the two answers, each with a picture.
+  - Every field is labelled, and every save says whether it worked.
+
 ## 1.17.6
 
 ### Added
