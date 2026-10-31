@@ -188,6 +188,7 @@ import energy
 import engine
 import facts_store
 import garden_facts
+import minecraft_companion
 import minecraft_facts
 import episodes
 import esphome
@@ -7669,7 +7670,7 @@ async def _gate_decide(body: dict) -> dict:
     # fix's contract — and a Discuss session's ask rules are the CLI's,
     # which an allow from here (the hook printing nothing) never reaches.
     # It rides in the cache key, so flipping it is not answered from before.
-    if channel == gate.MINECRAFT_CHANNEL:
+    if gate.minecraft_channel(channel):
         # A request from the game's chat: decided in code, never by the
         # model and never cached — in-world acts pass (the owner's policy;
         # the game's engine holds its own guards), anything else is refused.
@@ -12303,14 +12304,15 @@ def _record_garden(snapshot: dict, now: float) -> int | None:
 
 
 def _record_game(snapshot: dict, now: float) -> int | None:
-    """Keep what Vesper learned in the Minecraft world as facts, one per
-    person and key (`minecraft_facts`), read off the states this pass
-    already fetched. None when the game could not be read."""
+    """Keep what the Minecraft companion learned as facts, one per person
+    and key (`minecraft_facts`), read off its memory file. None when it
+    could not be read. `snapshot` is the pass's, unused: the memory is
+    brAIn's own, not a sensor's."""
     try:
-        return minecraft_facts.sync(snapshot.get("states") or {}, now)
+        return minecraft_facts.sync(now)
     except Exception as exc:  # noqa: BLE001 — accounting must not fail the
         # pass it is accounting for; same rule as `journal.record`.
-        log.warning("could not file what Vesper learned: %s", exc)
+        log.warning("could not file what the Minecraft companion learned: %s", exc)
         return None
 
 
@@ -26232,6 +26234,54 @@ async def h_morph_request(request: web.Request) -> web.Response:
     return web.json_response(await asyncio.to_thread(morph_service.request, kind, payload))
 
 
+# ⚙ › Minecraft (minecraft_companion.py): the settings of brAIn's Minecraft
+# faculty, and what it did in the world (BRUH Minecraft's own action log,
+# read and undone through its services, so the two lists agree).
+async def h_minecraft_get(request: web.Request) -> web.Response:
+    import ha_data  # noqa: PLC0415 — deferred, as everywhere in this module
+    view = await asyncio.to_thread(minecraft_companion.view)
+    try:
+        addon = await ha_data.call_with_response("bruh_minecraft", "get_companion", {}, 15)
+        view["present"] = True
+        view["actions"] = (addon.get("actions") or [])[:30]
+        view["online"] = addon.get("online") or []
+        view["accounts"] = addon.get("accounts") or {}
+    except Exception as exc:  # noqa: BLE001 — no BRUH Minecraft, or it is restarting
+        view["present"] = False
+        view["actions"] = []
+        view["why_absent"] = str(exc)[:200]
+    return web.json_response(view)
+
+
+async def h_minecraft_put(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except ValueError:
+        raise web.HTTPBadRequest(text="send the settings as JSON") from None
+    try:
+        saved = await asyncio.to_thread(minecraft_companion.save, body)
+    except minecraft_companion.rules.RulesError as exc:
+        raise web.HTTPBadRequest(text=str(exc)) from None
+    return web.json_response({"settings": saved})
+
+
+async def h_minecraft_undo(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    import ha_data  # noqa: PLC0415 — deferred, as everywhere in this module
+    action_id = str((body or {}).get("id") or "")
+    if action_id and not re.fullmatch(r"[0-9]{8}-[0-9a-f]{6}", action_id):
+        raise web.HTTPBadRequest(text="that is not one of the companion's action ids")
+    try:
+        done = await ha_data.call_with_response(
+            "bruh_minecraft", "undo_action", {"id": action_id} if action_id else {}, 60)
+    except Exception as exc:  # noqa: BLE001 — the add-on's refusal, said
+        raise web.HTTPBadRequest(text=f"BRUH Minecraft could not undo it: {exc}") from None
+    return web.json_response(done)
+
+
 async def h_personality_get(request: web.Request) -> web.Response:
     return web.json_response(await asyncio.to_thread(personality.payload))
 
@@ -28325,6 +28375,9 @@ def make_app() -> web.Application:
     app.router.add_put("/api/features", h_features_put)
     app.router.add_get("/api/morph/state", h_morph_state)
     app.router.add_post("/api/morph/request", h_morph_request)
+    app.router.add_get("/api/minecraft", h_minecraft_get)
+    app.router.add_put("/api/minecraft", h_minecraft_put)
+    app.router.add_post("/api/minecraft/undo", h_minecraft_undo)
     app.router.add_get("/api/personality", h_personality_get)
     app.router.add_put("/api/personality", h_personality_put)
     app.router.add_post("/api/personality/growth", h_personality_growth)
@@ -28457,6 +28510,12 @@ def make_app() -> web.Application:
         await asyncio.to_thread(instructions.export_builtins)
         # A browser left over from before the restart (report #355).
         await asyncio.to_thread(browser_reaper.maybe_reap)
+        # ⚙ › Minecraft's "Default" models, written beside its settings for
+        # the integration's listener (the thinking level may have moved).
+        try:
+            await asyncio.to_thread(minecraft_companion.publish)
+        except Exception:  # noqa: BLE001 — a game setting never holds the panel up
+            log.debug("could not publish the Minecraft models", exc_info=True)
         # The household's personality used to live in Morph's own code;
         # read it out of Morph's copy ONCE, while brAIn has no file of its
         # own, before the terminal's prompt is written from it. Morph's

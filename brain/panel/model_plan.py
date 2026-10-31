@@ -123,6 +123,12 @@ JOBS: dict[str, tuple[str, str, bool, bool]] = {
     "fix_plan":        ("sonnet", "high",   False, True),
     "voice":           ("sonnet", "low",    True,  False),
     "task":            ("sonnet", "medium", False, True),
+    # Minecraft's companion (custom_components/brain/minecraft.py): a reply
+    # in the game's chat is somebody waiting at a keyboard, often a child —
+    # quick and cheap; a build asked for there is worth the middle tier.
+    # ⚙ › Minecraft overrides either.
+    "minecraft_chat":  ("haiku",  "low",    False, True),
+    "minecraft_build": ("sonnet", "medium", True,  True),
     # Home Assistant's own maintainer (tidy, the house book, the nightly
     # SRE pass, the upgrade advisor). Naming in a house's own style and a
     # manual are cheap to get slightly wrong — every row is reviewed or

@@ -138,15 +138,22 @@ def interactive(channel: str) -> bool:
 # A grown-up's request typed in BRUH Minecraft's chat (the `minecraft` task
 # scope, on its own channel). The owner's policy: an in-world act asked for
 # in the game needs no approval card, because the grown-up asking there IS
-# the parent asking — it still passes every guard, budget and undo of the
-# game's engine. Anything else on that channel is outside the game, and is
-# refused with the sentence the game says back.
+# the parent asking — it still passes every guard and undo BRUH Minecraft
+# holds next to the world, and brAIn's own privacy and bedtime rules.
+# Anything else on that channel is outside the game, and is refused with
+# the sentence the game says back.
 MINECRAFT_CHANNEL = "minecraft"
 MINECRAFT_WORLD_TOOL = "minecraft_world"
 MINECRAFT_CHAT_ACTIONS = frozenset({"time", "weather", "say", "ask", "undo", "build"})
 MINECRAFT_OUTSIDE = ("this request came from the game's chat, which may act only in the "
                      "Minecraft world; anything else needs approval in brAIn — say "
                      "\"I'll need you to approve that in brAIn.\"")
+
+
+def minecraft_channel(channel: str) -> bool:
+    """Whether a run is a request from the game's chat (both of its scopes,
+    `minecraft` and the words-only `minecraft_talk`, run on this channel)."""
+    return str(channel or "") == MINECRAFT_CHANNEL
 
 
 def minecraft_chat_verdict(tool: str, args: dict) -> tuple[str, str]:

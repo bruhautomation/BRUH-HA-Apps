@@ -7418,3 +7418,9 @@ html.in-shell.bar-hidden .topbar > .shelledit { opacity: 0; visibility: hidden; 
   .kctxkinds .pill { min-height: 44px; }
   .kctxabout .linkish { display: inline-flex; align-items: center; min-height: 44px; }
 }
+
+/* ⚙ › Minecraft: the family rows and what the companion did. */
+.mcperson { border: 1px solid var(--line, rgba(127,127,127,.3)); border-radius: 8px; padding: 8px 12px 12px; margin: 0 0 10px; display: grid; gap: 4px; }
+.mcperson legend { padding: 0 4px; font-weight: 600; }
+.mcacts { list-style: none; padding: 0; margin: 0 0 12px; }
+.mcacts li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line, rgba(127,127,127,.2)); overflow-wrap: anywhere; }

@@ -590,7 +590,7 @@ needs a restart.
 | Switch | What it does | Where its work goes |
 |---|---|---|
 | **Morph dashboard** | The **Home** tab: a dashboard laid out by what matters in the house right now, which brAIn designs and edits with you. The Morph dashboard below. | Stays in this house |
-| **Personality** | brAIn takes the name and personality you give it in ⚙ › Personality, everywhere: the sidebar, every screen, the chat, voice and notifications. With a name set, nothing says "brAIn" any more — it is "talk to Vesper". Off, the personality you wrote is kept and nothing reads it. | Stays in this house |
+| **Personality** | brAIn takes the name and personality you give it in ⚙ › Personality, everywhere: the sidebar, every screen, the chat, voice and notifications. With a name set, nothing says "brAIn" any more — it is "talk to" whatever you called it, and in Minecraft the companion goes by it too. Off, the personality you wrote is kept and nothing reads it. | Stays in this house |
 | **Learning loop** (self-improvement) | brAIn improves **itself**, here: it watches how its dashboard is used, suggests changes, keeps this household's lessons and may propose changes to its own dashboard code. Off, brAIn still does what you ask and never changes itself on its own. It works on the Morph dashboard, so it does nothing while that is off. | Stays in this house |
 | **Development loop** | brAIn reports its own faults as issues in your private GitHub repository, where a cloud routine fixes brAIn's code and ships an update. The repository, the token, what it sends and its daily limits are in ⚙ › Developer. | **Leaves this house**, with names, rooms and entity ids replaced by aliases |
 
@@ -3375,7 +3375,7 @@ The \`tools\` field is that way, and it has four values:
 | \`full\` **(default)** | Everything, exactly as before: the shell, file edits, web access, and every Home Assistant tool. |
 | \`house\` | Every Home Assistant tool — it can read your house and act on it — with no shell, no file reads or edits, and no web access. |
 | \`read_only\` | The same list brAIn's own scheduled analysis runs with: it can look at anything in Home Assistant and change nothing. It cannot read files in \`/config\` either, so \`secrets.yaml\` stays out of reach of an automation that only asked a question. |
-| \`minecraft\` | A grown-up's request typed in BRUH Minecraft's chat (Vesper sends these): the Minecraft world's tools — say something as Vesper, ask a child a pad question, build something small, undo, time, weather — a few reads, and what brAIn remembers. Never a house service: no \`call_service\`, no \`control_*\`, even in YOLO mode, and anything outside the game is answered "I'll need you to approve that in brAIn". An in-world act needs no approval card (the grown-up asking in the game is the parent asking); the game's engine still checks, counts and can undo every one. Needs an administrator, like \`house\`. |
+| \`minecraft\` | A grown-up's request typed in BRUH Minecraft's chat (brAIn's Minecraft companion sends these): the Minecraft world's tools — say something as the companion, ask a child a pad question, build something small, undo, time, weather — a few reads, and what brAIn remembers. Never a house service: no \`call_service\`, no \`control_*\`, even in YOLO mode, and anything outside the game is answered "I'll need you to approve that in brAIn". An in-world act needs no approval card (the grown-up asking in the game is the parent asking); BRUH Minecraft still checks every one and can undo it. Needs an administrator, like \`house\`. A child's line is answered by a run with no tools at all, which you cannot ask for. |
 
 \`full\` is the default on purpose, so nothing you have already written
 changes. Narrow it per call:
@@ -4140,6 +4140,57 @@ panel; each add-on keeps its own.
 Every one of these goes through the same checks as any other service call: an
 agent's **Blocked services** list applies, so you can take \`bruh_minecraft.teleport\`
 away from the kitchen speaker if you want to.
+`,
+  },
+  {
+    id: "it-plays-minecraft-with-your-family",
+    group: "Other add-ons",
+    title: "It plays Minecraft with your family",
+    body: `
+# It plays Minecraft with your family
+
+With **BRUH Minecraft** and its integration installed, brAIn can play in the
+world with your family as a companion, under the name you gave it in ⚙ ›
+Personality ("brAIn" if you gave none). Set it up in **⚙ › Minecraft** (the
+section shows only when BRUH Minecraft is there):
+
+- **On or off**, and whether it says hello when someone from the family joins.
+- **The family**: each person, Child or Grown-up, their in-game names, and any
+  nickname a server script shows for them in chat. Anybody not on the list is
+  left alone, whatever they type.
+- **Bedtime**: a switch (or a door sensor and the state that means bedtime).
+  At bedtime the children get a goodnight and nothing new starts for them.
+- **Limits**: brAIn turns a day, things it does in the world a day, and things
+  it does for one player in one sitting. **0 means no limit**, which is where
+  they all start. One reply at a time per person, a few seconds apart, is what
+  stops a flood.
+- **Models**: one for answering in chat (by default the quick one) and one for
+  building (by default the chat's own model), each with its effort.
+- **What it did**: everything it did in the world, with **Undo**.
+
+In the game, a grown-up starts a chat message with its name: "**Name**, build
+Kaz a little bridge", "**name** status", "**name** stop" / "**name** start", "**name**
+undo", "**name** come here", "**name** help". Every line from the family that
+starts with its name gets an answer in the chat under that name — no
+automation needed. What a grown-up asks may act **only in the game** (say
+something, put a question on the pads, build something small, undo, time and
+weather); anything outside it is answered "I'll need you to approve that in
+brAIn". A child's line gets a friendly answer and never does anything. A
+child is never told about another child. A grown-up's name is believed only
+when the server checks accounts. What it learns about each person becomes
+something brAIn remembers.
+
+**The contract with BRUH Minecraft.** brAIn listens to the add-on's game
+events — \`bruh_minecraft_chat\`, \`_join\`, \`_leave\`, \`_death\`, \`_advancement\`,
+\`_place\` and \`_answer\` — and acts only through its services: \`companion_say\`
+(words under the companion's name), \`companion_appear\`, \`ask_choice\`,
+\`companion_build\`, \`undo_action\`, \`set_zone\`, \`set_companion\`,
+\`get_companion\` and \`companion_handover\`. The add-on decides nothing and
+holds the world-side safety itself (only its own allay, quiet sounds, blocks
+only into empty space and never in a protected place, undo for everything).
+BRUH Minecraft's DOCS has the fields. On the first run after updating from
+BRUH Minecraft 1.17.7, brAIn takes over the family list, memory and switch the
+add-on kept, once.
 `,
   },
   {

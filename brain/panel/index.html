@@ -1081,6 +1081,8 @@
         <span class="setnavname">Cameras &amp; calendars</span><span class="setnavsum" id="setSumSources">What brAIn may look at</span></button>
       <button type="button" class="setnavbtn" data-sec="personality" role="tab" aria-controls="setsecPersonality">
         <span class="setnavname">Personality</span><span class="setnavsum" id="setSumPersonality">Who brAIn is in this house</span></button>
+      <button type="button" class="setnavbtn" data-sec="minecraft" role="tab" aria-controls="setsecMinecraft" id="setNavMinecraft" hidden>
+        <span class="setnavname">Minecraft</span><span class="setnavsum" id="setSumMinecraft">The companion that plays with your family</span></button>
       <button type="button" class="setnavbtn" data-sec="instructions" role="tab" aria-controls="setsecInstructions">
         <span class="setnavname">Instructions</span><span class="setnavsum" id="setSumInstructions">What brAIn tells Claude</span></button>
       <button type="button" class="setnavbtn" data-sec="diagnostics" role="tab" aria-controls="setsecDiagnostics">
@@ -1176,6 +1178,19 @@
           <p class="hint featwarn">Experimental: Morph is still being actively developed and may
             be unstable. Keep your usual dashboards beside it.</p>
           <div id="dashBody">Open this section to load the dashboard's settings.</div>
+        </div>
+      </section>
+
+      <!-- The Minecraft faculty (custom_components/brain/minecraft.py), shown
+           only while BRUH Minecraft's integration is there. Its settings are
+           brAIn's; BRUH Minecraft only reports and carries out. -->
+      <section class="setsec" id="setsecMinecraft" data-sec="minecraft" role="tabpanel" hidden>
+        <header class="setsechead">
+          <button type="button" class="setback" aria-label="All settings">‹ Settings</button>
+          <h2 class="setsecname">Minecraft</h2>
+        </header>
+        <div class="setsecbody">
+          <div id="mcBody">Open this section to load the Minecraft companion.</div>
         </div>
       </section>
 

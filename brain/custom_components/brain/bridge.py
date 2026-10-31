@@ -483,12 +483,13 @@ class ClaudeBridge:
         memory: bool = False,
         scheduled: bool = False,
         cameras: bool = False,
+        effort: str | None = None,
     ) -> str:
         """Send an automation task and wait for the result's text."""
         answer = await self.async_send_task_full(
             prompt, notify=notify, notify_entity=notify_entity,
             timeout=timeout, model=model, tools=tools, schema=schema,
-            memory=memory, scheduled=scheduled, cameras=cameras)
+            memory=memory, scheduled=scheduled, cameras=cameras, effort=effort)
         return answer["text"]
 
     async def async_send_task_full(
@@ -503,6 +504,7 @@ class ClaudeBridge:
         memory: bool = False,
         scheduled: bool = False,
         cameras: bool = False,
+        effort: str | None = None,
     ) -> dict:
         """Send a task and wait for the whole result: ``{"text", "data"}``.
 
@@ -541,6 +543,10 @@ class ClaudeBridge:
             task["notify_entity"] = notify_entity
         if model and model != "default":
             task["model"] = model
+        # The CLI's --effort, written only when asked for (the Minecraft
+        # faculty's own setting); the listener passes nothing it cannot name.
+        if effort in ("low", "medium", "high", "xhigh", "max"):
+            task["effort"] = effort
         # Written only when it narrows something. The listener reads a
         # missing key as `full`, which is what every task before this field
         # existed asked for and what BRight's director still writes, so the

@@ -188,6 +188,7 @@ def layout(text: str) -> str:
         if version is not None and int(version) >= 5:
             return "new"
     except ValueError:
+        # A version that is not a number says nothing; the keys decide.
         pass
     if re.search(r"^java:\s*$", text, re.M):
         return "new"

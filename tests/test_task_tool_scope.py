@@ -283,12 +283,17 @@ class TestTheBridgeWritesIt(unittest.TestCase):
             "time": __import__("time"),
             "timeout": 300, "notify_entity": None,
             "model": None, "tools": None, "schema": None,
-            "memory": False, "scheduled": False, "cameras": False,
+            "memory": False, "scheduled": False, "cameras": False, "effort": None,
         }
         scope.update(kw)
         exec(compile(snippet.replace("\n        ", "\n"), "<bridge>", "exec"),
              {}, scope)
         return scope["task"]
+
+    def test_an_effort_rides_only_when_it_is_one_the_cli_takes(self):
+        self.assertEqual(self._task(effort="low")["effort"], "low")
+        self.assertNotIn("effort", self._task(effort=None))
+        self.assertNotIn("effort", self._task(effort="--model opus"))
 
     def test_the_default_puts_the_same_json_on_disk_it_always_did(self):
         self.assertNotIn("tools", self._task(tools="full"))

@@ -8,7 +8,7 @@
  * a phone (390) and a desk (1200), against a stubbed `hass` whose sensors
  * carry what worldview.py publishes. Fails on: the world's time, day or
  * weather missing; a player or where they are missing (a Bedrock name with
- * its dot included); Vesper's current job, its progress or a finished
+ * its dot included); the current build job, its progress or a finished
  * build's picture missing; the feed missing; anything about TPS or latency;
  * any button, hover text or floating element (Morph's rules); text under
  * 11 px; the card wider than its column; a page error. Then the quiet
@@ -45,12 +45,12 @@ const HOUSE = {
       { time: iso(30), kind: 'death', player: '.KidPlays', text: '.KidPlays was slain by Zombie' },
       { time: iso(200), kind: 'advancement', player: 'Alex', text: 'Alex made the advancement Stone Age' },
       { time: iso(400), kind: 'chat', player: 'Alex', text: 'Alex: look at the tower, it is getting really tall now and I think we need more glass' },
-      { time: iso(900), kind: 'build', player: 'Vesper', text: 'Vesper started building Watchtower' },
+      { time: iso(900), kind: 'build', player: 'brAIn', text: 'brAIn started building Watchtower' },
       { time: iso(1200), kind: 'join', player: '.KidPlays', text: '.KidPlays joined' },
       { time: iso(1300), kind: 'save', player: null, text: 'The world was saved' },
     ],
     last_seen: { Alex: iso(5), '.KidPlays': iso(5) } }),
-  [`${P}vesper_building`]: st('vesper_building', 'Watchtower', {
+  [`${P}building`]: st('building', 'Watchtower', {
     progress: 40, part: 'curiosity', queued: 2,
     current: { id: '20261031-abcdef', title: 'Watchtower', part: 'curiosity', status: 'building',
       progress: 40, started: iso(900) },
@@ -108,7 +108,7 @@ for (const [width, column] of [[390, 358], [1200, 520]]) {
   const t = await text(page);
   for (const want of ['19:00', 'Day 41', 'Sunset', 'Raining', 'On now · 2', 'Alex',
     'Overworld · near Watchtower', '.KidPlays', 'Nether · -8, 70, 4', 'creative', '♥ 19/20',
-    'Vesper is building', 'Watchtower', 'curiosity · 40%', 'North wall',
+    'Building', 'Watchtower', 'curiosity · 40%', 'North wall',
     'Lantern path', '.KidPlays was slain by Zombie', 'Alex made the advancement Stone Age',
     'Saved 4 min ago', 'backed up 1 h ago']) {
     if (want && !t.includes(want)) problems.push(`${width}: "${want}" is not on the card`);
@@ -152,7 +152,7 @@ for (const [width, column] of [[390, 358], [1200, 520]]) {
     window.card.hass = { states: { ...house }, entities: {} };
     const same = window.card.shadowRoot.querySelector('.wrap') === before;
     const next = JSON.parse(JSON.stringify(house));
-    next['sensor.bruh_minecraft_server_vesper_building'].attributes.current.progress = 55;
+    next['sensor.bruh_minecraft_server_building'].attributes.current.progress = 55;
     window.card.hass = { states: next, entities: {} };
     return { same, now: window.card.shadowRoot.querySelector('.bar i').style.width };
   }, HOUSE);
@@ -161,14 +161,14 @@ for (const [width, column] of [[390, 358], [1200, 520]]) {
   await page.close();
 }
 
-// Nobody on: who was on last, and still the world and Vesper.
+// Nobody on: who was on last, and still the world and the build.
 {
   const quiet = JSON.parse(JSON.stringify(HOUSE));
   quiet[`${P}players_online`] = st('players_online', 0, { players: [], details: [] });
   const page = await mount(390, 358, quiet);
   const t = await text(page);
   if (!t.includes('Nobody is on. Last on: Alex just now')) problems.push(`nobody on: "${t.slice(0, 200)}"`);
-  if (!t.includes('Watchtower')) problems.push('nobody on: Vesper is gone from the card');
+  if (!t.includes('Watchtower')) problems.push('nobody on: the build is gone from the card');
   await page.close();
 }
 // The server down: the world says so, the history stays.

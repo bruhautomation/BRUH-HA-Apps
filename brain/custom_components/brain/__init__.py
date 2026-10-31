@@ -401,11 +401,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # `parse_action` rejects far more than it accepts.
         unsub_actions = hass.bus.async_listen(
             EVENT_MOBILE_ACTION, _make_action_handler(hass))
+        # The Minecraft faculty (minecraft.py): BRUH Minecraft's game events
+        # in, its services out. Account-wide like the watchers, and inert
+        # while the bruh_minecraft integration is not there.
+        from . import minecraft as minecraft_part
+
+        stop_minecraft = await minecraft_part.async_setup(
+            hass, bridge, async_track_time_interval)
 
         def _stop_learning() -> None:
             unsub_learning()
             unsub_findings()
             unsub_actions()
+            stop_minecraft()
             # The Repairs entries are this watcher's, so they leave with
             # it: a reload puts them back on the first poll, and removing
             # the integration should not leave brAIn's rows on somebody's
@@ -1181,7 +1189,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 timeout=call.data.get("timeout"),
                 tools=tools,
                 schema=schema if isinstance(schema, dict) else None,
-                # The game's Vesper is the house's assistant: a request from
+                # The game companion is the house's assistant: a request from
                 # its chat is answered knowing what brAIn knows here.
                 memory=tools == "minecraft",
             )

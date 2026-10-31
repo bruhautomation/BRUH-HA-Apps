@@ -974,9 +974,11 @@ ANALYST_DENIED = [
     *PLATFORM_DENIED,
 ]
 # The `minecraft` task scope: a grown-up's request typed in the game's chat
-# (BRUH Minecraft's Vesper, through `brain.ask` with `tools: minecraft`).
-# The game world's tool — `minecraft_world`, whose in-world acts the BRUH
-# Minecraft engine guards, logs and can undo — and a handful of reads for
+# (brAIn's Minecraft faculty, custom_components/brain/minecraft.py, or
+# `brain.ask` with `tools: minecraft`). The game world's tool —
+# `minecraft_world`, whose in-world acts BRUH Minecraft guards, logs and can
+# undo, and brAIn's MCP server holds to its privacy and bedtime rules — and
+# a handful of reads for
 # house context. Everything else the server registers is DENIED for it by
 # the automation listener (both lists above, minus these), so a chat line
 # cannot reach `call_service` or any `control_*` tool; the MCP server
