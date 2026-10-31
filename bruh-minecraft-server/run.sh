@@ -380,8 +380,12 @@ download_server_jar() {
 
     if "${SCRIPTS_DIR}/download-server.sh"; then
         bashio::log.info "Server jar ready: ${MC_SERVER_DIR}/server.jar"
+    elif [ -s "${MC_SERVER_DIR}/server.jar" ]; then
+        # A transient failure must not stop an add-on that has a working jar
+        # (#575). The retry is the next start: it asks again every time.
+        bashio::log.warning "Could not check for or download a new server jar; starting the jar that is already installed. The update is tried again at the next start."
     else
-        bashio::log.error "Failed to download server jar"
+        bashio::log.error "Failed to download server jar, and no server jar is installed, so the server cannot start"
         return 1
     fi
 }
@@ -739,13 +743,43 @@ graceful_shutdown() {
 trap graceful_shutdown SIGTERM SIGINT SIGHUP
 
 # ----------------------------------------------------------------------------
+# Say plainly at start whether world backups can copy the world (#570: an image
+# without rsync made every backup hold only config files while reporting done).
+# A failed check is loud but does not stop the server.
+# ----------------------------------------------------------------------------
+check_backup_tools() {
+    local out
+    if out=$(BACKUP_USE_GIT="${BACKUP_USE_GIT}" "${SCRIPTS_DIR}/backup.sh" --check 2>&1); then
+        bashio::log.info "${out}"
+    else
+        bashio::log.error "${out}"
+        bashio::log.error "World backups will fail until this is fixed"
+    fi
+}
+
+# ----------------------------------------------------------------------------
+# Warn (log + panel status) when memory_mb leaves the rest of the host too
+# little. Never changes the option.
+# ----------------------------------------------------------------------------
+check_memory_headroom() {
+    local msg
+    msg=$(python3 "${SCRIPTS_DIR}/memory-check.py" 2>/dev/null) || true
+    if [ -n "${msg}" ]; then
+        bashio::log.warning "${msg}"
+    fi
+}
+
+# ----------------------------------------------------------------------------
 # Run the Minecraft server with auto-restart on crash
 # ----------------------------------------------------------------------------
 run_server_loop() {
-    local max_crash_restarts=5
-    local crash_window_seconds=300
-    local crash_count=0
-    local crash_window_start=0
+    # Restarts after a crash back off (10 s, 30 s, 1 min, 2 min, then 5 min) and
+    # are capped per hour, so a server that dies on every start does not spin
+    # forever, and one that was killed once comes straight back.
+    local max_crash_restarts=10      # per crash window
+    local crash_window_seconds=3600  # one hour
+    local backoff_seconds=(10 30 60 120 300)
+    local crash_times=()
     local first_iteration=1
 
     while true; do
@@ -768,12 +802,24 @@ run_server_loop() {
         write_state "starting"
         bashio::log.info "Launching Minecraft server"
 
-        # Launch server; script exits with the JVM's exit code
-        su-exec minecraft "${SCRIPTS_DIR}/server-launcher.sh"
-        local rc=$?
+        # Launch server; script exits with the JVM's exit code. The `|| rc=$?`
+        # matters: bashio runs with errexit, and a bare non-zero exit here
+        # (a killed JVM is 137) ended run.sh itself, so the loop below never
+        # ran and the add-on stayed down (#585).
+        local rc=0
+        su-exec minecraft "${SCRIPTS_DIR}/server-launcher.sh" || rc=$?
 
         write_state "stopped"
         bashio::log.warning "Minecraft server exited with code ${rc}"
+
+        # A world rename holds the relaunch while it moves folders under the
+        # stopped server; the panel then restarts the whole add-on.
+        local held=0
+        while [ -f "${MC_PANEL_STATE}/hold_restart" ] && [ "${held}" -lt 600 ]; do
+            sleep 1
+            held=$((held + 1))
+        done
+        rm -f "${MC_PANEL_STATE}/hold_restart"
 
         # Honour an explicit "no_restart" request from the panel / HA bridge.
         # The flag is cleared after we act on it so future lifecycle events work.
@@ -789,29 +835,39 @@ run_server_loop() {
         fi
 
         # Clean exits (0) restart automatically — this is the code path the
-        # "Restart" button uses (RCON stop = rc 0). Crashes (non-zero) also
-        # restart but are rate-limited by the crash-window logic below.
+        # "Restart" button uses (RCON stop = rc 0). Any non-zero exit is a
+        # crash: it restarts too, with a backoff and the hourly cap.
         if [ "${rc}" -eq 0 ]; then
             bashio::log.info "Clean exit — restarting in 3s"
             sleep 3
             continue
         fi
 
-        local now
-        now=$(date +%s)
-        if [ $((now - crash_window_start)) -gt "${crash_window_seconds}" ]; then
-            crash_window_start=${now}
-            crash_count=0
-        fi
-        crash_count=$((crash_count + 1))
+        case "${rc}" in
+            137) bashio::log.warning "The Java process was killed from outside (exit 137, SIGKILL) with no crash report. This is most likely Linux ending it because the host ran out of memory - lower 'memory_mb' if this repeats." ;;
+            143) bashio::log.warning "The Java process was stopped by a signal (exit 143, SIGTERM) that did not come from this add-on." ;;
+            *)   bashio::log.warning "The Java process crashed (exit ${rc})." ;;
+        esac
 
-        if [ "${crash_count}" -ge "${max_crash_restarts}" ]; then
-            bashio::log.fatal "Server crashed ${crash_count} times in ${crash_window_seconds}s; giving up"
+        local now kept=() t
+        now=$(date +%s)
+        for t in "${crash_times[@]}"; do
+            [ $((now - t)) -lt "${crash_window_seconds}" ] && kept+=("${t}")
+        done
+        kept+=("${now}")
+        crash_times=("${kept[@]}")
+        local crash_count=${#crash_times[@]}
+
+        if [ "${crash_count}" -gt "${max_crash_restarts}" ]; then
+            bashio::log.fatal "Server stopped ${crash_count} times within an hour (more than ${max_crash_restarts} restarts per hour); giving up. Fix the cause, then start the add-on again."
             return "${rc}"
         fi
 
-        bashio::log.warning "Restarting in 10s (crash ${crash_count}/${max_crash_restarts})"
-        sleep 10
+        local idx=$((crash_count - 1))
+        [ "${idx}" -ge "${#backoff_seconds[@]}" ] && idx=$((${#backoff_seconds[@]} - 1))
+        local delay=${backoff_seconds[${idx}]}
+        bashio::log.warning "Restarting in ${delay}s (restart ${crash_count} of ${max_crash_restarts} allowed per hour)"
+        sleep "${delay}"
     done
 }
 
@@ -898,6 +954,8 @@ main() {
     install_bedrock_support
     cleanup_duplicate_plugins
 
+    check_backup_tools
+    check_memory_headroom
     start_backup_watcher
     start_stats_collector
     start_ha_bridge

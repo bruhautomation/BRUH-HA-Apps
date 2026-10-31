@@ -13,6 +13,11 @@
 #                              restart the add-on for the change to take effect.
 #   delete <name>           — remove a profile + its backups (refuses the
 #                              currently-active profile)
+#   rename <old> <new>      — move a profile (and its level folders, its
+#                              level-name and its backups) to a new name. The
+#                              caller stops the server first when <old> is the
+#                              active profile, and updates the active_world
+#                              add-on option afterwards.
 #   active                  — print the currently-active profile name
 #
 # Profile name constraints: 1-32 chars, [A-Za-z0-9_-].
@@ -27,7 +32,7 @@ set -o pipefail
 
 MC_WORLDS_DIR="${MC_WORLDS_DIR:-/config/minecraft-worlds}"
 MC_BACKUPS_ROOT="${MC_BACKUPS_ROOT:-/config/minecraft-backups}"
-MC_SERVER_LINK="/config/minecraft"
+MC_SERVER_LINK="${MC_SERVER_LINK:-/config/minecraft}"
 
 log()  { printf '[world-manager] %s\n' "$*" >&2; }
 die()  { log "ERROR: $*"; exit "${2:-1}"; }
@@ -164,6 +169,72 @@ cmd_delete() {
     log "Deleted profile: ${name}"
 }
 
+# Move a profile to a new name. Every step is undone if a later one fails, so
+# a refusal or an error never leaves half a world behind.
+cmd_rename() {
+    local old="${1:-}" new="${2:-}"
+    valid_name "${old}" || die "invalid current name" 2
+    valid_name "${new}" || die "invalid new name (1-32 characters: letters, digits, _ and -)" 2
+    [ "${old}" != "${new}" ] || die "the new name is the same as the current one" 2
+    [ -d "${MC_WORLDS_DIR}/${old}" ] || die "world '${old}' does not exist" 2
+    [ ! -e "${MC_WORLDS_DIR}/${new}" ] || die "a world named '${new}' already exists" 2
+    [ ! -e "${MC_BACKUPS_ROOT}/${new}" ] || die "a backup folder named '${new}' already exists" 2
+
+    local src="${MC_WORLDS_DIR}/${old}" dst="${MC_WORLDS_DIR}/${new}"
+    local props="${dst}/server.properties" level=""
+    local moved_backups=0 moved_level=0 relinked=0 link_was=""
+
+    undo() {
+        [ "${relinked}" -eq 1 ] && ln -sfn "${link_was}" "${MC_SERVER_LINK}" 2>/dev/null
+        if [ "${moved_level}" -eq 1 ]; then
+            for sfx in "" _nether _the_end; do
+                [ -d "${dst}/${new}${sfx}" ] && mv "${dst}/${new}${sfx}" "${dst}/${old}${sfx}"
+            done
+            [ -f "${props}.bak" ] && mv -f "${props}.bak" "${props}"
+        fi
+        [ "${moved_backups}" -eq 1 ] && mv "${MC_BACKUPS_ROOT}/${new}" "${MC_BACKUPS_ROOT}/${old}"
+        [ -d "${dst}" ] && [ ! -e "${src}" ] && mv "${dst}" "${src}"
+        return 0
+    }
+
+    mv "${src}" "${dst}" || die "could not move the world folder" 1
+
+    if [ -f "${props}" ]; then
+        level=$(grep -E '^level-name=' "${props}" | head -n 1 | cut -d= -f2-)
+    fi
+    # Only a level folder that carries the world's own name is renamed with it;
+    # one called "world" (the default) keeps its name, because it is the
+    # server's, not the profile's.
+    if [ "${level}" = "${old}" ]; then
+        cp -f "${props}" "${props}.bak" || { undo; die "could not read server.properties" 1; }
+        moved_level=1
+        for sfx in "" _nether _the_end; do
+            if [ -d "${dst}/${old}${sfx}" ]; then
+                mv "${dst}/${old}${sfx}" "${dst}/${new}${sfx}" || { undo; die "could not rename the level folder '${old}${sfx}'" 1; }
+            fi
+        done
+        if ! sed "s/^level-name=.*/level-name=${new}/" "${props}.bak" > "${props}.tmp" \
+                || ! mv -f "${props}.tmp" "${props}"; then
+            rm -f "${props}.tmp"
+            undo; die "could not update level-name in server.properties" 1
+        fi
+    fi
+
+    if [ -d "${MC_BACKUPS_ROOT}/${old}" ]; then
+        mv "${MC_BACKUPS_ROOT}/${old}" "${MC_BACKUPS_ROOT}/${new}" \
+            || { undo; die "could not move the backups folder" 1; }
+        moved_backups=1
+    fi
+
+    if [ -L "${MC_SERVER_LINK}" ] && [ "$(readlink "${MC_SERVER_LINK}")" = "${src}" ]; then
+        link_was="${src}"
+        ln -sfn "${dst}" "${MC_SERVER_LINK}" || { undo; die "could not repoint ${MC_SERVER_LINK}" 1; }
+        relinked=1
+    fi
+    rm -f "${props}.bak"
+    log "Renamed world '${old}' to '${new}'"
+}
+
 cmd_active() {
     active_world
 }
@@ -175,6 +246,7 @@ case "${sub}" in
     create)  cmd_create "$@" ;;
     switch)  cmd_switch "$@" ;;
     delete)  cmd_delete "$@" ;;
+    rename)  cmd_rename "$@" ;;
     active)  cmd_active "$@" ;;
-    *)       die "usage: world-manager.sh {list|create|switch|delete|active} [args]" 2 ;;
+    *)       die "usage: world-manager.sh {list|create|switch|delete|rename|active} [args]" 2 ;;
 esac

@@ -400,20 +400,42 @@ main() {
     log "Currently installed: ${installed_before} (request: ${SERVER_TYPE} ${VERSION_REQ})"
 
     case "${SERVER_TYPE}" in
-        paper)   download_paper_like paper ;;
-        folia)   download_paper_like folia ;;
-        purpur)  download_purpur ;;
-        vanilla) download_vanilla ;;
-        fabric)  download_fabric ;;
-        forge)   download_forge ;;
+        paper|folia|purpur|vanilla|fabric|forge) ;;
         *)
             log "Unsupported server_type: ${SERVER_TYPE}"
             exit 1
             ;;
     esac
 
-    if [ ! -s "${JAR_PATH}" ]; then
-        log "server.jar is missing or empty after download"
+    # A failed version check or download must not stop an add-on that already
+    # has a working jar (#575: a transient Paper API failure at boot kept the
+    # whole add-on down). The resolver runs in a subshell with errexit on, so
+    # a failure anywhere in it ends the attempt, and this decides what that
+    # means: boot the installed jar and try again at the next start, or, with
+    # no jar at all, stop.
+    local had_jar=0 rc=0
+    [ -s "${JAR_PATH}" ] && had_jar=1
+    set +e
+    (
+        set -e
+        case "${SERVER_TYPE}" in
+            paper)   download_paper_like paper ;;
+            folia)   download_paper_like folia ;;
+            purpur)  download_purpur ;;
+            vanilla) download_vanilla ;;
+            fabric)  download_fabric ;;
+            forge)   download_forge ;;
+        esac
+    )
+    rc=$?
+    set -e
+
+    if [ "${rc}" -ne 0 ] || [ ! -s "${JAR_PATH}" ]; then
+        if [ "${had_jar}" -eq 1 ] && [ -s "${JAR_PATH}" ]; then
+            log "WARNING: could not check for or download a new ${SERVER_TYPE} jar (exit ${rc}). Starting the installed jar (${installed_before}) instead; the update will be tried again at the next start."
+            return 0
+        fi
+        log "ERROR: could not download a ${SERVER_TYPE} jar (exit ${rc}) and no server jar is installed, so the server cannot start. Check that the add-on can reach the internet, then restart it."
         exit 1
     fi
     local installed_after

@@ -139,6 +139,13 @@
       // Crash banner: surface the last few error lines when the JVM exited
       // unexpectedly. Respect a dismissal until the crash signature changes.
       renderCrashBanner(data.crash);
+      // memory_mb against the host's memory (checked at add-on start): a hint
+      // only - the setting is changed in the add-on's Configuration tab.
+      const memHint = $('#memory-hint');
+      if (memHint) {
+        memHint.textContent = data.memory_warning ? data.memory_warning.message : '';
+        memHint.hidden = !data.memory_warning;
+      }
       $('#m-online').textContent = stats.online ?? 0;
       $('#m-max').textContent = stats.max_players ?? state.max_players ?? 0;
 
@@ -509,10 +516,12 @@
       // Export (download .zip) is available for every world — including the
       // active one. Switching/deleting is only meaningful for non-active.
       const exportBtn = `<a class="btn btn-ghost" href="api/worlds/${encodeURIComponent(w.name)}/export" download title="Download this world's save as a .zip for sharing or off-host backup">Download</a>`;
+      const renameBtn = `<button class="btn btn-ghost" data-rename="${esc(w.name)}" data-active="${w.active ? '1' : ''}" title="Give this world a new name">Rename</button>`;
       const actions = w.active
-        ? exportBtn
+        ? `${renameBtn} ${exportBtn}`
         : `
           <button class="btn btn-primary" data-switch="${esc(w.name)}">Switch</button>
+          ${renameBtn}
           ${exportBtn}
           <button class="btn btn-danger" data-delete="${esc(w.name)}">Delete</button>
         `;
@@ -537,6 +546,19 @@
         // RCON restart here — that races against the container teardown and
         // was part of why switching felt broken.
         const resp = await api(`api/worlds/${encodeURIComponent(name)}/switch`, { method: 'POST' });
+        alert(resp.message || resp.warning || resp.error || 'unknown error');
+        loadWorlds();
+      });
+    });
+    tbody.querySelectorAll('button[data-rename]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const name = b.dataset.rename;
+        const next = (prompt(`New name for "${name}" (letters, digits, _ and -, up to 32):`, name) || '').trim();
+        if (!next || next === name) return;
+        if (b.dataset.active && !confirm(`"${name}" is the running world. The server will stop, the world will be renamed to "${next}" and the add-on will restart (the panel is unreachable for ~30s). Continue?`)) return;
+        const resp = await api(`api/worlds/${encodeURIComponent(name)}/rename`, {
+          method: 'POST', body: JSON.stringify({ new_name: next }),
+        });
         alert(resp.message || resp.warning || resp.error || 'unknown error');
         loadWorlds();
       });
