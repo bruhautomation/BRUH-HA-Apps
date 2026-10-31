@@ -5,6 +5,18 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.17.5
+
+### Added
+
+- **What is going on in the world.** New sensors for the world's time of day, day count and weather, a feed of joins, leaves, deaths, advancements, chat and builds, and when the world was last saved and backed up. Players online now lists, per player, the dimension, where they are (near a named place, or rough coordinates), game mode, health and food. A daily journal of who played and for how long is kept with the world.
+- **Vesper's build log.** A list of what Vesper is building: the current job with its part and progress, the queue, and finished builds with a top-down picture of each one, drawn from the world's own files when a build is marked done. The new services `get_world`, `list_builds`, `save_build` and `delete_build` read and write it. Build pictures are saved under `/local/minecraft`, which Home Assistant serves without a login.
+- **A Minecraft world card for the Morph dashboard** (`custom:morph-minecraft-world`): the clock, day and weather, who is on and where, what Vesper is building and has built, the feed, and when the world was last saved. It is installed automatically when the dashboard is present; an existing hand-made card keeps its type until it is switched.
+
+### Fixed
+
+- **Players online and Online read the server as down once the add-on has stopped**, instead of repeating the last figures it wrote.
+
 ## 1.17.4
 
 ### Added
