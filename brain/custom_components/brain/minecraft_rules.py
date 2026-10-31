@@ -135,15 +135,28 @@ def read_json(path: str, default: Any) -> Any:
     return data if isinstance(data, type(default)) else default
 
 
+def _umask() -> int:
+    current = os.umask(0o022)
+    os.umask(current)
+    return current
+
+
 def write_json(path: str, data: Any) -> None:
     """tmp + rename in the same folder, with a unique scratch name: two
-    writers never share one, and a reader never sees half a file."""
+    writers never share one, and a reader never sees half a file. The mode
+    is the panel's `atomic_write` rule: an existing file keeps the mode it
+    had, a new one gets what the process umask allows (what a plain write
+    would have made), never a mode chosen here."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    try:
+        mode = os.stat(path).st_mode & 0o777
+    except OSError:
+        mode = 0o666 & ~_umask()
     fd, tmp = tempfile.mkstemp(prefix=f".{os.path.basename(path)}.", dir=os.path.dirname(path))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=1, ensure_ascii=False)
-        os.chmod(tmp, 0o644)
+        os.chmod(tmp, mode)
         os.replace(tmp, path)
     except BaseException:
         try:

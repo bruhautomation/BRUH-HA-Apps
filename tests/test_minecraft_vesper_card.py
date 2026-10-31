@@ -39,8 +39,15 @@ class TestTheOldCardIsGone(unittest.TestCase):
         self.assertNotRegex(bridge, re.compile(OLD, re.I))
 
     def test_the_family_and_limits_moved_to_brain(self):
+        # ⚙ › Minecraft is brAIn's, and is built by the page only when BRUH
+        # Minecraft answers (absent from the markup otherwise; the present
+        # case is driven in tests/manual/measure-settings.mjs).
         html = (REPO / "brain" / "panel" / "index.html").read_text()
-        self.assertIn('id="setsecMinecraft"', html)
+        js = (REPO / "brain" / "panel" / "app.js").read_text()
+        self.assertNotIn("setsecMinecraft", html)
+        self.assertIn('sec.id = "setsecMinecraft";', js)
+        sync = js[js.index("async function syncMinecraftNav()"):]
+        self.assertLess(sync.index("if (!d.present)"), sync.index("ensureMinecraftSection()"))
         self.assertIn("⚙ › Minecraft", (PANEL / "index.html").read_text())
 
 

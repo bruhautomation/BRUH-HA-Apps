@@ -35,7 +35,6 @@ PREDICATE = "minecraft:"
 EXPIRES_DAYS = 14
 MAX_FACTS = 60
 TEXT_MAX = 300
-_NO_READING = frozenset({"unavailable", "unknown", ""})
 _KEY = re.compile(r"[^a-z0-9_]")
 
 

@@ -26237,6 +26237,12 @@ async def h_morph_request(request: web.Request) -> web.Response:
 # ⚙ › Minecraft (minecraft_companion.py): the settings of brAIn's Minecraft
 # faculty, and what it did in the world (BRUH Minecraft's own action log,
 # read and undone through its services, so the two lists agree).
+MINECRAFT_NOT_SAVED = ("Not saved. Check that each person has a name and at least one "
+                       "in-game name, that the bedtime switch is an entity like "
+                       "input_boolean.kids_bedtime, that limits are 0 or more, and that the "
+                       "model and effort are ones listed.")
+
+
 async def h_minecraft_get(request: web.Request) -> web.Response:
     import ha_data  # noqa: PLC0415 — deferred, as everywhere in this module
     view = await asyncio.to_thread(minecraft_companion.view)
@@ -26247,9 +26253,9 @@ async def h_minecraft_get(request: web.Request) -> web.Response:
         view["online"] = addon.get("online") or []
         view["accounts"] = addon.get("accounts") or {}
     except Exception as exc:  # noqa: BLE001 — no BRUH Minecraft, or it is restarting
+        log.debug("BRUH Minecraft did not answer get_companion: %s", exc)
         view["present"] = False
         view["actions"] = []
-        view["why_absent"] = str(exc)[:200]
     return web.json_response(view)
 
 
@@ -26261,7 +26267,10 @@ async def h_minecraft_put(request: web.Request) -> web.Response:
     try:
         saved = await asyncio.to_thread(minecraft_companion.save, body)
     except minecraft_companion.rules.RulesError as exc:
-        raise web.HTTPBadRequest(text=str(exc)) from None
+        # The exact reason goes to the log; the page gets a fixed sentence
+        # (nothing an exception carried reaches a response).
+        log.info("the Minecraft settings were not kept: %s", exc)
+        raise web.HTTPBadRequest(text=MINECRAFT_NOT_SAVED) from None
     return web.json_response({"settings": saved})
 
 
@@ -26277,8 +26286,10 @@ async def h_minecraft_undo(request: web.Request) -> web.Response:
     try:
         done = await ha_data.call_with_response(
             "bruh_minecraft", "undo_action", {"id": action_id} if action_id else {}, 60)
-    except Exception as exc:  # noqa: BLE001 — the add-on's refusal, said
-        raise web.HTTPBadRequest(text=f"BRUH Minecraft could not undo it: {exc}") from None
+    except Exception as exc:  # noqa: BLE001 — the add-on's refusal, logged
+        log.warning("BRUH Minecraft could not undo %s: %s", action_id or "the last action", exc)
+        raise web.HTTPBadRequest(text="BRUH Minecraft could not undo that. Its log, and "
+                                      "brAIn's, say why.") from None
     return web.json_response(done)
 
 

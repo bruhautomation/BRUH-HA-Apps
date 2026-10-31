@@ -20,8 +20,8 @@ import re
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 from aiohttp.test_utils import AioHTTPTestCase
 
@@ -466,7 +466,7 @@ class PanelCase(AioHTTPTestCase):
 
 class TestThePanelWithoutBrain(PanelCase):
     async def test_no_brain_no_companion_and_one_line_why(self):
-        with mock.patch.object(self.panel, "_core_api", return_value={"result": [
+        with unittest.mock.patch.object(self.panel, "_core_api", return_value={"result": [
                 {"domain": "light"}, {"domain": "bruh_minecraft"}]}):
             r = await self.client.get("/api/companion")
         body = await r.json()
@@ -476,7 +476,7 @@ class TestThePanelWithoutBrain(PanelCase):
                          "Install brAIn to have a companion play in the world.")
 
     async def test_events_without_home_assistant_say_nothing(self):
-        with mock.patch.dict(os.environ, {"SUPERVISOR_TOKEN": ""}), \
+        with unittest.mock.patch.dict(os.environ, {"SUPERVISOR_TOKEN": ""}), \
                 self.assertNoLogs(level=logging.DEBUG):
             sender = self.panel._EventSender()
             sender.fire("bruh_minecraft_chat", {"player": "x"})
@@ -499,7 +499,7 @@ class TestThePanelWithoutBrain(PanelCase):
 
 class TestThePanelWithBrain(PanelCase):
     async def test_the_card_carries_who_brain_says_it_is(self):
-        with mock.patch.object(self.panel, "_core_api", return_value={"result": [
+        with unittest.mock.patch.object(self.panel, "_core_api", return_value={"result": [
                 {"domain": "brain"}]}):
             r = await self.client.post("/api/companion/identity", json={
                 "name": "Juniper", "colour": "aqua", "active": True, "by": "brAIn",
