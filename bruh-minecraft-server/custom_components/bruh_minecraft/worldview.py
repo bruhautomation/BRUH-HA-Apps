@@ -115,9 +115,15 @@ def feed_attrs(world: dict[str, Any]) -> dict[str, Any]:
                        "player": _clip(e.get("player"), 40) or None,
                        "text": _clip(e.get("text"))})
     seen = sorted((world.get("last_seen") or {}).items(), key=lambda kv: kv[1], reverse=True)
+    # Whether the server's log is being heard (#588): a script that rewrote
+    # the join or chat lines leaves the feed quiet while people play, and
+    # this is where brAIn and an automation can see that it is.
+    heard = world.get("listening") or {}
     return {"events": events,
             "last_seen": {_clip(k, 40): _when(v).isoformat() for k, v in seen[:MAX_PLAYERS]
-                          if _when(v)}}
+                          if _when(v)},
+            "listening": bool(heard.get("ok", True)),
+            "listening_problem": _clip(heard.get("why")) or None}
 
 
 # -- saves and backups -------------------------------------------------------
@@ -129,7 +135,7 @@ def last_backup(world: dict[str, Any]) -> datetime | None:
     return _when(world.get("last_backup"))
 
 
-# -- Vesper ------------------------------------------------------------------
+# -- The build log ----------------------------------------------------------
 def _job(job: dict[str, Any] | None) -> dict[str, Any] | None:
     if not job:
         return None
@@ -156,47 +162,28 @@ def building_attrs(world: dict[str, Any]) -> dict[str, Any]:
             "recent": [_job(j) for j in (builds.get("recent") or [])[:MAX_RECENT_JOBS]]}
 
 
-# -- Vesper in the game (panel/vesper.py) ------------------------------------
-def vesper_state(world: dict[str, Any]) -> str:
-    """off, paused, idle, acting, asking, bedtime or waiting."""
-    v = world.get("vesper") or {}
-    if not v:
+# -- The companion in the game (panel/companion.py) ----------------------------
+def companion_state(world: dict[str, Any]) -> str:
+    """off (no companion running), idle, acting or asking."""
+    c = world.get("companion") or {}
+    if not c or not c.get("active"):
         return "off"
-    if not v.get("enabled"):
-        return "off"
-    if v.get("paused"):
-        return "paused"
-    return str(v.get("state") or "idle")
+    return str(c.get("state") or "idle")
 
 
-MAX_LEARNED = 40
-
-
-def _learned(v: dict[str, Any]) -> list[dict[str, Any]]:
-    """What Vesper learned about each person, for brAIn's facts store
-    (brAIn's panel files one fact per person and key off this attribute)."""
-    out = []
-    for row in (v.get("learned") or [])[:MAX_LEARNED]:
-        if isinstance(row, dict) and row.get("person") and row.get("key") and row.get("text"):
-            out.append({"person": _clip(row["person"], 40), "key": _clip(row["key"], 20),
-                        "text": _clip(row["text"], 300)})
-    return out
-
-
-def vesper_attrs(world: dict[str, Any]) -> dict[str, Any]:
-    v = world.get("vesper") or {}
-    last = v.get("last_action") or None
-    q = v.get("open_question") or None
-    return {"enabled": bool(v.get("enabled")), "paused": bool(v.get("paused")),
-            "name": _clip(v.get("name") or "Vesper", 16),
-            "chat_commands": v.get("commands") or "on",
-            "vesper_learned": _learned(v),
-            "budget": v.get("budget") or {},
-            "queued_questions": v.get("queued_questions", 0),
+def companion_attrs(world: dict[str, Any]) -> dict[str, Any]:
+    c = world.get("companion") or {}
+    last = c.get("last_action") or None
+    q = c.get("open_question") or None
+    feed = world.get("listening") or {}
+    return {"active": bool(c.get("active")),
+            "name": _clip(c.get("name") or "Companion", 16),
+            "queued_questions": c.get("queued_questions", 0),
             "open_question": ({"id": q.get("id"), "person": _clip(q.get("person"), 40),
                                "text": _clip(q.get("text"), 200)} if q else None),
             "last_action": ({"id": last.get("id"), "kind": last.get("kind"),
-                             "person": _clip(last.get("person"), 40),
+                             "player": _clip(last.get("player"), 40),
                              "text": _clip(last.get("text"), 200), "status": last.get("status"),
                              "when": _when(last.get("t")).isoformat() if _when(last.get("t")) else None}
-                            if last else None)}
+                            if last else None),
+            "listening": bool(feed.get("ok", True))}

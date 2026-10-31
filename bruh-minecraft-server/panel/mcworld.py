@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""What is going on in the Minecraft world: its senses, and Vesper's build log.
+"""What is going on in the Minecraft world: its senses, and the build log.
 
 The owner (#573): *"I don't care about TPS or latency. I want to know what's
-going on in the world … I want to know what Vesper is building as part of
-the sentience engine."* This module is that layer, and the API the next
-batch (Vesper playing in the world, #572) reads it through.
+going on in the world … I want to know what [the companion] is building
+as part of the sentience engine."* This module is that layer, and the API
+a companion playing in the world (brAIn's, through Home Assistant) reads it
+through.
 
 * **WorldCollector** asks the server over RCON — no plugin — who is on and,
   for each of them, where (position, dimension), in what game mode and
@@ -18,7 +19,7 @@ batch (Vesper playing in the world, #572) reads it through.
   the last `FEED_SIZE` of them as the world feed, each player's last-seen
   time, and writes a **journal** per day (`.bruh-world/journal/<day>.jsonl`
   in the world folder): what happened, who was on and for how long.
-* **BuildLog** is Vesper's jobs (`.bruh-world/builds.json`): title, which
+* **BuildLog** is the companion's build jobs (`.bruh-world/builds.json`): title, which
   part of the engine, status queued/building/done/failed, progress, the
   build's box, start and finish, a picture and notes. The panel's
   `/api/builds` routes are its only writer; nothing about it needs RCON.
@@ -58,6 +59,8 @@ CHAT_CAP = 200             # characters of one chat line kept
 MAX_JOBS = 200
 NEAR_RADIUS = 96           # blocks: within this a place is "near"
 WEATHER_RETRY = 3600       # seconds before asking a server that refused again
+JOIN_GRACE = 30            # seconds a join seen by `list` waits for its log line
+LOG_SILENT = 300           # seconds of a silent log, with players on, that mean it is not read
 
 DATA_DIR_NAME = ".bruh-world"
 
@@ -124,9 +127,36 @@ def parse_list(reply: str) -> dict[str, Any] | None:
             "players": [p.strip() for p in m.group("players").split(",") if p.strip()]}
 
 
+_TIME_ANY_RE = re.compile(
+    # "The time is 6000", "The time of minecraft:overworld is 6000 ticks",
+    # "Time: 6,000", "Daytime is 6000", "It is day 12": the number that
+    # follows "is", "time", "day" or a colon, with thousands separators.
+    r"(?:\bis|\btime|\bday|:)\D{0,40}?(-?\d[\d,_ ]{0,15}\d|-?\d)\b", re.I)
+_BARE_NUMBER_RE = re.compile(r"^\s*(-?\d[\d,_]*)\s*(?:ticks?)?\s*\.?\s*$", re.I)
+
+
 def parse_time(reply: str) -> int | None:
-    m = _TIME_RE.search(plain(reply))
-    return int(m.group(1)) if m else None
+    """The number in a `time query` answer, or None.
+
+    Vanilla answers "The time is 6000"; Paper 26.x's world clocks and some
+    forks say it differently ("The time of minecraft:overworld is 6000
+    ticks", "Time: 6,000", a bare "6000"). Anything that is not one of
+    those — an error, a usage line — is None rather than a guess.
+    """
+    text = plain(reply).strip()
+    if not text or re.search(r"unknown|incorrect|expected|<--\[here\]|usage", text, re.I):
+        return None
+    m = _TIME_RE.search(text)
+    if m:
+        return int(m.group(1))
+    m = _BARE_NUMBER_RE.match(text) or _TIME_ANY_RE.search(text)
+    if not m:
+        return None
+    digits = re.sub(r"[,_ ]", "", m.group(1))
+    try:
+        return int(digits)
+    except ValueError:
+        return None
 
 
 def parse_test(reply: str) -> bool | None:
@@ -216,6 +246,32 @@ _LEAVE_RE = re.compile(rf"^(?P<name>{_NAME}) left the game$")
 _ADV_RE = re.compile(
     rf"^(?P<name>{_NAME}) has (?P<how>made the advancement|completed the challenge|reached the goal) \[(?P<what>.+)\]$")
 _CHAT_RE = re.compile(r"^(?:\[Not Secure\] )?<(?P<name>[^>]{1,40})> (?P<text>.*)$")
+# The shapes a server script or chat plugin gives a chat line once it
+# rewrites the format (Skript's `chat format`, EssentialsX Chat, a nickname
+# plugin): "[Not Secure] Dad: hi", "[Member] Dad » hi", "Dad > hi". These
+# are only read as chat when the line says it is (`[Not Secure]`, Paper's
+# chat thread) or the name is somebody the collector knows is playing — a
+# plugin's "Loading: 12 worlds" is not somebody called Loading talking.
+_NOT_SECURE = "[Not Secure] "
+_SPOKEN_RE = re.compile(
+    r"^(?P<name>(?:\[[^\]]{1,24}\] ?)*[^\s:<>»\[\]][^:<>»]{0,39}?)\s?(?::|»|>|›|\|)\s(?P<text>.+)$")
+_RANK_RE = re.compile(r"^(?:\[[^\]]{0,24}\]\s*)+|^[~*@]+")
+# Paper logs messages the server itself broadcast (a script's own join line,
+# an announcement) as "System chat: …"; the vanilla join and leave lines
+# can arrive that way too.
+_SYSTEM_RE = re.compile(r"^(?:\[[^\]]*\] )?System chat: (?P<text>.*)$")
+
+
+def shown_name(name: str) -> str:
+    """A name as a chat line shows it, without a rank in brackets, colour
+    codes or a nickname marker: "[Admin] ~Dad" is "Dad"."""
+    text = plain(str(name or "")).strip()
+    for _ in range(4):
+        cut = _RANK_RE.sub("", text).strip()
+        if cut == text:
+            break
+        text = cut
+    return text[:40]
 _DONE_RE = re.compile(r"^Done \([\d.,]+s\)! For help")
 _DEATH_RE = re.compile(
     rf"^(?P<name>{_NAME}) (?P<how>"
@@ -228,6 +284,10 @@ _DEATH_RE = re.compile(
     r"didn't want to live|left the confines of this world|was killed)")
 
 
+def _bare(name: str) -> str:
+    return re.sub(r"^[.*]", "", str(name or "").strip()).lower()
+
+
 def parse_log_line(line: str, known: set[str] | frozenset[str] = frozenset()) -> dict[str, Any] | None:
     """One world event from a server log line, or None.
 
@@ -235,12 +295,28 @@ def parse_log_line(line: str, known: set[str] | frozenset[str] = frozenset()) ->
     death is anything that reads like a death message for a player name;
     when the names of the players known to be on are given, the line has to
     be about one of them, because a plugin's line can start with a word.
+
+    A chat line's `player` is the name the line shows, which a script may
+    have made a nickname ("Dad"); the collector maps it back to who is
+    playing (`WorldCollector.speaker`). A rewritten format is still chat
+    (`_SPOKEN_RE`) when the line is marked `[Not Secure]`, came from
+    Paper's chat thread, or names somebody `known`.
     """
     m = _LINE_RE.match(line.rstrip("\r\n"))
     if not m or m.group("level") != "INFO":
         return None
     msg = plain(m.group("msg")).strip()
-    if (j := _JOIN_RE.match(msg)):
+    thread = str(m.group("thread") or "")
+    if (s := _SYSTEM_RE.match(msg)):
+        inner = s["text"].strip()
+        if _JOIN_RE.match(inner) or _LEAVE_RE.match(inner):
+            msg = inner
+        else:
+            return None
+    marked = msg.startswith(_NOT_SECURE)
+    if marked:
+        msg = msg[len(_NOT_SECURE):].strip()
+    if (j := _JOIN_RE.match(msg)) and not marked:
         return {"kind": "join", "player": j["name"], "text": f"{j['name']} joined"}
     if (j := _LEAVE_RE.match(msg)):
         return {"kind": "leave", "player": j["name"], "text": f"{j['name']} left"}
@@ -251,8 +327,17 @@ def parse_log_line(line: str, known: set[str] | frozenset[str] = frozenset()) ->
         return {"kind": "advancement", "player": j["name"], "what": j["what"],
                 "text": f"{j['name']} {verb} {j['what']}"}
     if (j := _CHAT_RE.match(msg)):
+        name = shown_name(j["name"]) or j["name"]
         said = j["text"].strip()[:CHAT_CAP]
-        return {"kind": "chat", "player": j["name"], "text": f"{j['name']}: {said}"}
+        return {"kind": "chat", "player": name, "said": said, "text": f"{name}: {said}"}
+    if (j := _SPOKEN_RE.match(msg)):
+        name = shown_name(j["name"])
+        chat_thread = "chat" in thread.lower()
+        if name and (marked or chat_thread or _bare(name) in {_bare(k) for k in known}):
+            said = j["text"].strip()[:CHAT_CAP]
+            return {"kind": "chat", "player": name, "said": said, "text": f"{name}: {said}"}
+    if marked:
+        return None
     if msg == "Saved the game":
         return {"kind": "save", "player": None, "text": "The world was saved"}
     if _DONE_RE.match(msg):
@@ -386,9 +471,9 @@ class Journal:
                 person_of: Callable[[str], str] | None = None) -> dict[str, Any]:
         """Who was on that day and for how long, and what happened.
 
-        With `person_of` (Vesper's roster: an in-game name to a person),
-        `people` sums each person's names: time on, deaths, advancements,
-        chat lines and what Vesper did with them.
+        With `person_of` (an in-game name to a person), `people` sums each
+        person's names: time on, deaths, advancements, chat lines and what
+        the companion did with them.
         """
         events = self.events(day)
         seconds: dict[str, int] = {}
@@ -401,7 +486,7 @@ class Journal:
                 seconds[who] = seconds.get(who, 0) + int(ev["seconds"])
             elif who and ev.get("kind") in ("join", "death", "advancement", "chat"):
                 seconds.setdefault(who, 0)
-            if who and ev.get("kind") in ("join", "death", "advancement", "chat", "vesper"):
+            if who and ev.get("kind") in ("join", "death", "advancement", "chat", "companion"):
                 per.setdefault(who, {}).setdefault(ev["kind"], 0)
                 per[who][ev["kind"]] += 1
         if open_sessions and day == self.day_of(self.clock()):
@@ -418,7 +503,7 @@ class Journal:
             for who in set(seconds) | set(per):
                 rec = people.setdefault(person_of(who), {
                     "players": [], "seconds": 0, "joins": 0, "deaths": 0,
-                    "advancements": 0, "chat": 0, "vesper": 0})
+                    "advancements": 0, "chat": 0, "companion": 0})
                 rec["players"].append(who)
                 rec["seconds"] += seconds.get(who, 0)
                 kinds = per.get(who, {})
@@ -426,13 +511,13 @@ class Journal:
                 rec["deaths"] += kinds.get("death", 0)
                 rec["advancements"] += kinds.get("advancement", 0)
                 rec["chat"] += kinds.get("chat", 0)
-                rec["vesper"] += kinds.get("vesper", 0)
+                rec["companion"] += kinds.get("companion", 0)
             out["people"] = people
         return out
 
 
 # ---------------------------------------------------------------------------
-# Vesper's build log
+# The build log
 # ---------------------------------------------------------------------------
 STATUSES = ("queued", "building", "done", "failed")
 _TEXT_FIELDS = {"title": 120, "part": 60, "notes": 2000, "by": 40, "image": 300,
@@ -473,7 +558,7 @@ def clean_bounds(value: Any) -> dict[str, Any] | None:
 
 
 class BuildLog:
-    """Vesper's build jobs for one world, newest first.
+    """The companion's build jobs for one world, newest first.
 
     The file is the record (`builds.json`), written whole through a
     temporary file; the panel is its one writer. Status moves set the
@@ -562,7 +647,7 @@ class BuildLog:
             "id": time.strftime("%Y%m%d", time.localtime(now)) + "-" + secrets.token_hex(3),
             "title": "", "part": "", "status": "queued", "progress": None,
             "bounds": None, "created_at": int(now), "started_at": None,
-            "finished_at": None, "image": "", "image_note": "", "notes": "", "by": "Vesper",
+            "finished_at": None, "image": "", "image_note": "", "notes": "", "by": "brAIn",
         }
         self._apply(job, {"status": "queued", **data}, now)
         with self._lock:
@@ -636,7 +721,7 @@ class RconSession:
     def __init__(self, factory: Callable[[], Any]):
         self.factory = factory
         self.conn = None
-        # The world thread and Vesper's API calls (an undo from the panel)
+        # The world thread and the companion's API calls (an undo from the panel)
         # share the one connection; a request and its reply are one turn.
         self._lock = threading.RLock()
 
@@ -707,10 +792,25 @@ class WorldCollector:
         self.next_poll = 0.0
         self.polled_at: float | None = None
         self._lock = threading.Lock()
-        # Vesper's engine (vesper.py) listens to every recorded event and adds
-        # its own small view to the snapshot; both stay None without it.
+        # The panel listens to every recorded event (and to a player entering
+        # a named place, which is not written to the feed) and adds its own
+        # small view to the snapshot; both stay None without it.
         self.on_event: Callable[[dict[str, Any]], None] | None = None
         self.extra: Callable[[], dict[str, Any]] | None = None
+        # Who a chat line's nickname is (bare nickname -> player), learned
+        # when a name could be tied to the one person it could be.
+        self.nicknames: dict[str, str] = {}
+        # Players `list` showed before the log said they joined: the feed
+        # records them at once, and the log's own line (if it comes) is not
+        # recorded twice. One still here after JOIN_GRACE means the log's
+        # join lines are not being read — a script rewrote them, or the log
+        # is somewhere the collector cannot see.
+        self.joined_via_list: set[str] = set()
+        self.unheard_joins: dict[str, float] = {}
+        self.heard_at: float | None = None
+        self.heard_player_at: float | None = None
+        self.line_at: float | None = None
+        self.near_of: dict[str, str | None] = {}
         state = _read_json(self.data_dir / "state.json", {})
         self.last_seen: dict[str, float] = {
             str(k): float(v) for k, v in (state.get("last_seen") or {}).items()
@@ -758,16 +858,73 @@ class WorldCollector:
         since = self.sessions.pop(name, None)
         self.players.pop(name, None)
         self.missing.pop(name, None)
+        self.joined_via_list.discard(name)
+        self.near_of.pop(name, None)
         self.last_seen[name] = now
         return int(now - since) if since else None
 
     # -- the log --------------------------------------------------------------
+    def speaker(self, shown: str) -> str | None:
+        """The player a chat line's name means, or None.
+
+        A server script can show a nickname instead of the account name
+        ("Dad" for DadMC). Who is playing is known from `list`, so: the
+        player whose name it is (case and a Bedrock prefix ignored), a
+        nickname this collector already tied to a player, a player whose
+        name starts with it or contains it when only one does, and, with
+        exactly one person on, that person. Anything else is None and the
+        line keeps the name it showed — a companion matches it against the
+        names it knows (BRUH Minecraft keeps no roster).
+        """
+        name = shown_name(shown)
+        if not name:
+            return None
+        online = list(self.sessions)
+        want = _bare(name)
+        for p in online:
+            if _bare(p) == want:
+                return p
+        tied = self.nicknames.get(want)
+        if tied in online:
+            return tied
+        close = [p for p in online if want and (_bare(p).startswith(want) or want in _bare(p))]
+        if len(close) == 1:
+            return close[0]
+        if len(online) == 1:
+            return online[0]
+        return None
+
+    def _heard(self, now: float, kind: str) -> None:
+        self.heard_at = now
+        if kind in ("join", "chat", "leave", "death", "advancement"):
+            self.heard_player_at = now
+
     def handle_line(self, line: str) -> dict[str, Any] | None:
-        known = set(self.sessions) | set(self.players) | set(self.last_seen)
+        self.line_at = self.clock()
+        known = (set(self.sessions) | set(self.players) | set(self.last_seen)
+                 | set(self.nicknames))
         ev = parse_log_line(line, known)
         if ev is None:
             return None
         now = self.clock()
+        self._heard(now, ev["kind"])
+        if ev["kind"] == "chat":
+            shown = ev["player"]
+            who = self.speaker(shown)
+            if who is not None:
+                if _bare(who) != _bare(shown):
+                    self.nicknames[_bare(shown)] = who
+                    ev["shown"] = shown
+                ev["player"] = who
+            else:
+                ev["player"], ev["shown"], ev["unmatched"] = None, shown, True
+        if ev["kind"] == "join":
+            self.unheard_joins.pop(ev["player"], None)
+        if ev["kind"] == "join" and ev["player"] in self.joined_via_list:
+            # `list` saw them first and the feed already says so.
+            self.joined_via_list.discard(ev["player"])
+            self._open(ev["player"], now)
+            return None
         if ev["kind"] == "join":
             self._open(ev["player"], now)
             self.next_poll = 0.0       # ask where they are at once
@@ -808,9 +965,21 @@ class WorldCollector:
         self.reachable = True
         self.max_players = listed["max"]
         online = listed["players"]
+        # The first look after the panel starts finds people who joined
+        # before it was watching: they are opened quietly, as always.
+        first = self.polled_at is None
         for name in online:
             if name not in self.sessions:
                 self._open(name, now)
+                if first:
+                    continue
+                # On the list with no join line read: say so in the feed now
+                # rather than never (a script's own join message is not the
+                # vanilla line), and remember the log owes us that line.
+                self.joined_via_list.add(name)
+                self.unheard_joins[name] = now
+                self.record({"kind": "join", "player": name, "text": f"{name} joined",
+                             "via": "list"})
         # Gone from the list twice running and no leave line read: the log
         # missed it (a crash, a log we could not read). Close it quietly.
         for name in list(self.sessions):
@@ -830,6 +999,7 @@ class WorldCollector:
             info = self._poll_player(name)
             info["since"] = int(self.sessions.get(name, now))
             info["near"] = nearest_place(info.get("pos"), info.get("dimension") or "", places)
+            self._entered(name, info, now)
             players[name] = info
             self.last_seen[name] = now
         for name in online[MAX_PLAYERS_DETAILED:]:
@@ -840,18 +1010,86 @@ class WorldCollector:
             # Nobody to watch: give the connection back until somebody joins.
             self.session.close()
 
-    def _poll_time(self, now: float) -> None:
+    def _entered(self, name: str, info: dict[str, Any], now: float) -> None:
+        """A player walking into a named place: told to whoever listens
+        (`on_event`), never written to the feed, which would fill with it."""
+        place = info.get("near")
+        was = self.near_of.get(name, "\0")
+        self.near_of[name] = place
+        if place and was != "\0" and place != was and self.on_event is not None:
+            self.on_event({"t": int(now), "kind": "place", "player": name, "place": place,
+                           "dimension": info.get("dimension") or "minecraft:overworld",
+                           "text": f"{name} is at {place}"})
+
+    def listening(self) -> dict[str, Any]:
+        """Whether the server's log is being heard, for the panel's headline,
+        the feed sensor and anything that reports on the world.
+
+        Two things say it is not: somebody `list` shows came on and no join
+        line for them was read within JOIN_GRACE (a script rewrote the join
+        message, or the log is not the one being read), or the log has said
+        nothing at all for LOG_SILENT while the server answers RCON (whose
+        own polls write lines, so a silent log is one that is not read).
+        """
+        now = self.clock()
+        if not self.reachable or not self.sessions:
+            return {"ok": True, "why": ""}
+        missed = sorted(n for n, at in self.unheard_joins.items()
+                        if n in self.sessions and now - at >= JOIN_GRACE)
+        if self.line_at is None or now - self.line_at >= LOG_SILENT:
+            return {"ok": False, "code": "log_silent", "since": int(self.line_at or 0) or None,
+                    "why": ("The panel cannot read the server's log, so chat, joins and "
+                            "deaths are missing from the feed while players are on.")}
+        if missed:
+            return {"ok": False, "code": "joins_unheard", "players": missed[:6],
+                    "why": (f"{', '.join(missed[:3])} came on without the usual join line in "
+                            "the server's log. A plugin or script probably changed the join "
+                            "or chat messages, so the feed may miss chat. Chat is still read "
+                            "in the common rewritten shapes (\"Name: text\").")}
+        return {"ok": True, "why": ""}
+
+    def _query_time(self, what: str) -> int | None:
+        """`time query <what>`, asked the ways a server may want it: the
+        namespaced command first (EssentialsX overrides the bare one), then
+        the bare one for a server whose dispatcher refuses the namespace
+        over RCON. The first answer that reads as a number wins."""
+        for cmd in (f"minecraft:time query {what}", f"time query {what}"):
+            try:
+                value = parse_time(self.session.command(cmd))
+            except Exception:  # noqa: BLE001 — a server that went away
+                return None
+            if value is not None:
+                return value
+        return None
+
+    def _time_from_save(self) -> tuple[int | None, int | None]:
+        """(daytime, day) as of the last save, from level.dat's DayTime."""
+        if self.read_nbt is None:
+            return None, None
+        level = self.server_dir / (self.level_name() or "world") / "level.dat"
         try:
-            daytime = parse_time(self.session.command("minecraft:time query daytime"))
-            day = parse_time(self.session.command("minecraft:time query day"))
-        except Exception:  # noqa: BLE001
-            return
+            data = self.read_nbt(level).get("Data", {})
+            ticks = int(data.get("DayTime"))
+        except Exception:  # noqa: BLE001 — no save, or a format we cannot read
+            return None, None
+        return ticks % 24000, ticks // 24000
+
+    def _poll_time(self, now: float) -> None:
+        daytime = self._query_time("daytime")
+        day = self._query_time("day")
+        source = "server"
         if daytime is None:
-            return
+            saved_time, saved_day = self._time_from_save()
+            if saved_time is None:
+                return
+            daytime, source = saved_time, "save"
+            day = day if day is not None else saved_day
+        elif day is None:
+            day = self._time_from_save()[1]
         hour, minute = clock_of(daytime)
         self.world_time = {"daytime": daytime, "day": day, "hour": hour,
                            "clock": f"{hour:02d}:{minute:02d}", "phase": phase_of(daytime),
-                           "as_of": int(now)}
+                           "as_of": int(now), "source": source}
 
     def _poll_weather(self, now: float) -> None:
         state = None
@@ -1006,7 +1244,7 @@ class WorldCollector:
         if status == was:
             self.write()
             return
-        by = job.get("by") or "Vesper"
+        by = job.get("by") or "brAIn"
         title = job.get("title") or "a build"
         text = {"building": f"{by} started building {title}",
                 "done": f"{by} finished building {title}",
@@ -1044,6 +1282,7 @@ class WorldCollector:
             "weather": self.weather,
             "last_seen": {k: int(v) for k, v in last_seen.items()},
             "feed": feed,
+            "listening": self.listening(),
             "last_save": int(self.last_save) if self.last_save else None,
             "last_backup": int(self.last_backup) if self.last_backup else None,
             "builds": {"current": job_brief(self.builds.current()), "recent": recent,
@@ -1056,7 +1295,7 @@ class WorldCollector:
             return {}
         try:
             return self.extra()
-        except Exception:  # noqa: BLE001 — the world view never fails for Vesper's part
+        except Exception:  # noqa: BLE001 — the world view never fails for the companion's part
             return {}
 
     def write(self) -> dict[str, Any]:

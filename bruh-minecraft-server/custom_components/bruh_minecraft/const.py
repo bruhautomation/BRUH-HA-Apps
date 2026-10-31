@@ -17,7 +17,7 @@ STATS_FILE = f"{SHARED_DIR}/stats.json"
 PLAYERS_FILE = f"{SHARED_DIR}/players.json"
 STATE_FILE = f"{SHARED_DIR}/state.json"
 # What is going on in the world (panel/mcworld.py): players and where they
-# are, time, weather, the feed, saves, backups and Vesper's builds.
+# are, time, weather, the feed, saves, backups and the companion's builds.
 WORLD_FILE = f"{SHARED_DIR}/world.json"
 # The add-on rewrites stats.json every 15 s and world.json every few
 # seconds (a minute when nobody is on). Older than this, the add-on is not
@@ -67,18 +67,21 @@ SERVICE_ADDON_SEARCH = "search_addons"
 SERVICE_ADDON_INSTALL = "install_addon"
 SERVICE_ADDON_REMOVE = "remove_addon"
 ADDON_KINDS = ("plugin", "datapack", "mod", "resourcepack")
-# Vesper in the game (panel/vesper.py): the engine, its questions, its undo.
-SERVICE_VESPER = "get_vesper"
-SERVICE_VESPER_ASK = "vesper_ask"
-SERVICE_VESPER_UNDO = "vesper_undo"
-SERVICE_VESPER_ENGINE = "vesper_engine"
-SERVICE_VESPER_FAMILY = "set_family"
-SERVICE_VESPER_ZONE = "set_zone"
-# brAIn and automations reaching the game through Vesper: words to a person
-# or the family, and a small undoable build.
-SERVICE_VESPER_SAY = "vesper_say"
-SERVICE_VESPER_BUILD = "vesper_build"
+# The companion's hands (panel/companion.py): mechanics a companion — brAIn's
+# Minecraft faculty, or anybody's automation — drives. The add-on decides
+# nothing with them; the speaker's name and colour come from the caller.
+SERVICE_COMPANION = "get_companion"
+SERVICE_SET_COMPANION = "set_companion"
+SERVICE_COMPANION_SAY = "companion_say"
+SERVICE_COMPANION_APPEAR = "companion_appear"
+SERVICE_ASK_CHOICE = "ask_choice"
+SERVICE_COMPANION_BUILD = "companion_build"
+SERVICE_UNDO_ACTION = "undo_action"
+SERVICE_SET_ZONE = "set_zone"
+SERVICE_COMPANION_HANDOVER = "companion_handover"
 SERVICE_RENAME_WORLD = "rename_world"
-# Fired by the add-on for each moment worth a decision (join, idle, death,
-# achievement, a favourite place, a parent asking in chat, an answer).
-EVENT_MOMENT = "bruh_minecraft_moment"
+# Fired by the add-on for every game happening it reads, whether or not
+# anything listens: neutral facts, no scores, caps or persona (DOCS.md, "The
+# companion contract"). `answer` is a choice pad being answered.
+GAME_EVENTS = ("chat", "join", "leave", "death", "advancement", "place", "answer")
+EVENT_PREFIX = "bruh_minecraft_"

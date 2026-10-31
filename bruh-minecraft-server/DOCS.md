@@ -529,7 +529,8 @@ All entities live under a single device **BRUH Minecraft**. Default entities:
 | sensor | `world_weather` | clear / rain / thunder (`source`: the server, or the last save on servers older than 1.20.5) |
 | sensor | `world_feed` | the latest thing that happened; the last 15 events and who was last seen in attributes |
 | sensor | `last_save` / `last_backup` | timestamps |
-| sensor | `vesper_building` | what Vesper is building now, or `idle`; progress, the part of the engine and recent builds in attributes |
+| sensor | `building` | what is being built now, or `idle`; progress, the part of the build and recent builds in attributes |
+| sensor | `companion` | `off` when no companion runs, else `idle`, `acting` or `asking`; its name, the open question and the last action in attributes |
 
 `players_online` also carries `details`: each player's dimension, position,
 the place they are near, game mode, health and food. Whoever is on, and
@@ -559,6 +560,8 @@ three minutes, so a stopped add-on never reads as a world with people in it.
 | `bruh_minecraft.list_builds` | optional `status`, `limit` (response only) |
 | `bruh_minecraft.save_build` | `title` to add a job, or `id` to change one; `part`, `status`, `progress`, `bounds`, `notes`, `image`, `by` |
 | `bruh_minecraft.delete_build` | `id` |
+| `bruh_minecraft.rename_world` | `name` (as said; the folder takes a safe form of it) |
+| companion services | see **The companion contract** below |
 
 A player may be a name or `@a` (everyone), `@p`, `@r`. Every service that has
 something to say returns the server's reply as response data (`response_variable`
@@ -574,11 +577,23 @@ and where (asked over RCON every 5 seconds while anybody is on, once a minute
 while nobody is), the time and weather, and the server log for joins, leaves,
 deaths, advancements and chat. The last 50 events are the feed; every day
 gets a journal in the world folder (`.bruh-world/journal/YYYY-MM-DD.jsonl`).
-Named places for "near …" are spawn, Vesper's builds, and any you list in
-`.bruh-world/places.json` (`[{"name": "Village", "x": 120, "z": -40}]`).
+Named places for "near …" are spawn, the builds in the build log, and any you
+list in `.bruh-world/places.json` (`[{"name": "Village", "x": 120, "z": -40}]`).
 
-**Vesper's build log** (`.bruh-world/builds.json`) is the list of what Vesper
-builds for the sentience engine: title, part of the engine, status (queued,
+**Chat in other shapes.** A plugin or a Skript script that rewrites the chat
+format or the join messages (nicknames, ranks: `[Not Secure] Dad: hi`,
+`[Admin] ~Dad » hi`, `System chat: Dad is here`) is still read: a line is
+chat when it says so (`[Not Secure]`, Paper's chat thread) or names somebody
+playing, and the name it shows is matched back to who is playing (the player
+whose name it is, a nickname already tied to one, the one player whose name
+contains it, or the only person on). Somebody `list` shows who never got a
+join line is added to the feed anyway. **When the log cannot be heard** —
+players are on and their join line never came, or the log has said nothing
+for five minutes — the Dashboard says so at the top, and the `world_feed`
+sensor carries `listening: false` and `listening_problem` with why.
+
+**The build log** (`.bruh-world/builds.json`) is the list of what the
+companion builds: title, part of the engine, status (queued,
 building, done, failed), progress, the build's box, start and finish, notes
 and a picture. When a job with a box is marked done, the panel saves the
 world and draws the box from above out of the region files into
@@ -589,190 +604,88 @@ The panel's API is `GET /api/world`, `GET /api/world/journal[?day=]`,
 
 **The Morph card.** When brAIn's Morph dashboard is installed the add-on puts
 `custom:morph-minecraft-world` in `/config/morph/cards`: the world's time,
-day and weather, who is on and where, what Vesper is building with pictures
+day and weather, who is on and where, what is being built with pictures
 of what it finished, the feed, and when the world was last saved and backed
 up. No TPS, no latency, no buttons.
 
-### Vesper in the game
+### The companion contract
 
-Vesper can play in the world with the family — appear when a child joins, and
-ask a child (who cannot read) a question they answer by **standing on a
-picture**. It is off until you switch it on — the **Vesper** card on the
-panel's Dashboard (the **Vesper is on/off** switch), or `bruh_minecraft.vesper_engine`
-with `on: true`; the setting belongs to the world — and it never sends the server
-anything while nobody is online. Everything goes through RCON: no plugin, and
-it works for Bedrock/iPad players through Geyser (whose names start with a dot).
+BRUH Minecraft is a server first: with nothing else installed it runs no
+companion, shows none, and logs nothing about one. A **companion** — brAIn's
+Minecraft faculty when brAIn is installed, or anybody's automations — plays
+in the world through two lanes and no other: the add-on **tells** Home
+Assistant what happens in the game as plain events, and it **does** what it
+is asked through the services below. It decides nothing: who is family, when
+to greet, what to say, bedtime, budgets, the model and what to remember are
+the companion's.
 
-**Who is who.** Tell Vesper the family once — on the Vesper card (step 1,
-**Family**: tap a player seen in the game to add them, pick Child or
-Grown-up, **Save family**), in brAIn ("Kaz plays as .Kaz8044 and is a
-child; I'm Ben13765"), or with `bruh_minecraft.set_family`:
+**Events** (fired for every game happening the panel reads, whether or not
+anything listens; `t` is Unix seconds, `time` the same as ISO 8601 UTC,
+`world` the active world):
 
-```yaml
-action: bruh_minecraft.set_family
-data:
-  people:
-    - {person: Kaz, role: child, players: [".Kaz8044"]}
-    - {person: Lev, role: child, players: [".Lev6398"]}
-    - {person: Dad, role: reader, players: ["Ben13765"]}
-```
+| Event | Data |
+|-------|------|
+| `bruh_minecraft_chat` | `player` (who is playing, or null when the name a script showed could not be matched), `name` (the name the line showed, a nickname perhaps), `text`, `verified` (the server checks the account behind that name), `why_unverified` |
+| `bruh_minecraft_join` | `player`, `verified`, `why_unverified` |
+| `bruh_minecraft_leave` | `player`, `seconds` (how long they played) |
+| `bruh_minecraft_death` | `player`, `text` (the death message) |
+| `bruh_minecraft_advancement` | `player`, `what`, `text` |
+| `bruh_minecraft_place` | `player`, `place` (a named place they walked into), `dimension` |
+| `bruh_minecraft_answer` | `player`, `question_id`, `question`, `answer`, `other`, `options`, `by` (a choice pad was answered) |
 
-Everybody on the list plays with Vesper. A **child** (`role: child`) gets
-sounds, sparkles, pictures and choice pads; a **grown-up** (`role: reader` —
-the stored word is kept) gets the same hello and company plus words in chat,
-and can talk to Vesper and give it commands there (below). Anybody not on the
-list is a guest Vesper leaves alone, whatever they type. Name places on the
-card (step 3, **Protected places**, which can fill in where a player is
-standing) or with `bruh_minecraft.set_zone` (x, z, radius); a **protected** zone (the default
-for family zones) is one Vesper never builds in.
+`verified` is the account check: Java names are real with `online-mode` on (or
+a Velocity proxy checking them); Bedrock names when Floodgate signs them in
+(Geyser's `auth-type` not `offline`). A name the server does not check is
+anyone's to type, so a companion should not take a grown-up's commands under
+it.
 
-**What a grown-up sees.** When a grown-up joins, Vesper comes by briefly (a
-short visit with a soft chime) and says hello in chat, in brAIn's words — the
-same assistant as at home, under the name brAIn's ⚙ › Personality gives it
-(`<Vesper>` unless the house named it something else). At most once an hour.
-A grown-up's deaths and advancements are moments too.
+**Services** (each answers with what was done and fails with why not):
 
-**What a child sees.**
-- *Hello* — when a child joins, a named allay called Vesper appears in front
-  of them with a three-note chime and sparkles, hops (its wave), and leaves
-  again after about 25 seconds, or when they leave.
-- *Choice pads* — a question asked through brAIn ("ask Kaz if he wants a
-  castle or a farm") or `bruh_minecraft.vesper_ask` builds two 2×2 carpets
-  beside the child, green and red, with a fence post and a picture block
-  behind each (the question can choose the pictures, and a gift for each
-  answer). Standing on one for two seconds is the answer: a chime and a burst
-  of sparkles, the other picture disappears, any gift is given, and a few
-  seconds later the pads are gone. The answer goes into that child's memory.
-  Pads go only on flat, natural ground (grass, dirt, sand, stone, gravel,
-  snow) where every block is empty, never in a protected zone or on or next
-  to a build in the build log. No answer in three minutes, or the child
-  leaving, takes them away.
-- *Goodnight* — set the **bedtime switch** (the Vesper card, or
-  `vesper_engine`'s `bedtime_entity`) to an
-  entity, e.g. `input_boolean.kids_bedtime`, or an entity and the state that
-  means bedtime, `binary_sensor.boys_door=off`. At bedtime Vesper puts
-  "Goodnight!" on the children's screens with a soft chime, takes away
-  anything it has out, and does nothing more until bedtime ends. If the
-  switch cannot be read, Vesper starts nothing new.
+| Service | Fields | What it does |
+|---------|--------|--------------|
+| `bruh_minecraft.companion_say` | `to` (a player, a list, or `everyone`), `message`, optional `name`, `colour`, `chime`, `by` | `<name> message` in chat to those players, split over a few lines |
+| `bruh_minecraft.companion_appear` | `player`, optional `seconds` (3–120), `kind` (greet/visit), `name`, `colour`, `chime` (full/short/none), `text`, `by` | a named, invulnerable, silent allay beside them with a chime, sparkles and a wave, then gone; logged and undoable |
+| `bruh_minecraft.ask_choice` | `player`, `question`, optional `options` (two labels or label, picture, gift and gift_count), `person`, `name`, `by` | two pads beside them on natural ground; standing on one for two seconds answers (`bruh_minecraft_answer`) |
+| `bruh_minecraft.companion_build` | `blocks` (x, y, z and a block each, at most 64), optional `player` (offsets from their feet), `dimension`, `title`, `name`, `by` | into empty space over natural ground, never in a protected place or on or next to a build; snapshotted first when large; logged and undoable |
+| `bruh_minecraft.undo_action` | optional `id` (the newest undoable one without) | puts back blocks that still hold what was placed and removes the action's entities |
+| `bruh_minecraft.set_zone` | `name`, `x`, `z`, `radius`, `dimension`, `protect`, `kind`, or `delete` | a named place; nothing is ever built inside a protected one |
+| `bruh_minecraft.set_companion` | optional `name`, `colour`, `active`, `by`, `model` | who the companion is, for the panel and as the default speaker |
+| `bruh_minecraft.get_companion` | — (response only) | identity, places, questions, the action log, what it said, the account check |
+| `bruh_minecraft.companion_handover` | optional `done` (response only) | the family list, memory and settings the add-on's own companion kept up to 1.17.7, once; `done` retires them |
 
-**Hard rules.** Vesper only ever summons an allay; only plays gentle chimes,
-never louder than 0.8; only removes or moves its own entities (all tagged
-`vesper`); speaks to one named player at a time and never names one child to
-another; changes blocks only by placing into empty space with `setblock …
-keep`, after a backup when a change is large (64 blocks or more). It does
-at most its **actions a day** (`daily_actions`, 120 unless set) things a
-day, at most 4 for one child in one session, greets a child at most every 20
-minutes, and sends Home Assistant at most 40 moments a day.
+The rcon, world and build-log services above are the rest of the lane.
 
-**Seeing and undoing it.** The panel's Dashboard has a **Vesper** card: what
-Vesper did (with **Undo** on anything still in the world), the questions and
-their answers, the switch, and the bedtime and budget settings. An undo puts back only the blocks that
-still hold what Vesper placed (a block a child changed since is left), and
-removes the action's entities. The same is `bruh_minecraft.vesper_undo` and
-brAIn's "undo that". The `sensor.*_vesper` entity says what the engine is
-doing (off, idle, acting, asking, bedtime, waiting) with its last action.
+**Held next to the world, whoever asks.** Every command passes one
+chokepoint: only an allay is ever summoned and it carries the tag
+`bruh_companion`; only gentle chimes at a capped volume, to one named
+player; only the companion's own entities are removed or moved; words go to
+named players; blocks change only through the guarded placement or an undo;
+gifts are a few safe items. The companion's entities are swept by tag when
+someone joins, so nothing is left behind after a restart (the 1.17.7
+engine's tag is swept too).
 
-**Memory.** Per person, in the world folder (`.bruh-world/vesper/people.json`):
-sessions and time played, the places they keep going back to, what they chose
-(likes and dislikes) and which moments happened. The day's journal also sums
-each person (`GET /api/world/journal?day=` → `summary.people`). It is for the
-parent and brAIn; it is never said to another player.
-
-**Moments and brAIn.** Vesper notices joins, a child standing still for a
-minute, a death, an advancement, returning to a favourite place, a parent
-saying "Vesper" in chat, and an answer. Each has a cooldown, and the ones
-worth a decision are fired as a Home Assistant event,
-`bruh_minecraft_moment` (`kind`, `player`, `person`, `role`, `score`,
-`world`, and `said`/`answer`/`place` where they apply) — brAIn, or an
-automation, can listen for it and act with the services above. Vesper calls
-brAIn only for a grown-up's words (below); everything else is its own rules.
-
-### Talking to Vesper in the game
-
-A grown-up on the family list talks to Vesper by starting a chat message with
-its name: `vesper …`, `Vesper, …`, `@vesper …` or `hey vesper …` (or the name
-brAIn's personality uses). No plugin and no slash command: Vesper reads the
-chat from the server log. Only grown-ups (`reader`) are listened to — a child
-saying "vesper stop" is play (a moment brAIn hears about, never an
-instruction), and a guest is ignored.
-
-| Say | What happens |
-| --- | --- |
-| `vesper stop` / `vesper pause` | Vesper takes everything it has out of the world now and pauses until… |
-| `vesper start` / `vesper resume` | …it is started again (switching Vesper off and on in the card does the same). |
-| `vesper undo` | Takes back Vesper's last action that is still in the world. |
-| `vesper status` | What it is doing, today's counts against the limits, who is online and who is on the list. |
-| `vesper come here` | Vesper appears beside you for a few seconds. |
-| `vesper help` | The list above, in chat. |
-| anything else | Asked of brAIn — e.g. `vesper build Kaz a little bridge`, `vesper ask Lev if he wants a castle or a farm`, `vesper what has Kaz been up to?` |
-
-The built-in commands are answered at once and use no brAIn time. Anything
-else is one brAIn turn (`brain.ask` with the `minecraft` tool scope): Vesper
-says "Hmm…" with a sparkle while it thinks, and brAIn's answer comes back to
-you only, in a few chat lines. brAIn is told who asked, where everyone is,
-what just happened, what Vesper remembers and its state; your words are passed
-as data, never as instructions. It may act **in the game** — say something to
-someone, ask a child a pad question, build something small next to a player
-(at most 64 blocks, only into empty space on natural ground, never in a
-protected place or on or next to a build, undoable), undo, set the time or
-weather — **without an approval card**, because a grown-up asking in the game
-is the parent asking; every act still passes Vesper's guards, budget and undo
-and shows up on the card. Anything **outside the game** (lights, locks, the
-house, renaming the world, any other service) it cannot do from the game's
-chat: it answers "I'll need you to approve that in brAIn".
-
-**Names have to be real.** Anyone can type any name on a server that does not
-check accounts, so commands are only taken from a name the server checked:
-`online-mode=true` in the world's settings (or a Velocity proxy that checks),
-and for Bedrock players (names starting with a dot) Floodgate with Geyser's
-`auth-type` not `offline`. Otherwise Vesper tells the grown-up once why it
-cannot take commands, and the card's status line says so.
-
-**Limits.** brAIn is asked at most **Times a day Vesper may ask brAIn** times
-a day (`daily_chats`, 30 unless set; a grown-up's hello counts) — after that
-Vesper answers with a short built-in line. One request at a time per person, a
-few seconds apart; an answer that takes over 90 seconds is given up with a
-short line. When brAIn cannot be reached (not installed, not running, out of
-its own budget), Vesper uses short built-in lines for a few minutes. Nothing
-is sent while nobody is online. The card's **Talked with** list shows what was
-said and answered.
-
-**The house reaches the game.** brAIn ("tell the kids dinner is ready in
-Minecraft") and automations can speak as Vesper:
-
-```yaml
-action: bruh_minecraft.vesper_say
-data:
-  to: family          # or a person / Minecraft name
-  message: Dinner in five minutes!
-```
-
-Vesper never tells one child about another (a line naming Kaz is not said to
-Lev), never speaks to a guest, and says nothing to a child at bedtime.
-`bruh_minecraft.vesper_build` places a small build (`blocks: [{x, y, z,
-block}]`, offsets from `player`'s feet when one is named) under the same rules
-as above; undo it with `vesper_undo`.
-
-**What Vesper learns comes home.** What children chose on the pads, what
-grown-ups asked for, favourite places, time played and brAIn's own notes are
-on the `vesper` sensor (`vesper_learned`), and brAIn files them as facts it
-remembers (one per person and topic, replaced as they change), so the chat or
-a card at home can recall them.
+**The panel.** With brAIn installed, the Dashboard's **Companion** card is
+named as brAIn names it and shows what it is doing, the protected places, a
+question to put on the pads, and everything it did with **Undo**. Without
+brAIn it says, in one line, "Install brAIn to have a companion play in the
+world." Panel API: `GET /api/companion` (with `brain`, `listening` and
+`headline`), `POST /api/companion/identity`, `/say`, `/appear`, `/ask`,
+`/build`, `POST /api/companion/actions/<id|last>/undo`,
+`POST|DELETE /api/companion/zones[/<name>]`, `GET /api/companion/legacy`,
+`POST /api/companion/legacy/retire`. Files: `.bruh-world/companion/`
+(`companion.json`, `actions.json`, `questions.json`, `said.json`) and
+`.bruh-world/places.json`.
 
 **Renaming the world.** `bruh_minecraft.rename_world` (or asking brAIn to
-"rename the world to Vesper World") renames the active world: the folder
-takes a safe form of the name (`Vesper_World` — a folder holds letters,
-digits, `_` and `-`), the server list shows the name as said (the MOTD), the
-backups move with it, and the add-on restarts.
+"rename the world to Our World") renames the active world: the folder takes a
+safe form of the name (`Our_World` — a folder holds letters, digits, `_` and
+`-`), the server list shows the name as said (the MOTD), the backups move
+with it, and the add-on restarts. `POST /api/world/rename` (`{"name"}`).
 
-Panel API: `GET /api/vesper` (with `headline`, the card's status sentence, `online`, `talks` and `accounts`), `GET /api/vesper/entities` (Home Assistant's on/off entities for the bedtime list), `POST /api/vesper/engine` (`{"on", "bedtime_entity", "daily_actions", "daily_chats"}`),
-`POST /api/vesper/say` (`{"to", "message", "by"}`), `POST /api/vesper/build` (`{"blocks", "player", "dimension", "title", "by"}`),
-`POST /api/vesper/ask` (`{"player", "text", "options"}`),
-`POST /api/vesper/actions/<id>/undo`, `GET|PUT /api/vesper/family`,
-`POST /api/vesper/zones`, `DELETE /api/vesper/zones/<name>`,
-`POST /api/world/rename` (`{"name"}`). Files: `.bruh-world/vesper/`
-(`family.json`, `people.json`, `actions.json`, `questions.json`,
-`talks.json`, `budget.json`, `engine.json`) and `.bruh-world/places.json` for zones.
+**What changed.** The header shows the version with a **changelog** link; it
+opens the release notes in the panel (`GET /api/changelog`, newest first),
+and says "Updated since you last looked" after an update until they are
+opened.
 
 ### Example automations
 

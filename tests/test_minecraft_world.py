@@ -2,7 +2,7 @@
 """BRUH Minecraft's world-activity layer (panel/mcworld.py, panel/mcmap.py).
 
 The owner (#573) wanted to know what is going on in the world and what
-Vesper is building, not TPS. These drive the real collector against canned
+is being built, not TPS. These drive the real collector against canned
 RCON answers (a Paper server, a Bedrock player through Geyser whose name
 starts with a dot, a server that is down), real Paper log lines, the
 journal and the build log on disk, the panel's /api/world and /api/builds
@@ -364,7 +364,7 @@ class TestFeedAndJournal(CollectorBase):
 
 
 # ---------------------------------------------------------------------------
-# Vesper's build log
+# The build log
 # ---------------------------------------------------------------------------
 class TestTheBuildLog(unittest.TestCase):
     def setUp(self):
@@ -581,7 +581,8 @@ class TestThePanelRoutes(AioHTTPTestCase):
         r = await self.client.get("/api/world")
         world = await r.json()
         self.assertEqual(world["builds"]["current"]["title"], "Watchtower")
-        self.assertEqual(world["feed"][0]["text"], "Vesper started building Watchtower")
+        # A job that names nobody is brAIn's (the add-on names no persona).
+        self.assertEqual(world["feed"][0]["text"], "brAIn started building Watchtower")
         r = await self.client.delete(f"/api/builds/{job['id']}")
         self.assertEqual(r.status, 200)
         r = await self.client.get(f"/api/builds/{job['id']}")

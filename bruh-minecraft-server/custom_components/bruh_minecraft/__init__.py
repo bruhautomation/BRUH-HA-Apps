@@ -69,14 +69,15 @@ from .const import (
     SERVICE_TELEPORT,
     SERVICE_TIME,
     SERVICE_RENAME_WORLD,
-    SERVICE_VESPER,
-    SERVICE_VESPER_ASK,
-    SERVICE_VESPER_BUILD,
-    SERVICE_VESPER_ENGINE,
-    SERVICE_VESPER_FAMILY,
-    SERVICE_VESPER_SAY,
-    SERVICE_VESPER_UNDO,
-    SERVICE_VESPER_ZONE,
+    SERVICE_ASK_CHOICE,
+    SERVICE_COMPANION,
+    SERVICE_COMPANION_APPEAR,
+    SERVICE_COMPANION_BUILD,
+    SERVICE_COMPANION_HANDOVER,
+    SERVICE_COMPANION_SAY,
+    SERVICE_SET_COMPANION,
+    SERVICE_SET_ZONE,
+    SERVICE_UNDO_ACTION,
     SERVICE_WEATHER,
     SERVICE_WHITELIST_ADD,
     SERVICE_WHITELIST_REMOVE,
@@ -283,7 +284,7 @@ def _register_services(hass: HomeAssistant) -> None:
     async def handle_addon_remove(call: ServiceCall) -> dict[str, Any]:
         return _strip(await _ask("addon_remove", {"id": call.data["id"]}, timeout=60.0))
 
-    # The world and Vesper's build log (panel/mcworld.py). Reading the world
+    # The world and the build log (panel/mcworld.py). Reading the world
     # asks the panel now, not the mirrored file, so a caller is never
     # handed a state up to fifteen seconds old.
     async def handle_world(_: ServiceCall) -> dict[str, Any]:
@@ -302,42 +303,51 @@ def _register_services(hass: HomeAssistant) -> None:
     async def handle_build_delete(call: ServiceCall) -> dict[str, Any]:
         return _strip(await _ask("build_delete", {"id": call.data["id"]}))
 
-    # Vesper in the game (panel/vesper.py). The add-on's panel holds the one
-    # engine; these carry a parent's (or brAIn's) request to it and answer
-    # with what it did.
-    async def handle_vesper(_: ServiceCall) -> dict[str, Any]:
-        return _strip(await _ask("vesper", {}))
+    # The companion's hands (panel/companion.py). The add-on's panel holds the
+    # one implementation; these carry a companion's request to it and answer
+    # with what was done, or raise with why not.
+    async def handle_companion(_: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("companion", {}))
 
-    async def handle_vesper_ask(call: ServiceCall) -> dict[str, Any]:
-        payload = {"player": call.data["player"], "text": call.data["question"]}
-        for key in ("options", "by"):
-            if key in call.data:
-                payload[key] = call.data[key]
-        return _strip(await _ask("vesper_ask", payload))
-
-    async def handle_vesper_undo(call: ServiceCall) -> dict[str, Any]:
-        return _strip(await _ask("vesper_undo", {"id": call.data["id"]}, timeout=60.0))
-
-    async def handle_vesper_engine(call: ServiceCall) -> dict[str, Any]:
-        return _strip(await _ask("vesper_engine", {
-            k: call.data[k] for k in ("on", "bedtime_entity", "daily_actions", "daily_chats")
+    async def handle_set_companion(call: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("companion_identity", {
+            k: call.data[k] for k in ("name", "colour", "active", "by", "model")
             if k in call.data}))
 
-    async def handle_vesper_say(call: ServiceCall) -> dict[str, Any]:
-        return _strip(await _ask("vesper_say", {
-            "to": call.data.get("to", "family"), "message": _one_line(call.data["message"]),
-            "by": call.data.get("by", "Home Assistant")}))
+    async def handle_companion_say(call: ServiceCall) -> dict[str, Any]:
+        to = call.data.get("to", "everyone")
+        payload = {"to": to, "message": _one_line(call.data["message"])}
+        for key in ("name", "colour", "chime", "by"):
+            if key in call.data:
+                payload[key] = call.data[key]
+        return _strip(await _ask("companion_say", payload))
 
-    async def handle_vesper_build(call: ServiceCall) -> dict[str, Any]:
-        payload = {k: call.data[k] for k in ("blocks", "player", "dimension", "title", "by")
-                   if k in call.data}
-        return _strip(await _ask("vesper_build", payload, timeout=60.0))
+    async def handle_companion_appear(call: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("companion_appear", {
+            k: call.data[k] for k in ("player", "seconds", "kind", "name", "colour", "chime",
+                                      "text", "by") if k in call.data}))
 
-    async def handle_vesper_family(call: ServiceCall) -> dict[str, Any]:
-        return _strip(await _ask("vesper_family", {"people": call.data["people"]}))
+    async def handle_ask_choice(call: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("companion_ask", {
+            k: call.data[k] for k in ("player", "question", "options", "person", "name", "by")
+            if k in call.data}))
 
-    async def handle_vesper_zone(call: ServiceCall) -> dict[str, Any]:
-        return _strip(await _ask("vesper_zone", dict(call.data)))
+    async def handle_companion_build(call: ServiceCall) -> dict[str, Any]:
+        payload = {k: call.data[k] for k in ("blocks", "player", "dimension", "title", "name",
+                                             "by") if k in call.data}
+        return _strip(await _ask("companion_build", payload, timeout=60.0))
+
+    async def handle_undo_action(call: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("companion_undo", {"id": call.data.get("id") or "last"},
+                                 timeout=60.0))
+
+    async def handle_set_zone(call: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("companion_zone", dict(call.data)))
+
+    async def handle_companion_handover(call: ServiceCall) -> dict[str, Any]:
+        # The 1.17.7 engine's per-world state, once; `done: true` retires it.
+        kind = "companion_legacy_retire" if call.data.get("done") else "companion_legacy"
+        return _strip(await _ask(kind, {}))
 
     async def handle_rename_world(call: ServiceCall) -> dict[str, Any]:
         # Renaming the active world restarts the add-on once it has answered.
@@ -419,46 +429,70 @@ def _register_services(hass: HomeAssistant) -> None:
         vol.Optional("gift"): cv.string,
         vol.Optional("gift_count"): vol.All(vol.Coerce(int), vol.Range(1, 16)),
     }))
-    vesper_ask_schema = vol.Schema({
-        vol.Required("player"): vol.All(cv.string, vol.Length(min=1, max=40)),
+    speaker = vol.All(cv.string, vol.Length(min=1, max=16))
+    colour_name = vol.In(["black", "dark_blue", "dark_green", "dark_aqua", "dark_red",
+                          "dark_purple", "gold", "gray", "dark_gray", "blue", "green", "aqua",
+                          "red", "light_purple", "yellow", "white"])
+    by_schema = vol.All(cv.string, vol.Length(max=40))
+    set_companion_schema = vol.Schema({
+        vol.Optional("name"): speaker,
+        vol.Optional("colour"): colour_name,
+        vol.Optional("active"): bool,
+        vol.Optional("by"): by_schema,
+        vol.Optional("model"): vol.All(cv.string, vol.Length(max=60)),
+    })
+    player_name = vol.All(cv.string, vol.Length(min=1, max=40))
+    companion_say_schema = vol.Schema({
+        vol.Optional("to", default="everyone"): vol.Any(
+            player_name, vol.All([player_name], vol.Length(min=1, max=20))),
+        vol.Required("message"): vol.All(cv.string, vol.Length(min=1, max=640)),
+        vol.Optional("name"): speaker,
+        vol.Optional("colour"): colour_name,
+        vol.Optional("chime"): bool,
+        vol.Optional("by"): by_schema,
+    })
+    companion_appear_schema = vol.Schema({
+        vol.Required("player"): player_name,
+        vol.Optional("seconds", default=25): vol.All(vol.Coerce(int), vol.Range(3, 120)),
+        vol.Optional("kind", default="visit"): vol.In(["greet", "visit"]),
+        vol.Optional("name"): speaker,
+        vol.Optional("colour"): colour_name,
+        vol.Optional("chime", default="full"): vol.In(["full", "short", "none"]),
+        vol.Optional("text"): vol.All(cv.string, vol.Length(max=200)),
+        vol.Optional("by"): by_schema,
+    })
+    ask_choice_schema = vol.Schema({
+        vol.Required("player"): player_name,
         vol.Required("question"): vol.All(cv.string, vol.Length(min=1, max=200)),
         vol.Optional("options"): vol.All([option_schema], vol.Length(min=2, max=2)),
-        vol.Optional("by"): cv.string,
-    })
-    vesper_undo_schema = vol.Schema({vol.Required("id"): cv.string})
-    vesper_engine_schema = vol.Schema({
-        vol.Optional("on"): bool,
-        vol.Optional("bedtime_entity"): cv.string,
-        vol.Optional("daily_actions"): vol.All(vol.Coerce(int), vol.Range(0, 1000)),
-        vol.Optional("daily_chats"): vol.All(vol.Coerce(int), vol.Range(0, 200)),
-    })
-    vesper_say_schema = vol.Schema({
-        vol.Optional("to", default="family"): vol.All(cv.string, vol.Length(min=1, max=40)),
-        vol.Required("message"): vol.All(cv.string, vol.Length(min=1, max=640)),
-        vol.Optional("by"): vol.All(cv.string, vol.Length(max=40)),
+        vol.Optional("person"): vol.All(cv.string, vol.Length(max=40)),
+        vol.Optional("name"): speaker,
+        vol.Optional("by"): by_schema,
     })
     block_schema = vol.Schema({
         vol.Required("x"): vol.Coerce(int), vol.Required("y"): vol.Coerce(int),
         vol.Required("z"): vol.Coerce(int), vol.Required("block"): cv.string,
     })
-    vesper_build_schema = vol.Schema({
+    companion_build_schema = vol.Schema({
         vol.Required("blocks"): vol.All([block_schema], vol.Length(min=1, max=64)),
-        vol.Optional("player"): vol.All(cv.string, vol.Length(min=1, max=40)),
+        vol.Optional("player"): player_name,
         vol.Optional("dimension"): cv.string,
         vol.Optional("title"): vol.All(cv.string, vol.Length(max=60)),
-        vol.Optional("by"): vol.All(cv.string, vol.Length(max=40)),
+        vol.Optional("name"): speaker,
+        vol.Optional("by"): by_schema,
     })
-    vesper_family_schema = vol.Schema({vol.Required("people"): [dict]})
-    vesper_zone_schema = vol.Schema({
+    undo_action_schema = vol.Schema({vol.Optional("id"): cv.string})
+    set_zone_schema = vol.Schema({
         vol.Required("name"): cv.string,
         vol.Optional("x"): vol.Coerce(float),
         vol.Optional("z"): vol.Coerce(float),
         vol.Optional("radius"): vol.All(vol.Coerce(int), vol.Range(1, 512)),
         vol.Optional("dimension"): cv.string,
         vol.Optional("protect"): bool,
-        vol.Optional("kind"): vol.In(["family", "vesper"]),
+        vol.Optional("kind"): vol.In(["family", "companion"]),
         vol.Optional("delete"): bool,
     })
+    handover_schema = vol.Schema({vol.Optional("done"): bool})
     rename_world_schema = vol.Schema({
         vol.Required("name"): vol.All(cv.string, vol.Length(min=1, max=60))})
     player_schema = vol.Schema({vol.Required("player"): _player})
@@ -490,14 +524,15 @@ def _register_services(hass: HomeAssistant) -> None:
     register(SERVICE_BUILDS, handle_builds, builds_schema, only)
     register(SERVICE_BUILD_SAVE, handle_build_save, build_save_schema, optional)
     register(SERVICE_BUILD_DELETE, handle_build_delete, build_delete_schema, optional)
-    register(SERVICE_VESPER, handle_vesper, empty_schema, only)
-    register(SERVICE_VESPER_ASK, handle_vesper_ask, vesper_ask_schema, optional)
-    register(SERVICE_VESPER_UNDO, handle_vesper_undo, vesper_undo_schema, optional)
-    register(SERVICE_VESPER_ENGINE, handle_vesper_engine, vesper_engine_schema, optional)
-    register(SERVICE_VESPER_FAMILY, handle_vesper_family, vesper_family_schema, optional)
-    register(SERVICE_VESPER_ZONE, handle_vesper_zone, vesper_zone_schema, optional)
-    register(SERVICE_VESPER_SAY, handle_vesper_say, vesper_say_schema, optional)
-    register(SERVICE_VESPER_BUILD, handle_vesper_build, vesper_build_schema, optional)
+    register(SERVICE_COMPANION, handle_companion, empty_schema, only)
+    register(SERVICE_SET_COMPANION, handle_set_companion, set_companion_schema, optional)
+    register(SERVICE_COMPANION_SAY, handle_companion_say, companion_say_schema, optional)
+    register(SERVICE_COMPANION_APPEAR, handle_companion_appear, companion_appear_schema, optional)
+    register(SERVICE_ASK_CHOICE, handle_ask_choice, ask_choice_schema, optional)
+    register(SERVICE_COMPANION_BUILD, handle_companion_build, companion_build_schema, optional)
+    register(SERVICE_UNDO_ACTION, handle_undo_action, undo_action_schema, optional)
+    register(SERVICE_SET_ZONE, handle_set_zone, set_zone_schema, optional)
+    register(SERVICE_COMPANION_HANDOVER, handle_companion_handover, handover_schema, only)
     register(SERVICE_RENAME_WORLD, handle_rename_world, rename_world_schema, optional)
     register(SERVICE_BACKUP, handle_backup, empty_schema, optional)
     register(SERVICE_RESTART, handle_restart, empty_schema, optional)

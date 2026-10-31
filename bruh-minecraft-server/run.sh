@@ -668,7 +668,7 @@ deploy_custom_integration() {
 
 # ----------------------------------------------------------------------------
 # The world card for Morph (custom:morph-minecraft-world): who is on and
-# where, the world's time and weather, the feed and what Vesper is
+# where, the world's time and weather, the feed and what the companion is
 # building. Morph loads every file in /config/morph/cards by itself; the
 # file is written only when it changed, because Morph reloads a card whose
 # file moved. Nothing happens on a house without Morph.
@@ -686,7 +686,7 @@ install_world_card() {
     fi
 }
 
-# Pictures of Vesper's finished builds, drawn by the panel from the world's
+# Pictures of the companion's finished builds, drawn by the panel from the world's
 # region files and served by Home Assistant as /local/minecraft/<job>.png.
 # The panel runs as `minecraft`, and /config/www is root's.
 prepare_world_pictures() {

@@ -158,19 +158,20 @@ SENSORS: tuple[BruhSensorDescription, ...] = (
         world_fn=worldview.last_backup,
     ),
     BruhSensorDescription(
-        key="vesper_building",
-        name="Vesper building",
+        key="building",
+        name="Building",
         icon="mdi:hammer-wrench",
         world_fn=worldview.building_state,
         world_attrs_fn=worldview.building_attrs,
     ),
-    # Vesper in the game (#572): what the engine is doing and its last act.
+    # The companion in the game: what its hands are doing and the last act
+    # (panel/companion.py). Named as brAIn names it; "off" without one.
     BruhSensorDescription(
-        key="vesper",
-        name="Vesper",
+        key="companion",
+        name="Companion",
         icon="mdi:creation",
-        world_fn=worldview.vesper_state,
-        world_attrs_fn=worldview.vesper_attrs,
+        world_fn=worldview.companion_state,
+        world_attrs_fn=worldview.companion_attrs,
     ),
 )
 

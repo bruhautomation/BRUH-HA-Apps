@@ -172,7 +172,7 @@ _JOB_FIELDS = ("title", "part", "status", "progress", "bounds", "started_at",
 
 
 async def world(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """The world's state and Vesper's build log, asked of the panel.
+    """The world's state and the build log, asked of the panel.
 
     The panel holds the one collector and the one writer of the build log
     (panel/mcworld.py); this only carries the request there.
@@ -199,45 +199,53 @@ async def world(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": False, "error": f"unknown kind '{kind}'"}
 
 
-VESPER_KINDS = ("vesper", "vesper_ask", "vesper_undo", "vesper_engine", "vesper_family",
-                "vesper_zone", "vesper_say", "vesper_build", "rename_world")
+COMPANION_KINDS = ("companion", "companion_identity", "companion_say", "companion_appear",
+                   "companion_ask", "companion_build", "companion_undo", "companion_zone",
+                   "companion_legacy", "companion_legacy_retire", "rename_world")
 
 
-async def vesper(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """Vesper's engine and the world's name, asked of the panel (vesper.py
-    is the one engine; this only carries the request there)."""
-    if kind == "vesper":
-        return await asyncio.to_thread(_panel, "GET", "/api/vesper", None, 15)
-    if kind == "vesper_ask":
-        body = {k: payload[k] for k in ("player", "text", "options", "by") if k in payload}
-        return await asyncio.to_thread(_panel, "POST", "/api/vesper/ask", body, 15)
-    if kind == "vesper_undo":
-        action_id = str(payload.get("id") or "")
-        if not _JOB_ID.match(action_id):
-            return {"ok": False, "error": f"'{action_id}' is not one of Vesper's action ids."}
-        return await asyncio.to_thread(_panel, "POST", f"/api/vesper/actions/{action_id}/undo",
+def _pick(payload: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
+    return {k: payload[k] for k in keys if k in payload}
+
+
+async def companion(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """The companion's hands and the world's name, asked of the panel
+    (panel/companion.py holds the one implementation; this only carries
+    the request there)."""
+    if kind == "companion":
+        return await asyncio.to_thread(_panel, "GET", "/api/companion", None, 15)
+    if kind == "companion_identity":
+        return await asyncio.to_thread(_panel, "POST", "/api/companion/identity", _pick(
+            payload, ("name", "colour", "active", "by", "model")), 15)
+    if kind == "companion_say":
+        return await asyncio.to_thread(_panel, "POST", "/api/companion/say", _pick(
+            payload, ("to", "message", "name", "colour", "chime", "by")), 15)
+    if kind == "companion_appear":
+        return await asyncio.to_thread(_panel, "POST", "/api/companion/appear", _pick(
+            payload, ("player", "seconds", "kind", "name", "colour", "chime", "text", "by")), 15)
+    if kind == "companion_ask":
+        return await asyncio.to_thread(_panel, "POST", "/api/companion/ask", _pick(
+            payload, ("player", "question", "options", "person", "name", "by")), 15)
+    if kind == "companion_build":
+        return await asyncio.to_thread(_panel, "POST", "/api/companion/build", _pick(
+            payload, ("blocks", "player", "dimension", "title", "name", "by")), 60)
+    if kind == "companion_undo":
+        action_id = str(payload.get("id") or "last")
+        if action_id != "last" and not _JOB_ID.match(action_id):
+            return {"ok": False, "error": f"'{action_id}' is not one of the companion's action ids."}
+        return await asyncio.to_thread(_panel, "POST", f"/api/companion/actions/{action_id}/undo",
                                        {}, 60)
-    if kind == "vesper_say":
-        body = {k: payload[k] for k in ("to", "message", "by") if k in payload}
-        return await asyncio.to_thread(_panel, "POST", "/api/vesper/say", body, 15)
-    if kind == "vesper_build":
-        body = {k: payload[k] for k in ("blocks", "player", "dimension", "title", "by")
-                if k in payload}
-        return await asyncio.to_thread(_panel, "POST", "/api/vesper/build", body, 60)
-    if kind == "vesper_engine":
-        body = {k: payload[k] for k in ("on", "bedtime_entity", "daily_actions", "daily_chats")
-                if k in payload}
-        return await asyncio.to_thread(_panel, "POST", "/api/vesper/engine", body, 15)
-    if kind == "vesper_family":
-        return await asyncio.to_thread(_panel, "PUT", "/api/vesper/family",
-                                       {"people": payload.get("people")}, 15)
-    if kind == "vesper_zone":
+    if kind == "companion_zone":
         if payload.get("delete"):
             name = urllib.parse.quote(str(payload.get("name") or ""), safe="")
-            return await asyncio.to_thread(_panel, "DELETE", f"/api/vesper/zones/{name}", None, 15)
-        body = {k: payload[k] for k in ("name", "x", "z", "radius", "dimension", "protect", "kind")
-                if k in payload}
-        return await asyncio.to_thread(_panel, "POST", "/api/vesper/zones", body, 15)
+            return await asyncio.to_thread(_panel, "DELETE", f"/api/companion/zones/{name}",
+                                           None, 15)
+        return await asyncio.to_thread(_panel, "POST", "/api/companion/zones", _pick(
+            payload, ("name", "x", "z", "radius", "dimension", "protect", "kind")), 15)
+    if kind == "companion_legacy":
+        return await asyncio.to_thread(_panel, "GET", "/api/companion/legacy", None, 15)
+    if kind == "companion_legacy_retire":
+        return await asyncio.to_thread(_panel, "POST", "/api/companion/legacy/retire", {}, 15)
     if kind == "rename_world":
         # Renaming the active world restarts the add-on, this bridge with it,
         # once the panel has answered.
@@ -266,8 +274,8 @@ async def handle(request: dict[str, Any]) -> dict[str, Any]:
         if kind in ("world", "builds_list", "build_save", "build_delete"):
             return await world(kind, payload)
 
-        if kind in VESPER_KINDS:
-            return await vesper(kind, payload)
+        if kind in COMPANION_KINDS:
+            return await companion(kind, payload)
 
         if kind == "say":
             msg = str(payload.get("message", "")).strip().replace("\n", " ")[:256]
