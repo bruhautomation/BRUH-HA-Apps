@@ -208,6 +208,12 @@
   ];
   // A select cuts a long option short, so the whole sentence is under it too.
   const roleWords = (role) => (VESPER_ROLES.find(([v]) => v === role) || VESPER_ROLES[0])[1];
+  const TALK_STATUS = {
+    thinking: 'thinking…', timed_out: 'took too long', down: 'brAIn could not be reached',
+    budget: 'out of today’s talks', refused: 'refused: the server does not check accounts',
+    dropped: 'they left first', error: 'something went wrong', canned: 'a short built-in line',
+    kept: 'not said', empty: 'no answer',
+  };
   const Q_STATUS = {
     queued: 'waiting to be asked', open: 'the pads are out now', answered: 'answered',
     expired: 'no answer', cancelled: 'cancelled',
@@ -358,9 +364,12 @@
       $('#vesper-bedtime').value = entity;
       when.value = state;
       $('#vesper-daily').value = settings.daily_actions ?? 120;
+      $('#vesper-chats').value = settings.daily_chats ?? 30;
     }
     $('#vesper-today').textContent = budget && budget.actions_limit !== undefined
       ? `Today so far: ${budget.actions} of ${budget.actions_limit}.` : '';
+    $('#vesper-chats-today').textContent = budget && budget.chats_limit !== undefined
+      ? `Today so far: ${budget.chats} of ${budget.chats_limit}.` : '';
   }
   async function loadBedtimeEntities() {
     if (vs.entities) return;
@@ -385,6 +394,7 @@
     const r = await vSend('api/vesper/engine', 'POST', {
       bedtime_entity: entity ? (when === 'on' ? entity : `${entity}=${when}`) : '',
       daily_actions: Number($('#vesper-daily').value || 0),
+      daily_chats: Number($('#vesper-chats').value || 0),
     });
     if (r.error) { vSay('#vesper-settings-msg', r.error, false); return; }
     vs.settingsDirty = false;
@@ -512,6 +522,10 @@
       <li><span>${esc(q.person)}: ${esc(q.text)} <span class="muted">(${(q.options || []).map((o) => esc(o.label)).join(' or ')})</span></span>
         <span class="muted">${q.answer ? `answered <strong>${esc(q.answer)}</strong>` : esc(Q_STATUS[q.status] || q.status)}${q.note ? ` · ${esc(q.note)}` : ''}</span></li>`).join('')
       || '<li class="muted">No questions yet. Ask one above; the answer shows up here.</li>';
+    $('#vesper-talks').innerHTML = (v.talks || []).slice(0, 12).map((t) => `
+      <li><span>${esc(fmtWhen(t.t))} · ${t.kind === 'say' ? `Vesper to ${esc(t.person)}${t.by ? ` (asked by ${esc(t.by)})` : ''}` : esc(t.person || t.player || '')}${t.said ? `: “${esc(t.said)}”` : (t.kind === 'greet' ? ' joined' : '')}</span>
+        <span class="muted">${t.reply ? `→ ${esc(t.reply)}` : ''}${TALK_STATUS[t.status] ? ` (${esc(TALK_STATUS[t.status])})` : ''}</span></li>`).join('')
+      || '<li class="muted">Nobody has talked to Vesper yet. A grown-up on the family list can start a chat message with “Vesper” in the game — try “vesper help”.</li>';
   }
   $('#vesper-actions')?.addEventListener('click', async (e) => {
     const b = e.target.closest('button[data-vesper-undo]');

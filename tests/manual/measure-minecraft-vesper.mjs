@@ -12,7 +12,10 @@
  * list is empty), tap the "Add .Kaz8044" chip, save the family (the PUT
  * carries the roster), pick a bedtime entity and "off", add a protected
  * place from someone's position (the POST carries x and z), ask a question
- * (disabled while the person is away, then the POST). Fails on: a control
+ * (disabled while the person is away, then the POST), set how many times a
+ * day Vesper may ask brAIn (the POST carries daily_chats, the count shows),
+ * and read the "Talked with" list (a grown-up's chat request and brAIn's
+ * answer, and a canned refusal in words). Fails on: a control
  * in the card without a label; sideways scroll; a control under 40px; text
  * fields under 16px on touch; a page error from the card.
  */
@@ -38,7 +41,7 @@ const fail = (where, what) => problems.push(`${where}: ${what}`);
 
 function fakeServer() {
   const s = {
-    enabled: false, bedtime: '', daily: 120, family: [], zones: [], questions: [], posts: [],
+    enabled: false, bedtime: '', daily: 120, chats: 30, family: [], zones: [], questions: [], posts: [],
     online: ['.Kaz8044'],
   };
   const who = (player) => {
@@ -55,8 +58,13 @@ function fakeServer() {
   };
   const status = () => ({
     enabled: s.enabled, state: s.enabled ? 'idle' : 'off',
-    settings: { enabled: s.enabled, bedtime_entity: s.bedtime, daily_actions: s.daily },
-    budget: { day: '2026-10-31', actions: 3, actions_limit: s.daily, events: 1, events_limit: 40 },
+    settings: { enabled: s.enabled, bedtime_entity: s.bedtime, daily_actions: s.daily, daily_chats: s.chats },
+    budget: { day: '2026-10-31', actions: 3, actions_limit: s.daily, events: 1, events_limit: 40, chats: 4, chats_limit: s.chats },
+    talks: [
+      { id: '20261031-111111', t: 1761900100, kind: 'chat', person: 'Dad', player: 'Ben13765', said: 'build Kaz a little bridge over the river by the farm', reply: 'Done — a little oak bridge is up beside Kaz. Say “vesper undo” if you want it gone.', status: 'answered' },
+      { id: '20261031-222222', t: 1761900050, kind: 'chat', person: 'Dad', player: 'Ben13765', said: 'turn off the kitchen lights', reply: 'I’ll need you to approve that in brAIn.', status: 'answered' },
+      { id: '20261031-333333', t: 1761900000, kind: 'chat', person: 'Dad', player: 'Ben13765', said: 'tell me a joke', reply: 'I’ve talked a lot today — let’s pick this up tomorrow.', status: 'budget' },
+    ],
     family: s.family, zones: s.zones, questions: s.questions, online: s.online.map(who),
     headline: headline(), note: '', moments: [], memory: {},
     actions: [{ id: '20261031-abcdef', t: 1761900000, kind: 'greeting', text: 'Vesper said hello to Kaz', status: 'done', undoable: false }],
@@ -76,6 +84,7 @@ function fakeServer() {
       if ('on' in body) s.enabled = body.on;
       if ('bedtime_entity' in body) s.bedtime = body.bedtime_entity;
       if ('daily_actions' in body) s.daily = body.daily_actions;
+      if ('daily_chats' in body) s.chats = body.daily_chats;
       return [200, status()];
     }
     if (path === 'api/vesper/family' && method === 'PUT') {
@@ -195,9 +204,19 @@ for (const [width, touch] of [[1200, false], [390, true]]) {
     if (!listed.includes('binary_sensor.boys_door')) fail(where, 'the bedtime list is missing entities');
     await page.fill('#vesper-bedtime', 'binary_sensor.boys_door');
     if ((await page.$eval('#vesper-bedtime-when', (e) => e.value)) !== 'off') fail(where, 'a door sensor did not pick "off"');
+    await page.fill('#vesper-chats', '12');
     await page.click('#f-vesper button[type="submit"]');
     await settle(page);
     if (fake.s.bedtime !== 'binary_sensor.boys_door=off') fail(where, `bedtime saved as "${fake.s.bedtime}"`);
+    if (fake.s.chats !== 12) fail(where, `daily_chats saved as ${JSON.stringify(fake.s.chats)}`);
+    const chatsToday = await page.$eval('#vesper-chats-today', (e) => e.textContent);
+    if (!chatsToday.includes('4 of 12')) fail(where, `the brAIn count says "${chatsToday}"`);
+
+    // The talks: what a grown-up said in chat and what came back.
+    const talks = await page.$$eval('#vesper-talks li', (l) => l.map((x) => x.textContent.replace(/\s+/g, ' ')));
+    if (talks.length !== 3) fail(where, `${talks.length} talk rows`);
+    if (!talks[0] || !talks[0].includes('Dad') || !talks[0].includes('bridge') || !talks[0].includes('oak bridge')) fail(where, `the first talk row is "${talks[0]}"`);
+    if (!talks[2] || !talks[2].includes('out of today')) fail(where, `the budget row is "${talks[2]}"`);
 
     // 3. A protected place from where Kaz stands.
     await page.click('#vesper-here button[data-here=".Kaz8044"]');

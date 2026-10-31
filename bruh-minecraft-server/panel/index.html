@@ -563,7 +563,7 @@
             </label>
           </div>
           <p id="vesper-status" class="vesper-status" role="status" aria-live="polite">Loading…</p>
-          <p class="muted vesper-intro">Vesper plays in the world with your family: it appears when someone joins, says hello, and can ask a question that is answered by standing on a picture, so no reading is needed. Set it up below. Everything it does is listed at the bottom and can be undone.</p>
+          <p class="muted vesper-intro">Vesper plays in the world with your family, grown-ups included: it appears when someone joins and says hello, asks children questions they answer by standing on a picture (no reading needed), and grown-ups can talk to it in the game's chat — start a message with “Vesper”, like “vesper status” or “vesper build Kaz a bridge”. Set it up below. Everything it does is listed at the bottom and can be undone.</p>
 
           <section class="vesper-step" aria-labelledby="vesper-family-h">
             <h3 id="vesper-family-h"><span class="vesper-num" aria-hidden="true">1</span> Family</h3>
@@ -578,7 +578,7 @@
           </section>
 
           <section class="vesper-step" aria-labelledby="vesper-settings-h">
-            <h3 id="vesper-settings-h"><span class="vesper-num" aria-hidden="true">2</span> Bedtime and daily limit</h3>
+            <h3 id="vesper-settings-h"><span class="vesper-num" aria-hidden="true">2</span> Bedtime and daily limits</h3>
             <form id="f-vesper" class="vesper-form">
               <div class="vesper-field vesper-field-wide">
                 <label for="vesper-bedtime">Bedtime switch</label>
@@ -599,8 +599,13 @@
                 <input id="vesper-daily" type="number" inputmode="numeric" min="0" max="1000" aria-describedby="vesper-daily-help" />
                 <p id="vesper-daily-help" class="muted">120 is plenty for an afternoon of play. <span id="vesper-today"></span></p>
               </div>
+              <div class="vesper-field">
+                <label for="vesper-chats">Times a day Vesper may ask brAIn</label>
+                <input id="vesper-chats" type="number" inputmode="numeric" min="0" max="200" aria-describedby="vesper-chats-help" />
+                <p id="vesper-chats-help" class="muted">A grown-up's hello and each thing they ask in chat. 0 keeps Vesper to short built-in lines. <span id="vesper-chats-today"></span></p>
+              </div>
               <div class="vesper-buttons">
-                <button class="btn btn-primary" type="submit">Save bedtime and limit</button>
+                <button class="btn btn-primary" type="submit">Save bedtime and limits</button>
               </div>
               <p id="vesper-settings-msg" class="vesper-msg" role="status" aria-live="polite"></p>
             </form>
@@ -683,6 +688,9 @@
             <ul id="vesper-actions" class="vesper-list"></ul>
             <h3>Questions &amp; answers</h3>
             <ul id="vesper-questions" class="vesper-list"></ul>
+            <h3>Talked with</h3>
+            <p class="muted">What grown-ups said to Vesper in the game's chat, and what it answered.</p>
+            <ul id="vesper-talks" class="vesper-list"></ul>
           </section>
         </div>
       </div>

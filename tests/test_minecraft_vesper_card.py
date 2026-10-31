@@ -174,6 +174,16 @@ class TestStatusAndWording(unittest.TestCase):
         self.assertIn("next time someone from the family joins", _vesper_block())
         self.assertNotIn("for the children", card)
 
+    def test_grown_ups_can_see_how_to_talk_to_it_and_what_was_said(self):
+        card = INDEX[INDEX.index('id="vesper-card"'):INDEX.index("<!-- Console -->")]
+        self.assertIn("grown-ups can talk to it in the game's chat", card)
+        self.assertIn('<label for="vesper-chats">Times a day Vesper may ask brAIn</label>', card)
+        self.assertIn('<ul id="vesper-talks" class="vesper-list"></ul>', card)
+        js = _vesper_block()
+        self.assertIn("daily_chats: Number($('#vesper-chats').value || 0)", js)
+        self.assertIn("budget.chats_limit", js)
+        self.assertIn("try “vesper help”", js)
+
     def test_empty_states_guide(self):
         js = _vesper_block()
         self.assertIn("Nothing yet — Vesper will say hello here", js)
