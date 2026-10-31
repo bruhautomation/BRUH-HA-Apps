@@ -659,6 +659,34 @@ deploy_custom_integration() {
 }
 
 # ----------------------------------------------------------------------------
+# The world card for Morph (custom:morph-minecraft-world): who is on and
+# where, the world's time and weather, the feed and what Vesper is
+# building. Morph loads every file in /config/morph/cards by itself; the
+# file is written only when it changed, because Morph reloads a card whose
+# file moved. Nothing happens on a house without Morph.
+# ----------------------------------------------------------------------------
+install_world_card() {
+    local src="/opt/bruh-mc/custom_components/bruh_minecraft/frontend/bruh-minecraft-world.js"
+    local dst="/config/morph/cards/bruh-minecraft-world.js"
+    [ -f "${src}" ] && [ -d /config/morph ] || return 0
+    mkdir -p /config/morph/cards
+    if ! cmp -s "${src}" "${dst}"; then
+        cp -f "${src}" "${dst}"
+        # Morph's own user edits these files; hand it over like the rest.
+        chown --reference=/config/morph "${dst}" 2>/dev/null || true
+        bashio::log.info "Morph world card at ${dst} (custom:morph-minecraft-world)"
+    fi
+}
+
+# Pictures of Vesper's finished builds, drawn by the panel from the world's
+# region files and served by Home Assistant as /local/minecraft/<job>.png.
+# The panel runs as `minecraft`, and /config/www is root's.
+prepare_world_pictures() {
+    mkdir -p /config/www/minecraft 2>/dev/null || return 0
+    chown minecraft:minecraft /config/www/minecraft 2>/dev/null || true
+}
+
+# ----------------------------------------------------------------------------
 # Announce the bruh_minecraft service to the Supervisor's /discovery endpoint.
 # HA Core sees this and surfaces a one-click "Discovered: BRUH Minecraft"
 # tile on Settings → Devices & Services. Already-configured instances are
@@ -867,8 +895,10 @@ main() {
     # editing the Configuration tab by hand. If EULA is unset we idle here
     # forever; the wizard writes EULA=true via the Supervisor and the
     # Supervisor restart relaunches us through the normal path.
+    prepare_world_pictures
     start_ingress_panel
     deploy_custom_integration
+    install_world_card
 
     if [ "${EULA}" != "true" ]; then
         write_state "waiting_for_setup"

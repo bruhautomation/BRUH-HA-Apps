@@ -42,6 +42,7 @@ except ImportError:  # pragma: no cover — the test harness stubs HA
 from .bridge import send_request
 from .const import (
     ADDON_KINDS,
+    BUILD_STATUSES,
     DOMAIN,
     GAMEMODES,
     PLAYER_PATTERN,
@@ -51,6 +52,9 @@ from .const import (
     SERVICE_ADDONS,
     SERVICE_BACKUP,
     SERVICE_BAN,
+    SERVICE_BUILD_DELETE,
+    SERVICE_BUILD_SAVE,
+    SERVICE_BUILDS,
     SERVICE_COMMAND,
     SERVICE_DEOP,
     SERVICE_GAMEMODE,
@@ -67,6 +71,7 @@ from .const import (
     SERVICE_WEATHER,
     SERVICE_WHITELIST_ADD,
     SERVICE_WHITELIST_REMOVE,
+    SERVICE_WORLD,
 )
 from .coordinator import BruhMinecraftCoordinator
 from .fingerprint import record_loaded
@@ -269,6 +274,25 @@ def _register_services(hass: HomeAssistant) -> None:
     async def handle_addon_remove(call: ServiceCall) -> dict[str, Any]:
         return _strip(await _ask("addon_remove", {"id": call.data["id"]}, timeout=60.0))
 
+    # The world and Vesper's build log (panel/mcworld.py). Reading the world
+    # asks the panel now, not the mirrored file, so a caller is never
+    # handed a state up to fifteen seconds old.
+    async def handle_world(_: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("world", {}))
+
+    async def handle_builds(call: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("builds_list", {
+            k: call.data[k] for k in ("status", "limit") if k in call.data}))
+
+    async def handle_build_save(call: ServiceCall) -> dict[str, Any]:
+        payload = dict(call.data)
+        if not payload.get("id") and not str(payload.get("title") or "").strip():
+            raise HomeAssistantError("A new build job needs a title; to change one, give its id.")
+        return _strip(await _ask("build_save", payload, timeout=30.0))
+
+    async def handle_build_delete(call: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("build_delete", {"id": call.data["id"]}))
+
     async def handle_backup(_: ServiceCall) -> dict[str, Any]:
         answer = await _ask("backup", {}, timeout=120.0)
         return {"output": str(answer.get("output", ""))[-2000:]}
@@ -323,6 +347,22 @@ def _register_services(hass: HomeAssistant) -> None:
         vol.Required("kind"): vol.In(list(ADDON_KINDS)),
     })
     addon_remove_schema = vol.Schema({vol.Required("id"): cv.string})
+    builds_schema = vol.Schema({
+        vol.Optional("status"): vol.In(list(BUILD_STATUSES)),
+        vol.Optional("limit"): vol.All(vol.Coerce(int), vol.Range(1, 200)),
+    })
+    build_save_schema = vol.Schema({
+        vol.Optional("id"): cv.string,
+        vol.Optional("title"): cv.string,
+        vol.Optional("part"): cv.string,
+        vol.Optional("status"): vol.In(list(BUILD_STATUSES)),
+        vol.Optional("progress"): vol.All(vol.Coerce(int), vol.Range(0, 100)),
+        vol.Optional("bounds"): dict,
+        vol.Optional("notes"): cv.string,
+        vol.Optional("image"): cv.string,
+        vol.Optional("by"): cv.string,
+    })
+    build_delete_schema = vol.Schema({vol.Required("id"): cv.string})
     player_schema = vol.Schema({vol.Required("player"): _player})
     empty_schema = vol.Schema({})
 
@@ -348,6 +388,10 @@ def _register_services(hass: HomeAssistant) -> None:
     register(SERVICE_ADDON_SEARCH, handle_addon_search, addon_search_schema, only)
     register(SERVICE_ADDON_INSTALL, handle_addon_install, addon_install_schema, optional)
     register(SERVICE_ADDON_REMOVE, handle_addon_remove, addon_remove_schema, optional)
+    register(SERVICE_WORLD, handle_world, empty_schema, only)
+    register(SERVICE_BUILDS, handle_builds, builds_schema, only)
+    register(SERVICE_BUILD_SAVE, handle_build_save, build_save_schema, optional)
+    register(SERVICE_BUILD_DELETE, handle_build_delete, build_delete_schema, optional)
     register(SERVICE_BACKUP, handle_backup, empty_schema, optional)
     register(SERVICE_RESTART, handle_restart, empty_schema, optional)
     register(SERVICE_STOP, handle_stop, empty_schema, optional)

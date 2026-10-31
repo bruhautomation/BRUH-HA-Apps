@@ -524,6 +524,17 @@ All entities live under a single device **BRUH Minecraft**. Default entities:
 | binary_sensor | `reachable` | Minecraft status ping succeeds |
 | binary_sensor | `rcon_ok` | RCON handshake succeeds (disabled by default) |
 | button | `backup_now`, `restart_server`, `stop_server`, `save_all` | |
+| sensor | `world_time` | sunrise / day / sunset / night; `hour`, `clock`, `day` in attributes |
+| sensor | `world_day` | the world's day count |
+| sensor | `world_weather` | clear / rain / thunder (`source`: the server, or the last save on servers older than 1.20.5) |
+| sensor | `world_feed` | the latest thing that happened; the last 15 events and who was last seen in attributes |
+| sensor | `last_save` / `last_backup` | timestamps |
+| sensor | `vesper_building` | what Vesper is building now, or `idle`; progress, the part of the engine and recent builds in attributes |
+
+`players_online` also carries `details`: each player's dimension, position,
+the place they are near, game mode, health and food. Whoever is on, and
+everything above, goes to unknown/off when the add-on has not written for
+three minutes, so a stopped add-on never reads as a world with people in it.
 
 ### Services
 
@@ -544,6 +555,10 @@ All entities live under a single device **BRUH Minecraft**. Default entities:
 | `bruh_minecraft.list_addons` / `search_addons` | `kind`, `query` (response only) |
 | `bruh_minecraft.install_addon` | `id`, `kind` from a search |
 | `bruh_minecraft.remove_addon` | `id` |
+| `bruh_minecraft.get_world` | — (response only: players and where they are, time, weather, the feed, saves, builds) |
+| `bruh_minecraft.list_builds` | optional `status`, `limit` (response only) |
+| `bruh_minecraft.save_build` | `title` to add a job, or `id` to change one; `part`, `status`, `progress`, `bounds`, `notes`, `image`, `by` |
+| `bruh_minecraft.delete_build` | `id` |
 
 A player may be a name or `@a` (everyone), `@p`, `@r`. Every service that has
 something to say returns the server's reply as response data (`response_variable`
@@ -551,6 +566,32 @@ in a script), and a refusal — or an add-on that did not answer — fails the c
 with the reason, so it shows in the automation trace.
 
 All services are routed through a file-based IPC bridge at `/config/.bruh_minecraft/`. HA Core drops a JSON request; the add-on watches that folder, handles the request via RCON, and writes a response file back.
+
+### What is going on in the world
+
+The panel watches the world while the server runs, with no plugin: who is on
+and where (asked over RCON every 5 seconds while anybody is on, once a minute
+while nobody is), the time and weather, and the server log for joins, leaves,
+deaths, advancements and chat. The last 50 events are the feed; every day
+gets a journal in the world folder (`.bruh-world/journal/YYYY-MM-DD.jsonl`).
+Named places for "near …" are spawn, Vesper's builds, and any you list in
+`.bruh-world/places.json` (`[{"name": "Village", "x": 120, "z": -40}]`).
+
+**Vesper's build log** (`.bruh-world/builds.json`) is the list of what Vesper
+builds for the sentience engine: title, part of the engine, status (queued,
+building, done, failed), progress, the build's box, start and finish, notes
+and a picture. When a job with a box is marked done, the panel saves the
+world and draws the box from above out of the region files into
+`/config/www/minecraft/<job>.png` (shown as `/local/minecraft/<job>.png`).
+The panel's API is `GET /api/world`, `GET /api/world/journal[?day=]`,
+`GET|POST /api/builds`, `GET|PATCH|DELETE /api/builds/<id>` and
+`POST /api/builds/<id>/render`.
+
+**The Morph card.** When brAIn's Morph dashboard is installed the add-on puts
+`custom:morph-minecraft-world` in `/config/morph/cards`: the world's time,
+day and weather, who is on and where, what Vesper is building with pictures
+of what it finished, the feed, and when the world was last saved and backed
+up. No TPS, no latency, no buttons.
 
 ### Example automations
 

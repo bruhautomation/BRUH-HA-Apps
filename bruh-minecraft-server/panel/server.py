@@ -19,6 +19,11 @@ POST /api/restore/<ref>     — restore git commit or tar archive by name
 POST /api/restart           — stop the server; run.sh auto-restarts
 POST /api/stop              — graceful stop (clears auto-restart flag file)
 GET  /api/logs/tail         — Server-Sent Events stream of console.log tail
+GET  /api/world             — what is going on in the world (mcworld snapshot)
+GET  /api/world/journal     — the days journalled, or ?day=YYYY-MM-DD's events
+GET  /api/builds            — Vesper's build log, newest first (?status=)
+POST /api/builds            — add a job;  GET/PATCH/DELETE /api/builds/<id>
+POST /api/builds/<id>/render — draw the job's box from above into its picture
 
 Runs as the `minecraft` user on 0.0.0.0:8099. The HA supervisor proxies the
 ingress URL into /api/hassio_ingress/<token>/...; we therefore use only
@@ -77,17 +82,25 @@ from rcon_client import Rcon  # noqa: E402
 # repository has a `server.py`, and a directory pushed to the front of the
 # path makes the next `import server` anywhere in the same process answer
 # with this one.
-def _load_addons():
+def _load_beside(name: str, filename: str):
     import importlib.util
     spec = importlib.util.spec_from_file_location(
-        "bruh_mc_addons", Path(__file__).resolve().parent / "addons.py")
+        name, Path(__file__).resolve().parent / filename)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["bruh_mc_addons"] = module
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
 
+def _load_addons():
+    return _load_beside("bruh_mc_addons", "addons.py")
+
+
 addons = _load_addons()
+# The world-activity layer (who is on, where, the feed, the journal and
+# Vesper's build log) and the top-down renderer of a build's box.
+mcworld = _load_beside("bruh_mc_world", "mcworld.py")
+mcmap = _load_beside("bruh_mc_map", "mcmap.py")
 
 # ---------------------------------------------------------------------------
 # Paths / constants
@@ -2785,6 +2798,205 @@ async def api_curated_install_status(_: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# The world-activity layer (mcworld.py): the world's senses and Vesper's
+# build log. The collector runs on its own thread in this process (started
+# from main(), never by build_app, so the tests' app polls nothing): RCON
+# every few seconds only while somebody is on, once a minute otherwise.
+# ---------------------------------------------------------------------------
+WORLD_FILE = MC_PANEL_STATE / "world.json"
+MC_WWW_DIR = Path(os.environ.get("MC_WWW_DIR", "/config/www/minecraft"))
+MC_WWW_URL = "/local/minecraft"
+_JOB_ID = re.compile(r"^[0-9]{8}-[0-9a-f]{6}$")
+_WORLD: dict = {"collector": None, "thread": None, "stop": None}
+
+
+def _level_name() -> str:
+    name = _read_properties().get("level-name", "world") or "world"
+    return name if re.fullmatch(r"[A-Za-z0-9._ -]{1,64}", name) and ".." not in name else "world"
+
+
+def _world() -> "mcworld.WorldCollector":
+    """The one collector (made on first use; it polls only on its thread)."""
+    col = _WORLD["collector"]
+    if col is None:
+        def factory():
+            return Rcon(RCON_HOST, _rcon_password(), port=RCON_PORT, timeout=3)
+        col = mcworld.WorldCollector(
+            rcon_factory=factory, server_dir=MC_SERVER_DIR, out_path=WORLD_FILE,
+            log_paths=[MC_SERVER_DIR / "logs" / "latest.log", MC_CONSOLE_LOG],
+            backup_dir=MC_BACKUP_DIR, level_name=_level_name, read_nbt=mcmap.read_nbt_file)
+        _WORLD["collector"] = col
+    return col
+
+
+def _world_loop(stop) -> None:
+    col = _world()
+    while not stop.wait(mcworld.LOG_INTERVAL):
+        try:
+            col.step()
+        except Exception as exc:  # noqa: BLE001 — one bad beat is not the end
+            logging.warning("world collector: %s", _for_log(exc))
+    col.close()
+
+
+async def _start_world_watch(_app: web.Application) -> None:
+    import threading
+    stop = threading.Event()
+    thread = threading.Thread(target=_world_loop, args=(stop,), name="world", daemon=True)
+    _WORLD.update(stop=stop, thread=thread)
+    thread.start()
+
+
+async def _stop_world_watch(_app: web.Application) -> None:
+    if _WORLD["stop"] is not None:
+        _WORLD["stop"].set()
+
+
+async def api_world(_: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_world().snapshot))
+
+
+async def api_world_journal(request: web.Request) -> web.Response:
+    col = _world()
+    day = request.query.get("day", "")
+    if not day:
+        return web.json_response({"days": col.journal.days()})
+    if not re.fullmatch(r"\d{4}-\d\d-\d\d", day):
+        return web.json_response({"error": "day is YYYY-MM-DD."}, status=400)
+    events = await asyncio.to_thread(col.journal.events, day)
+    summary = await asyncio.to_thread(col.journal.summary, day, dict(col.sessions))
+    return web.json_response({"day": day, "summary": summary, "events": events})
+
+
+def _job_id(request: web.Request) -> str:
+    job_id = request.match_info["id"]
+    if not _JOB_ID.match(job_id):
+        raise web.HTTPNotFound(text=json.dumps({"error": "No such job."}),
+                               content_type="application/json")
+    return job_id
+
+
+async def _json_body(request: web.Request) -> dict:
+    try:
+        body = await request.json()
+    except (ValueError, UnicodeDecodeError):
+        raise web.HTTPBadRequest(text=json.dumps({"error": "The body is not JSON."}),
+                                 content_type="application/json") from None
+    if not isinstance(body, dict):
+        raise web.HTTPBadRequest(text=json.dumps({"error": "The body is a JSON object."}),
+                                 content_type="application/json")
+    return body
+
+
+async def api_builds_list(request: web.Request) -> web.Response:
+    col = _world()
+    status = request.query.get("status") or None
+    if status and status not in mcworld.STATUSES:
+        return web.json_response({"error": f"status is one of {', '.join(mcworld.STATUSES)}."},
+                                 status=400)
+    try:
+        limit = max(1, min(mcworld.MAX_JOBS, int(request.query.get("limit", "50"))))
+    except ValueError:
+        limit = 50
+    jobs = await asyncio.to_thread(col.builds.list, status, limit)
+    return web.json_response({"jobs": jobs, "current": col.builds.current()})
+
+
+async def api_builds_get(request: web.Request) -> web.Response:
+    job = _world().builds.get(_job_id(request))
+    if job is None:
+        return web.json_response({"error": "No such job."}, status=404)
+    return web.json_response({"job": job})
+
+
+def _after_build_change(col, job: dict, was: str | None) -> None:
+    col.build_changed(job, was)
+    if job.get("status") == "done" and was != "done" and job.get("bounds"):
+        asyncio.get_running_loop().run_in_executor(None, _render_job, job["id"], True)
+
+
+async def api_builds_create(request: web.Request) -> web.Response:
+    col = _world()
+    body = await _json_body(request)
+    try:
+        job = await asyncio.to_thread(col.builds.create, body)
+    except mcworld.BuildError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    _after_build_change(col, job, None)
+    return web.json_response({"job": job}, status=201)
+
+
+async def api_builds_update(request: web.Request) -> web.Response:
+    col = _world()
+    job_id = _job_id(request)
+    body = await _json_body(request)
+    before = col.builds.get(job_id)
+    if before is None:
+        return web.json_response({"error": "No such job."}, status=404)
+    try:
+        job = await asyncio.to_thread(col.builds.update, job_id, body)
+    except mcworld.BuildError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    _after_build_change(col, job, before.get("status"))
+    return web.json_response({"job": job})
+
+
+async def api_builds_delete(request: web.Request) -> web.Response:
+    col = _world()
+    job_id = _job_id(request)
+    if not await asyncio.to_thread(col.builds.delete, job_id):
+        return web.json_response({"error": "No such job."}, status=404)
+    try:
+        (MC_WWW_DIR / f"{job_id}.png").unlink()
+    except OSError:
+        # The job had no picture; the job itself is what was asked to go.
+        pass
+    col.write()
+    return web.json_response({"ok": True})
+
+
+def _render_job(job_id: str, save_first: bool = False) -> dict:
+    """Draw a job's box from above into /config/www/minecraft/<id>.png."""
+    col = _world()
+    job = col.builds.get(job_id)
+    if job is None:
+        return {"error": "No such job."}
+    if not job.get("bounds"):
+        return {"error": "The job has no bounds to draw."}
+    if save_first:
+        # The world on disk is the world as of the last save; a build that
+        # just finished is likely still only in memory.
+        try:
+            with Rcon(RCON_HOST, _rcon_password(), port=RCON_PORT, timeout=5) as r:
+                r.command("save-all")
+            time.sleep(3)
+        except Exception:  # noqa: BLE001 — draw what is on disk
+            pass
+    out = MC_WWW_DIR / f"{job_id}.png"
+    try:
+        result = mcmap.render_bounds(MC_SERVER_DIR / _level_name(), job["bounds"], out)
+    except OSError as exc:
+        result = {"error": f"The picture could not be written: {exc}"}
+    if result.get("error"):
+        col.builds.update(job_id, {"image_note": result["error"]})
+    else:
+        stamp = int(out.stat().st_mtime)
+        col.builds.update(job_id, {"image": f"{MC_WWW_URL}/{job_id}.png?v={stamp}",
+                                   "image_note": ""})
+    col.write()
+    return result
+
+
+async def api_builds_render(request: web.Request) -> web.Response:
+    job_id = _job_id(request)
+    result = await asyncio.to_thread(_render_job, job_id)
+    if result.get("error"):
+        status = 404 if result["error"] == "No such job." else 409
+        return web.json_response(result, status=status)
+    return web.json_response({"job": _world().builds.get(job_id), **result})
+
+
+# ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
 def build_app() -> web.Application:
@@ -2857,6 +3069,17 @@ def build_app() -> web.Application:
     app.router.add_post("/api/addons/remove-file", api_addons_remove_file)
     app.router.add_post("/api/addons/use-pack", api_addons_use_pack)
     app.router.add_delete("/api/addons/{id}", api_addons_remove)
+
+    # The world-activity layer and Vesper's build log (mcworld.py)
+    app.router.add_get("/api/world", api_world)
+    app.router.add_get("/api/world/journal", api_world_journal)
+    app.router.add_get("/api/builds", api_builds_list)
+    app.router.add_post("/api/builds", api_builds_create)
+    app.router.add_get("/api/builds/{id}", api_builds_get)
+    app.router.add_patch("/api/builds/{id}", api_builds_update)
+    app.router.add_post("/api/builds/{id}", api_builds_update)
+    app.router.add_delete("/api/builds/{id}", api_builds_delete)
+    app.router.add_post("/api/builds/{id}/render", api_builds_render)
     return app
 
 
@@ -2866,7 +3089,10 @@ def main() -> None:
     # exactly the case that needs a line in the add-on log.
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     MC_PANEL_STATE.mkdir(parents=True, exist_ok=True)
-    web.run_app(build_app(), host=BIND_HOST, port=BIND_PORT, access_log=None)
+    app = build_app()
+    app.on_startup.append(_start_world_watch)
+    app.on_cleanup.append(_stop_world_watch)
+    web.run_app(app, host=BIND_HOST, port=BIND_PORT, access_log=None)
 
 
 if __name__ == "__main__":

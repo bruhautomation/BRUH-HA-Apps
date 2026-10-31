@@ -16,6 +16,13 @@ SHARED_DIR = "/config/.bruh_minecraft"
 STATS_FILE = f"{SHARED_DIR}/stats.json"
 PLAYERS_FILE = f"{SHARED_DIR}/players.json"
 STATE_FILE = f"{SHARED_DIR}/state.json"
+# What is going on in the world (panel/mcworld.py): players and where they
+# are, time, weather, the feed, saves, backups and Vesper's builds.
+WORLD_FILE = f"{SHARED_DIR}/world.json"
+# The add-on rewrites stats.json every 15 s and world.json every few
+# seconds (a minute when nobody is on). Older than this, the add-on is not
+# running and what the file says is not true any more.
+STALE_AFTER = 180
 COMMAND_REQ_DIR = f"{SHARED_DIR}/requests"
 COMMAND_RES_DIR = f"{SHARED_DIR}/responses"
 
@@ -50,6 +57,11 @@ GAMEMODES = ("survival", "creative", "adventure", "spectator")
 # one-character prefix (`.` by default), so 17 is the real ceiling. `*` is
 # in the class because some Floodgate configs use it as the prefix.
 PLAYER_PATTERN = r"^(@[aprs]|[A-Za-z0-9_.*]{1,17})$"
+SERVICE_WORLD = "get_world"
+SERVICE_BUILDS = "list_builds"
+SERVICE_BUILD_SAVE = "save_build"
+SERVICE_BUILD_DELETE = "delete_build"
+BUILD_STATUSES = ("queued", "building", "done", "failed")
 SERVICE_ADDONS = "list_addons"
 SERVICE_ADDON_SEARCH = "search_addons"
 SERVICE_ADDON_INSTALL = "install_addon"

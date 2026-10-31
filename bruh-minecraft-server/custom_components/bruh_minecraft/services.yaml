@@ -162,6 +162,89 @@ get_status:
   name: Get status
   description: Who is online right now, beside the last collected server stats. Returns response data.
 
+get_world:
+  name: Get world
+  description: What is going on in the world now - who is on and where, the time, day and weather, recent events, the last save and backup, and Vesper's builds. Returns response data.
+
+list_builds:
+  name: List builds
+  description: Vesper's build log, newest first. Returns response data.
+  fields:
+    status:
+      name: Status
+      description: Only jobs with this status.
+      selector:
+        select:
+          options: [queued, building, done, failed]
+    limit:
+      name: Limit
+      selector:
+        number:
+          min: 1
+          max: 200
+
+save_build:
+  name: Save build
+  description: Add a job to Vesper's build log (give a title), or change one (give its id). A job set to done with bounds gets a top-down picture.
+  fields:
+    id:
+      name: Job id
+      description: The job to change. Leave out to add a new one.
+      selector:
+        text: {}
+    title:
+      name: Title
+      description: What is being built.
+      selector:
+        text: {}
+    part:
+      name: Part of the engine
+      description: Which part of the sentience engine this build is for (any label).
+      selector:
+        text: {}
+    status:
+      name: Status
+      selector:
+        select:
+          options: [queued, building, done, failed]
+    progress:
+      name: Progress
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+    bounds:
+      name: Bounds
+      description: 'The build''s box: {"x1": 0, "z1": 0, "x2": 16, "z2": 16, "y1": 60, "y2": 90, "dimension": "minecraft:overworld"}.'
+      selector:
+        object: {}
+    notes:
+      name: Notes
+      selector:
+        text:
+          multiline: true
+    image:
+      name: Picture
+      description: A picture of the build (a /local/ path or URL), if not drawn from the world.
+      selector:
+        text: {}
+    by:
+      name: Builder
+      description: Who builds it (Vesper unless said).
+      selector:
+        text: {}
+
+delete_build:
+  name: Delete build
+  description: Remove a job from Vesper's build log.
+  fields:
+    id:
+      name: Job id
+      required: true
+      selector:
+        text: {}
+
 list_addons:
   name: List add-ons
   description: What the add-on browser can offer this server, and what is installed in the active world. Returns response data.

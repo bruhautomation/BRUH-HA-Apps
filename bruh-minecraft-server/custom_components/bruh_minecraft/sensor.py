@@ -15,6 +15,7 @@ from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from . import worldview
 from .const import DOMAIN
 from .coordinator import BruhMinecraftCoordinator
 from .entity import BruhMinecraftEntity
@@ -22,7 +23,11 @@ from .entity import BruhMinecraftEntity
 
 @dataclass(frozen=True, kw_only=True)
 class BruhSensorDescription(SensorEntityDescription):
-    value_fn: Callable[[dict, dict], object]
+    # From the server's stats and state (stats.json, state.json) ...
+    value_fn: Callable[[dict, dict], object] | None = None
+    # ... or from the world (world.json): value and attributes.
+    world_fn: Callable[[dict], object] | None = None
+    world_attrs_fn: Callable[[dict], dict] | None = None
 
 
 SENSORS: tuple[BruhSensorDescription, ...] = (
@@ -110,6 +115,55 @@ SENSORS: tuple[BruhSensorDescription, ...] = (
         icon="mdi:gamepad-variant",
         value_fn=lambda stats, state: state.get("gamemode"),
     ),
+    # What is going on in the world (#573), from panel/mcworld.py.
+    BruhSensorDescription(
+        key="world_time",
+        name="World time",
+        icon="mdi:weather-sunset",
+        world_fn=worldview.time_state,
+        world_attrs_fn=worldview.time_attrs,
+    ),
+    BruhSensorDescription(
+        key="world_day",
+        name="World day",
+        icon="mdi:calendar-today",
+        world_fn=worldview.day_state,
+    ),
+    BruhSensorDescription(
+        key="world_weather",
+        name="World weather",
+        icon="mdi:weather-partly-rainy",
+        world_fn=worldview.weather_state,
+        world_attrs_fn=worldview.weather_attrs,
+    ),
+    BruhSensorDescription(
+        key="world_feed",
+        name="World feed",
+        icon="mdi:script-text-outline",
+        world_fn=worldview.feed_state,
+        world_attrs_fn=worldview.feed_attrs,
+    ),
+    BruhSensorDescription(
+        key="last_save",
+        name="Last save",
+        icon="mdi:content-save-outline",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        world_fn=worldview.last_save,
+    ),
+    BruhSensorDescription(
+        key="last_backup",
+        name="Last backup",
+        icon="mdi:backup-restore",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        world_fn=worldview.last_backup,
+    ),
+    BruhSensorDescription(
+        key="vesper_building",
+        name="Vesper building",
+        icon="mdi:hammer-wrench",
+        world_fn=worldview.building_state,
+        world_attrs_fn=worldview.building_attrs,
+    ),
 )
 
 
@@ -124,6 +178,9 @@ async def async_setup_entry(
 
 class BruhSensor(BruhMinecraftEntity, SensorEntity):
     entity_description: BruhSensorDescription
+    # Where everybody is and the feed move every few seconds while people
+    # play; the state is what history wants, these are for the card.
+    _unrecorded_attributes = frozenset({"details", "events", "last_seen", "recent", "current"})
 
     def __init__(
         self,
@@ -134,16 +191,39 @@ class BruhSensor(BruhMinecraftEntity, SensorEntity):
         self.entity_description = description
 
     @property
+    def world(self) -> dict:
+        return (self.coordinator.data or {}).get("world") or {}
+
+    @property
+    def available(self) -> bool:  # type: ignore[override]
+        # A world sensor has nothing to say until the add-on writes world.json.
+        if self.entity_description.world_fn is not None and not self.world:
+            return False
+        return bool(getattr(self.coordinator, "last_update_success", True))
+
+    @property
     def native_value(self):  # type: ignore[override]
+        d = self.entity_description
         try:
-            return self.entity_description.value_fn(self.stats, self.state_info)
+            if d.world_fn is not None:
+                return d.world_fn(self.world)
+            return d.value_fn(self.stats, self.state_info)
         except Exception:  # noqa: BLE001
             return None
 
     @property
     def extra_state_attributes(self) -> dict:
-        if self.entity_description.key == "players_online":
-            return {"players": self.stats.get("players", [])}
+        d = self.entity_description
+        if d.world_attrs_fn is not None:
+            try:
+                return d.world_attrs_fn(self.world)
+            except Exception:  # noqa: BLE001
+                return {}
+        if d.key == "players_online":
+            attrs = {"players": self.stats.get("players", [])}
+            if self.world:
+                attrs.update(worldview.players_attrs(self.world))
+            return attrs
         if self.entity_description.key == "version":
             return {"brand": self.stats.get("version_brand")}
         return {}
