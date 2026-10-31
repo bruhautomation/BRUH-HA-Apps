@@ -380,8 +380,12 @@ download_server_jar() {
 
     if "${SCRIPTS_DIR}/download-server.sh"; then
         bashio::log.info "Server jar ready: ${MC_SERVER_DIR}/server.jar"
+    elif [ -s "${MC_SERVER_DIR}/server.jar" ]; then
+        # A transient failure must not stop an add-on that has a working jar
+        # (#575). The retry is the next start: it asks again every time.
+        bashio::log.warning "Could not check for or download a new server jar; starting the jar that is already installed. The update is tried again at the next start."
     else
-        bashio::log.error "Failed to download server jar"
+        bashio::log.error "Failed to download server jar, and no server jar is installed, so the server cannot start"
         return 1
     fi
 }
