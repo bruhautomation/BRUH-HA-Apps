@@ -1201,8 +1201,8 @@ VOICE_UNTARGETED = {
         "set_weather", "say", "list_addons", "search_addons",
         # Reading the world and the build log; writing the log is typed.
         "get_world", "list_builds",
-        # Reading Vesper's engine (its log, questions and memory).
-        "get_vesper"}),
+        # Reading the companion's hands (its action log and questions).
+        "get_companion"}),
     "bruh_print": frozenset({"get_status", "print_text", "print_template"}),
     "bright": frozenset({"get_status", "start_show", "start_party",
                          "party_mode", "stop_show"}),
@@ -1693,6 +1693,11 @@ def call_service(domain, service, data=None, return_response=False):
     # was looking at an empty target. It is checked as the script it runs.
     script = _script_service_target(domain, service)
     extra = [script] if script else []
+    # A request typed in Minecraft's chat may act only in the game, and
+    # that is a scope rather than a rule, so YOLO does not lift it.
+    game = _minecraft_chat_refusal(domain, service)
+    if game:
+        return game
     # YOLO mode (the panel's opt-in switch, a file brAIn writes) stands
     # every rule down: the call goes to Home Assistant as asked.
     if not yolo_mode():
@@ -2791,10 +2796,12 @@ VOICE_ADMIN_SERVICES = frozenset({
         "rcon_command", "op_player", "deop_player", "kick_player", "ban_player",
         "pardon_player", "whitelist_add", "whitelist_remove", "restart_server",
         "stop_server", "install_addon", "remove_addon",
-        # Vesper in the game: renaming the world restarts the server, an undo
-        # changes the world, and a question builds pads beside a child.
-        "rename_world", "vesper_undo", "vesper_engine", "vesper_ask", "set_family",
-        "set_zone")
+        # The companion in the game: renaming the world restarts the server,
+        # an undo changes the world, a question builds pads beside a child,
+        # and words and builds are the companion's, held to brAIn's rules in
+        # minecraft_world rather than reachable by the side door.
+        "rename_world", "undo_action", "ask_choice", "set_zone", "companion_say",
+        "companion_build", "companion_appear", "set_companion", "companion_handover")
 } | {("bright", "import_show")} | {
     # Voice may design a part and start a print (the owner's rule since
     # 3.9); stopping one cannot be undone, G-code is anything at all, and a
@@ -2904,9 +2911,9 @@ def _mc_online():
     return [str(p) for p in status.get("players") or []], ""
 
 
-def minecraft_status(builds=False, vesper=False):
+def minecraft_status(builds=False, companion=False):
     """Who is on the Minecraft server, what is going on in the world, and
-    (with `builds`) Vesper's build log, (with `vesper`) Vesper's engine."""
+    (with `builds`) the build log, (with `companion`) brAIn's companion."""
     status = _addon_call("bruh_minecraft", "get_status")
     if status.get("error"):
         return status
@@ -2930,26 +2937,75 @@ def minecraft_status(builds=False, vesper=False):
                          else _tag_text({"jobs": listed.get("jobs") or [],
                                          "current": listed.get("current")},
                                         ("title", "part", "notes")))
-    if vesper:
-        out["vesper_engine"] = _mc_vesper()
+    if companion:
+        out["companion"] = _mc_companion()
     return out
 
 
-MC_VESPER_KEYS = ("enabled", "paused", "state", "note", "budget", "family", "zones",
-                  "moments", "questions", "actions", "memory", "open_question", "last_action")
+# brAIn's Minecraft faculty: its rules are the integration's
+# (custom_components/brain/minecraft_rules.py, beside this folder in the
+# repository and in the image), so this tool holds the SAME privacy and
+# bedtime rules the listener does; its files are /config/.brain/minecraft/.
+MC_SHARED_DIR = os.environ.get("BRAIN_SHARED_DIR", "/config/.brain")
+MC_RULES_DIR = os.environ.get("BRAIN_INTEGRATION_DIR", os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "custom_components", "brain"))
 
 
-def _mc_vesper():
-    """Vesper in the game (bruh_minecraft.get_vesper): whether it is on, the
-    family, the zones, recent moments, questions, the action log (each
-    undoable one has an id for minecraft_world undo) and what Vesper
-    remembers about each person. Questions, chat a parent typed and action
-    text are words from outside."""
-    v = _addon_call("bruh_minecraft", "get_vesper")
-    if v.get("error"):
-        return {"note": v["error"]}
-    return _tag_text({k: v.get(k) for k in MC_VESPER_KEYS if k in v},
-                     ("text", "said", "question", "note", "undo_note"))
+def _mc_rules():
+    name = "brain_minecraft_rules"
+    if name in sys.modules:
+        return sys.modules[name]
+    import importlib.util  # noqa: PLC0415
+    spec = importlib.util.spec_from_file_location(
+        name, os.path.join(MC_RULES_DIR, "minecraft_rules.py"))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _mc_faculty():
+    """(rules, settings, roster, name, state) of brAIn's Minecraft faculty."""
+    rules = _mc_rules()
+    settings = rules.effective_settings(MC_SHARED_DIR)
+    state = rules.read_json(os.path.join(rules.folder(MC_SHARED_DIR), rules.STATE), {})
+    return (rules, settings, rules.Roster(settings["people"]),
+            rules.persona_name(MC_SHARED_DIR), state)
+
+
+def _mc_bedtime(rules, settings):
+    """True at bedtime, False otherwise, None when the switch cannot be read."""
+    rule = rules.bedtime_rule(settings.get("bedtime_entity"))
+    if rule is None:
+        return False
+    result = ha_api_request(f"/api/states/{rule[0]}")
+    return rules.is_bedtime(rule, None if "error" in result else result.get("state"))
+
+
+MC_COMPANION_KEYS = ("identity", "state", "questions", "actions", "zones", "said",
+                     "open_question", "last_action")
+
+
+def _mc_companion():
+    """brAIn's companion in the game: its settings (on, the family, budgets,
+    bedtime), what it remembers about each person and what was said to it,
+    and BRUH Minecraft's side (bruh_minecraft.get_companion): the action log
+    with ids to undo, the questions and the protected places. Questions,
+    chat and action text are words from outside."""
+    rules, settings, _roster, name, state = _mc_faculty()
+    base = rules.folder(MC_SHARED_DIR)
+    out = {"name": name, "enabled": settings["enabled"], "paused": bool(state.get("paused")),
+           "family": settings["people"], "bedtime_entity": settings["bedtime_entity"],
+           "budgets": settings["budgets"],
+           "today": {"turns": state.get("turns", 0), "actions": state.get("actions", 0)},
+           "memory": rules.read_json(os.path.join(base, rules.PEOPLE), {}),
+           "talks": (rules.read_json(os.path.join(base, rules.TALKS), {}).get("talks") or [])[:15]}
+    hands = _addon_call("bruh_minecraft", "get_companion")
+    if hands.get("error"):
+        out["note"] = hands["error"]
+    else:
+        out.update({k: hands.get(k) for k in MC_COMPANION_KEYS if k in hands})
+    return _tag_text(out, ("text", "said", "question", "note", "undo_note", "reply"))
 
 
 MC_FEED_FOR_MODEL = 15
@@ -2957,7 +3013,10 @@ MC_FEED_FOR_MODEL = 15
 
 def _mc_world():
     """The world part of minecraft_status: where everybody is, the time and
-    weather, the feed, and what Vesper is building (bruh_minecraft.get_world).
+    weather, the feed, what is being built (bruh_minecraft.get_world), and
+    whether the server's log is being heard (`listening`: a script that
+    rewrote the chat or join lines leaves the feed quiet, and that is a thing
+    worth telling the household).
 
     Chat and build titles are other people's words, so they are tagged as
     text from outside. An integration older than the world layer is said
@@ -2978,8 +3037,9 @@ def _mc_world():
         "last_seen": w.get("last_seen") or {},
         "last_save": w.get("last_save"),
         "last_backup": w.get("last_backup"),
-        "vesper": {"current": builds.get("current"), "recent": builds.get("recent") or [],
-                   "queued": builds.get("queued", 0)},
+        "building": {"current": builds.get("current"), "recent": builds.get("recent") or [],
+                     "queued": builds.get("queued", 0)},
+        "listening": w.get("listening") or {"ok": True},
     }, ("text", "title", "part"))
 
 
@@ -3075,17 +3135,51 @@ def minecraft_player(player, action, value=None, amount=None):
             "server_reply": _reply(result)}
 
 
-MC_VESPER_ACTIONS = ("rename", "ask", "undo")
+MC_COMPANION_ACTIONS = ("rename", "ask", "undo", "build")
+MINECRAFT_CHANNEL = "minecraft"
+# What a run on the `minecraft` channel (a request typed in the game's chat,
+# the `minecraft` task scope) may call: the game world's in-world acts
+# through the companion's services, and reading the game. Nothing else
+# — no house service, no rcon_command, op, kick, give or teleport — whatever
+# YOLO says: a name in a game's chat is not the person at brAIn's keyboard,
+# and anything outside the game needs brAIn's own approval.
+MINECRAFT_CHAT_SERVICES = frozenset(("bruh_minecraft", s) for s in (
+    "get_status", "get_world", "get_companion", "list_builds",
+    "companion_say", "ask_choice", "companion_build", "undo_action", "set_time",
+    "set_weather"))
+MINECRAFT_CHAT_REFUSAL = (
+    "{what} is outside the Minecraft world, and this request came from the game's "
+    "chat, which may act only in the game. Tell them: \"I'll need you to approve "
+    "that in brAIn.\" Do not retry or look for another route.")
+MINECRAFT_CHAT_ACTIONS = ("time", "weather", "say", "ask", "undo", "build")
 
 
-def minecraft_world(action, value=None, player=None, options=None):
+def _minecraft_chat_refusal(domain, service):
+    """The refusal for a service a game-chat run may not call, or None."""
+    if _channel() != MINECRAFT_CHANNEL:
+        return None
+    if (str(domain).lower(), str(service).lower()) in MINECRAFT_CHAT_SERVICES:
+        return None
+    return {"error": MINECRAFT_CHAT_REFUSAL.format(what=f"{domain}.{service}")}
+
+
+def minecraft_world(action, value=None, player=None, options=None, blocks=None):
     """The world everyone is in: time of day, weather, a chat message; and
-    Vesper's part of it: rename the world, ask a child a choice-pad
-    question, undo one of Vesper's actions."""
+    the companion's part of it: say something as brAIn's companion to a
+    person or the family, build something small, rename the world, ask a
+    child a choice-pad question, undo one of the companion's actions."""
     action = str(action or "").strip().lower()
     value = "" if value is None else str(value).strip()
-    if action in MC_VESPER_ACTIONS:
-        return _mc_vesper_action(action, value, player, options)
+    in_game = _channel() == MINECRAFT_CHANNEL
+    if in_game and action not in MINECRAFT_CHAT_ACTIONS:
+        return {"error": MINECRAFT_CHAT_REFUSAL.format(what=f"Minecraft '{action}'")}
+    if action == "say" and (player or in_game):
+        # From the companion, to a person or the family, under brAIn's rules
+        # (never one child's news to another): a request from the game's
+        # chat never speaks as the server to everyone, guests included.
+        return _mc_companion_say(value, player or "family")
+    if action in MC_COMPANION_ACTIONS:
+        return _mc_companion_action(action, value, player, options, blocks)
     if action == "time":
         spoken = {"morning": "day", "sunrise": "day", "evening": "night",
                   "sunset": "night", "dusk": "night", "dawn": "day"}
@@ -3102,23 +3196,128 @@ def minecraft_world(action, value=None, player=None, options=None):
         result = _addon_call("bruh_minecraft", "say", {"message": value[:256]})
     else:
         return {"error": "Use time (day/night/noon/midnight or ticks), weather "
-                         "(clear/rain/thunder), say, rename, ask or undo."}
+                         "(clear/rain/thunder), say, rename, ask, build or undo."}
     if result.get("error"):
         return result
     return {"done": True, "action": action, "value": value,
             "server_reply": _reply(result)}
 
 
-def _mc_vesper_action(action, value, player, options):
-    """rename, ask and undo: each one service, each refused to voice."""
-    refusal = _voice_admin_refusal({"rename": "Renaming the Minecraft world",
-                                    "ask": "Asking a child a question in Minecraft",
-                                    "undo": "Undoing Vesper's action in Minecraft"}[action])
+def _mc_companion_say(value, to):
+    """The companion says it in the game (bruh_minecraft.companion_say), under
+    the house's name for brAIn, refused to voice. Only to the family; never
+    to a child at bedtime; never a line naming one child to another."""
+    refusal = _voice_admin_refusal("Saying something as the companion in Minecraft")
     if refusal:
         return refusal
+    if not value:
+        return {"error": "Nothing to say."}
+    rules, settings, roster, name, state = _mc_faculty()
+    if not settings["enabled"]:
+        return {"error": "The Minecraft companion is switched off (brAIn, ⚙ › Minecraft)."}
+    if state.get("paused"):
+        return {"error": (f"The companion is paused in the game; it says nothing until a "
+                          f"grown-up says “{name.lower()} start”.")}
+    online, down = _mc_online()
+    if down:
+        return {"error": down}
+    target = str(to or "").strip()
+    if target.lower() in ("", "family", "everyone", "everybody", "all", "@a"):
+        players = [p for p in online if roster.who(p)["role"] != "guest"]
+        if not players:
+            return {"error": "Nobody from the family is in the game."}
+    else:
+        players = roster.players_of(target, online)
+        if not players:
+            return {"error": f"{target} is not in the game right now."}
+    bed = _mc_bedtime(rules, settings)
+    sent, kept = [], []
+    for p in players:
+        who = roster.who(p)
+        if who["role"] == "guest":
+            kept.append({"person": p, "why": "not on the family list"})
+        elif who["role"] == "child" and bed is not False:
+            kept.append({"person": who["person"], "why": (
+                "it is bedtime" if bed else "the bedtime switch cannot be read")})
+        elif roster.names_another_child(p, value):
+            kept.append({"person": who["person"], "why": (
+                "it names another child, and the companion never tells one child about "
+                "another")})
+        else:
+            sent.append(p)
+    if not sent:
+        return {"error": "Nothing was said: " + "; ".join(
+            f"{k['person']} — {k['why']}" for k in kept) + "."}
+    result = _addon_call("bruh_minecraft", "companion_say", {
+        "to": sent, "message": value[:640], "name": name,
+        "colour": settings.get("colour") or rules.DEFAULT_COLOUR, "by": "brAIn"})
+    if result.get("error"):
+        return result
+    return {"done": True, "action": "say", "to": str(to),
+            "sent": [roster.who(p)["person"] for p in sent], "kept": kept}
+
+
+def _mc_blocks(blocks):
+    """blocks as a list of {x, y, z, block}, from a list or its JSON."""
+    if isinstance(blocks, str):
+        try:
+            blocks = json.loads(blocks)
+        except ValueError:
+            return None
+    if not isinstance(blocks, list) or not blocks:
+        return None
+    out = []
+    for b in blocks[:65]:
+        if not isinstance(b, dict):
+            return None
+        out.append({k: b.get(k) for k in ("x", "y", "z", "block")})
+    return out
+
+
+def _mc_companion_action(action, value, player, options, blocks=None):
+    """rename, ask, undo and build: each one service, each refused to voice,
+    and build and ask held to brAIn's switch, pause and bedtime."""
+    refusal = _voice_admin_refusal({"rename": "Renaming the Minecraft world",
+                                    "ask": "Asking a child a question in Minecraft",
+                                    "undo": "Undoing the companion's action in Minecraft",
+                                    "build": "Building in Minecraft"}[action])
+    if refusal:
+        return refusal
+    if action in ("build", "ask"):
+        rules, settings, roster, name, state = _mc_faculty()
+        if not settings["enabled"]:
+            return {"error": "The Minecraft companion is switched off (brAIn, ⚙ › Minecraft)."}
+        if state.get("paused"):
+            return {"error": "The companion is paused in the game."}
+        bed = _mc_bedtime(rules, settings)
+        if bed is None:
+            return {"error": "The bedtime switch cannot be read, so nothing new starts."}
+    if action == "build":
+        if bed:
+            return {"error": "It is bedtime; nothing is built until it ends."}
+        cells = _mc_blocks(blocks)
+        if cells is None:
+            return {"error": ("Give blocks: a list of {x, y, z, block} (at most 64), "
+                              "offsets from the player's feet when player is given.")}
+        data = {"blocks": cells, "title": value[:60], "by": "brAIn", "name": name}
+        if player:
+            online, down = _mc_online()
+            if down:
+                return {"error": down}
+            found = roster.players_of(player, online)
+            if not found:
+                return {"error": f"{player} is not in the game right now."}
+            data["player"] = found[0]
+        result = _addon_call("bruh_minecraft", "companion_build", data)
+        if result.get("error"):
+            return result
+        act = result.get("action") or {}
+        return _tag_text({"done": True, "action": "build", "id": act.get("id"),
+                          "text": act.get("text"), "blocks": len(act.get("cells") or []),
+                          "note": result.get("note", "")}, ("text",))
     if action == "rename":
         if not value:
-            return {"error": "Give the new name, e.g. 'Vesper World'."}
+            return {"error": "Give the new name, e.g. 'Our World'."}
         result = _addon_call("bruh_minecraft", "rename_world", {"name": value[:60]})
         if result.get("error"):
             if "did not answer" in result["error"]:
@@ -3134,7 +3333,14 @@ def _mc_vesper_action(action, value, player, options):
             return {"error": "Name the child to ask (their name, or their Minecraft name)."}
         if not value:
             return {"error": "Give the question (value); the child sees the two pictures."}
-        data = {"player": str(player), "question": value[:200]}
+        who = roster.who(player, player)
+        if who["role"] == "child" and bed:
+            return {"error": f"It is {who['person']}'s bedtime."}
+        online, _down = _mc_online()
+        found = roster.players_of(player, online or [])
+        target = found[0] if found else roster.player_name(player) or str(player)
+        data = {"player": str(target), "question": value[:200], "person": who["person"],
+                "name": name, "by": "brAIn"}
         if options:
             if isinstance(options, str):
                 try:
@@ -3142,14 +3348,12 @@ def _mc_vesper_action(action, value, player, options):
                 except ValueError:
                     options = [o.strip() for o in options.split(",") if o.strip()]
             data["options"] = options
-        result = _addon_call("bruh_minecraft", "vesper_ask", data)
+        result = _addon_call("bruh_minecraft", "ask_choice", data)
         if result.get("error"):
             return result
         return _tag_text({"done": True, "action": "ask", "question": result.get("question"),
                           "note": result.get("note", "")}, ("text",))
-    if not value:
-        return {"error": "Give the action id to undo (minecraft_status vesper=true lists them)."}
-    result = _addon_call("bruh_minecraft", "vesper_undo", {"id": value})
+    result = _addon_call("bruh_minecraft", "undo_action", {"id": value} if value else {})
     if result.get("error"):
         return result
     return _tag_text({"done": True, "action": "undo", "restored": result.get("restored"),
@@ -6635,26 +6839,26 @@ TOOLS = [
             "the world: where each player is (dimension, position, the place "
             "they are near), their game mode and health, the time, day and "
             "weather, the recent feed (joins, leaves, deaths, advancements, "
-            "chat), the last save and backup, and what Vesper is building. "
-            "builds=true adds Vesper's build log. Read-only. Call it before "
+            "chat; `listening` false when the server's log is not being heard), "
+            "the last save and backup, and what is being built. "
+            "builds=true adds the build log. Read-only. Call it before "
             "acting on a player so you use the name the server knows. To add or "
             "change a job in the build log, call_service bruh_minecraft.save_build "
             "(title, part, status queued/building/done/failed, progress, bounds "
             "{x1,z1,x2,z2,y1,y2,dimension}, notes; give id to change one) or "
             "delete_build (id); a job marked done with bounds gets a picture. "
-            "vesper=true adds Vesper in the game: whether the engine is on, the "
-            "family roster, zones, recent moments, choice-pad questions and "
-            "answers, the action log (ids to undo) and what Vesper remembers about "
-            "each person — for the parent; never tell one child about another. "
-            "The roster and zones are set with call_service bruh_minecraft."
-            "set_family / set_zone; Vesper is switched on or off, and its bedtime "
-            "switch and daily budget set, with bruh_minecraft.vesper_engine."
+            "companion=true adds brAIn's companion in the game: whether it is on, "
+            "the family list, budgets and bedtime (all set in brAIn, ⚙ › "
+            "Minecraft), choice-pad questions and answers, the action log (ids to "
+            "undo), protected places and what it remembers about each person — "
+            "for the parent; never tell one child about another. Places are set "
+            "with call_service bruh_minecraft.set_zone."
         ),
         "inputSchema": {"type": "object", "properties": {
             "builds": {"type": "boolean",
-                       "description": "Also list Vesper's build log (newest 20)."},
-            "vesper": {"type": "boolean",
-                       "description": "Also read Vesper's engine, action log and memory."}}},
+                       "description": "Also list the build log (newest 20)."},
+            "companion": {"type": "boolean",
+                          "description": "Also read the companion: settings, action log and memory."}}},
     },
     {
         "name": "minecraft_teleport",
@@ -6697,23 +6901,33 @@ TOOLS = [
         "description": (
             "The Minecraft world everyone shares: set the time (day, night, "
             "noon, midnight or ticks), the weather (clear, rain, thunder), or "
-            "say a message in chat to every player. Vesper's part (not for a "
-            "voice-level agent): rename (value: the name as said, e.g. 'Vesper "
-            "World'; the folder becomes Vesper_World, the server list shows the "
+            "say a message in chat to every player. The companion's part (not for "
+            "a voice-level agent): say with player (a person, a Minecraft name or "
+            "'family'): the companion says value to them in chat, under the "
+            "house's name for brAIn — never one child's news "
+            "to another; build (value: what it is; blocks: up to 64 of {x, y, z, "
+            "block}, offsets from player's feet when player is given — only into "
+            "empty space on natural ground, never in a protected place or on or "
+            "next to a build; undoable); rename (value: the name as said, e.g. 'Our "
+            "World'; the folder becomes Our_World, the server list shows the "
             "name, and the server restarts); ask (player: the child; value: the "
             "question for the parent's record; options: two of label or {label, "
             "picture: a block id, gift: an item} — the child answers by standing "
             "on a green or red pad, so pictures matter more than words; leave out "
             "for yes/no); undo (value: an action id from minecraft_status "
-            "vesper=true)."
+            "companion=true; empty for the newest)."
         ),
         "inputSchema": {"type": "object", "properties": {
             "action": {"type": "string",
-                       "enum": ["time", "weather", "say", "rename", "ask", "undo"]},
+                       "enum": ["time", "weather", "say", "rename", "ask", "undo", "build"]},
             "value": {"type": "string"},
-            "player": {"type": "string", "description": "ask: the child to ask."},
+            "player": {"type": "string", "description": (
+                "ask: the child to ask; say: who the companion says it to ('family' for "
+                "everyone on the list); build: whose feet the offsets are from.")},
             "options": {"type": "array", "description": "ask: the two choices.",
-                        "items": {"anyOf": [{"type": "string"}, {"type": "object"}]}}},
+                        "items": {"anyOf": [{"type": "string"}, {"type": "object"}]}},
+            "blocks": {"type": "array", "description": "build: [{x, y, z, block}].",
+                       "items": {"type": "object"}}},
             "required": ["action", "value"]},
     },
     {

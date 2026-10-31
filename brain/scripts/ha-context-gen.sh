@@ -691,7 +691,7 @@ asked.
   \`minecraft_teleport\`, \`minecraft_server\`, \`minecraft_addons\`. Match a
   spoken name against who is online; when "me" is not a name you know,
   \`recall\` the person's Minecraft name, or ask once and \`remember_fact\` it.
-  Vesper in the game: \`minecraft_status\` with vesper=true reads its log,
+  The companion in the game: \`minecraft_status\` with companion=true reads its log,
   questions and per-person memory; \`minecraft_world\` rename, ask (a
   choice-pad question to a child) and undo change it. Never tell one child
   what another did.

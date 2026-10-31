@@ -4,14 +4,14 @@
  *
  * The owner (#573): "make this card as great as possible. I don't care
  * about TPS or latency. I want to know what's going on in the world. I
- * don't need buttons. I want to know what Vesper is building as part of
- * the sentience engine." So this card says, and does nothing else:
+ * don't need buttons. I want to know what [the companion] is building as
+ * part of the sentience engine." So this card says, and does nothing else:
  *
  *   - the world's day, time of day and weather;
  *   - who is on and where (dimension, "near <place>" or rounded
  *     coordinates), their game mode and health; when nobody is, who was
  *     on last;
- *   - what Vesper is building now (title, part of the engine, progress)
+ *   - what is being built now (title, part of the build, progress)
  *     and what it finished lately, with the picture drawn from the world;
  *   - the feed: joins, leaves, deaths, advancements, chat;
  *   - when the world was last saved and backed up.
@@ -19,7 +19,7 @@
  * Everything is read off the bruh_minecraft integration's sensors (panel/
  * mcworld.py → world.json → worldview.py): `world_time`, `world_day`,
  * `world_weather`, `players_online` (its `details`), `world_feed`,
- * `vesper_building`, `last_save`, `last_backup`. No TPS, no latency, no
+ * `building`, `last_save`, `last_backup`. No TPS, no latency, no
  * buttons, nothing floats, no hover text: Morph's rules (docs/design/
  * morph-vision.md §15). Plain custom element, no imports.
  *
@@ -29,10 +29,10 @@
  * default `sensor.bruh_minecraft_server_`).
  */
 
-const CARD_VERSION = '1.0.0';
+const CARD_VERSION = '1.1.0';
 
 const KEYS = ['world_time', 'world_day', 'world_weather', 'players_online', 'world_feed',
-  'vesper_building', 'last_save', 'last_backup'];
+  'building', 'last_save', 'last_backup'];
 const PHASE = { day: 'Day', sunset: 'Sunset', night: 'Night', sunrise: 'Sunrise' };
 const WEATHER = { clear: 'Clear', rain: 'Raining', thunder: 'Thunderstorm' };
 const KIND_MARK = { join: '→', leave: '←', death: '✝', advancement: '★', chat: '“', build: '▣',
@@ -181,8 +181,8 @@ class MorphMinecraftWorld extends HTMLElement {
     return `<section><div class="lab">${count ? `On now · ${count}` : 'On now'}</div><div class="rows">${rows}</div></section>`;
   }
 
-  _vesperHtml(s) {
-    const v = s.vesper_building;
+  _buildingHtml(s) {
+    const v = s.building;
     if (!v) return '';
     const a = v.attributes || {};
     const cur = a.current;
@@ -203,7 +203,7 @@ class MorphMinecraftWorld extends HTMLElement {
       ? `<div class="shot"><img src="${esc(j.image)}" alt="${esc(j.title)} from above" loading="lazy"><span class="st">${esc(j.title)}</span><span class="sw">${esc(ago(j.finished))}</span></div>`
       : `<div class="shot text"><span class="st">${esc(j.title)}</span><span class="sw">${esc([j.part, ago(j.finished)].filter(Boolean).join(' · '))}</span></div>`).join('')}</div>` : '';
     const fail = failed.length ? `<div class="quiet">Could not finish ${esc(failed[0].title)} (${esc(ago(failed[0].finished))}).</div>` : '';
-    return `<section><div class="lab">Vesper is building · sentience engine</div><div class="rows">${now}${shots}${fail}</div></section>`;
+    return `<section><div class="lab">Building</div><div class="rows">${now}${shots}${fail}</div></section>`;
   }
 
   _feedHtml(s) {
@@ -233,7 +233,7 @@ class MorphMinecraftWorld extends HTMLElement {
       ${cfg.title ? `<div class="title">${esc(cfg.title)}</div>` : ''}
       ${this._skyHtml(s)}
       ${this._whoHtml(s)}
-      ${this._vesperHtml(s)}
+      ${this._buildingHtml(s)}
       ${this._feedHtml(s)}
       ${this._footHtml(s)}
     </div>`;

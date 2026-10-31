@@ -21,17 +21,23 @@ POST /api/stop              — graceful stop (clears auto-restart flag file)
 GET  /api/logs/tail         — Server-Sent Events stream of console.log tail
 GET  /api/world             — what is going on in the world (mcworld snapshot)
 GET  /api/world/journal     — the days journalled, or ?day=YYYY-MM-DD's events
-GET  /api/builds            — Vesper's build log, newest first (?status=)
+GET  /api/builds            — the companion's build log, newest first (?status=)
 POST /api/builds            — add a job;  GET/PATCH/DELETE /api/builds/<id>
 POST /api/builds/<id>/render — draw the job's box from above into its picture
-POST /api/world/rename      — rename the active world to a name as said ("Vesper World")
-GET  /api/vesper            — Vesper's engine: state, budget, family, zones, moments,
-                              questions, the action log and per-person memory
-POST /api/vesper/engine     — {"on", "bedtime_entity", "daily_actions"}: Vesper's settings
-GET  /api/vesper/entities   — Home Assistant's on/off entities, for the bedtime switch list
-POST /api/vesper/ask        — pose a two-picture choice-pad question to a child
-POST /api/vesper/actions/<id>/undo — put back what one action changed
-PUT  /api/vesper/family     — the roster; POST/DELETE /api/vesper/zones — named places
+POST /api/world/rename      — rename the active world to a name as said ("Our World")
+GET  /api/companion         — the companion's hands: who it is (as brAIn last said),
+                              whether brAIn is installed, places, questions, the
+                              action log, what it said, the account check
+POST /api/companion/identity — {"name", "colour", "active", "by", "model"} from brAIn
+POST /api/companion/say     — {"to", "message", "name", "colour", "chime", "by"}
+POST /api/companion/appear  — {"player", "seconds", "kind", "name", "colour", "chime", "by"}
+POST /api/companion/ask     — {"player", "question", "options", "person", "name", "by"}
+POST /api/companion/build   — {"blocks", "player", "dimension", "title", "name", "by"}
+POST /api/companion/actions/<id>/undo — put back what one action changed (or "last")
+POST /api/companion/zones   — a named place; DELETE /api/companion/zones/<name>
+GET  /api/companion/legacy  — the 1.17.7 engine's per-world state, for brAIn to keep;
+                              POST /api/companion/legacy/retire once it has
+GET  /api/changelog         — CHANGELOG.md, newest release first
 
 Runs as the `minecraft` user on 0.0.0.0:8099. The HA supervisor proxies the
 ingress URL into /api/hassio_ingress/<token>/...; we therefore use only
@@ -67,6 +73,7 @@ import sys
 import tempfile
 import time
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 import aiofiles
@@ -106,12 +113,13 @@ def _load_addons():
 
 addons = _load_addons()
 # The world-activity layer (who is on, where, the feed, the journal and
-# Vesper's build log) and the top-down renderer of a build's box.
+# the build log) and the top-down renderer of a build's box.
 mcworld = _load_beside("bruh_mc_world", "mcworld.py")
 mcmap = _load_beside("bruh_mc_map", "mcmap.py")
-# Vesper in the game (#572): attention, a body, choice pads and an undoable
-# action log, on top of the world's senses.
-vesper = _load_beside("bruh_mc_vesper", "vesper.py")
+# The companion's hands in the world: a body, words, choice pads and an
+# undoable action log, on top of the world's senses. Mechanics only — a
+# companion (brAIn's) decides, through the integration's services.
+companion = _load_beside("bruh_mc_companion", "companion.py")
 
 # ---------------------------------------------------------------------------
 # Paths / constants
@@ -1809,8 +1817,8 @@ async def _rename_world(old: str, new: str, display: str = "") -> web.Response:
 
 
 def world_folder_name(name: str) -> str:
-    """A folder name for a world name a person said: 'Vesper World' is
-    'Vesper_World', because a world folder holds letters, digits, _ and -
+    """A folder name for a world name a person said: 'Our World' is
+    'Our_World', because a world folder holds letters, digits, _ and -
     only (world-manager.sh, the active_world option's schema)."""
     folder = re.sub(r"[^A-Za-z0-9_-]+", "_", str(name or "").strip()).strip("_-")
     return folder[:32]
@@ -1848,7 +1856,7 @@ def _set_property_in(path: Path, key: str, value: str) -> None:
 
 
 async def api_world_rename(request: web.Request) -> web.Response:
-    """Rename the ACTIVE world to a name a person said (`{"name": "Vesper
+    """Rename the ACTIVE world to a name a person said (`{"name": "Our
     World"}`): the folder gets a safe form of it and the MOTD the name as
     said. brAIn's `minecraft_world(rename)` reaches this through the
     integration's `rename_world` service."""
@@ -2981,7 +2989,7 @@ async def api_curated_install_status(_: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
-# The world-activity layer (mcworld.py): the world's senses and Vesper's
+# The world-activity layer (mcworld.py): the world's senses and the
 # build log. The collector runs on its own thread in this process (started
 # from main(), never by build_app, so the tests' app polls nothing): RCON
 # every few seconds only while somebody is on, once a minute otherwise.
@@ -3014,16 +3022,17 @@ def _world() -> "mcworld.WorldCollector":
 
 def _world_loop(stop) -> None:
     col = _world()
-    engine = _vesper()
-    while not stop.wait(engine.interval(mcworld.LOG_INTERVAL)):
+    hands = _companion()
+    _EVENTS.start()
+    while not stop.wait(hands.interval(mcworld.LOG_INTERVAL)):
         try:
             col.step()
         except Exception as exc:  # noqa: BLE001 — one bad beat is not the end
             logging.warning("world collector: %s", _for_log(exc))
         try:
-            engine.step()
-        except Exception as exc:  # noqa: BLE001 — nor is one bad beat of Vesper's
-            logging.warning("vesper: %s", _for_log(str(exc)))
+            hands.step()
+        except Exception as exc:  # noqa: BLE001 — nor is one bad beat of the companion's
+            logging.warning("companion: %s", _for_log(str(exc)))
     col.close()
 
 
@@ -3052,9 +3061,7 @@ async def api_world_journal(request: web.Request) -> web.Response:
     if not re.fullmatch(r"\d{4}-\d\d-\d\d", day):
         return web.json_response({"error": "day is YYYY-MM-DD."}, status=400)
     events = await asyncio.to_thread(col.journal.events, day)
-    roster = _vesper().roster
-    summary = await asyncio.to_thread(col.journal.summary, day, dict(col.sessions),
-                                      lambda name: roster.who(name)["person"])
+    summary = await asyncio.to_thread(col.journal.summary, day, dict(col.sessions))
     return web.json_response({"day": day, "summary": summary, "events": events})
 
 
@@ -3196,13 +3203,18 @@ async def api_builds_render(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
-# Vesper in the game (vesper.py). The engine lives beside the collector and
-# steps on its thread; it acts only while somebody is on, only once it has
-# been switched on (its own settings, per world: the panel's Vesper card or
-# bruh_minecraft.vesper_engine), and never at bedtime.
+# The game, told to Home Assistant, and the companion's hands (companion.py).
+#
+# Every game happening the collector reads is a neutral Home Assistant event
+# — bruh_minecraft_chat, _join, _leave, _death, _advancement and _place (and
+# _answer when a choice pad is answered) — with no scoring, caps or persona,
+# whether or not anything listens. A companion (brAIn's, when brAIn is
+# installed) listens and acts only through the integration's services,
+# which reach the routes below. With no brAIn installed the panel shows no
+# companion and nothing here logs a word: a server is still a server.
 # ---------------------------------------------------------------------------
-_BEDTIME: dict = {"at": 0.0, "value": False, "key": ""}
-bedtime_rule = vesper.bedtime_rule
+GAME_EVENTS = ("join", "leave", "death", "advancement", "chat", "place")
+EVENT_QUEUE = 500
 
 
 def _core_api(method: str, path: str, body: dict | None = None, timeout: float = 3) -> dict | None:
@@ -3221,26 +3233,101 @@ def _core_api(method: str, path: str, body: dict | None = None, timeout: float =
     return answer if isinstance(answer, dict) else {"result": answer}
 
 
-def _vesper_bedtime(rule: tuple[str, str]) -> bool | None:
-    """True at bedtime, False otherwise, None when the switch cannot be read."""
-    key = "=".join(rule)
-    now = time.monotonic()
-    if _BEDTIME["key"] == key and now - _BEDTIME["at"] < vesper.BEDTIME_STALE:
-        return _BEDTIME["value"]
-    try:
-        state = (_core_api("GET", f"/states/{rule[0]}") or {}).get("state")
-        value = None if state in (None, "unknown", "unavailable") else state == rule[1]
-    except Exception:  # noqa: BLE001 — Home Assistant restarting: unknown, not "awake"
-        value = None
-    _BEDTIME.update(at=now, value=value, key=key)
-    return value
+class _EventSender:
+    """Fires Home Assistant events off the world thread: a slow Core never
+    delays a beat, a missing one costs nothing, and none of it is logged —
+    an event nobody can hear is not an error on a server with no companion."""
+
+    def __init__(self, post=None):
+        import queue
+        self.queue: "queue.Queue[tuple[str, dict]]" = queue.Queue(maxsize=EVENT_QUEUE)
+        self.post = post or (lambda name, data: _core_api("POST", f"/events/{name}", data))
+        self.thread = None
+        self.sent = 0
+        self.dropped = 0
+
+    def fire(self, name: str, data: dict) -> None:
+        try:
+            self.queue.put_nowait((name, data))
+        except Exception:  # noqa: BLE001 — a full queue drops the oldest news, not the game
+            self.dropped += 1
+
+    def start(self) -> None:
+        import threading
+        if self.thread is not None:
+            return
+        self.thread = threading.Thread(target=self._run, name="game-events", daemon=True)
+        self.thread.start()
+
+    def _run(self) -> None:
+        while True:
+            name, data = self.queue.get()
+            try:
+                self.post(name, data)
+                self.sent += 1
+            except Exception:  # noqa: BLE001 — Home Assistant away: the event is dropped
+                self.dropped += 1
 
 
-def _vesper_emit(kind: str, data: dict) -> None:
-    _core_api("POST", f"/events/{kind}", data)
+_EVENTS = _EventSender()
 
 
-def _vesper_snapshot() -> str | None:
+def _ha_events_on() -> bool:
+    return os.environ.get("ENABLE_HA_INTEGRATION", "true").lower() != "false"
+
+
+def game_event(ev: dict, verified=None, world: str = "") -> tuple[str, dict] | None:
+    """The Home Assistant event for one collector event, or None.
+
+    `verified(player)` is the account check, `(bool, why)`: whether the
+    server checks the account behind that name, carried on chat and join so
+    a companion knows whether a name may be believed.
+    """
+    kind = str(ev.get("kind") or "")
+    if kind not in GAME_EVENTS:
+        return None
+    t = int(ev.get("t") or time.time())
+    data: dict = {"player": ev.get("player"), "t": t,
+                  "time": datetime.fromtimestamp(t, timezone.utc).isoformat(),
+                  "world": world}
+    if kind == "chat":
+        data["text"] = str(ev.get("said") if ev.get("said") is not None
+                           else str(ev.get("text") or "").split(": ", 1)[-1])[:mcworld.CHAT_CAP]
+        data["name"] = ev.get("shown") or ev.get("player")
+    elif kind == "leave":
+        data["seconds"] = ev.get("seconds")
+    elif kind == "death":
+        data["text"] = str(ev.get("text") or "")[:240]
+    elif kind == "advancement":
+        data["what"] = str(ev.get("what") or "")[:120]
+        data["text"] = str(ev.get("text") or "")[:240]
+    elif kind == "place":
+        data["place"] = str(ev.get("place") or "")[:60]
+        data["dimension"] = ev.get("dimension")
+    if kind in ("chat", "join") and verified is not None:
+        ok, why = verified(ev.get("player"))
+        data["verified"] = bool(ok)
+        if not ok:
+            data["why_unverified"] = why
+    return f"bruh_minecraft_{kind}", data
+
+
+def _on_world_event(ev: dict) -> None:
+    if not _ha_events_on():
+        return
+    hands = _COMPANION["hands"]
+    out = game_event(ev, hands.verified if hands is not None else None,
+                     world=_world().level_name())
+    if out is not None:
+        _EVENTS.fire(*out)
+
+
+def _companion_emit(name: str, data: dict) -> None:
+    if _ha_events_on():
+        _EVENTS.fire(name, data)
+
+
+def _companion_snapshot() -> str | None:
     """A backup before a large change: None when it worked, else why not."""
     import subprocess
     try:
@@ -3251,140 +3338,253 @@ def _vesper_snapshot() -> str | None:
     return None if proc.returncode == 0 else (proc.stdout or proc.stderr or "")[-200:]
 
 
-def _vesper_modern() -> bool:
+def _companion_modern() -> bool:
     meta = _read_json(MC_SERVER_DIR / ".server-meta.json", {})
     version = meta.get("version") if isinstance(meta, dict) else None
     if not version:
         version = _read_json(MC_PANEL_STATE / "stats.json", {}).get("version")
-    return vesper.modern_text(version)
+    return companion.modern_text(version)
 
 
-_VESPER: dict = {"engine": None}
+# Whether brAIn is installed: its integration's services are on Core
+# (`brain` among the service domains). Asked at most every BRAIN_CHECK_S; an
+# unanswerable Core is "unknown", which shows the card only when brAIn has
+# told this world who its companion is.
+BRAIN_CHECK_S = 300
+_BRAIN: dict = {"at": -1e12, "present": None}
 
 
-def _vesper() -> "vesper.Engine":
-    engine = _VESPER["engine"]
+def brain_present() -> bool | None:
+    now = time.monotonic()
+    if now - _BRAIN["at"] < BRAIN_CHECK_S:
+        return _BRAIN["present"]
+    try:
+        answer = _core_api("GET", "/services", timeout=5)
+    except Exception:  # noqa: BLE001 — Home Assistant restarting
+        answer = None
+    services = (answer or {}).get("result") if isinstance(answer, dict) else None
+    if isinstance(services, list):
+        present = any(isinstance(d, dict) and d.get("domain") == "brain" for d in services)
+    else:
+        present = None
+    _BRAIN.update(at=now, present=present)
+    return present
+
+
+_COMPANION: dict = {"hands": None}
+
+
+def _companion() -> "companion.Companion":
+    hands = _COMPANION["hands"]
     col = _world()
-    if engine is None or engine.col is not col:
-        engine = vesper.Engine(col, bedtime=_vesper_bedtime, emit=_vesper_emit,
-                               snapshot=_vesper_snapshot, modern=_vesper_modern)
-        col.extra = lambda: {"vesper": engine.brief()}
-        _VESPER["engine"] = engine
-    return engine
+    if hands is None or hands.col is not col:
+        hands = companion.Companion(col, emit=_companion_emit, snapshot=_companion_snapshot,
+                                    modern=_companion_modern)
+        col.on_event = _on_world_event
+        col.extra = lambda: {"companion": hands.brief()}
+        _COMPANION["hands"] = hands
+    return hands
 
 
 def _action_id(request: web.Request) -> str:
     action_id = request.match_info["id"]
-    if not _JOB_ID.match(action_id):
+    if action_id != "last" and not _JOB_ID.match(action_id):
         raise web.HTTPNotFound(text=json.dumps({"error": "No such action."}),
                                content_type="application/json")
     return action_id
 
 
-async def api_vesper(_: web.Request) -> web.Response:
-    return web.json_response(await asyncio.to_thread(_vesper().status))
+def companion_headline(status: dict, brain: bool | None, listening: dict) -> dict:
+    """The card's one sentence: who the companion is and what it is doing,
+    or why there is none — and, first, a feed that has gone deaf."""
+    ident = status.get("identity") or {}
+    name = ident.get("name") or companion.DEFAULT_NAME
+    if brain is False or (brain is None and not ident.get("by")):
+        return {"code": "no_brain", "show": False,
+                "text": "Install brAIn to have a companion play in the world."}
+    if not listening.get("ok", True):
+        return {"code": "deaf", "show": True, "warning": True,
+                "text": f"{listening.get('why')} {name} cannot answer what it cannot hear."}
+    if not ident.get("active"):
+        return {"code": "off", "show": True,
+                "text": f"{name} is off. Switch it on in brAIn, ⚙ › Minecraft."}
+    state = status.get("state")
+    if state == "asking":
+        q = status.get("open_question") or {}
+        return {"code": "asking", "show": True, "text": (
+            f"{name} is asking {q.get('person') or 'someone'} a question — they answer by "
+            "standing on a picture.")}
+    if state == "acting":
+        return {"code": "acting", "show": True, "text": f"{name} is in the world now."}
+    online = status.get("online") or []
+    if not online:
+        return {"code": "waiting", "show": True,
+                "text": f"{name} is on, and waiting for someone to join the game."}
+    return {"code": "ready", "show": True,
+            "text": f"{name} is on. brAIn decides what it does; everything it did is below "
+                    "and can be undone."}
 
 
-# The kinds of entity a bedtime switch can be: anything that is on or off.
-_BEDTIME_DOMAINS = ("input_boolean", "binary_sensor", "switch", "schedule")
-
-
-def _bedtime_candidates() -> dict:
-    """Home Assistant's on/off entities, for the Vesper card's bedtime list."""
-    try:
-        answer = _core_api("GET", "/states", timeout=5)
-    except Exception:  # noqa: BLE001 — Home Assistant restarting: the field still takes a typed id
-        answer = None
-    states = (answer or {}).get("result")
-    if not isinstance(states, list):
-        return {"entities": [], "reachable": False}
-    out = []
-    for st in states:
-        if not isinstance(st, dict):
-            continue
-        eid = str(st.get("entity_id") or "")
-        domain = eid.split(".", 1)[0]
-        if domain not in _BEDTIME_DOMAINS or not bedtime_rule(eid):
-            continue
-        attrs = st.get("attributes") if isinstance(st.get("attributes"), dict) else {}
-        out.append({"entity_id": eid, "name": str(attrs.get("friendly_name") or eid)[:80],
-                    "state": str(st.get("state") or "")[:40]})
-    out.sort(key=lambda e: (_BEDTIME_DOMAINS.index(e["entity_id"].split(".", 1)[0]),
-                            e["name"].lower()))
-    return {"entities": out[:400], "reachable": True}
-
-
-async def api_vesper_entities(_: web.Request) -> web.Response:
-    return web.json_response(await asyncio.to_thread(_bedtime_candidates))
-
-
-async def api_vesper_engine(request: web.Request) -> web.Response:
-    """`{"on": bool, "bedtime_entity": str, "daily_actions": int}`, any of them."""
-    body = await _json_body(request)
-    if "on" in body and not isinstance(body["on"], bool):
-        return web.json_response({"error": "on is true or false."}, status=400)
-    try:
-        status = await asyncio.to_thread(
-            _vesper().configure, body.get("on"), body.get("bedtime_entity"),
-            body.get("daily_actions"))
-    except vesper.VesperError as exc:
-        return web.json_response({"error": str(exc)}, status=400)
-    _world().write()
+async def api_companion(_: web.Request) -> web.Response:
+    hands = _companion()
+    status = await asyncio.to_thread(hands.status)
+    brain = await asyncio.to_thread(brain_present)
+    listening = await asyncio.to_thread(_world().listening)
+    status["brain"] = brain
+    status["listening"] = listening
+    status["headline"] = companion_headline(status, brain, listening)
     return web.json_response(status)
 
 
-async def api_vesper_ask(request: web.Request) -> web.Response:
+def _companion_error(exc: Exception, status: int = 400) -> web.Response:
+    return web.json_response({"error": str(exc)}, status=status)
+
+
+async def api_companion_identity(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    if "active" in body and not isinstance(body["active"], bool):
+        return web.json_response({"error": "active is true or false."}, status=400)
+    ident = await asyncio.to_thread(_companion().set_identity, body.get("name"),
+                                    body.get("colour"), body.get("active"), body.get("by"),
+                                    body.get("model"))
+    _world().write()
+    return web.json_response({"identity": ident})
+
+
+async def api_companion_say(request: web.Request) -> web.Response:
     body = await _json_body(request)
     try:
-        q = await asyncio.to_thread(_vesper().ask, body.get("player"), body.get("text"),
-                                    body.get("options"), body.get("by") or "brAIn")
-    except vesper.VesperError as exc:
-        return web.json_response({"error": str(exc)}, status=400)
-    online = q["player"] in _world().sessions
-    return web.json_response({"question": q, "note": (
-        f"Vesper will put two pads beside {q['person']} now." if online else
-        f"{q['person']} is not on; Vesper asks the next time they play.")}, status=201)
+        result = await asyncio.to_thread(
+            _companion().say, body.get("to") or "everyone", body.get("message"),
+            body.get("name"), body.get("colour"), bool(body.get("chime")), str(body.get("by") or ""))
+    except companion.CompanionError as exc:
+        return _companion_error(exc)
+    return web.json_response(result)
 
 
-async def api_vesper_undo(request: web.Request) -> web.Response:
-    action_id = _action_id(request)
+async def api_companion_appear(request: web.Request) -> web.Response:
+    body = await _json_body(request)
     try:
-        result = await asyncio.to_thread(_vesper().undo, action_id)
+        act = await asyncio.to_thread(
+            _companion().appear, body.get("player"), body.get("seconds", 25),
+            str(body.get("kind") or "visit"), body.get("name"), body.get("colour"),
+            str(body.get("chime") or "full"), str(body.get("text") or ""),
+            str(body.get("by") or ""))
+    except companion.CompanionError as exc:
+        return _companion_error(exc)
+    _world().write()
+    return web.json_response({"action": act})
+
+
+async def api_companion_ask(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    try:
+        q = await asyncio.to_thread(
+            _companion().ask, body.get("player"), body.get("question") or body.get("text"),
+            body.get("options"), str(body.get("by") or ""), body.get("person"), body.get("name"))
+    except companion.CompanionError as exc:
+        return _companion_error(exc)
+    online = q["player"] in _world().sessions
+    who = q.get("person") or q["player"]
+    return web.json_response({"question": q, "note": (
+        f"Two pads go beside {who} now." if online else
+        f"{who} is not on; the question waits for the next time they play.")}, status=201)
+
+
+async def api_companion_build(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    try:
+        act = await asyncio.to_thread(
+            _companion().build, body.get("blocks"), body.get("player"), body.get("dimension"),
+            body.get("title"), str(body.get("by") or ""), body.get("name"))
+    except companion.CompanionError as exc:
+        return _companion_error(exc)
+    _world().write()
+    return web.json_response({"action": act, "note": (
+        f"Built {len(act.get('cells') or [])} blocks. Undo with its id: {act['id']}.")})
+
+
+async def api_companion_undo(request: web.Request) -> web.Response:
+    action_id = _action_id(request)
+    hands = _companion()
+    try:
+        if action_id == "last":
+            result = await asyncio.to_thread(hands.undo_last)
+            if result is None:
+                return web.json_response({"error": "There is nothing left to undo."},
+                                         status=404)
+        else:
+            result = await asyncio.to_thread(hands.undo, action_id)
     except KeyError:
         return web.json_response({"error": "No such action."}, status=404)
-    except vesper.VesperError as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+    except companion.CompanionError as exc:
+        return _companion_error(exc)
     _world().write()
     return web.json_response(result)
 
 
-async def api_vesper_family(request: web.Request) -> web.Response:
-    engine = _vesper()
-    if request.method == "GET":
-        return web.json_response({"people": engine.roster.people()})
+async def api_companion_zone_save(request: web.Request) -> web.Response:
     body = await _json_body(request)
     try:
-        people = await asyncio.to_thread(engine.roster.save, body.get("people"))
-    except vesper.VesperError as exc:
-        return web.json_response({"error": str(exc)}, status=400)
-    return web.json_response({"people": people})
+        zone = await asyncio.to_thread(_companion().zones.save, body)
+    except companion.CompanionError as exc:
+        return _companion_error(exc)
+    return web.json_response({"zone": zone, "zones": _companion().zones.list()})
 
 
-async def api_vesper_zone_save(request: web.Request) -> web.Response:
-    body = await _json_body(request)
-    try:
-        zone = await asyncio.to_thread(_vesper().zones.save, body)
-    except vesper.VesperError as exc:
-        return web.json_response({"error": str(exc)}, status=400)
-    return web.json_response({"zone": zone, "zones": _vesper().zones.list()})
-
-
-async def api_vesper_zone_delete(request: web.Request) -> web.Response:
+async def api_companion_zone_delete(request: web.Request) -> web.Response:
     name = request.match_info["name"]
-    if not await asyncio.to_thread(_vesper().zones.delete, name):
-        return web.json_response({"error": "No such zone."}, status=404)
-    return web.json_response({"zones": _vesper().zones.list()})
+    if not await asyncio.to_thread(_companion().zones.delete, name):
+        return web.json_response({"error": "No such place."}, status=404)
+    return web.json_response({"zones": _companion().zones.list()})
 
+
+async def api_companion_legacy(_: web.Request) -> web.Response:
+    """What the 1.17.7 engine knew about this world, for brAIn to keep once
+    (`companion_legacy`); `{"legacy": null}` when there is none."""
+    return web.json_response({"legacy": await asyncio.to_thread(_companion().legacy_state),
+                              "world": _world().level_name()})
+
+
+async def api_companion_legacy_retire(_: web.Request) -> web.Response:
+    moved = await asyncio.to_thread(_companion().retire_legacy)
+    return web.json_response({"retired": moved})
+
+
+# ---------------------------------------------------------------------------
+# The release notes (#594): the header's "v1.17.8 · changelog" opens these in
+# the panel, newest release first, from the CHANGELOG.md in the image.
+# ---------------------------------------------------------------------------
+CHANGELOG_PATH = Path(os.environ.get("MC_CHANGELOG", "/opt/bruh-mc/CHANGELOG.md"))
+CHANGELOG_MAX = 400_000
+
+
+def changelog_releases(text: str, limit: int = 40) -> list[dict]:
+    """`## x.y.z` sections, newest first whatever order the file is in."""
+    releases: list[dict] = []
+    current = None
+    for line in str(text or "").splitlines():
+        m = re.match(r"^##\s+\[?v?(\d+(?:\.\d+){1,3})\]?\s*(?:[-–—]\s*(.*))?$", line)
+        if m:
+            current = {"version": m.group(1), "date": (m.group(2) or "").strip()[:40],
+                       "body": []}
+            releases.append(current)
+        elif current is not None:
+            current["body"].append(line)
+    for r in releases:
+        r["body"] = "\n".join(r["body"]).strip()
+    releases.sort(key=lambda r: tuple(int(n) for n in r["version"].split(".")), reverse=True)
+    return releases[:limit]
+
+
+async def api_changelog(_: web.Request) -> web.Response:
+    try:
+        raw = await asyncio.to_thread(CHANGELOG_PATH.read_text, encoding="utf-8")
+    except OSError:
+        return web.json_response({"error": "The changelog is not in this image.",
+                                  "version": ADDON_VERSION, "releases": []}, status=404)
+    return web.json_response({"version": ADDON_VERSION,
+                              "releases": changelog_releases(raw[:CHANGELOG_MAX])})
 
 # ---------------------------------------------------------------------------
 # App factory
@@ -3461,7 +3661,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/addons/use-pack", api_addons_use_pack)
     app.router.add_delete("/api/addons/{id}", api_addons_remove)
 
-    # The world-activity layer and Vesper's build log (mcworld.py)
+    # The world-activity layer and the build log (mcworld.py)
     app.router.add_get("/api/world", api_world)
     app.router.add_get("/api/world/journal", api_world_journal)
     app.router.add_get("/api/builds", api_builds_list)
@@ -3472,16 +3672,20 @@ def build_app() -> web.Application:
     app.router.add_delete("/api/builds/{id}", api_builds_delete)
     app.router.add_post("/api/builds/{id}/render", api_builds_render)
     app.router.add_post("/api/world/rename", api_world_rename)
-    # Vesper in the game (vesper.py)
-    app.router.add_get("/api/vesper", api_vesper)
-    app.router.add_post("/api/vesper/engine", api_vesper_engine)
-    app.router.add_get("/api/vesper/entities", api_vesper_entities)
-    app.router.add_post("/api/vesper/ask", api_vesper_ask)
-    app.router.add_post("/api/vesper/actions/{id}/undo", api_vesper_undo)
-    app.router.add_get("/api/vesper/family", api_vesper_family)
-    app.router.add_put("/api/vesper/family", api_vesper_family)
-    app.router.add_post("/api/vesper/zones", api_vesper_zone_save)
-    app.router.add_delete("/api/vesper/zones/{name}", api_vesper_zone_delete)
+    # The companion's hands (companion.py): mechanics a companion drives
+    app.router.add_get("/api/companion", api_companion)
+    app.router.add_post("/api/companion/identity", api_companion_identity)
+    app.router.add_post("/api/companion/say", api_companion_say)
+    app.router.add_post("/api/companion/appear", api_companion_appear)
+    app.router.add_post("/api/companion/ask", api_companion_ask)
+    app.router.add_post("/api/companion/build", api_companion_build)
+    app.router.add_post("/api/companion/actions/{id}/undo", api_companion_undo)
+    app.router.add_post("/api/companion/zones", api_companion_zone_save)
+    app.router.add_delete("/api/companion/zones/{name}", api_companion_zone_delete)
+    app.router.add_get("/api/companion/legacy", api_companion_legacy)
+    app.router.add_post("/api/companion/legacy/retire", api_companion_legacy_retire)
+    # The release notes, for the header's version link (#594)
+    app.router.add_get("/api/changelog", api_changelog)
     return app
 
 

@@ -116,7 +116,7 @@ esac
 # "Please log into Xbox to join this server." kick users hit even after
 # patching the Geyser config to auth-type: offline. See DOCS #troubleshooting.
 resolve_auth_type() {
-    local requested="${GEYSER_AUTH_TYPE:-auto}"
+    local requested="${BRUH_GEYSER_AUTH_TYPE:-auto}"
     case "${requested}" in
         floodgate|online|offline)
             printf '%s' "${requested}"
@@ -187,16 +187,23 @@ install_jar() {
 
 # ----------------------------------------------------------------------------
 # Geyser's default auth-type is "online", which prompts every Bedrock client
-# with "Please log into Xbox to join this server." We patch the value based
-# on $GEYSER_AUTH_TYPE (already resolved to $AUTH_TYPE at the top of the
-# script). Safe to re-run: idempotent and preserves the rest of the user's
-# config.
+# with "Please log into Xbox to join this server." We write the value from
+# $BRUH_GEYSER_AUTH_TYPE (already resolved to $AUTH_TYPE at the top of the
+# script), the MTU from $BRUH_GEYSER_MTU, validate-bedrock-login and the
+# MOTD into Geyser's config.yml, in whichever layout it is (Geyser 2.9 moved
+# `remote.auth-type` to `java.auth-type` and `mtu` under `advanced.bedrock`;
+# patch-geyser-config.py --managed knows both). The file is the ONLY place
+# they are set: Geyser reads every `GEYSER_*` environment variable as an
+# override and warns "does not match any config option" about each one
+# that is not, which is what GEYSER_AUTH_TYPE and GEYSER_MTU did up to
+# 1.17.7 — hence the BRUH_ prefix, which Geyser ignores. Safe to re-run:
+# idempotent and preserves the rest of the user's config.
 # ----------------------------------------------------------------------------
 configure_geyser() {
-    # Configure Geyser auth-type + MOTD from add-on options.
     local plugin_dir="${PLUGINS_DIR}/Geyser-Spigot"
     local cfg="${plugin_dir}/config.yml"
     local auth_type="${AUTH_TYPE:-$(resolve_auth_type)}"
+    local mtu="${BRUH_GEYSER_MTU:-1400}"
 
     mkdir -p "${plugin_dir}"
 
@@ -204,115 +211,67 @@ configure_geyser() {
     motd="$(read_prop motd 'A BRUH Minecraft')"
     local motd_sub="Powered by BRUH HA Apps"
 
-    log "Resolved Geyser auth-type: ${auth_type} (requested='${GEYSER_AUTH_TYPE:-auto}', online-mode='$(read_prop online-mode true)')"
+    log "Resolved Geyser auth-type: ${auth_type} (requested='${BRUH_GEYSER_AUTH_TYPE:-auto}', online-mode='$(read_prop online-mode true)')"
 
-    if [ -f "${cfg}" ]; then
-        log "Geyser config exists at ${cfg} ($(stat -c '%s bytes, %y' "${cfg}" 2>/dev/null || echo '?'))"
-        log "  owner: $(stat -c '%U:%G' "${cfg}" 2>/dev/null || echo '?')  mode: $(stat -c '%a' "${cfg}" 2>/dev/null || echo '?')"
-        local before after
-        # `|| true` so grep's non-zero "no match" exit doesn't abort under set -e.
-        before=$(grep -E '^[[:space:]]*auth-type:' "${cfg}" 2>/dev/null | head -n 1 | sed 's/^[[:space:]]*//' || true)
-        if [ -n "${before}" ]; then
-            sed -i -E \
-                "s/^([[:space:]]*)auth-type:[[:space:]]*.*/\\1auth-type: ${auth_type}/" \
-                "${cfg}"
-            after=$(grep -E '^[[:space:]]*auth-type:' "${cfg}" 2>/dev/null | head -n 1 | sed 's/^[[:space:]]*//' || true)
-            log "  - auth-type: ${before} -> ${after}"
-            if [ "${after}" != "auth-type: ${auth_type}" ]; then
-                warn "  ! auth-type did NOT end up as '${auth_type}' after patching!"
-                warn "  ! current value: ${after}"
-                warn "  ! Bedrock clients may still see 'Please log into Xbox'"
-            fi
-        else
-            printf '\nremote:\n  auth-type: %s\n' "${auth_type}" >> "${cfg}"
-            log "  - appended remote.auth-type: ${auth_type} (no auth-type line was present)"
-        fi
+    # The REAL fix for "Please log into Xbox to join this server.":
+    # Geyser validates the Bedrock client's signed Xbox Live JWT chain
+    # in LoginEncryptionUtils.encryptConnectionWithCert() *before* any
+    # auth-type / Floodgate logic runs. The gate is
+    # `advanced.bedrock.validate-bedrock-login` (default true). When
+    # it's true and the client's chain is unsigned (LAN devices,
+    # cracked clients, family Bedrock with no Xbox session), Geyser
+    # kicks with the exact message we've been chasing — regardless of
+    # auth-type. It is false in offline mode and the secure default
+    # (true) in online / floodgate modes.
+    local validate="true"
+    if [ "${auth_type}" = "offline" ]; then
+        validate="false"
+    fi
 
-        # The REAL fix for "Please log into Xbox to join this server.":
-        # Geyser validates the Bedrock client's signed Xbox Live JWT chain
-        # in LoginEncryptionUtils.encryptConnectionWithCert() *before* any
-        # auth-type / Floodgate logic runs. The gate is
-        # `advanced.bedrock.validate-bedrock-login` (default true). When
-        # it's true and the client's chain is unsigned (LAN devices,
-        # cracked clients, family Bedrock with no Xbox session), Geyser
-        # kicks with the exact message we've been chasing — regardless of
-        # auth-type. We flip this key to false in offline mode, and
-        # restore the secure default (true) in online / floodgate modes.
-        local want_validate
-        if [ "${auth_type}" = "offline" ]; then
-            want_validate="false"
-        else
-            want_validate="true"
-        fi
-        if python3 "${SCRIPT_DIR}/patch-geyser-config.py" \
-               "${cfg}" validate-bedrock-login "${want_validate}" advanced.bedrock; then
-            log "  - advanced.bedrock.validate-bedrock-login: ${want_validate}"
-        else
-            warn "  ! failed to patch validate-bedrock-login"
-        fi
-
-        # MTU tuning: lowering from 1400 -> 1200 is the #1 fix for the iOS
-        # "Connecting multiplayer server..." hang. Wi-Fi routers + cellular
-        # hot-spots commonly fragment UDP at ~1400 and RakNet's login
-        # handshake silently stalls. Expose as an add-on option so users
-        # can dial it down when LAN pings work but joins hang.
-        local want_mtu="${GEYSER_MTU:-1400}"
-        if python3 "${SCRIPT_DIR}/patch-geyser-config.py" \
-               "${cfg}" mtu "${want_mtu}" advanced; then
-            log "  - advanced.mtu: ${want_mtu}"
-        else
-            warn "  ! failed to patch advanced.mtu"
-        fi
-
-        # Patch bedrock MOTD lines (motd1 + motd2) to match the add-on motd
-        local motd_escaped sub_escaped
-        motd_escaped=$(printf '%s' "${motd}"     | sed -e 's/[\/&]/\\&/g')
-        sub_escaped=$( printf '%s' "${motd_sub}" | sed -e 's/[\/&]/\\&/g')
-        if grep -qE '^[[:space:]]*motd1:' "${cfg}"; then
-            sed -i -E \
-                "s/^([[:space:]]*)motd1:[[:space:]]*.*/\\1motd1: \"${motd_escaped}\"/" \
-                "${cfg}"
-            log "  - motd1 -> \"${motd}\""
-        fi
-        if grep -qE '^[[:space:]]*motd2:' "${cfg}"; then
-            sed -i -E \
-                "s/^([[:space:]]*)motd2:[[:space:]]*.*/\\1motd2: \"${sub_escaped}\"/" \
-                "${cfg}"
-            log "  - motd2 -> \"${motd_sub}\""
-        fi
-    else
-        # Fresh install: stage a minimal file. Geyser fills in defaults for
-        # every key we don't specify on first boot.
-        local fresh_validate
-        if [ "${auth_type}" = "offline" ]; then
-            fresh_validate="false"
-        else
-            fresh_validate="true"
-        fi
-        local fresh_mtu="${GEYSER_MTU:-1400}"
-        log "Staging fresh Geyser config at ${cfg} (auth-type: ${auth_type}, validate-bedrock-login: ${fresh_validate}, mtu: ${fresh_mtu})"
+    # MTU tuning: lowering from 1400 -> 1200 is the #1 fix for the iOS
+    # "Connecting multiplayer server..." hang. Wi-Fi routers + cellular
+    # hot-spots commonly fragment UDP at ~1400 and RakNet's login
+    # handshake silently stalls.
+    if [ ! -f "${cfg}" ]; then
+        # Fresh install: stage a minimal file in Geyser's current layout
+        # (2.9+). Geyser fills in defaults for every key we don't specify on
+        # first boot, and migrates the file's layout itself if it is older.
+        local motd_q sub_q
+        motd_q=$(printf '%s' "${motd}" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+        sub_q=$(printf '%s' "${motd_sub}" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+        log "Staging fresh Geyser config at ${cfg} (auth-type: ${auth_type}, validate-bedrock-login: ${validate}, mtu: ${mtu})"
         cat > "${cfg}" <<YAML
 # Managed by BRUH Minecraft add-on.
-# auth-type, validate-bedrock-login, and mtu are re-asserted on every
-# add-on boot from the add-on options. See the README / DOCS for the
-# tradeoffs between floodgate / offline / online. Every other key here
-# is free for you to edit — Geyser fills in defaults for anything we
-# haven't set.
-bedrock:
-  motd1: "${motd}"
-  motd2: "${motd_sub}"
-remote:
+# java.auth-type, advanced.bedrock.mtu, advanced.bedrock.validate-bedrock-login
+# and the MOTD are re-asserted on every add-on boot from the add-on options.
+# See the README / DOCS for the tradeoffs between floodgate / offline /
+# online. Every other key here is free for you to edit — Geyser fills in
+# defaults for anything we haven't set.
+java:
   auth-type: ${auth_type}
+motd:
+  primary-motd: "${motd_q}"
+  secondary-motd: "${sub_q}"
 advanced:
-  # Lower from 1400 to 1200 if iOS clients hang on "Connecting
-  # multiplayer server…" — Wi-Fi routers often fragment UDP at 1400.
-  mtu: ${fresh_mtu}
   bedrock:
+    # Lower from 1400 to 1200 if iOS clients hang on "Connecting
+    # multiplayer server…" — Wi-Fi routers often fragment UDP at 1400.
+    mtu: ${mtu}
     # When false, Geyser skips validating the Bedrock client's signed
     # Xbox Live JWT chain — required so family LAN / cracked clients
     # can join a server with auth-type: offline.
-    validate-bedrock-login: ${fresh_validate}
+    validate-bedrock-login: ${validate}
 YAML
+    else
+        log "Geyser config exists at ${cfg} ($(stat -c '%s bytes, %y' "${cfg}" 2>/dev/null || echo '?'))"
+        local layout
+        if layout=$(python3 "${SCRIPT_DIR}/patch-geyser-config.py" --managed \
+                "${cfg}" "${auth_type}" "${mtu}" "${validate}" "${motd}" "${motd_sub}"); then
+            log "  - ${layout} layout: auth-type ${auth_type}, mtu ${mtu}, validate-bedrock-login ${validate}, motd \"${motd}\""
+        else
+            warn "  ! could not write the Geyser options into ${cfg}"
+            warn "  ! Bedrock clients may still see 'Please log into Xbox'"
+        fi
     fi
 
     chown -R minecraft:minecraft "${plugin_dir}" 2>/dev/null || true

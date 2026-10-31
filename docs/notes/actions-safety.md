@@ -91,6 +91,7 @@ Part of the project notes (see `CLAUDE.md` › *Where the notes are*). Read this
     2. house rules (tighten only);
     3. contract arithmetic (`contract_verdict`: a call on the contract, a file it names, a shell command that only reads with no metacharacters, or `brain own` naming only files the contract names, with no flag);
     4. fast path (`consequence.fast_path`: one call, one entity, a `FAST_PATH` service, not a security cover, no scope, the person's words name the entity's room);
+    - (before all of these, after YOLO) the `minecraft` channel — a grown-up's request typed in Minecraft's chat — is decided in code by `gate.minecraft_chat_verdict`: `minecraft_world`'s in-world actions allow (the owner's policy: BRUH Minecraft guards and undoes them), anything else denies; never the model, never cached (mcp-voice-integration.md, *A family chat line naming the companion is a brAIn task held to the game*);
     5. the switch: on `chat`/`terminal` with *Let brAIn act without asking* on, `allow` with path `switch` and no model call — still through `house_rules.tighten` (the bullet after house rules);
     6. the `gate` model (Haiku, `run_claude`, no tools, schema). Anything outside allow/ask/deny is `ask`.
   - **The gate's model call takes no run-queue seat, on purpose.** It is asked from inside a run that already holds one (a fix's tool call), so three seated fixes each waiting on a gate that needs a fourth seat would deadlock into `undecided`. `tests/test_run_queue.py` exempts exactly `_gate_decide`.

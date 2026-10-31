@@ -231,7 +231,7 @@ class TestTheServiceAcceptsIt(unittest.TestCase):
         self.assertIn('vol.Optional("tools", default=DEFAULT_TASK_TOOLS)',
                       source)
         self.assertIn('DEFAULT_TASK_TOOLS = "full"', source)
-        self.assertIn('TASK_TOOLS = ("full", "house", "read_only")', source)
+        self.assertIn('TASK_TOOLS = ("full", "house", "read_only", "minecraft")', source)
 
     def test_the_handler_passes_it_to_the_bridge(self):
         source = (INTEGRATION_DIR / "__init__.py").read_text(encoding="utf-8")
@@ -245,7 +245,7 @@ class TestTheServiceAcceptsIt(unittest.TestCase):
         field = catalog["run_task"]["fields"]["tools"]
         self.assertEqual(field["default"], "full")
         self.assertEqual(field["selector"]["select"]["options"],
-                         ["full", "house", "read_only"])
+                         ["full", "house", "read_only", "minecraft"])
 
     def test_the_field_is_in_strings_and_the_translation(self):
         for name in ("strings.json", "translations/en.json"):
@@ -283,12 +283,17 @@ class TestTheBridgeWritesIt(unittest.TestCase):
             "time": __import__("time"),
             "timeout": 300, "notify_entity": None,
             "model": None, "tools": None, "schema": None,
-            "memory": False, "scheduled": False, "cameras": False,
+            "memory": False, "scheduled": False, "cameras": False, "effort": None,
         }
         scope.update(kw)
         exec(compile(snippet.replace("\n        ", "\n"), "<bridge>", "exec"),
              {}, scope)
         return scope["task"]
+
+    def test_an_effort_rides_only_when_it_is_one_the_cli_takes(self):
+        self.assertEqual(self._task(effort="low")["effort"], "low")
+        self.assertNotIn("effort", self._task(effort=None))
+        self.assertNotIn("effort", self._task(effort="--model opus"))
 
     def test_the_default_puts_the_same_json_on_disk_it_always_did(self):
         self.assertNotIn("tools", self._task(tools="full"))

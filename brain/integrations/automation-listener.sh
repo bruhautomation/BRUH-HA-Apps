@@ -321,6 +321,16 @@ claim_task_session() {
 #              of the two lists, which is what makes the union complete —
 #              denying the non-MCP half of the analyst's deny list: Bash,
 #              Write, Edit, NotebookEdit, WebFetch, WebSearch.
+#   minecraft  a grown-up's request typed in the game's chat (brAIn's
+#              Minecraft faculty, custom_components/brain/minecraft.py):
+#              `engine.MINECRAFT_CHAT_TOOLS` — the game
+#              world's tool and a few reads — and every other tool the two
+#              lists name denied by name, call_service and control_* among
+#              them. The task's subshell is on the `minecraft` channel, which
+#              the MCP server and the action gate also hold to the game.
+#   minecraft_talk  a child's line in the game's chat: words only. Every
+#              tool the two lists name is denied and none is allowed, so a
+#              child's words can never be an instruction that does anything.
 #
 # A scoping that cannot be read REFUSES the run rather than widening it: a
 # task asked for read-only that runs with Bash is worse than a task that
@@ -335,7 +345,7 @@ task_tool_flags() {
 
     case "$mode" in
         ''|full) return 0 ;;
-        house|read_only) ;;
+        house|read_only|minecraft|minecraft_talk) ;;
         *) return 1 ;;
     esac
 
@@ -373,10 +383,20 @@ for tool in allow + deny:
 house_deny = [t for t in deny if not t.startswith("mcp__")]
 if not house_allow or not house_deny:
     raise SystemExit(1)
+# The game's scope: its own short list, and everything else named denied.
+game_allow = list(getattr(engine, "MINECRAFT_CHAT_TOOLS", []) or [])
+if not game_allow or any(not t.startswith("mcp__") for t in game_allow):
+    raise SystemExit(1)
+game_deny = [t for t in deny if t not in game_allow]
+game_deny += [t for t in allow if t not in game_allow and t not in game_deny]
 print(",".join(allow))
 print(",".join(deny))
 print(",".join(house_allow))
 print(",".join(house_deny))
+print(",".join(game_allow))
+print(",".join(game_deny))
+talk_deny = list(dict.fromkeys(deny + allow))
+print(",".join(talk_deny))
 PYTOOLS
     ); then
         return 1
@@ -385,6 +405,15 @@ PYTOOLS
     if [ "$mode" = "read_only" ]; then
         allow=$(printf '%s' "$lists" | sed -n '1p')
         deny=$(printf '%s' "$lists" | sed -n '2p')
+    elif [ "$mode" = "minecraft" ]; then
+        allow=$(printf '%s' "$lists" | sed -n '5p')
+        deny=$(printf '%s' "$lists" | sed -n '6p')
+    elif [ "$mode" = "minecraft_talk" ]; then
+        # Nothing allowed: only the deny list is passed.
+        deny=$(printf '%s' "$lists" | sed -n '7p')
+        [ -n "$deny" ] || return 1
+        printf '%s\n%s\n' "--disallowedTools" "$deny"
+        return 0
     else
         allow=$(printf '%s' "$lists" | sed -n '3p')
         deny=$(printf '%s' "$lists" | sed -n '4p')
@@ -661,7 +690,7 @@ process_task() {
     mv "$task_file" "$work_file" 2>/dev/null || return 0
 
     local task_id prompt notify notify_entity task_ts task_timeout task_model
-    local task_tools task_schema task_memory task_scheduled
+    local task_tools task_schema task_memory task_scheduled task_effort
 
     task_id=$(jq -r '.id // empty' "$work_file" 2>/dev/null)
     prompt=$(jq -r '.prompt // empty' "$work_file" 2>/dev/null)
@@ -670,6 +699,10 @@ process_task() {
     task_ts=$(jq -r '.ts // empty' "$work_file" 2>/dev/null)
     task_timeout=$(jq -r '.timeout // empty' "$work_file" 2>/dev/null)
     task_model=$(jq -r '.model // empty' "$work_file" 2>/dev/null)
+    # The CLI's depth for this task (the Minecraft faculty's setting), only
+    # ever one of the words the CLI takes; anything else is no flag.
+    task_effort=$(jq -r '.effort // empty' "$work_file" 2>/dev/null)
+    case "$task_effort" in low|medium|high|xhigh|max) ;; *) task_effort="" ;; esac
     task_tools=$(jq -r '.tools // empty' "$work_file" 2>/dev/null)
     # A JSON Schema the answer must fit (`brain.ask`). Compact so it rides
     # one argv entry; empty when the task carries none, and then no flag
@@ -718,9 +751,19 @@ process_task() {
         unset BRAIN_PERSON_WORDS
     fi
 
+    # A request typed in Minecraft's chat runs on its own channel, which the
+    # MCP server and the action gate hold to the game world — and it is
+    # never widened by "Let brAIn act without asking": a name in a game's
+    # chat is not the person at the keyboard of brAIn.
+    if [ "$task_tools" = "minecraft" ] || [ "$task_tools" = "minecraft_talk" ]; then
+        export BRAIN_CHANNEL=minecraft
+        unset BRAIN_PERSON_WORDS
+    fi
+
     # Somebody asked for this and the switch is on: the chat's reach.
     local task_acts=""
-    if person_task_acts "$task_conversation" "$task_words"; then
+    if person_task_acts "$task_conversation" "$task_words" \
+            && [ "$task_tools" != "minecraft" ] && [ "$task_tools" != "minecraft_talk" ]; then
         task_acts=true
         task_tools=""
         export BRAIN_CHANNEL=chat
@@ -735,6 +778,9 @@ process_task() {
     local model_flag=""
     if [ -n "$task_model" ]; then
         model_flag="--model $task_model"
+    fi
+    if [ -n "$task_effort" ]; then
+        model_flag="${model_flag} --effort $task_effort"
     fi
 
     if [ -z "$task_id" ] || [ -z "$prompt" ]; then
@@ -779,7 +825,7 @@ process_task() {
     fi
     if ! tool_flags_out=$(task_tool_flags "$task_tools" "$task_cameras"); then
         bashio::log.error "Task [$task_id] asked for tools='${task_tools}' and it could not be honoured"
-        write_task_result "$task_id" "brAIn refused this task: tools='${task_tools}' is not one of full, house or read_only, or the analyst's tool lists could not be read from the panel. A task that cannot be scoped is not run with the full grant." "" refused
+        write_task_result "$task_id" "brAIn refused this task: tools='${task_tools}' is not one of full, house, read_only, minecraft or minecraft_talk, or the analyst's tool lists could not be read from the panel. A task that cannot be scoped is not run with the full grant." "" refused
         journal_task error 0 "" "${task_model:-}" "tools scope could not be honoured" "$task_scheduled"
         return
     fi

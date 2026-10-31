@@ -135,6 +135,37 @@ def interactive(channel: str) -> bool:
     return str(channel or "") in INTERACTIVE_CHANNELS
 
 
+# A grown-up's request typed in BRUH Minecraft's chat (the `minecraft` task
+# scope, on its own channel). The owner's policy: an in-world act asked for
+# in the game needs no approval card, because the grown-up asking there IS
+# the parent asking — it still passes every guard and undo BRUH Minecraft
+# holds next to the world, and brAIn's own privacy and bedtime rules.
+# Anything else on that channel is outside the game, and is refused with
+# the sentence the game says back.
+MINECRAFT_CHANNEL = "minecraft"
+MINECRAFT_WORLD_TOOL = "minecraft_world"
+MINECRAFT_CHAT_ACTIONS = frozenset({"time", "weather", "say", "ask", "undo", "build"})
+MINECRAFT_OUTSIDE = ("this request came from the game's chat, which may act only in the "
+                     "Minecraft world; anything else needs approval in brAIn — say "
+                     "\"I'll need you to approve that in brAIn.\"")
+
+
+def minecraft_channel(channel: str) -> bool:
+    """Whether a run is a request from the game's chat (both of its scopes,
+    `minecraft` and the words-only `minecraft_talk`, run on this channel)."""
+    return str(channel or "") == MINECRAFT_CHANNEL
+
+
+def minecraft_chat_verdict(tool: str, args: dict) -> tuple[str, str]:
+    """(verdict, why) for a gated call on the `minecraft` channel."""
+    name = str(tool or "").rsplit("__", 1)[-1]
+    action = str((args or {}).get("action") or "").strip().lower()
+    if name == MINECRAFT_WORLD_TOOL and action in MINECRAFT_CHAT_ACTIONS:
+        return "allow", ("an in-world act a grown-up asked for in the game; the game's "
+                         + "engine guards it, counts it and can undo it")
+    return "deny", MINECRAFT_OUTSIDE
+
+
 def finalize(verdict: str, channel: str) -> str:
     """The hook's decision. `allow` passes, and `ask` asks only somebody
     who is there; for a run nobody watches it is a refusal."""

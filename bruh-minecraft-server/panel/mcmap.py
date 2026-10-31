@@ -5,7 +5,7 @@ No plugin, no server command and no package: the world's own region files
 (Anvil, `r.X.Z.mca`) are read here, the top block of every column inside
 a box is looked up, and the result is painted one colour per block into a
 PNG written by hand (zlib and struct are the whole encoder). It is what a
-finished build in Vesper's build log is shown as (`mcworld.BuildLog`), and
+finished build in the companion's build log is shown as (`mcworld.BuildLog`), and
 what `level.dat` is read with when the server cannot be asked the weather.
 
 What it can read: Java Edition worlds from 1.16 on (the block-state

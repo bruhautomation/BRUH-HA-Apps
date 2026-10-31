@@ -131,7 +131,7 @@ GROUPS: list[tuple[str, list[str]]] = [
     ]),
     ("Other add-ons", [
         "it-manages-your-esphome-devices", "it-runs-music-assistant",
-        "it-runs-your-other-bruh-add-ons",
+        "it-runs-your-other-bruh-add-ons", "it-plays-minecraft-with-your-family",
     ]),
     ("Safety and privacy", [
         "what-it-will-not-do", "security", "cameras", "ports", "where-things-live",

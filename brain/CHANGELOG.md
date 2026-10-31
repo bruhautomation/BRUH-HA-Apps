@@ -2,6 +2,37 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.29
+
+### Added
+
+- **brAIn plays Minecraft with your family.** With BRUH Minecraft 1.17.8 installed, brAIn is the companion in the game, under the name you gave it in ⚙ › Personality ("brAIn" if you gave none). Every chat line from someone on your family list that starts with its name gets an answer in the game's chat, in its own words — no automation needed. A grown-up can ask it to build something small, put a question to a child on the picture pads, undo, or say something to the family; it says hello when someone from the family joins and goodnight at the children's bedtime.
+- **⚙ › Minecraft**, shown when BRUH Minecraft is there:
+  - an on/off switch, and whether it says hello;
+  - the family list (Child or Grown-up, their in-game names, and any nickname a server script shows in chat);
+  - a bedtime switch;
+  - limits for replies, things it does in the world, and things it does for one player in one sitting, where **0 means no limit** and every limit starts at 0;
+  - the model and effort for answering in chat (quick by default) and for building (the chat's own model by default);
+  - everything it did in the world, with **Undo**.
+- **What it learns in the game becomes something brAIn remembers**: what each child picked, what grown-ups asked for, favourite places and how much each person plays.
+
+### Changed
+
+- **The family list, bedtime and memory BRUH Minecraft kept are taken over once**, the first time brAIn sees the updated add-on, and the add-on stops keeping its own copy. Its old fixed limits are not carried over.
+- **`minecraft_status` takes `companion=true`** (it was `vesper=true`) and also says when the server's log cannot be heard, so brAIn can tell you the game's feed has gone quiet.
+
+### Removed
+
+- **The automation that sent Minecraft chat to a conversation agent is no longer needed**, and can be deleted.
+
+### Security
+
+- **A request from the game reaches only the game.**
+  - A grown-up's request runs in the `minecraft` task scope: the Minecraft tools and a few read-only house lookups, and nothing else, even with act-without-asking on. Anything that would touch the house is answered "I'll need you to approve that in brAIn".
+  - In-world actions run without an approval card, because a grown-up on the family list asked in the game; BRUH Minecraft's own guards and Undo still apply.
+  - A child's line is answered by a run that can use no tools at all, so it can never make anything happen.
+  - A child is never told about another child, nothing new starts for a child at bedtime, and a grown-up's commands are taken only when the server checks the account behind the name.
+
 ## 4.0.28
 
 ### Added

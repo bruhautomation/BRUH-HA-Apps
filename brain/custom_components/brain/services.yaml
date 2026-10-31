@@ -74,8 +74,10 @@ run_task:
         house drops the shell, file reads and edits, and the web, and leaves every Home
         Assistant tool. read_only is the same list the scheduled analyst runs with — it
         can look at anything in Home Assistant and change nothing, and it cannot read
-        files. Anything wider than read_only needs a Home Assistant administrator (an
-        automation runs as the system and may ask for any).'
+        files. minecraft is a request typed in BRUH Minecraft''s chat: the game world''s
+        tool and a few reads, never a house service. Anything wider than read_only
+        needs a Home Assistant administrator (an automation runs as the system and
+        may ask for any).'
       default: full
       selector:
         select:
@@ -83,6 +85,7 @@ run_task:
           - full
           - house
           - read_only
+          - minecraft
 clear_conversation:
   name: Clear conversation
   description: Clear a persistent Claude conversation session. This resets the conversation history
@@ -152,7 +155,9 @@ ask:
       description: >-
         What the run may touch. `read_only` (the default) is Home Assistant's read-only
         tools; `house` adds every Home Assistant tool including control; `full` adds
-        the shell and file editing.
+        the shell and file editing; `minecraft` is a request typed in BRUH
+        Minecraft's chat (the game world's tool, a few reads and what brAIn
+        remembers, never a house service).
       required: false
       default: read_only
       selector:
@@ -161,6 +166,7 @@ ask:
             - read_only
             - house
             - full
+            - minecraft
     timeout:
       name: Timeout
       description: Seconds to wait for the answer (10–600).

@@ -23,6 +23,16 @@
         <div>
           <h1>BRUH Minecraft</h1>
           <p id="brand-subtitle">Loading…</p>
+          <!-- The version and what changed (#594): opens CHANGELOG.md in the
+               panel, newest release first. "Updated" stays beside it after
+               an update until the notes are opened (this browser's memory).
+               The href is the published file, for a press with no script. -->
+          <p class="brand-version">
+            <a id="version-link" class="version-link" href="https://github.com/bruhautomation/BRUH-HA-Apps/blob/main/bruh-minecraft-server/CHANGELOG.md"
+               target="_blank" rel="noopener noreferrer"
+               aria-label="BRUH Minecraft __VERSION__: what's new (the changelog)">v__VERSION__ · changelog</a>
+            <span id="version-new" class="version-new" hidden>Updated since you last looked</span>
+          </p>
         </div>
       </div>
       <div class="actions">
@@ -508,6 +518,9 @@
   <main>
     <!-- Dashboard -->
     <section id="tab-dashboard" class="tab-panel active">
+      <!-- The feed's hearing (#588): shown when players are on and the
+           server's log is not saying what they do. -->
+      <p id="feed-warning" class="feed-warning" role="alert" hidden></p>
       <div class="grid">
         <div class="card">
           <h2>Status</h2>
@@ -553,136 +566,97 @@
           </form>
           <pre id="cmd-reply" class="reply"></pre>
         </div>
-        <div class="card wide vesper" id="vesper-card">
-          <div class="vesper-head">
-            <h2>Vesper</h2>
-            <label class="vesper-switch" for="vesper-on">
-              <input id="vesper-on" type="checkbox" role="switch" />
-              <span class="vesper-switch-track" aria-hidden="true"></span>
-              <span id="vesper-on-word">Vesper is off</span>
-            </label>
+        <!-- The companion: brAIn's, when brAIn is installed (it decides; this
+             add-on only carries out). Without brAIn the card is hidden and
+             one line says why. -->
+        <p id="companion-absent" class="card wide companion-absent muted" hidden>Install brAIn to have a companion play in the world.</p>
+        <div class="card wide companion" id="companion-card" hidden>
+          <div class="companion-head">
+            <h2 id="companion-title">Companion</h2>
+            <span id="companion-who" class="muted"></span>
           </div>
-          <p id="vesper-status" class="vesper-status" role="status" aria-live="polite">Loading…</p>
-          <p class="muted vesper-intro">Vesper plays in the world with your family: it appears when someone joins, says hello, and can ask a question that is answered by standing on a picture, so no reading is needed. Set it up below. Everything it does is listed at the bottom and can be undone.</p>
+          <p id="companion-status" class="companion-status" role="status" aria-live="polite">Loading…</p>
+          <p class="muted companion-intro">brAIn plays in this world as its companion, under the name you gave brAIn: it says hello when someone from the family joins, answers grown-ups who start a chat message with its name (“<span class="companion-name">Companion</span>, build Kaz a bridge”), asks children questions they answer by standing on a picture, and builds small things when asked. Who is family, bedtime, the daily limits and the model are set in brAIn, under ⚙ › Minecraft. Everything it did in the world is below and can be undone.</p>
 
-          <section class="vesper-step" aria-labelledby="vesper-family-h">
-            <h3 id="vesper-family-h"><span class="vesper-num" aria-hidden="true">1</span> Family</h3>
-            <p class="muted">Who plays. Vesper only plays with people on this list and leaves anyone else alone.</p>
-            <div id="vesper-seen" class="vesper-chips" aria-label="Players seen in the game"></div>
-            <div id="vesper-family" class="vesper-people"></div>
-            <div class="vesper-buttons">
-              <button id="vesper-add-person" class="btn btn-ghost" type="button">Add person</button>
-              <button id="vesper-family-save" class="btn btn-primary" type="button">Save family</button>
-            </div>
-            <p id="vesper-family-msg" class="vesper-msg" role="status" aria-live="polite"></p>
-          </section>
-
-          <section class="vesper-step" aria-labelledby="vesper-settings-h">
-            <h3 id="vesper-settings-h"><span class="vesper-num" aria-hidden="true">2</span> Bedtime and daily limit</h3>
-            <form id="f-vesper" class="vesper-form">
-              <div class="vesper-field vesper-field-wide">
-                <label for="vesper-bedtime">Bedtime switch</label>
-                <input id="vesper-bedtime" type="text" list="vesper-entities" maxlength="120" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="input_boolean.kids_bedtime" aria-describedby="vesper-bedtime-help" />
-                <datalist id="vesper-entities"></datalist>
-                <p id="vesper-bedtime-help" class="muted">Vesper says goodnight and stops when this is on. Pick a toggle helper or a door sensor. Leave empty for no bedtime.</p>
+          <section class="companion-step" aria-labelledby="companion-zones-h">
+            <h3 id="companion-zones-h"><span class="companion-num" aria-hidden="true">1</span> Protected places</h3>
+            <p class="muted">Nothing is ever built within these, whoever asks. Stand there in game and press F3 (Java) or turn on Show Coordinates (Bedrock) to read x and z.</p>
+            <ul id="companion-zones" class="companion-list"></ul>
+            <div id="companion-here" class="companion-chips" aria-label="Where players are now"></div>
+            <form id="f-companion-zone" class="companion-form">
+              <div class="companion-field companion-field-wide">
+                <label for="companion-zone-name">Name of the place</label>
+                <input id="companion-zone-name" type="text" maxlength="60" placeholder="Our house" />
               </div>
-              <div class="vesper-field">
-                <label for="vesper-bedtime-when">Bedtime is when it is</label>
-                <select id="vesper-bedtime-when" aria-describedby="vesper-when-help">
-                  <option value="on">on</option>
-                  <option value="off">off</option>
-                </select>
-                <p id="vesper-when-help" class="muted">For a door sensor, pick “off”, so that a closed door means bedtime.</p>
+              <div class="companion-field companion-field-num">
+                <label for="companion-zone-x">x</label>
+                <input id="companion-zone-x" type="number" inputmode="numeric" step="any" />
               </div>
-              <div class="vesper-field">
-                <label for="vesper-daily">Most things Vesper may do in a day</label>
-                <input id="vesper-daily" type="number" inputmode="numeric" min="0" max="1000" aria-describedby="vesper-daily-help" />
-                <p id="vesper-daily-help" class="muted">120 is plenty for an afternoon of play. <span id="vesper-today"></span></p>
+              <div class="companion-field companion-field-num">
+                <label for="companion-zone-z">z</label>
+                <input id="companion-zone-z" type="number" inputmode="numeric" step="any" />
               </div>
-              <div class="vesper-buttons">
-                <button class="btn btn-primary" type="submit">Save bedtime and limit</button>
+              <div class="companion-field companion-field-num">
+                <label for="companion-zone-radius">How far around it (blocks)</label>
+                <input id="companion-zone-radius" type="number" inputmode="numeric" min="1" max="512" value="16" />
               </div>
-              <p id="vesper-settings-msg" class="vesper-msg" role="status" aria-live="polite"></p>
-            </form>
-          </section>
-
-          <section class="vesper-step" aria-labelledby="vesper-zones-h">
-            <h3 id="vesper-zones-h"><span class="vesper-num" aria-hidden="true">3</span> Protected places</h3>
-            <p class="muted">Vesper never builds within these. Stand there in game and press F3 (Java) or turn on Show Coordinates (Bedrock) to read x and z.</p>
-            <ul id="vesper-zones" class="vesper-list"></ul>
-            <div id="vesper-here" class="vesper-chips" aria-label="Where players are now"></div>
-            <form id="f-vesper-zone" class="vesper-form">
-              <div class="vesper-field vesper-field-wide">
-                <label for="vesper-zone-name">Name of the place</label>
-                <input id="vesper-zone-name" type="text" maxlength="60" placeholder="Our house" />
-              </div>
-              <div class="vesper-field vesper-field-num">
-                <label for="vesper-zone-x">x</label>
-                <input id="vesper-zone-x" type="number" inputmode="numeric" step="any" />
-              </div>
-              <div class="vesper-field vesper-field-num">
-                <label for="vesper-zone-z">z</label>
-                <input id="vesper-zone-z" type="number" inputmode="numeric" step="any" />
-              </div>
-              <div class="vesper-field vesper-field-num">
-                <label for="vesper-zone-radius">How far around it (blocks)</label>
-                <input id="vesper-zone-radius" type="number" inputmode="numeric" min="1" max="512" value="16" />
-              </div>
-              <div class="vesper-field">
-                <label for="vesper-zone-dim">World</label>
-                <select id="vesper-zone-dim">
+              <div class="companion-field">
+                <label for="companion-zone-dim">World</label>
+                <select id="companion-zone-dim">
                   <option value="minecraft:overworld">Overworld</option>
                   <option value="minecraft:the_nether">The Nether</option>
                   <option value="minecraft:the_end">The End</option>
                 </select>
               </div>
-              <div class="vesper-buttons">
+              <div class="companion-buttons">
                 <button class="btn btn-primary" type="submit">Add place</button>
               </div>
-              <p id="vesper-zone-msg" class="vesper-msg" role="status" aria-live="polite"></p>
+              <p id="companion-zone-msg" class="companion-msg" role="status" aria-live="polite"></p>
             </form>
           </section>
 
-          <section class="vesper-step" aria-labelledby="vesper-ask-h">
-            <h3 id="vesper-ask-h"><span class="vesper-num" aria-hidden="true">4</span> Ask a question</h3>
-            <p class="muted">Mainly for children who cannot read yet: Vesper builds two pads beside them, a green one and a red one, each with a picture. They answer by standing on one, and the answer shows up below.</p>
-            <form id="f-vesper-ask" class="vesper-form">
-              <div class="vesper-field">
-                <label for="vesper-ask-who">Who to ask</label>
-                <select id="vesper-ask-who"></select>
+          <section class="companion-step" aria-labelledby="companion-ask-h">
+            <h3 id="companion-ask-h"><span class="companion-num" aria-hidden="true">2</span> Ask a question</h3>
+            <p class="muted">Mainly for children who cannot read yet: the companion builds two pads beside them, a green one and a red one, each with a picture. They answer by standing on one, and the answer shows up below.</p>
+            <form id="f-companion-ask" class="companion-form">
+              <div class="companion-field">
+                <label for="companion-ask-who">Who to ask</label>
+                <select id="companion-ask-who"></select>
               </div>
-              <div class="vesper-field vesper-field-wide">
-                <label for="vesper-ask-text">Your question (for your records; they see only the pictures)</label>
-                <input id="vesper-ask-text" type="text" maxlength="200" placeholder="Do you want a castle or a farm?" />
+              <div class="companion-field companion-field-wide">
+                <label for="companion-ask-text">Your question (for your records; they see only the pictures)</label>
+                <input id="companion-ask-text" type="text" maxlength="200" placeholder="Do you want a castle or a farm?" />
               </div>
-              <fieldset class="vesper-choice">
+              <fieldset class="companion-choice">
                 <legend>Green pad</legend>
-                <label for="vesper-ask-a">Answer</label>
-                <input id="vesper-ask-a" type="text" maxlength="40" value="yes" />
-                <label for="vesper-ask-a-pic">Picture</label>
-                <select id="vesper-ask-a-pic" class="vesper-pictures"></select>
+                <label for="companion-ask-a">Answer</label>
+                <input id="companion-ask-a" type="text" maxlength="40" value="yes" />
+                <label for="companion-ask-a-pic">Picture</label>
+                <select id="companion-ask-a-pic" class="companion-pictures"></select>
               </fieldset>
-              <fieldset class="vesper-choice">
+              <fieldset class="companion-choice">
                 <legend>Red pad</legend>
-                <label for="vesper-ask-b">Answer</label>
-                <input id="vesper-ask-b" type="text" maxlength="40" value="no" />
-                <label for="vesper-ask-b-pic">Picture</label>
-                <select id="vesper-ask-b-pic" class="vesper-pictures"></select>
+                <label for="companion-ask-b">Answer</label>
+                <input id="companion-ask-b" type="text" maxlength="40" value="no" />
+                <label for="companion-ask-b-pic">Picture</label>
+                <select id="companion-ask-b-pic" class="companion-pictures"></select>
               </fieldset>
-              <div class="vesper-buttons">
-                <button id="vesper-ask-go" class="btn btn-primary" type="submit" aria-describedby="vesper-ask-why">Ask</button>
+              <div class="companion-buttons">
+                <button id="companion-ask-go" class="btn btn-primary" type="submit" aria-describedby="companion-ask-why">Ask</button>
               </div>
-              <p id="vesper-ask-why" class="vesper-msg vesper-why"></p>
-              <p id="vesper-ask-msg" class="vesper-msg" role="status" aria-live="polite"></p>
+              <p id="companion-ask-why" class="companion-msg companion-why"></p>
+              <p id="companion-ask-msg" class="companion-msg" role="status" aria-live="polite"></p>
             </form>
           </section>
 
-          <section class="vesper-step" aria-labelledby="vesper-did-h">
-            <h3 id="vesper-did-h">What Vesper did</h3>
-            <p id="vesper-did-msg" class="vesper-msg" role="status" aria-live="polite"></p>
-            <ul id="vesper-actions" class="vesper-list"></ul>
+          <section class="companion-step" aria-labelledby="companion-did-h">
+            <h3 id="companion-did-h">What it did</h3>
+            <p id="companion-did-msg" class="companion-msg" role="status" aria-live="polite"></p>
+            <ul id="companion-actions" class="companion-list"></ul>
             <h3>Questions &amp; answers</h3>
-            <ul id="vesper-questions" class="vesper-list"></ul>
+            <ul id="companion-questions" class="companion-list"></ul>
+            <h3>What it said</h3>
+            <ul id="companion-said" class="companion-list"></ul>
           </section>
         </div>
       </div>
@@ -871,6 +845,14 @@
 
     <!-- Resource Packs -->
   </main>
+
+  <dialog id="changelog-dialog" class="changelog-dialog" aria-labelledby="changelog-title">
+    <div class="changelog-head">
+      <h2 id="changelog-title">What's new in BRUH Minecraft</h2>
+      <button id="changelog-close" class="btn btn-ghost" type="button">Close</button>
+    </div>
+    <div id="changelog-body" class="changelog-body">Loading…</div>
+  </dialog>
 
   <footer>
     <span id="last-refresh">—</span>

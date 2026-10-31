@@ -118,6 +118,8 @@ COPY custom_components/ /opt/bruh-mc/custom_components/
 # which then shows up in the startup banner. Reading config.yaml at runtime
 # is authoritative and sidesteps the templating question entirely.
 COPY config.yaml /opt/bruh-mc/config.yaml
+# The release notes the panel header links to (/api/changelog, #594).
+COPY CHANGELOG.md /opt/bruh-mc/CHANGELOG.md
 
 # Ensure every shell / python entrypoint is executable
 RUN chmod +x /run.sh \

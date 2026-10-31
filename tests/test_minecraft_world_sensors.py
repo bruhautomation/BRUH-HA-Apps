@@ -77,7 +77,7 @@ class TestWhatEachSensorSays(unittest.TestCase):
         self.assertEqual(details[1]["name"], ".KidPlays")
         self.assertEqual(details[1]["gamemode"], "creative")
 
-    def test_the_feed_and_vesper(self):
+    def test_the_feed_and_the_build_log(self):
         w = world()
         self.assertEqual(worldview.feed_state(w), "Alex: 0")
         self.assertEqual(worldview.building_state(w), "Watchtower")
@@ -116,7 +116,7 @@ class TestTheCatalog(unittest.TestCase):
         text = (PKG_DIR / "sensor.py").read_text()
         strings = json.loads((PKG_DIR / "strings.json").read_text())["entity"]["sensor"]
         for key in ("world_time", "world_day", "world_weather", "world_feed",
-                    "last_save", "last_backup", "vesper_building"):
+                    "last_save", "last_backup", "building", "companion"):
             self.assertIn(f'key="{key}"', text)
             self.assertIn(key, strings)
         # No sensor of the world says TPS or latency; those stay the server's.

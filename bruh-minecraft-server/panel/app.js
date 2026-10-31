@@ -25,6 +25,93 @@
   };
 
   // ------------------------------------------------------------------
+  // What's new (#594): the header's "v1.2.3 · changelog" opens the
+  // release notes in the panel (/api/changelog, newest first). After an
+  // update the header says "Updated since you last looked" until the notes
+  // are opened; which version was last read is this browser's memory
+  // (localStorage), and a browser that keeps none simply never says it.
+  // ------------------------------------------------------------------
+  const CHANGELOG_SEEN = 'bruh-minecraft.changelog.seen';
+  const versionLink = $('#version-link');
+  const panelVersion = ((versionLink && versionLink.textContent) || '').replace(/^v/, '').split(' ')[0];
+  const versionNewer = (a, b) => {
+    const pa = String(a || '').split('.').map((n) => parseInt(n, 10) || 0);
+    const pb = String(b || '').split('.').map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const d = (pa[i] || 0) - (pb[i] || 0);
+      if (d) return d > 0;
+    }
+    return false;
+  };
+  const seenGet = () => { try { return localStorage.getItem(CHANGELOG_SEEN) || ''; } catch { return ''; } };
+  const seenSet = (v) => { try { localStorage.setItem(CHANGELOG_SEEN, v); } catch { /* private window */ } };
+  function markUpdated() {
+    const seen = seenGet();
+    if (!seen && /^\d/.test(panelVersion)) {
+      // The first look in this browser: nothing to compare with yet.
+      seenSet(panelVersion);
+      return;
+    }
+    const fresh = /^\d/.test(panelVersion) && versionNewer(panelVersion, seen);
+    $('#version-new').hidden = !fresh;
+  }
+  // The notes are Markdown; this renders only what CHANGELOG.md uses, and
+  // escapes everything before it adds a tag.
+  function notesHtml(md) {
+    const inline = (t) => esc(t)
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    const out = [];
+    let list = false;
+    const close = () => { if (list) { out.push('</ul>'); list = false; } };
+    for (const raw of String(md || '').split('\n')) {
+      const line = raw.trimEnd();
+      if (/^###\s+/.test(line)) { close(); out.push(`<h4>${inline(line.replace(/^###\s+/, ''))}</h4>`); continue; }
+      if (/^\s*[-*]\s+/.test(line)) {
+        if (!list) { out.push('<ul>'); list = true; }
+        out.push(`<li>${inline(line.replace(/^\s*[-*]\s+/, ''))}</li>`);
+        continue;
+      }
+      if (/^\s{2,}\S/.test(line) && list) {
+        out[out.length - 1] = out[out.length - 1].replace(/<\/li>$/, ` ${inline(line.trim())}</li>`);
+        continue;
+      }
+      close();
+      if (line.trim()) out.push(`<p>${inline(line)}</p>`);
+    }
+    close();
+    return out.join('');
+  }
+  async function openChangelog() {
+    const dlg = $('#changelog-dialog');
+    const body = $('#changelog-body');
+    const seen = seenGet();
+    body.textContent = 'Loading…';
+    if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open', '');
+    let data;
+    try { data = await api('api/changelog'); } catch { data = null; }
+    const releases = (data && data.releases) || [];
+    if (!releases.length) {
+      body.innerHTML = `<p>${esc((data && data.error) || 'The release notes could not be read.')} They are also <a href="${esc(versionLink.href)}" target="_blank" rel="noopener noreferrer">published online</a>.</p>`;
+      return;
+    }
+    body.innerHTML = releases.map((r) => `<section><h3>v${esc(r.version)}${r.date ? ` <span class="muted">${esc(r.date)}</span>` : ''}${seen && versionNewer(r.version, seen) ? ' <span class="changelog-new">New</span>' : ''}</h3>${notesHtml(r.body)}</section>`).join('');
+    seenSet(releases[0].version);
+    $('#version-new').hidden = true;
+  }
+  versionLink?.addEventListener('click', (ev) => {
+    // A modified press keeps the link's own meaning (a new tab).
+    if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button) return;
+    ev.preventDefault();
+    openChangelog();
+  });
+  $('#changelog-close')?.addEventListener('click', () => {
+    const dlg = $('#changelog-dialog');
+    if (dlg.close) dlg.close(); else dlg.removeAttribute('open');
+  });
+  markUpdated();
+
+  // ------------------------------------------------------------------
   // Tabs
   // ------------------------------------------------------------------
   $$('.tab').forEach((tab) => {
@@ -169,16 +256,18 @@
   refreshStatus();
 
   // ------------------------------------------------------------------
-  // Vesper in the game (vesper.py): set up as a flow a parent can follow
-  // without the docs — the family, bedtime and the daily limit, protected
-  // places, a question on the pads — then what it did, with Undo.
+  // The companion (companion.py): brAIn's, when brAIn is installed. This
+  // card shows who it is and what it did (with Undo), and keeps the two
+  // things that belong to the world: protected places and a question on
+  // the pads. Who is family, bedtime, limits and the model are brAIn's
+  // (⚙ › Minecraft). Without brAIn the card is hidden and one line says why.
   // ------------------------------------------------------------------
   const fmtWhen = (t) => (t ? new Date(t * 1000).toLocaleString() : '');
   // The choice pads' pictures. Each is set on a fence post with setblock,
   // so only full blocks that stay put: nothing that falls (sand), decays
   // (leaves), needs ground (flowers) or is an entity (pig). Every id must
-  // pass vesper.block_id (tests/test_minecraft_vesper_card.py checks).
-  const VESPER_PICTURES = [
+  // pass companion.block_id (tests/test_minecraft_companion_card.py checks).
+  const PAD_PICTURES = [
     ['', 'Plain colour (the pad\'s own)'],
     ['minecraft:stone_bricks', 'Castle (stone bricks)'],
     ['minecraft:oak_planks', 'House (wood planks)'],
@@ -200,30 +289,20 @@
     ['minecraft:lime_wool', 'Yes (green wool)'],
     ['minecraft:red_wool', 'No (red wool)'],
   ];
-  // The stored roles stay `child` and `reader` (the engine reads them);
-  // only the words a parent sees are these.
-  const VESPER_ROLES = [
-    ['child', 'Child — Vesper plays with them and asks them questions with pads'],
-    ['reader', 'Grown-up — Vesper plays with them too, and they can talk to it and give it commands in chat'],
-  ];
-  // A select cuts a long option short, so the whole sentence is under it too.
-  const roleWords = (role) => (VESPER_ROLES.find(([v]) => v === role) || VESPER_ROLES[0])[1];
   const Q_STATUS = {
     queued: 'waiting to be asked', open: 'the pads are out now', answered: 'answered',
     expired: 'no answer', cancelled: 'cancelled',
   };
-  const vBare = (n) => String(n || '').trim().replace(/^[.*]/, '').toLowerCase();
-  const vs = { v: null, world: null, family: [], familyDirty: false, settingsDirty: false,
-    entities: false, askWho: '' };
+  const cs = { c: null, world: null };
 
-  const vSay = (sel, text, ok) => {
+  const cSay = (sel, text, ok) => {
     const el = $(sel);
     if (!el) return;
     el.textContent = text || '';
     el.classList.toggle('good', ok === true);
     el.classList.toggle('bad', ok === false);
   };
-  async function vSend(path, method, body) {
+  async function cSend(path, method, body) {
     try {
       const r = await api(path, { method, body: body === undefined ? undefined : JSON.stringify(body) });
       if (r && r._raw !== undefined) return { error: 'The panel did not answer. Try again in a moment.' };
@@ -232,338 +311,176 @@
       return { error: 'The panel could not be reached. Try again in a moment.' };
     }
   }
+  const companionName = () => (cs.c && cs.c.identity && cs.c.identity.name) || 'the companion';
 
-  // -- 1. Family ---------------------------------------------------------
-  const guessName = (player) => {
-    const base = String(player).replace(/^[.*]/, '').replace(/[\d_]+$/, '');
-    return base ? base[0].toUpperCase() + base.slice(1) : String(player);
-  };
-  function renderFamily() {
-    const box = $('#vesper-family');
-    if (!vs.family.length) {
-      box.innerHTML = '<p class="muted vesper-empty">Nobody yet. Tap a name above, or Add person.</p>';
-      return;
-    }
-    box.innerHTML = vs.family.map((p, i) => `
-      <div class="vesper-person">
-        <div class="vesper-field">
-          <label for="vp-name-${i}">Name</label>
-          <input id="vp-name-${i}" type="text" maxlength="40" data-i="${i}" data-k="person" value="${esc(p.person)}" placeholder="Kaz" />
-        </div>
-        <div class="vesper-field">
-          <label for="vp-role-${i}">Role</label>
-          <select id="vp-role-${i}" data-i="${i}" data-k="role">${VESPER_ROLES.map(([v, l]) =>
-            `<option value="${v}"${p.role === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
-          <p class="muted vesper-role-help" data-role-help="${i}">${esc(roleWords(p.role))}</p>
-        </div>
-        <div class="vesper-field vesper-field-wide">
-          <label for="vp-players-${i}">In-game names</label>
-          <input id="vp-players-${i}" type="text" maxlength="120" data-i="${i}" data-k="players" autocapitalize="off" autocomplete="off" spellcheck="false" value="${esc(p.players)}" placeholder=".Kaz8044" aria-describedby="vp-help-${i}" />
-          <p id="vp-help-${i}" class="muted">Exactly as shown in the game, separated by commas. Bedrock/iPad players start with a dot, e.g. .Kaz8044</p>
-        </div>
-        <div class="vesper-buttons">
-          <button type="button" class="btn btn-ghost" data-remove="${i}" aria-label="Remove ${esc(p.person || 'this person')}">Remove</button>
-        </div>
-      </div>`).join('');
-  }
-  function familyHas(player) {
-    const want = vBare(player);
-    return vs.family.some((p) => String(p.players).split(',').some((n) => vBare(n) === want));
-  }
-  function renderSeen() {
-    const v = vs.v || {};
-    const names = [];
-    const add = (n, now) => {
-      if (!n || names.some((x) => x.name === n)) return;
-      names.push({ name: n, now });
-    };
-    (v.online || []).forEach((o) => add(o.player, true));
-    ((vs.world && vs.world.players) || []).forEach((p) => add(p.name, true));
-    Object.keys((vs.world && vs.world.last_seen) || {}).forEach((n) => add(n, false));
-    const chips = names.filter((x) => !familyHas(x.name)).slice(0, 8);
-    $('#vesper-seen').innerHTML = chips.length
-      ? `<span class="muted">Seen in the game — tap to add:</span>${chips.map((x) =>
-        `<button type="button" class="chip" data-seen="${esc(x.name)}">Add ${esc(x.name)}${x.now ? ' <span class="muted">(playing now)</span>' : ''}</button>`).join('')}`
-      : '';
-  }
-  $('#vesper-family')?.addEventListener('input', (e) => {
-    const el = e.target;
-    if (!el.dataset || el.dataset.i === undefined) return;
-    vs.family[Number(el.dataset.i)][el.dataset.k] = el.value;
-    if (el.dataset.k === 'role') {
-      const help = $(`#vesper-family [data-role-help="${el.dataset.i}"]`);
-      if (help) help.textContent = roleWords(el.value);
-    }
-    vs.familyDirty = true;
-    vSay('#vesper-family-msg', 'Not saved yet.');
-  });
-  $('#vesper-family')?.addEventListener('change', (e) => {
-    if (e.target.dataset && e.target.dataset.k) renderSeen();
-  });
-  $('#vesper-family')?.addEventListener('click', (e) => {
-    const b = e.target.closest('button[data-remove]');
-    if (!b) return;
-    vs.family.splice(Number(b.dataset.remove), 1);
-    vs.familyDirty = true;
-    renderFamily();
-    renderSeen();
-    vSay('#vesper-family-msg', 'Removed. Save family to keep the change.');
-  });
-  $('#vesper-seen')?.addEventListener('click', (e) => {
-    const b = e.target.closest('button[data-seen]');
-    if (!b) return;
-    const player = b.dataset.seen;
-    let i = vs.family.findIndex((p) => !String(p.players).trim());
-    if (i < 0) {
-      vs.family.push({ person: guessName(player), role: 'child', players: player });
-      i = vs.family.length - 1;
-    } else {
-      vs.family[i].players = player;
-      if (!vs.family[i].person.trim()) vs.family[i].person = guessName(player);
-    }
-    vs.familyDirty = true;
-    renderFamily();
-    renderSeen();
-    $(`#vp-name-${i}`)?.focus();
-    vSay('#vesper-family-msg', `Added ${player}. Check the name and role, then Save family.`);
-  });
-  $('#vesper-add-person')?.addEventListener('click', () => {
-    vs.family.push({ person: '', role: 'child', players: '' });
-    vs.familyDirty = true;
-    renderFamily();
-    $(`#vp-name-${vs.family.length - 1}`)?.focus();
-  });
-  $('#vesper-family-save')?.addEventListener('click', async () => {
-    const people = vs.family.map((p) => ({
-      person: String(p.person).trim(), role: p.role,
-      players: String(p.players).split(',').map((n) => n.trim()).filter(Boolean),
-    }));
-    const r = await vSend('api/vesper/family', 'PUT', { people });
-    if (r.error) { vSay('#vesper-family-msg', r.error, false); return; }
-    vs.familyDirty = false;
-    const n = (r.people || []).length;
-    vSay('#vesper-family-msg', n ? `Saved. Vesper knows ${n} ${n === 1 ? 'person' : 'people'}.` : 'Saved. The family list is empty.', true);
-    refreshVesper();
-  });
-
-  // -- 2. Bedtime and the daily limit -------------------------------------
-  function fillSettings(settings, budget) {
-    const rule = String(settings.bedtime_entity || '');
-    const [entity, state] = rule.includes('=') ? rule.split('=', 2) : [rule, 'on'];
-    const when = $('#vesper-bedtime-when');
-    if (!Array.from(when.options).some((o) => o.value === state)) {
-      when.add(new Option(state, state));
-    }
-    if (!vs.settingsDirty && !$('#f-vesper').contains(document.activeElement)) {
-      $('#vesper-bedtime').value = entity;
-      when.value = state;
-      $('#vesper-daily').value = settings.daily_actions ?? 120;
-    }
-    $('#vesper-today').textContent = budget && budget.actions_limit !== undefined
-      ? `Today so far: ${budget.actions} of ${budget.actions_limit}.` : '';
-  }
-  async function loadBedtimeEntities() {
-    if (vs.entities) return;
-    vs.entities = true;
-    const r = await vSend('api/vesper/entities', 'GET');
-    const list = $('#vesper-entities');
-    list.innerHTML = (r.entities || []).map((e) =>
-      `<option value="${esc(e.entity_id)}">${esc(e.name)}${e.state ? ` (now ${esc(e.state)})` : ''}</option>`).join('');
-  }
-  $('#f-vesper')?.addEventListener('input', (e) => {
-    vs.settingsDirty = true;
-    if (e.target.id === 'vesper-bedtime') {
-      // A door sensor is "on" while open: a closed door is "off".
-      const id = e.target.value.trim();
-      if (/^binary_sensor\..*(door|gate)/.test(id)) $('#vesper-bedtime-when').value = 'off';
-    }
-  });
-  $('#f-vesper')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const entity = $('#vesper-bedtime').value.trim();
-    const when = $('#vesper-bedtime-when').value;
-    const r = await vSend('api/vesper/engine', 'POST', {
-      bedtime_entity: entity ? (when === 'on' ? entity : `${entity}=${when}`) : '',
-      daily_actions: Number($('#vesper-daily').value || 0),
-    });
-    if (r.error) { vSay('#vesper-settings-msg', r.error, false); return; }
-    vs.settingsDirty = false;
-    vSay('#vesper-settings-msg', entity ? 'Saved.' : 'Saved. No bedtime is set.', true);
-    refreshVesper();
-  });
-  $('#vesper-bedtime')?.addEventListener('focus', loadBedtimeEntities);
-
-  // -- 3. Protected places --------------------------------------------------
+  // -- 1. Protected places --------------------------------------------------
   const DIM_NAMES = { 'minecraft:overworld': 'Overworld', 'minecraft:the_nether': 'The Nether', 'minecraft:the_end': 'The End' };
   function renderZones(zones) {
-    $('#vesper-zones').innerHTML = zones.map((z) => `
+    $('#companion-zones').innerHTML = zones.map((z) => `
       <li><span><strong>${esc(z.name)}</strong> · x ${esc(Math.round(z.x))}, z ${esc(Math.round(z.z))} · within ${esc(z.radius)} blocks · ${esc(DIM_NAMES[z.dimension] || z.dimension)}
-        · <span class="muted">${z.protect ? 'Vesper never builds here' : 'a named place, not protected'}</span></span>
+        · <span class="muted">${z.protect ? 'nothing is built here' : 'a named place, not protected'}</span></span>
         <button type="button" class="btn btn-ghost" data-zone-del="${esc(z.name)}" aria-label="Remove ${esc(z.name)}">Remove</button></li>`).join('')
-      || '<li class="muted">No protected places yet. Add your house, or anything you do not want Vesper building near.</li>';
-    const here = ((vs.world && vs.world.players) || []).filter((p) => p.x != null && p.z != null);
-    $('#vesper-here').innerHTML = here.length
+      || '<li class="muted">No protected places yet. Add your house, or anything you do not want built near.</li>';
+    const here = ((cs.world && cs.world.players) || []).filter((p) => p.x != null && p.z != null);
+    $('#companion-here').innerHTML = here.length
       ? `<span class="muted">Fill in where someone is standing:</span>${here.map((p) =>
         `<button type="button" class="chip" data-here="${esc(p.name)}">Use ${esc(p.name)}’s spot (x ${esc(p.x)}, z ${esc(p.z)})</button>`).join('')}`
       : '';
   }
-  $('#vesper-here')?.addEventListener('click', (e) => {
+  $('#companion-here')?.addEventListener('click', (e) => {
     const b = e.target.closest('button[data-here]');
     if (!b) return;
-    const p = ((vs.world && vs.world.players) || []).find((x) => x.name === b.dataset.here);
+    const p = ((cs.world && cs.world.players) || []).find((x) => x.name === b.dataset.here);
     if (!p) return;
-    $('#vesper-zone-x').value = p.x;
-    $('#vesper-zone-z').value = p.z;
-    const dim = $('#vesper-zone-dim');
-    if (p.dimension && !Array.from(dim.options).some((o) => o.value === p.dimension)) {
-      dim.add(new Option(p.dimension, p.dimension));
-    }
-    if (p.dimension) dim.value = p.dimension;
-    if (!$('#vesper-zone-name').value.trim()) $('#vesper-zone-name').focus();
+    $('#companion-zone-x').value = p.x;
+    $('#companion-zone-z').value = p.z;
+    const dim = $('#companion-zone-dim');
+    if ([...dim.options].some((o) => o.value === p.dimension)) dim.value = p.dimension;
+    if (!$('#companion-zone-name').value.trim()) $('#companion-zone-name').focus();
   });
-  $('#vesper-zones')?.addEventListener('click', async (e) => {
+  $('#companion-zones')?.addEventListener('click', async (e) => {
     const b = e.target.closest('button[data-zone-del]');
     if (!b) return;
-    if (!confirm(`Remove ${b.dataset.zoneDel}? Vesper may build there again.`)) return;
-    const r = await vSend(`api/vesper/zones/${encodeURIComponent(b.dataset.zoneDel)}`, 'DELETE');
-    if (r.error) { vSay('#vesper-zone-msg', r.error, false); return; }
-    vSay('#vesper-zone-msg', `Removed ${b.dataset.zoneDel}.`, true);
-    refreshVesper();
+    if (!confirm(`Remove ${b.dataset.zoneDel}? Things may be built there again.`)) return;
+    const r = await cSend(`api/companion/zones/${encodeURIComponent(b.dataset.zoneDel)}`, 'DELETE');
+    if (r.error) { cSay('#companion-zone-msg', r.error, false); return; }
+    cSay('#companion-zone-msg', `Removed ${b.dataset.zoneDel}.`, true);
+    refreshCompanion();
   });
-  $('#f-vesper-zone')?.addEventListener('submit', async (e) => {
+  $('#f-companion-zone')?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const name = $('#vesper-zone-name').value.trim();
-    const x = $('#vesper-zone-x').value.trim();
-    const z = $('#vesper-zone-z').value.trim();
-    if (!name) { vSay('#vesper-zone-msg', 'Give the place a name, like Our house.', false); return; }
-    if (x === '' || z === '') { vSay('#vesper-zone-msg', 'Fill in x and z (or tap someone’s spot above).', false); return; }
-    const r = await vSend('api/vesper/zones', 'POST', {
-      name, x: Number(x), z: Number(z), radius: Number($('#vesper-zone-radius').value || 16),
-      dimension: $('#vesper-zone-dim').value, protect: true,
+    const name = $('#companion-zone-name').value.trim();
+    const x = $('#companion-zone-x').value.trim();
+    const z = $('#companion-zone-z').value.trim();
+    if (!name) { cSay('#companion-zone-msg', 'Give the place a name, like Our house.', false); return; }
+    if (x === '' || z === '') { cSay('#companion-zone-msg', 'Fill in x and z (or tap someone’s spot above).', false); return; }
+    const r = await cSend('api/companion/zones', 'POST', {
+      name, x: Number(x), z: Number(z), radius: Number($('#companion-zone-radius').value || 16),
+      dimension: $('#companion-zone-dim').value, protect: true,
     });
-    if (r.error) { vSay('#vesper-zone-msg', r.error, false); return; }
-    vSay('#vesper-zone-msg', `Added ${name}. Vesper will not build within ${r.zone ? r.zone.radius : ''} blocks of it.`, true);
-    $('#vesper-zone-name').value = '';
-    refreshVesper();
+    if (r.error) { cSay('#companion-zone-msg', r.error, false); return; }
+    cSay('#companion-zone-msg', `Added ${name}. Nothing will be built within ${r.zone ? r.zone.radius : ''} blocks of it.`, true);
+    $('#companion-zone-name').value = '';
+    refreshCompanion();
   });
 
-  // -- 4. Ask a question ------------------------------------------------------
-  $$('.vesper-pictures').forEach((sel) => {
-    sel.innerHTML = VESPER_PICTURES.map(([id, label]) => `<option value="${esc(id)}">${esc(label)}</option>`).join('');
+  // -- 2. A question on the pads ------------------------------------------------
+  $$('.companion-pictures').forEach((sel) => {
+    sel.innerHTML = PAD_PICTURES.map(([id, label]) => `<option value="${esc(id)}">${esc(label)}</option>`).join('');
   });
-  [['#vesper-ask-a', '#vesper-ask-a-pic'], ['#vesper-ask-b', '#vesper-ask-b-pic']].forEach(([inp, sel]) => {
-    // Typing "castle" picks the castle picture, until a picture is chosen by hand.
-    $(sel)?.addEventListener('change', () => { $(sel).dataset.byHand = $(sel).value ? '1' : ''; });
-    $(inp)?.addEventListener('input', () => {
-      if ($(sel).dataset.byHand) return;
+  [['#companion-ask-a', '#companion-ask-a-pic'], ['#companion-ask-b', '#companion-ask-b-pic']].forEach(([inp, sel]) => {
+    $(inp)?.addEventListener('change', () => {
+      // An answer that names a picture picks it ("castle" → stone bricks).
+      if ($(sel).value) return;
       const word = $(inp).value.trim().toLowerCase();
-      const hit = VESPER_PICTURES.find(([id, label]) => id && word && label.toLowerCase().split(/[ (]/)[0] === word);
-      $(sel).value = hit ? hit[0] : '';
+      const hit = PAD_PICTURES.find(([id, label]) => id && word && label.toLowerCase().split(/[ (]/)[0] === word);
+      if (hit) $(sel).value = hit[0];
     });
   });
-  function askReason(v) {
-    const who = $('#vesper-ask-who').value;
-    if (!v.enabled) return 'Switch Vesper on first (at the top of this card).';
-    if (!(v.family || []).length) return 'Add someone to the family list first (step 1).';
+  function askReason(c) {
+    const who = $('#companion-ask-who').value;
+    if (!(c.online || []).length) return 'Nobody is in the game right now. You can ask when somebody is playing.';
     if (!who) return 'Pick who to ask.';
-    const on = (v.online || []).some((o) => o.person === who && o.role !== 'guest');
-    if (!on) return `${who} is not in the game right now. You can ask when they are playing.`;
     return '';
   }
-  function renderAsk(v) {
-    const sel = $('#vesper-ask-who');
-    const people = [...(v.family || [])].sort((a, b) => (a.role === 'child' ? 0 : 1) - (b.role === 'child' ? 0 : 1));
-    const opts = people.map((p) => `<option value="${esc(p.person)}">${esc(p.person)}${p.role === 'child' ? '' : ' (grown-up)'}</option>`).join('');
+  function renderAsk(c) {
+    const sel = $('#companion-ask-who');
+    const online = c.online || [];
+    const opts = online.map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
     if (sel.dataset.opts !== opts) {
       const keep = sel.value;
-      sel.innerHTML = opts || '<option value="">Nobody on the family list yet</option>';
+      sel.innerHTML = opts || '<option value="">Nobody is playing</option>';
       sel.dataset.opts = opts;
-      if (people.some((p) => p.person === keep)) sel.value = keep;
+      if (online.includes(keep)) sel.value = keep;
     }
-    const why = askReason(v);
-    $('#vesper-ask-go').disabled = !!why;
-    vSay('#vesper-ask-why', why);
+    const why = askReason(c);
+    $('#companion-ask-go').disabled = !!why;
+    cSay('#companion-ask-why', why);
   }
-  $('#vesper-ask-who')?.addEventListener('change', () => { if (vs.v) renderAsk(vs.v); });
-  $('#f-vesper-ask')?.addEventListener('submit', async (e) => {
+  $('#companion-ask-who')?.addEventListener('change', () => { if (cs.c) renderAsk(cs.c); });
+  $('#f-companion-ask')?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    if (vs.v && askReason(vs.v)) return;
-    const text = $('#vesper-ask-text').value.trim();
-    if (!text) { vSay('#vesper-ask-msg', 'Write the question first, so you know what the answer means.', false); return; }
+    if (cs.c && askReason(cs.c)) return;
+    const text = $('#companion-ask-text').value.trim();
+    if (!text) { cSay('#companion-ask-msg', 'Write the question first, so you know what the answer means.', false); return; }
     const opt = (inp, sel) => ({ label: $(inp).value.trim(), ...($(sel).value ? { picture: $(sel).value } : {}) });
-    const r = await vSend('api/vesper/ask', 'POST', {
-      player: $('#vesper-ask-who').value, text, by: 'a parent',
-      options: [opt('#vesper-ask-a', '#vesper-ask-a-pic'), opt('#vesper-ask-b', '#vesper-ask-b-pic')],
+    const r = await cSend('api/companion/ask', 'POST', {
+      player: $('#companion-ask-who').value, question: text, by: 'a parent',
+      options: [opt('#companion-ask-a', '#companion-ask-a-pic'), opt('#companion-ask-b', '#companion-ask-b-pic')],
     });
-    if (r.error) { vSay('#vesper-ask-msg', r.error, false); return; }
-    vSay('#vesper-ask-msg', r.note || 'Asked.', true);
-    $('#vesper-ask-text').value = '';
-    refreshVesper();
+    if (r.error) { cSay('#companion-ask-msg', r.error, false); return; }
+    cSay('#companion-ask-msg', r.note || 'Asked.', true);
+    $('#companion-ask-text').value = '';
+    refreshCompanion();
   });
 
-  // -- What Vesper did, the answers, and the switch ----------------------------
-  function renderLog(v) {
-    $('#vesper-actions').innerHTML = (v.actions || []).slice(0, 15).map((a) => `
+  // -- What it did, the answers, and what it said ---------------------------------
+  function renderLog(c) {
+    $('#companion-actions').innerHTML = (c.actions || []).slice(0, 15).map((a) => `
       <li><span>${esc(fmtWhen(a.t))} · ${esc(a.text || a.kind)} <span class="muted">(${esc(a.status)})</span>
         ${a.undo_note ? `<span class="muted">${esc(a.undo_note)}</span>` : ''}</span>
-        ${a.undoable ? `<button type="button" class="btn btn-ghost" data-vesper-undo="${esc(a.id)}">Undo</button>` : ''}</li>`).join('')
-      || '<li class="muted">Nothing yet — Vesper will say hello here the next time someone from the family joins the game.</li>';
-    $('#vesper-questions').innerHTML = (v.questions || []).slice(0, 10).map((q) => `
-      <li><span>${esc(q.person)}: ${esc(q.text)} <span class="muted">(${(q.options || []).map((o) => esc(o.label)).join(' or ')})</span></span>
+        ${a.undoable ? `<button type="button" class="btn btn-ghost" data-companion-undo="${esc(a.id)}">Undo</button>` : ''}</li>`).join('')
+      || `<li class="muted">Nothing yet — ${esc(companionName())} will say hello here the next time someone from the family joins the game.</li>`;
+    $('#companion-questions').innerHTML = (c.questions || []).slice(0, 10).map((q) => `
+      <li><span>${esc(q.person || q.player)}: ${esc(q.text)} <span class="muted">(${(q.options || []).map((o) => esc(o.label)).join(' or ')})</span></span>
         <span class="muted">${q.answer ? `answered <strong>${esc(q.answer)}</strong>` : esc(Q_STATUS[q.status] || q.status)}${q.note ? ` · ${esc(q.note)}` : ''}</span></li>`).join('')
       || '<li class="muted">No questions yet. Ask one above; the answer shows up here.</li>';
+    $('#companion-said').innerHTML = (c.said || []).slice(0, 12).map((t) => `
+      <li><span>${esc(fmtWhen(t.t))} · ${esc(t.name || companionName())} to ${esc((t.to || []).join(', '))}${t.by ? ` <span class="muted">(asked by ${esc(t.by)})</span>` : ''}</span>
+        <span class="muted">“${esc(t.text)}”</span></li>`).join('')
+      || `<li class="muted">Nothing said yet. A grown-up on brAIn's family list can start a chat message with “${esc(companionName())}” in the game.</li>`;
   }
-  $('#vesper-actions')?.addEventListener('click', async (e) => {
-    const b = e.target.closest('button[data-vesper-undo]');
+  $('#companion-actions')?.addEventListener('click', async (e) => {
+    const b = e.target.closest('button[data-companion-undo]');
     if (!b) return;
     if (!confirm('Undo this? Blocks that changed since are left alone.')) return;
     b.disabled = true;
-    const r = await vSend(`api/vesper/actions/${encodeURIComponent(b.dataset.vesperUndo)}/undo`, 'POST');
-    if (r.error) vSay('#vesper-did-msg', r.error, false);
-    else vSay('#vesper-did-msg', r.note || 'Undone.', true);
-    refreshVesper();
-  });
-  $('#vesper-on')?.addEventListener('change', async () => {
-    const on = $('#vesper-on').checked;
-    const r = await vSend('api/vesper/engine', 'POST', { on });
-    if (r.error) {
-      $('#vesper-on').checked = !on;
-      vSay('#vesper-status', r.error, false);
-      return;
-    }
-    refreshVesper();
+    const r = await cSend(`api/companion/actions/${encodeURIComponent(b.dataset.companionUndo)}/undo`, 'POST');
+    if (r.error) cSay('#companion-did-msg', r.error, false);
+    else cSay('#companion-did-msg', r.note || 'Undone.', true);
+    refreshCompanion();
   });
 
-  async function refreshVesper() {
-    const [v, world] = await Promise.all([vSend('api/vesper', 'GET'), vSend('api/world', 'GET')]);
-    if (!v || v.error) {
-      if (v && v.error) vSay('#vesper-status', v.error, false);
+  async function refreshCompanion() {
+    const [c, world] = await Promise.all([cSend('api/companion', 'GET'), cSend('api/world', 'GET')]);
+    cs.world = world && !world.error ? world : null;
+    renderListening(cs.world);
+    if (!c || c.error) {
+      if (c && c.error) cSay('#companion-status', c.error, false);
       return;
     }
-    vs.v = v;
-    vs.world = world && !world.error ? world : null;
-    $('#vesper-on').checked = !!v.enabled;
-    $('#vesper-on-word').textContent = v.enabled ? 'Vesper is on' : 'Vesper is off';
-    const head = v.headline || { code: v.enabled ? v.state : 'off', text: v.enabled ? 'On.' : 'Off.' };
-    const status = $('#vesper-status');
+    cs.c = c;
+    const head = c.headline || { code: 'no_brain', show: false, text: '' };
+    // No brAIn: no companion. The card goes and one line says why.
+    $('#companion-card').hidden = !head.show;
+    $('#companion-absent').hidden = !!head.show;
+    if (!head.show) return;
+    const ident = c.identity || {};
+    $('#companion-title').textContent = ident.name || 'Companion';
+    $$('.companion-name').forEach((el) => { el.textContent = ident.name || 'Companion'; });
+    $('#companion-who').textContent = [ident.active ? 'on' : 'off', ident.by ? `run by ${ident.by}` : '',
+      ident.model ? `model ${ident.model}` : ''].filter(Boolean).join(' · ');
+    const status = $('#companion-status');
     status.textContent = head.text;
     status.dataset.code = head.code;
-    status.classList.remove('bad');
-    if (!vs.familyDirty) {
-      vs.family = (v.family || []).map((p) => ({
-        person: p.person, role: p.role || 'child', players: (p.players || []).join(', '),
-      }));
-      const editing = $('#vesper-family').contains(document.activeElement);
-      if (!editing) renderFamily();
-    }
-    renderSeen();
-    fillSettings(v.settings || {}, v.budget);
-    renderZones(v.zones || []);
-    renderAsk(v);
-    renderLog(v);
+    status.classList.toggle('bad', !!head.warning);
+    renderZones(c.zones || []);
+    renderAsk(c);
+    renderLog(c);
   }
-  setInterval(refreshVesper, 15000);
-  refreshVesper();
+  setInterval(refreshCompanion, 15000);
+  refreshCompanion();
+
+  // The feed's hearing (#588): a script that rewrote the join or chat lines
+  // leaves the feed quiet while people play. Said at the top of the page,
+  // whether or not a companion is listening.
+  function renderListening(world) {
+    const el = $('#feed-warning');
+    if (!el) return;
+    const heard = (world && world.listening) || { ok: true };
+    el.hidden = !!heard.ok;
+    el.textContent = heard.ok ? '' : heard.why || 'The server\'s log is not being read.';
+  }
 
   // ------------------------------------------------------------------
   // Quick chat / command

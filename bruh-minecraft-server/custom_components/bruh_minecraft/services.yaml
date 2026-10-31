@@ -164,11 +164,11 @@ get_status:
 
 get_world:
   name: Get world
-  description: What is going on in the world now - who is on and where, the time, day and weather, recent events, the last save and backup, and Vesper's builds. Returns response data.
+  description: What is going on in the world now - who is on and where, the time, day and weather, recent events, the last save and backup, and the companion's builds. Returns response data.
 
 list_builds:
   name: List builds
-  description: Vesper's build log, newest first. Returns response data.
+  description: The companion's build log, newest first. Returns response data.
   fields:
     status:
       name: Status
@@ -185,7 +185,7 @@ list_builds:
 
 save_build:
   name: Save build
-  description: Add a job to Vesper's build log (give a title), or change one (give its id). A job set to done with bounds gets a top-down picture.
+  description: Add a job to the companion's build log (give a title), or change one (give its id). A job set to done with bounds gets a top-down picture.
   fields:
     id:
       name: Job id
@@ -231,13 +231,13 @@ save_build:
         text: {}
     by:
       name: Builder
-      description: Who builds it (Vesper unless said).
+      description: Who builds it (brAIn unless said).
       selector:
         text: {}
 
 delete_build:
   name: Delete build
-  description: Remove a job from Vesper's build log.
+  description: Remove a job from the companion's build log.
   fields:
     id:
       name: Job id
@@ -295,23 +295,129 @@ remove_addon:
       selector:
         text: {}
 
-get_vesper:
-  name: Vesper's engine
-  description: Vesper in the game — whether it is on, the family roster, named zones, recent moments, questions, the action log (each undoable action) and what Vesper remembers about each person. Returns response data.
+get_companion:
+  name: Companion
+  description: The companion's hands in the game — who it is (the name and colour brAIn last set), the named places, the choice-pad questions, the action log (each undoable action has an id), what it said, and whether the server checks the accounts behind the names in chat. Returns response data.
 
-vesper_ask:
-  name: Ask with choice pads
-  description: Put a two-picture question to a child. Vesper builds a green and a red pad beside them with a picture above each; standing on one for two seconds is the answer, which goes into their memory. Asked the next time they play if they are not on.
+set_companion:
+  name: Set the companion
+  description: Tell the add-on who the companion is, for its panel and as the default speaker. A companion (brAIn) calls this; each field is optional.
+  fields:
+    name:
+      name: Name
+      description: The name it goes by in the game, up to 16 letters.
+      selector:
+        text: {}
+    colour:
+      name: Colour
+      description: The colour of its name in chat, one of Minecraft's sixteen colour names.
+      selector:
+        text: {}
+    active:
+      name: Active
+      description: Whether a companion is running. Switching it off takes anything it has out of the world.
+      selector:
+        boolean: {}
+    by:
+      name: Run by
+      selector:
+        text: {}
+    model:
+      name: Model
+      description: The model it answers with, shown on the panel.
+      selector:
+        text: {}
+
+companion_say:
+  name: Say something as the companion
+  description: A message in the game's chat under a speaker name and colour, to named players or to everyone in the game. The add-on decides nothing about who may hear what; the caller does.
+  fields:
+    to:
+      name: To
+      description: A player's Minecraft name, a list of them, or everyone.
+      default: everyone
+      selector:
+        text: {}
+    message:
+      name: Message
+      required: true
+      description: What it says. Long messages are split over a few lines.
+      selector:
+        text: {}
+    name:
+      name: Speaker
+      description: The name it is said under; the companion's own name if left out.
+      selector:
+        text: {}
+    colour:
+      name: Colour
+      selector:
+        text: {}
+    chime:
+      name: Chime
+      description: Play a soft chime to each player it is said to.
+      selector:
+        boolean: {}
+    by:
+      name: Asked by
+      description: Who asked, for the log.
+      selector:
+        text: {}
+
+companion_appear:
+  name: Bring the companion beside a player
+  description: An invulnerable, silent allay named as the companion appears beside a player for some seconds, with a chime, sparkles and a little wave, and then goes. Logged and undoable.
   fields:
     player:
-      name: Player or person
-      description: The in-game name (Bedrock names keep their dot) or the person's name from the roster.
+      name: Player
+      required: true
+      selector:
+        text: {}
+    seconds:
+      name: Seconds
+      default: 25
+      selector:
+        number: { min: 3, max: 120 }
+    kind:
+      name: Kind
+      selector:
+        select:
+          options: [greet, visit]
+    name:
+      name: Name
+      selector:
+        text: {}
+    colour:
+      name: Colour
+      selector:
+        text: {}
+    chime:
+      name: Chime
+      selector:
+        select:
+          options: [full, short, none]
+    text:
+      name: Log line
+      selector:
+        text: {}
+    by:
+      name: Asked by
+      selector:
+        text: {}
+
+ask_choice:
+  name: Ask with choice pads
+  description: Put a two-picture question to a player. A green and a red pad go beside them with a picture above each; standing on one for two seconds is the answer, announced as the bruh_minecraft_answer event. Asked the next time they play if they are not on.
+  fields:
+    player:
+      name: Player
+      description: The Minecraft name (Bedrock names keep their dot).
       required: true
       selector:
         text: {}
     question:
       name: Question
-      description: The question in words, kept for the parent; the child sees the pictures.
+      description: The question in words, kept for the record; the player sees the pictures.
       required: true
       selector:
         text: {}
@@ -320,54 +426,67 @@ vesper_ask:
       description: Two options, each either a label, or an object with a label, a picture (a block id), a gift (an item) and a gift_count. Leave out for yes and no.
       selector:
         object: {}
+    person:
+      name: Person
+      description: What the caller calls them, for the panel.
+      selector:
+        text: {}
+    name:
+      name: Speaker
+      selector:
+        text: {}
     by:
       name: Asked by
       selector:
         text: {}
 
-vesper_undo:
-  name: Undo Vesper's action
-  description: Put back what one of Vesper's actions changed in the world (blocks that still hold what Vesper placed, and its entities).
+companion_build:
+  name: Build something small
+  description: Up to 64 blocks, relative to a player's feet when a player is named. Only into empty space, on natural ground, never in a protected place or on or next to a build; logged, and undone with undo_action.
+  fields:
+    blocks:
+      name: Blocks
+      required: true
+      description: 'A list of blocks, each with x, y, z and a block id, for example x 2, y 0, z 0, block oak_planks.'
+      selector:
+        object: {}
+    player:
+      name: Beside
+      description: A Minecraft name; the coordinates are then offsets from where they stand.
+      selector:
+        text: {}
+    dimension:
+      name: Dimension
+      description: For absolute coordinates (no player); minecraft:overworld unless given.
+      selector:
+        text: {}
+    title:
+      name: Title
+      description: What it is, for the log ("a little bridge").
+      selector:
+        text: {}
+    name:
+      name: Speaker
+      selector:
+        text: {}
+    by:
+      name: Asked by
+      description: Who asked, for the log.
+      selector:
+        text: {}
+
+undo_action:
+  name: Undo the companion's action
+  description: Put back what one of the companion's actions changed in the world (blocks that still hold what it placed, and its entities). Leave the id out for the newest one that can still be undone.
   fields:
     id:
       name: Action id
-      required: true
       selector:
         text: {}
-
-vesper_engine:
-  name: Vesper's settings
-  description: Switch Vesper in the game on or off (it is off until switched on), name the bedtime switch, and set how many things it may do a day. Each field is optional.
-  fields:
-    "on":
-      name: "On"
-      description: Let Vesper appear, greet the children and ask choice-pad questions.
-      selector:
-        boolean: {}
-    bedtime_entity:
-      name: Bedtime switch
-      description: An entity that means bedtime (input_boolean.kids_bedtime, bedtime while on), or an entity and the state to match (binary_sensor.boys_door=off). Empty for none.
-      selector:
-        text: {}
-    daily_actions:
-      name: Actions a day
-      description: The most things Vesper may do in the world in one day.
-      selector:
-        number: { min: 0, max: 1000 }
-
-set_family:
-  name: Set the family
-  description: Who plays and how Vesper treats them. A list of people, each with a person name, a role (child or reader) and their in-game player names.
-  fields:
-    people:
-      name: People
-      required: true
-      selector:
-        object: {}
 
 set_zone:
-  name: Set a zone
-  description: Name a place in the world (x, z, radius). A protected zone is one Vesper never builds in; delete removes it.
+  name: Set a place
+  description: Name a place in the world (x, z, radius). Nothing is ever built inside a protected one; delete removes it. A player walking into a named place fires bruh_minecraft_place.
   fields:
     name:
       name: Name
@@ -398,15 +517,24 @@ set_zone:
       name: Kind
       selector:
         select:
-          options: [family, vesper]
+          options: [family, companion]
     delete:
       name: Delete
       selector:
         boolean: {}
 
+companion_handover:
+  name: Hand over the old companion state
+  description: The family list, memory and settings the add-on's own companion kept in this world up to 1.17.7, for brAIn to keep once. With done, the old state is retired and not read again. Returns response data.
+  fields:
+    done:
+      name: Done
+      selector:
+        boolean: {}
+
 rename_world:
   name: Rename the world
-  description: Rename the active world to a name as said ("Vesper World"). The folder takes a safe form of it (Vesper_World) and the server list shows the name as said. Stops the server, keeps the backups, and restarts the add-on.
+  description: Rename the active world to a name as said ("Our World"). The folder takes a safe form of it (Our_World) and the server list shows the name as said. Stops the server, keeps the backups, and restarts the add-on.
   fields:
     name:
       name: Name

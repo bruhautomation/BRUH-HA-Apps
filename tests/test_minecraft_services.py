@@ -375,54 +375,81 @@ class TestTheBridgeAsksThePanelForAddons(TestTheBridgeAnswersStatus):
         self.assertIn("cannot load plugins", got["error"])
 
 
-class TestVesperServices(Base):
-    """Vesper in the game (#572): each service carries one request to the
-    panel and answers with what the engine did."""
+class TestCompanionServices(Base):
+    """The companion's hands (#593): each service carries one request to the
+    panel and answers with what was done; the speaker comes from the caller."""
 
     def test_each_service_and_what_it_sends(self):
         self.answer = {"ok": True, "question": {"id": "q"}, "note": "soon"}
-        got = self.call("vesper_ask", player="Kaz", question="Castle or farm?",
-                        options=["castle", "farm"])
+        got = asyncio.run(self.handlers["ask_choice"][0](Call({
+            "player": ".Kaz8044", "question": "Castle or farm?", "options": ["castle", "farm"],
+            "person": "Kaz", "name": "Juniper"})))
         self.assertEqual(got, {"question": {"id": "q"}, "note": "soon"})
-        self.assertEqual(self.sent[-1], ("vesper_ask", {"player": "Kaz", "text": "Castle or farm?",
-                                                        "options": ["castle", "farm"]}))
-        self.call("vesper_undo", id="20261031-abcdef")
-        self.assertEqual(self.sent[-1], ("vesper_undo", {"id": "20261031-abcdef"}))
-        self.call("vesper_engine", on=False)
-        self.assertEqual(self.sent[-1], ("vesper_engine", {"on": False}))
-        asyncio.run(self.handlers["rename_world"][0](Call({"name": "Vesper World"})))
-        self.assertEqual(self.sent[-1], ("rename_world", {"name": "Vesper World"}))
-        self.call("set_family", people=[{"person": "Kaz"}])
-        self.assertEqual(self.sent[-1][0], "vesper_family")
+        self.assertEqual(self.sent[-1], ("companion_ask", {
+            "player": ".Kaz8044", "question": "Castle or farm?", "options": ["castle", "farm"],
+            "person": "Kaz", "name": "Juniper"}))
+        self.call("undo_action", id="20261031-abcdef")
+        self.assertEqual(self.sent[-1], ("companion_undo", {"id": "20261031-abcdef"}))
+        self.call("undo_action")
+        self.assertEqual(self.sent[-1], ("companion_undo", {"id": "last"}))
+        asyncio.run(self.handlers["companion_say"][0](Call({
+            "to": [".Kaz8044"], "message": "hi\nthere", "name": "Juniper", "colour": "aqua"})))
+        self.assertEqual(self.sent[-1], ("companion_say", {
+            "to": [".Kaz8044"], "message": "hi there", "name": "Juniper", "colour": "aqua"}))
+        self.call("companion_appear", player=".Kaz8044", seconds=8, kind="greet")
+        self.assertEqual(self.sent[-1], ("companion_appear", {"player": ".Kaz8044",
+                                                              "seconds": 8, "kind": "greet"}))
+        asyncio.run(self.handlers["set_companion"][0](Call({"name": "Juniper", "active": True})))
+        self.assertEqual(self.sent[-1], ("companion_identity", {"name": "Juniper", "active": True}))
+        asyncio.run(self.handlers["rename_world"][0](Call({"name": "Our World"})))
+        self.assertEqual(self.sent[-1], ("rename_world", {"name": "Our World"}))
         asyncio.run(self.handlers["set_zone"][0](Call({"name": "Spawn", "x": 0, "z": 0,
                                                         "protect": True})))
-        self.assertEqual(self.sent[-1], ("vesper_zone", {"name": "Spawn", "x": 0, "z": 0,
-                                                         "protect": True}))
-        self.assertEqual(self.handlers["get_vesper"][1], "only")
+        self.assertEqual(self.sent[-1], ("companion_zone", {"name": "Spawn", "x": 0, "z": 0,
+                                                            "protect": True}))
+        self.assertEqual(asyncio.run(self.handlers["companion_handover"][0](Call({}))), {
+            "question": {"id": "q"}, "note": "soon"})
+        self.assertEqual(self.sent[-1], ("companion_legacy", {}))
+        asyncio.run(self.handlers["companion_handover"][0](Call({"done": True})))
+        self.assertEqual(self.sent[-1], ("companion_legacy_retire", {}))
+        self.assertEqual(self.handlers["get_companion"][1], "only")
+        self.assertEqual(self.handlers["companion_handover"][1], "only")
 
-    def test_a_refusal_from_the_engine_is_an_error(self):
-        self.answer = {"ok": False, "error": "Vesper's engine is off (the add-on's vesper_engine option)."}
+    def test_no_persona_service_is_registered(self):
+        for name in self.handlers:
+            self.assertNotIn("vesper", name)
+        for gone in ("set_family", "vesper_engine", "get_vesper"):
+            self.assertNotIn(gone, self.handlers)
+
+    def test_a_refusal_from_the_add_on_is_an_error(self):
+        self.answer = {"ok": False, "error": "Nobody is in the game, so there is nobody to say it to."}
         with self.assertRaises(HAError) as ctx:
-            self.call("vesper_ask", player="Kaz", question="?")
-        self.assertIn("vesper_engine", str(ctx.exception))
+            self.call("companion_say", message="?")
+        self.assertIn("Nobody is in the game", str(ctx.exception))
 
 
-class TestTheBridgeCarriesVesper(TestTheBridgeAsksThePanelForAddons):
+class TestTheBridgeCarriesTheCompanion(TestTheBridgeAsksThePanelForAddons):
     def test_rename_and_undo_reach_the_panel(self):
-        url, seen = self.serve(200, {"ok": True, "folder": "Vesper_World"})
+        url, seen = self.serve(200, {"ok": True, "folder": "Our_World"})
         with tempfile.TemporaryDirectory() as tmp:
             mod = self.load(tmp, "")
             mod.PANEL_URL = url
             got = asyncio.run(mod.handle({"kind": "rename_world",
-                                          "payload": {"name": "Vesper World"}}))
-            self.assertEqual(got["folder"], "Vesper_World")
-            asyncio.run(mod.handle({"kind": "vesper_undo", "payload": {"id": "20261031-abcdef"}}))
-            bad = asyncio.run(mod.handle({"kind": "vesper_undo", "payload": {"id": "../x"}}))
+                                          "payload": {"name": "Our World"}}))
+            self.assertEqual(got["folder"], "Our_World")
+            asyncio.run(mod.handle({"kind": "companion_undo",
+                                    "payload": {"id": "20261031-abcdef"}}))
+            bad = asyncio.run(mod.handle({"kind": "companion_undo", "payload": {"id": "../x"}}))
+            asyncio.run(mod.handle({"kind": "companion_say",
+                                    "payload": {"to": ["x"], "message": "hi", "name": "J",
+                                                "ignored": True}}))
         self.assertEqual(seen[0][:2], ("POST", "/api/world/rename"))
-        self.assertEqual(json.loads(seen[0][2]), {"name": "Vesper World"})
-        self.assertEqual(seen[1][:2], ("POST", "/api/vesper/actions/20261031-abcdef/undo"))
+        self.assertEqual(json.loads(seen[0][2]), {"name": "Our World"})
+        self.assertEqual(seen[1][:2], ("POST", "/api/companion/actions/20261031-abcdef/undo"))
         self.assertFalse(bad["ok"])
-        self.assertEqual(len(seen), 2)
+        self.assertEqual(seen[2][:2], ("POST", "/api/companion/say"))
+        self.assertEqual(json.loads(seen[2][2]), {"to": ["x"], "message": "hi", "name": "J"})
+        self.assertEqual(len(seen), 3)
 
 
 class TestTheCatalogAgrees(unittest.TestCase):

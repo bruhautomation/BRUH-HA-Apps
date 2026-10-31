@@ -367,6 +367,27 @@ async def call_core_service(domain: str, service: str,
             return await resp.json()
 
 
+async def call_with_response(domain: str, service: str, data: dict | None = None,
+                             timeout: int = 30) -> dict:
+    """Call `<domain>.<service>` and return its response data (Core's
+    `?return_response`). Raises on anything but 2xx, as `call_core_service`
+    does, and checks both names the same way. The Minecraft section's one
+    use: reading BRUH Minecraft's action log and undoing an entry of it."""
+    for part in (domain, service):
+        if not re.fullmatch(r"[a-z0-9_]+", str(part or "")):
+            raise ValueError(f"{part!r} is not a service name")
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{CORE_API}/services/{domain}/{service}", headers=_headers(),
+            params={"return_response": ""},
+            json=data or {}, timeout=aiohttp.ClientTimeout(total=timeout),
+        ) as resp:
+            resp.raise_for_status()
+            answer = await resp.json()
+    response = answer.get("service_response") if isinstance(answer, dict) else None
+    return response if isinstance(response, dict) else {}
+
+
 async def entity_exists(entity_id: str, timeout: int = 15) -> bool:
     """Whether Core currently has a state for this entity.
 

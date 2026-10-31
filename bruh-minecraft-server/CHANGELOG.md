@@ -5,12 +5,47 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.17.8
+
+This release turns the add-on's own game companion into a plain set of game events and actions that brAIn (or your own automations) drives. With brAIn installed, the companion is now part of brAIn: it goes by the name you gave brAIn, answers in its words, and is set up in brAIn's ⚙ › Minecraft. Without brAIn, BRUH Minecraft is simply a server again, with no companion and nothing about one in the log.
+
+### Added
+
+- **Game events for Home Assistant.** Every chat line, join, leave, death, advancement and walk into a named place now fires an event (`bruh_minecraft_chat`, `_join`, `_leave`, `_death`, `_advancement`, `_place`), plus `bruh_minecraft_answer` when a choice pad is answered. Chat and join events say whether the server checks the account behind the name. There are no daily caps and nothing is filtered: every line arrives.
+- **Companion actions anyone can call:** `companion_say` (words in chat under a name and colour you choose), `companion_appear` (the companion beside a player for a moment), `ask_choice` (the two-picture pads), `companion_build`, `undo_action`, `set_zone`, `set_companion` and `get_companion`. They are documented in DOCS, under "The companion contract".
+- **The version and a changelog link in the panel's header**, at every screen size. It opens these notes in the panel, newest first, and says "Updated since you last looked" after an update until you open them.
+- **A warning when the feed goes deaf.** If players are on but the server's log is not showing their joins (for example a script changed the join messages), the Dashboard says so at the top, and the World feed sensor carries `listening: false` with the reason.
+
+### Changed
+
+- **The companion belongs to brAIn.** The family list, bedtime, daily limits, the model, what it remembers and when it says hello are all brAIn's now. The panel's card is called after brAIn's name for its assistant, shows everything the companion did with Undo, and keeps the protected places and the choice-pad question. Without brAIn the card is replaced by one line: "Install brAIn to have a companion play in the world."
+- **Chat with nicknames and ranks is read.** Lines like `[Not Secure] Dad: hi`, `[Admin] ~Dad » hi` and `System chat: …` are understood, and a nickname is matched back to the player. Someone who joins without the usual join line still shows up in the feed.
+- **The World time and World day sensors read newer servers.** The time is read from the newer replies (Paper 26.x), from the plain command when the namespaced one is refused, and from the world's save as a last resort.
+- **Geyser's settings go into Geyser's own config file** (`java.auth-type` and `advanced.bedrock.mtu` on Geyser 2.9 and later, the older keys on older files), so the Bedrock sign-in mode and MTU you chose take effect.
+- **Sensors renamed:** "Vesper" is now **Companion** and "Vesper building" is now **Building**. Update any dashboard or automation that used the old entities.
+
+### Removed
+
+- **Breaking: the old companion services are gone**, with no aliases: `get_vesper`, `vesper_engine`, `set_family`, `vesper_ask`, `vesper_undo`, `vesper_say` and `vesper_build`. Use `get_companion`, brAIn's ⚙ › Minecraft, brAIn's family list, `ask_choice`, `undo_action`, `companion_say` and `companion_build`.
+- **The `bruh_minecraft_moment` event is gone.** Listen for the game events above instead. An automation that answered it (sending chat to a conversation agent) is no longer needed with brAIn 4.0.29.
+- **The fixed 40-a-day event limit and the one-question-per-session limit are gone**, with the rest of the add-on's own decisions.
+
+### Fixed
+
+- **Geyser no longer warns** "Environment variable GEYSER_AUTH_TYPE (or GEYSER_MTU) does not match any config option" on every start.
+- **A chat format or join message changed by a server script no longer leaves the companion deaf.**
+- **The Stop button and the green "healthy" and TPS figures are easier to read** (contrast now at least 4.5:1 in both themes).
+
+### Security
+
+- **Everything the add-on does in the world is still held in code, whoever asks:** only its own allay, quiet chimes to one player, its own entities removed, blocks only into empty space on natural ground and never in a protected place or next to a build, a backup before anything large, and Undo for every action. Entities left by the old companion are cleared out of the world.
+
 ## 1.17.7
 
 ### Changed
 
-- **The Vesper card is a setup you can follow.**
-  - At the top, one line says what Vesper is doing and why it is waiting: switched off, nobody on the family list, bedtime, or today's limit reached.
+- **The companion card is a setup you can follow.**
+  - At the top, one line says what the companion is doing and why it is waiting: switched off, nobody on the family list, bedtime, or today's limit reached.
   - **Family:** add people by name, choose Child or Grown-up, and type their in-game names, or tap a player who has been in the game to add them.
   - **Bedtime:** pick a switch from a list and choose whether bedtime is when it is on or off.
   - **Daily limit:** shows how much of today's limit is used.
@@ -22,17 +57,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Vesper in the game.** Vesper can now play in the world with the family. It is off until you switch it on in the panel's Vesper card (or the `vesper_engine` service), and it is set per world.
-  - **A greeting.** When a child on the family list joins, Vesper appears beside them as a named allay, chimes, sparkles and waves, then goes after a little while.
+- **A companion in the game.** A companion can now play in the world with the family. It is off until you switch it on in the panel's card (or with a service), and it is set per world.
+  - **A greeting.** When a child on the family list joins, the companion appears beside them as a named allay, chimes, sparkles and waves, then goes after a little while.
   - **Questions without reading.** brAIn or a parent can ask a child a yes-or-no question. Two coloured pads with a picture behind each appear beside them; standing on one for two seconds is the answer, confirmed with a chime and sparkles, and it is remembered for that child.
-  - **The family list.** Each player name, including Bedrock names with a leading dot, is mapped to a person and marked as a child, a reader or a guest. Named places can be protected so Vesper never builds there.
-  - **Moments.** Joining, standing still for a while, dying, an advancement, returning to a favourite place, a parent saying "Vesper" in chat and an answer each fire a `bruh_minecraft_moment` event for automations and brAIn.
-  - **A `vesper` sensor** says what Vesper is doing, and new services ask a question, undo an action, set the family and places, switch Vesper on or off, and rename the world.
-- **Rename the running world from brAIn or a service.** "Vesper World" becomes the folder `Vesper_World`, with "Vesper World" as the name in the server list.
+  - **The family list.** Each player name, including Bedrock names with a leading dot, is mapped to a person and marked as a child, a reader or a guest. Named places can be protected so nothing is built there.
+  - **Moments.** Joining, standing still for a while, dying, an advancement, returning to a favourite place, a parent saying the companion's name in chat and an answer each fire a `bruh_minecraft_moment` event for automations and brAIn.
+  - **A sensor** says what the companion is doing, and new services ask a question, undo an action, set the family and places, switch the companion on or off, and rename the world.
+- **Rename the running world from brAIn or a service.** "Our World" becomes the folder `Our_World`, with "Our World" as the name in the server list.
 
 ### Security
 
-- **Vesper's limits are enforced in code**:
+- **The companion's limits are enforced in code**:
   - It only ever summons its own allay and only plays gentle sounds, quietly, to one player.
   - It never places a block over anything, never builds in a protected place or next to a build, and backs up the world before anything large.
   - Every action it takes is logged and can be undone from the panel; an undo leaves anything a child has changed since.
@@ -44,8 +79,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - **What is going on in the world.** New sensors for the world's time of day, day count and weather, a feed of joins, leaves, deaths, advancements, chat and builds, and when the world was last saved and backed up. Players online now lists, per player, the dimension, where they are (near a named place, or rough coordinates), game mode, health and food. A daily journal of who played and for how long is kept with the world.
-- **Vesper's build log.** A list of what Vesper is building: the current job with its part and progress, the queue, and finished builds with a top-down picture of each one, drawn from the world's own files when a build is marked done. The new services `get_world`, `list_builds`, `save_build` and `delete_build` read and write it. Build pictures are saved under `/local/minecraft`, which Home Assistant serves without a login.
-- **A Minecraft world card for the Morph dashboard** (`custom:morph-minecraft-world`): the clock, day and weather, who is on and where, what Vesper is building and has built, the feed, and when the world was last saved. It is installed automatically when the dashboard is present; an existing hand-made card keeps its type until it is switched.
+- **The build log.** A list of what the companion is building: the current job with its part and progress, the queue, and finished builds with a top-down picture of each one, drawn from the world's own files when a build is marked done. The new services `get_world`, `list_builds`, `save_build` and `delete_build` read and write it. Build pictures are saved under `/local/minecraft`, which Home Assistant serves without a login.
+- **A Minecraft world card for the Morph dashboard** (`custom:morph-minecraft-world`): the clock, day and weather, who is on and where, what is being built and has been built, the feed, and when the world was last saved. It is installed automatically when the dashboard is present; an existing hand-made card keeps its type until it is switched.
 
 ### Fixed
 

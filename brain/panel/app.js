@@ -3300,7 +3300,7 @@ function renderSettingsForm(data) {
 // answer null (an ingress iframe may be refused storage), so Account is the
 // fallback.
 const SET_SECTIONS = ["features", "dashboard", "account", "usage", "permissions", "notifications",
-                      "sources", "personality", "instructions",
+                      "sources", "personality", "minecraft", "instructions",
                       "diagnostics", "developer", "guide"];
 const SET_SECTION_KEY = "brain.set.section";
 // Where the list sits beside the section rather than in front of it. The
@@ -3319,6 +3319,7 @@ const SET_LOADERS = {
   permissions: () => loadSetHouseRules(),
   sources: () => { loadCameras(); loadSetCalendars(); },
   personality: () => loadPersonality(),
+  minecraft: () => loadMinecraft(),
   instructions: () => loadInstructions(),
   diagnostics: () => loadAdvanced(),
   developer: () => loadDeveloper(),
@@ -3342,6 +3343,8 @@ function showSettingsSection(name, load = true) {
   // still names it opens the document there.
   if (name === "memory") { openKnowledgeFold("kDocFold"); return; }
   if (!SET_SECTIONS.includes(name)) name = "account";
+  // Remembered from a visit while BRUH Minecraft was there, and it is not now.
+  if (name === "minecraft" && !$("#setsecMinecraft")) name = "account";
   setSection = name;
   const root = $("#setModal");
   if (root) root.classList.remove("setindex");
@@ -3683,6 +3686,7 @@ async function openSettings() {
   }
   window.scrollTo(0, 0);
   loadAuth();
+  syncMinecraftNav();
   advancedLoaded = false;
   camerasLoaded = false;
   setCalendarsState.data = null;
@@ -18841,3 +18845,213 @@ $("#dashBody").addEventListener("click", async (ev) => {
   toast(r && r.ok ? said[act] : (r && r.error) || "That did not work.");
   loadDashboard();
 });
+
+// ---- ⚙ › Minecraft: brAIn's companion in BRUH Minecraft -------------------
+// The faculty runs in the integration (custom_components/brain/minecraft.py);
+// this is its settings — on/off, the family, bedtime, the limits (0 is no
+// limit, where they all start), the models — and what it did, with Undo
+// (BRUH Minecraft's own action log). Shown only while BRUH Minecraft's
+// integration answers.
+const mcState = { data: null };
+const MC_MODEL_WORDS = { "": "Default", haiku: "Haiku (quick)", sonnet: "Sonnet", opus: "Opus (strongest)" };
+const MC_BUDGETS = [
+  ["daily_turns", "Replies and greetings a day", "Each time brAIn writes words in the game."],
+  ["daily_actions", "Things it does in the world a day", "Hellos, visits and anything it puts out on its own."],
+  ["per_session", "Things it does for one player in one sitting", "Counted from when they join."],
+];
+
+// The row and the section are not in the page until BRUH Minecraft's
+// integration answers: a house without it has the same ⚙ as before, row
+// for row (tests/manual/measure-settings.mjs counts them).
+function ensureMinecraftSection() {
+  if ($("#setsecMinecraft")) return $("#setNavMinecraft");
+  const after = document.querySelector('#setNav .setnavbtn[data-sec="personality"]');
+  const secAfter = $("#setsecPersonality");
+  if (!after || !secAfter) return null;
+  const nav = document.createElement("button");
+  nav.type = "button";
+  nav.className = "setnavbtn";
+  nav.dataset.sec = "minecraft";
+  nav.id = "setNavMinecraft";
+  nav.setAttribute("role", "tab");
+  nav.setAttribute("aria-controls", "setsecMinecraft");
+  nav.innerHTML = '<span class="setnavname">Minecraft</span><span class="setnavsum" id="setSumMinecraft">The companion that plays with your family</span>';
+  nav.addEventListener("click", () => showSettingsSection("minecraft"));
+  after.after(nav);
+  const sec = document.createElement("section");
+  sec.className = "setsec";
+  sec.id = "setsecMinecraft";
+  sec.dataset.sec = "minecraft";
+  sec.setAttribute("role", "tabpanel");
+  sec.hidden = true;
+  sec.innerHTML = '<header class="setsechead"><button type="button" class="setback" aria-label="All settings">‹ Settings</button>'
+    + '<h2 class="setsecname">Minecraft</h2></header>'
+    + '<div class="setsecbody"><div id="mcBody">Open this section to load the Minecraft companion.</div></div>';
+  sec.querySelector(".setback").addEventListener("click", () => showSettingsIndex());
+  secAfter.after(sec);
+  return nav;
+}
+
+async function syncMinecraftNav() {
+  try {
+    const d = await api("api/minecraft");
+    mcState.data = d;
+    if (!d.present) {
+      const old = $("#setNavMinecraft");
+      if (old) old.hidden = true;
+      return;
+    }
+    const nav = ensureMinecraftSection();
+    if (!nav) return;
+    nav.hidden = !d.present;
+    if (d.present) {
+      setSummary("setSumMinecraft", d.settings.enabled
+        ? `${d.name} plays with ${d.settings.people.length || "nobody yet"}${d.settings.people.length ? " on the list" : ""}`
+        : "Off");
+    }
+  } catch (e) {
+    const nav = $("#setNavMinecraft");
+    if (nav) nav.hidden = true;
+  }
+}
+
+function mcPersonRow(p, i) {
+  const role = (r) => `<option value="${r}"${p.role === r ? " selected" : ""}>${r === "child" ? "Child" : "Grown-up"}</option>`;
+  return `<fieldset class="mcperson" data-i="${i}">
+    <legend>Person ${i + 1}</legend>
+    <label for="mcPerson${i}">Name</label>
+    <input id="mcPerson${i}" type="text" maxlength="40" data-k="person" value="${esc(p.person || "")}">
+    <label for="mcRole${i}">Plays as</label>
+    <select id="mcRole${i}" data-k="role">${role("child")}${role("reader")}</select>
+    <label for="mcPlayers${i}">In-game names</label>
+    <input id="mcPlayers${i}" type="text" maxlength="120" data-k="players" autocapitalize="off" spellcheck="false" value="${esc((p.players || []).join(", "))}">
+    <p class="hint">Separated by commas. Bedrock names keep their leading dot.</p>
+    <label for="mcNicks${i}">Nicknames in chat</label>
+    <input id="mcNicks${i}" type="text" maxlength="120" data-k="nicknames" value="${esc((p.nicknames || []).join(", "))}">
+    <p class="hint">What a server script shows instead of the in-game name, if anything.</p>
+    <button type="button" class="btn mcremove" data-i="${i}">Remove ${esc(p.person || "this person")}</button>
+  </fieldset>`;
+}
+
+function mcModelSelect(id, value, defaults) {
+  const opts = (mcState.data.model_choices || [""]).map((m) => `<option value="${esc(m)}"${m === (value || "") ? " selected" : ""}>${esc(m ? MC_MODEL_WORDS[m] || m : `Default (${defaults.model})`)}</option>`).join("");
+  return `<select id="${id}">${opts}</select>`;
+}
+
+function mcEffortSelect(id, value, defaults) {
+  const opts = [""].concat(mcState.data.efforts || []).map((e) => `<option value="${esc(e)}"${e === (value || "") ? " selected" : ""}>${esc(e || `Default (${defaults.effort})`)}</option>`).join("");
+  return `<select id="${id}">${opts}</select>`;
+}
+
+function renderMinecraft() {
+  const d = mcState.data;
+  const body = $("#mcBody");
+  if (!d || !d.present) {
+    body.innerHTML = `<p class="hint">Install BRUH Minecraft and its Home Assistant integration to have ${esc((d && d.name) || "brAIn")} play in the world with your family.</p>`;
+    return;
+  }
+  const s = d.settings;
+  const today = d.today || {};
+  const people = s.people.length ? s.people : [];
+  body.innerHTML = `
+    <p class="hint">${esc(d.name)} plays in the world under this name (⚙ › Personality). In the game, a grown-up on the list starts a chat message with “${esc(d.name)}” — “${esc(d.name.toLowerCase())} help” lists what it can do. Every line from the family that starts with its name gets an answer.</p>
+    ${d.paused ? `<p class="hint featwarn">Paused in the game by ${esc(d.paused_by || "a grown-up")}. Saying “${esc(d.name.toLowerCase())} start” there brings it back.</p>` : ""}
+    <label class="check bigcheck"><input id="mcEnabled" class="tog" type="checkbox"${s.enabled ? " checked" : ""}>
+      <span><b>Play in the Minecraft world</b><span class="subtext">Off: it says and does nothing in the game.</span></span></label>
+    <label class="check bigcheck"><input id="mcGreet" class="tog" type="checkbox"${s.greet ? " checked" : ""}>
+      <span><b>Say hello when someone joins</b><span class="subtext">A short visit and a chime; a line in chat for a grown-up.</span></span></label>
+    <h3 class="setsubhead">The family</h3>
+    <p class="hint">Only people on this list play with ${esc(d.name)}; anybody else is left alone. A child gets sounds, pictures and questions they answer by standing on a picture, and their words are never taken as an instruction. A grown-up can ask it things in chat.</p>
+    <div id="mcPeople">${people.map(mcPersonRow).join("") || '<p class="hint">Nobody yet.</p>'}</div>
+    <button type="button" class="btn" id="mcAddPerson">Add person</button>
+    <h3 class="setsubhead">Bedtime</h3>
+    <label for="mcBedtime">Bedtime switch</label>
+    <input id="mcBedtime" type="text" maxlength="160" autocapitalize="off" spellcheck="false" value="${esc(s.bedtime_entity)}">
+    <p class="hint">An entity that is on at bedtime (input_boolean.kids_bedtime), or an entity and the state that means bedtime (binary_sensor.boys_door=off). Empty for none.</p>
+    <h3 class="setsubhead">Limits</h3>
+    <p class="hint">0 means no limit. One reply at a time per person, a few seconds apart, is always kept.</p>
+    ${MC_BUDGETS.map(([k, label, hint]) => `<label for="mcBudget_${k}">${esc(label)}</label>
+      <input id="mcBudget_${k}" type="number" inputmode="numeric" min="0" step="1" value="${esc(s.budgets[k] || 0)}">
+      <p class="hint">${esc(hint)}${k === "daily_turns" ? ` Today: ${esc(today.turns || 0)}.` : k === "daily_actions" ? ` Today: ${esc(today.actions || 0)}.` : ""}</p>`).join("")}
+    <h3 class="setsubhead">Models</h3>
+    <label for="mcChatModel">For answering in chat</label>
+    ${mcModelSelect("mcChatModel", s.chat_model, d.defaults.chat)}
+    <label for="mcChatEffort">Effort for answering</label>
+    ${mcEffortSelect("mcChatEffort", s.chat_effort, d.defaults.chat)}
+    <label for="mcBuildModel">For building</label>
+    ${mcModelSelect("mcBuildModel", s.build_model, d.defaults.build)}
+    <label for="mcBuildEffort">Effort for building</label>
+    ${mcEffortSelect("mcBuildEffort", s.build_effort, d.defaults.build)}
+    <p class="hint">Default answers with the quick model, so a child is not kept waiting, and builds with the chat's own model.</p>
+    <button type="button" class="btn primary" id="mcSave">Save</button>
+    <p id="mcMsg" class="hint" role="status" aria-live="polite"></p>
+    <h3 class="setsubhead">What it did</h3>
+    <ul class="mcacts">${(d.actions || []).slice(0, 20).map((a) => `<li><span>${esc(new Date((a.t || 0) * 1000).toLocaleString())} · ${esc(a.text || a.kind)} <span class="hint">(${esc(a.status)})</span></span>${a.undoable ? ` <button type="button" class="btn" data-mcundo="${esc(a.id)}">Undo</button>` : ""}</li>`).join("") || '<li class="hint">Nothing yet.</li>'}</ul>
+    <h3 class="setsubhead">Talked with</h3>
+    <ul class="mcacts">${(d.talks || []).slice(0, 12).map((t) => `<li><span>${esc(t.person || t.player || "")}${t.said ? `: “${esc(t.said)}”` : ""}</span> <span class="hint">${t.reply ? `→ ${esc(t.reply)}` : ""}</span></li>`).join("") || '<li class="hint">Nobody has talked to it yet.</li>'}</ul>`;
+}
+
+function mcReadPeople() {
+  return [...document.querySelectorAll("#mcPeople .mcperson")].map((f) => {
+    const v = (k) => (f.querySelector(`[data-k="${k}"]`) || {}).value || "";
+    return { person: v("person").trim(), role: v("role"),
+             players: v("players").split(/[,\s]+/).filter(Boolean),
+             nicknames: v("nicknames").split(",").map((n) => n.trim()).filter(Boolean) };
+  });
+}
+
+async function loadMinecraft() {
+  $("#mcBody").textContent = "Loading…";
+  try {
+    mcState.data = await api("api/minecraft");
+  } catch (e) {
+    $("#mcBody").textContent = "The Minecraft settings could not be read: " + e.message;
+    return;
+  }
+  renderMinecraft();
+}
+
+document.addEventListener("click", async (ev) => {
+  const t = ev.target;
+  if (!(t instanceof Element) || !t.closest("#mcBody")) return;
+  if (t.id === "mcAddPerson") {
+    const people = mcReadPeople();
+    people.push({ person: "", role: "child", players: [], nicknames: [] });
+    $("#mcPeople").innerHTML = people.map(mcPersonRow).join("");
+    const last = document.querySelector(`#mcPerson${people.length - 1}`);
+    if (last) last.focus();
+  } else if (t.classList.contains("mcremove")) {
+    const people = mcReadPeople().filter((_, i) => String(i) !== t.dataset.i);
+    $("#mcPeople").innerHTML = people.map(mcPersonRow).join("") || '<p class="hint">Nobody yet.</p>';
+  } else if (t.id === "mcSave") {
+    const budgets = {};
+    MC_BUDGETS.forEach(([k]) => { budgets[k] = Math.max(0, parseInt($(`#mcBudget_${k}`).value, 10) || 0); });
+    const body = {
+      enabled: $("#mcEnabled").checked, greet: $("#mcGreet").checked,
+      people: mcReadPeople().filter((p) => p.person || p.players.length),
+      bedtime_entity: $("#mcBedtime").value.trim(), budgets,
+      chat_model: $("#mcChatModel").value, chat_effort: $("#mcChatEffort").value,
+      build_model: $("#mcBuildModel").value, build_effort: $("#mcBuildEffort").value,
+    };
+    t.disabled = true;
+    try {
+      await api("api/minecraft", { method: "PUT", body: JSON.stringify(body) });
+      $("#mcMsg").textContent = "Saved. It takes effect in the game within a minute.";
+      await loadMinecraft();
+      syncMinecraftNav();
+    } catch (e) {
+      $("#mcMsg").textContent = "Not saved: " + e.message;
+      t.disabled = false;
+    }
+  } else if (t.dataset.mcundo) {
+    t.disabled = true;
+    try {
+      await api("api/minecraft/undo", { method: "POST", body: JSON.stringify({ id: t.dataset.mcundo }) });
+      toast("Undone in the game.");
+    } catch (e) {
+      toast("Not undone: " + e.message);
+    }
+    loadMinecraft();
+  }
+});
+setTimeout(syncMinecraftNav, 2500);
