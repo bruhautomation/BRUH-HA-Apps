@@ -89,7 +89,6 @@ MAX_ANSWERS = 50
 MOMENTS_KEPT = 40
 BEDTIME_STALE = 30
 
-ROLES = ("child", "reader", "guest")
 DIR_NAME = "vesper"
 
 SAFE_SUMMONS = frozenset({"minecraft:allay"})
