@@ -31,6 +31,39 @@ TIMESTAMP=$(date -u +"%Y-%m-%dT%H-%M-%SZ")
 LOG_PREFIX="[backup ${TIMESTAMP}]"
 log() { printf '%s %s\n' "${LOG_PREFIX}" "$*"; }
 
+# The copy tool a git-mode backup needs. 1.x images shipped without rsync, the
+# copy step failed on every run, and the backup still said it was done (#570),
+# so the tool is checked before anything is flushed or copied, and the check is
+# also run once at add-on start (`backup.sh --check`).
+copy_tool_ok() {
+    if [ "${BACKUP_USE_GIT}" = "true" ]; then
+        if ! command -v rsync >/dev/null 2>&1; then
+            log "ERROR: rsync is not installed in this add-on image, so world backups cannot copy the world. Update the add-on or reinstall it."
+            return 1
+        fi
+        if ! command -v git >/dev/null 2>&1; then
+            log "ERROR: git is not installed in this add-on image, so world backups cannot be stored."
+            return 1
+        fi
+    elif ! command -v tar >/dev/null 2>&1; then
+        log "ERROR: tar is not installed in this add-on image, so world backups cannot be written."
+        return 1
+    fi
+    return 0
+}
+
+if [ "${1:-}" = "--check" ]; then
+    if copy_tool_ok; then
+        if [ "${BACKUP_USE_GIT}" = "true" ]; then
+            log "Backup self-check passed: rsync and git are available"
+        else
+            log "Backup self-check passed: tar is available"
+        fi
+        exit 0
+    fi
+    exit 1
+fi
+
 if [ ! -d "${MC_SERVER_DIR}" ]; then
     log "Server dir missing; nothing to back up"
     exit 0
@@ -66,14 +99,26 @@ backup_worlds_git() {
         } > "${repo}/.gitignore"
     fi
 
-    # Copy live worlds (and critical config) into the repo with rsync
+    # Copy live worlds (and critical config) into the repo with rsync. A world
+    # that was not copied is a failed backup, never a done one.
+    if [ ! -d "${MC_SERVER_DIR}/${LEVEL_NAME}" ]; then
+        log "ERROR: there is no world folder '${LEVEL_NAME}' in ${MC_SERVER_DIR}, so there is nothing to back up"
+        return 1
+    fi
     local worlds=( "${LEVEL_NAME}" "${LEVEL_NAME}_nether" "${LEVEL_NAME}_the_end" )
     for w in "${worlds[@]}"; do
         [ -d "${MC_SERVER_DIR}/${w}" ] || continue
-        rsync -a --delete \
-            --exclude='session.lock' \
-            --exclude='*.lock' \
-            "${MC_SERVER_DIR}/${w}/" "${repo}/${w}/"
+        if ! rsync -a --delete \
+                --exclude='session.lock' \
+                --exclude='*.lock' \
+                "${MC_SERVER_DIR}/${w}/" "${repo}/${w}/"; then
+            log "ERROR: copying world '${w}' failed, so this backup does not hold it"
+            return 1
+        fi
+        if [ -f "${MC_SERVER_DIR}/${w}/level.dat" ] && [ ! -f "${repo}/${w}/level.dat" ]; then
+            log "ERROR: level.dat of '${w}' is missing from the copy, so this backup does not hold it"
+            return 1
+        fi
     done
 
     for f in server.properties ops.json whitelist.json banned-players.json banned-ips.json bukkit.yml spigot.yml paper-global.yml; do
@@ -82,13 +127,19 @@ backup_worlds_git() {
         cp -f "${MC_SERVER_DIR}/${f}" "${repo}/_config/${f}"
     done
 
-    git -C "${repo}" add -A
+    if ! git -C "${repo}" add -A; then
+        log "ERROR: could not stage the copied world in the backup repository"
+        return 1
+    fi
     if git -C "${repo}" diff --cached --quiet; then
         log "No changes to commit"
         return 0
     fi
-    git -C "${repo}" commit -q -m "backup ${TIMESTAMP}" \
-        -m "Players online at backup: $(get_player_count)"
+    if ! git -C "${repo}" commit -q -m "backup ${TIMESTAMP}" \
+            -m "Players online at backup: $(get_player_count)"; then
+        log "ERROR: could not commit the snapshot to the backup repository"
+        return 1
+    fi
     log "Committed snapshot $(git -C "${repo}" rev-parse --short HEAD)"
 
     # Trim history past keep-count (best effort — rewrites refs, not blobs)
@@ -116,9 +167,13 @@ backup_worlds_tar() {
     for w in "${LEVEL_NAME}" "${LEVEL_NAME}_nether" "${LEVEL_NAME}_the_end"; do
         [ -d "${MC_SERVER_DIR}/${w}" ] && worlds+=( "${w}" )
     done
-    [ "${#worlds[@]}" -gt 0 ] || { log "No world dirs found"; return 0; }
+    [ "${#worlds[@]}" -gt 0 ] || { log "ERROR: no world folder found in ${MC_SERVER_DIR}, so there is nothing to back up"; return 1; }
 
-    tar -C "${MC_SERVER_DIR}" -czf "${out}" "${worlds[@]}"
+    if ! tar -C "${MC_SERVER_DIR}" -czf "${out}" "${worlds[@]}"; then
+        log "ERROR: writing the archive failed, so this backup does not hold the world"
+        rm -f "${out}"
+        return 1
+    fi
     log "Archive size $(du -h "${out}" | cut -f1)"
 
     # Prune
@@ -139,13 +194,22 @@ get_player_count() {
 }
 
 main() {
+    # Check the tool before save-off, so a missing one never leaves saving off.
+    copy_tool_ok || return 1
     rcon_flush
+    local rc=0
     if [ "${BACKUP_USE_GIT}" = "true" ]; then
-        backup_worlds_git
+        backup_worlds_git || rc=$?
     else
-        backup_worlds_tar
+        backup_worlds_tar || rc=$?
     fi
     rcon_resume
+    if [ "${rc}" -ne 0 ]; then
+        log "Backup FAILED"
+        return "${rc}"
+    fi
+    return 0
 }
 
 main
+exit $?

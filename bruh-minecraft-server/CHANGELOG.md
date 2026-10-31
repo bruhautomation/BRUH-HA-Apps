@@ -5,6 +5,19 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.17.4
+
+### Added
+
+- **Rename a world.** The panel's world list has Rename: it moves the world, its level folder and name, its backups and the active-world setting together, and restarts the server if it was the one running. A name that is unsafe or already taken is refused.
+- **A warning when the server's memory would starve the host.** At start the add-on compares the memory setting with the machine's memory and, when less than about 2 GB would be left for everything else, says so in the log and on the panel with a suggested value. The setting itself is not changed.
+
+### Fixed
+
+- **Backups contain the world again.** The image was missing the copy tool backups use, so a backup saved only the server's settings and still said it had finished. It is installed now, every copy step is checked, a backup that could not copy the world says so (to the panel and to brAIn), and the add-on checks the tool at start (#570).
+- **A failed update check no longer stops the add-on.** With the version set to latest, a failed check or download now logs a warning and starts the server that is already installed; it tries again at the next start. Only a missing server is fatal (#575).
+- **A server killed from outside comes back.** When the system ends the server (most often because the host ran out of memory) and restart-on-crash is on, it is started again after a short, growing wait, with a limit per hour; the log says what happened. The Online sensor now turns off while the server is down (#585).
+
 ## 1.17.3
 
 ### Changed
