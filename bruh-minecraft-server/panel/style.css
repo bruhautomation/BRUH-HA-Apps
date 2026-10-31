@@ -936,3 +936,84 @@ footer {
 .vesper-list { list-style: none; padding: 0; margin: 0 0 12px; }
 .vesper-list li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border, rgba(127,127,127,.2)); flex-wrap: wrap; }
 .vesper-list li span { overflow-wrap: anywhere; }
+
+/* The Vesper card: a setup flow (status, family, bedtime, places, ask) */
+.vesper-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.vesper-head h2 { margin: 0; }
+.vesper-switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; min-height: 40px; font-weight: 600; }
+.vesper-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.vesper-switch-track {
+  position: relative; width: 46px; height: 26px; border-radius: 13px; flex: none;
+  background: var(--bg-raise); border: 1px solid var(--border); transition: background .15s;
+}
+.vesper-switch-track::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px;
+  border-radius: 50%; background: var(--muted); transition: transform .15s, background .15s;
+}
+.vesper-switch input:checked + .vesper-switch-track { background: var(--accent); border-color: var(--accent); }
+.vesper-switch input:checked + .vesper-switch-track::after { transform: translateX(20px); background: #fff; }
+.vesper-switch input:focus-visible + .vesper-switch-track { outline: 2px solid var(--primary); outline-offset: 2px; }
+.vesper-status {
+  margin: 12px 0 6px; padding: 10px 12px; border-radius: 8px; font-size: 16px;
+  background: var(--bg-raise); border-left: 4px solid var(--muted); overflow-wrap: anywhere;
+}
+.vesper-status[data-code="ready"], .vesper-status[data-code="acting"],
+.vesper-status[data-code="asking"], .vesper-status[data-code="waiting_join"] { border-left-color: var(--accent); }
+.vesper-status[data-code="no_family"], .vesper-status[data-code="waiting"],
+.vesper-status[data-code="limit"], .vesper-status[data-code="bedtime"] { border-left-color: var(--warn); }
+.vesper-status.bad { border-left-color: var(--danger); }
+.vesper-intro { margin: 0 0 4px; }
+.vesper-step { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 4px; }
+.vesper-step h3 { display: flex; align-items: center; gap: 8px; font-size: 15px; color: var(--fg); }
+.vesper-num {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #0f1419;
+  font-size: 13px; font-weight: 700;
+}
+.vesper-step p.muted { margin: 4px 0 8px; overflow-wrap: anywhere; }
+.vesper-form, .vesper-person { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: flex-start; }
+.vesper-person {
+  padding: 10px; margin-bottom: 8px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-raise);
+}
+.vesper-field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 200px; min-width: 0; }
+.vesper-field-wide { flex: 2 1 320px; }
+.vesper-field-num { flex: 1 1 110px; }
+.vesper-field label, .vesper-choice > label { font-weight: 600; color: var(--fg); font-size: 14px; }
+.vesper-field p.muted { margin: 0; font-size: 13px; }
+.vesper input[type="text"], .vesper input[type="number"], .vesper select {
+  width: 100%; min-width: 0; min-height: 40px; padding: 8px 10px; border-radius: 6px;
+  background: var(--bg); color: var(--fg); border: 1px solid var(--border); font: inherit;
+}
+.vesper-person input[type="text"], .vesper-person select { background: var(--bg-card); }
+.vesper input:focus, .vesper select:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+.vesper-choice {
+  flex: 1 1 240px; min-width: 0; margin: 0; padding: 8px 10px 10px; border: 1px solid var(--border);
+  border-radius: 8px; display: flex; flex-direction: column; gap: 4px;
+}
+.vesper-choice legend { padding: 0 4px; font-weight: 600; }
+.vesper-buttons { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; width: 100%; }
+.vesper-person .vesper-buttons { width: auto; align-self: flex-end; }
+.vesper-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 8px; }
+.vesper-chips > .muted { width: 100%; font-size: 13px; }
+.vesper .chip {
+  min-height: 40px; padding: 0 14px; border-radius: 20px; max-width: 100%;
+  border: 1px solid var(--border); background: var(--bg-raise); color: var(--fg);
+  font: inherit; cursor: pointer; overflow-wrap: anywhere;
+}
+.vesper .chip:hover { border-color: var(--accent); }
+.vesper-msg { margin: 6px 0 0; min-height: 0; width: 100%; overflow-wrap: anywhere; }
+.vesper-msg:empty { display: none; }
+.vesper-msg.good { color: var(--accent); }
+.vesper-msg.bad { color: var(--danger); }
+.vesper-why { color: var(--muted); }
+.vesper-empty { margin: 0 0 8px; }
+.vesper button:disabled { opacity: .55; cursor: not-allowed; }
+@media (max-width: 720px) {
+  .vesper input[type="text"], .vesper input[type="number"], .vesper select { font-size: 16px; }
+  .vesper-buttons .btn { flex: 1 1 auto; }
+}
+@media (pointer: coarse) {
+  .vesper input[type="text"], .vesper input[type="number"], .vesper select { font-size: 16px; min-height: 44px; }
+  .vesper .chip, .vesper .btn { min-height: 44px; }
+}

@@ -224,7 +224,7 @@ _SWEEP = re.compile(
 # A measure says which panel it loads in one of three ways: the panel's
 # path (as a string or a path.join), or the demo panel it boots.
 _MEASURE_PANEL = re.compile(
-    r"""(brain|bright|bruh-print|bruh-task-manager)['"]?\s*[,/]\s*['"]?panel\b""")
+    r"""(brain|bright|bruh-print|bruh-task-manager|bruh-minecraft-server)['"]?\s*[,/]\s*['"]?panel\b""")
 _MEASURE_DEMO = (
     (re.compile(r"bright_demo_panel"), "bright"),
     (re.compile(r"bruh_print_demo_panel"), "bruh-print"),

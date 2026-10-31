@@ -1431,9 +1431,56 @@ class Engine:
                                                              "text", "status")}
                                 if last else None)}
 
+    def online(self) -> list[dict[str, Any]]:
+        """Who is in the game now, as the family list sees them."""
+        return [self.roster.who(p) for p in sorted(self.col.sessions)]
+
+    def headline(self) -> dict[str, str]:
+        """One plain sentence for the panel: what Vesper is doing, or why not."""
+        family = self.roster.people()
+        here = [w for w in self.online() if w["role"] != "guest"]
+        names = ", ".join(sorted({w["person"] for w in here}))
+        guests = [w["player"] for w in self.online() if w["role"] == "guest"]
+        budget = self.budget.view()
+        if not self.enabled():
+            if not family:
+                return {"code": "off", "text": "Off. Add your family below, then switch "
+                                               "Vesper on."}
+            return {"code": "off", "text": "Off. Switch Vesper on to let it play in the "
+                                           "world with your family."}
+        if not family:
+            return {"code": "no_family", "text": "On, but nobody is on the family list yet "
+                    "— add your family below. Vesper leaves anyone not on the list alone."}
+        if self.state == "bedtime":
+            return {"code": "bedtime", "text": "Bedtime — Vesper said goodnight and is "
+                                               "paused until the bedtime switch turns off."}
+        if self.state == "waiting":
+            return {"code": "waiting", "text": "Paused — Vesper cannot read the bedtime "
+                    f"switch ({self.settings()['bedtime_entity']}), so it starts nothing "
+                    "new. Check the bedtime switch below."}
+        if budget["actions"] >= budget["actions_limit"]:
+            return {"code": "limit", "text": f"Today's limit reached — Vesper did "
+                    f"{budget['actions']} things today and rests until tomorrow. Raise the "
+                    "daily limit below to let it do more."}
+        if not here:
+            text = "On, waiting for someone from the family to join the game."
+            if guests:
+                text += (f" Playing now but not on the family list: {', '.join(guests)} "
+                         "— add them below if they are family.")
+            return {"code": "waiting_join", "text": text}
+        if self.state == "asking":
+            q = self.asking and self.questions.get(self.asking["qid"])
+            who = q.get("person") if q else names
+            return {"code": "asking", "text": f"Asking {who} a question now — they answer "
+                                              "by standing on a picture."}
+        if self.state == "acting":
+            return {"code": "acting", "text": f"Playing with {names} now."}
+        return {"code": "ready", "text": f"On — {names} in the game. Vesper is ready."}
+
     def status(self) -> dict[str, Any]:
         with self._lock:
             return {**self.brief(), "note": self.last_note,
+                    "online": self.online(), "headline": self.headline(),
                     "family": self.roster.people(),
                     "zones": self.zones.list(),
                     "moments": list(self.moments)[:20],

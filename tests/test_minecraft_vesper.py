@@ -737,6 +737,59 @@ class TestAttentionAndMemory(EngineBase):
 
 
 # ---------------------------------------------------------------------------
+# The card's status line: what Vesper is doing, or why it is not
+# ---------------------------------------------------------------------------
+class TestTheHeadline(EngineBase):
+    def head(self):
+        return self.engine.status()["headline"]
+
+    def test_an_empty_family_is_said_before_anything_else(self):
+        self.engine.roster.save([])
+        h = self.head()
+        self.assertEqual(h["code"], "no_family")
+        self.assertIn("nobody is on the family list", h["text"])
+        self.assertIn("add your family below", h["text"])
+
+    def test_off_says_off_and_what_to_do(self):
+        self.engine.configure(on=False)
+        self.assertEqual(self.head()["code"], "off")
+        self.assertTrue(self.head()["text"].startswith("Off."))
+        self.engine.roster.save([])
+        self.assertIn("Add your family", self.head()["text"])
+
+    def test_waiting_for_someone_and_a_stranger_is_named(self):
+        self.assertEqual(self.head()["code"], "waiting_join")
+        self.world.players["Stranger1"] = [0.5, 64.0, 0.5]
+        self.beat(0)
+        h = self.head()
+        self.assertEqual(h["code"], "waiting_join")
+        self.assertIn("Stranger1", h["text"])
+        self.assertIn("not on the family list", h["text"])
+
+    def test_someone_in_the_game_and_the_online_list(self):
+        self.join(KAZ)
+        status = self.engine.status()
+        self.assertIn(status["headline"]["code"], ("ready", "acting"))
+        self.assertIn("Kaz", status["headline"]["text"])
+        self.assertEqual(status["online"], [{"person": "Kaz", "role": "child", "player": KAZ}])
+
+    def test_bedtime_and_an_unreadable_switch(self):
+        self.bed = True
+        self.join(KAZ)
+        self.assertEqual(self.head()["code"], "bedtime")
+        self.bed = None
+        self.beat()
+        h = self.head()
+        self.assertEqual(h["code"], "waiting")
+        self.assertIn("input_boolean.kids_bedtime", h["text"])
+
+    def test_todays_limit(self):
+        self.limits = {"actions": 0, "events": 40}
+        self.assertEqual(self.head()["code"], "limit")
+        self.assertIn("Today's limit reached", self.head()["text"])
+
+
+# ---------------------------------------------------------------------------
 # The panel's routes
 # ---------------------------------------------------------------------------
 def _load_panel(root: Path):
@@ -819,6 +872,36 @@ class TestThePanelRoutes(AioHTTPTestCase):
         self.assertEqual((await r.json())["zones"], [])
         r = await self.client.get("/api/world")
         self.assertIn("vesper", await r.json())
+        self.assertEqual(state["headline"]["code"], "waiting_join")
+        self.assertEqual(state["online"], [])
+
+    async def test_the_bedtime_list_is_home_assistants_on_off_entities(self):
+        def core(method, path, body=None, timeout=3):
+            self.assertEqual((method, path), ("GET", "/states"))
+            return {"result": [
+                {"entity_id": "light.kitchen", "state": "on", "attributes": {}},
+                {"entity_id": "binary_sensor.boys_door", "state": "off",
+                 "attributes": {"friendly_name": "Boys' door"}},
+                {"entity_id": "input_boolean.kids_bedtime", "state": "off",
+                 "attributes": {"friendly_name": "Kids bedtime"}},
+                {"entity_id": "switch.fan", "state": "on", "attributes": {}},
+                "junk"]}
+        self.panel._core_api = core
+        r = await self.client.get("/api/vesper/entities")
+        body = await r.json()
+        self.assertTrue(body["reachable"])
+        self.assertEqual([e["entity_id"] for e in body["entities"]],
+                         ["input_boolean.kids_bedtime", "binary_sensor.boys_door", "switch.fan"])
+        self.assertEqual(body["entities"][1]["name"], "Boys' door")
+
+        def down(*a, **k):
+            raise OSError("Home Assistant is restarting")
+        self.panel._core_api = down
+        body = await (await self.client.get("/api/vesper/entities")).json()
+        self.assertEqual(body, {"entities": [], "reachable": False})
+        self.panel._core_api = lambda *a, **k: None    # no Supervisor token
+        body = await (await self.client.get("/api/vesper/entities")).json()
+        self.assertFalse(body["reachable"])
 
     async def test_renaming_to_vesper_world_keeps_a_safe_folder_and_shows_the_name(self):
         calls = []

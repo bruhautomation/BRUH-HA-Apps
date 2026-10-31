@@ -553,19 +553,137 @@
           </form>
           <pre id="cmd-reply" class="reply"></pre>
         </div>
-        <div class="card wide" id="vesper-card">
-          <h2>Vesper <span id="vesper-state" class="muted">—</span></h2>
-          <p id="vesper-note" class="muted">Vesper in the game: greetings and choice pads for the children. Everything it does is listed here and can be undone.</p>
-          <button id="vesper-toggle" class="btn btn-ghost" type="button">Switch Vesper on</button>
-          <form id="f-vesper" class="inline-form">
-            <input id="vesper-bedtime" type="text" placeholder="Bedtime switch, e.g. input_boolean.kids_bedtime or binary_sensor.boys_door=off" maxlength="120" />
-            <input id="vesper-daily" type="number" min="0" max="1000" title="Things Vesper may do in a day" />
-            <button class="btn btn-primary">Save</button>
-          </form>
-          <h3>What Vesper did</h3>
-          <ul id="vesper-actions" class="vesper-list"></ul>
-          <h3>Questions</h3>
-          <ul id="vesper-questions" class="vesper-list"></ul>
+        <div class="card wide vesper" id="vesper-card">
+          <div class="vesper-head">
+            <h2>Vesper</h2>
+            <label class="vesper-switch" for="vesper-on">
+              <input id="vesper-on" type="checkbox" role="switch" />
+              <span class="vesper-switch-track" aria-hidden="true"></span>
+              <span id="vesper-on-word">Vesper is off</span>
+            </label>
+          </div>
+          <p id="vesper-status" class="vesper-status" role="status" aria-live="polite">Loading…</p>
+          <p class="muted vesper-intro">Vesper plays in the world with your family: it appears when someone joins, says hello, and can ask a question that is answered by standing on a picture, so no reading is needed. Set it up below. Everything it does is listed at the bottom and can be undone.</p>
+
+          <section class="vesper-step" aria-labelledby="vesper-family-h">
+            <h3 id="vesper-family-h"><span class="vesper-num" aria-hidden="true">1</span> Family</h3>
+            <p class="muted">Who plays. Vesper only plays with people on this list and leaves anyone else alone.</p>
+            <div id="vesper-seen" class="vesper-chips" aria-label="Players seen in the game"></div>
+            <div id="vesper-family" class="vesper-people"></div>
+            <div class="vesper-buttons">
+              <button id="vesper-add-person" class="btn btn-ghost" type="button">Add person</button>
+              <button id="vesper-family-save" class="btn btn-primary" type="button">Save family</button>
+            </div>
+            <p id="vesper-family-msg" class="vesper-msg" role="status" aria-live="polite"></p>
+          </section>
+
+          <section class="vesper-step" aria-labelledby="vesper-settings-h">
+            <h3 id="vesper-settings-h"><span class="vesper-num" aria-hidden="true">2</span> Bedtime and daily limit</h3>
+            <form id="f-vesper" class="vesper-form">
+              <div class="vesper-field vesper-field-wide">
+                <label for="vesper-bedtime">Bedtime switch</label>
+                <input id="vesper-bedtime" type="text" list="vesper-entities" maxlength="120" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="input_boolean.kids_bedtime" aria-describedby="vesper-bedtime-help" />
+                <datalist id="vesper-entities"></datalist>
+                <p id="vesper-bedtime-help" class="muted">Vesper says goodnight and stops when this is on. Pick a toggle helper or a door sensor. Leave empty for no bedtime.</p>
+              </div>
+              <div class="vesper-field">
+                <label for="vesper-bedtime-when">Bedtime is when it is</label>
+                <select id="vesper-bedtime-when" aria-describedby="vesper-when-help">
+                  <option value="on">on</option>
+                  <option value="off">off</option>
+                </select>
+                <p id="vesper-when-help" class="muted">For a door sensor, pick “off”, so that a closed door means bedtime.</p>
+              </div>
+              <div class="vesper-field">
+                <label for="vesper-daily">Most things Vesper may do in a day</label>
+                <input id="vesper-daily" type="number" inputmode="numeric" min="0" max="1000" aria-describedby="vesper-daily-help" />
+                <p id="vesper-daily-help" class="muted">120 is plenty for an afternoon of play. <span id="vesper-today"></span></p>
+              </div>
+              <div class="vesper-buttons">
+                <button class="btn btn-primary" type="submit">Save bedtime and limit</button>
+              </div>
+              <p id="vesper-settings-msg" class="vesper-msg" role="status" aria-live="polite"></p>
+            </form>
+          </section>
+
+          <section class="vesper-step" aria-labelledby="vesper-zones-h">
+            <h3 id="vesper-zones-h"><span class="vesper-num" aria-hidden="true">3</span> Protected places</h3>
+            <p class="muted">Vesper never builds within these. Stand there in game and press F3 (Java) or turn on Show Coordinates (Bedrock) to read x and z.</p>
+            <ul id="vesper-zones" class="vesper-list"></ul>
+            <div id="vesper-here" class="vesper-chips" aria-label="Where players are now"></div>
+            <form id="f-vesper-zone" class="vesper-form">
+              <div class="vesper-field vesper-field-wide">
+                <label for="vesper-zone-name">Name of the place</label>
+                <input id="vesper-zone-name" type="text" maxlength="60" placeholder="Our house" />
+              </div>
+              <div class="vesper-field vesper-field-num">
+                <label for="vesper-zone-x">x</label>
+                <input id="vesper-zone-x" type="number" inputmode="numeric" step="any" />
+              </div>
+              <div class="vesper-field vesper-field-num">
+                <label for="vesper-zone-z">z</label>
+                <input id="vesper-zone-z" type="number" inputmode="numeric" step="any" />
+              </div>
+              <div class="vesper-field vesper-field-num">
+                <label for="vesper-zone-radius">How far around it (blocks)</label>
+                <input id="vesper-zone-radius" type="number" inputmode="numeric" min="1" max="512" value="16" />
+              </div>
+              <div class="vesper-field">
+                <label for="vesper-zone-dim">World</label>
+                <select id="vesper-zone-dim">
+                  <option value="minecraft:overworld">Overworld</option>
+                  <option value="minecraft:the_nether">The Nether</option>
+                  <option value="minecraft:the_end">The End</option>
+                </select>
+              </div>
+              <div class="vesper-buttons">
+                <button class="btn btn-primary" type="submit">Add place</button>
+              </div>
+              <p id="vesper-zone-msg" class="vesper-msg" role="status" aria-live="polite"></p>
+            </form>
+          </section>
+
+          <section class="vesper-step" aria-labelledby="vesper-ask-h">
+            <h3 id="vesper-ask-h"><span class="vesper-num" aria-hidden="true">4</span> Ask a question</h3>
+            <p class="muted">Mainly for children who cannot read yet: Vesper builds two pads beside them, a green one and a red one, each with a picture. They answer by standing on one, and the answer shows up below.</p>
+            <form id="f-vesper-ask" class="vesper-form">
+              <div class="vesper-field">
+                <label for="vesper-ask-who">Who to ask</label>
+                <select id="vesper-ask-who"></select>
+              </div>
+              <div class="vesper-field vesper-field-wide">
+                <label for="vesper-ask-text">Your question (for your records; they see only the pictures)</label>
+                <input id="vesper-ask-text" type="text" maxlength="200" placeholder="Do you want a castle or a farm?" />
+              </div>
+              <fieldset class="vesper-choice">
+                <legend>Green pad</legend>
+                <label for="vesper-ask-a">Answer</label>
+                <input id="vesper-ask-a" type="text" maxlength="40" value="yes" />
+                <label for="vesper-ask-a-pic">Picture</label>
+                <select id="vesper-ask-a-pic" class="vesper-pictures"></select>
+              </fieldset>
+              <fieldset class="vesper-choice">
+                <legend>Red pad</legend>
+                <label for="vesper-ask-b">Answer</label>
+                <input id="vesper-ask-b" type="text" maxlength="40" value="no" />
+                <label for="vesper-ask-b-pic">Picture</label>
+                <select id="vesper-ask-b-pic" class="vesper-pictures"></select>
+              </fieldset>
+              <div class="vesper-buttons">
+                <button id="vesper-ask-go" class="btn btn-primary" type="submit" aria-describedby="vesper-ask-why">Ask</button>
+              </div>
+              <p id="vesper-ask-why" class="vesper-msg vesper-why"></p>
+              <p id="vesper-ask-msg" class="vesper-msg" role="status" aria-live="polite"></p>
+            </form>
+          </section>
+
+          <section class="vesper-step" aria-labelledby="vesper-did-h">
+            <h3 id="vesper-did-h">What Vesper did</h3>
+            <p id="vesper-did-msg" class="vesper-msg" role="status" aria-live="polite"></p>
+            <ul id="vesper-actions" class="vesper-list"></ul>
+            <h3>Questions &amp; answers</h3>
+            <ul id="vesper-questions" class="vesper-list"></ul>
+          </section>
         </div>
       </div>
     </section>
