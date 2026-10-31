@@ -195,7 +195,15 @@ async def handle(request: dict[str, Any]) -> dict[str, Any]:
                 stderr=asyncio.subprocess.STDOUT,
             )
             out, _ = await proc.communicate()
-            return {"ok": proc.returncode == 0, "output": out.decode(errors="replace")[-4096:]}
+            text = out.decode(errors="replace")[-4096:]
+            if proc.returncode == 0:
+                return {"ok": True, "output": text}
+            # A failed backup says why: the last line the script wrote.
+            lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+            return {"ok": False, "output": text,
+                    "error": "The backup did not finish: "
+                             + (lines[-2] if len(lines) > 1 and lines[-1].endswith("FAILED") else
+                                (lines[-1] if lines else f"backup.sh exited {proc.returncode}"))}
 
         if kind == "restart":
             try:

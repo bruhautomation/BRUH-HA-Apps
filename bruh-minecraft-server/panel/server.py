@@ -1231,10 +1231,14 @@ async def api_backup(_: web.Request) -> web.Response:
         stderr=asyncio.subprocess.STDOUT,
     )
     out_bytes, _ = await proc.communicate()
-    return web.json_response({
-        "ok": proc.returncode == 0,
-        "output": out_bytes.decode("utf-8", "replace")[-4096:],
-    })
+    text = out_bytes.decode("utf-8", "replace")[-4096:]
+    body: dict = {"ok": proc.returncode == 0, "output": text}
+    if proc.returncode != 0:
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        body["error"] = "The backup did not finish: " + (
+            lines[-2] if len(lines) > 1 and lines[-1].endswith("FAILED")
+            else (lines[-1] if lines else f"backup.sh exited {proc.returncode}"))
+    return web.json_response(body)
 
 
 async def api_backups_list(_: web.Request) -> web.Response:
