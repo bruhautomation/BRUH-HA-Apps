@@ -33,6 +33,9 @@ POST /api/companion/say     — {"to", "message", "name", "colour", "chime", "by
 POST /api/companion/appear  — {"player", "seconds", "kind", "name", "colour", "chime", "by"}
 POST /api/companion/ask     — {"player", "question", "options", "person", "name", "by"}
 POST /api/companion/build   — {"blocks", "player", "dimension", "title", "name", "by"}
+POST /api/companion/look    — {"player" | "x","y","z", "size", "dimension"}: the blocks in a box
+POST /api/companion/edit    — {"blocks", "fills", "player", "dimension", "title", "name", "by"}:
+                              a trusted edit (anything, anywhere), snapshotted for Undo
 POST /api/companion/actions/<id>/undo — put back what one action changed (or "last")
 POST /api/companion/zones   — a named place; DELETE /api/companion/zones/<name>
 GET  /api/companion/legacy  — the 1.17.7 engine's per-world state, for brAIn to keep;
@@ -3338,6 +3341,25 @@ def _companion_snapshot() -> str | None:
     return None if proc.returncode == 0 else (proc.stdout or proc.stderr or "")[-200:]
 
 
+def _companion_reader(dimension: str, box: tuple) -> dict | None:
+    """The saved block states in a box, for a look and for a trusted edit's
+    undo snapshot: the world is saved first (`save-all flush` waits for the
+    write), then read from its region files (mcmap). None when it cannot be
+    read; never a guess."""
+    try:
+        with Rcon(RCON_HOST, _rcon_password(), port=RCON_PORT, timeout=10) as r:
+            r.command("save-all flush")
+    except Exception:  # noqa: BLE001 — read what is on disk; a stale read is
+        # still the world as of the last save, and a cell the edit changes is
+        # checked again by the undo before it is put back.
+        log.debug("save-all before a block read did not answer")
+    region = mcmap.region_dir(MC_SERVER_DIR / _level_name(), dimension)
+    try:
+        return mcmap.box_states(region, *box, limit=None)
+    except (OSError, ValueError):
+        return None
+
+
 def _companion_modern() -> bool:
     meta = _read_json(MC_SERVER_DIR / ".server-meta.json", {})
     version = meta.get("version") if isinstance(meta, dict) else None
@@ -3379,7 +3401,7 @@ def _companion() -> "companion.Companion":
     col = _world()
     if hands is None or hands.col is not col:
         hands = companion.Companion(col, emit=_companion_emit, snapshot=_companion_snapshot,
-                                    modern=_companion_modern)
+                                    modern=_companion_modern, reader=_companion_reader)
         col.on_event = _on_world_event
         col.extra = lambda: {"companion": hands.brief()}
         _COMPANION["hands"] = hands
@@ -3502,6 +3524,34 @@ async def api_companion_build(request: web.Request) -> web.Response:
     _world().write()
     return web.json_response({"action": act, "note": (
         f"Built {len(act.get('cells') or [])} blocks. Undo with its id: {act['id']}.")})
+
+
+async def api_companion_look(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    try:
+        seen = await asyncio.to_thread(
+            _companion().look, body.get("player"), body.get("x"), body.get("y"),
+            body.get("z"), body.get("size"), body.get("dimension"))
+    except companion.CompanionError as exc:
+        return _companion_error(exc)
+    return web.json_response(seen)
+
+
+async def api_companion_edit(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    try:
+        act = await asyncio.to_thread(
+            _companion().edit, body.get("blocks"), body.get("fills"), body.get("player"),
+            body.get("dimension"), body.get("title"), str(body.get("by") or ""),
+            body.get("name"))
+    except companion.CompanionError as exc:
+        return _companion_error(exc)
+    _world().write()
+    note = f"Changed {act['changed']} blocks. Undo with its id: {act['id']}."
+    if act.get("backup_note"):
+        note += " " + act["backup_note"]
+    return web.json_response({"action": {k: v for k, v in act.items() if k != "cells"},
+                              "changed": act["changed"], "note": note})
 
 
 async def api_companion_undo(request: web.Request) -> web.Response:
@@ -3679,6 +3729,8 @@ def build_app() -> web.Application:
     app.router.add_post("/api/companion/appear", api_companion_appear)
     app.router.add_post("/api/companion/ask", api_companion_ask)
     app.router.add_post("/api/companion/build", api_companion_build)
+    app.router.add_post("/api/companion/look", api_companion_look)
+    app.router.add_post("/api/companion/edit", api_companion_edit)
     app.router.add_post("/api/companion/actions/{id}/undo", api_companion_undo)
     app.router.add_post("/api/companion/zones", api_companion_zone_save)
     app.router.add_delete("/api/companion/zones/{name}", api_companion_zone_delete)

@@ -548,7 +548,7 @@ class TestTheChangelogRoute(PanelCase):
         self.assertEqual(r.status, 200, await r.text())
         body = await r.json()
         versions = [x["version"] for x in body["releases"]]
-        self.assertEqual(versions[0], "1.17.8")
+        self.assertEqual(versions[0], "1.17.9")
         as_tuples = [tuple(int(n) for n in v.split(".")) for v in versions]
         self.assertEqual(as_tuples, sorted(as_tuples, reverse=True))
         self.assertIn("### Added", body["releases"][0]["body"])

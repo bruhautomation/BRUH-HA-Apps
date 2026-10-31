@@ -637,7 +637,13 @@ anything listens; `t` is Unix seconds, `time` the same as ISO 8601 UTC,
 a Velocity proxy checking them); Bedrock names when Floodgate signs them in
 (Geyser's `auth-type` not `offline`). A name the server does not check is
 anyone's to type, so a companion should not take a grown-up's commands under
-it.
+it. brAIn's **Can ask for anything** (⚙ › Minecraft, per grown-up, off by
+default) depends on it: a grown-up with it on gets brAIn's chat from the game
+— game modes, items, teleports, any console command, `companion_edit`
+anywhere, and the house the way brAIn's own chat would (acting with brAIn's
+*act without asking* on; otherwise waiting for a Yes in brAIn › Today and on
+the phone) — but only while the server checks their name. Unchecked, the
+toggle is not used, and brAIn's ⚙ row says so.
 
 **Services** (each answers with what was done and fails with why not):
 
@@ -647,7 +653,9 @@ it.
 | `bruh_minecraft.companion_appear` | `player`, optional `seconds` (3–120), `kind` (greet/visit), `name`, `colour`, `chime` (full/short/none), `text`, `by` | a named, invulnerable, silent allay beside them with a chime, sparkles and a wave, then gone; logged and undoable |
 | `bruh_minecraft.ask_choice` | `player`, `question`, optional `options` (two labels or label, picture, gift and gift_count), `person`, `name`, `by` | two pads beside them on natural ground; standing on one for two seconds answers (`bruh_minecraft_answer`) |
 | `bruh_minecraft.companion_build` | `blocks` (x, y, z and a block each, at most 64), optional `player` (offsets from their feet), `dimension`, `title`, `name`, `by` | into empty space over natural ground, never in a protected place or on or next to a build; snapshotted first when large; logged and undoable |
-| `bruh_minecraft.undo_action` | optional `id` (the newest undoable one without) | puts back blocks that still hold what was placed and removes the action's entities |
+| `bruh_minecraft.companion_edit` | `blocks` (x, y, z, any block state such as `red_bed[facing=east,part=head]`, optional `mode: remove`) and/or `fills` (boxes x1, y1, z1, x2, y2, z2 and a block; `air` clears), optional `player` (offsets from their feet), `dimension`, `title`, `name`, `by` | a **trusted** edit, for a person the caller trusts to ask for anything (brAIn's "Can ask for anything"): any block anywhere — over what is there, inside or next to a build, in a protected place. Every cell's saved state is read first (and the other half of a bed or door beside one), so Undo puts it all back; an edit whose before cannot be read is not made. 64 blocks or more is backed up first; a backup that fails is said in the answer, never a refusal. At most 32,768 blocks in one edit |
+| `bruh_minecraft.look_blocks` | `player` (around them) or `x`, `y`, `z`; optional `size` ([x, y, z], at most 32 × 16 × 32), `dimension` (response only) | every block in the box that is not air, by block state, as runs `[x, y, z, length]` along x — walls, doors, beds, furniture — read from the saved world after a save |
+| `bruh_minecraft.undo_action` | optional `id` (the newest undoable one without) | puts back blocks that still hold what was placed (for an edit, their saved state) and removes the action's entities |
 | `bruh_minecraft.set_zone` | `name`, `x`, `z`, `radius`, `dimension`, `protect`, `kind`, or `delete` | a named place; nothing is ever built inside a protected one |
 | `bruh_minecraft.set_companion` | optional `name`, `colour`, `active`, `by`, `model` | who the companion is, for the panel and as the default speaker |
 | `bruh_minecraft.get_companion` | — (response only) | identity, places, questions, the action log, what it said, the account check |
@@ -660,7 +668,11 @@ chokepoint: only an allay is ever summoned and it carries the tag
 `bruh_companion`; only gentle chimes at a capped volume, to one named
 player; only the companion's own entities are removed or moved; words go to
 named players; blocks change only through the guarded placement or an undo;
-gifts are a few safe items. The companion's entities are swept by tag when
+gifts are a few safe items. A **trusted edit** (`companion_edit`) is not the
+companion's own act and does not pass that chokepoint — it is the caller's
+promise that a person it trusts asked (brAIn sends one only for a grown-up
+with "Can ask for anything" whose name the server checks, below) — and what
+holds it is the undo: every block it changes is saved before it changes. The companion's entities are swept by tag when
 someone joins, so nothing is left behind after a restart (the 1.17.7
 engine's tag is swept too).
 
@@ -670,7 +682,7 @@ question to put on the pads, and everything it did with **Undo**. Without
 brAIn it says, in one line, "Install brAIn to have a companion play in the
 world." Panel API: `GET /api/companion` (with `brain`, `listening` and
 `headline`), `POST /api/companion/identity`, `/say`, `/appear`, `/ask`,
-`/build`, `POST /api/companion/actions/<id|last>/undo`,
+`/build`, `/edit`, `/look`, `POST /api/companion/actions/<id|last>/undo`,
 `POST|DELETE /api/companion/zones[/<name>]`, `GET /api/companion/legacy`,
 `POST /api/companion/legacy/retire`. Files: `.bruh-world/companion/`
 (`companion.json`, `actions.json`, `questions.json`, `said.json`) and
