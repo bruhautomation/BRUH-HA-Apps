@@ -14,10 +14,15 @@ import unittest
 from test_minecraft_integration import PKG_DIR
 
 
+def _source() -> str:
+    with open(os.path.join(PKG_DIR, "binary_sensor.py"), encoding="utf-8") as fh:
+        return fh.read()
+
+
 def _load_helpers() -> dict:
     """binary_sensor.py needs Home Assistant to import, so lift just its pure
     helper (the constants and server_is_up) out of the source."""
-    src = open(os.path.join(PKG_DIR, "binary_sensor.py")).read()
+    src = _source()
     tree = ast.parse(src)
     keep = [n for n in tree.body
             if (isinstance(n, ast.FunctionDef) and n.name == "server_is_up")
@@ -55,7 +60,7 @@ class TestServerIsUp(unittest.TestCase):
         self.assertTrue(self.up({"reachable": True}, {}))
 
     def test_the_sensor_uses_it_for_online_and_rcon(self):
-        src = open(os.path.join(PKG_DIR, "binary_sensor.py")).read()
+        src = _source()
         body = src[src.index("def is_on"):]
         self.assertIn("server_is_up(", body)
 
