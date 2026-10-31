@@ -1198,7 +1198,9 @@ VOICE_UNTARGETED = {
     "persistent_notification": frozenset({"create"}),
     "bruh_minecraft": frozenset({
         "get_status", "teleport", "set_gamemode", "give", "set_time",
-        "set_weather", "say", "list_addons", "search_addons"}),
+        "set_weather", "say", "list_addons", "search_addons",
+        # Reading the world and the build log; writing the log is typed.
+        "get_world", "list_builds"}),
     "bruh_print": frozenset({"get_status", "print_text", "print_template"}),
     "bright": frozenset({"get_status", "start_show", "start_party",
                          "party_mode", "stop_show"}),
@@ -2896,14 +2898,15 @@ def _mc_online():
     return [str(p) for p in status.get("players") or []], ""
 
 
-def minecraft_status():
-    """Who is on the Minecraft server, and how it is doing."""
+def minecraft_status(builds=False):
+    """Who is on the Minecraft server, what is going on in the world, and
+    (with `builds`) Vesper's build log."""
     status = _addon_call("bruh_minecraft", "get_status")
     if status.get("error"):
         return status
     stats = status.get("stats") or {}
     state = status.get("state") or {}
-    return {
+    out = {
         "reachable": status.get("reachable"),
         "online": status.get("online"),
         "max": status.get("max"),
@@ -2914,6 +2917,45 @@ def minecraft_status():
         "tps": stats.get("tps_1m"),
         "note": status.get("note", ""),
     }
+    out.update(_mc_world())
+    if builds:
+        listed = _addon_call("bruh_minecraft", "list_builds", {"limit": 20})
+        out["builds"] = (listed if listed.get("error")
+                         else _tag_text({"jobs": listed.get("jobs") or [],
+                                         "current": listed.get("current")},
+                                        ("title", "part", "notes")))
+    return out
+
+
+MC_FEED_FOR_MODEL = 15
+
+
+def _mc_world():
+    """The world part of minecraft_status: where everybody is, the time and
+    weather, the feed, and what Vesper is building (bruh_minecraft.get_world).
+
+    Chat and build titles are other people's words, so they are tagged as
+    text from outside. An integration older than the world layer is said
+    in a sentence, never an error that hides who is on.
+    """
+    w = _addon_call("bruh_minecraft", "get_world")
+    if w.get("error"):
+        return {"world_note": w["error"]}
+    builds = w.get("builds") or {}
+    return _tag_text({
+        "where": [{k: p.get(k) for k in ("name", "dimension", "x", "y", "z", "near",
+                                         "gamemode", "health", "food")}
+                  for p in (w.get("players") or [])],
+        "time": w.get("time"),
+        "weather": w.get("weather"),
+        "feed": [{k: e.get(k) for k in ("t", "kind", "player", "text")}
+                 for e in (w.get("feed") or [])[:MC_FEED_FOR_MODEL]],
+        "last_seen": w.get("last_seen") or {},
+        "last_save": w.get("last_save"),
+        "last_backup": w.get("last_backup"),
+        "vesper": {"current": builds.get("current"), "recent": builds.get("recent") or [],
+                   "queued": builds.get("queued", 0)},
+    }, ("text", "title", "part"))
 
 
 def minecraft_teleport(player, to_player=None, x=None, y=None, z=None):
@@ -6508,10 +6550,21 @@ TOOLS = [
         "description": (
             "The BRUH Minecraft server: whether it is answering, who is online "
             "right now (exact names — Bedrock/iPad players carry a '.' prefix), "
-            "the world, server type, version and TPS. Read-only. Call it before "
-            "acting on a player so you use the name the server knows."
+            "the world, server type, version and TPS; and what is going on in "
+            "the world: where each player is (dimension, position, the place "
+            "they are near), their game mode and health, the time, day and "
+            "weather, the recent feed (joins, leaves, deaths, advancements, "
+            "chat), the last save and backup, and what Vesper is building. "
+            "builds=true adds Vesper's build log. Read-only. Call it before "
+            "acting on a player so you use the name the server knows. To add or "
+            "change a job in the build log, call_service bruh_minecraft.save_build "
+            "(title, part, status queued/building/done/failed, progress, bounds "
+            "{x1,z1,x2,z2,y1,y2,dimension}, notes; give id to change one) or "
+            "delete_build (id); a job marked done with bounds gets a picture."
         ),
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {"type": "object", "properties": {
+            "builds": {"type": "boolean",
+                       "description": "Also list Vesper's build log (newest 20)."}}},
     },
     {
         "name": "minecraft_teleport",
