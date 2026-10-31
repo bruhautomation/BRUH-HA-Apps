@@ -8,7 +8,6 @@ with a copy tool it must hold level.dat and the region files.
 """
 from __future__ import annotations
 
-import os
 import shutil
 import stat
 import subprocess

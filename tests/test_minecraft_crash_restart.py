@@ -104,7 +104,6 @@ class TestRestartOnKill(unittest.TestCase):
     def test_restarts_are_capped_per_hour(self):
         rc, out, _ = _drive([137] * 30, step_seconds=60)
         self.assertEqual(rc, 137, "\n".join(out))
-        launches = [l for l in out if l.startswith("LAUNCHES")]
         self.assertTrue(any("giving up" in l for l in out), "\n".join(out))
         self.assertTrue(any("per hour" in l for l in out), "\n".join(out))
         # a cap, not an endless loop

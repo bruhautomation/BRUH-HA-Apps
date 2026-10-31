@@ -776,7 +776,8 @@ run_server_loop() {
     # Restarts after a crash back off (10 s, 30 s, 1 min, 2 min, then 5 min) and
     # are capped per hour, so a server that dies on every start does not spin
     # forever, and one that was killed once comes straight back.
-    local max_restarts_per_hour=10
+    local max_crash_restarts=10      # per crash window
+    local crash_window_seconds=3600  # one hour
     local backoff_seconds=(10 30 60 120 300)
     local crash_times=()
     local first_iteration=1
@@ -851,21 +852,21 @@ run_server_loop() {
         local now kept=() t
         now=$(date +%s)
         for t in "${crash_times[@]}"; do
-            [ $((now - t)) -lt 3600 ] && kept+=("${t}")
+            [ $((now - t)) -lt "${crash_window_seconds}" ] && kept+=("${t}")
         done
         kept+=("${now}")
         crash_times=("${kept[@]}")
         local crash_count=${#crash_times[@]}
 
-        if [ "${crash_count}" -gt "${max_restarts_per_hour}" ]; then
-            bashio::log.fatal "Server stopped ${crash_count} times within an hour (more than ${max_restarts_per_hour} restarts per hour); giving up. Fix the cause, then start the add-on again."
+        if [ "${crash_count}" -gt "${max_crash_restarts}" ]; then
+            bashio::log.fatal "Server stopped ${crash_count} times within an hour (more than ${max_crash_restarts} restarts per hour); giving up. Fix the cause, then start the add-on again."
             return "${rc}"
         fi
 
         local idx=$((crash_count - 1))
         [ "${idx}" -ge "${#backoff_seconds[@]}" ] && idx=$((${#backoff_seconds[@]} - 1))
         local delay=${backoff_seconds[${idx}]}
-        bashio::log.warning "Restarting in ${delay}s (restart ${crash_count} of ${max_restarts_per_hour} allowed per hour)"
+        bashio::log.warning "Restarting in ${delay}s (restart ${crash_count} of ${max_crash_restarts} allowed per hour)"
         sleep "${delay}"
     done
 }
