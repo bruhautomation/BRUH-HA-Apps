@@ -41,7 +41,6 @@ SOURCE = "minecraft_approval"
 SOURCE_TITLE = "Asked for in Minecraft"
 MAX_RECORDS = 30
 RUN_TIMEOUT_S = 90
-MCP_PREFIX = "mcp__home-assistant__"
 MCP_SERVER = os.environ.get(
     "BRAIN_MCP_SERVER",
     str(Path(__file__).resolve().parent.parent / "ha-mcp-server" / "ha_mcp_server.py"))
