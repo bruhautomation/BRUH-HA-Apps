@@ -294,3 +294,112 @@ remove_addon:
       required: true
       selector:
         text: {}
+
+get_vesper:
+  name: Vesper's engine
+  description: Vesper in the game — whether it is on, the family roster, named zones, recent moments, questions, the action log (each undoable action) and what Vesper remembers about each person. Returns response data.
+
+vesper_ask:
+  name: Ask with choice pads
+  description: Put a two-picture question to a child. Vesper builds a green and a red pad beside them with a picture above each; standing on one for two seconds is the answer, which goes into their memory. Asked the next time they play if they are not on.
+  fields:
+    player:
+      name: Player or person
+      description: The in-game name (Bedrock names keep their dot) or the person's name from the roster.
+      required: true
+      selector:
+        text: {}
+    question:
+      name: Question
+      description: The question in words, kept for the parent; the child sees the pictures.
+      required: true
+      selector:
+        text: {}
+    options:
+      name: Options
+      description: Two options, each a label or {label, picture (a block id), gift (an item), gift_count}. Leave out for yes and no.
+      selector:
+        object: {}
+    by:
+      name: Asked by
+      selector:
+        text: {}
+
+vesper_undo:
+  name: Undo Vesper's action
+  description: Put back what one of Vesper's actions changed in the world (blocks that still hold what Vesper placed, and its entities).
+  fields:
+    id:
+      name: Action id
+      required: true
+      selector:
+        text: {}
+
+vesper_engine:
+  name: Vesper on or off
+  description: Pause or resume Vesper in the game. The add-on's 'Vesper in the game' option must be on for anything to happen.
+  fields:
+    "on":
+      name: "On"
+      required: true
+      selector:
+        boolean: {}
+
+set_family:
+  name: Set the family
+  description: Who plays and how Vesper treats them. A list of {person, role (child or reader), players (in-game names)}.
+  fields:
+    people:
+      name: People
+      required: true
+      selector:
+        object: {}
+
+set_zone:
+  name: Set a zone
+  description: Name a place in the world (x, z, radius). A protected zone is one Vesper never builds in; delete removes it.
+  fields:
+    name:
+      name: Name
+      required: true
+      selector:
+        text: {}
+    x:
+      name: X
+      selector:
+        number: { min: -30000000, max: 30000000, mode: box }
+    z:
+      name: Z
+      selector:
+        number: { min: -30000000, max: 30000000, mode: box }
+    radius:
+      name: Radius
+      selector:
+        number: { min: 1, max: 512 }
+    dimension:
+      name: Dimension
+      selector:
+        text: {}
+    protect:
+      name: Protect
+      selector:
+        boolean: {}
+    kind:
+      name: Kind
+      selector:
+        select:
+          options: [family, vesper]
+    delete:
+      name: Delete
+      selector:
+        boolean: {}
+
+rename_world:
+  name: Rename the world
+  description: Rename the active world to a name as said ("Vesper World"). The folder takes a safe form of it (Vesper_World) and the server list shows the name as said. Stops the server, keeps the backups, and restarts the add-on.
+  fields:
+    name:
+      name: Name
+      required: true
+      selector:
+        text: {}

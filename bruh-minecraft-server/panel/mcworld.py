@@ -382,11 +382,18 @@ class Journal:
                 out.append(ev)
         return out
 
-    def summary(self, day: str, open_sessions: dict[str, float] | None = None) -> dict[str, Any]:
-        """Who was on that day and for how long, and what happened."""
+    def summary(self, day: str, open_sessions: dict[str, float] | None = None,
+                person_of: Callable[[str], str] | None = None) -> dict[str, Any]:
+        """Who was on that day and for how long, and what happened.
+
+        With `person_of` (Vesper's roster: an in-game name to a person),
+        `people` sums each person's names: time on, deaths, advancements,
+        chat lines and what Vesper did with them.
+        """
         events = self.events(day)
         seconds: dict[str, int] = {}
         counts: dict[str, int] = {}
+        per: dict[str, dict[str, int]] = {}
         for ev in events:
             counts[ev.get("kind", "?")] = counts.get(ev.get("kind", "?"), 0) + 1
             who = ev.get("player")
@@ -394,15 +401,34 @@ class Journal:
                 seconds[who] = seconds.get(who, 0) + int(ev["seconds"])
             elif who and ev.get("kind") in ("join", "death", "advancement", "chat"):
                 seconds.setdefault(who, 0)
+            if who and ev.get("kind") in ("join", "death", "advancement", "chat", "vesper"):
+                per.setdefault(who, {}).setdefault(ev["kind"], 0)
+                per[who][ev["kind"]] += 1
         if open_sessions and day == self.day_of(self.clock()):
             now = self.clock()
             start_of_day = time.mktime(time.strptime(day, "%Y-%m-%d"))
             for who, since in open_sessions.items():
                 seconds[who] = seconds.get(who, 0) + int(now - max(since, start_of_day))
-        return {"day": day, "players": seconds, "counts": counts,
-                "events": len(events),
-                "first": events[0].get("t") if events else None,
-                "last": events[-1].get("t") if events else None}
+        out = {"day": day, "players": seconds, "counts": counts,
+               "events": len(events),
+               "first": events[0].get("t") if events else None,
+               "last": events[-1].get("t") if events else None}
+        if person_of is not None:
+            people: dict[str, dict[str, Any]] = {}
+            for who in set(seconds) | set(per):
+                rec = people.setdefault(person_of(who), {
+                    "players": [], "seconds": 0, "joins": 0, "deaths": 0,
+                    "advancements": 0, "chat": 0, "vesper": 0})
+                rec["players"].append(who)
+                rec["seconds"] += seconds.get(who, 0)
+                kinds = per.get(who, {})
+                rec["joins"] += kinds.get("join", 0)
+                rec["deaths"] += kinds.get("death", 0)
+                rec["advancements"] += kinds.get("advancement", 0)
+                rec["chat"] += kinds.get("chat", 0)
+                rec["vesper"] += kinds.get("vesper", 0)
+            out["people"] = people
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -610,20 +636,25 @@ class RconSession:
     def __init__(self, factory: Callable[[], Any]):
         self.factory = factory
         self.conn = None
+        # The world thread and Vesper's API calls (an undo from the panel)
+        # share the one connection; a request and its reply are one turn.
+        self._lock = threading.RLock()
 
     def command(self, cmd: str) -> str:
-        if self.conn is None:
-            conn = self.factory()
-            conn.connect()
-            self.conn = conn
-        try:
-            return self.conn.command(cmd)
-        except Exception:
-            self.close()
-            raise
+        with self._lock:
+            if self.conn is None:
+                conn = self.factory()
+                conn.connect()
+                self.conn = conn
+            try:
+                return self.conn.command(cmd)
+            except Exception:
+                self.close()
+                raise
 
     def close(self) -> None:
-        conn, self.conn = self.conn, None
+        with self._lock:
+            conn, self.conn = self.conn, None
         if conn is not None:
             try:
                 conn.close()
@@ -676,6 +707,10 @@ class WorldCollector:
         self.next_poll = 0.0
         self.polled_at: float | None = None
         self._lock = threading.Lock()
+        # Vesper's engine (vesper.py) listens to every recorded event and adds
+        # its own small view to the snapshot; both stay None without it.
+        self.on_event: Callable[[dict[str, Any]], None] | None = None
+        self.extra: Callable[[], dict[str, Any]] | None = None
         state = _read_json(self.data_dir / "state.json", {})
         self.last_seen: dict[str, float] = {
             str(k): float(v) for k, v in (state.get("last_seen") or {}).items()
@@ -710,6 +745,8 @@ class WorldCollector:
         except OSError:
             # The feed still has it; a journal that cannot be written loses a line, not the world.
             pass
+        if self.on_event is not None:
+            self.on_event(event)
         return event
 
     def _open(self, name: str, now: float) -> None:
@@ -1005,7 +1042,16 @@ class WorldCollector:
             "last_backup": int(self.last_backup) if self.last_backup else None,
             "builds": {"current": job_brief(self.builds.current()), "recent": recent,
                        "queued": len(self.builds.list(status="queued"))},
+            **(self._extra()),
         }
+
+    def _extra(self) -> dict[str, Any]:
+        if self.extra is None:
+            return {}
+        try:
+            return self.extra()
+        except Exception:  # noqa: BLE001 — the world view never fails for Vesper's part
+            return {}
 
     def write(self) -> dict[str, Any]:
         snap = self.snapshot()

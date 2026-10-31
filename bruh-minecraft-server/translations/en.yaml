@@ -98,6 +98,26 @@ configuration:
     description: >-
       Allow Home Assistant automations to broadcast messages in-game,
       e.g. "front door opened".
+  vesper_engine:
+    name: Vesper in the game
+    description: >-
+      Let Vesper play in the world: it appears and chimes when a child
+      joins, and asks questions with green and red choice pads a child
+      answers by standing on one. Everything it does is in the panel's
+      Vesper card and can be undone. Off by default, and nothing runs
+      while nobody is online.
+  vesper_bedtime_entity:
+    name: Bedtime switch
+    description: >-
+      A Home Assistant entity that means bedtime, such as
+      input_boolean.kids_bedtime (bedtime while it is on), or an entity
+      and the state to match, such as binary_sensor.boys_door=off. At
+      bedtime Vesper says goodnight and stops. Leave empty for no bedtime.
+  vesper_daily_actions:
+    name: Vesper's actions a day
+    description: >-
+      The most things Vesper may do in the world in one day (greetings,
+      questions). It stops for the day when they are spent.
   enable_bedrock_support:
     name: Bedrock cross-play
     description: >-

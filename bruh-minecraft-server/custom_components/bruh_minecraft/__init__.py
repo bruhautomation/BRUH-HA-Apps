@@ -68,6 +68,13 @@ from .const import (
     SERVICE_STOP,
     SERVICE_TELEPORT,
     SERVICE_TIME,
+    SERVICE_RENAME_WORLD,
+    SERVICE_VESPER,
+    SERVICE_VESPER_ASK,
+    SERVICE_VESPER_ENGINE,
+    SERVICE_VESPER_FAMILY,
+    SERVICE_VESPER_UNDO,
+    SERVICE_VESPER_ZONE,
     SERVICE_WEATHER,
     SERVICE_WHITELIST_ADD,
     SERVICE_WHITELIST_REMOVE,
@@ -293,6 +300,35 @@ def _register_services(hass: HomeAssistant) -> None:
     async def handle_build_delete(call: ServiceCall) -> dict[str, Any]:
         return _strip(await _ask("build_delete", {"id": call.data["id"]}))
 
+    # Vesper in the game (panel/vesper.py). The add-on's panel holds the one
+    # engine; these carry a parent's (or brAIn's) request to it and answer
+    # with what it did.
+    async def handle_vesper(_: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("vesper", {}))
+
+    async def handle_vesper_ask(call: ServiceCall) -> dict[str, Any]:
+        payload = {"player": call.data["player"], "text": call.data["question"]}
+        for key in ("options", "by"):
+            if key in call.data:
+                payload[key] = call.data[key]
+        return _strip(await _ask("vesper_ask", payload))
+
+    async def handle_vesper_undo(call: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("vesper_undo", {"id": call.data["id"]}, timeout=60.0))
+
+    async def handle_vesper_engine(call: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("vesper_engine", {"on": call.data["on"]}))
+
+    async def handle_vesper_family(call: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("vesper_family", {"people": call.data["people"]}))
+
+    async def handle_vesper_zone(call: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("vesper_zone", dict(call.data)))
+
+    async def handle_rename_world(call: ServiceCall) -> dict[str, Any]:
+        # Renaming the active world restarts the add-on once it has answered.
+        return _strip(await _ask("rename_world", {"name": call.data["name"]}, timeout=150.0))
+
     async def handle_backup(_: ServiceCall) -> dict[str, Any]:
         answer = await _ask("backup", {}, timeout=120.0)
         return {"output": str(answer.get("output", ""))[-2000:]}
@@ -363,6 +399,33 @@ def _register_services(hass: HomeAssistant) -> None:
         vol.Optional("by"): cv.string,
     })
     build_delete_schema = vol.Schema({vol.Required("id"): cv.string})
+    option_schema = vol.Any(cv.string, vol.Schema({
+        vol.Required("label"): cv.string,
+        vol.Optional("picture"): cv.string,
+        vol.Optional("gift"): cv.string,
+        vol.Optional("gift_count"): vol.All(vol.Coerce(int), vol.Range(1, 16)),
+    }))
+    vesper_ask_schema = vol.Schema({
+        vol.Required("player"): vol.All(cv.string, vol.Length(min=1, max=40)),
+        vol.Required("question"): vol.All(cv.string, vol.Length(min=1, max=200)),
+        vol.Optional("options"): vol.All([option_schema], vol.Length(min=2, max=2)),
+        vol.Optional("by"): cv.string,
+    })
+    vesper_undo_schema = vol.Schema({vol.Required("id"): cv.string})
+    vesper_engine_schema = vol.Schema({vol.Required("on"): cv.boolean})
+    vesper_family_schema = vol.Schema({vol.Required("people"): [dict]})
+    vesper_zone_schema = vol.Schema({
+        vol.Required("name"): cv.string,
+        vol.Optional("x"): vol.Coerce(float),
+        vol.Optional("z"): vol.Coerce(float),
+        vol.Optional("radius"): vol.All(vol.Coerce(int), vol.Range(1, 512)),
+        vol.Optional("dimension"): cv.string,
+        vol.Optional("protect"): cv.boolean,
+        vol.Optional("kind"): vol.In(["family", "vesper"]),
+        vol.Optional("delete"): cv.boolean,
+    })
+    rename_world_schema = vol.Schema({
+        vol.Required("name"): vol.All(cv.string, vol.Length(min=1, max=60))})
     player_schema = vol.Schema({vol.Required("player"): _player})
     empty_schema = vol.Schema({})
 
@@ -392,6 +455,13 @@ def _register_services(hass: HomeAssistant) -> None:
     register(SERVICE_BUILDS, handle_builds, builds_schema, only)
     register(SERVICE_BUILD_SAVE, handle_build_save, build_save_schema, optional)
     register(SERVICE_BUILD_DELETE, handle_build_delete, build_delete_schema, optional)
+    register(SERVICE_VESPER, handle_vesper, empty_schema, only)
+    register(SERVICE_VESPER_ASK, handle_vesper_ask, vesper_ask_schema, optional)
+    register(SERVICE_VESPER_UNDO, handle_vesper_undo, vesper_undo_schema, optional)
+    register(SERVICE_VESPER_ENGINE, handle_vesper_engine, vesper_engine_schema, optional)
+    register(SERVICE_VESPER_FAMILY, handle_vesper_family, vesper_family_schema, optional)
+    register(SERVICE_VESPER_ZONE, handle_vesper_zone, vesper_zone_schema, optional)
+    register(SERVICE_RENAME_WORLD, handle_rename_world, rename_world_schema, optional)
     register(SERVICE_BACKUP, handle_backup, empty_schema, optional)
     register(SERVICE_RESTART, handle_restart, empty_schema, optional)
     register(SERVICE_STOP, handle_stop, empty_schema, optional)

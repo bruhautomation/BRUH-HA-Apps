@@ -199,6 +199,45 @@ async def world(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": False, "error": f"unknown kind '{kind}'"}
 
 
+VESPER_KINDS = ("vesper", "vesper_ask", "vesper_undo", "vesper_engine", "vesper_family",
+                "vesper_zone", "rename_world")
+
+
+async def vesper(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Vesper's engine and the world's name, asked of the panel (vesper.py
+    is the one engine; this only carries the request there)."""
+    if kind == "vesper":
+        return await asyncio.to_thread(_panel, "GET", "/api/vesper", None, 15)
+    if kind == "vesper_ask":
+        body = {k: payload[k] for k in ("player", "text", "options", "by") if k in payload}
+        return await asyncio.to_thread(_panel, "POST", "/api/vesper/ask", body, 15)
+    if kind == "vesper_undo":
+        action_id = str(payload.get("id") or "")
+        if not _JOB_ID.match(action_id):
+            return {"ok": False, "error": f"'{action_id}' is not one of Vesper's action ids."}
+        return await asyncio.to_thread(_panel, "POST", f"/api/vesper/actions/{action_id}/undo",
+                                       {}, 60)
+    if kind == "vesper_engine":
+        return await asyncio.to_thread(_panel, "POST", "/api/vesper/engine",
+                                       {"on": bool(payload.get("on"))}, 15)
+    if kind == "vesper_family":
+        return await asyncio.to_thread(_panel, "PUT", "/api/vesper/family",
+                                       {"people": payload.get("people")}, 15)
+    if kind == "vesper_zone":
+        if payload.get("delete"):
+            name = urllib.parse.quote(str(payload.get("name") or ""), safe="")
+            return await asyncio.to_thread(_panel, "DELETE", f"/api/vesper/zones/{name}", None, 15)
+        body = {k: payload[k] for k in ("name", "x", "z", "radius", "dimension", "protect", "kind")
+                if k in payload}
+        return await asyncio.to_thread(_panel, "POST", "/api/vesper/zones", body, 15)
+    if kind == "rename_world":
+        # Renaming the active world restarts the add-on, this bridge with it,
+        # once the panel has answered.
+        return await asyncio.to_thread(_panel, "POST", "/api/world/rename",
+                                       {"name": str(payload.get("name") or "")}, 150)
+    return {"ok": False, "error": f"unknown kind '{kind}'"}
+
+
 async def handle(request: dict[str, Any]) -> dict[str, Any]:
     kind = request.get("kind", "")
     payload = request.get("payload", {}) or {}
@@ -218,6 +257,9 @@ async def handle(request: dict[str, Any]) -> dict[str, Any]:
 
         if kind in ("world", "builds_list", "build_save", "build_delete"):
             return await world(kind, payload)
+
+        if kind in VESPER_KINDS:
+            return await vesper(kind, payload)
 
         if kind == "say":
             msg = str(payload.get("message", "")).strip().replace("\n", " ")[:256]

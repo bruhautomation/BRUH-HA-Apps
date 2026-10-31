@@ -67,3 +67,14 @@ SERVICE_ADDON_SEARCH = "search_addons"
 SERVICE_ADDON_INSTALL = "install_addon"
 SERVICE_ADDON_REMOVE = "remove_addon"
 ADDON_KINDS = ("plugin", "datapack", "mod", "resourcepack")
+# Vesper in the game (panel/vesper.py): the engine, its questions, its undo.
+SERVICE_VESPER = "get_vesper"
+SERVICE_VESPER_ASK = "vesper_ask"
+SERVICE_VESPER_UNDO = "vesper_undo"
+SERVICE_VESPER_ENGINE = "vesper_engine"
+SERVICE_VESPER_FAMILY = "set_family"
+SERVICE_VESPER_ZONE = "set_zone"
+SERVICE_RENAME_WORLD = "rename_world"
+# Fired by the add-on for each moment worth a decision (join, idle, death,
+# achievement, a favourite place, a parent asking in chat, an answer).
+EVENT_MOMENT = "bruh_minecraft_moment"
