@@ -63,7 +63,7 @@ def _run_patcher(
         f"export SCRIPT_DIR={(BASE_DIR / 'bruh-minecraft-server' / 'scripts').as_posix()!r}",
     ]
     if geyser_auth_type is not None:
-        env_bits.append(f"export GEYSER_AUTH_TYPE={geyser_auth_type!r}")
+        env_bits.append(f"export BRUH_GEYSER_AUTH_TYPE={geyser_auth_type!r}")
     wrapper = textwrap.dedent("""
         set -euo pipefail
         {env}
@@ -117,7 +117,7 @@ def _run_full_script(
         "SERVER_TYPE": "paper",
     }
     if geyser_auth_type is not None:
-        env["GEYSER_AUTH_TYPE"] = geyser_auth_type
+        env["BRUH_GEYSER_AUTH_TYPE"] = geyser_auth_type
     # Replace the real install_jar with a no-network stub: just `touch` the
     # destination file so downstream assertions can verify the jar "landed".
     # A regex swap against the source keeps the rest of the script intact.
@@ -270,11 +270,14 @@ class TestGeyserAuthPatch(unittest.TestCase):
             plugin_dir.mkdir(parents=True)
             cfg = plugin_dir / "config.yml"
             cfg.write_text(textwrap.dedent("""
-                remote:
+                java:
                   auth-type: floodgate
+                motd:
+                  primary-motd: "A BRUH Minecraft Server"
+                  secondary-motd: "Powered by BRUH HA Apps"
                 advanced:
-                  mtu: 1400
                   bedrock:
+                    mtu: 1400
                     validate-bedrock-login: true
             """).lstrip())
             before = cfg.read_text()
@@ -315,7 +318,8 @@ class TestGeyserAuthPatch(unittest.TestCase):
             proc = _run_patcher(server_dir, motd="BRUH House MC")
             self.assertEqual(proc.returncode, 0, proc.stderr)
             text = (server_dir / "plugins" / "Geyser-Spigot" / "config.yml").read_text()
-            self.assertIn('motd1: "BRUH House MC"', text)
+            # Geyser 2.9+'s layout: the MOTD is motd.primary-motd.
+            self.assertIn('primary-motd: "BRUH House MC"', text)
 
     def test_auto_picks_offline_when_online_mode_is_off(self):
         """Java `online_mode: false` + `geyser_auth_type: auto` must resolve

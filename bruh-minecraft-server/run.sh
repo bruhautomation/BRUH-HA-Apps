@@ -97,8 +97,12 @@ load_config() {
     ENABLE_HA_INTEGRATION=$(bashio::config 'enable_ha_integration' 'true')
     ANNOUNCE_HA_EVENTS=$(bashio::config 'announce_ha_events' 'true')
     ENABLE_BEDROCK_SUPPORT=$(bashio::config 'enable_bedrock_support' 'true')
-    GEYSER_AUTH_TYPE=$(bashio::config 'geyser_auth_type' 'auto')
-    GEYSER_MTU=$(bashio::config 'geyser_mtu' '1400')
+    # BRUH_-prefixed on purpose: Geyser reads every GEYSER_* variable in
+    # the server's environment as a config override, and warned "does not
+    # match any config option" about these two on every start (#591). They
+    # reach Geyser through its config.yml (install-bedrock-support.sh).
+    BRUH_GEYSER_AUTH_TYPE=$(bashio::config 'geyser_auth_type' 'auto')
+    BRUH_GEYSER_MTU=$(bashio::config 'geyser_mtu' '1400')
     AUTO_KICK_GHOST_SESSIONS=$(bashio::config 'auto_kick_ghost_sessions' 'true')
     AUTO_QUARANTINE_DUPLICATES=$(bashio::config 'auto_quarantine_duplicates' 'true')
     EXTRA_JVM_ARGS=$(bashio::config 'extra_jvm_args' '')
@@ -151,8 +155,8 @@ load_config() {
            AUTO_UPDATE_SERVER AUTO_BACKUP \
            BACKUP_INTERVAL_MINUTES BACKUP_KEEP_COUNT BACKUP_USE_GIT \
            AUTO_RESTART_ON_CRASH AUTO_RESTART_SCHEDULE ENABLE_HA_INTEGRATION \
-           ANNOUNCE_HA_EVENTS ENABLE_BEDROCK_SUPPORT GEYSER_AUTH_TYPE \
-           GEYSER_MTU AUTO_KICK_GHOST_SESSIONS \
+           ANNOUNCE_HA_EVENTS ENABLE_BEDROCK_SUPPORT BRUH_GEYSER_AUTH_TYPE \
+           BRUH_GEYSER_MTU AUTO_KICK_GHOST_SESSIONS \
            AUTO_QUARANTINE_DUPLICATES \
            EXTRA_JVM_ARGS LOG_LEVEL
 

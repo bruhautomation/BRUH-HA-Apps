@@ -202,7 +202,7 @@ class TestInstallerIntegration(unittest.TestCase):
             "SERVER_TYPE": "paper",
             "MOTD": "test",
             "ONLINE_MODE": online_mode,
-            "GEYSER_AUTH_TYPE": geyser_auth_type,
+            "BRUH_GEYSER_AUTH_TYPE": geyser_auth_type,
             # Point the installer at the real scripts dir so it finds
             # patch-geyser-config.py even when launched via `bash -c`.
             "BRUH_MC_SCRIPTS_DIR": str(SCRIPT.parent),
@@ -223,7 +223,7 @@ class TestInstallerIntegration(unittest.TestCase):
             cfg = server_dir / "plugins" / "Geyser-Spigot" / "config.yml"
             data = yaml.safe_load(cfg.read_text())
             self.assertIs(data["advanced"]["bedrock"]["validate-bedrock-login"], False)
-            self.assertEqual(data["remote"]["auth-type"], "offline")
+            self.assertEqual(data["java"]["auth-type"], "offline")
 
     def test_floodgate_fresh_install_keeps_validate_true(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -236,7 +236,7 @@ class TestInstallerIntegration(unittest.TestCase):
             cfg = server_dir / "plugins" / "Geyser-Spigot" / "config.yml"
             data = yaml.safe_load(cfg.read_text())
             self.assertIs(data["advanced"]["bedrock"]["validate-bedrock-login"], True)
-            self.assertEqual(data["remote"]["auth-type"], "floodgate")
+            self.assertEqual(data["java"]["auth-type"], "floodgate")
 
     def test_offline_patches_existing_real_sized_config(self):
         """The real-world case: an already-rendered 13KB Geyser config from
@@ -273,28 +273,29 @@ class TestInstallerIntegration(unittest.TestCase):
             )
 
     def test_installer_patches_advanced_mtu(self):
-        """New in 1.2.4: the installer must set advanced.mtu from the
-        GEYSER_MTU env var — the #1 fix for iOS "Connecting multiplayer
+        """New in 1.2.4, moved in 1.17.8: the installer sets Geyser's MTU
+        (advanced.bedrock.mtu since Geyser 2.9) from BRUH_GEYSER_MTU — the #1 fix for iOS "Connecting multiplayer
         server…" hangs on Wi-Fi routers that fragment UDP at 1400."""
         with tempfile.TemporaryDirectory() as tmp:
             server_dir = Path(tmp)
             (server_dir / "plugins").mkdir()
-            # Pass GEYSER_MTU=1200 to simulate a user-tuned value.
-            old = os.environ.get("GEYSER_MTU")
-            os.environ["GEYSER_MTU"] = "1200"
+            # Pass BRUH_GEYSER_MTU=1200 to simulate a user-tuned value.
+            old = os.environ.get("BRUH_GEYSER_MTU")
+            os.environ["BRUH_GEYSER_MTU"] = "1200"
             try:
                 proc = self._run_installer(
                     server_dir, geyser_auth_type="offline", online_mode="false",
                 )
             finally:
                 if old is None:
-                    del os.environ["GEYSER_MTU"]
+                    del os.environ["BRUH_GEYSER_MTU"]
                 else:
-                    os.environ["GEYSER_MTU"] = old
+                    os.environ["BRUH_GEYSER_MTU"] = old
             self.assertEqual(proc.returncode, 0, proc.stderr)
             cfg = server_dir / "plugins" / "Geyser-Spigot" / "config.yml"
             data = yaml.safe_load(cfg.read_text())
-            self.assertEqual(data["advanced"]["mtu"], 1200)
+            self.assertEqual(data["advanced"]["bedrock"]["mtu"], 1200)
+            self.assertNotIn("mtu", data["advanced"])
 
     def test_switching_back_to_floodgate_restores_validate_true(self):
         """Regression guard: if a user flips geyser_auth_type offline -> floodgate,
