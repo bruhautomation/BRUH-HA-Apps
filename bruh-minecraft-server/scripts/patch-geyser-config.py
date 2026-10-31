@@ -124,7 +124,7 @@ def _find(lines: list[str], start: int, end: int, name: str) -> tuple[int | None
 def get_path(text: str, path: list[str]) -> str | None:
     """The scalar at a dotted path (`java.auth-type`), or None."""
     lines = text.splitlines(keepends=True)
-    start, end, indent = 0, len(lines), -1
+    start, end = 0, len(lines)
     for depth, name in enumerate(path):
         at, ind = _find(lines, start, end, name)
         if at is None:
@@ -132,7 +132,6 @@ def get_path(text: str, path: list[str]) -> str | None:
         if depth == len(path) - 1:
             value = lines[at].split(":", 1)[1].strip()
             return re.sub(r"\s+#.*$", "", value).strip().strip('"').strip("'")
-        indent = ind
         start, end = at + 1, _block_end(lines, at + 1, ind)
     return None
 
