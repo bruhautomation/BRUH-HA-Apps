@@ -26,6 +26,7 @@ RUN apk add --no-cache \
     jq \
     git \
     git-lfs \
+    rsync \
     tar \
     gzip \
     xz \

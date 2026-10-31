@@ -739,6 +739,21 @@ graceful_shutdown() {
 trap graceful_shutdown SIGTERM SIGINT SIGHUP
 
 # ----------------------------------------------------------------------------
+# Say plainly at start whether world backups can copy the world (#570: an image
+# without rsync made every backup hold only config files while reporting done).
+# A failed check is loud but does not stop the server.
+# ----------------------------------------------------------------------------
+check_backup_tools() {
+    local out
+    if out=$(BACKUP_USE_GIT="${BACKUP_USE_GIT}" "${SCRIPTS_DIR}/backup.sh" --check 2>&1); then
+        bashio::log.info "${out}"
+    else
+        bashio::log.error "${out}"
+        bashio::log.error "World backups will fail until this is fixed"
+    fi
+}
+
+# ----------------------------------------------------------------------------
 # Run the Minecraft server with auto-restart on crash
 # ----------------------------------------------------------------------------
 run_server_loop() {
@@ -898,6 +913,7 @@ main() {
     install_bedrock_support
     cleanup_duplicate_plugins
 
+    check_backup_tools
     start_backup_watcher
     start_stats_collector
     start_ha_bridge
