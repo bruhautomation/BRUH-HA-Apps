@@ -2,6 +2,20 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.29
+
+### Added
+
+- **Vesper in Minecraft is the same Vesper.** With BRUH Minecraft 1.17.8, a grown-up can talk to Vesper in the game's chat, and brAIn answers with its own personality and name. What Vesper learns in the game becomes facts in brAIn's memory.
+- **`minecraft_world` can `say` as Vesper and `build`** small things through BRUH Minecraft's guarded, undoable builder.
+
+### Security
+
+- **A request from the game reaches only the game.**
+  - It runs in a new `minecraft` task scope that can use the Minecraft tools and a few read-only house lookups, and nothing else, even with act-without-asking on.
+  - In-world actions run without an approval card, because a grown-up on the family list asked in the game; every guard and limit still applies.
+  - Anything that would touch the house is refused with "I'll need you to approve that in brAIn".
+
 ## 4.0.28
 
 ### Added

@@ -5,6 +5,24 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.17.8
+
+### Added
+
+- **Vesper plays with the grown-ups too.** A grown-up on the family list is greeted with a short visit and a line in chat in brAIn's own words and personality name, and their joins and achievements count as moments. Anyone not on the list is still left alone.
+- **Talk to Vesper in chat.** A grown-up starts a chat message with "Vesper":
+  - `vesper help`, `status`, `come here`, `undo`, `stop` and `start` answer at once.
+  - Anything else goes to brAIn, which answers in chat and can act in the world: ask a child a question, say something, or build something small beside you. Builds can be undone and never go over or next to anyone's build.
+  - Anything outside the game, like the house's lights, still needs your approval in brAIn.
+  - Children's chat is never taken as a command.
+- **What Vesper learns in the game reaches brAIn's memory**, so Vesper at home knows what each person picked and asked for.
+- **New services `vesper_say` and `vesper_build`**, for brAIn and automations to speak or build in the game.
+- **The card:** a daily limit for how many times Vesper may ask brAIn (30 by default) and a "Talked with" list.
+
+### Security
+
+- **Chat commands are only taken under names the server checks.** If the server lets anyone join under any name (`online-mode=false` with no proxy, or Bedrock players without Floodgate), Vesper refuses commands, says why once, and the card's status line says so.
+
 ## 1.17.7
 
 ### Changed
