@@ -6647,7 +6647,8 @@ TOOLS = [
             "answers, the action log (ids to undo) and what Vesper remembers about "
             "each person — for the parent; never tell one child about another. "
             "The roster and zones are set with call_service bruh_minecraft."
-            "set_family / set_zone."
+            "set_family / set_zone; Vesper is switched on or off, and its bedtime "
+            "switch and daily budget set, with bruh_minecraft.vesper_engine."
         ),
         "inputSchema": {"type": "object", "properties": {
             "builds": {"type": "boolean",
