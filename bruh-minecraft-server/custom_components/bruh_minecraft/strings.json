@@ -345,7 +345,7 @@
         },
         "options": {
           "name": "Options",
-          "description": "Two options, each a label or {label, picture (a block id), gift (an item), gift_count}. Leave out for yes and no."
+          "description": "Two options, each either a label, or an object with a label, a picture (a block id), a gift (an item) and a gift_count. Leave out for yes and no."
         },
         "by": {
           "name": "Asked by",
