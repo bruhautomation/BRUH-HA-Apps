@@ -26287,7 +26287,8 @@ async def h_minecraft_undo(request: web.Request) -> web.Response:
         done = await ha_data.call_with_response(
             "bruh_minecraft", "undo_action", {"id": action_id} if action_id else {}, 60)
     except Exception as exc:  # noqa: BLE001 — the add-on's refusal, logged
-        log.warning("BRUH Minecraft could not undo %s: %s", action_id or "the last action", exc)
+        # The id stays out of the log line: it came from the request.
+        log.warning("BRUH Minecraft could not undo the action asked for: %s", exc)
         raise web.HTTPBadRequest(text="BRUH Minecraft could not undo that. Its log, and "
                                       "brAIn's, say why.") from None
     return web.json_response(done)
