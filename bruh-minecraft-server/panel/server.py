@@ -28,6 +28,7 @@ POST /api/world/rename      — rename the active world to a name as said ("Vesp
 GET  /api/vesper            — Vesper's engine: state, budget, family, zones, moments,
                               questions, the action log and per-person memory
 POST /api/vesper/engine     — {"on", "bedtime_entity", "daily_actions"}: Vesper's settings
+GET  /api/vesper/entities   — Home Assistant's on/off entities, for the bedtime switch list
 POST /api/vesper/ask        — pose a two-picture choice-pad question to a child
 POST /api/vesper/actions/<id>/undo — put back what one action changed
 PUT  /api/vesper/family     — the roster; POST/DELETE /api/vesper/zones — named places
@@ -3284,6 +3285,39 @@ async def api_vesper(_: web.Request) -> web.Response:
     return web.json_response(await asyncio.to_thread(_vesper().status))
 
 
+# The kinds of entity a bedtime switch can be: anything that is on or off.
+_BEDTIME_DOMAINS = ("input_boolean", "binary_sensor", "switch", "schedule")
+
+
+def _bedtime_candidates() -> dict:
+    """Home Assistant's on/off entities, for the Vesper card's bedtime list."""
+    try:
+        answer = _core_api("GET", "/states", timeout=5)
+    except Exception:  # noqa: BLE001 — Home Assistant restarting: the field still takes a typed id
+        answer = None
+    states = (answer or {}).get("result")
+    if not isinstance(states, list):
+        return {"entities": [], "reachable": False}
+    out = []
+    for st in states:
+        if not isinstance(st, dict):
+            continue
+        eid = str(st.get("entity_id") or "")
+        domain = eid.split(".", 1)[0]
+        if domain not in _BEDTIME_DOMAINS or not bedtime_rule(eid):
+            continue
+        attrs = st.get("attributes") if isinstance(st.get("attributes"), dict) else {}
+        out.append({"entity_id": eid, "name": str(attrs.get("friendly_name") or eid)[:80],
+                    "state": str(st.get("state") or "")[:40]})
+    out.sort(key=lambda e: (_BEDTIME_DOMAINS.index(e["entity_id"].split(".", 1)[0]),
+                            e["name"].lower()))
+    return {"entities": out[:400], "reachable": True}
+
+
+async def api_vesper_entities(_: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_bedtime_candidates))
+
+
 async def api_vesper_engine(request: web.Request) -> web.Response:
     """`{"on": bool, "bedtime_entity": str, "daily_actions": int}`, any of them."""
     body = await _json_body(request)
@@ -3441,6 +3475,7 @@ def build_app() -> web.Application:
     # Vesper in the game (vesper.py)
     app.router.add_get("/api/vesper", api_vesper)
     app.router.add_post("/api/vesper/engine", api_vesper_engine)
+    app.router.add_get("/api/vesper/entities", api_vesper_entities)
     app.router.add_post("/api/vesper/ask", api_vesper_ask)
     app.router.add_post("/api/vesper/actions/{id}/undo", api_vesper_undo)
     app.router.add_get("/api/vesper/family", api_vesper_family)

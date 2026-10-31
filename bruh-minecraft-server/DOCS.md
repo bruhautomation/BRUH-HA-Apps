@@ -598,13 +598,15 @@ up. No TPS, no latency, no buttons.
 Vesper can play in the world with the family — appear when a child joins, and
 ask a child (who cannot read) a question they answer by **standing on a
 picture**. It is off until you switch it on — the **Vesper** card on the
-panel's Dashboard (**Switch Vesper on**), or `bruh_minecraft.vesper_engine`
+panel's Dashboard (the **Vesper is on/off** switch), or `bruh_minecraft.vesper_engine`
 with `on: true`; the setting belongs to the world — and it never sends the server
 anything while nobody is online. Everything goes through RCON: no plugin, and
 it works for Bedrock/iPad players through Geyser (whose names start with a dot).
 
-**Who is who.** Tell Vesper the family once — in brAIn ("Kaz plays as
-.Kaz8044 and is a child; I'm Ben13765"), or with `bruh_minecraft.set_family`:
+**Who is who.** Tell Vesper the family once — on the Vesper card (step 1,
+**Family**: tap a player seen in the game to add them, pick Child or
+Grown-up, **Save family**), in brAIn ("Kaz plays as .Kaz8044 and is a
+child; I'm Ben13765"), or with `bruh_minecraft.set_family`:
 
 ```yaml
 action: bruh_minecraft.set_family
@@ -616,8 +618,9 @@ data:
 ```
 
 A **child** gets Vesper in the world; a **reader** (a parent) gets words in
-chat; anybody else is a guest Vesper leaves alone. Name places with
-`bruh_minecraft.set_zone` (x, z, radius); a **protected** zone (the default
+chat; anybody else is a guest Vesper leaves alone. Name places on the
+card (step 3, **Protected places**, which can fill in where a player is
+standing) or with `bruh_minecraft.set_zone` (x, z, radius); a **protected** zone (the default
 for family zones) is one Vesper never builds in.
 
 **What a child sees.**
@@ -681,7 +684,7 @@ takes a safe form of the name (`Vesper_World` — a folder holds letters,
 digits, `_` and `-`), the server list shows the name as said (the MOTD), the
 backups move with it, and the add-on restarts.
 
-Panel API: `GET /api/vesper`, `POST /api/vesper/engine` (`{"on", "bedtime_entity", "daily_actions"}`),
+Panel API: `GET /api/vesper` (with `headline`, the card's status sentence, and `online`), `GET /api/vesper/entities` (Home Assistant's on/off entities for the bedtime list), `POST /api/vesper/engine` (`{"on", "bedtime_entity", "daily_actions"}`),
 `POST /api/vesper/ask` (`{"player", "text", "options"}`),
 `POST /api/vesper/actions/<id>/undo`, `GET|PUT /api/vesper/family`,
 `POST /api/vesper/zones`, `DELETE /api/vesper/zones/<name>`,
