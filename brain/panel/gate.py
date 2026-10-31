@@ -155,7 +155,7 @@ def minecraft_chat_verdict(tool: str, args: dict) -> tuple[str, str]:
     action = str((args or {}).get("action") or "").strip().lower()
     if name == MINECRAFT_WORLD_TOOL and action in MINECRAFT_CHAT_ACTIONS:
         return "allow", ("an in-world act a grown-up asked for in the game; the game's "
-                         "engine guards it, counts it and can undo it")
+                         + "engine guards it, counts it and can undo it")
     return "deny", MINECRAFT_OUTSIDE
 
 

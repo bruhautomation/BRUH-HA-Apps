@@ -100,7 +100,8 @@ class TestTheMinecraftScope(unittest.TestCase):
         block = src.split('if [ "$task_tools" = "minecraft" ]; then', 1)[1][:200]
         self.assertIn("export BRAIN_CHANNEL=minecraft", block)
         self.assertIn("unset BRAIN_PERSON_WORDS", block)
-        self.assertIn('if [ "$task_tools" != "minecraft" ] && person_task_acts', src)
+        self.assertIn('if person_task_acts "$task_conversation" "$task_words" '
+                      + '&& [ "$task_tools" != "minecraft" ]; then', src)
         # The channel is set before any claude invocation reads it.
         self.assertLess(src.index("export BRAIN_CHANNEL=minecraft"),
                         src.index('"${tool_flags[@]}"'))

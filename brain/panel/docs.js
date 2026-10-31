@@ -3368,13 +3368,14 @@ because a task is usually asked to **change** something. That is right for "fix
 the heating schedule" and far more than "tell me which lights were on at 3am"
 needs, and there used to be no way for the automation asking to say so.
 
-The \`tools\` field is that way, and it has three values:
+The \`tools\` field is that way, and it has four values:
 
 | \`tools\` | What the task can reach |
 | --- | --- |
 | \`full\` **(default)** | Everything, exactly as before: the shell, file edits, web access, and every Home Assistant tool. |
 | \`house\` | Every Home Assistant tool — it can read your house and act on it — with no shell, no file reads or edits, and no web access. |
 | \`read_only\` | The same list brAIn's own scheduled analysis runs with: it can look at anything in Home Assistant and change nothing. It cannot read files in \`/config\` either, so \`secrets.yaml\` stays out of reach of an automation that only asked a question. |
+| \`minecraft\` | A grown-up's request typed in BRUH Minecraft's chat (Vesper sends these): the Minecraft world's tools — say something as Vesper, ask a child a pad question, build something small, undo, time, weather — a few reads, and what brAIn remembers. Never a house service: no \`call_service\`, no \`control_*\`, even in YOLO mode, and anything outside the game is answered "I'll need you to approve that in brAIn". An in-world act needs no approval card (the grown-up asking in the game is the parent asking); the game's engine still checks, counts and can undo every one. Needs an administrator, like \`house\`. |
 
 \`full\` is the default on purpose, so nothing you have already written
 changes. Narrow it per call:

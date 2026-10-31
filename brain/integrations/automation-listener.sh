@@ -746,7 +746,7 @@ process_task() {
 
     # Somebody asked for this and the switch is on: the chat's reach.
     local task_acts=""
-    if [ "$task_tools" != "minecraft" ] && person_task_acts "$task_conversation" "$task_words"; then
+    if person_task_acts "$task_conversation" "$task_words" && [ "$task_tools" != "minecraft" ]; then
         task_acts=true
         task_tools=""
         export BRAIN_CHANNEL=chat
