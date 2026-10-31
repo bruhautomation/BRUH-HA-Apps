@@ -51,6 +51,27 @@
       },
       "gamemode": {
         "name": "Default gamemode"
+      },
+      "world_time": {
+        "name": "World time"
+      },
+      "world_day": {
+        "name": "World day"
+      },
+      "world_weather": {
+        "name": "World weather"
+      },
+      "world_feed": {
+        "name": "World feed"
+      },
+      "last_save": {
+        "name": "Last save"
+      },
+      "last_backup": {
+        "name": "Last backup"
+      },
+      "vesper_building": {
+        "name": "Vesper building"
       }
     },
     "binary_sensor": {
@@ -186,6 +207,76 @@
     "get_status": {
       "name": "Get status",
       "description": "Who is online right now, beside the last collected server stats. Returns response data."
+    },
+    "get_world": {
+      "name": "Get world",
+      "description": "What is going on in the world now - who is on and where, the time, day and weather, recent events, the last save and backup, and Vesper's builds. Returns response data."
+    },
+    "list_builds": {
+      "name": "List builds",
+      "description": "Vesper's build log, newest first. Returns response data.",
+      "fields": {
+        "status": {
+          "name": "Status",
+          "description": "Only jobs with this status."
+        },
+        "limit": {
+          "name": "Limit",
+          "description": "At most this many jobs."
+        }
+      }
+    },
+    "save_build": {
+      "name": "Save build",
+      "description": "Add a job to Vesper's build log (give a title), or change one (give its id). A job set to done with bounds gets a top-down picture.",
+      "fields": {
+        "id": {
+          "name": "Job id",
+          "description": "The job to change. Leave out to add a new one."
+        },
+        "title": {
+          "name": "Title",
+          "description": "What is being built."
+        },
+        "part": {
+          "name": "Part of the engine",
+          "description": "Which part of the sentience engine this build is for (any label)."
+        },
+        "status": {
+          "name": "Status",
+          "description": "queued, building, done or failed."
+        },
+        "progress": {
+          "name": "Progress",
+          "description": "How far along, 0 to 100."
+        },
+        "bounds": {
+          "name": "Bounds",
+          "description": "The build's box: x1, z1, x2, z2, optional y1, y2 and dimension."
+        },
+        "notes": {
+          "name": "Notes",
+          "description": "Anything worth keeping about the build."
+        },
+        "image": {
+          "name": "Picture",
+          "description": "A picture of the build (a /local/ path or URL), if not drawn from the world."
+        },
+        "by": {
+          "name": "Builder",
+          "description": "Who builds it (Vesper unless said)."
+        }
+      }
+    },
+    "delete_build": {
+      "name": "Delete build",
+      "description": "Remove a job from Vesper's build log.",
+      "fields": {
+        "id": {
+          "name": "Job id",
+          "description": "The job to remove."
+        }
+      }
     },
     "list_addons": {
       "name": "List add-ons",

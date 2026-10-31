@@ -45,7 +45,7 @@ PANEL_URL = os.environ.get("BRUH_MC_PANEL_URL", "http://127.0.0.1:8099")
 RCON_HOST = "127.0.0.1"
 RCON_PORT = 25575
 
-MIRROR_FILES = ("stats.json", "state.json", "players.json")
+MIRROR_FILES = ("stats.json", "state.json", "players.json", "world.json")
 MIRROR_INTERVAL = 5
 POLL_INTERVAL = 0.5
 
@@ -166,6 +166,39 @@ async def addons(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
     return await asyncio.to_thread(_panel, "DELETE", f"/api/addons/{pid}")
 
 
+_JOB_ID = re.compile(r"^[0-9]{8}-[0-9a-f]{6}$")
+_JOB_FIELDS = ("title", "part", "status", "progress", "bounds", "started_at",
+               "finished_at", "image", "notes", "by")
+
+
+async def world(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """The world's state and Vesper's build log, asked of the panel.
+
+    The panel holds the one collector and the one writer of the build log
+    (panel/mcworld.py); this only carries the request there.
+    """
+    if kind == "world":
+        return await asyncio.to_thread(_panel, "GET", "/api/world", None, 15)
+    if kind == "builds_list":
+        query = urllib.parse.urlencode({k: str(payload[k]) for k in ("status", "limit")
+                                        if payload.get(k)})
+        return await asyncio.to_thread(_panel, "GET", "/api/builds" + (f"?{query}" if query else ""),
+                                       None, 15)
+    job_id = str(payload.get("id") or "")
+    if job_id and not _JOB_ID.match(job_id):
+        return {"ok": False, "error": f"'{job_id}' is not a build job id."}
+    if kind == "build_save":
+        body = {k: payload[k] for k in _JOB_FIELDS if k in payload}
+        if job_id:
+            return await asyncio.to_thread(_panel, "PATCH", f"/api/builds/{job_id}", body, 30)
+        return await asyncio.to_thread(_panel, "POST", "/api/builds", body, 30)
+    if kind == "build_delete":
+        if not job_id:
+            return {"ok": False, "error": "Name the job to delete (its id)."}
+        return await asyncio.to_thread(_panel, "DELETE", f"/api/builds/{job_id}", None, 15)
+    return {"ok": False, "error": f"unknown kind '{kind}'"}
+
+
 async def handle(request: dict[str, Any]) -> dict[str, Any]:
     kind = request.get("kind", "")
     payload = request.get("payload", {}) or {}
@@ -182,6 +215,9 @@ async def handle(request: dict[str, Any]) -> dict[str, Any]:
 
         if kind in ("addon_list", "addon_search", "addon_install", "addon_remove"):
             return await addons(kind, payload)
+
+        if kind in ("world", "builds_list", "build_save", "build_delete"):
+            return await world(kind, payload)
 
         if kind == "say":
             msg = str(payload.get("message", "")).strip().replace("\n", " ")[:256]

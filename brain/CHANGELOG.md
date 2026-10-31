@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.27
+
+### Added
+
+- **brAIn can see into the Minecraft world.** Asking brAIn about Minecraft now answers where each player is, the time and weather in the world, what has happened lately, who was last on and when, when the world was last saved and backed up, and what Vesper is building. It can keep Vesper's build log with BRUH Minecraft 1.17.5 or later, through the same approval as any other change; voice can read the world and the build log but not change it. Chat lines and build notes from the game are treated as something players wrote, never as instructions.
+
 ## 4.0.26
 
 ### Changed
