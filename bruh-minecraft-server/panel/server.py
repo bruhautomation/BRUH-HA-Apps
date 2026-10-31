@@ -27,7 +27,7 @@ POST /api/builds/<id>/render — draw the job's box from above into its picture
 POST /api/world/rename      — rename the active world to a name as said ("Vesper World")
 GET  /api/vesper            — Vesper's engine: state, budget, family, zones, moments,
                               questions, the action log and per-person memory
-POST /api/vesper/engine     — {"on": bool}: pause or resume (the option is the master)
+POST /api/vesper/engine     — {"on", "bedtime_entity", "daily_actions"}: Vesper's settings
 POST /api/vesper/ask        — pose a two-picture choice-pad question to a child
 POST /api/vesper/actions/<id>/undo — put back what one action changed
 PUT  /api/vesper/family     — the roster; POST/DELETE /api/vesper/zones — named places
@@ -3196,45 +3196,12 @@ async def api_builds_render(request: web.Request) -> web.Response:
 
 # ---------------------------------------------------------------------------
 # Vesper in the game (vesper.py). The engine lives beside the collector and
-# steps on its thread; it acts only while somebody is on, only when the
-# `vesper_engine` option is on, and never at bedtime.
+# steps on its thread; it acts only while somebody is on, only once it has
+# been switched on (its own settings, per world: the panel's Vesper card or
+# bruh_minecraft.vesper_engine), and never at bedtime.
 # ---------------------------------------------------------------------------
-_OPTIONS_CACHE: dict = {"at": 0.0, "value": {}}
 _BEDTIME: dict = {"at": 0.0, "value": False, "key": ""}
-VESPER_OPTION_TTL = 10
-
-
-def _cached_options() -> dict:
-    """The add-on options, read at most every few seconds (the engine asks each beat)."""
-    now = time.monotonic()
-    if now - _OPTIONS_CACHE["at"] > VESPER_OPTION_TTL:
-        _OPTIONS_CACHE.update(at=now, value=_options())
-    return _OPTIONS_CACHE["value"]
-
-
-def _vesper_on() -> bool:
-    return bool(_cached_options().get("vesper_engine", False))
-
-
-def _vesper_limits() -> dict:
-    opts = _cached_options()
-    try:
-        actions = int(opts.get("vesper_daily_actions") or vesper.DAILY_ACTIONS)
-    except (TypeError, ValueError):
-        actions = vesper.DAILY_ACTIONS
-    return {"actions": max(0, actions), "events": vesper.DAILY_EVENTS}
-
-
-def bedtime_rule(option: str) -> tuple[str, str] | None:
-    """`input_boolean.bedtime` (bedtime while on) or `binary_sensor.door=off`."""
-    text = str(option or "").strip()
-    if not text:
-        return None
-    entity, _, state = text.partition("=")
-    entity, state = entity.strip(), (state.strip() or "on")
-    if not re.fullmatch(r"[a-z_]+\.[a-z0-9_]+", entity):
-        return None
-    return entity, state
+bedtime_rule = vesper.bedtime_rule
 
 
 def _core_api(method: str, path: str, body: dict | None = None, timeout: float = 3) -> dict | None:
@@ -3253,11 +3220,8 @@ def _core_api(method: str, path: str, body: dict | None = None, timeout: float =
     return answer if isinstance(answer, dict) else {"result": answer}
 
 
-def _vesper_bedtime() -> bool | None:
+def _vesper_bedtime(rule: tuple[str, str]) -> bool | None:
     """True at bedtime, False otherwise, None when the switch cannot be read."""
-    rule = bedtime_rule(_cached_options().get("vesper_bedtime_entity", ""))
-    if rule is None:
-        return False
     key = "=".join(rule)
     now = time.monotonic()
     if _BEDTIME["key"] == key and now - _BEDTIME["at"] < vesper.BEDTIME_STALE:
@@ -3301,9 +3265,8 @@ def _vesper() -> "vesper.Engine":
     engine = _VESPER["engine"]
     col = _world()
     if engine is None or engine.col is not col:
-        engine = vesper.Engine(col, enabled=_vesper_on, bedtime=_vesper_bedtime,
-                               emit=_vesper_emit, snapshot=_vesper_snapshot,
-                               modern=_vesper_modern, limits=_vesper_limits)
+        engine = vesper.Engine(col, bedtime=_vesper_bedtime, emit=_vesper_emit,
+                               snapshot=_vesper_snapshot, modern=_vesper_modern)
         col.extra = lambda: {"vesper": engine.brief()}
         _VESPER["engine"] = engine
     return engine
@@ -3322,14 +3285,17 @@ async def api_vesper(_: web.Request) -> web.Response:
 
 
 async def api_vesper_engine(request: web.Request) -> web.Response:
+    """`{"on": bool, "bedtime_entity": str, "daily_actions": int}`, any of them."""
     body = await _json_body(request)
-    if not isinstance(body.get("on"), bool):
+    if "on" in body and not isinstance(body["on"], bool):
         return web.json_response({"error": "on is true or false."}, status=400)
-    engine = _vesper()
-    status = await asyncio.to_thread(engine.set_paused, not body["on"])
-    if body["on"] and not engine.enabled_opt():
-        status["note"] = ("Vesper is resumed, but the add-on's 'Vesper in the game' option "
-                          "is off, so nothing happens until it is switched on.")
+    try:
+        status = await asyncio.to_thread(
+            _vesper().configure, body.get("on"), body.get("bedtime_entity"),
+            body.get("daily_actions"))
+    except vesper.VesperError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    _world().write()
     return web.json_response(status)
 
 

@@ -597,8 +597,9 @@ up. No TPS, no latency, no buttons.
 
 Vesper can play in the world with the family — appear when a child joins, and
 ask a child (who cannot read) a question they answer by **standing on a
-picture**. It is off until you switch on **Vesper in the game**
-(`vesper_engine`) in the add-on options, and it never sends the server
+picture**. It is off until you switch it on — the **Vesper** card on the
+panel's Dashboard (**Switch Vesper on**), or `bruh_minecraft.vesper_engine`
+with `on: true`; the setting belongs to the world — and it never sends the server
 anything while nobody is online. Everything goes through RCON: no plugin, and
 it works for Bedrock/iPad players through Geyser (whose names start with a dot).
 
@@ -634,7 +635,8 @@ for family zones) is one Vesper never builds in.
   snow) where every block is empty, never in a protected zone or on or next
   to a build in the build log. No answer in three minutes, or the child
   leaving, takes them away.
-- *Goodnight* — set **Bedtime switch** (`vesper_bedtime_entity`) to an
+- *Goodnight* — set the **bedtime switch** (the Vesper card, or
+  `vesper_engine`'s `bedtime_entity`) to an
   entity, e.g. `input_boolean.kids_bedtime`, or an entity and the state that
   means bedtime, `binary_sensor.boys_door=off`. At bedtime Vesper puts
   "Goodnight!" on the children's screens with a soft chime, takes away
@@ -646,13 +648,13 @@ never louder than 0.8; only removes or moves its own entities (all tagged
 `vesper`); speaks to one named player at a time and never names one child to
 another; changes blocks only by placing into empty space with `setblock …
 keep`, after a backup when a change is large (64 blocks or more). It does
-at most **Vesper's actions a day** (`vesper_daily_actions`, 120) things a
+at most its **actions a day** (`daily_actions`, 120 unless set) things a
 day, at most 4 for one child in one session, greets a child at most every 20
 minutes, and sends Home Assistant at most 40 moments a day.
 
 **Seeing and undoing it.** The panel's Dashboard has a **Vesper** card: what
 Vesper did (with **Undo** on anything still in the world), the questions and
-their answers, and a Pause button. An undo puts back only the blocks that
+their answers, the switch, and the bedtime and budget settings. An undo puts back only the blocks that
 still hold what Vesper placed (a block a child changed since is left), and
 removes the action's entities. The same is `bruh_minecraft.vesper_undo` and
 brAIn's "undo that". The `sensor.*_vesper` entity says what the engine is
@@ -679,7 +681,7 @@ takes a safe form of the name (`Vesper_World` — a folder holds letters,
 digits, `_` and `-`), the server list shows the name as said (the MOTD), the
 backups move with it, and the add-on restarts.
 
-Panel API: `GET /api/vesper`, `POST /api/vesper/engine` (`{"on": bool}`),
+Panel API: `GET /api/vesper`, `POST /api/vesper/engine` (`{"on", "bedtime_entity", "daily_actions"}`),
 `POST /api/vesper/ask` (`{"player", "text", "options"}`),
 `POST /api/vesper/actions/<id>/undo`, `GET|PUT /api/vesper/family`,
 `POST /api/vesper/zones`, `DELETE /api/vesper/zones/<name>`,

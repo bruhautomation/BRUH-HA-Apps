@@ -203,6 +203,18 @@ def modern_text(version: str | None) -> bool:
     return tuple(nums) >= (1, 21, 5)
 
 
+def bedtime_rule(text: str) -> tuple[str, str] | None:
+    """`input_boolean.bedtime` (bedtime while on) or `binary_sensor.door=off`."""
+    text = str(text or "").strip()
+    if not text:
+        return None
+    entity, _, state = text.partition("=")
+    entity, state = entity.strip(), (state.strip() or "on")
+    if not re.fullmatch(r"[a-z_]+\.[a-z0-9_]+", entity) or len(state) > 40:
+        return None
+    return entity, state
+
+
 def _day(t: float) -> str:
     return time.strftime("%Y-%m-%d", time.localtime(t))
 
@@ -644,12 +656,16 @@ class Engine:
     """Attention, rules, body and pads, beat by beat beside the collector.
 
     `step()` runs after every collector beat on the world thread; the API
-    (`ask`, `undo`, `set_paused`) is called from request threads, so state
+    (`ask`, `undo`, `configure`) is called from request threads, so state
     is under one lock and the RCON session has its own.
+
+    Its settings are the world's own (`.bruh-world/vesper/engine.json`):
+    on or off (off until somebody switches it on), the bedtime switch
+    (`bedtime(rule)` reads it in Home Assistant) and the day's budget.
     """
 
-    def __init__(self, collector, *, enabled: Callable[[], bool],
-                 bedtime: Callable[[], bool | None] = lambda: False,
+    def __init__(self, collector, *, enabled: Callable[[], bool] = lambda: True,
+                 bedtime: Callable[[tuple[str, str]], bool | None] = lambda rule: False,
                  emit: Callable[[str, dict], Any] | None = None,
                  snapshot: Callable[[], str | None] | None = None,
                  modern: Callable[[], bool] = lambda: True,
@@ -658,7 +674,7 @@ class Engine:
                  clock: Callable[[], float] = time.time):
         self.col = collector
         self.clock = clock
-        self.enabled_opt = enabled
+        self.enabled_fn = enabled
         self.bedtime_fn = bedtime
         self.emit_fn = emit or (lambda kind, data: None)
         self.snapshot_fn = snapshot
@@ -671,7 +687,7 @@ class Engine:
         self.actions = ActionLog(root / "actions.json", clock)
         self.questions = Questions(root / "questions.json", clock)
         self.budget = Budget(root / "budget.json", limits or (
-            lambda: {"actions": DAILY_ACTIONS, "events": DAILY_EVENTS}), clock)
+            lambda: {"actions": self.settings()["daily_actions"], "events": DAILY_EVENTS}), clock)
         self.state_path = Path(state_path) if state_path else root / "engine.json"
         self.epoch = "vesper_e" + secrets.token_hex(3)
         self._lock = threading.RLock()
@@ -692,15 +708,50 @@ class Engine:
         collector.on_event = self.observe
 
     # -- settings ------------------------------------------------------------
-    def paused(self) -> bool:
-        return bool(_read_json(self.state_path, {}).get("paused"))
+    def settings(self) -> dict[str, Any]:
+        data = _read_json(self.state_path, {})
+        data = data if isinstance(data, dict) else {}
+        try:
+            daily = max(0, min(1000, int(data.get("daily_actions", DAILY_ACTIONS))))
+        except (TypeError, ValueError):
+            daily = DAILY_ACTIONS
+        return {"enabled": bool(data.get("enabled", False)),
+                "bedtime_entity": str(data.get("bedtime_entity") or ""),
+                "daily_actions": daily}
 
-    def set_paused(self, paused: bool) -> dict[str, Any]:
-        _atomic_write_json(self.state_path, {"paused": bool(paused), "at": int(self.clock())})
-        return self.status()
+    def configure(self, on: bool | None = None, bedtime_entity: str | None = None,
+                  daily_actions: Any = None) -> dict[str, Any]:
+        """Switch Vesper on or off, name the bedtime switch, set the budget."""
+        with self._lock:
+            cur = self.settings()
+            if on is not None:
+                cur["enabled"] = bool(on)
+            if bedtime_entity is not None:
+                text = str(bedtime_entity).strip()
+                if text and bedtime_rule(text) is None:
+                    raise VesperError("The bedtime switch is an entity like "
+                                      "input_boolean.kids_bedtime, or an entity and a state "
+                                      "like binary_sensor.boys_door=off.")
+                cur["bedtime_entity"] = text
+            if daily_actions is not None:
+                try:
+                    cur["daily_actions"] = max(0, min(1000, int(daily_actions)))
+                except (TypeError, ValueError):
+                    raise VesperError("daily_actions is a number from 0 to 1000.") from None
+            cur["at"] = int(self.clock())
+            _atomic_write_json(self.state_path, cur)
+            if not cur["enabled"] and (self.live or self.asking) and self.col.sessions:
+                self._wind_down("Vesper was switched off.")
+            return self.status()
 
     def enabled(self) -> bool:
-        return bool(self.enabled_opt()) and not self.paused()
+        return bool(self.enabled_fn()) and self.settings()["enabled"]
+
+    def bedtime(self) -> bool | None:
+        rule = bedtime_rule(self.settings()["bedtime_entity"])
+        if rule is None:
+            return False
+        return self.bedtime_fn(rule)
 
     # -- commands ------------------------------------------------------------
     def _cmd(self, cmd: str, placing: bool = False) -> str:
@@ -790,13 +841,13 @@ class Engine:
         if not self.enabled():
             if self.live or self.asking:
                 self._wind_down("Vesper was switched off.")
-            self.state = "paused" if self.enabled_opt() else "off"
+            self.state = "off"
             return
         if not self.swept:
             # Anything an earlier run of this panel left behind.
             self._try(f"minecraft:kill @e[tag=vesper,tag=!{self.epoch}]")
             self.swept = True
-        bed = self.bedtime_fn()
+        bed = self.bedtime()
         if bed:
             if not self.bedtime_said:
                 self._goodnight(online)
@@ -929,7 +980,7 @@ class Engine:
         """'' when Vesper may do something proactive for `player` now, else why not."""
         if not self.enabled():
             return "Vesper is switched off."
-        bed = self.bedtime_fn()
+        bed = self.bedtime()
         if bed:
             return "It is bedtime."
         if bed is None:
@@ -1130,8 +1181,9 @@ class Engine:
     def ask(self, player: str, text: str, options: Any = None, by: str = "brAIn") -> dict[str, Any]:
         """Queue a question for a child; it is put to them when they are on."""
         with self._lock:
-            if not self.enabled_opt():
-                raise VesperError("Vesper's engine is off (the add-on's vesper_engine option).")
+            if not self.enabled():
+                raise VesperError("Vesper is switched off. Switch it on in the panel's Vesper "
+                                  "card, or with bruh_minecraft.vesper_engine (on: true).")
             player = str(player or "").strip()
             who = self.roster.who(player)
             if who["role"] == "guest":
@@ -1371,7 +1423,7 @@ class Engine:
         """The small view for world.json and Home Assistant."""
         last = self.actions.list(1)
         open_q = self.asking and self.questions.get(self.asking["qid"])
-        return {"enabled": bool(self.enabled_opt()), "paused": self.paused(),
+        return {"enabled": self.enabled(), "settings": self.settings(),
                 "state": self.state, "budget": self.budget.view(),
                 "queued_questions": len(self.questions.list("queued")),
                 "open_question": ({k: open_q.get(k) for k in ("id", "person", "text")}
@@ -1393,4 +1445,4 @@ class Engine:
 
 __all__ = ["Engine", "Roster", "Zones", "Memory", "ActionLog", "Budget", "Questions",
            "GuardError", "VesperError", "check_command", "clean_options", "block_id",
-           "modern_text", "bare", "undoable"]
+           "modern_text", "bare", "undoable", "bedtime_rule"]

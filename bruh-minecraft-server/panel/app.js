@@ -175,13 +175,13 @@
   async function refreshVesper() {
     const v = await api('api/vesper');
     if (!v || v.error || v._raw) return;
-    const state = !v.enabled ? 'off (switch on "Vesper in the game" in the add-on options)'
-      : v.paused ? 'paused' : v.state;
-    $('#vesper-state').textContent = `· ${state}`;
+    const settings = v.settings || {};
+    $('#vesper-state').textContent = `· ${v.enabled ? v.state : 'off'}`;
     const toggle = $('#vesper-toggle');
-    toggle.hidden = !v.enabled;
-    toggle.textContent = v.paused ? 'Resume Vesper' : 'Pause Vesper';
-    toggle.dataset.on = v.paused ? 'true' : 'false';
+    toggle.textContent = v.enabled ? 'Switch Vesper off' : 'Switch Vesper on';
+    toggle.dataset.on = v.enabled ? 'false' : 'true';
+    if (document.activeElement !== $('#vesper-bedtime')) $('#vesper-bedtime').value = settings.bedtime_entity || '';
+    if (document.activeElement !== $('#vesper-daily')) $('#vesper-daily').value = settings.daily_actions ?? 120;
     if (v.note) $('#vesper-note').textContent = v.note;
     $('#vesper-actions').innerHTML = (v.actions || []).slice(0, 15).map((a) => `
       <li><span>${esc(fmtWhen(a.t))} · ${esc(a.text || a.kind)} <span class="muted">(${esc(a.status)})</span>
@@ -200,6 +200,15 @@
       refreshVesper();
     }));
   }
+  $('#f-vesper')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const r = await api('api/vesper/engine', { method: 'POST', body: JSON.stringify({
+      bedtime_entity: $('#vesper-bedtime').value.trim(),
+      daily_actions: Number($('#vesper-daily').value || 0),
+    }) });
+    if (r && r.error) alert(r.error);
+    refreshVesper();
+  });
   $('#vesper-toggle')?.addEventListener('click', async () => {
     await api('api/vesper/engine', { method: 'POST', body: JSON.stringify({ on: $('#vesper-toggle').dataset.on === 'true' }) });
     refreshVesper();

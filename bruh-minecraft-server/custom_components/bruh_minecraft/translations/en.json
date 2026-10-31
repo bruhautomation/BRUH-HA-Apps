@@ -364,12 +364,20 @@
       }
     },
     "vesper_engine": {
-      "name": "Vesper on or off",
-      "description": "Pause or resume Vesper in the game. The add-on's 'Vesper in the game' option must be on for anything to happen.",
+      "name": "Vesper's settings",
+      "description": "Switch Vesper in the game on or off (it is off until switched on), name the bedtime switch, and set how many things it may do a day. Each field is optional.",
       "fields": {
         "on": {
           "name": "On",
-          "description": "On."
+          "description": "Let Vesper appear, greet the children and ask choice-pad questions."
+        },
+        "bedtime_entity": {
+          "name": "Bedtime switch",
+          "description": "An entity that means bedtime (input_boolean.kids_bedtime, bedtime while on), or an entity and the state to match (binary_sensor.boys_door=off). Empty for none."
+        },
+        "daily_actions": {
+          "name": "Actions a day",
+          "description": "The most things Vesper may do in the world in one day."
         }
       }
     },

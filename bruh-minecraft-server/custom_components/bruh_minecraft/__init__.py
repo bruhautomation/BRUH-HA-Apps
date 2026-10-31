@@ -317,7 +317,8 @@ def _register_services(hass: HomeAssistant) -> None:
         return _strip(await _ask("vesper_undo", {"id": call.data["id"]}, timeout=60.0))
 
     async def handle_vesper_engine(call: ServiceCall) -> dict[str, Any]:
-        return _strip(await _ask("vesper_engine", {"on": call.data["on"]}))
+        return _strip(await _ask("vesper_engine", {
+            k: call.data[k] for k in ("on", "bedtime_entity", "daily_actions") if k in call.data}))
 
     async def handle_vesper_family(call: ServiceCall) -> dict[str, Any]:
         return _strip(await _ask("vesper_family", {"people": call.data["people"]}))
@@ -412,7 +413,11 @@ def _register_services(hass: HomeAssistant) -> None:
         vol.Optional("by"): cv.string,
     })
     vesper_undo_schema = vol.Schema({vol.Required("id"): cv.string})
-    vesper_engine_schema = vol.Schema({vol.Required("on"): bool})
+    vesper_engine_schema = vol.Schema({
+        vol.Optional("on"): bool,
+        vol.Optional("bedtime_entity"): cv.string,
+        vol.Optional("daily_actions"): vol.All(vol.Coerce(int), vol.Range(0, 1000)),
+    })
     vesper_family_schema = vol.Schema({vol.Required("people"): [dict]})
     vesper_zone_schema = vol.Schema({
         vol.Required("name"): cv.string,

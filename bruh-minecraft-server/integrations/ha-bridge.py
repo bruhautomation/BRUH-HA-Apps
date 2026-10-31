@@ -218,8 +218,8 @@ async def vesper(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
         return await asyncio.to_thread(_panel, "POST", f"/api/vesper/actions/{action_id}/undo",
                                        {}, 60)
     if kind == "vesper_engine":
-        return await asyncio.to_thread(_panel, "POST", "/api/vesper/engine",
-                                       {"on": bool(payload.get("on"))}, 15)
+        body = {k: payload[k] for k in ("on", "bedtime_entity", "daily_actions") if k in payload}
+        return await asyncio.to_thread(_panel, "POST", "/api/vesper/engine", body, 15)
     if kind == "vesper_family":
         return await asyncio.to_thread(_panel, "PUT", "/api/vesper/family",
                                        {"people": payload.get("people")}, 15)

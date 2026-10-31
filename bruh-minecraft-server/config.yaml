@@ -216,20 +216,6 @@ options:
   announce_ha_events: true
 
   # ──────────────────────────────────────────────────────────────────────
-  # Vesper in the game (panel/vesper.py)
-  # ──────────────────────────────────────────────────────────────────────
-  # vesper_engine: let Vesper appear, greet the children and ask choice-pad
-  # questions in the world. Off by default: nothing Vesper does happens
-  # until the owner switches it on. It never acts while nobody is online.
-  vesper_engine: false
-  # vesper_bedtime_entity: a Home Assistant entity that means bedtime —
-  # `input_boolean.kids_bedtime` (bedtime while on) or a state to match,
-  # `binary_sensor.boys_door=off`. Vesper says goodnight and stops.
-  vesper_bedtime_entity: ""
-  # vesper_daily_actions: how many things Vesper may do in the world a day.
-  vesper_daily_actions: 120
-
-  # ──────────────────────────────────────────────────────────────────────
   # Bedrock cross-play (Geyser + Floodgate)
   # ──────────────────────────────────────────────────────────────────────
   # enable_bedrock_support: auto-install Geyser (protocol translation) and
@@ -371,9 +357,6 @@ schema:
   auto_restart_schedule: "str?"
   enable_ha_integration: bool
   announce_ha_events: bool
-  vesper_engine: bool
-  vesper_bedtime_entity: "str?"
-  vesper_daily_actions: "int(0,1000)"
   enable_bedrock_support: bool
   geyser_auth_type: "list(auto|floodgate|online|offline)"
   geyser_mtu: "int(576,1492)"

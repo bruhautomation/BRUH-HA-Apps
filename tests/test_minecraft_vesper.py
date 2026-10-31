@@ -183,9 +183,10 @@ class EngineBase(unittest.TestCase):
         self.emitted: list[tuple[str, dict]] = []
         self.snapshots: list[str] = []
         self.engine = vesper.Engine(
-            self.col, enabled=lambda: self.on, bedtime=lambda: self.bed,
+            self.col, enabled=lambda: self.on, bedtime=lambda rule: self.bed,
             emit=lambda kind, data: self.emitted.append((kind, data)),
             snapshot=self._snapshot, limits=lambda: dict(self.limits), clock=self.clock)
+        self.engine.configure(on=True, bedtime_entity="input_boolean.kids_bedtime")
         self.engine.roster.save([
             {"person": "Kaz", "role": "child", "players": [KAZ]},
             {"person": "Lev", "role": "child", "players": [LEV]},
@@ -232,7 +233,7 @@ class TestNothingRunsOffline(EngineBase):
         self.assertEqual(self.engine.state, "idle")
 
     def test_switched_off_sends_nothing_with_a_child_on(self):
-        self.on = False
+        self.engine.configure(on=False)
         self.join(KAZ)
         for _ in range(10):
             self.beat()
@@ -249,10 +250,32 @@ class TestNothingRunsOffline(EngineBase):
             self.beat(30)
         self.assertEqual(len(self.world.engine_commands()), sent)
 
-    def test_asking_while_the_engine_option_is_off_is_refused(self):
-        self.on = False
+    def test_off_until_switched_on_and_asking_while_off_is_refused(self):
+        fresh = vesper.Engine(mcworld.WorldCollector(
+            rcon_factory=self.world.factory, server_dir=self.root / "other",
+            out_path=self.root / "other.json", clock=self.clock), clock=self.clock)
+        self.assertFalse(fresh.enabled())
+        self.assertEqual(fresh.settings()["daily_actions"], vesper.DAILY_ACTIONS)
+        self.engine.configure(on=False)
         with self.assertRaises(vesper.VesperError):
             self.engine.ask("Kaz", "Castle?")
+
+    def test_switching_off_mid_greeting_takes_vesper_away(self):
+        self.join(KAZ)
+        self.assertEqual(len(self.world.entities), 1)
+        self.engine.configure(on=False)
+        self.assertEqual(self.world.entities, [])
+
+    def test_settings_are_checked(self):
+        with self.assertRaises(vesper.VesperError):
+            self.engine.configure(bedtime_entity="the kids' door")
+        with self.assertRaises(vesper.VesperError):
+            self.engine.configure(daily_actions="lots")
+        self.engine.configure(bedtime_entity="binary_sensor.boys_door=off", daily_actions=5)
+        self.assertEqual(self.engine.settings()["bedtime_entity"], "binary_sensor.boys_door=off")
+        self.assertEqual(self.engine.settings()["daily_actions"], 5)
+        own = vesper.Engine(self.col, clock=self.clock)       # the budget read from the settings
+        self.assertEqual(own.budget.view()["actions_limit"], 5)
 
 
 # ---------------------------------------------------------------------------
@@ -736,7 +759,6 @@ def _load_panel(root: Path):
     os.environ["MC_CONSOLE_LOG"] = str(root / "state" / "console.log")
     os.environ["MC_WWW_DIR"] = str(root / "www")
     os.environ["MC_WORLDS_DIR"] = str(root / "worlds")
-    os.environ["MC_OPTIONS_FILE"] = str(root / "options.json")
     spec = importlib.util.spec_from_file_location("panel_server_vesper", PANEL / "server.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -753,13 +775,18 @@ class TestThePanelRoutes(AioHTTPTestCase):
         (self.root / "server" / "server.properties").write_text("level-name=world\n")
         (self.root / "worlds" / "TEST2" / "server.properties").write_text(
             "motd=A BRUH Minecraft\nlevel-name=TEST2\n")
-        (self.root / "options.json").write_text(json.dumps({"vesper_engine": True}))
         self.panel = _load_panel(self.root)
-        for key in ("MC_WWW_DIR", "MC_WORLDS_DIR", "MC_OPTIONS_FILE"):
+        for key in ("MC_WWW_DIR", "MC_WORLDS_DIR"):
             self.addCleanup(os.environ.pop, key, None)
         return self.panel.build_app()
 
     async def test_engine_state_family_ask_and_undo(self):
+        r = await self.client.post("/api/vesper/ask", json={"player": "x", "text": "?"})
+        self.assertEqual(r.status, 400)
+        self.assertIn("switched off", (await r.json())["error"])
+        r = await self.client.post("/api/vesper/engine", json={
+            "on": True, "bedtime_entity": "input_boolean.kids_bedtime"})
+        self.assertEqual(r.status, 200, await r.text())
         r = await self.client.put("/api/vesper/family", json={"people": [
             {"person": "Kaz", "role": "child", "players": [KAZ]}]})
         self.assertEqual(r.status, 200, await r.text())
@@ -780,8 +807,10 @@ class TestThePanelRoutes(AioHTTPTestCase):
         r = await self.client.post("/api/vesper/actions/nonsense/undo")
         self.assertEqual(r.status, 404)
         r = await self.client.post("/api/vesper/engine", json={"on": False})
-        self.assertTrue((await r.json())["paused"])
+        self.assertFalse((await r.json())["enabled"])
         r = await self.client.post("/api/vesper/engine", json={"on": "yes"})
+        self.assertEqual(r.status, 400)
+        r = await self.client.post("/api/vesper/engine", json={"bedtime_entity": "door"})
         self.assertEqual(r.status, 400)
         r = await self.client.post("/api/vesper/zones", json={"name": "Spawn town", "x": 0,
                                                                 "z": 0, "radius": 40})
@@ -790,13 +819,6 @@ class TestThePanelRoutes(AioHTTPTestCase):
         self.assertEqual((await r.json())["zones"], [])
         r = await self.client.get("/api/world")
         self.assertIn("vesper", await r.json())
-
-    async def test_asking_with_the_option_off_is_refused(self):
-        (self.root / "options.json").write_text(json.dumps({"vesper_engine": False}))
-        self.panel._OPTIONS_CACHE["at"] = 0.0
-        r = await self.client.post("/api/vesper/ask", json={"player": "x", "text": "?"})
-        self.assertEqual(r.status, 400)
-        self.assertIn("vesper_engine", (await r.json())["error"])
 
     async def test_renaming_to_vesper_world_keeps_a_safe_folder_and_shows_the_name(self):
         calls = []
