@@ -758,6 +758,18 @@ check_backup_tools() {
 }
 
 # ----------------------------------------------------------------------------
+# Warn (log + panel status) when memory_mb leaves the rest of the host too
+# little. Never changes the option.
+# ----------------------------------------------------------------------------
+check_memory_headroom() {
+    local msg
+    msg=$(python3 "${SCRIPTS_DIR}/memory-check.py" 2>/dev/null) || true
+    if [ -n "${msg}" ]; then
+        bashio::log.warning "${msg}"
+    fi
+}
+
+# ----------------------------------------------------------------------------
 # Run the Minecraft server with auto-restart on crash
 # ----------------------------------------------------------------------------
 run_server_loop() {
@@ -942,6 +954,7 @@ main() {
     cleanup_duplicate_plugins
 
     check_backup_tools
+    check_memory_headroom
     start_backup_watcher
     start_stats_collector
     start_ha_bridge

@@ -626,6 +626,7 @@ async def api_status(_: web.Request) -> web.Response:
         "server_meta": meta,
         "setup_required": _setup_required(),
         "crash": _detect_crash(state),
+        "memory_warning": (_read_json(MC_PANEL_STATE / "memory-warning.json", {}) or None),
     })
 
 

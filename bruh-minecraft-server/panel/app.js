@@ -139,6 +139,13 @@
       // Crash banner: surface the last few error lines when the JVM exited
       // unexpectedly. Respect a dismissal until the crash signature changes.
       renderCrashBanner(data.crash);
+      // memory_mb against the host's memory (checked at add-on start): a hint
+      // only - the setting is changed in the add-on's Configuration tab.
+      const memHint = $('#memory-hint');
+      if (memHint) {
+        memHint.textContent = data.memory_warning ? data.memory_warning.message : '';
+        memHint.hidden = !data.memory_warning;
+      }
       $('#m-online').textContent = stats.online ?? 0;
       $('#m-max').textContent = stats.max_players ?? state.max_players ?? 0;
 
