@@ -389,7 +389,7 @@ vesper_build:
     blocks:
       name: Blocks
       required: true
-      description: 'A list of {x, y, z, block}, e.g. [{x: 2, y: 0, z: 0, block: oak_planks}].'
+      description: 'A list of blocks, each with x, y, z and a block id, for example x 2, y 0, z 0, block oak_planks.'
       selector:
         object: {}
     player:
