@@ -188,6 +188,7 @@ import energy
 import engine
 import facts_store
 import garden_facts
+import minecraft_facts
 import episodes
 import esphome
 import eventbus
@@ -7668,6 +7669,13 @@ async def _gate_decide(body: dict) -> dict:
     # fix's contract — and a Discuss session's ask rules are the CLI's,
     # which an allow from here (the hook printing nothing) never reaches.
     # It rides in the cache key, so flipping it is not answered from before.
+    if channel == gate.MINECRAFT_CHANNEL:
+        # A request from the game's chat: decided in code, never by the
+        # model and never cached — in-world acts pass (the owner's policy;
+        # the game's engine holds its own guards), anything else is refused.
+        verdict, why = gate.minecraft_chat_verdict(tool, args)
+        gate.STATE["minecraft"] = gate.STATE.get("minecraft", 0) + 1
+        return gate._out(verdict, why, channel, "minecraft_chat")
     switch = gate.interactive(channel) and eff_skip_permissions()
     key = gate.cache_key(str(body.get("session_id") or ""), tool, args, words,
                          str((contract or {}).get("id") or "")
@@ -12294,6 +12302,18 @@ def _record_garden(snapshot: dict, now: float) -> int | None:
         return None
 
 
+def _record_game(snapshot: dict, now: float) -> int | None:
+    """Keep what Vesper learned in the Minecraft world as facts, one per
+    person and key (`minecraft_facts`), read off the states this pass
+    already fetched. None when the game could not be read."""
+    try:
+        return minecraft_facts.sync(snapshot.get("states") or {}, now)
+    except Exception as exc:  # noqa: BLE001 — accounting must not fail the
+        # pass it is accounting for; same rule as `journal.record`.
+        log.warning("could not file what Vesper learned: %s", exc)
+        return None
+
+
 def _record_routines(snapshot: dict, now: float) -> int:
     """File the person-caused moves this pass saw, for the habit miner.
 
@@ -15898,6 +15918,7 @@ async def run_checks(reason: str = "schedule") -> dict:
         await asyncio.to_thread(_record_routines, snapshot, started)
         await asyncio.to_thread(_record_manual, snapshot, started)
         await asyncio.to_thread(_record_garden, snapshot, started)
+        await asyncio.to_thread(_record_game, snapshot, started)
         result = checks.run_all(snapshot, started)
 
         def apply() -> tuple[list[dict], int, list[dict], dict]:

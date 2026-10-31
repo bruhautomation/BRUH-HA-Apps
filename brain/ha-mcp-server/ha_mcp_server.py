@@ -1693,6 +1693,11 @@ def call_service(domain, service, data=None, return_response=False):
     # was looking at an empty target. It is checked as the script it runs.
     script = _script_service_target(domain, service)
     extra = [script] if script else []
+    # A request typed in Minecraft's chat may act only in the game, and
+    # that is a scope rather than a rule, so YOLO does not lift it.
+    game = _minecraft_chat_refusal(domain, service)
+    if game:
+        return game
     # YOLO mode (the panel's opt-in switch, a file brAIn writes) stands
     # every rule down: the call goes to Home Assistant as asked.
     if not yolo_mode():
@@ -2794,7 +2799,7 @@ VOICE_ADMIN_SERVICES = frozenset({
         # Vesper in the game: renaming the world restarts the server, an undo
         # changes the world, and a question builds pads beside a child.
         "rename_world", "vesper_undo", "vesper_engine", "vesper_ask", "set_family",
-        "set_zone")
+        "set_zone", "vesper_say", "vesper_build")
 } | {("bright", "import_show")} | {
     # Voice may design a part and start a print (the owner's rule since
     # 3.9); stopping one cannot be undone, G-code is anything at all, and a
@@ -3075,17 +3080,50 @@ def minecraft_player(player, action, value=None, amount=None):
             "server_reply": _reply(result)}
 
 
-MC_VESPER_ACTIONS = ("rename", "ask", "undo")
+MC_VESPER_ACTIONS = ("rename", "ask", "undo", "build")
+MINECRAFT_CHANNEL = "minecraft"
+# What a run on the `minecraft` channel (a grown-up's request typed in the
+# game's chat, the `minecraft` task scope) may call: the game world's
+# in-world acts through Vesper's engine, and reading the game. Nothing else
+# — no house service, no rcon_command, op, kick, give or teleport — whatever
+# YOLO says: a name in a game's chat is not the person at brAIn's keyboard,
+# and anything outside the game needs brAIn's own approval.
+MINECRAFT_CHAT_SERVICES = frozenset(("bruh_minecraft", s) for s in (
+    "get_status", "get_world", "get_vesper", "list_builds",
+    "vesper_say", "vesper_ask", "vesper_build", "vesper_undo", "set_time", "set_weather"))
+MINECRAFT_CHAT_REFUSAL = (
+    "{what} is outside the Minecraft world, and this request came from the game's "
+    "chat, which may act only in the game. Tell them: \"I'll need you to approve "
+    "that in brAIn.\" Do not retry or look for another route.")
+MINECRAFT_CHAT_ACTIONS = ("time", "weather", "say", "ask", "undo", "build")
 
 
-def minecraft_world(action, value=None, player=None, options=None):
+def _minecraft_chat_refusal(domain, service):
+    """The refusal for a service a game-chat run may not call, or None."""
+    if _channel() != MINECRAFT_CHANNEL:
+        return None
+    if (str(domain).lower(), str(service).lower()) in MINECRAFT_CHAT_SERVICES:
+        return None
+    return {"error": MINECRAFT_CHAT_REFUSAL.format(what=f"{domain}.{service}")}
+
+
+def minecraft_world(action, value=None, player=None, options=None, blocks=None):
     """The world everyone is in: time of day, weather, a chat message; and
-    Vesper's part of it: rename the world, ask a child a choice-pad
+    Vesper's part of it: say something as Vesper to a person or the family,
+    build something small, rename the world, ask a child a choice-pad
     question, undo one of Vesper's actions."""
     action = str(action or "").strip().lower()
     value = "" if value is None else str(value).strip()
+    in_game = _channel() == MINECRAFT_CHANNEL
+    if in_game and action not in MINECRAFT_CHAT_ACTIONS:
+        return {"error": MINECRAFT_CHAT_REFUSAL.format(what=f"Minecraft '{action}'")}
+    if action == "say" and (player or in_game):
+        # From Vesper, to a person or the family, through the engine's rules
+        # (never one child's news to another): a request from the game's
+        # chat never speaks as the server to everyone, guests included.
+        return _mc_vesper_say(value, player or "family")
     if action in MC_VESPER_ACTIONS:
-        return _mc_vesper_action(action, value, player, options)
+        return _mc_vesper_action(action, value, player, options, blocks)
     if action == "time":
         spoken = {"morning": "day", "sunrise": "day", "evening": "night",
                   "sunset": "night", "dusk": "night", "dawn": "day"}
@@ -3102,20 +3140,68 @@ def minecraft_world(action, value=None, player=None, options=None):
         result = _addon_call("bruh_minecraft", "say", {"message": value[:256]})
     else:
         return {"error": "Use time (day/night/noon/midnight or ticks), weather "
-                         "(clear/rain/thunder), say, rename, ask or undo."}
+                         "(clear/rain/thunder), say, rename, ask, build or undo."}
     if result.get("error"):
         return result
     return {"done": True, "action": action, "value": value,
             "server_reply": _reply(result)}
 
 
-def _mc_vesper_action(action, value, player, options):
-    """rename, ask and undo: each one service, each refused to voice."""
-    refusal = _voice_admin_refusal({"rename": "Renaming the Minecraft world",
-                                    "ask": "Asking a child a question in Minecraft",
-                                    "undo": "Undoing Vesper's action in Minecraft"}[action])
+def _mc_vesper_say(value, to):
+    """Vesper says it in the game (bruh_minecraft.vesper_say), refused to voice."""
+    refusal = _voice_admin_refusal("Saying something as Vesper in Minecraft")
     if refusal:
         return refusal
+    if not value:
+        return {"error": "Nothing to say."}
+    result = _addon_call("bruh_minecraft", "vesper_say",
+                         {"to": str(to)[:40], "message": value[:640], "by": "brAIn"})
+    if result.get("error"):
+        return result
+    return {"done": True, "action": "say", "to": str(to), "sent": result.get("sent") or [],
+            "kept": result.get("kept") or []}
+
+
+def _mc_blocks(blocks):
+    """blocks as a list of {x, y, z, block}, from a list or its JSON."""
+    if isinstance(blocks, str):
+        try:
+            blocks = json.loads(blocks)
+        except ValueError:
+            return None
+    if not isinstance(blocks, list) or not blocks:
+        return None
+    out = []
+    for b in blocks[:65]:
+        if not isinstance(b, dict):
+            return None
+        out.append({k: b.get(k) for k in ("x", "y", "z", "block")})
+    return out
+
+
+def _mc_vesper_action(action, value, player, options, blocks=None):
+    """rename, ask, undo and build: each one service, each refused to voice."""
+    refusal = _voice_admin_refusal({"rename": "Renaming the Minecraft world",
+                                    "ask": "Asking a child a question in Minecraft",
+                                    "undo": "Undoing Vesper's action in Minecraft",
+                                    "build": "Building in Minecraft"}[action])
+    if refusal:
+        return refusal
+    if action == "build":
+        cells = _mc_blocks(blocks)
+        if cells is None:
+            return {"error": ("Give blocks: a list of {x, y, z, block} (at most 64), "
+                              "offsets from the player's feet when player is given.")}
+        data = {"blocks": cells, "title": value[:60], "by": "brAIn"}
+        if player:
+            data["player"] = str(player)[:40]
+        result = _addon_call("bruh_minecraft", "vesper_build", data)
+        if result.get("error"):
+            return result
+        act = result.get("action") or {}
+        return _tag_text({"done": True, "action": "build", "id": act.get("id"),
+                          "text": act.get("text"), "blocks": len(act.get("cells") or []),
+                          "note": result.get("note", "")}, ("text",))
     if action == "rename":
         if not value:
             return {"error": "Give the new name, e.g. 'Vesper World'."}
@@ -6698,7 +6784,12 @@ TOOLS = [
             "The Minecraft world everyone shares: set the time (day, night, "
             "noon, midnight or ticks), the weather (clear, rain, thunder), or "
             "say a message in chat to every player. Vesper's part (not for a "
-            "voice-level agent): rename (value: the name as said, e.g. 'Vesper "
+            "voice-level agent): say with player (a person, a Minecraft name or "
+            "'family'): Vesper says value to them in chat — never one child's news "
+            "to another; build (value: what it is; blocks: up to 64 of {x, y, z, "
+            "block}, offsets from player's feet when player is given — only into "
+            "empty space on natural ground, never in a protected place or on or "
+            "next to a build; undoable); rename (value: the name as said, e.g. 'Vesper "
             "World'; the folder becomes Vesper_World, the server list shows the "
             "name, and the server restarts); ask (player: the child; value: the "
             "question for the parent's record; options: two of label or {label, "
@@ -6709,11 +6800,15 @@ TOOLS = [
         ),
         "inputSchema": {"type": "object", "properties": {
             "action": {"type": "string",
-                       "enum": ["time", "weather", "say", "rename", "ask", "undo"]},
+                       "enum": ["time", "weather", "say", "rename", "ask", "undo", "build"]},
             "value": {"type": "string"},
-            "player": {"type": "string", "description": "ask: the child to ask."},
+            "player": {"type": "string", "description": (
+                "ask: the child to ask; say: who Vesper says it to ('family' for "
+                "everyone on the list); build: whose feet the offsets are from.")},
             "options": {"type": "array", "description": "ask: the two choices.",
-                        "items": {"anyOf": [{"type": "string"}, {"type": "object"}]}}},
+                        "items": {"anyOf": [{"type": "string"}, {"type": "object"}]}},
+            "blocks": {"type": "array", "description": "build: [{x, y, z, block}].",
+                       "items": {"type": "object"}}},
             "required": ["action", "value"]},
     },
     {

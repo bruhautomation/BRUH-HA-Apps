@@ -321,6 +321,12 @@ claim_task_session() {
 #              of the two lists, which is what makes the union complete —
 #              denying the non-MCP half of the analyst's deny list: Bash,
 #              Write, Edit, NotebookEdit, WebFetch, WebSearch.
+#   minecraft  a grown-up's request typed in the game's chat (BRUH
+#              Minecraft's Vesper): `engine.MINECRAFT_CHAT_TOOLS` — the game
+#              world's tool and a few reads — and every other tool the two
+#              lists name denied by name, call_service and control_* among
+#              them. The task's subshell is on the `minecraft` channel, which
+#              the MCP server and the action gate also hold to the game.
 #
 # A scoping that cannot be read REFUSES the run rather than widening it: a
 # task asked for read-only that runs with Bash is worse than a task that
@@ -335,7 +341,7 @@ task_tool_flags() {
 
     case "$mode" in
         ''|full) return 0 ;;
-        house|read_only) ;;
+        house|read_only|minecraft) ;;
         *) return 1 ;;
     esac
 
@@ -373,10 +379,18 @@ for tool in allow + deny:
 house_deny = [t for t in deny if not t.startswith("mcp__")]
 if not house_allow or not house_deny:
     raise SystemExit(1)
+# The game's scope: its own short list, and everything else named denied.
+game_allow = list(getattr(engine, "MINECRAFT_CHAT_TOOLS", []) or [])
+if not game_allow or any(not t.startswith("mcp__") for t in game_allow):
+    raise SystemExit(1)
+game_deny = [t for t in deny if t not in game_allow]
+game_deny += [t for t in allow if t not in game_allow and t not in game_deny]
 print(",".join(allow))
 print(",".join(deny))
 print(",".join(house_allow))
 print(",".join(house_deny))
+print(",".join(game_allow))
+print(",".join(game_deny))
 PYTOOLS
     ); then
         return 1
@@ -385,6 +399,9 @@ PYTOOLS
     if [ "$mode" = "read_only" ]; then
         allow=$(printf '%s' "$lists" | sed -n '1p')
         deny=$(printf '%s' "$lists" | sed -n '2p')
+    elif [ "$mode" = "minecraft" ]; then
+        allow=$(printf '%s' "$lists" | sed -n '5p')
+        deny=$(printf '%s' "$lists" | sed -n '6p')
     else
         allow=$(printf '%s' "$lists" | sed -n '3p')
         deny=$(printf '%s' "$lists" | sed -n '4p')
@@ -718,9 +735,18 @@ process_task() {
         unset BRAIN_PERSON_WORDS
     fi
 
+    # A request typed in Minecraft's chat runs on its own channel, which the
+    # MCP server and the action gate hold to the game world — and it is
+    # never widened by "Let brAIn act without asking": a name in a game's
+    # chat is not the person at the keyboard of brAIn.
+    if [ "$task_tools" = "minecraft" ]; then
+        export BRAIN_CHANNEL=minecraft
+        unset BRAIN_PERSON_WORDS
+    fi
+
     # Somebody asked for this and the switch is on: the chat's reach.
     local task_acts=""
-    if person_task_acts "$task_conversation" "$task_words"; then
+    if [ "$task_tools" != "minecraft" ] && person_task_acts "$task_conversation" "$task_words"; then
         task_acts=true
         task_tools=""
         export BRAIN_CHANNEL=chat
@@ -779,7 +805,7 @@ process_task() {
     fi
     if ! tool_flags_out=$(task_tool_flags "$task_tools" "$task_cameras"); then
         bashio::log.error "Task [$task_id] asked for tools='${task_tools}' and it could not be honoured"
-        write_task_result "$task_id" "brAIn refused this task: tools='${task_tools}' is not one of full, house or read_only, or the analyst's tool lists could not be read from the panel. A task that cannot be scoped is not run with the full grant." "" refused
+        write_task_result "$task_id" "brAIn refused this task: tools='${task_tools}' is not one of full, house, read_only or minecraft, or the analyst's tool lists could not be read from the panel. A task that cannot be scoped is not run with the full grant." "" refused
         journal_task error 0 "" "${task_model:-}" "tools scope could not be honoured" "$task_scheduled"
         return
     fi

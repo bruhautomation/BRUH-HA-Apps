@@ -189,7 +189,7 @@
         },
         "tools": {
           "name": "Tools",
-          "description": "What this task is allowed to touch. full (default) keeps today's behaviour: the shell, file edits, web access and every Home Assistant tool. house drops the shell, file reads and edits, and the web, and leaves every Home Assistant tool. read_only is the same list the scheduled analyst runs with — it can look at anything in Home Assistant and change nothing, and it cannot read files. Anything wider than read_only needs a Home Assistant administrator (an automation runs as the system and may ask for any)."
+          "description": "What this task is allowed to touch. full (default) keeps today's behaviour: the shell, file edits, web access and every Home Assistant tool. house drops the shell, file reads and edits, and the web, and leaves every Home Assistant tool. read_only is the same list the scheduled analyst runs with — it can look at anything in Home Assistant and change nothing, and it cannot read files. minecraft is a request typed in BRUH Minecraft's chat: the game world's tool and a few reads, never a house service. Anything wider than read_only needs a Home Assistant administrator (an automation runs as the system and may ask for any)."
         }
       }
     },
@@ -1249,7 +1249,7 @@
         },
         "tools": {
           "name": "Tools",
-          "description": "`read_only` (default), `house` (every Home Assistant tool, including control) or `full` (the shell and file editing too)."
+          "description": "`read_only` (default), `house` (every Home Assistant tool, including control), `full` (the shell and file editing too) or `minecraft` (a request typed in BRUH Minecraft's chat: the game world's tool and a few reads, never a house service)."
         },
         "timeout": {
           "name": "Timeout",

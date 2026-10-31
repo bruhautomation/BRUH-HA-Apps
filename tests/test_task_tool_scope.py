@@ -231,7 +231,7 @@ class TestTheServiceAcceptsIt(unittest.TestCase):
         self.assertIn('vol.Optional("tools", default=DEFAULT_TASK_TOOLS)',
                       source)
         self.assertIn('DEFAULT_TASK_TOOLS = "full"', source)
-        self.assertIn('TASK_TOOLS = ("full", "house", "read_only")', source)
+        self.assertIn('TASK_TOOLS = ("full", "house", "read_only", "minecraft")', source)
 
     def test_the_handler_passes_it_to_the_bridge(self):
         source = (INTEGRATION_DIR / "__init__.py").read_text(encoding="utf-8")
@@ -245,7 +245,7 @@ class TestTheServiceAcceptsIt(unittest.TestCase):
         field = catalog["run_task"]["fields"]["tools"]
         self.assertEqual(field["default"], "full")
         self.assertEqual(field["selector"]["select"]["options"],
-                         ["full", "house", "read_only"])
+                         ["full", "house", "read_only", "minecraft"])
 
     def test_the_field_is_in_strings_and_the_translation(self):
         for name in ("strings.json", "translations/en.json"):

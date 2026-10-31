@@ -142,12 +142,16 @@ SEND_PROMPT_SCHEMA = vol.Schema(
 # may call it are decided here alone. The two narrower values are opt-in,
 # and the listener derives both from the panel's own analyst lists rather
 # than from a copy kept here.
-TASK_TOOLS = ("full", "house", "read_only")
+TASK_TOOLS = ("full", "house", "read_only", "minecraft")
 DEFAULT_TASK_TOOLS = "full"
 # What a non-admin caller may ask for. `house` acts on the house through
 # the Supervisor's token, which is an admin's reach whatever the caller's
 # own account is, and `full` is a shell in /config; `read_only` is the
 # analyst's own list and changes nothing. See `_require_admin_for`.
+# `minecraft` is a grown-up's request typed in BRUH Minecraft's chat: the
+# game world's tool and a few reads, never a house service (the listener,
+# the MCP server and the action gate each hold it to the game). It acts, so
+# it is an admin's to ask for — BRUH Minecraft asks with the Supervisor's.
 NON_ADMIN_TOOLS = ("read_only",)
 
 RUN_TASK_SCHEMA = vol.Schema(
@@ -1177,6 +1181,9 @@ def _register_services(hass: HomeAssistant) -> None:
                 timeout=call.data.get("timeout"),
                 tools=tools,
                 schema=schema if isinstance(schema, dict) else None,
+                # The game's Vesper is the house's assistant: a request from
+                # its chat is answered knowing what brAIn knows here.
+                memory=tools == "minecraft",
             )
         except (BrainRunError, TimeoutError) as exc:
             raise _failed(exc, "The question") from exc

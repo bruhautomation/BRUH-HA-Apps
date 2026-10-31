@@ -973,6 +973,23 @@ ANALYST_DENIED = [
     # those keep the built-in set.
     *PLATFORM_DENIED,
 ]
+# The `minecraft` task scope: a grown-up's request typed in the game's chat
+# (BRUH Minecraft's Vesper, through `brain.ask` with `tools: minecraft`).
+# The game world's tool — `minecraft_world`, whose in-world acts the BRUH
+# Minecraft engine guards, logs and can undo — and a handful of reads for
+# house context. Everything else the server registers is DENIED for it by
+# the automation listener (both lists above, minus these), so a chat line
+# cannot reach `call_service` or any `control_*` tool; the MCP server
+# refuses a house service on that channel too, and the action gate allows
+# only `minecraft_world`'s in-world actions there.
+MINECRAFT_CHAT_TOOLS = [
+    f"{MCP}minecraft_status",
+    f"{MCP}minecraft_world",
+    f"{MCP}get_entity_state",
+    f"{MCP}get_all_states",
+    f"{MCP}get_areas",
+    f"{MCP}recall",
+]
 
 
 def run_analyst(
