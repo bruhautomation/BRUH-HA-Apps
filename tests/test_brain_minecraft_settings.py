@@ -72,6 +72,37 @@ class TestTheSettings(SettingsCase):
         self.assertFalse((self.shared / "minecraft" / "settings.json").exists())
 
 
+class TestTheDesksThreeSettings(SettingsCase):
+    """docs/design/minecraft-companion.md: every line (on), how many jobs at
+    once (1–5, 5), and the spyglass on join (on)."""
+
+    def test_a_fresh_house_has_the_defaults(self):
+        s = mcp.load(str(self.shared))
+        self.assertEqual((s["every_line"], s["workers"], s["spyglass"]), (True, 5, True))
+
+    def test_save_keeps_them_and_the_listener_reads_them(self):
+        out = mcp.save({"every_line": False, "workers": 2, "spyglass": False},
+                       str(self.shared))
+        self.assertEqual((out["every_line"], out["workers"], out["spyglass"]), (False, 2, False))
+        s = rules.effective_settings(str(self.shared))
+        self.assertEqual((s["every_line"], s["workers"], s["spyglass"]), (False, 2, False))
+
+    def test_what_cannot_be_kept_is_said(self):
+        for bad in ({"every_line": "yes"}, {"spyglass": 1}, {"workers": 0},
+                    {"workers": 6}, {"workers": "lots"}, {"workers": True}):
+            with self.subTest(bad=bad), self.assertRaises(rules.RulesError):
+                mcp.save(bad, str(self.shared))
+
+    def test_the_handover_keeps_them_too(self):
+        (self.shared / "minecraft").mkdir()
+        (self.shared / "minecraft" / "handover.json").write_text(json.dumps(
+            {"family": FAMILY, "settings": {"enabled": True}}))
+        (self.shared / "minecraft" / "settings.json").write_text(json.dumps(
+            {"workers": 3, "every_line": False}))
+        s = rules.effective_settings(str(self.shared))
+        self.assertEqual((s["workers"], s["every_line"]), (3, False))
+
+
 class TestDefaultIsAModelPlanAnswer(SettingsCase):
     def test_a_reply_is_quick_and_a_build_is_the_chats_model(self):
         self.assertEqual(model_plan.JOBS["minecraft_chat"][:2], ("haiku", "low"))
@@ -133,6 +164,20 @@ class TestThePanelPage(unittest.TestCase):
         for label in ("For answering in chat", "For building", "Effort for answering",
                       "Replies and greetings a day", "0 means no limit"):
             self.assertIn(label, js)
+
+    def test_the_desks_settings_are_on_the_pane_and_saved(self):
+        js = (REPO / "brain" / "panel" / "app.js").read_text()
+        render = js[js.index("function renderMinecraft()"):]
+        render = render[:render.index("\n}\n")]
+        for wanted in ('id="mcEveryLine"', 'id="mcWorkers"', 'id="mcSpyglass"',
+                       "Answer every line from the family", "Jobs at once",
+                       "Give everyone a spyglass", '<label for="mcWorkers">'):
+            self.assertIn(wanted, render)
+        save = js[js.index('t.id === "mcSave"'):]
+        save = save[:save.index("t.disabled = true;")]
+        for key in ("every_line: $(\"#mcEveryLine\").checked", "spyglass: $(\"#mcSpyglass\").checked",
+                    "workers:"):
+            self.assertIn(key, save)
 
     def test_the_routes(self):
         src = (REPO / "brain" / "panel" / "server.py").read_text()

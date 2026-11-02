@@ -1257,6 +1257,32 @@
         }
       }
     },
+    "minecraft_job": {
+      "name": "Minecraft job",
+      "description": "What a job of brAIn's Minecraft companion reports and reads while it works: its progress (shown on the player's action bar), the new words waiting in its inbox, the edits it made, or the job list. brAIn's own MCP server calls it; the companion keeps the jobs.",
+      "fields": {
+        "action": {
+          "name": "Action",
+          "description": "list, progress, inbox, edit, or undo (a finished job's changes)."
+        },
+        "job": {
+          "name": "Job",
+          "description": "The job's id, as the job list gives it."
+        },
+        "text": {
+          "name": "Progress",
+          "description": "A few words on how far it has got."
+        },
+        "percent": {
+          "name": "Percent",
+          "description": "How far it has got, 0 to 100."
+        },
+        "edit": {
+          "name": "Edit",
+          "description": "The id of an edit the job made, so cancelling it puts that back too."
+        }
+      }
+    },
     "intent": {
       "name": "Do this once",
       "description": "Say one thing you want to happen next time. brAIn works out the automation and offers it on the Proposals tab; it runs once and disarms itself.",

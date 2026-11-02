@@ -937,7 +937,7 @@ ANALYST_DENIED = [
     # into a show — none of it an unattended card's business.
     f"{MCP}minecraft_teleport", f"{MCP}minecraft_player",
     f"{MCP}minecraft_world", f"{MCP}minecraft_command",
-    f"{MCP}minecraft_server", f"{MCP}minecraft_addons",
+    f"{MCP}minecraft_server", f"{MCP}minecraft_addons", f"{MCP}minecraft_job",
     f"{MCP}print_label", f"{MCP}bright_show",
     # 3D printers: starting, stopping, heating, G-code and slicing.
     f"{MCP}bambu_print", f"{MCP}bambu_control", f"{MCP}bambu_slice",
@@ -973,20 +973,22 @@ ANALYST_DENIED = [
     # those keep the built-in set.
     *PLATFORM_DENIED,
 ]
-# The `minecraft` task scope: a grown-up's request typed in the game's chat
-# (brAIn's Minecraft faculty, custom_components/brain/minecraft.py, or
-# `brain.ask` with `tools: minecraft`). The game world's tool —
-# `minecraft_world`, whose in-world acts BRUH Minecraft guards, logs and can
-# undo, and brAIn's MCP server holds to its privacy and bedtime rules — and
-# a handful of reads for
-# house context. Everything else the server registers is DENIED for it by
-# the automation listener (both lists above, minus these), so a chat line
+# The `minecraft` task scope: every verified family member's line typed in
+# the game's chat, child or grown-up, and the jobs they open (brAIn's
+# Minecraft faculty, custom_components/brain/minecraft.py, or `brain.ask`
+# with `tools: minecraft`). The game world's tool — `minecraft_world`, whose
+# in-world acts and undoable edits BRUH Minecraft guards, logs and can undo,
+# and brAIn's MCP server holds to its privacy and bedtime rules — the job
+# tool a worker reports through (`minecraft_job`), and a handful of reads
+# for house context. Everything else the server registers is DENIED for it
+# by the automation listener (both lists above, minus these), so a chat line
 # cannot reach `call_service` or any `control_*` tool; the MCP server
 # refuses a house service on that channel too, and the action gate allows
-# only `minecraft_world`'s in-world actions there.
+# only the game's own actions there.
 MINECRAFT_CHAT_TOOLS = [
     f"{MCP}minecraft_status",
     f"{MCP}minecraft_world",
+    f"{MCP}minecraft_job",
     f"{MCP}get_entity_state",
     f"{MCP}get_all_states",
     f"{MCP}get_areas",

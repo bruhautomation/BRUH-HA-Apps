@@ -251,6 +251,19 @@ def _run_id():
     return value[:64] if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value) else ""
 
 
+def _minecraft_speaker(channel):
+    """Who asked, for a run a grown-up who can ask for anything started in
+    Minecraft's chat: the listener puts the person and the player in this
+    run's environment, as plain names, and only on that channel. None
+    anywhere else, so History can say "asked by Dad in Minecraft"."""
+    if channel != "minecraft_trusted":
+        return None
+    player = re.sub(r"[^A-Za-z0-9_.*]", "", os.environ.get("BRAIN_MINECRAFT_PLAYER", ""))[:17]
+    person = " ".join(re.sub(r"[^A-Za-z0-9 _.'-]", "",
+                             os.environ.get("BRAIN_MINECRAFT_PERSON", "")).split())[:40]
+    return {"person": person, "player": player} if person else None
+
+
 def record_action(domain, service, data, extra=()):
     """Append one service call to the ledger. Never raises.
 
@@ -279,6 +292,9 @@ def record_action(domain, service, data, extra=()):
         channel = _channel()
         if channel:
             row["channel"] = channel
+        by = _minecraft_speaker(channel)
+        if by:
+            row["by"] = by
         run_id = _run_id()
         if run_id:
             row["run_id"] = run_id
@@ -485,7 +501,7 @@ CONTRACT_REFUSED_TOOLS = frozenset({
     "music_assistant_command", "music_assistant_player",
     "music_assistant_play", "music_assistant_remove_players",
     "minecraft_teleport", "minecraft_player", "minecraft_world",
-    "minecraft_command", "minecraft_server", "minecraft_addons",
+    "minecraft_command", "minecraft_server", "minecraft_addons", "minecraft_job",
     "print_label", "bright_show",
     "bambu_print", "bambu_control", "bambu_slice", "bambu_design",
     "garden_log_harvest", "garden_log_spray", "garden_queue_spray",
@@ -2802,7 +2818,8 @@ VOICE_ADMIN_SERVICES = frozenset({
         # minecraft_world rather than reachable by the side door.
         "rename_world", "undo_action", "ask_choice", "set_zone", "companion_say",
         "companion_build", "companion_appear", "set_companion", "companion_handover",
-        "companion_edit", "look_blocks")
+        "companion_edit", "look_blocks", "atlas", "room", "label_place",
+        "companion_progress", "give_spyglass")
 } | {("bright", "import_show")} | {
     # Voice may design a part and start a print (the owner's rule since
     # 3.9); stopping one cannot be undone, G-code is anything at all, and a
@@ -3136,28 +3153,33 @@ def minecraft_player(player, action, value=None, amount=None):
             "server_reply": _reply(result)}
 
 
-MC_COMPANION_ACTIONS = ("rename", "ask", "undo", "build", "look", "edit")
+MC_COMPANION_ACTIONS = ("rename", "ask", "undo", "build", "look", "edit", "atlas", "room",
+                        "label")
 MINECRAFT_CHANNEL = "minecraft"
-# What a run on the `minecraft` channel (a request typed in the game's chat
-# by a grown-up WITHOUT "Can ask for anything", the `minecraft` task scope)
-# may call: the game world's in-world acts through the companion's guarded
-# services, and reading the game. Nothing else — no house service, no
-# rcon_command, op, kick, give, teleport or trusted edit — whatever YOLO
-# says: a name in a game's chat is not the person at brAIn's keyboard. There
-# is nothing to approve, so the sentence says who can change that and where.
+# What a run on the `minecraft` channel (a line a verified family member,
+# child or grown-up, typed in the game's chat WITHOUT "Can ask for
+# anything", or a job one opened: the `minecraft` task scope) may call: the
+# game world's in-world acts through the companion's guarded services — an
+# edit included, which BRUH Minecraft snapshots for Undo — reading the game
+# and its atlas, and the faculty's job service. Nothing else — no house
+# service, no rcon_command, op, kick, give or teleport — whatever YOLO says:
+# a name in a game's chat is not the person at brAIn's keyboard. There is
+# nothing to approve, so the sentence says who can change that and where.
 # A grown-up with the toggle runs on `minecraft_trusted` instead, which is
 # not this channel and has none of these limits.
-MINECRAFT_CHAT_SERVICES = frozenset(("bruh_minecraft", s) for s in (
+MINECRAFT_CHAT_SERVICES = frozenset({("bruh_minecraft", s) for s in (
     "get_status", "get_world", "get_companion", "list_builds", "look_blocks",
     "companion_say", "ask_choice", "companion_build", "undo_action", "set_time",
-    "set_weather"))
+    "set_weather", "companion_edit", "atlas", "room", "label_place")}
+    | {("brain", "minecraft_job")})
 MINECRAFT_OUTSIDE_LINE = ("I can't do that from the game. A parent can turn on 'Can ask for "
                           "anything' for you in brAIn › ⚙ › Minecraft.")
 MINECRAFT_CHAT_REFUSAL = (
     "{what} is not something a request from the game's chat may do, and nothing "
     "waits anywhere for a yes. Tell them exactly: \"" + MINECRAFT_OUTSIDE_LINE.replace("{", "{{")
     + "\" Do not retry or look for another route.")
-MINECRAFT_CHAT_ACTIONS = ("time", "weather", "say", "ask", "undo", "build", "look")
+MINECRAFT_CHAT_ACTIONS = ("time", "weather", "say", "ask", "undo", "build", "look", "edit",
+                          "atlas", "room", "label")
 
 
 def _minecraft_chat_refusal(domain, service):
@@ -3169,11 +3191,13 @@ def _minecraft_chat_refusal(domain, service):
     return {"error": MINECRAFT_CHAT_REFUSAL.format(what=f"{domain}.{service}")}
 
 
-def minecraft_world(action, value=None, player=None, options=None, blocks=None, fills=None):
+def minecraft_world(action, value=None, player=None, options=None, blocks=None, fills=None,
+                    shapes=None, job=None):
     """The world everyone is in: time of day, weather, a chat message; and
     the companion's part of it: say something as brAIn's companion to a
-    person or the family, build something small, rename the world, ask a
-    child a choice-pad question, undo one of the companion's actions."""
+    person or the family, build something small, change any blocks (undoably),
+    read the atlas of buildings and rooms, name a place, rename the world, ask
+    a child a choice-pad question, undo one of the companion's actions."""
     action = str(action or "").strip().lower()
     value = "" if value is None else str(value).strip()
     in_game = _channel() == MINECRAFT_CHANNEL
@@ -3185,7 +3209,8 @@ def minecraft_world(action, value=None, player=None, options=None, blocks=None, 
         # chat never speaks as the server to everyone, guests included.
         return _mc_companion_say(value, player or "family")
     if action in MC_COMPANION_ACTIONS:
-        return _mc_companion_action(action, value, player, options, blocks, fills)
+        return _mc_companion_action(action, value, player, options, blocks, fills,
+                                    shapes, job)
     if action == "time":
         spoken = {"morning": "day", "sunrise": "day", "evening": "night",
                   "sunset": "night", "dusk": "night", "dawn": "day"}
@@ -3202,7 +3227,8 @@ def minecraft_world(action, value=None, player=None, options=None, blocks=None, 
         result = _addon_call("bruh_minecraft", "say", {"message": value[:256]})
     else:
         return {"error": "Use time (day/night/noon/midnight or ticks), weather "
-                         "(clear/rain/thunder), say, rename, ask, build, look, edit or undo."}
+                         "(clear/rain/thunder), say, rename, ask, build, look, edit, atlas, "
+                         "room, label or undo."}
     if result.get("error"):
         return result
     return {"done": True, "action": action, "value": value,
@@ -3324,9 +3350,13 @@ def _mc_look(value, player, options):
     return {"done": True, "action": "look", **result}
 
 
-def _mc_edit(value, player, blocks, fills):
-    """A trusted edit (bruh_minecraft.companion_edit): any block, anywhere,
-    snapshotted by the add-on for Undo. Not on the game's guarded channel."""
+def _mc_edit(value, player, blocks, fills, shapes=None, job=None):
+    """An edit (bruh_minecraft.companion_edit): any block, anywhere — cells,
+    boxes and shapes (a tapering trunk, a dome, foliage), which the add-on
+    expands — snapshotted by the add-on for Undo. On every game scope since
+    the family may build anything; never voice. With `job`, the edit is
+    recorded on that job (the add-on's log and the faculty's job), so
+    cancelling the job puts it back."""
     cells = None
     if blocks:
         cells = blocks
@@ -3349,15 +3379,33 @@ def _mc_edit(value, player, blocks, fills):
                 return {"error": "fills is a list of {x1, y1, z1, x2, y2, z2, block}."}
         if not isinstance(boxes, list):
             return {"error": "fills is a list of {x1, y1, z1, x2, y2, z2, block}."}
-    if not cells and not boxes:
+    forms = None
+    if shapes:
+        forms = shapes
+        if isinstance(forms, str):
+            try:
+                forms = json.loads(forms)
+            except ValueError:
+                return {"error": "shapes is a list of {kind, block, …}."}
+        if not isinstance(forms, list) or not all(isinstance(f, dict) for f in forms):
+            return {"error": "shapes is a list of {kind, block, …}."}
+    if not cells and not boxes and not forms:
         return {"error": ("Give blocks (a list of {x, y, z, block}, mode remove to take one "
-                          "out) or fills (boxes {x1, y1, z1, x2, y2, z2, block}).")}
+                          "out), fills (boxes {x1, y1, z1, x2, y2, z2, block}) or shapes "
+                          "(line, ellipsoid, blob, cylinder, box).")}
+    job = str(job or "").strip()
+    if job and not re.fullmatch(r"j[0-9a-f]{6}", job):
+        return {"error": "job is a job's id from minecraft_job list, like j1a2b3c."}
     rules, settings, roster, name, _state = _mc_faculty()
     data = {"title": value[:60], "by": "brAIn", "name": name}
     if cells:
         data["blocks"] = cells
     if boxes:
         data["fills"] = boxes
+    if forms:
+        data["shapes"] = forms
+    if job:
+        data["job"] = job
     if player:
         online, down = _mc_online()
         if down:
@@ -3371,6 +3419,13 @@ def _mc_edit(value, player, blocks, fills):
     if result.get("error"):
         return result
     act = result.get("action") or {}
+    if job and act.get("id"):
+        # The faculty keeps the job's edits too, so a cancel finds this one
+        # even from an add-on that does not log the job on the edit. A
+        # record that could not be written costs the cancel one edit; the
+        # edit itself stands, and its own undo id is in the answer.
+        _addon_call("brain", "minecraft_job", {"action": "edit", "job": job,
+                                               "edit": str(act["id"])})
     return _tag_text({"done": True, "action": "edit", "id": act.get("id"),
                       "text": act.get("text"), "changed": result.get("changed"),
                       "note": result.get("note", ""),
@@ -3378,22 +3433,98 @@ def _mc_edit(value, player, blocks, fills):
                      ("text",))
 
 
-def _mc_companion_action(action, value, player, options, blocks=None, fills=None):
-    """rename, ask, undo, build, look and edit: each one service, each
-    refused to voice, and build and ask held to brAIn's switch, pause and
-    bedtime. look only reads; edit is the trusted one."""
+def _mc_atlas(action, value, player, options):
+    """BRUH Minecraft's atlas of the world (its region files, indexed in the
+    background): `atlas` — the buildings and roads near a player or a point,
+    where they are, and a search of the names; `room` — one room in full;
+    `label` — a name for a room, a building or a point. Names, signs and
+    labels are the family's words, marked as text from outside."""
+    data = {}
+    opts = options if isinstance(options, dict) else {}
+    if isinstance(options, str):
+        try:
+            parsed = json.loads(options)
+        except ValueError:
+            parsed = None
+        opts = parsed if isinstance(parsed, dict) else {}
+    if player:
+        online, down = _mc_online()
+        if down:
+            return {"error": down}
+        who, why = _mc_resolve(player, online)
+        if who is None:
+            return {"error": why}
+    else:
+        who = None
+    point = _mc_point(value)
+    if action == "atlas":
+        if who:
+            data["player"] = who
+        elif point:
+            data.update(zip(("x", "z"), (point[0], point[2])))
+        if value and not point:
+            data["query"] = value[:80]
+        for key in ("radius", "dimension"):
+            if opts.get(key) is not None:
+                data[key] = opts[key]
+        service = "atlas"
+    elif action == "room":
+        if point:
+            data.update(zip(("x", "y", "z"), point))
+        elif value:
+            data["room"] = value[:40]
+        elif who:
+            data["player"] = who
+        else:
+            return {"error": "Give the room's id (value), a point \"x y z\", or player."}
+        service = "room"
+    else:
+        if not value:
+            return {"error": "Give the name (value), and options {room} or {building}, or "
+                             "options {x, y, z}."}
+        for key in ("room", "building"):
+            if opts.get(key):
+                data[key] = str(opts[key])[:40]
+        if not data:
+            spot = [opts.get(k) for k in ("x", "y", "z")]
+            if all(isinstance(v, (int, float)) for v in spot):
+                data.update(zip(("x", "y", "z"), (int(v) for v in spot)))
+            else:
+                return {"error": "Say what to name: options {room}, {building} or {x, y, z}."}
+        _rules, _settings, roster, _name, _state = _mc_faculty()
+        by = roster.who(player, player)["person"] if player else "brAIn"
+        data.update(name=value[:60], by=by)
+        service = "label_place"
+    result = _addon_call("bruh_minecraft", service, data)
+    if result.get("error"):
+        return result
+    return _tag_text({"done": True, "action": action, **result},
+                     ("name", "text", "label", "sign", "building_name", "room_name"))
+
+
+def _mc_companion_action(action, value, player, options, blocks=None, fills=None,
+                         shapes=None, job=None):
+    """rename, ask, undo, build, look, edit, atlas, room and label: each one
+    service, each refused to voice, and build and ask held to brAIn's switch,
+    pause and bedtime. look, atlas and room only read; edit changes any
+    block, undoably."""
     refusal = _voice_admin_refusal({"rename": "Renaming the Minecraft world",
                                     "ask": "Asking a child a question in Minecraft",
                                     "undo": "Undoing the companion's action in Minecraft",
                                     "build": "Building in Minecraft",
                                     "look": "Looking at the Minecraft world's blocks",
-                                    "edit": "Changing blocks in Minecraft"}[action])
+                                    "edit": "Changing blocks in Minecraft",
+                                    "atlas": "Reading the Minecraft world's atlas",
+                                    "room": "Reading a room in the Minecraft world",
+                                    "label": "Naming a place in Minecraft"}[action])
     if refusal:
         return refusal
     if action == "look":
         return _mc_look(value, player, options)
     if action == "edit":
-        return _mc_edit(value, player, blocks, fills)
+        return _mc_edit(value, player, blocks, fills, shapes, job)
+    if action in ("atlas", "room", "label"):
+        return _mc_atlas(action, value, player, options)
     if action in ("build", "ask"):
         rules, settings, roster, name, state = _mc_faculty()
         if not settings["enabled"]:
@@ -3470,6 +3601,39 @@ def _mc_companion_action(action, value, player, options, blocks=None, fills=None
     return _tag_text({"done": True, "action": "undo", "restored": result.get("restored"),
                       "changed_since": result.get("changed"), "note": result.get("note", ""),
                       "undone": result.get("action")}, ("text",))
+
+
+MC_JOB_ACTIONS = ("list", "progress", "inbox")
+
+
+def minecraft_job(action, job=None, text=None, percent=None):
+    """A Minecraft companion's job, from the worker doing it: progress (a few
+    words and a percent on the requester's action bar), inbox (the new words
+    they sent, and whether to stop), or the job list. brAIn's Minecraft
+    faculty keeps the jobs (`brain.minecraft_job`); never voice."""
+    refusal = _voice_admin_refusal("A Minecraft job")
+    if refusal:
+        return refusal
+    action = str(action or "").strip().lower()
+    if action not in MC_JOB_ACTIONS:
+        return {"error": "Use progress (job, text, percent), inbox (job) or list."}
+    data = {"action": action}
+    if action != "list":
+        job = str(job or "").strip()
+        if not re.fullmatch(r"j[0-9a-f]{6}", job):
+            return {"error": "job is the job's id, like j1a2b3c (minecraft_job list)."}
+        data["job"] = job
+    if action == "progress":
+        data["text"] = " ".join(str(text or "").split())[:120]
+        if isinstance(percent, (int, float)) and not isinstance(percent, bool):
+            data["percent"] = max(0, min(100, int(percent)))
+    result = _addon_call("brain", "minecraft_job", data)
+    if result.get("error"):
+        return result
+    if action == "inbox":
+        return {**result, "messages": [untrusted(t) for t in result.get("messages") or []
+                                       if isinstance(t, str) and t]}
+    return _tag_text(result, ("title", "text"))
 
 
 def minecraft_command(command):
@@ -7016,45 +7180,83 @@ TOOLS = [
             "a voice-level agent): say with player (a person, a Minecraft name or "
             "'family'): the companion says value to them in chat, under the "
             "house's name for brAIn — never one child's news "
-            "to another; build (value: what it is; blocks: up to 64 of {x, y, z, "
+            "to another; atlas (player: around whom, or value 'x y z', or value a "
+            "name to search for; options {radius, dimension}: the buildings and "
+            "roads near, `here` — the building and room they are in — and the "
+            "places named like value); room (value: a room id from the atlas, or "
+            "'x y z', or player: the room they are in — its floor, free floor "
+            "cells, doors, windows, light, furniture and palette); label (value: "
+            "the name, e.g. \"Ben's room\"; options {room} or {building} or {x, y, "
+            "z}); build (value: what it is; blocks: up to 64 of {x, y, z, "
             "block}, offsets from player's feet when player is given — only into "
             "empty space on natural ground, never in a protected place or on or "
             "next to a build; undoable); rename (value: the name as said, e.g. 'Our "
             "World'; the folder becomes Our_World, the server list shows the "
             "name, and the server restarts); ask (player: the child; value: the "
-            "question for the parent's record; options: two of label or {label, "
-            "picture: a block id, gift: an item} — the child answers by standing "
-            "on a green or red pad, so pictures matter more than words; leave out "
-            "for yes/no); undo (value: an action id from minecraft_status "
-            "companion=true, or from an edit; empty for the newest); look (player: "
-            "around whom, or value 'x y z'; options: the box size [x, y, z], at most "
-            "32 16 32, default 16 8 16 — every block that is not air, with its "
-            "state, as runs [x, y, z, length] along +x: walls, doors, beds); edit "
-            "(only for a person who can ask for anything, never on a guarded game "
-            "request: value: what it is, for the log; blocks: [{x, y, z, block, "
-            "mode}] where block is any state like red_bed[facing=east,part=head] "
-            "and mode remove takes one out; fills: [{x1, y1, z1, x2, y2, z2, block}] "
-            "(air clears a box); absolute coordinates, or offsets from player's feet "
-            "— over existing blocks, inside builds, anywhere; every block's state "
-            "before is saved, so undo with its id puts it all back)."
+            "question for the parent's record; options: two or three of label or "
+            "{label, picture: a block id, item: an item id for the pad's icon, "
+            "gift: an item} — the child answers by standing on a pad, so pictures "
+            "matter more than words; leave out for yes/no); undo (value: an action "
+            "id from minecraft_status companion=true, or from an edit; empty for the "
+            "newest); look (player: around whom, or value 'x y z'; options: the box "
+            "size [x, y, z], at most 32 16 32, default 16 8 16 — every block that is "
+            "not air, with its state, as runs [x, y, z, length] along +x: walls, "
+            "doors, beds); edit (value: what it is, for the log; blocks: [{x, y, z, "
+            "block, mode}] where block is any state like "
+            "red_bed[facing=east,part=head] and mode remove takes one out; fills: "
+            "[{x1, y1, z1, x2, y2, z2, block}] (air clears a box); shapes: [{kind, "
+            "block, …}] — line {from, to, radius, radius_end} for a trunk or branch, "
+            "ellipsoid {center, radii, hollow}, blob {center, radius, density 0–1, "
+            "seed} for foliage and rock, cylinder {base, height, radius, radius_top, "
+            "hollow}, box {from, to, hollow}; at most 131072 cells an edit; absolute "
+            "coordinates, or offsets from player's feet — over existing blocks, inside "
+            "builds, anywhere; every block's state before is saved, so undo with its "
+            "id puts it all back; job: the job id when a job is doing it, so "
+            "cancelling the job puts it back)."
         ),
         "inputSchema": {"type": "object", "properties": {
             "action": {"type": "string",
                        "enum": ["time", "weather", "say", "rename", "ask", "undo", "build",
-                                "look", "edit"]},
+                                "look", "edit", "atlas", "room", "label"]},
             "value": {"type": "string"},
             "player": {"type": "string", "description": (
                 "ask: the child to ask; say: who the companion says it to ('family' for "
-                "everyone on the list); build: whose feet the offsets are from.")},
-            "options": {"type": "array", "description": "ask: the two choices.",
-                        "items": {"anyOf": [{"type": "string"}, {"type": "object"}]}},
+                "everyone on the list); build: whose feet the offsets are from; atlas, "
+                "room, look: around whom.")},
+            "options": {"anyOf": [{"type": "array", "items": {
+                "anyOf": [{"type": "string"}, {"type": "object"}, {"type": "integer"}]}},
+                {"type": "object"}], "description": (
+                "ask: the two or three choices; look: the box size; atlas: {radius, "
+                "dimension}; label: {room} or {building} or {x, y, z}.")},
             "blocks": {"type": "array", "description": (
                 "build: [{x, y, z, block}]; edit: [{x, y, z, block, mode}]."),
                        "items": {"type": "object"}},
             "fills": {"type": "array", "description": (
                 "edit: boxes [{x1, y1, z1, x2, y2, z2, block}]."),
-                      "items": {"type": "object"}}},
+                      "items": {"type": "object"}},
+            "shapes": {"type": "array", "description": (
+                "edit: [{kind: line|ellipsoid|blob|cylinder|box, block, …}]."),
+                       "items": {"type": "object"}},
+            "job": {"type": "string", "description": (
+                "edit: the job doing it (minecraft_job), so a cancel puts it back.")}},
             "required": ["action", "value"]},
+    },
+    {
+        "name": "minecraft_job",
+        "description": (
+            "A Minecraft companion's job, from the worker doing it (not for a "
+            "voice-level agent): progress (job, text: a few words, percent 0–100 — "
+            "shown on the requester's action bar), inbox (job: the new words they "
+            "sent since you last looked, and stop: true when the job was cancelled "
+            "— stop then and change nothing more), list (every job: id, who, title, "
+            "status, place in the queue, last progress)."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["progress", "inbox", "list"]},
+            "job": {"type": "string"},
+            "text": {"type": "string"},
+            "percent": {"type": "integer"}},
+            "required": ["action"]},
     },
     {
         "name": "minecraft_command",
@@ -9535,6 +9737,7 @@ TOOL_IMPLEMENTATIONS = {
     "minecraft_teleport": "minecraft_teleport",
     "minecraft_player": "minecraft_player",
     "minecraft_world": "minecraft_world",
+    "minecraft_job": "minecraft_job",
     "minecraft_command": "minecraft_command",
     "minecraft_server": "minecraft_server",
     "minecraft_addons": "minecraft_addons",
@@ -9675,6 +9878,7 @@ TOOL_ALIASES = {"get_device_registry": "get_entity_counts"}
 # refused for, and a long overlapping tool list is also a worse choice of tool.
 VOICE_HIDDEN_TOOLS = frozenset({
     "minecraft_command", "minecraft_server",   # refused for voice in full
+    "minecraft_job",                           # a game job's, refused for voice
     # Install and remove are refused for voice, and a list or a search of
     # Modrinth is nothing anybody acts on by ear.
     "minecraft_addons",

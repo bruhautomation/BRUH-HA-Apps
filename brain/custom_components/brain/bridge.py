@@ -507,6 +507,7 @@ class ClaudeBridge:
         cameras: bool = False,
         effort: str | None = None,
         speaker: dict | None = None,
+        session_id: str | None = None,
     ) -> dict:
         """Send a task and wait for the whole result: ``{"text", "data"}``.
 
@@ -523,6 +524,12 @@ class ClaudeBridge:
         says nobody pressed anything: the listener holds such a task to
         the panel's pause switch and usage budget, the gate every other
         unattended run answers to.
+
+        `session_id` resumes a CLI session the game's scopes (`minecraft`,
+        `minecraft_trusted`) were answered in before: the Minecraft faculty
+        keeps one per player. The result's `session_id` is the session the
+        run ended in, for the next line to resume — and a session the CLI
+        no longer holds is started fresh by the listener, never failed.
 
         Raises `BrainRunError` when the listener says the task failed —
         refused, timed out, signed out, produced nothing — and
@@ -577,6 +584,9 @@ class ClaudeBridge:
             who = {k: str(speaker.get(k) or "")[:40] for k in ("person", "player")}
             if re.fullmatch(r"[A-Za-z0-9_.*]{1,17}", who["player"]) and who["person"]:
                 task["speaker"] = who
+        # A CLI session uuid or nothing: it becomes an argv entry there.
+        if isinstance(session_id, str) and re.fullmatch(r"[A-Za-z0-9-]{1,64}", session_id):
+            task["session_id"] = session_id
 
         task_file = os.path.join(self.tasks_dir, f"{task_id}.json")
         result_file = os.path.join(self.task_results_dir, f"{task_id}.json")
@@ -670,7 +680,11 @@ class ClaudeBridge:
                 # failure. Both absent on everything an older add-on wrote,
                 # which every caller reads as an answer.
                 "status": status if isinstance(status, str) else None,
-                "error": str(data.get("error") or "")}
+                "error": str(data.get("error") or ""),
+                # The CLI session a resumable task (a conversation, a game
+                # line) ended in, for the next one to pick up; "" for every
+                # other task.
+                "session_id": str(data.get("session_id") or "")}
 
     @staticmethod
     def _remove_session_files(sessions_dir: str, conversation_id: str | None) -> None:

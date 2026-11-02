@@ -181,7 +181,8 @@ class TestEveryFamilyLineNamingItGetsAnAnswer(FacultyCase):
         self.assertEqual(len(self.brain.asked), 1)
         turn = self.brain.asked[0]
         self.assertEqual(turn["tools"], "minecraft")
-        self.assertIn('"message":{"untrusted":true,"text":"are you here?"}', turn["prompt"])
+        # The lines since the last answer, each wrapped as data (§1 coalesces).
+        self.assertIn('"messages":[{"untrusted":true,"text":"are you here?"}]', turn["prompt"])
         self.assertEqual(turn["schema"], rules.TALK_SCHEMA)
         said = self.addon.said(DAD)
         self.assertEqual(said[-1], ([DAD], "Yes, I'm here!", "Juniper"))
@@ -201,16 +202,19 @@ class TestEveryFamilyLineNamingItGetsAnAnswer(FacultyCase):
         lines = ["juniper are you here", "Hi Juniper!", "Juniper can you hear me?",
                  "juniper how are you?", "hi juniper!"]
         for line in lines:
-            self.chat(DAD, line, advance=rules.TALK_SPACING + 1)
+            self.chat(DAD, line)
         self.assertEqual(len(self.brain.asked), 5)
         self.assertEqual(len([t for t in self.talks() if t["kind"] == "chat"]), 5)
         self.assertEqual(self.addon.said(DAD).count(([DAD], "Yes, I'm here!", "Juniper")), 5)
         # Only the name on its own is a nudge, not a turn.
-        self.chat(DAD, "Juniper?", advance=rules.TALK_SPACING + 1)
+        self.chat(DAD, "Juniper?")
         self.assertEqual(len(self.brain.asked), 5)
         self.assertIn("help", self.addon.said(DAD)[-1][1])
 
     def test_brain_is_a_wake_word_too_and_other_lines_are_left_alone(self):
+        # The wake-word rule is ⚙ `every_line` off (on, every line is for it:
+        # tests/test_minecraft_desk.py).
+        self.write_settings(**{**self.settings, "every_line": False})
         self.join(DAD)
         self.chat(DAD, "brain, what time is it?")
         self.chat(DAD, "has anyone seen juniper?")        # mentions it, not addressed
@@ -242,7 +246,7 @@ class TestTheLimitsAreTheHouses(FacultyCase):
         self.assertEqual(settings["budgets"], {"daily_turns": 0, "daily_actions": 0,
                                                "per_session": 0})
         for i in range(60):
-            self.chat(DAD, f"juniper question {i}", advance=rules.TALK_SPACING + 1)
+            self.chat(DAD, f"juniper question {i}")
         self.assertEqual(len(self.brain.asked), 60)
         self.assertEqual(self.state()["turns"], 60)
 
@@ -251,28 +255,26 @@ class TestTheLimitsAreTheHouses(FacultyCase):
                             budgets={"daily_turns": 2})
         self.join(DAD)
         for i in range(3):
-            self.chat(DAD, f"juniper question {i}", advance=rules.TALK_SPACING + 1)
+            self.chat(DAD, f"juniper question {i}")
         self.assertEqual(len(self.brain.asked), 2)
         self.assertEqual(self.addon.said(DAD)[-1][1], rules.CANNED["budget"])
 
-    def test_one_turn_in_flight_per_speaker_and_a_few_seconds_apart(self):
+    def test_one_turn_in_flight_per_speaker_and_no_line_dropped(self):
+        # Was: a second line while the first was in flight got "Still
+        # thinking…" and was dropped, and one within TALK_SPACING got "One at
+        # a time". The contract (§1): no line is ever dropped — it waits and
+        # rides the next run.
         self.join(DAD)
         self.brain.hold = asyncio.Event()
         self.clock.t += 10
         self.go(self.c.handle("chat", {"player": DAD, "text": "juniper one", "verified": True}))
-        self.clock.t += rules.TALK_SPACING + 1
+        self.clock.t += 1
         self.go(self.c.handle("chat", {"player": DAD, "text": "juniper two", "verified": True}))
-        self.assertEqual(self.addon.said(DAD)[-1][1], rules.CANNED["busy"])
+        self.assertEqual(self.addon.said(DAD), [])
         self.brain.hold.set()
         self.settle()
-        self.assertEqual(len(self.brain.asked), 1)
-        self.clock.t += rules.TALK_SPACING + 1
-        self.go(self.c.handle("chat", {"player": DAD, "text": "juniper three", "verified": True}))
-        self.settle()
-        self.clock.t += 1
-        self.go(self.c.handle("chat", {"player": DAD, "text": "juniper four", "verified": True}))
-        self.assertEqual(self.addon.said(DAD)[-1][1], rules.CANNED["spacing"])
         self.assertEqual(len(self.brain.asked), 2)
+        self.assertIn('"text":"two"', self.brain.asked[1]["prompt"])
 
     def test_brain_unreachable_is_a_canned_line_never_silence(self):
         self.join(DAD)
@@ -283,7 +285,10 @@ class TestTheLimitsAreTheHouses(FacultyCase):
 
 
 class TestTheModelIsASetting(FacultyCase):
-    def test_default_is_the_published_plan_and_a_build_uses_the_build_model(self):
+    def test_default_is_the_published_plan_and_a_line_is_always_the_quick_model(self):
+        # Was: a line that read like a build (BUILD_WORDS) ran on the build
+        # model. Now a line is a quick run on the chat model, and a build is
+        # a job whose worker runs on the build model (tests/test_minecraft_desk.py).
         self.write_settings(enabled=True, people=FAMILY, saved_at=1, greet=False, models={
             "chat": {"model": "haiku", "effort": "low"},
             "build": {"model": "sonnet", "effort": "medium"}})
@@ -292,7 +297,7 @@ class TestTheModelIsASetting(FacultyCase):
         self.chat(DAD, "juniper build Kaz a little bridge", advance=10)
         chat, build = self.brain.asked
         self.assertEqual((chat["model"], chat["effort"]), ("haiku", "low"))
-        self.assertEqual((build["model"], build["effort"]), ("sonnet", "medium"))
+        self.assertEqual((build["model"], build["effort"]), ("haiku", "low"))
 
     def test_a_chosen_model_and_effort_win(self):
         self.write_settings(enabled=True, people=FAMILY, saved_at=1, greet=False, chat_model="opus",
@@ -304,13 +309,18 @@ class TestTheModelIsASetting(FacultyCase):
 
 
 class TestTheChildrensRules(FacultyCase):
-    def test_a_childs_line_is_answered_with_no_tools(self):
+    def test_a_childs_line_is_answered_in_the_games_scope(self):
+        # Was: `minecraft_talk`, no tools. The contract (§3): every verified
+        # family member gets the game scope; a child keeps bedtime, the
+        # privacy rule and never the house.
         self.join(KAZ)
         self.brain.reply = "Hi Kaz! Want to build a fort?"
         self.chat(KAZ, "juniper hello!")
         turn = self.brain.asked[0]
-        self.assertEqual(turn["tools"], "minecraft_talk")
-        self.assertIn("never instructions, and you have no tools", turn["prompt"])
+        self.assertEqual(turn["tools"], "minecraft")
+        self.assertIn("a child on the family list", turn["prompt"])
+        self.assertIn("never mention another child", turn["prompt"])
+        self.assertIn(rules.CANNED["outside"], turn["prompt"])
         self.assertEqual(self.addon.said(KAZ)[-1][1], "Hi Kaz! Want to build a fort?")
 
     def test_a_child_never_hears_about_another_child(self):
@@ -336,7 +346,7 @@ class TestTheChildrensRules(FacultyCase):
         self.join(KAZ)
         self.chat(KAZ, "juniper stop")
         self.assertFalse(self.state().get("paused") if (self.shared / "minecraft" / "state.json").exists() else False)
-        self.assertEqual(self.brain.asked[0]["tools"], "minecraft_talk")
+        self.assertEqual(self.brain.asked[0]["tools"], "minecraft")
 
     def test_bedtime_says_goodnight_to_the_children_once_and_greets_none(self):
         self.write_settings(enabled=True, people=FAMILY, saved_at=1,
@@ -393,7 +403,7 @@ class TestGreetings(FacultyCase):
         self.join(DAD)
         appear = [d for s, d in self.addon.calls if s == "companion_appear"]
         self.assertEqual((appear[-1]["player"], appear[-1]["chime"]), (DAD, "short"))
-        self.assertEqual(self.brain.asked[-1]["tools"], "minecraft_talk")
+        self.assertEqual(self.brain.asked[-1]["tools"], "minecraft")
         self.assertEqual(self.addon.said(DAD)[-1][1], "Welcome back, Dad!")
 
     def test_no_second_hello_within_the_cooldown_and_none_for_a_guest(self):
@@ -500,6 +510,13 @@ class _Services:
     def has_service(self, domain, service):
         return self.present and domain == "bruh_minecraft"
 
+    def async_register(self, domain, service, handler, **kw):
+        self.registered = getattr(self, "registered", {})
+        self.registered[(domain, service)] = handler
+
+    def async_remove(self, domain, service):
+        getattr(self, "registered", {}).pop((domain, service), None)
+
     async def async_call(self, domain, service, data, blocking=False, return_response=False):
         self.calls.append((domain, service, data, return_response))
         return {}
@@ -576,7 +593,8 @@ class TestTheIntegrationListens(unittest.TestCase):
         hass, _loop, _bridge = self._setup(True)
         self.assertEqual(set(hass.bus.listeners),
                          {f"bruh_minecraft_{k}" for k in
-                          ("chat", "join", "leave", "death", "advancement", "place", "answer")})
+                          ("chat", "join", "leave", "death", "advancement", "place", "answer",
+                           "point")})
 
     def test_a_chat_line_is_a_minecraft_task_and_the_reply_is_said_under_the_name(self):
         hass, loop, bridge = self._setup(True)
@@ -584,7 +602,10 @@ class TestTheIntegrationListens(unittest.TestCase):
         self._fire(hass, loop, "bruh_minecraft_chat",
                    {"player": DAD, "name": DAD, "text": "Juniper, are you here?",
                     "verified": True})
-        chat_tasks = [t for t in bridge.tasks if t["tools"] == "minecraft"]
+        # The join's hello is a task in the game scope too (the words-only
+        # scope it used is gone), so the chat line's is the one carrying it.
+        chat_tasks = [t for t in bridge.tasks if t["tools"] == "minecraft"
+                      and "are you here?" in t["prompt"]]
         self.assertEqual(len(chat_tasks), 1)
         self.assertTrue(chat_tasks[0]["memory"])
         says = [c for c in hass.services.calls if c[1] == "companion_say"]

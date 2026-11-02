@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """A request typed in Minecraft's chat reaches the game and nothing else.
 
-brAIn's Minecraft faculty (custom_components/brain/minecraft.py) hands a
-grown-up's chat request to a brAIn task with `tools: minecraft`, and a
-child's line to one with `tools: minecraft_talk` (no tool at all). The
-owner's policy: an in-world act a
-grown-up asks for in the game needs no approval card (the grown-up asking
-there IS the parent asking), and anything outside the game still needs
-brAIn's own approval. Held in four places, each driven here:
+brAIn's Minecraft faculty (custom_components/brain/minecraft.py) hands every
+verified family member's chat line, child or grown-up, to a brAIn task with
+`tools: minecraft` (the words-only scope a child's line once got is gone:
+docs/design/minecraft-companion.md §3). The owner's policy: an in-world act
+asked for in the game needs no approval card, and anything outside the game
+is refused there. Held in four places, each driven here:
 
   * the automation listener's `task_tool_flags minecraft` — the game world's
     tool and a few reads allowed, every other tool both lists name denied,
@@ -73,7 +72,9 @@ class TestTheMinecraftScope(unittest.TestCase):
         self.assertIn(MCP + "minecraft_world", self.allow)
         self.assertIn(MCP + "minecraft_status", self.allow)
         for tool in self.allow:
-            if tool != MCP + "minecraft_world":
+            # The game's own two (the world, and the job a worker reports
+            # through) act; everything else allowed only reads.
+            if tool not in (MCP + "minecraft_world", MCP + "minecraft_job"):
                 self.assertIn(tool, engine.ANALYST_TOOLS, f"{tool} is not a read")
 
     def test_no_house_service_and_no_shell_or_file(self):
@@ -102,32 +103,26 @@ class TestTheMinecraftScope(unittest.TestCase):
 
     def test_the_task_runs_on_its_own_channel_and_is_never_widened(self):
         src = LISTENER.read_text(encoding="utf-8")
-        block = src.split('if [ "$task_tools" = "minecraft" ] || '
-                          '[ "$task_tools" = "minecraft_talk" ]; then', 1)[1][:200]
+        block = src.split('if [ "$task_tools" = "minecraft" ]; then', 1)[1][:200]
         self.assertIn("export BRAIN_CHANNEL=minecraft", block)
         self.assertIn("unset BRAIN_PERSON_WORDS", block)
-        self.assertIn('&& [ "$task_tools" != "minecraft" ] && [ "$task_tools" != "minecraft_talk" ]; then',
-                      src)
+        self.assertIn('&& [ "$task_tools" != "minecraft" ]; then', src)
         # The channel is set before any claude invocation reads it.
         self.assertLess(src.index("export BRAIN_CHANNEL=minecraft"),
                         src.index('"${tool_flags[@]}"'))
         self.assertTrue(lift("task_tool_flags"))
 
 
-class TestTheChildsScopeIsWordsOnly(unittest.TestCase):
-    """A child's line in the game's chat is answered and never acts:
-    `minecraft_talk` passes no allowed tool and denies every one named."""
+class TestTheWordsOnlyScopeIsGone(unittest.TestCase):
+    """A child's line used to run under a words-only scope, no tool allowed.
+    Every verified family member now gets the game scope (the contract's
+    §3), so the listener no longer knows the word and a task asking for it
+    is refused rather than run."""
 
-    def test_nothing_is_allowed_and_everything_named_is_denied(self):
-        rc, flags = flags_for("minecraft_talk")
-        self.assertEqual(rc, 0, flags)
-        self.assertEqual(flags[0], "--disallowedTools")
-        self.assertNotIn("--allowedTools", flags)
-        deny = set(flags[1].split(","))
-        named = set(engine.ANALYST_TOOLS + engine.ANALYST_DENIED)
-        self.assertEqual(named - deny, set())
-        for tool in engine.MINECRAFT_CHAT_TOOLS:
-            self.assertIn(tool, deny)
+    def test_it_is_refused(self):
+        rc, flags = flags_for("minecraft" + "_talk")
+        self.assertNotEqual(rc, 0)
+        self.assertEqual(flags, [])
 
 
 # ---------------------------------------------------------------------------
