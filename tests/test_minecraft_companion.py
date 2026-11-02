@@ -549,7 +549,11 @@ class TestTheChangelogRoute(PanelCase):
         self.assertEqual(r.status, 200, await r.text())
         body = await r.json()
         versions = [x["version"] for x in body["releases"]]
-        self.assertEqual(versions[0], "1.17.9")
+        # The newest entry is the release this image ships: the version in
+        # config.yaml, never a number written into the test.
+        shipped = re.search(r'^version: "([^"]+)"', (ADDON / "config.yaml").read_text(),
+                            re.M).group(1)
+        self.assertEqual(versions[0], shipped)
         as_tuples = [tuple(int(n) for n in v.split(".")) for v in versions]
         self.assertEqual(as_tuples, sorted(as_tuples, reverse=True))
         self.assertIn("### Added", body["releases"][0]["body"])
