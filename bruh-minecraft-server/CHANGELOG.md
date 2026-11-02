@@ -5,6 +5,17 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.19.1
+
+### Changed
+
+- **The companion stays while it works, by what it is building.** While it thinks or works for someone, its allay is there: it hovers beside the build, slowly circling it and facing it, with the thought bubble over it. When it is only thinking, it stays beside the player. It leaves a few seconds after the work ends. Before, the allay came only for a short hello and then disappeared, so there was nothing for the thoughts to float over. Everyone can see the allay; the bubble is still only for the person it is working for.
+
+### Fixed
+
+- **The thought bubble shows reliably.** It is now shown to its player after it is in the world, not before.
+- **When the bubble cannot show, the log says why.** If BRUH Sight is not answering (a server that is not Paper or Purpur, or a plugin that did not load), the add-on's log says so, at most every ten minutes.
+
 ## 1.19.0
 
 ### Added

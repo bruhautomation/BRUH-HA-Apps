@@ -198,6 +198,10 @@ public final class BruhSight extends JavaPlugin implements Listener {
             JsonObject req = readBody(ex);
             return onMain(() -> thoughts.thought(req));
         }));
+        http.createContext("/v1/focus", ex -> serve(ex, "POST", () -> {
+            JsonObject req = readBody(ex);
+            return onMain(() -> thoughts.focus(req));
+        }));
         http.createContext("/v1/journal", ex -> serve(ex, "POST", () -> {
             JsonObject req = readBody(ex);
             return onMain(() -> thoughts.giveJournal(req));
@@ -522,7 +526,7 @@ public final class BruhSight extends JavaPlugin implements Listener {
 
     // -- blocks in a box ------------------------------------------------------------
 
-    private World worldOf(String dim) {
+    World worldOf(String dim) {
         String want = dim == null || dim.isBlank() ? "minecraft:overworld" : dim.trim().toLowerCase(Locale.ROOT);
         if (!want.contains(":")) {
             want = "minecraft:" + Map.of("nether", "the_nether", "end", "the_end").getOrDefault(want, want);

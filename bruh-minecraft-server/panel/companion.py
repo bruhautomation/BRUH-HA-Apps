@@ -1550,8 +1550,14 @@ class Companion:
             self.actions.put(act)
             self.col.record({"kind": "companion", "player": beside,
                              "action": act["id"], "text": text[:240]})
+            xs = [k[0] for k in targets] or [0]
+            ys = [k[1] for k in targets] or [0]
+            zs = [k[2] for k in targets] or [0]
+            # Where the work happened, for the companion's body to hover by.
+            focus = {"x": (min(xs) + max(xs)) // 2, "y": max(ys), "z": (min(zs) + max(zs)) // 2,
+                     "dimension": dim}
             return dict(act, cells=sum(c["n"] for c in cells), changed=len(changed),
-                        undoable=undoable(act), backup_note=backup_note)
+                        undoable=undoable(act), backup_note=backup_note, focus=focus)
 
     def _restore(self, act: dict[str, Any]) -> dict[str, int]:
         """Put back each cell that still holds what was placed."""

@@ -615,7 +615,19 @@ class Companion:
             data["title"] = str(title)[:32]
         if percent is not None:
             data["percent"] = percent
-        return await self._act("companion_thought", data)
+        try:
+            return await self.call("companion_thought", data)
+        except Exception as exc:  # noqa: BLE001 — a thought that did not show changes nothing
+            # Said once in the log, not at debug: an add-on updated without
+            # Home Assistant restarting has no `companion_thought` yet, and
+            # "nothing shows in the game" has to be findable.
+            if not getattr(self, "_thought_warned", False):
+                self._thought_warned = True
+                _LOGGER.warning(
+                    "minecraft: the thought bubble could not be shown (%s). If BRUH "
+                    "Minecraft was just updated to 1.19.0 or later, restart Home Assistant "
+                    "so its new services load.", str(exc)[:200])
+            return None
 
     def _thought_env(self, player: str, key: str, settings: dict) -> dict:
         """Who a run's own steps are shown to (the listener hands it to the

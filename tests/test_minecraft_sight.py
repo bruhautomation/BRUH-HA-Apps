@@ -109,6 +109,8 @@ class FakePlugin:
                                               "cells": [0] + [1] * (n - 1)})
                 if self.path == "/v1/thought":
                     return self._answer(200, {"shown": True})
+                if self.path == "/v1/focus":
+                    return self._answer(200, {"moved": 1})
                 if self.path == "/v1/journal":
                     return self._answer(200, {"given": True})
                 return self._answer(404, {})
@@ -277,6 +279,36 @@ class TestAnUnknownChunkLayoutIsSaid(unittest.TestCase):
         self.assertIsInstance(got, mcmap.Unread)
         self.assertEqual(got.code, "unreadable")
         self.assertIn("layout", got.why)
+
+
+class TestTheBodyHoversByTheWork(SightCase):
+    """The owner: *"Vesper the ally disappears. It should stay close to what it
+    is building if there is a stream of thought over it."* An edit tells the
+    plugin where the work is (its job's line, or the player it was beside)."""
+
+    def test_an_edit_sends_where_it_worked(self):
+        self.assertIsNotNone(self.sight.focus({"x": 4, "y": 70, "z": -2,
+                                                "dimension": "minecraft:overworld",
+                                                "key": "j1a2b3c"}))
+        sent = [a for a in self.plugin.asked if a[1] == "/v1/focus"][-1][2]
+        self.assertEqual((sent["x"], sent["y"], sent["z"], sent["key"]), (4, 70, -2, "j1a2b3c"))
+
+    def test_the_edit_reports_its_focus_and_the_panel_passes_it_on(self):
+        companion = (PANEL / "companion.py").read_text()
+        self.assertIn("focus=focus)", companion)
+        server = (PANEL / "server.py").read_text()
+        self.assertIn("_focus_after_edit(act, body)", server)
+
+    def test_the_plugin_keeps_a_body_while_it_works_and_takes_it_away_after(self):
+        src = (ADDON / "sight" / "src" / "main" / "java" / "com" / "bruhautomation" / "sight"
+               / "Thoughts.java").read_text()
+        body = src.split("private Allay spawnBody", 1)[1].split("\n    }\n", 1)[0]
+        for call in ("setPersistent(false)", "setAI(false)", "setInvulnerable(true)",
+                     "bruh_thought_body"):
+            self.assertIn(call, body)
+        tick = src.split("private void tick()", 1)[1].split("\n    }\n", 1)[0]
+        self.assertIn("removeBody(m);", tick, "no work, no body")
+        self.assertIn("p.showEntity(plugin, d);", tick, "shown after it is in the world")
 
 
 class TestThePluginShips(unittest.TestCase):

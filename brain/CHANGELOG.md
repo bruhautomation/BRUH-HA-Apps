@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.2.1
+
+### Fixed
+
+- **"Nothing shows in the game" now says why.** If the thought bubble cannot be shown, brAIn's log says so once. The usual cause is BRUH Minecraft being updated without Home Assistant restarting, which leaves its new services unloaded.
+
 ## 4.2.0
 
 The Minecraft companion now sees the live game and shows what it is thinking.

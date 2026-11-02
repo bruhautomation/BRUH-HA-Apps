@@ -69,6 +69,9 @@ final class Thoughts implements Listener {
     static final int LINE_CHARS = 48;
     static final int BUBBLE_LINES = 4;
     static final double ALLAY_NEAR = 16.0;
+    static final long FOCUS_TTL_MS = 10 * 60_000;  // a work site this old is forgotten
+    static final double FOCUS_REACH = 128.0;        // ... and one this far from the player
+    static final double ORBIT = 2.2;                // blocks from the work site it hovers
     static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm");
 
     static final class Line {
@@ -87,6 +90,9 @@ final class Thoughts implements Listener {
         String name = "brAIn";
         TextColor colour = NamedTextColor.AQUA;
         UUID display;
+        UUID body;            // the companion's allay while it works (ours)
+        Location focus;       // where it is working, from the panel's edits
+        long focusAt;
     }
 
     private final BruhSight plugin;
@@ -106,6 +112,7 @@ final class Thoughts implements Listener {
     void stop() {
         for (Mind m : minds.values()) {
             removeDisplay(m);
+            removeBody(m);
         }
         minds.clear();
     }
@@ -190,6 +197,44 @@ final class Thoughts implements Listener {
         return null;
     }
 
+    /** Where the companion is working: the line with this key (a job), or
+     * this player's. Its body hovers there while the work goes on. */
+    Map<String, Object> focus(JsonObject req) throws BruhSight.BadRequest {
+        int x, y, z;
+        try {
+            x = req.get("x").getAsInt();
+            y = req.get("y").getAsInt();
+            z = req.get("z").getAsInt();
+        } catch (RuntimeException e) {
+            throw new BruhSight.BadRequest("x, y and z are whole numbers");
+        }
+        org.bukkit.World w = plugin.worldOf(str(req, "dimension", null));
+        if (w == null) {
+            return Map.of("moved", 0);
+        }
+        Location at = new Location(w, x + 0.5, y + 0.5, z + 0.5);
+        String key = str(req, "key", null);
+        Player named = Bukkit.getPlayerExact(str(req, "player", ""));
+        int moved = 0;
+        long now = System.currentTimeMillis();
+        for (Map.Entry<UUID, Mind> e : minds.entrySet()) {
+            boolean mine = (key != null && e.getValue().active.containsKey(key))
+                    || (key == null && named != null && e.getKey().equals(named.getUniqueId()));
+            if (mine) {
+                e.getValue().focus = at;
+                e.getValue().focusAt = now;
+                moved++;
+            }
+        }
+        if (moved == 0 && named != null) {
+            Mind m = minds.computeIfAbsent(named.getUniqueId(), u -> new Mind());
+            m.focus = at;
+            m.focusAt = now;
+            moved = 1;
+        }
+        return Map.of("moved", moved);
+    }
+
     Map<String, Object> giveJournal(JsonObject req) {
         Player p = Bukkit.getPlayerExact(str(req, "player", ""));
         if (p == null) {
@@ -241,6 +286,7 @@ final class Thoughts implements Listener {
         Mind m = minds.remove(e.getPlayer().getUniqueId());
         if (m != null) {
             removeDisplay(m);
+            removeBody(m);
         }
     }
 
@@ -330,14 +376,17 @@ final class Thoughts implements Listener {
             }
             if (p == null || !p.isOnline() || shown.isEmpty()) {
                 removeDisplay(m);
+                removeBody(m);
                 continue;
             }
-            Location at = anchor(p);
+            Location at = anchor(p, m, now);
             TextDisplay d = m.display == null ? null : (TextDisplay) Bukkit.getEntity(m.display);
             if (d == null || !d.isValid() || !d.getWorld().equals(at.getWorld())) {
                 removeDisplay(m);
                 d = spawn(p, at);
                 m.display = d.getUniqueId();
+                // After it is in the world: shown to its owner only.
+                p.showEntity(plugin, d);
             } else if (d.getLocation().distanceSquared(at) > 0.0025) {
                 d.teleport(at);
             }
@@ -345,30 +394,76 @@ final class Thoughts implements Listener {
         }
     }
 
-    private Location anchor(Player p) {
-        Entity allay = null;
-        double best = ALLAY_NEAR * ALLAY_NEAR;
+    /** Where the bubble goes: over the companion's allay. The panel's own
+     * (a greeting, tagged bruh_companion) when one is near; otherwise ours,
+     * which hovers by the work site while it works and beside the player
+     * while it only thinks. */
+    private Location anchor(Player p, Mind m, long now) {
         for (Entity e : p.getNearbyEntities(ALLAY_NEAR, ALLAY_NEAR / 2, ALLAY_NEAR)) {
             if (e instanceof Allay && e.getScoreboardTags().contains("bruh_companion")) {
-                double d2 = e.getLocation().distanceSquared(p.getLocation());
-                if (d2 < best) {
-                    best = d2;
-                    allay = e;
-                }
+                removeBody(m);
+                return e.getLocation().add(0, 1.0, 0);
             }
         }
-        if (allay != null) {
-            return allay.getLocation().add(0, 1.1, 0);
+        Location target;
+        Location look;
+        if (m.focus != null && now - m.focusAt < FOCUS_TTL_MS
+                && m.focus.getWorld().equals(p.getWorld())
+                && m.focus.distanceSquared(p.getLocation()) < FOCUS_REACH * FOCUS_REACH) {
+            // Hover by the work, slowly round it, a little above, facing it.
+            double a = (now % 24_000L) / 24_000.0 * Math.PI * 2;
+            target = m.focus.clone().add(Math.cos(a) * ORBIT, 2.0, Math.sin(a) * ORBIT);
+            look = m.focus;
+        } else {
+            // Just thinking: beside the player, out of the middle of the screen.
+            Location eye = p.getEyeLocation();
+            Vector fwd = eye.getDirection().setY(0);
+            if (fwd.lengthSquared() < 1e-6) {
+                fwd = new Vector(0, 0, 1);
+            }
+            fwd.normalize();
+            Vector right = new Vector(-fwd.getZ(), 0, fwd.getX());
+            target = eye.clone().add(fwd.clone().multiply(1.6)).add(right.multiply(1.5)).add(0, 0.2, 0);
+            look = eye;
         }
-        // Up and to the right of where they look, out of the middle of the screen.
-        Location eye = p.getEyeLocation();
-        Vector fwd = eye.getDirection().setY(0);
-        if (fwd.lengthSquared() < 1e-6) {
-            fwd = new Vector(0, 0, 1);
+        Vector to = look.toVector().subtract(target.toVector());
+        target.setDirection(to.lengthSquared() < 1e-6 ? new Vector(0, 0, 1) : to);
+        Allay body = m.body == null ? null : (Allay) Bukkit.getEntity(m.body);
+        if (body == null || !body.isValid() || !body.getWorld().equals(target.getWorld())) {
+            removeBody(m);
+            body = spawnBody(target, m.name);
+            m.body = body.getUniqueId();
+        } else if (body.getLocation().distanceSquared(target) > 0.0025) {
+            body.teleport(target);
         }
-        fwd.normalize();
-        Vector right = new Vector(-fwd.getZ(), 0, fwd.getX());
-        return eye.clone().add(fwd.multiply(3.2)).add(right.multiply(1.9)).add(0, 0.9, 0);
+        return body.getLocation().add(0, 1.0, 0);
+    }
+
+    private Allay spawnBody(Location at, String name) {
+        return at.getWorld().spawn(at, Allay.class, a -> {
+            a.setPersistent(false);
+            a.setRemoveWhenFarAway(false);
+            a.setAI(false);
+            a.setGravity(false);
+            a.setInvulnerable(true);
+            a.setSilent(true);
+            a.setCollidable(false);
+            a.setCanPickupItems(false);
+            a.customName(Component.text(name));
+            a.setCustomNameVisible(false);
+            a.addScoreboardTag("bruh_thought_body");
+        });
+    }
+
+    private void removeBody(Mind m) {
+        if (m.body == null) {
+            return;
+        }
+        Entity e = Bukkit.getEntity(m.body);
+        if (e != null) {
+            e.remove();
+        }
+        m.body = null;
     }
 
     private TextDisplay spawn(Player owner, Location at) {
@@ -385,7 +480,6 @@ final class Thoughts implements Listener {
                     new org.joml.Vector3f(0.55f, 0.55f, 0.55f), new org.joml.Quaternionf()));
             d.setTeleportDuration(3);
             d.addScoreboardTag("bruh_thought");
-            owner.showEntity(plugin, d);
         });
     }
 

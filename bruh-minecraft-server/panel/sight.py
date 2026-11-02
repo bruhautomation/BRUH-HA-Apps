@@ -166,6 +166,13 @@ class Sight:
         got = self._call("/v1/thought", payload, STATE_TIMEOUT_S)
         return got if isinstance(got, dict) else None
 
+    def focus(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        """Where the companion is working ({x, y, z, dimension} with the
+        line's `key` and/or the `player`): its body hovers there while the
+        work goes on."""
+        got = self._call("/v1/focus", payload, STATE_TIMEOUT_S)
+        return got if isinstance(got, dict) else None
+
     def give_journal(self, player: str, name: str) -> dict[str, Any] | None:
         got = self._call("/v1/journal", {"player": player, "name": name}, STATE_TIMEOUT_S)
         return got if isinstance(got, dict) else None
