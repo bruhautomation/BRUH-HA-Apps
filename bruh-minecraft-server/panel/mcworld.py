@@ -198,6 +198,14 @@ def snbt_pos(text: str | None) -> list[float] | None:
     return [float(n) for n in nums]
 
 
+def snbt_floats(text: str | None) -> list[float] | None:
+    """`[91.5f, -12.25f]` as numbers."""
+    if not text:
+        return None
+    nums = re.findall(r"-?\d+(?:\.\d+)?(?:[eE]-?\d+)?", text)
+    return [float(n) for n in nums] or None
+
+
 def snbt_string(text: str | None) -> str | None:
     if not text:
         return None
@@ -797,6 +805,9 @@ class WorldCollector:
         # small view to the snapshot; both stay None without it.
         self.on_event: Callable[[dict[str, Any]], None] | None = None
         self.extra: Callable[[], dict[str, Any]] | None = None
+        # The building and room a position is in (the panel's atlas):
+        # `where(dimension, pos)` → {"building": …, "room": …}.
+        self.where: Callable[[str, list[float]], dict[str, Any]] | None = None
         # Who a chat line's nickname is (bare nickname -> player), learned
         # when a name could be tied to the one person it could be.
         self.nicknames: dict[str, str] = {}
@@ -1142,6 +1153,9 @@ class WorldCollector:
         pos = snbt_pos(ask("Pos"))
         if pos:
             info["pos"] = [round(c, 1) for c in pos]
+        facing = snbt_floats(ask("Rotation"))
+        if facing and len(facing) == 2:
+            info["yaw"], info["pitch"] = (round(v, 1) for v in facing)
         dim = snbt_string(ask("Dimension"))
         if dim:
             info["dimension"] = dim
@@ -1263,8 +1277,10 @@ class WorldCollector:
                 "name": name, "dimension": p.get("dimension"),
                 "x": round(pos[0]) if pos else None, "y": round(pos[1]) if pos else None,
                 "z": round(pos[2]) if pos else None, "near": p.get("near"),
+                "yaw": p.get("yaw"), "pitch": p.get("pitch"),
                 "gamemode": p.get("gamemode"), "health": p.get("health"),
-                "food": p.get("food"), "since": p.get("since")})
+                "food": p.get("food"), "since": p.get("since"),
+                **self._place_of(p)})
         recent = [job_brief(j) for j in self.builds.list(limit=10)
                   if j.get("status") in ("done", "failed")][:5]
         with self._lock:
@@ -1289,6 +1305,16 @@ class WorldCollector:
                        "queued": len(self.builds.list(status="queued"))},
             **(self._extra()),
         }
+
+    def _place_of(self, p: dict[str, Any]) -> dict[str, Any]:
+        """The building and room a player is in, when the panel can say."""
+        if self.where is None or not p.get("pos"):
+            return {"building": None, "room": None}
+        try:
+            got = self.where(p.get("dimension") or "minecraft:overworld", p["pos"]) or {}
+        except Exception:  # noqa: BLE001 — the world view never fails for the atlas's part
+            got = {}
+        return {"building": got.get("building"), "room": got.get("room")}
 
     def _extra(self) -> dict[str, Any]:
         if self.extra is None:
@@ -1323,5 +1349,5 @@ def duration_words(seconds: int | None) -> str:
 
 __all__ = ["WorldCollector", "BuildLog", "BuildError", "Journal", "LogTail", "RconSession",
            "parse_log_line", "parse_list", "parse_time", "parse_test", "quote_name",
-           "data_value", "snbt_pos", "snbt_number", "snbt_string", "phase_of", "clock_of",
+           "data_value", "snbt_pos", "snbt_number", "snbt_string", "snbt_floats", "phase_of", "clock_of",
            "nearest_place", "job_brief", "clean_bounds", "duration_words", "short_dimension"]

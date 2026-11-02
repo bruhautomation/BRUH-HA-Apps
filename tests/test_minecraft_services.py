@@ -452,6 +452,81 @@ class TestTheBridgeCarriesTheCompanion(TestTheBridgeAsksThePanelForAddons):
         self.assertEqual(len(seen), 3)
 
 
+class TestTheDeskServices(Base):
+    """brAIn's desk (docs/design/minecraft-companion.md, sections 4–6): the
+    atlas, a room, a label, progress, the spyglass, shapes and jobs. The
+    names and payloads are the contract the brAIn side is built against."""
+
+    def test_each_new_service_and_what_it_sends(self):
+        self.answer = {"ok": True, "buildings": [], "here": None}
+        got = self.call("atlas", player=".Kaz8044", radius=48, query="ben")
+        self.assertEqual(got, {"buildings": [], "here": None})
+        self.assertEqual(self.sent[-1], ("atlas", {"player": ".Kaz8044", "radius": 48,
+                                                   "query": "ben"}))
+        self.call("room", room="r:overworld:3:65:3")
+        self.assertEqual(self.sent[-1], ("atlas_room", {"room": "r:overworld:3:65:3"}))
+        asyncio.run(self.handlers["label_place"][0](Call({"x": 4, "y": 65, "z": 6,
+                                                          "name": "Ben's room", "by": "Dad"})))
+        self.assertEqual(self.sent[-1], ("atlas_label", {"x": 4, "y": 65, "z": 6,
+                                                         "name": "Ben's room", "by": "Dad"}))
+        self.call("companion_progress", to=".Kaz8044", text="Road\nhalf done", percent=50)
+        self.assertEqual(self.sent[-1], ("companion_progress", {"to": ".Kaz8044",
+                                                                "text": "Road half done",
+                                                                "percent": 50}))
+        asyncio.run(self.handlers["give_spyglass"][0](Call({"player": ".Kaz8044",
+                                                            "name": "Juniper's Spyglass"})))
+        self.assertEqual(self.sent[-1], ("companion_spyglass", {"player": ".Kaz8044",
+                                                                "name": "Juniper's Spyglass"}))
+        shape = {"kind": "blob", "block": "oak_leaves", "center": [0, 20, 0], "radius": 6}
+        self.call("companion_edit", player="Ben13765", shapes=[shape], job="job-1")
+        self.assertEqual(self.sent[-1], ("companion_edit", {"player": "Ben13765",
+                                                            "shapes": [shape], "job": "job-1"}))
+        self.call("undo_action", job="job-1")
+        self.assertEqual(self.sent[-1], ("companion_undo", {"job": "job-1"}))
+        for name in ("atlas", "room"):
+            self.assertEqual(self.handlers[name][1], "only")
+        for name in ("label_place", "companion_progress", "give_spyglass"):
+            self.assertEqual(self.handlers[name][1], "optional")
+
+    def test_an_edit_or_a_room_with_nothing_to_go_on_is_refused_before_the_bridge(self):
+        with self.assertRaises(HAError):
+            self.call("companion_edit", player="Ben13765")
+        with self.assertRaises(HAError):
+            self.call("room")
+        with self.assertRaises(HAError):
+            asyncio.run(self.handlers["label_place"][0](Call({"name": "x"})))
+        self.assertEqual(self.sent, [])
+
+    def test_point_is_a_game_event(self):
+        text = (PKG_DIR / "const.py").read_text()
+        self.assertRegex(text, r'GAME_EVENTS = \([^)]*"point"')
+
+
+class TestTheBridgeCarriesTheDesk(TestTheBridgeAsksThePanelForAddons):
+    def test_the_desk_kinds_reach_their_routes(self):
+        url, seen = self.serve(200, {"ok": True})
+        with tempfile.TemporaryDirectory() as tmp:
+            mod = self.load(tmp, "")
+            mod.PANEL_URL = url
+            for kind, payload in (
+                    ("atlas", {"player": "x", "query": "q", "junk": 1}),
+                    ("atlas_room", {"room": "r:overworld:1:2:3"}),
+                    ("atlas_label", {"x": 1, "y": 2, "z": 3, "name": "n"}),
+                    ("companion_progress", {"to": "x", "text": "t", "percent": 5}),
+                    ("companion_spyglass", {"player": "x", "name": "n"}),
+                    ("companion_edit", {"shapes": [{"kind": "box"}], "job": "j1"}),
+                    ("companion_undo", {"job": "j1"})):
+                asyncio.run(mod.handle({"kind": kind, "payload": payload}))
+            bad = asyncio.run(mod.handle({"kind": "companion_undo",
+                                          "payload": {"job": "../../x"}}))
+        self.assertEqual([p for _, p, _ in seen], [
+            "/api/atlas", "/api/atlas/room", "/api/atlas/labels", "/api/companion/progress",
+            "/api/companion/spyglass", "/api/companion/edit", "/api/companion/jobs/j1/undo"])
+        self.assertEqual(json.loads(seen[0][2]), {"player": "x", "query": "q"})
+        self.assertEqual(json.loads(seen[5][2]), {"shapes": [{"kind": "box"}], "job": "j1"})
+        self.assertFalse(bad["ok"])
+
+
 class TestTheCatalogAgrees(unittest.TestCase):
     def test_every_registered_service_is_documented_in_both_files(self):
         import yaml

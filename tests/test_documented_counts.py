@@ -39,7 +39,7 @@ import ha_mcp_server  # noqa: E402
 CORE_SERVICES = {
     "send_prompt", "run_task", "clear_conversation", "run_insight",
     "add_memory", "answer_question", "study", "intent", "add_todo", "check",
-    "ask",
+    "ask", "minecraft_job",
 }
 
 
@@ -61,8 +61,10 @@ def registered_own_services() -> set[str]:
     is what makes them absent from this and why `power_tool_count` exists
     separately.
     """
-    source = (INTEGRATION_DIR / "__init__.py").read_text()
     names = set()
+    # The Minecraft faculty registers its own (`brain.minecraft_job`).
+    source = "\n".join((INTEGRATION_DIR / name).read_text()
+                       for name in ("__init__.py", "minecraft.py"))
     for node in ast.walk(ast.parse(source)):
         if (isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)

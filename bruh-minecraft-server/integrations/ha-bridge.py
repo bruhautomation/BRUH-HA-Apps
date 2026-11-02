@@ -201,8 +201,10 @@ async def world(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 COMPANION_KINDS = ("companion", "companion_identity", "companion_say", "companion_appear",
                    "companion_ask", "companion_build", "companion_edit", "companion_look",
-                   "companion_undo", "companion_zone",
+                   "companion_undo", "companion_zone", "companion_progress",
+                   "companion_spyglass", "atlas", "atlas_room", "atlas_label",
                    "companion_legacy", "companion_legacy_retire", "rename_world")
+_JOB = re.compile(r"^[A-Za-z0-9_.:\-]{1,40}$")
 
 
 def _pick(payload: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
@@ -232,10 +234,31 @@ async def companion(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
             payload, ("blocks", "player", "dimension", "title", "name", "by")), 60)
     if kind == "companion_edit":
         return await asyncio.to_thread(_panel, "POST", "/api/companion/edit", _pick(
-            payload, ("blocks", "fills", "player", "dimension", "title", "name", "by")), 170)
+            payload, ("blocks", "fills", "shapes", "player", "dimension", "title", "name", "by",
+                      "job")), 170)
+    if kind == "companion_progress":
+        return await asyncio.to_thread(_panel, "POST", "/api/companion/progress", _pick(
+            payload, ("to", "text", "percent", "colour")), 15)
+    if kind == "companion_spyglass":
+        return await asyncio.to_thread(_panel, "POST", "/api/companion/spyglass", _pick(
+            payload, ("player", "name")), 15)
+    if kind == "atlas":
+        return await asyncio.to_thread(_panel, "POST", "/api/atlas", _pick(
+            payload, ("player", "x", "y", "z", "dimension", "radius", "query")), 55)
+    if kind == "atlas_room":
+        return await asyncio.to_thread(_panel, "POST", "/api/atlas/room", _pick(
+            payload, ("player", "room", "x", "y", "z", "dimension")), 55)
+    if kind == "atlas_label":
+        return await asyncio.to_thread(_panel, "POST", "/api/atlas/labels", _pick(
+            payload, ("room", "building", "x", "y", "z", "dimension", "name", "by")), 55)
     if kind == "companion_look":
         return await asyncio.to_thread(_panel, "POST", "/api/companion/look", _pick(
             payload, ("player", "x", "y", "z", "size", "dimension")), 55)
+    if kind == "companion_undo" and payload.get("job"):
+        job = str(payload["job"])
+        if not _JOB.match(job):
+            return {"ok": False, "error": f"'{job}' is not a job id."}
+        return await asyncio.to_thread(_panel, "POST", f"/api/companion/jobs/{job}/undo", {}, 120)
     if kind == "companion_undo":
         action_id = str(payload.get("id") or "last")
         if action_id != "last" and not _JOB_ID.match(action_id):

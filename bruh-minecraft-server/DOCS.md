@@ -631,7 +631,8 @@ anything listens; `t` is Unix seconds, `time` the same as ISO 8601 UTC,
 | `bruh_minecraft_death` | `player`, `text` (the death message) |
 | `bruh_minecraft_advancement` | `player`, `what`, `text` |
 | `bruh_minecraft_place` | `player`, `place` (a named place they walked into), `dimension` |
-| `bruh_minecraft_answer` | `player`, `question_id`, `question`, `answer`, `other`, `options`, `by` (a choice pad was answered) |
+| `bruh_minecraft_answer` | `player`, `question_id`, `question`, `answer`, `index`, `other` (the first option not chosen), `others`, `options`, `by` (a choice pad was answered) |
+| `bruh_minecraft_point` | `player`, `name`, `verified`, `dimension`, `target` (`{x, y, z, block}` — the first block that is not air or a fluid within 96 blocks, or null), `building` and `room` (the atlas's `{id, name}` there, or null), `eye`, `yaw`, `pitch` (somebody looked through a spyglass) |
 
 `verified` is the account check: Java names are real with `online-mode` on (or
 a Velocity proxy checking them); Bedrock names when Floodgate signs them in
@@ -651,11 +652,16 @@ toggle is not used, and brAIn's ⚙ row says so.
 |---------|--------|--------------|
 | `bruh_minecraft.companion_say` | `to` (a player, a list, or `everyone`), `message`, optional `name`, `colour`, `chime`, `by` | `<name> message` in chat to those players, split over a few lines |
 | `bruh_minecraft.companion_appear` | `player`, optional `seconds` (3–120), `kind` (greet/visit), `name`, `colour`, `chime` (full/short/none), `text`, `by` | a named, invulnerable, silent allay beside them with a chime, sparkles and a wave, then gone; logged and undoable |
-| `bruh_minecraft.ask_choice` | `player`, `question`, optional `options` (two labels or label, picture, gift and gift_count), `person`, `name`, `by` | two pads beside them on natural ground; standing on one for two seconds answers (`bruh_minecraft_answer`) |
+| `bruh_minecraft.ask_choice` | `player`, `question`, optional `options` (two or three labels, or label, picture, item, gift and gift_count), `person`, `name`, `by` | two or three pads beside them on natural ground, an option's `item` floating over its pad (nobody can pick it up; Bedrock players see it too); standing on one for two seconds answers (`bruh_minecraft_answer`) |
 | `bruh_minecraft.companion_build` | `blocks` (x, y, z and a block each, at most 64), optional `player` (offsets from their feet), `dimension`, `title`, `name`, `by` | into empty space over natural ground, never in a protected place or on or next to a build; snapshotted first when large; logged and undoable |
-| `bruh_minecraft.companion_edit` | `blocks` (x, y, z, any block state such as `red_bed[facing=east,part=head]`, optional `mode: remove`) and/or `fills` (boxes x1, y1, z1, x2, y2, z2 and a block; `air` clears), optional `player` (offsets from their feet), `dimension`, `title`, `name`, `by` | a **trusted** edit, for a person the caller trusts to ask for anything (brAIn's "Can ask for anything"): any block anywhere — over what is there, inside or next to a build, in a protected place. Every cell's saved state is read first (and the other half of a bed or door beside one), so Undo puts it all back; an edit whose before cannot be read is not made. 64 blocks or more is backed up first; a backup that fails is said in the answer, never a refusal. At most 32,768 blocks in one edit |
+| `bruh_minecraft.companion_edit` | `blocks` (x, y, z, any block state such as `red_bed[facing=east,part=head]`, optional `mode: remove`) and/or `fills` (boxes x1, y1, z1, x2, y2, z2 and a block; `air` clears), `shapes` (`line` from/to/radius/radius_end, `ellipsoid` center/radii/hollow, `blob` center/radius/density/seed, `cylinder` base/height/radius/radius_top/hollow, `box` from/to/hollow, each with a `block`), optional `player` (offsets from their feet), `dimension`, `title`, `name`, `by`, `job` | a **trusted** edit, for a person the caller trusts to ask for anything (brAIn's "Can ask for anything"): any block anywhere — over what is there, inside or next to a build, in a protected place. Every cell's saved state is read first (and the other half of a bed or door beside one), so Undo puts it all back; an edit whose before cannot be read is not made. 64 blocks or more is backed up first; a backup that fails is said in the answer, never a refusal. Written as `fill` runs along x. At most 131,072 blocks in one edit (one `fills` box at most 32,768); `job` is recorded so `undo_action` can take back every edit of it |
 | `bruh_minecraft.look_blocks` | `player` (around them) or `x`, `y`, `z`; optional `size` ([x, y, z], at most 32 × 16 × 32), `dimension` (response only) | every block in the box that is not air, by block state, as runs `[x, y, z, length]` along x — walls, doors, beds, furniture — read from the saved world after a save |
-| `bruh_minecraft.undo_action` | optional `id` (the newest undoable one without) | puts back blocks that still hold what was placed (for an edit, their saved state) and removes the action's entities |
+| `bruh_minecraft.undo_action` | optional `id` (the newest undoable one without), or `job` | puts back blocks that still hold what was placed (for an edit, their saved state) and removes the action's entities; with `job`, every edit recorded for it, newest first |
+| `bruh_minecraft.companion_progress` | `to` (a player, a list or `everyone`), `text`, optional `percent`, `colour` | a line on their action bar above the hotbar — a long job's progress; never in chat |
+| `bruh_minecraft.give_spyglass` | `player`, `name` | one spyglass with that name, unless they already have a spyglass by that name |
+| `bruh_minecraft.atlas` | `player`, or `x`, `z` (and `y`), optional `dimension`, `radius` (8–256, 64), `query` (response only) | the buildings near (each with its box, name and rooms) and the roads between them, `here` (the building and room the player or point is in), and `matches` for `query` among names, labels and signs |
+| `bruh_minecraft.room` | `player`, a `room` id, or `x`, `y`, `z` (response only) | one room in full: floor height and area, the free floor cells, doors, windows, light, furniture, the floor, wall and ceiling blocks, and its kind (bedroom, kitchen, storage, workshop, library or room) |
+| `bruh_minecraft.label_place` | `room` or `building` id, or `x`, `y`, `z`; `name`, optional `by` | names it ("Ben's room"); a newer name for the same thing replaces the older |
 | `bruh_minecraft.set_zone` | `name`, `x`, `z`, `radius`, `dimension`, `protect`, `kind`, or `delete` | a named place; nothing is ever built inside a protected one |
 | `bruh_minecraft.set_companion` | optional `name`, `colour`, `active`, `by`, `model` | who the companion is, for the panel and as the default speaker |
 | `bruh_minecraft.get_companion` | — (response only) | identity, places, questions, the action log, what it said, the account check |
@@ -663,12 +669,31 @@ toggle is not used, and brAIn's ⚙ row says so.
 
 The rcon, world and build-log services above are the rest of the lane.
 
+**The atlas.** The panel indexes the saved world in the background, a few
+chunks a second, nearest the players first: per chunk the surface, the
+placed blocks (planks, bricks, glass, doors, wool, concrete… — not terrain)
+and the signs, chests and beds, re-read only when the region file says the
+chunk changed, kept in the world's `.bruh-world/atlas/`. From those it works
+out buildings, their rooms (enclosed air inside, bounded by walls, doors and
+glass) and the roads between them. Every world layout is read — before 26.1
+(`world/region`, `DIM-1`, `world_nether`) and 26.1 on
+(`world/dimensions/minecraft/<dimension>/region`) — and LZ4 chunks too. A
+sign names the room it is in; `label_place` names anything.
+
+**The spyglass.** The add-on puts a small data pack, `bruh_companion`, in
+the active world's `datapacks/` and enables it. Looking through any spyglass
+tags the player for a moment; the panel asks about it once a second while
+someone is on, reads where they look, saves, and fires
+`bruh_minecraft_point` with the block they looked at. Nothing is said in
+chat. It works for Bedrock players through Geyser.
+
 **Held next to the world, whoever asks.** Every command passes one
-chokepoint: only an allay is ever summoned and it carries the tag
+chokepoint: only an allay (and a pad's icon) is ever summoned and each carries the tag
 `bruh_companion`; only gentle chimes at a capped volume, to one named
 player; only the companion's own entities are removed or moved; words go to
 named players; blocks change only through the guarded placement or an undo;
-gifts are a few safe items. A **trusted edit** (`companion_edit`) is not the
+gifts are a few safe items, with at most a name; a choice pad's icon is an
+item nobody can pick up; what a player carries is only ever counted. A **trusted edit** (`companion_edit`) is not the
 companion's own act and does not pass that chokepoint — it is the caller's
 promise that a person it trusts asked (brAIn sends one only for a grown-up
 with "Can ask for anything" whose name the server checks, below) — and what

@@ -96,7 +96,8 @@ class FakeWorld:
                 return "No entity was found"
             value = {"Pos": f"[{pos[0]}d, {pos[1]}d, {pos[2]}d]",
                      "Dimension": '"minecraft:overworld"', "Health": "20.0f",
-                     "foodLevel": "20", "playerGameType": "0"}[path]
+                     "foodLevel": "20", "playerGameType": "0",
+                     "Rotation": "[0.0f, 0.0f]"}[path]
             return f"{name} has the following entity data: {value}"
         dim = "minecraft:overworld"
         m = re.match(r"minecraft:execute in (\S+) (.*)$", cmd)
@@ -548,7 +549,11 @@ class TestTheChangelogRoute(PanelCase):
         self.assertEqual(r.status, 200, await r.text())
         body = await r.json()
         versions = [x["version"] for x in body["releases"]]
-        self.assertEqual(versions[0], "1.17.9")
+        # The newest entry is the release this image ships: the version in
+        # config.yaml, never a number written into the test.
+        shipped = re.search(r'^version: "([^"]+)"', (ADDON / "config.yaml").read_text(),
+                            re.M).group(1)
+        self.assertEqual(versions[0], shipped)
         as_tuples = [tuple(int(n) for n in v.split(".")) for v in versions]
         self.assertEqual(as_tuples, sorted(as_tuples, reverse=True))
         self.assertIn("### Added", body["releases"][0]["body"])

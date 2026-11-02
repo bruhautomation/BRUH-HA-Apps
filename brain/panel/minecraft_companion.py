@@ -5,8 +5,9 @@ minecraft.py), beside Home Assistant's event bus, because BRUH Minecraft's
 game events arrive there and its services are called from there. This
 module is the panel's half and the ONE writer of its settings
 (`/config/.brain/minecraft/settings.json`): the on/off switch, the family
-list and roles, bedtime, the budgets (0 = unlimited, the default), and the
-model and effort for replies and for builds — "Default" resolved here
+list and roles, bedtime, the budgets (0 = unlimited, the default), every
+line or only named ones, how many jobs run at once, the spyglass on join,
+and the model and effort for replies and for builds — "Default" resolved here
 through `model_plan` (the jobs `minecraft_chat` and `minecraft_build`) and
 written beside the choice, so the listener needs no copy of the plan.
 
@@ -93,11 +94,16 @@ def save(fields: dict, shared_dir: str | None = None) -> dict[str, Any]:
         raise rules.RulesError("Settings are an object.")
     cur = load(shared_dir)
     merged = dict(cur)
-    for key in ("enabled", "greet"):
+    for key in ("enabled", "greet", "every_line", "spyglass"):
         if key in fields:
             if not isinstance(fields[key], bool):
                 raise rules.RulesError(f"{key} is true or false.")
             merged[key] = fields[key]
+    if "workers" in fields:
+        n = fields["workers"]
+        if isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= rules.WORKERS_MAX:
+            raise rules.RulesError(f"Jobs at once is a number from 1 to {rules.WORKERS_MAX}.")
+        merged["workers"] = n
     if "people" in fields:
         merged["people"] = rules.clean_people(fields["people"])
     if "bedtime_entity" in fields:
@@ -184,6 +190,13 @@ def view(shared_dir: str | None = None) -> dict[str, Any]:
             "approvals": [r for r in approvals if isinstance(r, dict)][:10]}
 
 
+def jobs(shared_dir: str | None = None) -> list[dict[str, Any]]:
+    """The companion's jobs (`jobs.json`, the faculty its one writer), for
+    History's rows. Read only; an unreadable file is no jobs."""
+    data = rules.read_json(_path(rules.JOBS, shared_dir), {})
+    return [j for j in data.get("jobs") or [] if isinstance(j, dict) and j.get("id")]
+
+
 def learned(shared_dir: str | None = None) -> list[dict[str, Any]] | None:
     """What the companion learned, as fixed-word lines per person and key,
     or None when its memory could not be read (nothing touched then)."""
@@ -199,4 +212,4 @@ def learned(shared_dir: str | None = None) -> list[dict[str, Any]] | None:
     return rules.learned_facts(memory, rules.persona_name(shared_dir or SHARED_DIR))
 
 
-__all__ = ["load", "save", "publish", "view", "learned", "resolved_models", "rules"]
+__all__ = ["load", "save", "publish", "view", "learned", "jobs", "resolved_models", "rules"]

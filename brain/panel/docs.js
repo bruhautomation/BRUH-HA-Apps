@@ -3198,7 +3198,7 @@ a store has not measured yet rather than answering with a number it does not hav
 
 Most AI integrations can turn on a light. brAIn administers the installation.
 
-It reaches Home Assistant three ways at once — a **native MCP server** (112 tools) for
+It reaches Home Assistant three ways at once — a **native MCP server** (113 tools) for
 reading and controlling, **90 registry-management services** for the parts of Home
 Assistant that normally only exist behind the Settings UI, and a **real shell** in
 \`/config\` for everything that is still a YAML file.
@@ -3375,7 +3375,7 @@ The \`tools\` field is that way, and it has four values:
 | \`full\` **(default)** | Everything, exactly as before: the shell, file edits, web access, and every Home Assistant tool. |
 | \`house\` | Every Home Assistant tool — it can read your house and act on it — with no shell, no file reads or edits, and no web access. |
 | \`read_only\` | The same list brAIn's own scheduled analysis runs with: it can look at anything in Home Assistant and change nothing. It cannot read files in \`/config\` either, so \`secrets.yaml\` stays out of reach of an automation that only asked a question. |
-| \`minecraft\` | A grown-up's request typed in BRUH Minecraft's chat (brAIn's Minecraft companion sends these): the Minecraft world's tools — say something as the companion, ask a child a pad question, build something small, look at the blocks around someone, undo, time, weather — a few reads, and what brAIn remembers. Never a house service: no \`call_service\`, no \`control_*\`, even in YOLO mode, and anything outside the game is answered "I can't do that from the game. A parent can turn on 'Can ask for anything' for you in brAIn › ⚙ › Minecraft." An in-world act needs no approval card (the grown-up asking in the game is the parent asking); BRUH Minecraft still checks every one and can undo it. Needs an administrator, like \`house\`. A child's line is answered by a run with no tools at all, and a grown-up with "Can ask for anything" by a run with the chat's reach on its own channel (\`minecraft_trusted\`); you cannot ask for either. |
+| \`minecraft\` | A line someone in the family typed in BRUH Minecraft's chat, child or grown-up, or a job one of them opened (brAIn's Minecraft companion sends these): the Minecraft world's tools — say something as the companion, ask a pad question, read the atlas of buildings and rooms, look at the blocks, change any blocks (undoably), build something small, undo, time, weather, report a job's progress — a few reads, and what brAIn remembers. Never a house service: no \`call_service\`, no \`control_*\`, even in YOLO mode, and anything outside the game is answered "I can't do that from the game. A parent can turn on 'Can ask for anything' for you in brAIn › ⚙ › Minecraft." An in-world act needs no approval card (the grown-up asking in the game is the parent asking); BRUH Minecraft still checks every one and can undo it. Needs an administrator, like \`house\`. A grown-up with "Can ask for anything" is answered by a run with the chat's reach on its own channel (\`minecraft_trusted\`); you cannot ask for that one. |
 
 \`full\` is the default on purpose, so nothing you have already written
 changes. Narrow it per call:
@@ -4155,6 +4155,17 @@ Personality ("brAIn" if you gave none). Set it up in **⚙ › Minecraft** (the
 section shows only when BRUH Minecraft is there):
 
 - **On or off**, and whether it says hello when someone from the family joins.
+- **Answer every line from the family** (on at first): everything the family
+  types in chat is for it, and it stays quiet when a line is not (players
+  talking to each other, "lol"). Off, only lines that start with its name.
+- **Give everyone a spyglass** (on at first): "**Name**'s Spyglass" when they
+  join. Point it at something and say nothing, and it looks and offers two or
+  three ideas on choice pads; stand on one (or type 1, 2 or 3) and it starts.
+  Point and then talk, and "this" or "that" means what you pointed at.
+- **Jobs at once** (1–5, 5 at first): bigger requests — a build, a room made
+  over, a tree — become jobs that run while you keep playing. More than this
+  wait their turn, and so does one in the same place as a job already going;
+  you are told where it is in line.
 - **The family**: each person, Child or Grown-up, their in-game names, and any
   nickname a server script shows for them in chat. Anybody not on the list is
   left alone, whatever they type.
@@ -4162,8 +4173,8 @@ section shows only when BRUH Minecraft is there):
   At bedtime the children get a goodnight and nothing new starts for them.
 - **Limits**: brAIn turns a day, things it does in the world a day, and things
   it does for one player in one sitting. **0 means no limit**, which is where
-  they all start. One reply at a time per person, a few seconds apart, is what
-  stops a flood.
+  they all start. It answers one person's lines one at a time, and a line that
+  comes in meanwhile is answered next — none is dropped.
 - **Models**: one for answering in chat (by default the quick one) and one for
   building (by default the chat's own model), each with its effort.
 - **Can ask for anything** (on a grown-up's row only, off for everyone at
@@ -4172,18 +4183,23 @@ section shows only when BRUH Minecraft is there):
   asked to approve and how it ended, and who talked to it (a run with "Can
   ask for anything" is marked).
 
-In the game, a grown-up starts a chat message with its name: "**Name**, build
-Kaz a little bridge", "**name** status", "**name** stop" / "**name** start", "**name**
-undo", "**name** come here", "**name** help". Every line from the family that
-starts with its name gets an answer in the chat under that name — no
-automation needed. What a grown-up asks may act **only in the game** (say
-something, put a question on the pads, build something small, look around,
-undo, time and weather); anything outside it is answered "I can't do that from
-the game. A parent can turn on 'Can ask for anything' for you in brAIn › ⚙ ›
-Minecraft." A child's line gets a friendly answer and never does anything. A
-child is never told about another child. A grown-up's name is believed only
-when the server checks accounts. What it learns about each person becomes
-something brAIn remembers.
+In the game, just talk: "build Kaz a little bridge", "make the roof red",
+"put a couch in this room". The answer comes in the chat under its name — no
+automation needed. Something quick is done at once; something bigger becomes
+a job, and the person who asked sees its progress above their hotbar and hears
+one line when it is done (or what went wrong). Asking about a job changes it,
+and "stop the bridge" stops it and puts back what it changed. A grown-up's
+commands start with its name: "**name** status", "**name** stop" / "**name**
+start", "**name** undo", "**name** come here", "**name** help".
+
+Everyone on the list — children too — may ask for anything **in the game**:
+build, change any block (it is saved first, so Undo puts it back), look
+around, ask a question on the pads, time and weather. Anything outside the
+game is answered "I can't do that from the game. A parent can turn on 'Can ask
+for anything' for you in brAIn › ⚙ › Minecraft." A child is never told about
+another child, and nothing new starts for a child at bedtime. A name is
+believed only when the server checks accounts; otherwise nothing runs for it.
+What it learns about each person becomes something brAIn remembers.
 
 **Can ask for anything.** Turn it on for a grown-up in ⚙ › Minecraft and
 what they ask in the game is handled like a message to brAIn's chat:
@@ -4209,14 +4225,19 @@ what they ask in the game is handled like a message to brAIn's chat:
   used". Children never get it, whatever a settings file says.
 - Their words are their request; other players' chat, signs and names stay
   data, never instructions.
+- A house change it makes is in **History › Changes brAIn made** with its
+  Undo, marked "asked by **person** in Minecraft". So is every finished job
+  that changed the world, with an Undo that puts back all of it.
 
 **The contract with BRUH Minecraft.** brAIn listens to the add-on's game
 events — \`bruh_minecraft_chat\`, \`_join\`, \`_leave\`, \`_death\`, \`_advancement\`,
-\`_place\` and \`_answer\` — and acts only through its services: \`companion_say\`
-(words under the companion's name), \`companion_appear\`, \`ask_choice\`,
-\`companion_build\`, \`companion_edit\` and \`look_blocks\` (for a person with "Can
-ask for anything"; \`look_blocks\` for anyone), \`undo_action\`, \`set_zone\`,
-\`set_companion\`, \`get_companion\` and \`companion_handover\`. The add-on decides
+\`_place\`, \`_answer\` and \`_point\` (the spyglass) — and acts only through its
+services: \`companion_say\` (words under the companion's name),
+\`companion_appear\`, \`ask_choice\`, \`companion_build\`, \`companion_edit\`,
+\`look_blocks\`, \`atlas\`, \`room\`, \`label_place\`, \`companion_progress\`,
+\`give_spyglass\`, \`undo_action\`, \`set_zone\`, \`set_companion\`, \`get_companion\`
+and \`companion_handover\`. Its jobs report through brAIn's own
+\`brain.minecraft_job\` service. The add-on decides
 nothing and holds the world-side safety itself (only its own allay, quiet
 sounds, its own builds only into empty space and never in a protected place,
 undo for everything).

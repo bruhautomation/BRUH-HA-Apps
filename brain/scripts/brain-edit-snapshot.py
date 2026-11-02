@@ -158,6 +158,15 @@ def main() -> int:
     channel = _channel()
     if channel:
         entry["channel"] = channel
+    # And who, for an edit a grown-up who can ask for anything asked for in
+    # Minecraft (the listener's plain names; the MCP server's ledger reads
+    # the same two).
+    if channel == "minecraft_trusted":
+        person = " ".join(re.sub(r"[^A-Za-z0-9 _.'-]", "",
+                                 os.environ.get("BRAIN_MINECRAFT_PERSON", "")).split())[:40]
+        if person:
+            entry["by"] = {"person": person, "player": re.sub(
+                r"[^A-Za-z0-9_.*]", "", os.environ.get("BRAIN_MINECRAFT_PLAYER", ""))[:17]}
     try:
         with INDEX.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry) + "\n")

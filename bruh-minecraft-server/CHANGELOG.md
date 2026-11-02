@@ -5,6 +5,22 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.18.0
+
+### Added
+
+- **The world atlas.** The add-on reads the saved world in the background and knows its buildings, the rooms inside them (floor, free floor space, doors, windows, light, furniture, the blocks they are made of, and a guess at what each room is), the roads between them, and names from signs and from what people tell it. It only re-reads the parts that changed. New services: `atlas` (what is near a player or a point, which building and room they are in, and a search by name), `room` (one room in full) and `label_place` ("this is Ben's room").
+- **Shapes for building.** `companion_edit` takes `shapes`: tapering lines for trunks and branches, ellipsoids, seeded blobs for foliage and rock, cylinders and boxes, solid or hollow. They are written as fills rather than block by block, one edit can change up to 131,072 blocks, and all of it is undoable as before.
+- **Jobs.** An edit can carry a `job`, and `undo_action` with that job undoes every edit made for it, newest first.
+- **A progress line** (`companion_progress`) on a player's screen, above the hotbar.
+- **Three-way choice pads**, each pad able to show an item as its picture; the answer says which one was picked and which were not.
+- **The spyglass.** A small data pack (`bruh_companion`) is put in the world: using any spyglass points at something, and the add-on works out which block the player looked at and fires `bruh_minecraft_point` with the block, the building and the room. It works for Bedrock players too. `give_spyglass` hands a player a named spyglass unless they already have one.
+- **Which way players face.** The world snapshot carries each player's `yaw` and `pitch` and the building and room they are in.
+
+### Fixed
+
+- **Looking at blocks and undoable edits work on Minecraft 26.1 and later** (#606, #607). Minecraft 26.1 moved every dimension's files to `world/dimensions/minecraft/…`, and the add-on still looked in the old place, so every area read as "not saved on disk yet", even at a player's feet after a save. Both layouts are read now, chunks saved with LZ4 compression are read too, and when an area really cannot be read the answer says why: no files for that dimension, not generated yet, or stored in a way that cannot be read.
+
 ## 1.17.9
 
 ### Added

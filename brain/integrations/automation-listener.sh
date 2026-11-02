@@ -11,10 +11,13 @@
 #                   "notify_entity": "notify.mobile_app", "ts": <epoch>,
 #                   "timeout": <secs>}  (+ optional model, tools, schema,
 #                   memory, scheduled, person_words, and kind
-#                   "conversation" with an optional session_id)
+#                   "conversation" with an optional session_id; a game
+#                   task — tools minecraft or minecraft_trusted — may name
+#                   a session_id too)
 # Response format: {"id": "<uuid>", "result": "claude output",
 #                   "status": "completed" | "failed", "error": "<code>"}
-#                   (+ "session_id" and "resumed" on a conversation)
+#                   (+ "session_id" and "resumed" on a conversation and a
+#                   game task)
 #
 # A `conversation` task (Morph's Ask, brAIn 3.0) runs as brAIn's chat
 # would: channel `chat`, so the action gate asks (which a headless run
@@ -23,6 +26,13 @@
 # fresh session — said in the result — when the CLI no longer holds it; and
 # its session is NOT claimed in the run-source ledger, so it is the
 # person's own conversation in brAIn's Chats rail and can be picked up there.
+#
+# A game task (brAIn's Minecraft faculty: tools `minecraft` or
+# `minecraft_trusted`) resumes the player's session the same way and says
+# which session it ended in — on the game's OWN channel, never the chat's,
+# because the MCP server and the action gate hold that channel to the game.
+# A lost session starts fresh with nothing said in the reply: the player
+# reads it in a game's chat, where a sentence about sessions is noise.
 #
 # `status` is the half of the result that says whether `result` is an
 # ANSWER. Until it could say "failed", every task was "completed" — an
@@ -321,16 +331,15 @@ claim_task_session() {
 #              of the two lists, which is what makes the union complete —
 #              denying the non-MCP half of the analyst's deny list: Bash,
 #              Write, Edit, NotebookEdit, WebFetch, WebSearch.
-#   minecraft  a grown-up's request typed in the game's chat (brAIn's
-#              Minecraft faculty, custom_components/brain/minecraft.py):
-#              `engine.MINECRAFT_CHAT_TOOLS` — the game
-#              world's tool and a few reads — and every other tool the two
-#              lists name denied by name, call_service and control_* among
-#              them. The task's subshell is on the `minecraft` channel, which
-#              the MCP server and the action gate also hold to the game.
-#   minecraft_talk  a child's line in the game's chat: words only. Every
-#              tool the two lists name is denied and none is allowed, so a
-#              child's words can never be an instruction that does anything.
+#   minecraft  a family member's line typed in the game's chat, child or
+#              grown-up (brAIn's Minecraft faculty,
+#              custom_components/brain/minecraft.py), and a job one opened:
+#              `engine.MINECRAFT_CHAT_TOOLS` — the game world's tool (its
+#              undoable edits included), the job tool and a few reads — and
+#              every other tool the two lists name denied by name,
+#              call_service and control_* among them. The task's subshell is
+#              on the `minecraft` channel, which the MCP server and the
+#              action gate also hold to the game.
 #   minecraft_trusted  a grown-up with "Can ask for anything" (⚙ › Minecraft)
 #              whose name the server checked: the chat's reach, decided in
 #              process_task by the chat's own switch. With "Let brAIn act
@@ -355,7 +364,7 @@ task_tool_flags() {
 
     case "$mode" in
         ''|full) return 0 ;;
-        house|read_only|minecraft|minecraft_talk|minecraft_trusted) ;;
+        house|read_only|minecraft|minecraft_trusted) ;;
         *) return 1 ;;
     esac
 
@@ -405,8 +414,6 @@ print(",".join(house_allow))
 print(",".join(house_deny))
 print(",".join(game_allow))
 print(",".join(game_deny))
-talk_deny = list(dict.fromkeys(deny + allow))
-print(",".join(talk_deny))
 PYTOOLS
     ); then
         return 1
@@ -423,12 +430,6 @@ PYTOOLS
         # narrow answer, `house`, never the full grant.
         allow=$(printf '%s' "$lists" | sed -n '3p')
         deny=$(printf '%s' "$lists" | sed -n '4p')
-    elif [ "$mode" = "minecraft_talk" ]; then
-        # Nothing allowed: only the deny list is passed.
-        deny=$(printf '%s' "$lists" | sed -n '7p')
-        [ -n "$deny" ] || return 1
-        printf '%s\n%s\n' "--disallowedTools" "$deny"
-        return 0
     else
         allow=$(printf '%s' "$lists" | sed -n '3p')
         deny=$(printf '%s' "$lists" | sed -n '4p')
@@ -734,13 +735,18 @@ process_task() {
     # A conversation (Morph's Ask): brAIn's chat, by task. The session id is
     # a CLI session uuid or nothing — it becomes an argv entry, so anything
     # that is not plainly one is dropped and the run starts fresh.
-    local task_conversation task_session task_origin
+    local task_conversation task_session task_origin task_game=""
     task_conversation=$(jq -r 'if .kind == "conversation" then "true" else "" end' "$work_file" 2>/dev/null)
+    # A game task (the Minecraft faculty's): it resumes a player's session
+    # too, read here before the trusted scope is resolved below.
+    case "$task_tools" in
+        minecraft|minecraft_trusted) task_game=true ;;
+    esac
     # Who sent it, for the Chats list: Morph's tasks say so. Read as the
     # literal word and nothing else, so an unknown source changes nothing.
     task_origin=$(jq -r 'if .source == "morph" then "morph" else "" end' "$work_file" 2>/dev/null)
     task_session=""
-    if [ "$task_conversation" = "true" ]; then
+    if [ "$task_conversation" = "true" ] || [ "$task_game" = "true" ]; then
         task_session=$(jq -r 'if (.session_id | type) == "string" then .session_id else empty end' "$work_file" 2>/dev/null)
         case "$task_session" in
             *[!A-Za-z0-9-]*) task_session="" ;;
@@ -748,6 +754,8 @@ process_task() {
         if [ "${#task_session}" -gt 64 ]; then
             task_session=""
         fi
+    fi
+    if [ "$task_conversation" = "true" ]; then
         # This task's subshell only: the MCP server, the action gate and
         # the progress hook read the chat's channel, not a task's.
         export BRAIN_CHANNEL=chat
@@ -770,7 +778,7 @@ process_task() {
     # MCP server and the action gate hold to the game world — and it is
     # never widened by "Let brAIn act without asking": a name in a game's
     # chat is not the person at the keyboard of brAIn.
-    if [ "$task_tools" = "minecraft" ] || [ "$task_tools" = "minecraft_talk" ]; then
+    if [ "$task_tools" = "minecraft" ]; then
         export BRAIN_CHANNEL=minecraft
         unset BRAIN_PERSON_WORDS
     fi
@@ -802,7 +810,7 @@ process_task() {
     # Somebody asked for this and the switch is on: the chat's reach.
     if person_task_acts "$task_conversation" "$task_words" \
             && [ "$BRAIN_CHANNEL" != "minecraft_trusted" ] \
-            && [ "$task_tools" != "minecraft" ] && [ "$task_tools" != "minecraft_talk" ]; then
+            && [ "$task_tools" != "minecraft" ]; then
         task_acts=true
         task_tools=""
         export BRAIN_CHANNEL=chat
@@ -864,7 +872,7 @@ process_task() {
     fi
     if ! tool_flags_out=$(task_tool_flags "$task_tools" "$task_cameras"); then
         bashio::log.error "Task [$task_id] asked for tools='${task_tools}' and it could not be honoured"
-        write_task_result "$task_id" "brAIn refused this task: tools='${task_tools}' is not one of full, house, read_only, minecraft, minecraft_talk or minecraft_trusted, or the analyst's tool lists could not be read from the panel. A task that cannot be scoped is not run with the full grant." "" refused
+        write_task_result "$task_id" "brAIn refused this task: tools='${task_tools}' is not one of full, house, read_only, minecraft or minecraft_trusted, or the analyst's tool lists could not be read from the panel. A task that cannot be scoped is not run with the full grant." "" refused
         journal_task error 0 "" "${task_model:-}" "tools scope could not be honoured" "$task_scheduled"
         return
     fi
@@ -981,15 +989,16 @@ ${prompt}"
     (cd /config && task_feed | timeout "$claude_limit" ${CLAUDE_BIN} -p "${format_flags[@]}" --max-turns "$MAX_TURNS" ${model_flag} "${resume_flags[@]}" "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || task_rc=$?
     task_envelope_from_stream "$output_file"
 
-    # A conversation whose session the CLI no longer holds (pruned, or
-    # started on another machine) is begun again rather than failed, and
-    # the result says so: the person's words still deserve an answer.
+    # A conversation (or a game line) whose session the CLI no longer holds
+    # (pruned, or started on another machine) is begun again rather than
+    # failed, and the result says so: the person's words still deserve an
+    # answer.
     if [ -n "$task_session" ] && [ "$task_rc" != "0" ] \
         && grep -qiE "no conversation found|session.*(not found|does not exist)" "$stderr_file" "$output_file" 2>/dev/null; then
         resume_lost=1
         resume_flags=()
         local fresh_left=$(( claude_limit - ( $(date +%s) - start_time ) ))
-        bashio::log.info "Conversation [$task_id] could not resume ${task_session} — starting it fresh (${fresh_left}s left)"
+        bashio::log.info "Task [$task_id] could not resume ${task_session} — starting it fresh (${fresh_left}s left)"
         if [ "$fresh_left" -ge 30 ]; then
             task_rc=0
             # shellcheck disable=SC2086
@@ -1039,6 +1048,10 @@ ${prompt}"
     else
         claim_task_session "$output_file" "${task_origin:-automation}"
     fi
+    # A game line's session is the player's next line's to resume.
+    if [ "$task_game" = "true" ]; then
+        task_sid=$(jq -r 'if type == "object" then (.session_id // empty) else empty end' "$output_file" 2>/dev/null || true)
+    fi
     stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
     # The envelope is kept until the journal has read it (journal_task
     # removes it); everything else goes now.
@@ -1074,6 +1087,9 @@ ${prompt}"
                 fi
             else
                 claim_task_session "$output_file" "${task_origin:-automation}"
+            fi
+            if [ "$task_game" = "true" ]; then
+                task_sid=$(jq -r 'if type == "object" then (.session_id // empty) else empty end' "$output_file" 2>/dev/null || true)
             fi
             stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
             # The retry's envelope is the one that answers the task. The
@@ -1185,10 +1201,11 @@ ${prompt}"
     fi
 
     # A conversation's result names its session (the next turn resumes it)
-    # and whether it is the one that was asked for.
+    # and whether it is the one that was asked for; a game line's too, with
+    # no sentence about it in what the player reads.
     local task_extra=""
-    if [ "$task_conversation" = "true" ]; then
-        if [ -n "$resume_lost" ] && [ -z "$fail_code" ]; then
+    if [ "$task_conversation" = "true" ] || [ "$task_game" = "true" ]; then
+        if [ "$task_conversation" = "true" ] && [ -n "$resume_lost" ] && [ -z "$fail_code" ]; then
             result="(brAIn could not pick up the earlier conversation, so this is a new one.) ${result}"
         fi
         task_extra=$(jq -cn --arg sid "$task_sid" --arg asked "$task_session" \

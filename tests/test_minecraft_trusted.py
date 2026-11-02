@@ -151,7 +151,7 @@ class TestWhichScopeALineGets(FacultyCase):
         # The person's words are the request; everything else is data.
         self.assertIn("ARE this person's request", prompt)
         self.assertIn("other players' chat", prompt)
-        self.assertIn('"message":{"untrusted":true,', prompt)
+        self.assertIn('"messages":[{"untrusted":true,', prompt)
         # Understand, then do — and say how to undo it.
         for words in ("minecraft_command", "minecraft_world look", "minecraft_world edit",
                       "Do not ask questions", "Keep every change undoable",
@@ -170,14 +170,16 @@ class TestWhichScopeALineGets(FacultyCase):
         self.assertEqual(self.brain.asked[-1]["tools"], "minecraft")
         # The server said it does not check: nothing runs at all.
         n = len(self.brain.asked)
-        self.chat(DAD, "Juniper, open the garage", verified=False,
-                  advance=rules.TALK_SPACING + 1)
+        self.chat(DAD, "Juniper, open the garage", verified=False)
         self.assertEqual(len(self.brain.asked), n)
 
-    def test_a_child_with_the_flag_is_still_words_only(self):
+    def test_a_child_with_the_flag_is_still_the_games_scope_never_the_house(self):
+        # Was: words only (`minecraft_talk`, now gone). A child gets the game
+        # scope like everyone verified, and the toggle is never theirs.
         self.join(KAZ)
         self.chat(KAZ, "Juniper, make me creative")
-        self.assertEqual(self.brain.asked[-1]["tools"], "minecraft_talk")
+        self.assertEqual(self.brain.asked[-1]["tools"], "minecraft")
+        self.assertNotIn("speaker", self.brain.asked[-1])
 
 
 # ---------------------------------------------------------------------------
@@ -489,16 +491,20 @@ class TestTheRawPath(Base):
         self.assertIsNone(m._minecraft_chat_refusal("light", "turn_on"))
 
     def test_the_guarded_channel_refuses_them_pointing_at_the_setting(self):
+        # `edit` was refused here too until the family could build anything
+        # (docs/design/minecraft-companion.md §3): it is undoable, so it is
+        # on every game scope now (tests/test_minecraft_game_scope.py).
         self.channel("minecraft")
         for got in (m.minecraft_command("gamemode creative DadCraft42"),
                     m.minecraft_player("DadCraft42", "gamemode", "creative"),
-                    m.minecraft_world("edit", "a bed", blocks=[{"x": 0, "y": 64, "z": 0,
-                                                                "block": "red_bed"}]),
                     m.call_service("light", "turn_on", {"entity_id": "light.k1"})):
             self.assertIn(OUTSIDE, got["error"])
             self.assertNotIn("approve that", got["error"])
         self.assertNotIn("rcon_command", self.services())
-        self.assertNotIn("companion_edit", self.services())
+        got = m.minecraft_world("edit", "a bed", blocks=[{"x": 0, "y": 64, "z": 0,
+                                                          "block": "red_bed"}])
+        self.assertTrue(got["done"], got)
+        self.assertIn("companion_edit", self.services())
 
     def test_a_trusted_redecorate_goes_straight_to_the_edit_and_names_the_undo(self):
         self.channel("minecraft_trusted")

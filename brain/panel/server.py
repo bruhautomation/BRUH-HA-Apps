@@ -7282,7 +7282,7 @@ def _changes_rows(now: float | None = None) -> list[dict]:
         intents=intents.listing(),
         accepted=list(proposals.settled_keys().values()),
         names=dict(_NAMES), mtime=_file_mtime, protected=None,
-        honeytokens=tokens, now=now)
+        honeytokens=tokens, now=now, mc_jobs=minecraft_companion.jobs())
 
 
 async def h_changes(request: web.Request) -> web.Response:
@@ -7369,6 +7369,36 @@ async def h_change_call_undo(request: web.Request) -> web.Response:
              sum(1 for r in restored if r["restored"]))
     return web.json_response({**changes.page(await asyncio.to_thread(_changes_rows)),
                               "restored": restored, "text": text})
+
+
+_MC_JOB_ID = re.compile(r"^j[0-9a-f]{6}$")
+
+
+async def h_change_mcjob_undo(request: web.Request) -> web.Response:
+    """Put back everything one Minecraft job changed in the world. The
+    faculty keeps the jobs and does the undo (`brain.minecraft_job`), so
+    jobs.json keeps one writer; this only asks, and only for a row the list
+    still offers Undo on."""
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    job = request.match_info["job"]
+    if not _MC_JOB_ID.match(job):
+        raise web.HTTPNotFound(text="no such change")
+    rows = await asyncio.to_thread(_changes_rows)
+    _offered(rows, f"mcjob:{job}")
+    try:
+        answer = await ha_data.call_with_response(
+            "brain", "minecraft_job", {"action": "undo", "job": job})
+    except Exception as exc:  # noqa: BLE001 — said, never a 500; the detail is logged
+        log.warning("undo of a Minecraft job: the faculty did not answer (%s)", type(exc).__name__)
+        raise web.HTTPBadGateway(
+            text="The game did not answer, so nothing was put back. Try again in a minute.") from exc
+    if isinstance(answer, dict) and answer.get("error"):
+        raise web.HTTPConflict(text=str(answer["error"]))
+    n = int((answer or {}).get("undone") or 0) if isinstance(answer, dict) else 0
+    return web.json_response({**changes.page(await asyncio.to_thread(_changes_rows)),
+                              "text": f"Put back {n} change{'s' if n != 1 else ''} "
+                                      "in the game."})
 
 
 async def _undo_intervention(finding: dict) -> list[str]:
@@ -28366,6 +28396,7 @@ def make_app() -> web.Application:
     app.router.add_get("/api/changes", h_changes)
     app.router.add_post("/api/changes/edit/{ts}/undo", h_change_edit_undo)
     app.router.add_post("/api/changes/call/{ts}/undo", h_change_call_undo)
+    app.router.add_post("/api/changes/mcjob/{job}/undo", h_change_mcjob_undo)
     app.router.add_post("/api/history/clear", h_history_clear)
     app.router.add_get("/api/today", h_today)
     app.router.add_post("/api/today/hide", h_today_hide)

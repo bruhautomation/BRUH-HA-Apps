@@ -284,7 +284,7 @@ class TestTheBridgeWritesIt(unittest.TestCase):
             "timeout": 300, "notify_entity": None,
             "model": None, "tools": None, "schema": None,
             "memory": False, "scheduled": False, "cameras": False, "effort": None,
-            "speaker": None, "re": __import__("re"),
+            "speaker": None, "session_id": None, "re": __import__("re"),
         }
         scope.update(kw)
         # One namespace, not separate globals and locals: before Python 3.12
