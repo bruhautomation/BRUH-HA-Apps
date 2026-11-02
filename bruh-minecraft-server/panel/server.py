@@ -3275,7 +3275,7 @@ class _EventSender:
     def fire(self, name: str, data: dict) -> None:
         try:
             self.queue.put_nowait((name, data))
-        except Exception:  # noqa: BLE001 — a full queue drops the oldest news, not the game
+        except Exception:  # noqa: BLE001 — a full queue drops this (the newest) event, never the game
             self.dropped += 1
 
     def start(self) -> None:
@@ -3307,7 +3307,8 @@ def game_event(ev: dict, verified=None, world: str = "") -> tuple[str, dict] | N
 
     `verified(player)` is the account check, `(bool, why)`: whether the
     server checks the account behind that name, carried on chat and join so
-    a companion knows whether a name may be believed.
+    a companion knows whether a name may be believed. A line with no player
+    carries none.
     """
     kind = str(ev.get("kind") or "")
     if kind not in GAME_EVENTS:
@@ -3335,7 +3336,12 @@ def game_event(ev: dict, verified=None, world: str = "") -> tuple[str, dict] | N
         data["name"] = ev.get("shown") or ev.get("player")
         for key in ("dimension", "target", "building", "room", "eye", "yaw", "pitch"):
             data[key] = ev.get(key)
-    if kind in ("chat", "join", "point") and verified is not None:
+    # A line the collector could not tie to a player (a nickname a server
+    # script shows) has no account to check, so it carries no verdict at all:
+    # `verified: false` would read as "somebody playing whose name the server
+    # does not check" and be refused, where an absent one is the game's own
+    # scope.
+    if kind in ("chat", "join", "point") and verified is not None and ev.get("player"):
         ok, why = verified(ev.get("player"))
         data["verified"] = bool(ok)
         if not ok:

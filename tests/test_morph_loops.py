@@ -281,9 +281,27 @@ class TestDevloopOutbox(unittest.TestCase):
             row = out["rows"][0]
             self.assertTrue(row["where"].startswith("Morph"),
                             "brAIn's stream keeps only rows whose where starts with Morph")
-            self.assertEqual(3, row["impact"]["times"])
+            self.assertEqual(3, row["impact"]["count"])
             env.switch(development_loop=False)
             self.assertEqual([], env.devloop.publish("0.1.0")["rows"])
+
+    def test_a_tells_issue_is_a_persons_words(self):
+        # A Tell's issue is filed because somebody pressed Send on it: it
+        # was dressed as "Morph reported this 1 time" and could not be
+        # taken back from Settings.
+        with MorphEnv() as env:
+            env.switch(development_loop=True)
+            env.devloop.note_fault("Tell", "Morph cannot draw a fan's speed",
+                                   "Asked: show the fan speed", source="person")
+            [row] = env.devloop.rows()
+            self.assertEqual(row["where"], "Morph · Tell")
+            self.assertNotIn("Morph reported this", row["body"])
+            self.assertTrue(row["body"].startswith("Asked: show the fan speed"))
+            self.assertEqual(row["impact"]["count"], 1)
+            [mine] = env.devloop.mine()
+            self.assertEqual(mine["what"], "Morph cannot draw a fan's speed")
+            self.assertTrue(env.devloop.withdraw(mine["fp"])["ok"])
+            self.assertEqual(env.devloop.rows(), [])
 
     def test_every_issue_points_at_files_that_exist(self):
         # The body sent the developer to `morph/AGENTS.md`, which is not in

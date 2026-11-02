@@ -19362,7 +19362,8 @@ async def h_capture_delete(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
-# The development loop — ⚙ › Developer, off by default
+# The development loop — switched on in ⚙ › Features (off by default), its
+# repository, token and streams in ⚙ › Developer
 # ---------------------------------------------------------------------------
 #
 # Everything here answers about one opt-in feature (`devloop/`, and
@@ -19411,9 +19412,8 @@ async def _devloop_verify_pass(now: float | None = None) -> int:
     installed (`devloop/verify.py`). Files through `findings_store.add_case`
     like every question brAIn asks; deterministic and free, so no gate."""
     now = time.time() if now is None else now
-    # First, answer what brAIn can prove and withdraw what an update made
-    # moot, so a question still on the screen is one only the person can
-    # answer (`verify.proof`).
+    # First, withdraw what an update made moot, so a question still on the
+    # screen is about a fix that is still the fix (`verify.moot`).
     await _devloop_verify_settle(now)
     try:
         data = await asyncio.to_thread(devloop.upstream._load)
@@ -19450,85 +19450,56 @@ async def _devloop_verify_pass(now: float | None = None) -> int:
 
 
 async def _devloop_verify_settle(now: float | None = None) -> dict:
-    """The update protocol for "is this fixed?" questions: every open one
-    brAIn can prove from what it measures is answered Yes through the same
-    ending the owner's press takes (the comment says brAIn checked, never
-    that the owner confirmed), and one an update made moot is withdrawn
-    with nothing posted. What it cannot prove stays for the person. Never
-    raises: it is housekeeping in front of the ask."""
+    """Withdraw every open "is this fixed?" question an update made moot
+    (`verify.moot`), with nothing posted; what still stands stays for the
+    person. Never raises: it is housekeeping in front of the ask.
+
+    It also answered Yes for brAIn on a report it could prove, which no
+    question asked could ever be (`verify.moot`'s docstring says why)."""
     now = time.time() if now is None else now
-    done = {"answered": 0, "withdrawn": 0}
+    done = {"withdrawn": 0}
     try:
         data = await asyncio.to_thread(devloop.upstream._load)
         state = await asyncio.to_thread(devloop.verify.load)
         rows = [f for f in await asyncio.to_thread(findings_store.list_all)
                 if f.get("source") == devloop.verify.SOURCE
                 and f.get("status") in findings_store.LIVE_STATUSES]
-        # A fix is proven against the release that is RUNNING (#535).
-        running = devloop.verify.live_version(
-            str(data.get("version") or ""),
-            await asyncio.to_thread(_integration_versions))
-        measured = {**data, "version": running}
         for row in rows:
             # A question can cover several reports (`verify.group_row`): it
-            # is answered for brAIn only when every one is proven, and
-            # withdrawn only when every one is moot.
+            # is withdrawn only when every one is moot.
             fps = [fp for fp in devloop.verify.fps_for_finding(state, row)
                    if not (state.get(fp) or {}).get("answer")]
             if not fps:
                 continue
-            said = []
-            for fp in fps:
-                entry = data["items"].get(fp)
-                stream = str((entry or {}).get("stream") or "")
-                looked = bool(stream) and await asyncio.to_thread(
-                    devloop.stream_on, stream)
-                said.append(devloop.verify.proof(entry, state.get(fp),
-                                                 measured, looked=looked))
-            if any(s is None for s in said):
+            said = [devloop.verify.moot(data["items"].get(fp), state.get(fp))
+                    for fp in fps]
+            if not all(said):
                 continue
-            kinds = {s[0] for s in said}
-            words = said[0][1] if len(said) == 1 else "; ".join(
-                dict.fromkeys(s[1] for s in said))
-            if "held" in kinds:
-                moot = [fp for fp, s in zip(fps, said) if s[0] != "held"]
-                if moot:
-                    def drop(moot=moot) -> None:
-                        st = devloop.verify.load()
-                        for fp in moot:
-                            devloop.verify.record_moot(st, fp, now)
-                        devloop.verify.save(st)
-                    await asyncio.to_thread(drop)
-                await _end_devloop_verify(
-                    row, {"label": "accepted"},
-                    f"brAIn checked: {words}", by="brain")
-                done["answered"] += 1
-            else:
-                def withdraw(ts=row["ts"], fps=fps, words=words) -> None:
-                    findings_store.settle_and_clear(
-                        ts, "not_applicable",
-                        note=f"Withdrawn by brAIn: {words}")
-                    st = devloop.verify.load()
-                    for fp in fps:
-                        devloop.verify.record_moot(st, fp, now)
-                    devloop.verify.save(st)
-                await asyncio.to_thread(withdraw)
-                done["withdrawn"] += 1
+            words = "; ".join(dict.fromkeys(said))
+
+            def withdraw(ts=row["ts"], fps=fps, words=words) -> None:
+                findings_store.settle_and_clear(
+                    ts, "not_applicable",
+                    note=f"Withdrawn by brAIn: {words}")
+                st = devloop.verify.load()
+                for fp in fps:
+                    devloop.verify.record_moot(st, fp, now)
+                devloop.verify.save(st)
+            await asyncio.to_thread(withdraw)
+            done["withdrawn"] += 1
             state = await asyncio.to_thread(devloop.verify.load)
-        if done["answered"] or done["withdrawn"]:
-            log.info("devloop: answered %d fix question(s) from what brAIn "
-                     "measured and withdrew %d made moot",
-                     done["answered"], done["withdrawn"])
+        if done["withdrawn"]:
+            log.info("devloop: withdrew %d fix question(s) an update made moot",
+                     done["withdrawn"])
     except Exception as exc:  # noqa: BLE001 — housekeeping, not the loop
         log.warning("devloop: could not settle the fix questions: %s", exc)
     return done
 
 
 async def _end_devloop_verify(finding: dict, spec: dict,
-                              note: str, *, by: str = "owner") -> tuple[dict, str]:
+                              note: str) -> tuple[dict, str]:
     """Yes confirms the fix on the issue; No reopens it with the words
-    typed. Neither writes a memory line: it is a fact about brAIn. ``by``
-    is ``brain`` when brAIn answered from what it measured."""
+    typed. Neither writes a memory line: it is a fact about brAIn."""
     state = await asyncio.to_thread(devloop.verify.load)
     # Every report the question covers that is still waiting for an answer.
     fps = [fp for fp in devloop.verify.fps_for_finding(state, finding)
@@ -19537,8 +19508,8 @@ async def _end_devloop_verify(finding: dict, spec: dict,
 
     def settle() -> dict:
         for fp in fps:
-            devloop.upstream.owner_answer(fp, accept, note, by=by)
-            devloop.verify.record_answer(state, fp, accept, time.time(), by=by)
+            devloop.upstream.owner_answer(fp, accept, note)
+            devloop.verify.record_answer(state, fp, accept, time.time())
         if fps:
             devloop.verify.save(state)
         # Settled under the kind no scorecard counts: the answer is about
@@ -19631,14 +19602,26 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
         # The Claude-run streams. A scheduled one answers to the three gates
         # every unattended run answers to; a press needs only a credential.
         # Both spend from the day's cap, which refuses rather than queues.
+        why = ""
         if not engine.get_auth():
-            return {"skipped": "there is no Claude credential"}
-        if not pressed:
+            why = "there is no Claude credential"
+        elif not pressed:
             held = _resident_gate(await asyncio.to_thread(settings_store.load))
             if held:
                 return {"skipped": held}
-        if not await asyncio.to_thread(up.spend_run):
-            return {"skipped": "today's run cap is spent"}
+        if not why and not await asyncio.to_thread(up.spend_run):
+            why = "today's run cap is spent"
+        if why:
+            if stream != "look" or not topic:
+                return {"skipped": why}
+            # The owner pressed Send on their own words, and there is no
+            # run to write them up: they go as they are, and the box under
+            # them says why. Skipping here dropped the request with a 202
+            # and an empty status line.
+            rows = dl_streams.verbatim_rows(topic)
+            out = await asyncio.to_thread(up.ingest, stream, rows, payload, names)
+            return {**out, "fps": [up.fingerprint(r["where"], r["what"]) for r in rows],
+                    "note": f"{why}, so it was filed as you typed it"}
         score = await asyncio.to_thread(findings_store.scorecard)
         unmet = await asyncio.to_thread(
             dl_streams.unmet, Path(chat_session.TRANSCRIPT_DIR))
@@ -20117,8 +20100,12 @@ def _devloop_last_look(queue: list[dict]) -> dict | None:
     filed = [{k: by_fp[fp].get(k) for k in ("where", "state", "issue",
                                             "issue_url", "verdict")}
              for fp in fps if fp in by_fp]
+    result = last.get("result") or {}
+    # A pass that did not run says why: "skipped" was read as no error,
+    # and a request nothing was filed for showed an empty reason.
     return {**last, "filed": filed,
-            "error": (last.get("result") or {}).get("error") or ""}
+            "error": result.get("error") or result.get("skipped") or "",
+            "note": result.get("note") or ""}
 
 
 async def h_devloop_get(request: web.Request) -> web.Response:
@@ -20281,8 +20268,12 @@ def report_row(body: dict) -> tuple[dict | None, str]:
         return None, "a report needs a title and what is wrong"
     addon = str(body.get("addon") or "brAIn").strip()
     spec = devloop.siblings.spec_by_name(addon)
-    if addon.lower() != "brain" and not spec:
-        return None, ("addon must be brAIn or one of: "
+    # Morph is brAIn's half since 4.0: its report is brAIn's, released
+    # with brAIn, and its title leads with Morph, which is what the cloud
+    # routes a fix to brAIn's Morph code by. The tool still offers it.
+    morph = addon.lower() == "morph"
+    if addon.lower() != "brain" and not spec and not morph:
+        return None, ("addon must be brAIn, Morph or one of: "
                       + ", ".join(devloop.siblings.PRODUCTS))
     parts = []
     if fields["asked"].strip():
@@ -20299,6 +20290,8 @@ def report_row(body: dict) -> tuple[dict | None, str]:
            "detail": "", "body": "\n\n".join(parts), "ux": body.get("ui") is True}
     if spec:
         row.update(where=f"{spec['name']} · {row['where']}", product=spec["name"])
+    elif morph:
+        row["where"] = f"Morph · {row['where']}"
     return row, ""
 
 
@@ -20310,7 +20303,7 @@ async def h_devloop_report(request: web.Request) -> web.Response:
     with no second Claude run, because the conversation already was one."""
     if not await asyncio.to_thread(devloop.enabled):
         return web.json_response(
-            {"error": "the development loop is off: turn it on in ⚙ › Developer"},
+            {"error": "the development loop is off: turn it on in ⚙ › Features"},
             status=409)
     try:
         body = await request.json()
@@ -26201,7 +26194,7 @@ Ask brAIn's own measurements before you guess: what_is_normal (is a reading unus
 
 For a NEW standing automation you can also offer brAIn's replay: describe it in one sentence to the brain.intent service (call_service, domain "brain", service "intent", data {"sentence": "..."}) and brAIn drafts it, replays it over the last month, grades it against what this household actually did and offers it as a card to accept or trial. Offer that when seeing how it would have behaved helps; when they ask you to just make it, make it.
 
-When something in another BRUH add-on is broken (GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft, BRUH Cooking), look first with bruh_addon_status and its log. Do what can be done here (restart it, fix its options or the house's own config) and say so. Its code is in its own image and is never patched in place: when the cause is in that code, file it with report_bug — your diagnosis, the log lines and the owner's words — and it is fixed upstream and arrives as an update, which brAIn then checks held. Do the same for a bug in brAIn itself. When the problem is how a screen looks or reads — brAIn's own, another add-on's panel, Morph's dashboard or a Lovelace card — take a picture of it with screenshot_panel and look before you answer, at a phone's width (390) and a laptop's (1200), and file what you saw with report_bug and ui: true.
+When something in another BRUH add-on is broken (GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft, BRUH Cooking, BRUH Task Manager), look first with bruh_addon_status and its log. Do what can be done here (restart it, fix its options or the house's own config) and say so. Its code is in its own image and is never patched in place: when the cause is in that code, file it with report_bug — your diagnosis, the log lines and the owner's words — and it is fixed upstream and arrives as an update, which brAIn then checks held. Do the same for a bug in brAIn itself. When the problem is how a screen looks or reads — brAIn's own, another add-on's panel, Morph's dashboard or a Lovelace card — take a picture of it with screenshot_panel and look before you answer, at a phone's width (390) and a laptop's (1200), and file what you saw with report_bug and ui: true.
 
 Protected entities and the household's house rules hold whatever route you take. A refusal is their decision: tell them, and never route around it."""
 
@@ -26389,7 +26382,70 @@ async def _open_terminal(session_id: str = "", prompt: str = "") -> dict:
 # brAIn's own config (`personality.py`). The file is also the wire Morph
 # reads; the chat, the terminal, the generated CLAUDE.md and the voice
 # prompt carry it. A save rewrites the terminal's appended prompt so the
-# next window opened has it.
+# next window opened has it, and regenerates /config/CLAUDE.md, whose
+# personality section otherwise kept the old words until a restart or the
+# next memory filing.
+
+# The context generator, found where the consolidator finds it
+# (`brain-memory-consolidate.sh` `refresh_context`).
+CONTEXT_GENERATORS = (
+    os.environ.get("BRAIN_CONTEXT_GEN", "/usr/local/bin/ha-context-gen.sh"),
+    "/opt/scripts/ha-context-gen.sh")
+CONTEXT_GEN_TIMEOUT_S = 120
+# One regeneration at a time; a save during one asks for one more after it.
+_CONTEXT_REFRESH = {"running": False, "again": False}
+_CONTEXT_REFRESH_LOCK = threading.Lock()
+
+
+def _regenerate_claude_md() -> None:
+    """Run the generator once. Never raises: the file is derived, and what
+    it is derived from is already saved."""
+    gen = next((g for g in CONTEXT_GENERATORS if g and os.access(g, os.X_OK)), "")
+    if not gen:
+        return
+    try:
+        done = subprocess.run([gen], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=CONTEXT_GEN_TIMEOUT_S)
+        if done.returncode:
+            log.warning("could not refresh /config/CLAUDE.md (the generator "
+                        "exited %s); it has the previous personality until the "
+                        "next restart or memory filing", done.returncode)
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.warning("could not refresh /config/CLAUDE.md: %s", exc)
+
+
+def _refresh_claude_md() -> None:
+    """Regenerate /config/CLAUDE.md off the request's path, the way the
+    consolidator does. Returns at once; overlapping asks run one more pass
+    after the current one rather than two generators at once."""
+    with _CONTEXT_REFRESH_LOCK:
+        if _CONTEXT_REFRESH["running"]:
+            _CONTEXT_REFRESH["again"] = True
+            return
+        _CONTEXT_REFRESH["running"] = True
+
+    def run() -> None:
+        try:
+            while True:
+                with _CONTEXT_REFRESH_LOCK:
+                    _CONTEXT_REFRESH["again"] = False
+                _regenerate_claude_md()
+                with _CONTEXT_REFRESH_LOCK:
+                    if not _CONTEXT_REFRESH["again"]:
+                        _CONTEXT_REFRESH["running"] = False
+                        return
+        except Exception:  # noqa: BLE001 — never leave the flag stuck
+            log.exception("the CLAUDE.md refresh stopped")
+            with _CONTEXT_REFRESH_LOCK:
+                _CONTEXT_REFRESH["running"] = False
+
+    try:
+        threading.Thread(target=run, name="claude-md-refresh", daemon=True).start()
+    except RuntimeError:  # no thread to be had: the next save tries again
+        log.warning("could not start the CLAUDE.md refresh")
+        with _CONTEXT_REFRESH_LOCK:
+            _CONTEXT_REFRESH["running"] = False
+
 
 async def _personality_body(request: web.Request) -> dict:
     try:
@@ -26418,6 +26474,7 @@ async def h_features_put(request: web.Request) -> web.Response:
     why = features.refusal(body)
     if why:
         raise web.HTTPBadRequest(text=why)
+    named = await asyncio.to_thread(personality.enabled)
     try:
         await asyncio.to_thread(features.save, body)
     except ValueError:
@@ -26430,6 +26487,9 @@ async def h_features_put(request: web.Request) -> web.Response:
     # Personality and the development loop are both in what a new terminal
     # window is told.
     await asyncio.to_thread(_write_terminal_prompt)
+    # ...and the personality is a section of /config/CLAUDE.md.
+    if await asyncio.to_thread(personality.enabled) != named:
+        _refresh_claude_md()
     return web.json_response(await asyncio.to_thread(_features_payload))
 
 
@@ -26534,6 +26594,7 @@ async def h_personality_put(request: web.Request) -> web.Response:
             text="brAIn could not save that; the add-on log says why.")
     await asyncio.to_thread(features.publish)
     await asyncio.to_thread(_write_terminal_prompt)
+    _refresh_claude_md()
     return web.json_response(await asyncio.to_thread(personality.payload))
 
 
@@ -26586,6 +26647,7 @@ async def h_personality_growth(request: web.Request) -> web.Response:
         raise web.HTTPInternalServerError(
             text="brAIn could not record that; the add-on log says why.")
     await asyncio.to_thread(_write_terminal_prompt)
+    _refresh_claude_md()
     return web.json_response({"ok": True, "entry": entry})
 
 
@@ -27250,6 +27312,8 @@ def _context_sources() -> dict:
         DEVELOPMENT_MODE_ON if development_mode() else DEVELOPMENT_MODE_OFF) + (
         "\n\n" + YOLO_MODE_ON if yolo_mode() else "")
     src["personality"] = _personality_lines()
+    # Off is not "none set": the page says which (⚙ › Features).
+    src["personality_on"] = read(personality.enabled, True)
     src["house_now"] = "; ".join(read(_chat_house_lines, []))
     src["claude_md"] = read(lambda: Path(ha_data.CONTEXT_FILE).read_text(
         encoding="utf-8", errors="replace"))

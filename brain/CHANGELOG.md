@@ -2,6 +2,38 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.1.2
+
+Fixes from an audit of the development loop, the personality engine and the Minecraft companion.
+
+### Fixed
+
+- **Other add-ons' screenshots reach your reports.** Pictures of GardenRX, BRUH Bambu Studio, BRUH Print, BRight and BRUH Minecraft were refused on upload, so their screen reports were never filed.
+- **One add-on's new screen report no longer closes another's.** Filing Morph's screens closed brAIn's as "Superseded"; now only the same add-on's older report is closed.
+- **What you type into "What do you want to fix?" is never dropped.** With no Claude sign-in, or with the day's run limit used up, your words are filed as you typed them and the line under the box says why.
+- **A bug about Morph can be reported from the chat.** Asking brAIn to report a Morph problem, or a request about Morph, was refused; it is now filed as part of brAIn.
+- **Morph's reports say how often it happened.** The count Morph keeps reaches the report again, instead of the number of times brAIn re-read it.
+- **A change you sent from a Tell is your own report.** It no longer reads "Morph reported this 1 time", and Settings can take it back.
+- **An add-on's own report keeps its date.** A row that says when it last happened is no longer treated as seen again on every pass.
+- **A growth note that mentions a voice no longer changes it.** Only a note that says outright the voice changed to a named one ("the voice is now Nova") sets it. "Keep a calm voice when talking to children" made every card say brAIn's voice was "children".
+- **An emoji in Morph's old personality file no longer stops brAIn starting.** It is read as the emoji; a file brAIn cannot read is said in the log and skipped.
+- **A section you delete in ⚙ › Personality stays deleted.** It came back on every restart when the personality had been moved over from Morph, and the voice and the growth log's details were wiped with it.
+- **With Personality off, Morph's dashboard says "brAIn" too.** A Tell's and a conversation's steps used the stored name, and cards quoted the stored voice.
+- **The terminal's house file follows a personality change at once.** `/config/CLAUDE.md` kept the old personality until a restart or the next memory filing.
+- **A Morph personality file with a comment such as `// GROWTH: entries below` is read.** That comment made the whole import fail, and a persona cut by the old 4,000-character limit is now said to be cut when the cut fell near half that length.
+- **The page says your assistant's name only where it said brAIn.** A household member who shares the old name keeps their own words when the name changes, and a "one line:" or "summary:" part of the persona is titled Tagline.
+- **The Minecraft companion says the server is not answering instead of failing.** Saying something to, editing for or building at a player while the server's status could not be read ended in a Python error; it now says the server is not answering, and teleport, give, game mode, kick and look do the same instead of sending the request anyway.
+- **A nickname in Minecraft chat is no longer told the server does not check accounts.** A chat line the server could not tie to a player gets the game's own scope, never the house and never an "untrusted" refusal; a real player whose account is not checked is still refused (pairs with BRUH Minecraft 1.18.1).
+- **Undoing a Minecraft job no longer sends or counts changes that were already gone.** "Put back N changes" counts only what was actually put back.
+- **A bad picture on a choice pad no longer drops the whole question.** The companion drops the item it cannot show and keeps the pads.
+
+### Changed
+
+- **BRUH Task Manager is watched by the development loop.** Its errors are filed like the other BRUH add-ons', and the chat can report a bug in it.
+- **The development loop is switched on in ⚙ › Features.** The chat, the report refusal and `brain devloop` now say so, and `brain devloop` lists every stream.
+- **"Is this fixed now?" is only ever answered by you.** brAIn still withdraws a question an update made moot; the unused path where brAIn would answer one itself is gone.
+- **"What brAIn brings" says when Personality is switched off** and points to ⚙ › Features, instead of "None is set".
+
 ## 4.1.1
 
 ### Fixed

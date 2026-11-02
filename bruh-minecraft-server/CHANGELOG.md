@@ -5,6 +5,12 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.18.1
+
+### Fixed
+
+- **A chat line the server cannot tie to a player no longer says its account is unchecked.** The event carries no verdict, and brAIn 4.1.2 gives such a line the game's own scope instead of an "untrusted" refusal.
+
 ## 1.18.0
 
 ### Added

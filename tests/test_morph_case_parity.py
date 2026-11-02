@@ -160,6 +160,19 @@ class TestTheServiceNamesTheAssistantToo(unittest.TestCase):
             (env.brain_shared / "personality.json").write_text("{not json")
             self.assertEqual("brAIn", env.brain.who())
 
+    def test_with_personality_switched_off_it_is_brain(self):
+        # Every other surface says "brAIn" with the switch off; a Tell's
+        # steps said the stored name.
+        from morph_env import MorphEnv
+        with MorphEnv() as env:
+            (env.brain_shared / "personality.json").write_text(json.dumps({"name": "Wren"}))
+            self.assertEqual("Wren", env.brain.who())
+            env.switch(personality=False)
+            self.assertEqual("brAIn", env.brain.who())
+            # A house whose switches were never written keeps the name.
+            (env.brain_shared / "features.json").unlink()
+            self.assertEqual("Wren", env.brain.who())
+
     def test_a_conversations_steps_use_it(self):
         import asyncio
         import importlib

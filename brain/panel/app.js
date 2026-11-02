@@ -4663,7 +4663,7 @@ function devLookOutcome(last) {
       ? `<a href="${esc(f.issue_url)}" target="_blank" rel="noopener">#${esc(String(f.issue))}</a> `
       : "";
     return `${link}${name} (${esc(state)})`;
-  }).join("; ") + ".";
+  }).join("; ") + "." + (last.note ? " (" + esc(last.note) + ".)" : "");
 }
 
 function paintDevloop(data) {
@@ -12921,13 +12921,12 @@ function applyName() {
   const f = (state.status && state.status.features) || {};
   const name = f.personality && f.name ? String(f.name) : "brAIn";
   if (name === pageName) return;
-  const was = pageName;
   pageName = name;
   document.documentElement.classList.toggle("named", name !== "brAIn");
   const nameEl = $("#brandName");
   if (nameEl) nameEl.textContent = name === "brAIn" ? "" : name;
   document.title = name;
-  speakAll(document.body, was);
+  speakAll(document.body);
 }
 
 // The top bar's mark (⚙ › Personality › Header): the wordmark, the
@@ -12969,23 +12968,58 @@ function applyHeader() {
 const SPEAK_SKIP = new Set(["TEXTAREA", "INPUT", "CODE", "PRE", "SCRIPT", "STYLE", "SELECT"]);
 const SPEAK_ATTRS = ["placeholder", "aria-label", "title", "data-tip", "alt"];
 
-function speakText(s, from) {
-  return s.split(from).join(pageName);
+// The word as a word, as `personality.speak` has it (`\bbrAIn\b`): "brAIns"
+// is not the name.
+const BRAIN_WORD = /\bbrAIn\b/g;
+// What each text and attribute said before the page spoke it, and what it
+// wrote: a new name is said over brAIn's own words from what they were, so a
+// member of the household who shares the old name keeps theirs.
+const SPOKEN = new WeakMap();
+
+function speakText(s) {
+  return s.replace(BRAIN_WORD, () => pageName);
 }
 
-function speakAll(root, from = "brAIn") {
-  if (!root || pageName === from) return;
+function speakNode(node) {
+  const was = SPOKEN.get(node);
+  if (was && was.wrote === node.nodeValue) {
+    const now = speakText(was.orig);
+    if (now !== node.nodeValue) { was.wrote = now; node.nodeValue = now; }
+    return;
+  }
+  const orig = node.nodeValue;
+  if (pageName === "brAIn" || !orig.includes("brAIn")) return;
+  const now = speakText(orig);
+  if (now === orig) return;
+  SPOKEN.set(node, { orig, wrote: now });
+  node.nodeValue = now;
+}
+
+function speakAttr(el, a) {
+  const v = el.getAttribute && el.getAttribute(a);
+  if (!v) return;
+  let map = SPOKEN.get(el);
+  const was = map && map[a];
+  if (was && was.wrote === v) {
+    const now = speakText(was.orig);
+    if (now !== v) { was.wrote = now; el.setAttribute(a, now); }
+    return;
+  }
+  if (pageName === "brAIn" || !v.includes("brAIn")) return;
+  const now = speakText(v);
+  if (now === v) return;
+  if (!map) { map = {}; SPOKEN.set(el, map); }
+  map[a] = { orig: v, wrote: now };
+  el.setAttribute(a, now);
+}
+
+function speakAll(root) {
+  if (!root) return;
   const walk = (node) => {
-    if (node.nodeType === 3) {
-      if (node.nodeValue.includes(from)) node.nodeValue = speakText(node.nodeValue, from);
-      return;
-    }
+    if (node.nodeType === 3) { speakNode(node); return; }
     if (node.nodeType !== 1 || SPEAK_SKIP.has(node.tagName) || node.isContentEditable) return;
     if (node.closest && node.closest(".wordmark, .brandlink")) return;
-    for (const a of SPEAK_ATTRS) {
-      const v = node.getAttribute && node.getAttribute(a);
-      if (v && v.includes(from)) node.setAttribute(a, speakText(v, from));
-    }
+    for (const a of SPEAK_ATTRS) speakAttr(node, a);
     for (const c of node.childNodes) walk(c);
   };
   walk(root);
@@ -12999,14 +13033,9 @@ function speakAll(root, from = "brAIn") {
       if (rec.type === "characterData") {
         const n = rec.target;
         const p = n.parentElement;
-        if (n.nodeValue.includes("brAIn") && p && !SPEAK_SKIP.has(p.tagName) && !p.closest("code, pre, textarea, .brandlink")) {
-          n.nodeValue = speakText(n.nodeValue, "brAIn");
-        }
+        if (p && !SPEAK_SKIP.has(p.tagName) && !p.closest("code, pre, textarea, .brandlink")) speakNode(n);
       } else if (rec.type === "attributes") {
-        const v = rec.target.getAttribute(rec.attributeName);
-        if (v && v.includes("brAIn") && !rec.target.closest(".wordmark")) {
-          rec.target.setAttribute(rec.attributeName, speakText(v, "brAIn"));
-        }
+        if (!rec.target.closest(".wordmark")) speakAttr(rec.target, rec.attributeName);
       } else {
         rec.addedNodes.forEach((n) => {
           const p = n.parentElement;
@@ -18090,8 +18119,10 @@ async function loadPersonality() {
 // the first label are an untitled lead, and a persona with no labels is its
 // paragraphs under no title at all.
 const PERS_LABEL = /^([A-Za-z][A-Za-z0-9_' -]{0,39}):(?:\s+(.*))?$/;
+// Every key personality.py `TAGLINE_KEYS` reads as the tagline is titled so.
 const PERS_TITLES = {
   line: "Tagline", tagline: "Tagline", "tag line": "Tagline", one_line: "Tagline",
+  "one line": "Tagline", summary: "Tagline",
   name_why: "Why the name", why_the_name: "Why the name",
 };
 

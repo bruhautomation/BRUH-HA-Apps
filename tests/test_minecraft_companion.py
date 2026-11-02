@@ -556,7 +556,10 @@ class TestTheChangelogRoute(PanelCase):
         self.assertEqual(versions[0], shipped)
         as_tuples = [tuple(int(n) for n in v.split(".")) for v in versions]
         self.assertEqual(as_tuples, sorted(as_tuples, reverse=True))
-        self.assertIn("### Added", body["releases"][0]["body"])
+        # Grouped by kind (Keep a Changelog): a fix-only patch release has
+        # no "### Added", so any of the kinds will do.
+        self.assertRegex(body["releases"][0]["body"],
+                         r"(?m)^### (Added|Changed|Removed|Fixed|Security)$")
 
     async def test_the_order_is_the_versions_not_the_files(self):
         text = "# Changelog\n\n## 1.2.0\n- b\n\n## 1.10.0\n- c\n\n## 1.9.1\n- a\n"
@@ -611,6 +614,33 @@ class TestTheGameEvents(unittest.TestCase):
                          "Village")
         for kind in ("save", "server", "build", "companion"):
             self.assertIsNone(ev({"kind": kind}), kind)
+
+    def test_a_chat_line_no_player_could_be_tied_to_carries_no_verdict(self):
+        # A nickname a server script shows ("Daddy") can leave the collector
+        # with no player. The add-on cannot check an account that is nobody's,
+        # and saying `verified: false` made brAIn refuse the line as one from
+        # a name the server does not check; an absent verdict is the guarded
+        # game scope, which is what the notes promise such a line. Driven
+        # through the real `Companion.verified`, not a stand-in.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            col = mcworld.WorldCollector(rcon_factory=lambda *a, **k: None, server_dir=root,
+                                         out_path=root / "world.json")
+            hands = companion.Companion(col, accounts=lambda: {
+                "java": False, "why_java": "online-mode is off",
+                "bedrock": False, "why_bedrock": "not checked"})
+            ev = self.panel.game_event
+            name, data = ev({"t": 5, "kind": "chat", "player": None, "shown": "Daddy",
+                             "said": "juniper are you here"}, hands.verified, "world")
+            self.assertEqual((name, data["name"], data["player"]),
+                             ("bruh_minecraft_chat", "Daddy", None))
+            self.assertNotIn("verified", data)
+            self.assertNotIn("why_unverified", data)
+            # A name that IS somebody playing and fails the check still says so.
+            _, data = ev({"t": 6, "kind": "chat", "player": DAD, "said": "hi"},
+                         hands.verified, "world")
+            self.assertEqual((data["verified"], data["why_unverified"]),
+                             (False, "online-mode is off"))
 
     def test_every_chat_line_becomes_one_event_with_no_cap(self):
         fired = []

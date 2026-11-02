@@ -142,5 +142,71 @@ class TestABrokenImportIsRepaired(RichCase):
             str(Path(self.tmp.name) / "absent.js"), self.file), "")
 
 
+class TestOnlyAnUntouchedImportIsRepaired(RichCase):
+    """A stored file that is a SUBSET of a fresh read is not proof that
+    nobody edited it: a person who deleted a section in ⚙ › Personality left
+    exactly that, and the section came back on every restart, with the voice
+    and each growth entry's time and author wiped. The import is marked
+    (`morph_import`, its `updated_at`), every other write clears the mark,
+    and a repair happens only while the mark holds."""
+
+    def test_the_import_is_marked_and_a_save_clears_the_mark(self):
+        personality.migrate_from_morph(str(self.src), self.file)
+        data = personality.load(self.file)
+        self.assertEqual(data["morph_import"], data["updated_at"])
+        personality.save(data["name"], data["persona"], path=self.file)
+        self.assertIs(personality.load(self.file)["morph_import"], False)
+
+    def test_a_section_somebody_deleted_stays_deleted_after_a_restart(self):
+        personality.migrate_from_morph(str(self.src), self.file)
+        data = personality.load(self.file)
+        self.assertIn("tidy schedules", data["persona"])
+        kept = "\n".join(line for line in data["persona"].splitlines()
+                         if "likes" not in line and "tidy schedules" not in line
+                         and "garden at dusk" not in line)
+        personality.save(data["name"], kept, path=self.file)
+        # The next start runs the repair again.
+        self.assertEqual(personality.repair_from_morph(str(self.src), self.file), "")
+        self.assertNotIn("tidy schedules", personality.load(self.file)["persona"])
+
+    def stored_import(self, **extra) -> dict:
+        """A poorer import, marked as one, with what a repair must keep."""
+        data = {"name": "Wren",
+                "persona": ("line: A patient, plain-spoken helper who knows "
+                            "the house well.\nborn: 2026-03-14"),
+                "growth": [{"date": "2026-04-02", "at": 1_775_100_000, "by": "self",
+                            "text": "Learned the loft is the music room."}],
+                "updated_at": 1_760_000_000, "morph_import": 1_760_000_000, **extra}
+        Path(self.file).write_text(json.dumps(data), encoding="utf-8")
+        return data
+
+    def test_a_repair_keeps_the_voice_and_each_entrys_time_and_author(self):
+        self.stored_import(voice="Aurora")
+        said = personality.repair_from_morph(str(self.src), self.file)
+        self.assertIn("repaired", said)
+        data = personality.load(self.file)
+        self.assertIn("calm under pressure", data["persona"])
+        self.assertEqual(data["voice"], "Aurora")
+        [entry] = [g for g in data["growth"]
+                   if g["text"] == "Learned the loft is the music room."]
+        self.assertEqual((entry["at"], entry["by"]), (1_775_100_000, "self"))
+        self.assertEqual(len(data["growth"]), 4)
+        # A repair is an import: still marked, and nothing more to do.
+        self.assertEqual(data["morph_import"], data["updated_at"])
+        self.assertEqual(personality.repair_from_morph(str(self.src), self.file), "")
+
+    def test_a_marked_file_written_since_is_left_alone(self):
+        self.stored_import(updated_at=1_760_000_500)
+        self.assertEqual(personality.repair_from_morph(str(self.src), self.file), "")
+
+    def test_an_older_unmarked_import_with_a_voice_is_left_alone(self):
+        data = {"name": "Wren",
+                "persona": "line: A patient, plain-spoken helper who knows the house well.",
+                "growth": [], "updated_at": 1_760_000_000, "voice": "Aurora"}
+        Path(self.file).write_text(json.dumps(data), encoding="utf-8")
+        self.assertEqual(personality.repair_from_morph(str(self.src), self.file), "")
+        self.assertNotIn("calm under pressure", personality.load(self.file)["persona"])
+
+
 if __name__ == "__main__":
     unittest.main()

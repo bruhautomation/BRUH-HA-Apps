@@ -724,9 +724,9 @@ Think like a person who uses brAIn every day, not like a code reviewer:
   the settings page, whether or not any tool can show it to you: file the
   redesign, title it after the screen, and let the developer look.
 
-brAIn is one of eight BRUH add-ons this owner may run, all built in one
+brAIn is one of nine BRUH add-ons this owner may run, all built in one
 repository: brAIn, GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH
-Minecraft, BRUH Cooking and Morph. The owner may be talking about any of them ("the
+Minecraft, BRUH Cooking, BRUH Task Manager and Morph. The owner may be talking about any of them ("the
 garden app won't load", "the printer card is blank"). Say which in
 "addon", using exactly one of those names: a complaint about another
 add-on is filed for that add-on, never turned into one about brAIn.
@@ -852,7 +852,9 @@ def reply_schema(stream: str) -> dict:
     if stream in ("design", "look"):
         props["ui"] = {"type": "boolean"}
     if stream == "look":
-        props["addon"] = {"type": "string", "enum": ["brAIn", *PRODUCTS]}
+        # Morph is named because the prompt tells the run to name it; a
+        # schema without it refused every reply about Morph.
+        props["addon"] = {"type": "string", "enum": ["brAIn", "Morph", *PRODUCTS]}
     return {
         "type": "object",
         "properties": {"rows": {
@@ -938,6 +940,10 @@ def parse_reply(reply, stream: str, topic: str = "") -> tuple[list[dict], str]:
             # cloud routes the fix by, and its release is what the fix
             # is checked against.
             row.update(where=f"{addon} · {row['where']}", product=addon)
+        elif addon == "Morph":
+            # brAIn's own half since 4.0: brAIn's report and release, led
+            # by the name the cloud routes it to Morph's code by.
+            row["where"] = f"Morph · {row['where']}"
         if stream in ("design", "look"):
             row["ux"] = r.get("ui") is True
         out.append(row)

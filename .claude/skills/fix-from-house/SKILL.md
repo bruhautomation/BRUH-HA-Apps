@@ -214,7 +214,9 @@ pictures, then take your own:
   everything in it was handled.
 - Read the other add-ons' Screens issues the same way (`[<add-on> · Screens]
   UI audit on GardenRX …`, labelled `devloop:<key>` and `devloop:ux`, the
-  pictures under `screens/<add-on>-<version>/`): GardenRX, BRUH Bambu
+  pictures under `screens/<add-on>-<version>/`, the name in lower case with
+  hyphens, as `screens/bruh-print-0.3.1/`; Morph's, at brAIn's release, are
+  under brAIn's folder): GardenRX, BRUH Bambu
   Studio, BRUH Print, BRight and BRUH Minecraft are their own panels opened
   over the hassio network, and Morph's dashboard and the Lovelace cards
   are drawn on the house's real data in brAIn's preview page. Every write
@@ -299,7 +301,10 @@ add one. Older lines are in git.
 ## 4. Drain the queue
 
 From the reports repository, list **every** open issue labelled
-`from-house` or `from-cloud`. Leave out the lock issue and the two rolling
+`from-house` or `from-cloud`, and every open issue whose body carries the
+house's marker (`<!-- brain-devloop-fp:`) whatever its labels: GitHub drops
+a label silently when the house's token may not set it, which is why the
+house finds its own issues by that marker and never by label. Leave out the lock issue and the two rolling
 issues (`[Scorecard]` and `[House shape]`, labels `devloop:scorecard` and
 `devloop:snapshot`): those are evidence, not work. On a run without the
 UX audit, leave out the `Screens` issues too (step 3).
@@ -457,6 +462,7 @@ not depend on the current one's result. So while a pull request is in CI:
   | BRight | `devloop:bright` | `bright/` | `docs/notes/bright.md`, `tests/test_bright_*.py` |
   | BRUH Minecraft | `devloop:bruh_minecraft_server` | `bruh-minecraft-server/` | CLAUDE.md's Minecraft entry |
   | BRUH Cooking | `devloop:bruh-cooking` | `bruh-cooking/` | `docs/notes/cooking.md`; the integration's tests run against a real Home Assistant (`cd bruh-cooking && python3 -m pytest` after `pip install -r requirements_test.txt`), and a panel change is rebuilt (`cd bruh-cooking/frontend && npm ci && npm run check`) and the bundle committed |
+  | BRUH Task Manager | `devloop:bruh-task-manager` | `bruh-task-manager/` | `docs/notes/task-manager.md`, `tests/test_task_manager_*.py` |
 
   Morph's issues are faults it found in its own code; the others' come
   from the `siblings` stream (brAIn reading that add-on's log, Supervisor

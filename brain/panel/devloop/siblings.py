@@ -1,8 +1,8 @@
 """The other BRUH add-ons, watched from outside and filed through this loop.
 
 brAIn's own faults reach the development loop because brAIn measures
-itself. GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft and
-Morph do not, and until this the only route from one of them breaking to a
+itself. GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft,
+BRUH Cooking and BRUH Task Manager do not, and until this the only route from one of them breaking to a
 fix was the owner noticing, opening a cloud session and describing it. Yet
 brAIn already holds what a description would carry: it is the Supervisor's
 admin, so it can read each add-on's state and its log, and Home Assistant's
@@ -61,6 +61,8 @@ CATALOG: tuple[dict, ...] = (
      "dir": "bruh-minecraft-server/", "domain": "bruh_minecraft"},
     {"key": "bruh-cooking", "name": "BRUH Cooking", "dir": "bruh-cooking/",
      "domain": "bruh_cooking"},
+    {"key": "bruh-task-manager", "name": "BRUH Task Manager",
+     "dir": "bruh-task-manager/", "domain": "bruh_task_manager"},
 )
 PRODUCTS = tuple(s["name"] for s in CATALOG)
 
@@ -158,8 +160,12 @@ def read_outbox(spec: dict, root: Path | None = None) -> list[dict] | None:
         item = {"where": where[:80], "what": clip(what, 200),
                 "detail": clip(str(row.get("detail") or ""), 600),
                 "body": str(row.get("body") or "")[:6000]}
-        if row.get("seen_at") is not None:
-            item["seen_at"] = row.get("seen_at")
+        # When the add-on last saw it. Morph's row shape, which an outbox is
+        # documented to be in, says `last`; a row read without it was "seen
+        # now" on every pass, and said "Still happening" about an old one.
+        seen = row.get("seen_at") if row.get("seen_at") is not None else row.get("last")
+        if seen is not None:
+            item["seen_at"] = seen
         out.append(item)
         if len(out) >= MAX_OUTBOX_ROWS:
             break

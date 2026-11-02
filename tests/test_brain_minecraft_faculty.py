@@ -190,11 +190,27 @@ class TestEveryFamilyLineNamingItGetsAnAnswer(FacultyCase):
 
     def test_a_nickname_line_with_no_matched_player_is_still_the_family(self):
         # #588: the add-on could not tie "Daddy" to a player; brAIn's list can.
+        # The event is exactly what the add-on's `game_event` sends for such a
+        # line (tests/test_minecraft_companion.py pins it): `player` None and
+        # no verdict at all, because there is no account to check.
         self.join(DAD)
         self.clock.t += 10
-        self.event("chat", player=None, name="Daddy", text="juniper are you here", verified=True)
+        self.event("chat", player=None, name="Daddy", text="juniper are you here")
         self.assertEqual(len(self.brain.asked), 1)
+        self.assertEqual(self.brain.asked[0]["tools"], "minecraft")
         self.assertEqual(self.addon.said(DAD)[-1][1], "Yes, I'm here!")
+
+    def test_an_older_add_ons_untied_line_is_the_family_too(self):
+        # 1.17.8 and 1.17.9 stamped `verified: false` on the same line. It is
+        # not "a name the server does not check" (nobody is playing under it),
+        # so it must not meet the untrusted refusal either.
+        self.join(DAD)
+        self.clock.t += 10
+        self.event("chat", player=None, name="Daddy", text="juniper are you here",
+                   verified=False, why_unverified="the line's name is not anybody playing")
+        self.assertEqual(len(self.brain.asked), 1)
+        self.assertEqual(self.brain.asked[0]["tools"], "minecraft")
+        self.assertFalse([m for _, m, _ in self.addon.said(DAD) if "can't take commands" in m])
 
     def test_every_line_is_handled_not_only_the_first(self):
         # #590: "Hi Juniper!", "Juniper can you hear me?", … all answered.

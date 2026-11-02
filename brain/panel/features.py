@@ -8,7 +8,9 @@
   container (`brain/morph/service`), which does nothing while it is off.
 * **personality** — brAIn takes the name and personality the household gave
   it, everywhere a person reads it. Off, the stored personality is kept and
-  nothing reads it (`personality.enabled`).
+  nothing reads it (`personality.enabled`): not the name, not the persona or
+  its growth, and not the voice (`personality.identity` answers "brAIn" and
+  no voice), on brAIn's side and Morph's.
 * **learning_loop** — self-improvement: brAIn changes ITSELF, in this house.
   It watches how its dashboard is used, suggests improvements, keeps the
   household's lessons and may propose changes to its own dashboard code.
