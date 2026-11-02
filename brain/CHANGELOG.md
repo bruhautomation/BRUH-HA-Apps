@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.1.1
+
+### Fixed
+
+- **An automation that messages a player who is not in the game is no longer reported as broken** (#613). When the Minecraft server answers "No player was found" (or "No entity was found", "No targets matched selector"), the run did what it could; brAIn's automation check and its trace signal now treat that as expected. Every other server or service error is still reported.
+- **One assistant, one name** (#617). Findings, looks and cards called the same assistant by the household's name, "brAIn", "the companion", "the in-game companion" and "the engine". Model-written text now names it once, which every screen shows as the name the household chose, and an add-on is named only when the add-on itself is meant.
+
 ## 4.1.0
 
 The Minecraft companion, rebuilt around how a family actually plays: everything said in the game's chat is for it, it can work on several things at once and keep track of them, it knows the world, and anybody can point at something with a spyglass.
