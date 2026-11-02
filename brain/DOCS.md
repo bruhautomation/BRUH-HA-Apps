@@ -2585,6 +2585,14 @@ section shows only when BRUH Minecraft is there):
   join. Point it at something and say nothing, and it looks and offers two or
   three ideas on choice pads; stand on one (or type 1, 2 or 3) and it starts.
   Point and then talk, and "this" or "that" means what you pointed at.
+- **Show what it is thinking** (on at first): while it works for you, a small
+  bubble only you can see floats over its allay (or up and to the side of you)
+  with what it is doing right now — "looking at the blocks around you",
+  "placing 340 blocks" — and a line for each job with how far along it is. It
+  goes a few seconds after the work ends, and a quick answer never shows one.
+  Everyone also gets "**Name**'s Thoughts", a book: use it to read what it is
+  doing now, every job, and its recent steps. Nothing about it goes in chat.
+  Needs a Paper or Purpur server (BRUH Sight, which BRUH Minecraft installs).
 - **Jobs at once** (1–5, 5 at first): bigger requests — a build, a room made
   over, a tree — become jobs that run while you keep playing. More than this
   wait their turn, and so does one in the same place as a job already going;

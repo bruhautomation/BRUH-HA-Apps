@@ -79,7 +79,7 @@ OFFER_TTL = 10 * 60               # an offer's pads can be answered this long
 BRAIN_RETRY = 300
 REPLY_LINES = 4
 REPLY_LINE_CHARS = 160
-PROMPT_CHARS = 9000
+PROMPT_CHARS = 12000              # the live view (what they look at, hold, just built) costs room
 FAVOURITE_VISITS = 3
 MAX_ANSWERS = 50
 MAX_ASKED = 12
@@ -468,6 +468,10 @@ def clean_settings(raw: Any, strict: bool = False) -> dict[str, Any]:
         "workers": _workers(raw.get("workers")),
         # A named spyglass for everyone on the list, when they join.
         "spyglass": raw.get("spyglass") is not False,
+        # What the companion is thinking, shown where it is not in the way:
+        # a bubble only the asking player sees (over the allay when it is
+        # near) and a journal book on join that opens the whole stream.
+        "thoughts": raw.get("thoughts") is not False,
         "colour": (str(raw.get("colour")) if str(raw.get("colour") or "") in COLOURS
                    else DEFAULT_COLOUR),
         # What the panel resolved "Default" to (model_plan), so the listener
@@ -504,7 +508,7 @@ def effective_settings(shared_dir: str) -> dict[str, Any]:
         merged.update({k: v for k, v in clean_settings(raw).items()
                        if k in ("models", "chat_model", "chat_effort", "build_model",
                                 "build_effort", "budgets", "colour", "greet", "every_line",
-                                "workers", "spyglass")})
+                                "workers", "spyglass", "thoughts")})
         return merged
     return clean_settings(raw)
 
@@ -530,6 +534,11 @@ def choice_of(text: Any) -> int | None:
     if len(words) != 1:
         return None
     return _CHOICES.get(words[0])
+
+
+def journal_name(persona: str) -> str:
+    """The journal book's name in the game: "<persona>'s Thoughts", clipped."""
+    return f"{str(persona or 'brAIn')[:16]}'s Thoughts"[:32]
 
 
 def spyglass_name(persona: str) -> str:
@@ -818,5 +827,5 @@ __all__ = ["bare", "Roster", "RulesError", "addressed", "builtin", "split_reply"
            "bedtime_rule", "is_bedtime", "clean_settings", "clean_people", "effective_settings",
            "from_handover", "from_legacy_memory", "left", "persona_name", "game_name",
            "wake_words", "remember", "favourites", "learned_facts", "read_json", "write_json",
-           "choice_of", "spyglass_name", "overlaps", "clean_job_request", "queue_position",
+           "choice_of", "spyglass_name", "journal_name", "overlaps", "clean_job_request", "queue_position",
            "trim_jobs", "job_view"]

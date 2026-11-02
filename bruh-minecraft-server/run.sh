@@ -508,6 +508,36 @@ install_bedrock_support() {
 }
 
 # ----------------------------------------------------------------------------
+# BRUH Sight: the add-on's own plugin, which answers the panel from the
+# running server — where everybody is and what they are looking at, and the
+# blocks as they are now rather than as last saved. Copied on every start
+# (so an update reaches the server); without it (vanilla, Fabric, Forge,
+# Folia) the panel reads RCON and the saved region files as before.
+# ----------------------------------------------------------------------------
+install_sight() {
+    local jar="/opt/bruh-mc/sight/BruhSight.jar"
+    case "${SERVER_TYPE}" in
+        paper|purpur) ;;
+        *)
+            bashio::log.info "server_type=${SERVER_TYPE}: no live view (BRUH Sight needs Paper or Purpur); the companion reads the saved world"
+            return 0
+            ;;
+    esac
+    if [ ! -s "${jar}" ]; then
+        bashio::log.warning "BRUH Sight is missing from this image; the companion reads the saved world"
+        return 0
+    fi
+    mkdir -p "${MC_SERVER_DIR}/plugins"
+    if cp -f "${jar}" "${MC_SERVER_DIR}/plugins/BruhSight.jar"; then
+        chown minecraft:minecraft "${MC_SERVER_DIR}/plugins/BruhSight.jar" 2>/dev/null || true
+        bashio::log.info "BRUH Sight installed: the companion sees the live world"
+    else
+        bashio::log.warning "Could not copy BRUH Sight into plugins/ (continuing)"
+    fi
+    return 0
+}
+
+# ----------------------------------------------------------------------------
 # Quarantine duplicate plugin jars so Paper doesn't log "Ambiguous plugin
 # name" / "Could not load" errors on every boot. Runs AFTER plugin
 # installs so we never quarantine a freshly-downloaded jar — the new
@@ -986,6 +1016,7 @@ main() {
     install_plugins
     install_popular_plugins
     install_bedrock_support
+    install_sight
     cleanup_duplicate_plugins
 
     check_backup_tools

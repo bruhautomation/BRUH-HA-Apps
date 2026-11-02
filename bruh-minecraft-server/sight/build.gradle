@@ -1,0 +1,34 @@
+// BRUH Sight: the server-side plugin that lets the panel see the live world.
+// Built in the add-on image's first stage (see ../Dockerfile); the jar is
+// copied into the server's plugins/ folder by run.sh on Paper and its forks.
+plugins {
+    id 'java'
+}
+
+group = 'com.bruhautomation'
+version = '1.0.0'
+
+java {
+    // Bytecode for Java 21, so it loads on every JVM the add-on has shipped.
+    toolchain { languageVersion = JavaLanguageVersion.of(21) }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+    options.encoding = 'UTF-8'
+}
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://repo.papermc.io/repository/maven-public/' }
+}
+
+dependencies {
+    // Compiled against an older API on purpose: only long-stable Bukkit
+    // calls are used, and plugin.yml's api-version lets newer servers load it.
+    compileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
+}
+
+jar {
+    archiveFileName = 'BruhSight.jar'
+}

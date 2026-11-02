@@ -85,6 +85,10 @@ SERVICE_LOOK_BLOCKS = "look_blocks"
 # player points with (the bruh_companion data pack; bruh_minecraft_point).
 SERVICE_COMPANION_PROGRESS = "companion_progress"
 SERVICE_GIVE_SPYGLASS = "give_spyglass"
+# What the companion is thinking, where it is not in the way: a bubble only
+# the player it works for sees (BRUH Sight), and a book that opens the stream.
+SERVICE_COMPANION_THOUGHT = "companion_thought"
+SERVICE_GIVE_JOURNAL = "give_journal"
 # The atlas (panel/atlas.py): buildings, rooms, roads and labels, indexed
 # from the region files in the background.
 SERVICE_ATLAS = "atlas"

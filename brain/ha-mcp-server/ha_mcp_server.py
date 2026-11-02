@@ -18,6 +18,7 @@ import os
 import re
 import sys
 import time
+import threading
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -3065,9 +3066,14 @@ def _mc_world():
         return {"world_note": w["error"]}
     builds = w.get("builds") or {}
     return _tag_text({
+        # With BRUH Sight (`live`), this second's view: what each one looks at
+        # and holds, and the room they are in; without it, RCON's every 5 s.
         "where": [{k: p.get(k) for k in ("name", "dimension", "x", "y", "z", "near",
-                                         "gamemode", "health", "food")}
+                                         "gamemode", "health", "food", "room", "building",
+                                         "looking_at", "looking_at_entity", "holding", "doing")
+                   if p.get(k) is not None}
                   for p in (w.get("players") or [])],
+        "live": bool(w.get("live")),
         "time": w.get("time"),
         "weather": w.get("weather"),
         "feed": [{k: e.get(k) for k in ("t", "kind", "player", "text")}
@@ -3199,7 +3205,7 @@ MINECRAFT_CHAT_REFUSAL = (
     "waits anywhere for a yes. Tell them exactly: \"" + MINECRAFT_OUTSIDE_LINE.replace("{", "{{")
     + "\" Do not retry or look for another route.")
 MINECRAFT_CHAT_ACTIONS = ("time", "weather", "say", "ask", "undo", "build", "look", "edit",
-                          "atlas", "room", "label")
+                          "atlas", "room", "label", "think")
 
 
 def _minecraft_chat_refusal(domain, service):
@@ -3223,6 +3229,15 @@ def minecraft_world(action, value=None, player=None, options=None, blocks=None, 
     in_game = _channel() == MINECRAFT_CHANNEL
     if in_game and action not in MINECRAFT_CHAT_ACTIONS:
         return {"error": MINECRAFT_CHAT_REFUSAL.format(what=f"Minecraft '{action}'")}
+    if action == "think":
+        # A step of its own thinking, for the person it is working for: the
+        # bubble only they see and the journal (`_mc_thought`). Not chat.
+        if not value:
+            return {"error": "think needs value: what you are doing or working out now."}
+        shown = _mc_thought(value[:160], wait=True)
+        return {"done": True, "shown": bool(shown),
+                **({} if shown else {"note": "Nobody to show it to: this run is not for a "
+                                             "player in the game."})}
     if action == "say" and (player or in_game):
         # From the companion, to a person or the family, under brAIn's rules
         # (never one child's news to another): a request from the game's
@@ -7231,12 +7246,16 @@ TOOLS = [
             "coordinates, or offsets from player's feet — over existing blocks, inside "
             "builds, anywhere; every block's state before is saved, so undo with its "
             "id puts it all back; job: the job id when a job is doing it, so "
-            "cancelling the job puts it back)."
+            "cancelling the job puts it back); think (value: a few words of what you "
+            "are working out or about to do — shown to the person you are working for "
+            "in a small bubble only they see and in their journal book, never in chat; "
+            "each game tool you call is already shown as a step, so think is for the "
+            "reasoning between them)."
         ),
         "inputSchema": {"type": "object", "properties": {
             "action": {"type": "string",
                        "enum": ["time", "weather", "say", "rename", "ask", "undo", "build",
-                                "look", "edit", "atlas", "room", "label"]},
+                                "look", "edit", "atlas", "room", "label", "think"]},
             "value": {"type": "string"},
             "player": {"type": "string", "description": (
                 "ask: the child to ask; say: who the companion says it to ('family' for "
@@ -10084,6 +10103,139 @@ VOICE_INSTRUCTIONS = (
 )
 
 
+# What the person a game run works for sees of it, step by step: each game
+# tool it calls, said in a few words, in the companion's thought bubble
+# (bruh_minecraft.companion_thought — a bubble only they see, over the allay
+# when it is near, and the journal book; never chat). The listener names who
+# (BRAIN_THOUGHT_TO) and which line (BRAIN_THOUGHT_KEY: "talk" or a job id)
+# on the game's two channels only.
+#
+# Sent straight over the WebSocket, not through `call_service`: a thought is
+# a picture of what the run is doing, not an act on the house or the world,
+# and through the chokepoint every step would be a row in the action ledger
+# (History would fill with "showed a thought"). The one service it can reach
+# is hard-coded here; nothing a model writes picks another.
+THOUGHT_SERVICE = ("bruh_minecraft", "companion_thought")
+THOUGHT_TIMEOUT_S = 4
+
+
+def _thought_target():
+    to = re.sub(r"[^A-Za-z0-9_.*]", "", os.environ.get("BRAIN_THOUGHT_TO", ""))[:17]
+    key = re.sub(r"[^A-Za-z0-9_.:-]", "", os.environ.get("BRAIN_THOUGHT_KEY", ""))[:24]
+    if not to or not key or _channel() not in (MINECRAFT_CHANNEL, "minecraft_trusted"):
+        return None
+    return to, key
+
+
+def _mc_thought(text, wait=False):
+    """Show one step to the person this game run works for. Never raises and
+    never holds the tool up (unless `wait`, for the model's own `think`).
+    True when it was sent."""
+    target = _thought_target()
+    text = " ".join(str(text or "").split())[:160]
+    if target is None or not text:
+        return False
+    to, key = target
+
+    def send():
+        try:
+            _ws_command({"type": "call_service", "domain": THOUGHT_SERVICE[0],
+                         "service": THOUGHT_SERVICE[1], "return_response": True,
+                         "service_data": {"player": to, "key": key, "state": "working",
+                                          "text": text}}, timeout=THOUGHT_TIMEOUT_S)
+        except Exception:  # noqa: BLE001 — a thought that did not show changes nothing
+            pass
+
+    if wait:
+        send()
+        return True
+    with _THOUGHTS["lock"]:
+        _THOUGHTS["queue"].append(send)
+        if _THOUGHTS["worker"] is None or not _THOUGHTS["worker"].is_alive():
+            _THOUGHTS["worker"] = threading.Thread(target=_thought_worker, daemon=True)
+            _THOUGHTS["worker"].start()
+    return True
+
+
+# One sender, in order: step two must never land before step one and leave
+# the bubble showing the older words.
+_THOUGHTS = {"lock": threading.Lock(), "queue": [], "worker": None}
+
+
+def _thought_worker():
+    while True:
+        with _THOUGHTS["lock"]:
+            if not _THOUGHTS["queue"]:
+                _THOUGHTS["worker"] = None
+                return
+            send = _THOUGHTS["queue"].pop(0)
+        send()
+
+
+def _cells_of(arguments):
+    """Roughly how many blocks an edit changes, for its step's words."""
+    n = 0
+    for f in arguments.get("fills") or []:
+        try:
+            n += ((abs(int(f["x2"]) - int(f["x1"])) + 1) * (abs(int(f["y2"]) - int(f["y1"])) + 1)
+                  * (abs(int(f["z2"]) - int(f["z1"])) + 1))
+        except (KeyError, TypeError, ValueError):
+            continue
+    n += len(arguments.get("blocks") or [])
+    return n, len(arguments.get("shapes") or [])
+
+
+def thought_step(name, arguments):
+    """A game tool call in a few words a child can read, or None for a call
+    that is not worth showing (the job's own progress and inbox, a `say`,
+    the model's own `think`, which shows itself)."""
+    a = arguments or {}
+    who = str(a.get("player") or "").strip()[:17]
+    value = " ".join(str(a.get("value") or "").split())[:60]
+    if name == "minecraft_world":
+        act = str(a.get("action") or "").lower()
+        if act == "look":
+            return f"looking at the blocks around {who}" if who else "looking closely at the blocks"
+        if act == "atlas":
+            return f"searching the map for {value}" if value and not who else "checking the map"
+        if act == "room":
+            return "studying the room"
+        if act == "edit":
+            cells, shapes = _cells_of(a)
+            what = f" for {value}" if value else ""
+            if shapes and not cells:
+                return f"shaping {shapes} piece{'s' if shapes != 1 else ''}{what}"
+            if cells:
+                return f"placing {cells} block{'s' if cells != 1 else ''}{what}"
+            return f"changing blocks{what}"
+        if act == "build":
+            return f"building {value}" if value else "building"
+        if act == "undo":
+            return "putting things back"
+        if act == "ask":
+            return "asking you to pick"
+        if act == "label":
+            return f"naming this place {value}" if value else "naming this place"
+        if act in ("time", "weather"):
+            return f"changing the {act}"
+        return None
+    if name == "minecraft_status":
+        return "checking who's where"
+    if name == "minecraft_teleport":
+        return f"moving {who}" if who else "moving someone"
+    if name == "minecraft_player":
+        return f"helping {who}" if who else "helping a player"
+    if name == "minecraft_command":
+        return "running a server command"
+    if name in ("get_entity_state", "get_all_states", "get_areas", "search_entities"):
+        return "checking the house"
+    if name == "recall":
+        return "remembering"
+    if name.startswith("control_") or name in ("call_service", "activate_scene", "run_script"):
+        return "doing that in the house"
+    return None
+
+
 def handle_tool_call(name, arguments):
     """Dispatch a tool call.
 
@@ -10108,6 +10260,9 @@ def handle_tool_call(name, arguments):
         return {"error": CONTRACT_REFUSAL.format(
             what=name, why="this tool does not go through a service call the "
                            "approved change could be held to")}
+    step = thought_step(name, kwargs) if _thought_target() is not None else None
+    if step:
+        _mc_thought(step)
     try:
         return globals()[fn_name](**kwargs)
     except Exception as e:

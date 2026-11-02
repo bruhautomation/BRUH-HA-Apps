@@ -5,6 +5,18 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.19.0
+
+### Added
+
+- **BRUH Sight: the companion sees the live world.** A small plugin the add-on now builds and installs on Paper and Purpur servers. It answers the panel from the running server, over a private local connection, instead of from RCON polls and the saved world files. Where everybody is now updates every second instead of every five. Each player also shows the block and the creature under their crosshair, what they hold and carry, what is around them, and the blocks they just placed or broke. Looking at blocks, the undo snapshot of an edit and the spyglass all read the world as it is now, including builds the server has not saved yet. On vanilla, Fabric, Forge and Folia the panel reads the world the old way.
+- **What the companion is thinking, shown where it is not in the way.** A new `companion_thought` service shows one step of the companion's work to the player it is working for. It appears in a small bubble only that player can see, floating over the companion's allay when the allay is near, and otherwise up and to the side. The bubble has one line for the current step and one for each job, with its progress. A finished line goes after a few seconds. A short "thinking" never shows at all, so a quick answer doesn't flash anything. Nothing goes in chat. Without BRUH Sight, steps of real work show on the action bar.
+- **The companion's journal.** A new `give_journal` service gives a player a book named after the companion. Using it opens the companion's whole stream of thought: what it is doing now, every job, and its recent steps, newest first.
+
+### Fixed
+
+- **A saved chunk this panel cannot understand is said, not read as empty** (#620). Looking at blocks returned nothing everywhere, even beside builds. A chunk with no block sections where every known layout keeps them is now reported as unreadable, with what it holds, instead of all air. With BRUH Sight installed, blocks are read from the running server and the saved files are not needed.
+
 ## 1.18.1
 
 ### Fixed

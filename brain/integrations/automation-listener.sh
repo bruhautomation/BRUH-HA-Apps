@@ -783,6 +783,19 @@ process_task() {
         unset BRAIN_PERSON_WORDS
     fi
 
+    # Who a game run's steps are shown to (the companion's thought bubble):
+    # set on the game's two channels only, from the task's `thought`, plain
+    # names; the MCP server shows each game tool the run calls as a step.
+    unset BRAIN_THOUGHT_TO BRAIN_THOUGHT_KEY
+    if [ "$task_tools" = "minecraft" ] || [ "$task_tools" = "minecraft_trusted" ]; then
+        local th_to th_key
+        th_to=$(jq -r 'if (.thought.player | type) == "string" then .thought.player else empty end' "$work_file" 2>/dev/null | tr -cd 'A-Za-z0-9_.*' | cut -c1-17)
+        th_key=$(jq -r 'if (.thought.key | type) == "string" then .thought.key else empty end' "$work_file" 2>/dev/null | tr -cd 'A-Za-z0-9_.:-' | cut -c1-24)
+        if [ -n "$th_to" ] && [ -n "$th_key" ]; then
+            export BRAIN_THOUGHT_TO="$th_to" BRAIN_THOUGHT_KEY="$th_key"
+        fi
+    fi
+
     # A trusted grown-up's request from the game (`minecraft_trusted`): the
     # chat's reach on the game's own channel. The switch decides it here,
     # once, as it does for the chat: on, the full grant without prompts;

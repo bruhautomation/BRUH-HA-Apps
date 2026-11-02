@@ -508,6 +508,7 @@ class ClaudeBridge:
         effort: str | None = None,
         speaker: dict | None = None,
         session_id: str | None = None,
+        thought: dict | None = None,
     ) -> dict:
         """Send a task and wait for the whole result: ``{"text", "data"}``.
 
@@ -584,6 +585,15 @@ class ClaudeBridge:
             who = {k: str(speaker.get(k) or "")[:40] for k in ("person", "player")}
             if re.fullmatch(r"[A-Za-z0-9_.*]{1,17}", who["player"]) and who["person"]:
                 task["speaker"] = who
+        # Who a game run's steps are shown to, as thoughts (the Minecraft
+        # companion's bubble): the player and the line's key ("talk" or a
+        # job id). Plain names only; the listener hands them to the MCP
+        # server, which shows each game tool the run calls as a step.
+        if isinstance(thought, dict):
+            to = str(thought.get("player") or "")
+            key = str(thought.get("key") or "")
+            if re.fullmatch(r"[A-Za-z0-9_.*]{1,17}", to) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,24}", key):
+                task["thought"] = {"player": to, "key": key}
         # A CLI session uuid or nothing: it becomes an argv entry there.
         if isinstance(session_id, str) and re.fullmatch(r"[A-Za-z0-9-]{1,64}", session_id):
             task["session_id"] = session_id

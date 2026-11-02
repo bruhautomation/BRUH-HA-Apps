@@ -41,6 +41,9 @@ POST /api/companion/actions/<id>/undo — put back what one action changed (or "
 POST /api/companion/jobs/<job>/undo   — put back every edit recorded for a job
 POST /api/companion/progress — {"to", "text", "percent"}: a job's progress on the action bar
 POST /api/companion/spyglass — {"player", "name"}: one named spyglass unless they have it
+POST /api/companion/thought — {"player", "text", "state", "key", "title", "percent", "name"}:
+                              one step of the companion's thinking (BRUH Sight's bubble)
+POST /api/companion/journal — {"player", "name"}: the book that opens the stream of thought
 POST /api/atlas             — {"player" | "x","z","y","dimension", "radius", "query"}:
                               buildings, rooms and roads near, where it is, a search
 POST /api/atlas/room        — {"player" | "room" | "x","y","z", "dimension"}: one room in full
@@ -136,6 +139,10 @@ companion = _load_beside("bruh_mc_companion", "companion.py")
 # with (the bruh_companion data pack, polled over RCON).
 atlas_mod = _load_beside("bruh_mc_atlas", "atlas.py")
 spyglass = _load_beside("bruh_mc_spyglass", "spyglass.py")
+# The live world from the BRUH Sight plugin inside the server (Paper/Purpur):
+# players, what they look at, and blocks as they are now. Without it the
+# panel reads RCON and the saved world, as above.
+sight_mod = _load_beside("bruh_mc_sight", "sight.py")
 
 # ---------------------------------------------------------------------------
 # Paths / constants
@@ -3032,6 +3039,7 @@ def _world() -> "mcworld.WorldCollector":
             rcon_factory=factory, server_dir=MC_SERVER_DIR, out_path=WORLD_FILE,
             log_paths=[MC_SERVER_DIR / "logs" / "latest.log", MC_CONSOLE_LOG],
             backup_dir=MC_BACKUP_DIR, level_name=_level_name, read_nbt=mcmap.read_nbt_file)
+        col.live = _live_players
         _WORLD["collector"] = col
     return col
 
@@ -3401,11 +3409,38 @@ def world_dir() -> Path:
     return MC_SERVER_DIR / _level_name()
 
 
+_SIGHT: dict = {"sight": None}
+
+
+def _sight() -> "sight_mod.Sight":
+    if _SIGHT["sight"] is None:
+        _SIGHT["sight"] = sight_mod.Sight(lambda: MC_SERVER_DIR)
+    return _SIGHT["sight"]
+
+
+def _live_players() -> dict | None:
+    """Everybody online as BRUH Sight sees them, in the collector's shape."""
+    live = _sight().players()
+    if live is None:
+        return None
+    return {name: sight_mod.live_info(p) for name, p in live.items()}
+
+
 def _companion_reader(dimension: str, box: tuple):
-    """The saved block states in a box, for a look and for a trusted edit's
-    undo snapshot: the world is saved first, then read from its region
-    files (mcmap). When it cannot be read, mcmap's `Unread` says which of
-    the causes it was; never a guess."""
+    """The block states in a box, for a look and for a trusted edit's undo
+    snapshot. From the running server when BRUH Sight answers — the world
+    as it is this second, unsaved chunks and all. Otherwise the world is
+    saved first, then read from its region files (mcmap). When it cannot be
+    read, mcmap's `Unread` says which of the causes it was; never a guess."""
+    live = _sight().blocks(dimension, box)
+    if isinstance(live, dict) and isinstance(live.get("unread"), dict):
+        u = live["unread"]
+        chunk = u.get("chunk")
+        return mcmap.Unread(str(u.get("code") or "unreadable"),
+                            str(u.get("why") or "That area cannot be read."),
+                            tuple(chunk) if isinstance(chunk, list) and len(chunk) == 2 else None)
+    if isinstance(live, dict) and live and "error" not in live:
+        return live
     save_world()
     region = mcmap.region_dir(world_dir(), dimension)
     try:
@@ -3497,7 +3532,7 @@ def _pointer() -> "spyglass.Pointer":
     if pointer is None:
         index = _atlas()
         pointer = spyglass.Pointer(_world(), world_dir=world_dir, emit=_on_world_event,
-                                   save=save_world,
+                                   save=save_world, live=lambda name: _sight().player(name),
                                    here=lambda dim, x, y, z: index.here(dim, x, y, z))
         _ATLAS["pointer"] = pointer
     return pointer
@@ -3657,6 +3692,70 @@ async def api_companion_progress(request: web.Request) -> web.Response:
     except companion.CompanionError as exc:
         return _companion_error(exc)
     return web.json_response(result)
+
+
+THOUGHT_STATES = ("thinking", "working", "done", "failed", "clear")
+
+
+def companion_thought(body: dict) -> dict:
+    """One step of what the companion is thinking, for one player, shown
+    where it is not in the way: BRUH Sight's bubble (only that player sees
+    it, over the companion's allay when it is near) and its journal book.
+    Without the plugin a step of real work falls back to the action bar and
+    a bare "thinking" shows nothing — chat is never used for it."""
+    player = str(body.get("player") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.*]{1,17}", player):
+        raise companion.CompanionError("Name the player the thought is for.")
+    state = str(body.get("state") or "working").lower()
+    if state not in THOUGHT_STATES:
+        raise companion.CompanionError("state is thinking, working, done, failed or clear.")
+    text = " ".join(str(body.get("text") or "").split())[:160]
+    payload = {"player": player, "state": state, "text": text,
+               "key": re.sub(r"[^A-Za-z0-9_.:-]", "", str(body.get("key") or "talk"))[:24] or "talk"}
+    for key in ("title", "name", "colour"):
+        if body.get(key):
+            payload[key] = " ".join(str(body[key]).split())[:32]
+    if body.get("percent") not in (None, ""):
+        try:
+            payload["percent"] = max(0, min(100, int(round(float(body["percent"])))))
+        except (TypeError, ValueError):
+            raise companion.CompanionError("percent is a number from 0 to 100.") from None
+    got = _sight().thought(payload)
+    if isinstance(got, dict) and "error" not in got:
+        return {"shown": bool(got.get("shown")), "via": "bubble"}
+    if state in ("thinking", "clear") or not text:
+        return {"shown": False, "via": None}
+    line = f"{payload['title']}: {text}" if payload.get("title") else text
+    if state == "done":
+        line = "✔ " + line
+    elif state == "failed":
+        line = "✘ " + line
+    result = _companion().progress([player], line, payload.get("percent"), body.get("colour"))
+    return {"shown": bool(result.get("sent")), "via": "action_bar"}
+
+
+async def api_companion_thought(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    try:
+        result = await asyncio.to_thread(companion_thought, body)
+    except companion.CompanionError as exc:
+        return _companion_error(exc)
+    return web.json_response(result)
+
+
+async def api_companion_journal(request: web.Request) -> web.Response:
+    """The companion's journal for a player: a book that opens its whole
+    stream of thought. Needs BRUH Sight; without it, says so."""
+    body = await _json_body(request)
+    player = str(body.get("player") or "").strip()
+    name = " ".join(str(body.get("name") or "Thoughts").split())[:32]
+    if not re.fullmatch(r"[A-Za-z0-9_.*]{1,17}", player):
+        return _companion_error(companion.CompanionError("Name the player."))
+    got = await asyncio.to_thread(_sight().give_journal, player, name)
+    if not isinstance(got, dict) or "error" in got:
+        return web.json_response({"given": False, "why": "The journal needs BRUH Sight, which "
+                                  "runs on Paper and Purpur servers."})
+    return web.json_response({"given": bool(got.get("given")), "why": got.get("why")})
 
 
 async def api_companion_spyglass(request: web.Request) -> web.Response:
@@ -3893,6 +3992,8 @@ def build_app() -> web.Application:
     app.router.add_post("/api/companion/jobs/{job}/undo", api_companion_job_undo)
     app.router.add_post("/api/companion/progress", api_companion_progress)
     app.router.add_post("/api/companion/spyglass", api_companion_spyglass)
+    app.router.add_post("/api/companion/thought", api_companion_thought)
+    app.router.add_post("/api/companion/journal", api_companion_journal)
     app.router.add_post("/api/atlas", api_atlas)
     app.router.add_post("/api/atlas/room", api_atlas_room)
     app.router.add_post("/api/atlas/labels", api_atlas_label)

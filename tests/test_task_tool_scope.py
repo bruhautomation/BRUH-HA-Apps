@@ -284,7 +284,7 @@ class TestTheBridgeWritesIt(unittest.TestCase):
             "timeout": 300, "notify_entity": None,
             "model": None, "tools": None, "schema": None,
             "memory": False, "scheduled": False, "cameras": False, "effort": None,
-            "speaker": None, "session_id": None, "re": __import__("re"),
+            "speaker": None, "session_id": None, "thought": None, "re": __import__("re"),
         }
         scope.update(kw)
         # One namespace, not separate globals and locals: before Python 3.12
@@ -292,6 +292,13 @@ class TestTheBridgeWritesIt(unittest.TestCase):
         # so bridge.py's `{k: speaker.get(k) ...}` raised NameError on 3.11.
         exec(compile(snippet.replace("\n        ", "\n"), "<bridge>", "exec"), scope)
         return scope["task"]
+
+    def test_who_sees_a_game_runs_steps_rides_only_as_plain_names(self):
+        got = self._task(thought={"player": "Ben13765", "key": "j1a2b3c"})
+        self.assertEqual(got["thought"], {"player": "Ben13765", "key": "j1a2b3c"})
+        self.assertNotIn("thought", self._task())
+        self.assertNotIn("thought", self._task(thought={"player": "x; rm -rf /", "key": "talk"}))
+        self.assertNotIn("thought", self._task(thought={"player": "Ben", "key": "$(id)"}))
 
     def test_an_effort_rides_only_when_it_is_one_the_cli_takes(self):
         self.assertEqual(self._task(effort="low")["effort"], "low")

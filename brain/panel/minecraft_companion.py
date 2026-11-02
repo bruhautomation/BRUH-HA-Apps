@@ -94,7 +94,7 @@ def save(fields: dict, shared_dir: str | None = None) -> dict[str, Any]:
         raise rules.RulesError("Settings are an object.")
     cur = load(shared_dir)
     merged = dict(cur)
-    for key in ("enabled", "greet", "every_line", "spyglass"):
+    for key in ("enabled", "greet", "every_line", "spyglass", "thoughts"):
         if key in fields:
             if not isinstance(fields[key], bool):
                 raise rules.RulesError(f"{key} is true or false.")

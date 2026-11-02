@@ -50,6 +50,7 @@ from typing import Any, Callable
 # Tuning
 # ---------------------------------------------------------------------------
 BUSY_INTERVAL = 5          # seconds between polls while somebody is online
+LIVE_INTERVAL = 1          # ... when BRUH Sight answers (one loopback call, not RCON)
 IDLE_INTERVAL = 60         # ... and while nobody is
 LOG_INTERVAL = 2           # seconds between looks at the log (a stat, mostly)
 FEED_SIZE = 50
@@ -808,6 +809,11 @@ class WorldCollector:
         # The building and room a position is in (the panel's atlas):
         # `where(dimension, pos)` → {"building": …, "room": …}.
         self.where: Callable[[str, list[float]], dict[str, Any]] | None = None
+        # The live players from BRUH Sight (the panel's `sight.Sight.players`,
+        # each already in `_poll_player`'s shape by `sight.live_info`): None
+        # without the plugin, and then RCON is asked as before.
+        self.live: Callable[[], dict[str, dict[str, Any]] | None] | None = None
+        self.live_ok = False
         # Who a chat line's nickname is (bare nickname -> player), learned
         # when a name could be tied to the one person it could be.
         self.nicknames: dict[str, str] = {}
@@ -1005,15 +1011,28 @@ class WorldCollector:
         self._poll_time(now)
         self._poll_weather(now)
         places = self.places()
+        live = None
+        if self.live is not None:
+            try:
+                live = self.live()
+            except Exception:  # noqa: BLE001 — the plugin's trouble is RCON's turn
+                live = None
+        self.live_ok = live is not None
         players = {}
         for name in online[:MAX_PLAYERS_DETAILED]:
-            info = self._poll_player(name)
+            info = dict(live[name]) if live and name in live else self._poll_player(name)
             info["since"] = int(self.sessions.get(name, now))
             info["near"] = nearest_place(info.get("pos"), info.get("dimension") or "", places)
             self._entered(name, info, now)
             players[name] = info
             self.last_seen[name] = now
         for name in online[MAX_PLAYERS_DETAILED:]:
+            if live and name in live:
+                info = dict(live[name])
+                info["since"] = int(self.sessions.get(name, now))
+                info["near"] = nearest_place(info.get("pos"), info.get("dimension") or "", places)
+                players[name] = info
+                continue
             players[name] = {"name": name, "since": int(self.sessions.get(name, now))}
         self.players = players
         self.polled_at = now
@@ -1246,7 +1265,8 @@ class WorldCollector:
         if now >= self.next_poll:
             self.poll()
             self._check_saves(now)
-            self.next_poll = now + (BUSY_INTERVAL if self.players or self.sessions else IDLE_INTERVAL)
+            busy = LIVE_INTERVAL if self.live_ok else BUSY_INTERVAL
+            self.next_poll = now + (busy if self.players or self.sessions else IDLE_INTERVAL)
             moved = True
         if moved:
             self.write()
@@ -1280,7 +1300,7 @@ class WorldCollector:
                 "yaw": p.get("yaw"), "pitch": p.get("pitch"),
                 "gamemode": p.get("gamemode"), "health": p.get("health"),
                 "food": p.get("food"), "since": p.get("since"),
-                **self._place_of(p)})
+                **self._place_of(p), **(p.get("live") or {})})
         recent = [job_brief(j) for j in self.builds.list(limit=10)
                   if j.get("status") in ("done", "failed")][:5]
         with self._lock:
@@ -1290,6 +1310,10 @@ class WorldCollector:
             "updated_at": int(now),
             "polled_at": int(self.polled_at) if self.polled_at else None,
             "reachable": self.reachable,
+            # Whether the players above came from the running server (BRUH
+            # Sight): then they are a second old and say what each one is
+            # looking at; otherwise they are RCON's, up to BUSY_INTERVAL old.
+            "live": bool(self.live_ok and self.reachable),
             "world": self.level_name(),
             "online": len(players) if self.reachable else 0,
             "max": self.max_players,

@@ -4,6 +4,15 @@
 # override this per-arch via build.yaml.
 ARG BUILD_FROM=ghcr.io/home-assistant/base:3.24
 ARG ADDON_VERSION=dev
+
+# BRUH Sight, the server-side plugin that lets the panel (and brAIn) see the
+# live world: built here, copied into plugins/ by run.sh on Paper and its
+# forks. The jar is plain bytecode, so one build serves every architecture.
+FROM gradle:8.14.3-jdk21-alpine AS sight
+WORKDIR /src
+COPY sight/ /src/
+RUN gradle --no-daemon -q jar && cp build/libs/BruhSight.jar /BruhSight.jar
+
 FROM ${BUILD_FROM}
 
 ARG ADDON_VERSION
@@ -110,6 +119,7 @@ COPY scripts/ /opt/bruh-mc/scripts/
 COPY panel/ /opt/bruh-mc/panel/
 COPY integrations/ /opt/bruh-mc/integrations/
 COPY custom_components/ /opt/bruh-mc/custom_components/
+COPY --from=sight /BruhSight.jar /opt/bruh-mc/sight/BruhSight.jar
 
 # Bake config.yaml into the image so run.sh can read the add-on version at
 # runtime. build.yaml passes `ADDON_VERSION: "{{ version }}"` but not every

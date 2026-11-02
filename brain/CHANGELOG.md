@@ -2,6 +2,19 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.2.0
+
+The Minecraft companion now sees the live game and shows what it is thinking.
+
+### Added
+
+- **You can see what it is thinking in Minecraft, without it getting in the way.** While it works for you, a small bubble only you can see floats over its allay, or up and to the side of you. The bubble says what it is doing right now, for example "looking at the blocks around you" or "placing 340 blocks for the couch", and how far along each job is. It goes a few seconds after the work ends, and a quick answer never shows one. Everyone on the family list also gets "**Name**'s Thoughts" when they join, a book that opens the whole stream: now, every job, and the recent steps. Nothing about it goes in chat. Switch it off in ⚙ › Minecraft › **Show what it is thinking**. It needs BRUH Minecraft 1.19.0 on a Paper or Purpur server.
+- **It narrates the steps of a build.** A job can add its own words between steps ("the roof first, then the windows") with `minecraft_world think`.
+
+### Changed
+
+- **It sees the game as it is this second.** With BRUH Minecraft 1.19.0, each line it answers knows where everybody is right now. It also knows the block and the creature under the speaker's crosshair, what they are holding and carrying, what is near them and what they just built. "this" means what you are looking at, even without the spyglass, and it is told never to say it cannot see where you are. Its look at nearby rooms is asked for every player at once rather than one after another. `minecraft_status` carries what each player looks at and holds.
+
 ## 4.1.2
 
 Fixes from an audit of the development loop, the personality engine and the Minecraft companion.
