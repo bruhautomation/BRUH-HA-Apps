@@ -26,6 +26,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from test_minecraft_companion_edit import section_with_states  # noqa: E402
+import test_minecraft_companion as _hands  # noqa: E402
 from test_minecraft_layout import TS, chunk_nbt, write_region  # noqa: E402
 from test_minecraft_world import PANEL  # noqa: E402
 
@@ -228,7 +229,7 @@ class TestBuildingsAndRooms(AtlasBase):
 
 class TestTheSnapshotKnowsWhereEveryoneIs(unittest.TestCase):
     def test_players_carry_facing_room_and_building(self):
-        from test_minecraft_companion import FakeWorld, mcworld
+        FakeWorld, mcworld = _hands.FakeWorld, _hands.mcworld
 
         class World(FakeWorld):
             def reply(self, cmd):
@@ -253,8 +254,6 @@ class TestTheSnapshotKnowsWhereEveryoneIs(unittest.TestCase):
             self.assertEqual(p["room"]["kind"], "bedroom")
             self.assertEqual(p["building"]["id"], "b:overworld:2:2")
 
-
-import test_minecraft_companion as _hands  # noqa: E402
 
 
 class TestThePanelRoutes(_hands.PanelCase):
