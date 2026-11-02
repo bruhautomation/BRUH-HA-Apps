@@ -11,10 +11,18 @@ what `level.dat` is read with when the server cannot be asked the weather.
 What it can read: Java Edition worlds from 1.16 on (the block-state
 packing that never spans two longs), both the 1.18+ chunk layout
 (`sections` / `block_states`) and the 1.16–1.17 one (`Level` / `Sections`
-/ `Palette` / `BlockStates`), zlib, gzip and uncompressed chunks, and a
-chunk stored beside its region in a `.mcc` file. A chunk written with
-LZ4 (an opt-in server setting since 1.20.5) is skipped: there is no LZ4
-in the standard library, so its columns come out empty rather than wrong.
+/ `Palette` / `BlockStates`), zlib, gzip, LZ4 and uncompressed chunks, and
+a chunk stored beside its region in a `.mcc` file. LZ4 (the opt-in
+`region-file-compression=lz4` since 1.20.5) is lz4-java's block stream,
+decoded here by hand (`lz4_stream_decode`), because the standard library
+has no LZ4.
+
+Where a dimension's region files are moved in 26.1: every dimension,
+vanilla or a data pack's, under `<world>/dimensions/<namespace>/<path>/`
+(Paper too). `region_dir` knows that layout and the older ones and takes
+the one that exists. A box that cannot be read says which of three causes
+it was (`Unread`): no region folder for that dimension, a chunk never
+generated, or a chunk stored in a way that cannot be read.
 
 A world on disk is the world as of the last save. The panel asks the
 server for a `save-all` before it draws a build that has just finished.
@@ -23,8 +31,10 @@ from __future__ import annotations
 
 import gzip
 import os
+import re
 import struct
 import zlib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -116,38 +126,212 @@ def read_nbt_file(path: Path) -> dict[str, Any]:
 SECTOR = 4096
 
 
-def read_chunk(region_dir: Path, cx: int, cz: int) -> dict[str, Any] | None:
-    """Chunk (cx, cz)'s NBT from its region file, or None if not there."""
-    path = Path(region_dir) / f"r.{cx >> 5}.{cz >> 5}.mca"
+# ---------------------------------------------------------------------------
+# LZ4: lz4-java's block stream ("LZ4Block"), region compression type 4
+# ---------------------------------------------------------------------------
+# Minecraft writes an LZ4 chunk with lz4-java's LZ4BlockOutputStream: a
+# series of blocks, each `LZ4Block` + a token (high nibble the method, 0x10
+# stored or 0x20 LZ4; low nibble the size, a block holding at most
+# 1 << (10 + n) bytes) + the compressed and original lengths and an xxHash32
+# of the original (seed 0x9747b28c, top four bits cleared), all little-
+# endian; an empty block ends it.
+LZ4_MAGIC = b"LZ4Block"
+LZ4_SEED = 0x9747B28C
+_LZ4_RAW, _LZ4_LZ4 = 0x10, 0x20
+_M32 = 0xFFFFFFFF
+_P1, _P2, _P3, _P4, _P5 = 2654435761, 2246822519, 3266489917, 668265263, 374761393
+
+
+class Lz4Error(ValueError):
+    """The bytes are not the LZ4 they were said to be."""
+
+
+def _rotl(v: int, r: int) -> int:
+    return ((v << r) | (v >> (32 - r))) & _M32
+
+
+def xxh32(data: bytes, seed: int = 0) -> int:
+    """xxHash32, the checksum on every LZ4Block."""
+    n = len(data)
+    i = 0
+    if n >= 16:
+        v1, v2 = (seed + _P1 + _P2) & _M32, (seed + _P2) & _M32
+        v3, v4 = seed & _M32, (seed - _P1) & _M32
+        end = n - n % 16
+        for a, b, c, d in struct.iter_unpack("<4I", data[:end]):
+            v1 = (_rotl((v1 + a * _P2) & _M32, 13) * _P1) & _M32
+            v2 = (_rotl((v2 + b * _P2) & _M32, 13) * _P1) & _M32
+            v3 = (_rotl((v3 + c * _P2) & _M32, 13) * _P1) & _M32
+            v4 = (_rotl((v4 + d * _P2) & _M32, 13) * _P1) & _M32
+        h = (_rotl(v1, 1) + _rotl(v2, 7) + _rotl(v3, 12) + _rotl(v4, 18)) & _M32
+        i = end
+    else:
+        h = (seed + _P5) & _M32
+    h = (h + n) & _M32
+    while i + 4 <= n:
+        h = (_rotl((h + struct.unpack_from("<I", data, i)[0] * _P3) & _M32, 17) * _P4) & _M32
+        i += 4
+    while i < n:
+        h = (_rotl((h + data[i] * _P5) & _M32, 11) * _P1) & _M32
+        i += 1
+    h ^= h >> 15
+    h = (h * _P2) & _M32
+    h ^= h >> 13
+    h = (h * _P3) & _M32
+    h ^= h >> 16
+    return h
+
+
+def lz4_block_decode(src: bytes, limit: int = 1 << 26) -> bytes:
+    """One raw LZ4 block: sequences of literals and back-references."""
+    out = bytearray()
+    i, n = 0, len(src)
+    try:
+        while i < n:
+            token = src[i]
+            i += 1
+            lit = token >> 4
+            if lit == 15:
+                while True:
+                    b = src[i]
+                    i += 1
+                    lit += b
+                    if b != 255:
+                        break
+            if i + lit > n:
+                raise Lz4Error("literals run past the block")
+            out += src[i:i + lit]
+            i += lit
+            if i >= n:
+                break
+            offset = src[i] | (src[i + 1] << 8)
+            i += 2
+            ml = token & 15
+            if ml == 15:
+                while True:
+                    b = src[i]
+                    i += 1
+                    ml += b
+                    if b != 255:
+                        break
+            ml += 4
+            start = len(out) - offset
+            if offset == 0 or start < 0:
+                raise Lz4Error("a match reaches before the start")
+            if offset >= ml:
+                out += out[start:start + ml]
+            else:
+                pattern = bytes(out[start:])
+                out += (pattern * (ml // offset + 1))[:ml]
+            if len(out) > limit:
+                raise Lz4Error("more data than a chunk holds")
+    except IndexError:
+        raise Lz4Error("the block ends mid-sequence") from None
+    return bytes(out)
+
+
+def lz4_stream_decode(data: bytes) -> bytes:
+    """An LZ4Block stream, each block's checksum checked."""
+    out = bytearray()
+    pos, n = 0, len(data)
+    while pos < n:
+        if data[pos:pos + 8] != LZ4_MAGIC or pos + 21 > n:
+            raise Lz4Error("not an LZ4Block stream")
+        token = data[pos + 8]
+        packed, size, check = struct.unpack_from("<iii", data, pos + 9)
+        pos += 21
+        method, level = token & 0xF0, token & 0x0F
+        if size == 0:
+            break
+        if size < 0 or packed < 0 or size > 1 << (10 + level) or pos + packed > n:
+            raise Lz4Error("a block's lengths do not fit")
+        body = data[pos:pos + packed]
+        pos += packed
+        if method == _LZ4_RAW:
+            if packed != size:
+                raise Lz4Error("a stored block's lengths differ")
+            block = body
+        elif method == _LZ4_LZ4:
+            block = lz4_block_decode(body, size)
+            if len(block) != size:
+                raise Lz4Error("a block decoded to the wrong length")
+        else:
+            raise Lz4Error(f"unknown LZ4Block method {method:#x}")
+        if xxh32(block, LZ4_SEED) & 0x0FFFFFFF != check & 0x0FFFFFFF:
+            raise Lz4Error("a block's checksum does not match")
+        out += block
+    return bytes(out)
+
+
+# Region compression types: 1 gzip, 2 zlib, 3 none, 4 LZ4.
+_DECOMPRESS = {1: gzip.decompress, 2: zlib.decompress, 3: bytes, 4: lz4_stream_decode}
+
+
+def load_chunk(region_dir: Path, cx: int, cz: int) -> tuple[dict[str, Any] | None, str]:
+    """Chunk (cx, cz)'s NBT and why not: `(root, "ok")`, or `(None, code)`
+    with `no_region` (no such folder), `not_generated` (no file, or no
+    chunk in it) or `unreadable:<what>` (a compression this cannot read, or
+    damaged data)."""
+    region = Path(region_dir)
+    path = region / f"r.{cx >> 5}.{cz >> 5}.mca"
     try:
         with open(path, "rb") as f:
             header = f.read(SECTOR)
             i = 4 * ((cx & 31) + (cz & 31) * 32)
             if len(header) < i + 4:
-                return None
+                return None, "not_generated"
             offset = int.from_bytes(header[i:i + 3], "big")
             if offset == 0:
-                return None
+                return None, "not_generated"
             f.seek(offset * SECTOR)
             head = f.read(5)
             if len(head) < 5:
-                return None
+                return None, "unreadable:damaged"
             length = int.from_bytes(head[:4], "big")
             kind = head[4]
             data = f.read(max(0, length - 1))
+    except FileNotFoundError:
+        return None, "not_generated" if region.is_dir() else "no_region"
+    except OSError:
+        return None, "unreadable:damaged"
+    try:
         if kind & 0x80:
             # Too big for the region: the chunk is its own file beside it.
-            data = (Path(region_dir) / f"c.{cx}.{cz}.mcc").read_bytes()
+            data = (region / f"c.{cx}.{cz}.mcc").read_bytes()
             kind &= 0x7F
-        if kind == 1:
-            data = gzip.decompress(data)
-        elif kind == 2:
-            data = zlib.decompress(data)
-        elif kind != 3:
-            return None   # LZ4 (4) or a custom compressor: not readable here
-        return read_nbt(data)
-    except (OSError, zlib.error, EOFError, NbtError):
-        return None
+        decompress = _DECOMPRESS.get(kind)
+        if decompress is None:
+            return None, f"unreadable:compression {kind}"
+        return read_nbt(decompress(data)), "ok"
+    except (OSError, zlib.error, EOFError, NbtError, Lz4Error, gzip.BadGzipFile):
+        return None, "unreadable:damaged"
+
+
+def read_chunk(region_dir: Path, cx: int, cz: int) -> dict[str, Any] | None:
+    """Chunk (cx, cz)'s NBT from its region file, or None if not there."""
+    return load_chunk(region_dir, cx, cz)[0]
+
+
+def chunk_timestamps(region_file: Path) -> dict[tuple[int, int], int]:
+    """{(cx, cz): when the server last wrote it} for every chunk a region
+    file holds (its header's second table)."""
+    m = re.match(r"^r\.(-?\d+)\.(-?\d+)\.mca$", Path(region_file).name)
+    if not m:
+        return {}
+    rx, rz = int(m.group(1)), int(m.group(2))
+    try:
+        with open(region_file, "rb") as f:
+            header = f.read(2 * SECTOR)
+    except OSError:
+        return {}
+    if len(header) < 2 * SECTOR:
+        return {}
+    out = {}
+    for i in range(1024):
+        if int.from_bytes(header[4 * i:4 * i + 3], "big"):
+            out[(rx * 32 + i % 32, rz * 32 + i // 32)] = int.from_bytes(
+                header[SECTOR + 4 * i:SECTOR + 4 * i + 4], "big")
+    return out
 
 
 AIR = frozenset({"air", "cave_air", "void_air", "light", "structure_void", "barrier"})
@@ -261,54 +445,110 @@ def _state(entry: Any) -> str:
 BOX_MAX = 32 * 32 * 32
 
 
+@dataclass(frozen=True)
+class Unread:
+    """Why a box could not be read: `code` is `no_region`, `not_generated`
+    or `unreadable`; `why` says it in a sentence; `chunk` is the first chunk
+    that could not be read."""
+    code: str
+    why: str
+    chunk: tuple[int, int] | None = None
+
+
+def unread(region: Path, chunk: tuple[int, int], status: str) -> Unread:
+    cx, cz = chunk
+    where = f"chunk {cx}, {cz} — x {cx * 16} to {cx * 16 + 15}, z {cz * 16} to {cz * 16 + 15}"
+    if status == "no_region":
+        return Unread("no_region", "The world has no saved region files for that dimension "
+                      f"(nothing in {'/'.join(Path(region).parts[-4:])}) — nobody has been there yet, or the world is stored somewhere else.",
+                      chunk)
+    if status == "not_generated":
+        return Unread("not_generated", f"Part of that area ({where}) has never been generated "
+                      "or saved yet; somebody has to go there first.", chunk)
+    what = status.split(":", 1)[-1]
+    if what == "damaged":
+        return Unread("unreadable", f"The saved data of {where} is damaged or cut short, so it "
+                      "cannot be read.", chunk)
+    return Unread("unreadable", f"Part of that area ({where}) is stored with a {what} this "
+                  "panel cannot read.", chunk)
+
+
+# A box read (`box_states`) is held to this many cells: the companion reads a
+# room or a small build, never a landscape.
+BOX_MAX = 32 * 32 * 32
+
+
 def box_states(region: Path, x1: int, y1: int, z1: int, x2: int, y2: int,
-               z2: int, limit: int | None = BOX_MAX) -> dict[tuple[int, int, int], str] | None:
+               z2: int, limit: int | None = BOX_MAX) -> dict[tuple[int, int, int], str] | Unread:
     """Every cell's block state in the box (inclusive corners), air
-    included. None when any chunk the box touches cannot be read (not on
-    disk yet, or LZ4): a partial answer would be a wrong one."""
+    included — or `Unread` saying why not when any chunk the box touches
+    cannot be read: a partial answer would be a wrong one."""
     x1, x2 = sorted((int(x1), int(x2)))
     y1, y2 = sorted((int(y1), int(y2)))
     z1, z2 = sorted((int(z1), int(z2)))
     if limit is not None and (x2 - x1 + 1) * (y2 - y1 + 1) * (z2 - z1 + 1) > limit:
         raise ValueError(f"at most {limit} blocks in one read")
-    chunks: dict[tuple[int, int], Chunk | None] = {}
+    chunks: dict[tuple[int, int], Chunk] = {}
     out: dict[tuple[int, int, int], str] = {}
     for x in range(x1, x2 + 1):
         for z in range(z1, z2 + 1):
             key = (x >> 4, z >> 4)
-            if key not in chunks:
-                root = read_chunk(region, *key)
-                chunks[key] = Chunk(root) if root else None
-            chunk = chunks[key]
+            chunk = chunks.get(key)
             if chunk is None:
-                return None
+                root, status = load_chunk(region, *key)
+                if root is None:
+                    return unread(region, key, status)
+                chunk = chunks[key] = Chunk(root)
             for y in range(y1, y2 + 1):
                 out[(x, y, z)] = chunk.state(x & 15, y, z & 15)
     return out
 
 
-def region_dir(world_dir: Path, dimension: str) -> Path:
-    """Where a dimension's region files are, in vanilla's or Paper's layout.
+def _dimension_parts(dimension: str) -> tuple[str, str]:
+    """(namespace, path) of a dimension id; bare vanilla names allowed."""
+    dim = str(dimension or "overworld").strip().lower()
+    ns, _, path = dim.rpartition(":")
+    ns = ns or "minecraft"
+    path = {"nether": "the_nether", "end": "the_end", "": "overworld"}.get(path, path) \
+        if ns == "minecraft" else path
+    return ns, path
 
-    Vanilla keeps the Nether and the End inside the world folder (DIM-1,
-    DIM1); Paper/Spigot give each its own world folder beside it
-    (`world_nether/DIM-1`, `world_the_end/DIM1`).
+
+def region_dirs(world_dir: Path, dimension: str) -> list[Path]:
+    """Every place a dimension's region files may be, newest layout first.
+
+    26.1 and later (vanilla and Paper): `<world>/dimensions/<ns>/<path>/region`.
+    Before: the overworld in `<world>/region`; vanilla keeps the Nether and
+    the End inside the world folder (DIM-1, DIM1); Paper/Spigot give each
+    its own world folder beside it (`world_nether/DIM-1`, `world_the_end/DIM1`).
     """
     world_dir = Path(world_dir)
-    dim = _short(dimension or "overworld")
-    if dim in ("the_nether", "nether"):
-        for cand in (world_dir.parent / f"{world_dir.name}_nether" / "DIM-1" / "region",
-                     world_dir / "DIM-1" / "region"):
-            if cand.is_dir():
-                return cand
-        return world_dir / "DIM-1" / "region"
-    if dim in ("the_end", "end"):
-        for cand in (world_dir.parent / f"{world_dir.name}_the_end" / "DIM1" / "region",
-                     world_dir / "DIM1" / "region"):
-            if cand.is_dir():
-                return cand
-        return world_dir / "DIM1" / "region"
-    return world_dir / "region"
+    ns, path = _dimension_parts(dimension)
+    out = [world_dir / "dimensions" / ns / path / "region"]
+    if ns != "minecraft":
+        return out
+    side = {"the_nether": ("_nether", "DIM-1"), "the_end": ("_the_end", "DIM1")}.get(path)
+    if side is None:
+        out.append(world_dir / "region")
+    else:
+        suffix, legacy = side
+        beside = world_dir.parent / f"{world_dir.name}{suffix}"
+        out += [beside / "dimensions" / ns / path / "region",
+                beside / legacy / "region", world_dir / legacy / "region"]
+    return out
+
+
+def region_dir(world_dir: Path, dimension: str) -> Path:
+    """Where a dimension's region files are: the first layout that exists;
+    with none, where this world's layout would put them (26.1's when the
+    world has a `dimensions` folder)."""
+    cands = region_dirs(world_dir, dimension)
+    for cand in cands:
+        if cand.is_dir():
+            return cand
+    if (Path(world_dir) / "dimensions").is_dir() or len(cands) == 1:
+        return cands[0]
+    return cands[-1] if len(cands) > 2 else cands[1]
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +716,7 @@ def render_bounds(world_dir: Path, bounds: dict[str, Any], out: Path) -> dict[st
     return {"path": str(out), "width": w, "height": h, "columns": filled}
 
 
-__all__ = ["read_nbt", "read_nbt_file", "read_chunk", "Chunk", "region_dir", "colour",
-           "top_blocks", "paint", "write_png", "render_bounds", "NbtError", "box_states",
-           "BOX_MAX"]
+__all__ = ["read_nbt", "read_nbt_file", "read_chunk", "load_chunk", "Chunk", "region_dir",
+           "region_dirs", "colour", "top_blocks", "paint", "write_png", "render_bounds",
+           "NbtError", "box_states", "BOX_MAX", "Unread", "unread", "chunk_timestamps",
+           "xxh32", "lz4_block_decode", "lz4_stream_decode", "Lz4Error", "LZ4_SEED"]

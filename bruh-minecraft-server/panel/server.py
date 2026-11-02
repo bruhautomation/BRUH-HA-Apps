@@ -3183,7 +3183,7 @@ def _render_job(job_id: str, save_first: bool = False) -> dict:
             pass
     out = _picture_path(job_id)
     try:
-        result = mcmap.render_bounds(MC_SERVER_DIR / _level_name(), job["bounds"], out)
+        result = mcmap.render_bounds(world_dir(), job["bounds"], out)
     except OSError as exc:
         result = {"error": f"The picture could not be written: {exc}"}
     if result.get("error"):
@@ -3341,23 +3341,43 @@ def _companion_snapshot() -> str | None:
     return None if proc.returncode == 0 else (proc.stdout or proc.stderr or "")[-200:]
 
 
-def _companion_reader(dimension: str, box: tuple) -> dict | None:
-    """The saved block states in a box, for a look and for a trusted edit's
-    undo snapshot: the world is saved first (`save-all flush` waits for the
-    write), then read from its region files (mcmap). None when it cannot be
-    read; never a guess."""
+# A save is asked for at most this often: a large edit reads its undo
+# snapshot one chunk column at a time, and the spyglass reads before each
+# ray, and one `save-all flush` covers them all.
+SAVE_FRESH_S = 3.0
+_SAVED: dict = {"at": -1e12}
+
+
+def save_world() -> None:
+    """`save-all flush` (it waits for the write) unless one just ran."""
+    now = time.monotonic()
+    if now - _SAVED["at"] < SAVE_FRESH_S:
+        return
     try:
         with Rcon(RCON_HOST, _rcon_password(), port=RCON_PORT, timeout=10) as r:
             r.command("save-all flush")
+        _SAVED["at"] = time.monotonic()
     except Exception:  # noqa: BLE001 — read what is on disk; a stale read is
-        # still the world as of the last save, and a cell the edit changes is
+        # still the world as of the last save, and a cell an edit changes is
         # checked again by the undo before it is put back.
         log.debug("save-all before a block read did not answer")
-    region = mcmap.region_dir(MC_SERVER_DIR / _level_name(), dimension)
+
+
+def world_dir() -> Path:
+    return MC_SERVER_DIR / _level_name()
+
+
+def _companion_reader(dimension: str, box: tuple):
+    """The saved block states in a box, for a look and for a trusted edit's
+    undo snapshot: the world is saved first, then read from its region
+    files (mcmap). When it cannot be read, mcmap's `Unread` says which of
+    the causes it was; never a guess."""
+    save_world()
+    region = mcmap.region_dir(world_dir(), dimension)
     try:
         return mcmap.box_states(region, *box, limit=None)
-    except (OSError, ValueError):
-        return None
+    except (OSError, ValueError) as exc:
+        return mcmap.Unread("unreadable", f"The saved world could not be read ({exc}).")
 
 
 def _companion_modern() -> bool:

@@ -308,11 +308,14 @@ class TestTheRegionReader(unittest.TestCase):
         self.assertEqual(got[(6, 63, 6)], "minecraft:air")   # an all-air section
 
     def test_a_chunk_not_on_disk_is_not_a_guess_and_a_huge_box_is_refused(self):
-        self.assertIsNone(mcmap.box_states(self.region, 15, 64, 15, 17, 64, 17))
+        missing = mcmap.box_states(self.region, 15, 64, 15, 17, 64, 17)
+        self.assertIsInstance(missing, mcmap.Unread)
+        self.assertEqual(missing.code, "not_generated")
         with self.assertRaises(ValueError):
             mcmap.box_states(self.region, 0, -64, 0, 100, 300, 100)
         # The undo snapshot reads by chunk column with no cap.
-        self.assertIsNotNone(mcmap.box_states(self.region, 0, -64, 0, 15, 300, 15, limit=None))
+        self.assertIsInstance(mcmap.box_states(self.region, 0, -64, 0, 15, 300, 15, limit=None),
+                              dict)
 
     def test_the_compression_is_the_regions_own(self):
         # Sanity: the file really is zlib (kind 2), what the server writes.

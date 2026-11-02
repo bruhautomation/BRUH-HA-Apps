@@ -198,6 +198,15 @@ def parse_test(reply: str) -> bool | None:
     return None
 
 
+def unread_why(result: Any) -> str:
+    """Why the world's blocks could not be read, from what the reader gave
+    back instead of the states (mcmap's `Unread`: its `why`)."""
+    why = getattr(result, "why", None)
+    if why:
+        return str(why)
+    return "That part of the world could not be read from the saved files."
+
+
 def bare(name: str) -> str:
     """A name as people mean it: no Bedrock prefix, no case."""
     return re.sub(r"^[.*]", "", str(name or "").strip()).lower()
@@ -673,12 +682,12 @@ class Companion:
                  snapshot: Callable[[], str | None] | None = None,
                  modern: Callable[[], bool] = lambda: True,
                  accounts: Callable[[], dict] | None = None,
-                 reader: Callable[[str, tuple], dict | None] | None = None,
+                 reader: Callable[[str, tuple], Any] | None = None,
                  clock: Callable[[], float] = time.time):
         self.col = collector
         # The world's blocks as saved (the panel's: `save-all flush`, then
         # mcmap's region reader): `reader(dimension, (x1, y1, z1, x2, y2, z2))`
-        # → {(x, y, z): block state} or None when it could not be read.
+        # → {(x, y, z): block state}, or why not (mcmap.Unread, or None).
         self.reader = reader
         self.clock = clock
         self.emit_fn = emit or (lambda kind, data: None)
@@ -1158,9 +1167,8 @@ class Companion:
         if self.reader is None:
             raise CompanionError("The world's blocks cannot be read here.")
         states = self.reader(dim, box)
-        if states is None:
-            raise CompanionError("Part of that area is not saved on disk yet, or is stored in a "
-                                 "way that cannot be read, so it was not looked at.")
+        if not isinstance(states, dict):
+            raise CompanionError(f"{unread_why(states)} So it was not looked at.")
         blocks: dict[str, list[list[int]]] = {}
         for (bx, by, bz), st in states.items():
             if st.split("[", 1)[0] in ("minecraft:air", "minecraft:cave_air", "minecraft:void_air"):
@@ -1228,10 +1236,10 @@ class Companion:
                                  "({x1, y1, z1, x2, y2, z2, block}).")
         return targets, boxes
 
-    def _snapshot_states(self, dim: str, cells: list[tuple[int, int, int]]
-                         ) -> dict[tuple[int, int, int], str] | None:
+    def _snapshot_states(self, dim: str, cells: list[tuple[int, int, int]]) -> Any:
         """The saved states of these cells (and their neighbours), read per
-        chunk column; None when any part cannot be read."""
+        chunk column; the reader's reason (`unread_why`) when any part
+        cannot be read."""
         groups: dict[tuple[int, int], list[tuple[int, int, int]]] = {}
         for c in cells:
             groups.setdefault((c[0] >> 4, c[2] >> 4), []).append(c)
@@ -1243,8 +1251,8 @@ class Companion:
             box = (min(xs) - 1, max(min(ys) - 1, -64), min(zs) - 1,
                    max(xs) + 1, min(max(ys) + 1, 319), max(zs) + 1)
             got = self.reader(dim, box) if self.reader else None
-            if got is None:
-                return None
+            if not isinstance(got, dict):
+                return got
             out.update(got)
         return out
 
@@ -1281,10 +1289,9 @@ class Companion:
                     raise CompanionError("dimension is an id like minecraft:overworld.")
             targets, boxes = self._edit_targets(blocks, fills, base)
             before = self._snapshot_states(dim, list(targets))
-            if before is None:
-                raise CompanionError("That part of the world is not saved on disk in a way that "
-                                     "can be read, so the change could not be made undoable and "
-                                     "was not made.")
+            if not isinstance(before, dict):
+                raise CompanionError(f"{unread_why(before)} So the change could not be made "
+                                     "undoable and was not made.")
             changed = [(c, st) for c, st in targets.items()
                        if before.get(c, "minecraft:air") != st]
             touched = {c for c, _ in changed}
