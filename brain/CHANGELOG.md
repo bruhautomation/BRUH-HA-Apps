@@ -2,6 +2,30 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.1.0
+
+The Minecraft companion, rebuilt around how a family actually plays: everything said in the game's chat is for it, it can work on several things at once and keep track of them, it knows the world, and anybody can point at something with a spyglass.
+
+### Added
+
+- **Every chat line is for the companion.** Family members no longer start with its name: everything they type in the game's chat goes to it, and it stays quiet when a line needs no answer. Turn this off in ⚙ › Minecraft ("Every line is for …") to go back to needing the name. Guests still have to say it.
+- **A desk for long and many requests.** A line is answered within seconds, and anything that takes a while becomes a job that runs in the background — up to five at once (⚙ › Minecraft › "Jobs at once"), waiting its turn when it would build where another job is building, and saying so ("next after the road"). While a job runs, its progress shows above the player's hotbar; "make it red" reaches the job that is running instead of starting a new one; "stop that" stops it and undoes what it built; "what are you doing?" gets the list. When a job finishes, the person who asked hears how it went, and it is in History › Changes with its own Undo.
+- **It remembers the conversation.** Each player's lines continue one conversation for twenty minutes, so "taller" and "no, the other one" mean something.
+- **It knows the world.** Every message carries which building and room each player is in and which way they face, so "build a couch in this room" is enough: it reads the room's free floor, doors, windows, furniture and materials, and builds to match. It can name places ("this is Ben's room") and find them again by name.
+- **Organic builds.** Trees with tapering trunks and long branches, foliage, rocks and domes are built from shapes instead of block lists, so they no longer come out blocky; all of it is undoable.
+- **The spyglass.** Everyone in the family gets a spyglass named after the companion when they join (⚙ › Minecraft › "Spyglass"). Look at something with it and say "make this taller", or just look and wait: the companion looks at what you pointed at and offers two or three ideas on pads with pictures. Stand on one (or type its number) and it builds it — which is how a child who doesn't type can ask for things.
+
+### Changed
+
+- **Children build too.** A child's request is handled like a grown-up's in the game: it can build and change anything in the world, and all of it can be undone. Bedtime, the rule that a child never hears about another child, and no control of the house stay as they were.
+- **No line is dropped.** "Still thinking about your last one" and "One at a time" are gone: lines that arrive while the companion is busy are read together with the next answer.
+- **Stop, start, undo and status need the companion's name** ("Vesper stop"), so "stop!" said to another player pauses nothing.
+
+### Security
+
+- **A shown name no longer borrows someone's trust.** A chat line from an account belongs to that account; a name a server script displays is only used when the line cannot be tied to any account, and "Can ask for anything" needs the person's own account. A stranger shown as "Dad" gets nothing of Dad's.
+- **History › Changes says who asked from Minecraft** ("asked by … in Minecraft"), beside the Undo (#596).
+
 ## 4.0.30
 
 ### Added
