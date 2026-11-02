@@ -2,6 +2,26 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.1.2
+
+Fixes from an audit of the development loop, the personality engine and the Minecraft companion.
+
+### Fixed
+
+- **Other add-ons' screenshots reach your reports.** Pictures of GardenRX, BRUH Bambu Studio, BRUH Print, BRight and BRUH Minecraft were refused on upload, so their screen reports were never filed.
+- **One add-on's new screen report no longer closes another's.** Filing Morph's screens closed brAIn's as "Superseded"; now only the same add-on's older report is closed.
+- **What you type into "What do you want to fix?" is never dropped.** With no Claude sign-in, or with the day's run limit used up, your words are filed as you typed them and the line under the box says why.
+- **A bug about Morph can be reported from the chat.** Asking brAIn to report a Morph problem, or a request about Morph, was refused; it is now filed as part of brAIn.
+- **Morph's reports say how often it happened.** The count Morph keeps reaches the report again, instead of the number of times brAIn re-read it.
+- **A change you sent from a Tell is your own report.** It no longer reads "Morph reported this 1 time", and Settings can take it back.
+- **An add-on's own report keeps its date.** A row that says when it last happened is no longer treated as seen again on every pass.
+
+### Changed
+
+- **BRUH Task Manager is watched by the development loop.** Its errors are filed like the other BRUH add-ons', and the chat can report a bug in it.
+- **The development loop is switched on in ⚙ › Features.** The chat, the report refusal and `brain devloop` now say so, and `brain devloop` lists every stream.
+- **"Is this fixed now?" is only ever answered by you.** brAIn still withdraws a question an update made moot; the unused path where brAIn would answer one itself is gone.
+
 ## 4.1.1
 
 ### Fixed
