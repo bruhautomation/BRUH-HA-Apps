@@ -556,7 +556,10 @@ class TestTheChangelogRoute(PanelCase):
         self.assertEqual(versions[0], shipped)
         as_tuples = [tuple(int(n) for n in v.split(".")) for v in versions]
         self.assertEqual(as_tuples, sorted(as_tuples, reverse=True))
-        self.assertIn("### Added", body["releases"][0]["body"])
+        # Grouped by kind (Keep a Changelog): a fix-only patch release has
+        # no "### Added", so any of the kinds will do.
+        self.assertRegex(body["releases"][0]["body"],
+                         r"(?m)^### (Added|Changed|Removed|Fixed|Security)$")
 
     async def test_the_order_is_the_versions_not_the_files(self):
         text = "# Changelog\n\n## 1.2.0\n- b\n\n## 1.10.0\n- c\n\n## 1.9.1\n- a\n"

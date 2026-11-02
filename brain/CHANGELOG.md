@@ -22,6 +22,10 @@ Fixes from an audit of the development loop, the personality engine and the Mine
 - **The terminal's house file follows a personality change at once.** `/config/CLAUDE.md` kept the old personality until a restart or the next memory filing.
 - **A Morph personality file with a comment such as `// GROWTH: entries below` is read.** That comment made the whole import fail, and a persona cut by the old 4,000-character limit is now said to be cut when the cut fell near half that length.
 - **The page says your assistant's name only where it said brAIn.** A household member who shares the old name keeps their own words when the name changes, and a "one line:" or "summary:" part of the persona is titled Tagline.
+- **The Minecraft companion says the server is not answering instead of failing.** Saying something to, editing for or building at a player while the server's status could not be read ended in a Python error; it now says the server is not answering, and teleport, give, game mode, kick and look do the same instead of sending the request anyway.
+- **A nickname in Minecraft chat is no longer told the server does not check accounts.** A chat line the server could not tie to a player gets the game's own scope, never the house and never an "untrusted" refusal; a real player whose account is not checked is still refused (pairs with BRUH Minecraft 1.18.1).
+- **Undoing a Minecraft job no longer sends or counts changes that were already gone.** "Put back N changes" counts only what was actually put back.
+- **A bad picture on a choice pad no longer drops the whole question.** The companion drops the item it cannot show and keeps the pads.
 
 ### Changed
 
