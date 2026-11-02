@@ -33,7 +33,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "brain" / "ha-mcp-server"))
 
 from test_brain_minecraft_faculty import DAD  # noqa: E402
-from test_minecraft_desk import DeskCase, rules  # noqa: E402
+from test_minecraft_desk import DeskCase  # noqa: E402
 
 import ha_mcp_server as m  # noqa: E402
 from test_mcp_bruh_addons import Base  # noqa: E402
