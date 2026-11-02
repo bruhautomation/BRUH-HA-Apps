@@ -1825,8 +1825,20 @@ for (const width of WIDTHS) {
     await showSection(page, 'minecraft');
     await page.waitForSelector('#mcEnabled', { timeout: 4000 });
     const labels = await page.$$eval('#mcBody label', (l) => l.map((x) => x.textContent));
-    for (const want of ['For answering in chat', 'For building', 'Replies and greetings a day']) {
+    for (const want of ['For answering in chat', 'For building', 'Replies and greetings a day',
+                        'Answer every line from the family', 'Give everyone a spyglass',
+                        'Jobs at once']) {
       if (!labels.some((t) => t.includes(want))) note(where, `no "${want}" control`);
+    }
+    // The desk's three settings: every line and the spyglass on by default
+    // (an older save without them reads as on), five jobs at once.
+    const desk = await page.evaluate(() => ({
+      every: document.querySelector('#mcEveryLine') && document.querySelector('#mcEveryLine').checked,
+      spy: document.querySelector('#mcSpyglass') && document.querySelector('#mcSpyglass').checked,
+      workers: document.querySelector('#mcWorkers') && document.querySelector('#mcWorkers').value,
+      labelled: !!document.querySelector('label[for="mcWorkers"]') }));
+    if (JSON.stringify(desk) !== JSON.stringify({ every: true, spy: true, workers: '5', labelled: true })) {
+      note(where, `the desk's settings are drawn as ${JSON.stringify(desk)}`);
     }
     // "Can ask for anything" is on the grown-up's row only, and a row whose
     // names the server does not check says the setting is not used.

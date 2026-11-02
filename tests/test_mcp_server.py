@@ -562,7 +562,7 @@ class TestMCPProtocol(unittest.TestCase):
             "music_assistant_remove_players",
             # 2.10: the BRUH add-ons, through their integrations' services
             "minecraft_status", "minecraft_teleport", "minecraft_player",
-            "minecraft_world", "minecraft_command", "minecraft_server",
+            "minecraft_world", "minecraft_job", "minecraft_command", "minecraft_server",
             "minecraft_addons", "label_printer_status", "print_label",
             "bright_status", "bright_show", "explain_decision",
             # What became of brAIn's own notifications (the delivery ledger)

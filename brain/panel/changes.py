@@ -75,6 +75,10 @@ WHERE = {
     "timed": "a timed action",
     "task": "an automation task",
     "card": "from a card",
+    # A line typed in Minecraft's chat, or a job one opened: the game's own
+    # scope, and a grown-up who can ask for anything (⚙ › Minecraft).
+    "minecraft": "from Minecraft",
+    "minecraft_trusted": "from Minecraft",
 }
 # Service calls whose effect is a message: nothing on a device to put back.
 MESSAGE_DOMAINS = frozenset({"notify", "persistent_notification", "tts"})
@@ -93,6 +97,17 @@ VERB_WORDS = {
 
 def where_words(channel: str) -> str:
     return WHERE.get(str(channel or "").strip().lower(), "")
+
+
+def where_of(row: dict) -> str:
+    """Where a journal line or a ledger row came from, and — for one asked
+    for in Minecraft — who asked (`by`, the MCP server's)."""
+    words = where_words(row.get("channel"))
+    by = row.get("by") if isinstance(row.get("by"), dict) else {}
+    person = " ".join(str(by.get("person") or "").split())[:40]
+    if person and words == WHERE["minecraft"]:
+        return f"asked by {person} in Minecraft"
+    return words
 
 
 def _name(eid: str, names: dict) -> str:
@@ -165,11 +180,13 @@ def build(*, journal: list[dict], ledger: list[dict], fixes: list[dict],
           tidy_batches: list[dict], intents: list[dict],
           accepted: list[dict], names: dict | None = None,
           mtime=None, protected=None, honeytokens=(),
-          now: float = 0.0) -> list[dict]:
+          now: float = 0.0, mc_jobs: list[dict] | None = None) -> list[dict]:
     """Every change, newest first, as History rows.
 
     ``mtime`` is ``path -> epoch | None`` (a file's modification time), and
     ``protected``/``honeytokens`` are the restore press's own refusals.
+    ``mc_jobs`` is the Minecraft companion's jobs (its jobs.json): one row
+    for each that ended having changed the world, its Undo the faculty's.
     """
     names = names or {}
     since = now - CHANGES_DAYS * 86400
@@ -224,7 +241,7 @@ def build(*, journal: list[dict], ledger: list[dict], fixes: list[dict],
         if _in_window(ts, windows):
             continue
         tool = str(entry.get("tool") or "")
-        where = where_words(entry.get("channel"))
+        where = where_of(entry)
         title = edit_title(entry)
         if tool == automation_writer.TOOL:
             where = WHERE["card"]
@@ -265,7 +282,7 @@ def build(*, journal: list[dict], ledger: list[dict], fixes: list[dict],
         if ts < since or _in_window(ts, windows):
             continue
         title = call_title(call, names)
-        where = where_words(call.get("channel"))
+        where = where_of(call)
         entities = [str(e) for e in call.get("entities") or [] if e]
         later = any(newest_call.get(e, 0) > ts for e in entities)
         for e in entities:
@@ -306,6 +323,26 @@ def build(*, journal: list[dict], ledger: list[dict], fixes: list[dict],
                    "Puts back each field that still holds what brAIn wrote. "
                    "A field you changed since is left alone.")))
 
+    # Minecraft jobs that changed the world: one row each, its Undo putting
+    # back every edit the job made (the faculty's `minecraft_job undo`).
+    for job in mc_jobs or []:
+        at = float(job.get("ended") or 0)
+        if (at < since or job.get("status") not in ("done", "failed", "cancelled")
+                or not job.get("edits")):
+            continue
+        person = " ".join(str(job.get("person") or "").split())[:40]
+        where = f"asked by {person} in Minecraft" if person else WHERE["minecraft"]
+        reason = ""
+        if job.get("undone"):
+            reason = "Everything it changed has already been put back."
+        press = None if reason else _press(
+            "Undo", f"/api/changes/mcjob/{job.get('id')}/undo",
+            "Puts back every block this job changed in the world, newest first. "
+            "A block somebody changed since is left as it is.")
+        title = f"Made “{str(job.get('title') or 'a job')[:80]}” in Minecraft"
+        rows.append(_row(f"mcjob:{job.get('id')}", "mcjob", title, at, where, press,
+                         reason))
+
     rows.sort(key=lambda r: r["at"], reverse=True)
     return rows
 
@@ -345,6 +382,6 @@ def find_call(calls: list[dict], ts: float) -> dict | None:
     return None
 
 
-__all__ = ["CHANGES_DAYS", "OUTSIDE_EDIT_S", "PAGE", "PAGE_MAX", "WHERE",
+__all__ = ["CHANGES_DAYS", "OUTSIDE_EDIT_S", "PAGE", "PAGE_MAX", "WHERE", "where_of",
            "build", "call_title", "label", "edit_title", "find_call", "find_journal",
            "page", "where_words"]

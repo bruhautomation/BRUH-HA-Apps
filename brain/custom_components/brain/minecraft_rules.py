@@ -28,6 +28,9 @@ The files, all under `/config/.brain/minecraft/`:
 * `talks.json` — what was said to it and what it answered.
 * `approvals.json` — the panel's: house changes a trusted grown-up asked
   for in the game that waited for a person's approval, and how each ended.
+* `jobs.json` — the listener's: the desk's jobs (a build, a redecoration,
+  anything longer than a reply), queued, running and the last ones ended,
+  with what each changed so a cancel can put it back.
 """
 from __future__ import annotations
 
@@ -45,6 +48,7 @@ STATE = "state.json"
 PEOPLE = "people.json"
 TALKS = "talks.json"
 APPROVALS = "approvals.json"
+JOBS = "jobs.json"
 
 ROLES = ("child", "reader")
 DEFAULT_NAME = "brAIn"
@@ -66,31 +70,36 @@ GREET_ADULT_COOLDOWN = 60 * 60
 GREETING_SECONDS = 25
 ADULT_GREETING_SECONDS = 8
 VISIT_SECONDS = 15
-TALK_SPACING = 5                  # seconds between one person's requests
-COMMAND_SPACING = 2
-TALK_TIMEOUT = 90
+TALK_TIMEOUT = 60                 # a quick run: one (coalesced) chat line
+JOB_TIMEOUT = 15 * 60             # a worker run: one job
+SESSION_IDLE = 20 * 60            # a player's quick-run session is resumed this long
+POINT_TTL = 2 * 60                # a spyglass point is "this" / "that" this long
+POINT_QUIET = 8                   # no line this long after a point: offer ideas
+OFFER_TTL = 10 * 60               # an offer's pads can be answered this long
 BRAIN_RETRY = 300
 REPLY_LINES = 4
 REPLY_LINE_CHARS = 160
-PROMPT_CHARS = 6000
+PROMPT_CHARS = 9000
 FAVOURITE_VISITS = 3
 MAX_ANSWERS = 50
 MAX_ASKED = 12
 MAX_NOTES = 12
 MAX_TALKS = 60
 MAX_PEOPLE = 20
-BUILD_WORDS = re.compile(
-    r"\b(build|built|make|place|put|bridge|house|tower|wall|castle|farm|fence|garden|"
-    r"door|roof|stairs?|path|pool|hut|shelter|statue)\b", re.I)
+WORKERS_MAX = 5                   # jobs running at once (⚙, 1–5)
+MAX_JOBS = 50                     # jobs kept in jobs.json (every active one, always)
+MAX_INBOX = 20
+MAX_EDITS = 200
+JOB_ACTIVE = ("queued", "running")
+JOB_STATUSES = ("queued", "running", "done", "failed", "cancelled")
+JOB_ID = re.compile(r"j[0-9a-f]{6}")
+SPYGLASS_NAME_MAX = 32
 
 CANNED = {
     "greet": "Hello! Good to see you.",
-    "thinking": "Hmm…",
     "down": "I can't think that one through right now. Try again in a bit.",
     "budget": "I've talked a lot today — let's pick this up tomorrow.",
     "timeout": "That's taking me too long. Ask me again in a moment?",
-    "busy": "Still thinking about your last one.",
-    "spacing": "One at a time — give me a moment.",
     "paused": "I'm paused. Say “{name} start” when you want me back.",
     "untrusted": ("I can't take commands here: {why}, so anybody could use your name. "
                   "Ask me in brAIn instead."),
@@ -103,6 +112,15 @@ CANNED = {
     # change that and where — never "approve it in brAIn".
     "outside": ("I can't do that from the game. A parent can turn on 'Can ask for anything' "
                 "for you in brAIn › ⚙ › Minecraft."),
+    "next": "That's next, after {title}.",
+    "queued": "That's in line: {ahead} ahead of it.",
+    "job_done": "Done: {title}.",
+    "job_failed": "I couldn't finish {title}: {why}",
+    "job_cancelled": "Stopped {title}, and put back what I changed.",
+    "job_interrupted": "brAIn restarted while I was on it",
+    "job_timeout": "it took too long",
+    "picked": "On it: {title}.",
+    "which": "Which one?",
 }
 # A grown-up the family trusts ("Can ask for anything", ⚙ › Minecraft) asks
 # for a house change while "Let brAIn act without asking" is off: the change
@@ -125,14 +143,55 @@ HELP_LINES = (
     "{n} status — what I'm doing and who is here",
     "{n} come here · {n} help — or just ask me anything",
 )
+_JOB_REQUEST = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string", "maxLength": 80},
+        "brief": {"type": "string", "maxLength": 2000},
+        "where": {"type": "string", "maxLength": 120},
+    },
+    "required": ["title", "brief"],
+}
+# A quick run's answer: what the player reads now (empty for chatter that
+# needs none), and the desk's three moves on jobs.
 TALK_SCHEMA = {
     "type": "object",
     "properties": {
         "reply": {"type": "string", "maxLength": 700},
         "learned": {"type": "array", "items": {"type": "string", "maxLength": 200},
                     "maxItems": 2},
+        "job": _JOB_REQUEST,
+        "amend": {"type": "object", "properties": {
+            "job": {"type": "string", "maxLength": 12},
+            "message": {"type": "string", "maxLength": 600}},
+            "required": ["job", "message"]},
+        "cancel": {"type": "object", "properties": {
+            "job": {"type": "string", "maxLength": 12}}, "required": ["job"]},
     },
     "required": ["reply"],
+}
+# A spyglass point nobody spoke about: a short line and two or three ideas,
+# each one a job if it is picked.
+POINT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reply": {"type": "string", "maxLength": 200},
+        "ideas": {"type": "array", "minItems": 2, "maxItems": 3, "items": {
+            "type": "object",
+            "properties": {**_JOB_REQUEST["properties"],
+                           "item": {"type": "string", "maxLength": 60}},
+            "required": ["title", "brief"]}},
+    },
+    "required": ["reply", "ideas"],
+}
+# A worker run's answer: the one line the requester hears when it ends.
+JOB_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reply": {"type": "string", "maxLength": 300},
+        "ok": {"type": "boolean"},
+    },
+    "required": ["reply", "ok"],
 }
 _BUILTINS = {"stop": "stop", "pause": "stop", "stop it": "stop", "be quiet": "stop",
              "start": "start", "resume": "start", "unpause": "start", "go": "start",
@@ -366,6 +425,14 @@ def _budget(value: Any) -> int:
     return max(0, min(BUDGET_MAX, n))
 
 
+def _workers(value: Any) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return WORKERS_MAX
+    return max(1, min(WORKERS_MAX, n))
+
+
 def clean_settings(raw: Any, strict: bool = False) -> dict[str, Any]:
     """Settings as the listener reads them. `strict` raises on a family list
     that cannot be kept (the panel's save); otherwise a bad one reads as
@@ -395,6 +462,13 @@ def clean_settings(raw: Any, strict: bool = False) -> dict[str, Any]:
         "build_model": _model(raw.get("build_model")),
         "build_effort": _effort(raw.get("build_effort")),
         "greet": raw.get("greet") is not False,
+        # Every chat line from the family is for the companion (on, the
+        # default); off, only a line that starts with its name.
+        "every_line": raw.get("every_line") is not False,
+        # How many jobs run at once; more wait in line.
+        "workers": _workers(raw.get("workers")),
+        # A named spyglass for everyone on the list, when they join.
+        "spyglass": raw.get("spyglass") is not False,
         "colour": (str(raw.get("colour")) if str(raw.get("colour") or "") in COLOURS
                    else DEFAULT_COLOUR),
         # What the panel resolved "Default" to (model_plan), so the listener
@@ -430,7 +504,8 @@ def effective_settings(shared_dir: str) -> dict[str, Any]:
         merged = from_handover(handover)
         merged.update({k: v for k, v in clean_settings(raw).items()
                        if k in ("models", "chat_model", "chat_effort", "build_model",
-                                "build_effort", "budgets", "colour", "greet")})
+                                "build_effort", "budgets", "colour", "greet", "every_line",
+                                "workers", "spyglass")})
         return merged
     return clean_settings(raw)
 
@@ -438,6 +513,102 @@ def effective_settings(shared_dir: str) -> dict[str, Any]:
 def left(limit: int, used: int) -> float:
     """What is left of a budget: infinity when the limit is 0 (unlimited)."""
     return float("inf") if not limit else max(0, int(limit) - int(used))
+
+
+# ---------------------------------------------------------------------------
+# The desk: jobs, offers, the spyglass
+# ---------------------------------------------------------------------------
+_CHOICES = {"1": 0, "2": 1, "3": 2, "one": 0, "two": 1, "three": 2, "first": 0,
+            "second": 1, "third": 2}
+
+
+def choice_of(text: Any) -> int | None:
+    """The idea a typed line picks ("2", "#2", "two", "the second one"), as
+    an index, or None when the line is not a pick."""
+    words = re.sub(r"[^a-z0-9 ]", " ", str(text or "").lower()).split()
+    words = [w for w in words if w not in ("the", "number", "no", "one", "please", "pick",
+                                           "i", "want")] or words
+    if len(words) != 1:
+        return None
+    return _CHOICES.get(words[0])
+
+
+def spyglass_name(persona: str) -> str:
+    """The spyglass's name in the game: the persona's, clipped to fit."""
+    suffix = "'s Spyglass"
+    return game_name(persona)[:SPYGLASS_NAME_MAX - len(suffix)].rstrip() + suffix
+
+
+def _box(where: Any) -> tuple[tuple[int, int], ...] | None:
+    """A `where` that is a box ("x1 y1 z1 x2 y2 z2"), as three (low, high)
+    spans, or None for a room id, a building id or a place's name."""
+    parts = re.split(r"[\s,;]+", str(where or "").strip())
+    if len(parts) != 6:
+        return None
+    try:
+        n = [int(float(p)) for p in parts]
+    except ValueError:
+        return None
+    return tuple((min(n[i], n[i + 3]), max(n[i], n[i + 3])) for i in range(3))
+
+
+def overlaps(a: Any, b: Any) -> bool:
+    """Whether two jobs' `where` are the same place: the same room, building
+    or place (by name), or two boxes that meet. A job that names no place
+    overlaps nothing."""
+    ta, tb = " ".join(str(a or "").lower().split()), " ".join(str(b or "").lower().split())
+    if not ta or not tb:
+        return False
+    ba, bb = _box(ta), _box(tb)
+    if ba and bb:
+        return all(x[0] <= y[1] and y[0] <= x[1] for x, y in zip(ba, bb))
+    return ta == tb
+
+
+def clean_job_request(raw: Any) -> dict[str, str] | None:
+    """A job a run asked to open, as plain text fields, or None."""
+    if not isinstance(raw, dict):
+        return None
+    title = " ".join(str(raw.get("title") or "").split())[:80]
+    brief = " ".join(str(raw.get("brief") or "").split())[:2000]
+    if not title or not brief:
+        return None
+    return {"title": title, "brief": brief,
+            "where": " ".join(str(raw.get("where") or "").split())[:120]}
+
+
+def queue_position(jobs: list[dict], job_id: str) -> int:
+    """1 for the first job waiting, 2 for the next…; 0 when it is not waiting."""
+    queued = [j for j in jobs if j.get("status") == "queued"]
+    for i, j in enumerate(queued):
+        if j.get("id") == job_id:
+            return i + 1
+    return 0
+
+
+def trim_jobs(jobs: list[dict]) -> list[dict]:
+    """The newest MAX_JOBS, every active job kept whatever its age."""
+    active = [j for j in jobs if j.get("status") in JOB_ACTIVE]
+    ended = [j for j in jobs if j.get("status") not in JOB_ACTIVE]
+    keep = ended[-max(0, MAX_JOBS - len(active)):] if len(active) < MAX_JOBS else []
+    kept = {id(j) for j in active + keep}
+    return [j for j in jobs if id(j) in kept]
+
+
+def job_view(job: dict, jobs: list[dict]) -> dict[str, Any]:
+    """A job as a run reads it: its words are a person's, marked untrusted."""
+    out = {"id": job.get("id"), "who": job.get("person"), "status": job.get("status"),
+           "title": untrusted(job.get("title"), 80)}
+    if job.get("where"):
+        out["where"] = job["where"]
+    pos = queue_position(jobs, str(job.get("id") or ""))
+    if pos:
+        out["queue_position"] = pos
+    progress = job.get("progress") or {}
+    if progress.get("text"):
+        out["progress"] = {"text": untrusted(progress.get("text"), 120),
+                           "percent": progress.get("percent")}
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -449,21 +620,29 @@ class Roster:
 
     def who(self, player: Any, shown: Any = None) -> dict[str, Any]:
         """The person a player is. A chat line may show a nickname a server
-        script set (#588) instead of the account name, so `shown` is matched
-        too: against each person's in-game names, the nicknames listed for
-        them, and their own name."""
-        for name in (player, shown):
-            want = bare(name)
-            if not want:
-                continue
+        script set (#588) instead of the account name, so when the add-on
+        could not tie the line to a player, `shown` is matched: against each
+        person's in-game names, the nicknames listed for them, and their own
+        name. A line that came from an account is that account's, whatever
+        name it showed: a stranger a script displays as "Dad" is a guest.
+
+        `trusted` ("Can ask for anything") needs the account itself to be one
+        of the person's in-game names — never a nickname or a person's name,
+        which anybody can be shown as."""
+        name = player if bare(player) else shown
+        want = bare(name)
+        if want:
             for p in self.people:
-                keys = ([bare(n) for n in p.get("players") or []]
-                        + [bare(n) for n in p.get("nicknames") or []] + [bare(p["person"])])
+                accounts = [bare(n) for n in p.get("players") or []]
+                keys = (accounts + [bare(n) for n in p.get("nicknames") or []]
+                        + [bare(p["person"])])
                 if want in keys:
                     role = p.get("role") or "child"
+                    account = bool(bare(player)) and want in accounts
                     return {"person": p["person"], "role": role,
                             "player": player or (p.get("players") or [None])[0],
-                            "trusted": role == "reader" and p.get("trusted") is True}
+                            "trusted": (role == "reader" and p.get("trusted") is True
+                                        and account)}
         return {"person": str(player or shown or "?"), "role": "guest", "player": player,
                 "trusted": False}
 
@@ -626,4 +805,6 @@ def learned_facts(memory: dict[str, Any], name: str = DEFAULT_NAME,
 __all__ = ["bare", "Roster", "RulesError", "addressed", "builtin", "split_reply", "untrusted",
            "bedtime_rule", "is_bedtime", "clean_settings", "clean_people", "effective_settings",
            "from_handover", "from_legacy_memory", "left", "persona_name", "game_name",
-           "wake_words", "remember", "favourites", "learned_facts", "read_json", "write_json"]
+           "wake_words", "remember", "favourites", "learned_facts", "read_json", "write_json",
+           "choice_of", "spyglass_name", "overlaps", "clean_job_request", "queue_position",
+           "trim_jobs", "job_view"]

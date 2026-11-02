@@ -18976,14 +18976,21 @@ function renderMinecraft() {
   const today = d.today || {};
   const people = s.people.length ? s.people : [];
   body.innerHTML = `
-    <p class="hint">${esc(d.name)} plays in the world under this name (⚙ › Personality). In the game, a grown-up on the list starts a chat message with “${esc(d.name)}” — “${esc(d.name.toLowerCase())} help” lists what it can do. Every line from the family that starts with its name gets an answer.</p>
+    <p class="hint">${esc(d.name)} plays in the world under this name (⚙ › Personality). Anyone on the list can talk to it in the game's chat; a grown-up's commands start with “${esc(d.name)}” — “${esc(d.name.toLowerCase())} help” lists them.</p>
     ${d.paused ? `<p class="hint featwarn">Paused in the game by ${esc(d.paused_by || "a grown-up")}. Saying “${esc(d.name.toLowerCase())} start” there brings it back.</p>` : ""}
     <label class="check bigcheck"><input id="mcEnabled" class="tog" type="checkbox"${s.enabled ? " checked" : ""}>
       <span><b>Play in the Minecraft world</b><span class="subtext">Off: it says and does nothing in the game.</span></span></label>
     <label class="check bigcheck"><input id="mcGreet" class="tog" type="checkbox"${s.greet ? " checked" : ""}>
       <span><b>Say hello when someone joins</b><span class="subtext">A short visit and a chime; a line in chat for a grown-up.</span></span></label>
+    <label class="check bigcheck"><input id="mcEveryLine" class="tog" type="checkbox"${s.every_line !== false ? " checked" : ""}>
+      <span><b>Answer every line from the family</b><span class="subtext">On: everything the family types in chat is for ${esc(d.name)}, and it stays quiet when a line isn't. Off: only lines that start with “${esc(d.name)}”.</span></span></label>
+    <label class="check bigcheck"><input id="mcSpyglass" class="tog" type="checkbox"${s.spyglass !== false ? " checked" : ""}>
+      <span><b>Give everyone a spyglass</b><span class="subtext">“${esc(d.name)}'s Spyglass” when they join. Point it at something and ${esc(d.name)} offers ideas to pick from.</span></span></label>
+    <label for="mcWorkers">Jobs at once</label>
+    <select id="mcWorkers">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}"${n === (s.workers || 5) ? " selected" : ""}>${n}</option>`).join("")}</select>
+    <p class="hint">Bigger requests — a build, a room made over — become jobs that run while you keep playing. More than this wait their turn, and so does one in the same place as a job already going.</p>
     <h3 class="setsubhead">The family</h3>
-    <p class="hint">Only people on this list play with ${esc(d.name)}; anybody else is left alone. A child gets sounds, pictures and questions they answer by standing on a picture, and their words are never taken as an instruction. A grown-up can ask it things in chat.</p>
+    <p class="hint">Only people on this list play with ${esc(d.name)}; anybody else is left alone. Everyone on it can ask for anything in the game — build, change, undo — and nothing new starts for a child at bedtime. The house is only ever a grown-up's with “Can ask for anything” on.</p>
     <div id="mcPeople">${people.map(mcPersonRow).join("") || '<p class="hint">Nobody yet.</p>'}</div>
     <button type="button" class="btn" id="mcAddPerson">Add person</button>
     <h3 class="setsubhead">Bedtime</h3>
@@ -18991,7 +18998,7 @@ function renderMinecraft() {
     <input id="mcBedtime" type="text" maxlength="160" autocapitalize="off" spellcheck="false" value="${esc(s.bedtime_entity)}">
     <p class="hint">An entity that is on at bedtime (input_boolean.kids_bedtime), or an entity and the state that means bedtime (binary_sensor.boys_door=off). Empty for none.</p>
     <h3 class="setsubhead">Limits</h3>
-    <p class="hint">0 means no limit. One reply at a time per person, a few seconds apart, is always kept.</p>
+    <p class="hint">0 means no limit. ${esc(d.name)} answers one person's lines one at a time, and a line that comes in meanwhile is answered next.</p>
     ${MC_BUDGETS.map(([k, label, hint]) => `<label for="mcBudget_${k}">${esc(label)}</label>
       <input id="mcBudget_${k}" type="number" inputmode="numeric" min="0" step="1" value="${esc(s.budgets[k] || 0)}">
       <p class="hint">${esc(hint)}${k === "daily_turns" ? ` Today: ${esc(today.turns || 0)}.` : k === "daily_actions" ? ` Today: ${esc(today.actions || 0)}.` : ""}</p>`).join("")}
@@ -19059,6 +19066,8 @@ document.addEventListener("click", async (ev) => {
     MC_BUDGETS.forEach(([k]) => { budgets[k] = Math.max(0, parseInt($(`#mcBudget_${k}`).value, 10) || 0); });
     const body = {
       enabled: $("#mcEnabled").checked, greet: $("#mcGreet").checked,
+      every_line: $("#mcEveryLine").checked, spyglass: $("#mcSpyglass").checked,
+      workers: parseInt($("#mcWorkers").value, 10) || 5,
       people: mcReadPeople().filter((p) => p.person || p.players.length),
       bedtime_entity: $("#mcBedtime").value.trim(), budgets,
       chat_model: $("#mcChatModel").value, chat_effort: $("#mcChatEffort").value,

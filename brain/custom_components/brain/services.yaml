@@ -177,6 +177,52 @@ ask:
           max: 600
           unit_of_measurement: s
 
+minecraft_job:
+  name: Minecraft job
+  description: >-
+    What a job of brAIn's Minecraft companion reports and reads while it works:
+    its progress (shown on the player's action bar), the new words waiting in its
+    inbox, the edits it made, or the job list. brAIn's own MCP server calls it; the
+    companion keeps the jobs.
+  fields:
+    action:
+      name: Action
+      description: list, progress, inbox, edit, or undo (a finished job's changes).
+      required: true
+      selector:
+        select:
+          options:
+            - list
+            - progress
+            - inbox
+            - edit
+            - undo
+    job:
+      name: Job
+      description: The job's id, as the job list gives it.
+      required: false
+      selector:
+        text: {}
+    text:
+      name: Progress
+      description: A few words on how far it has got.
+      required: false
+      selector:
+        text: {}
+    percent:
+      name: Percent
+      description: How far it has got, 0 to 100.
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 100
+    edit:
+      name: Edit
+      description: The id of an edit the job made, so cancelling it puts that back too.
+      required: false
+      selector:
+        text: {}
 intent:
   name: Do this once
   description: >-
