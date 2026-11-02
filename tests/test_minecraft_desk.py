@@ -548,6 +548,29 @@ class TestJobs(DeskCase):
         self.brain.holds.pop("work").set()
         self.settle()
 
+    def test_the_first_event_restores_and_later_ones_do_not(self):
+        # Home Assistant's setup reads no files: the restore waits for the
+        # faculty's first event, and a job started after it is never taken
+        # for one a restart interrupted.
+        (self.shared / "minecraft" / "jobs.json").write_text(json.dumps({"jobs": [
+            {"id": "ja00001", "person": "Dad", "player": DAD, "title": "a road", "brief": "x",
+             "where": "", "status": "running", "scope": "minecraft", "created": 1,
+             "started": 2, "ended": None, "progress": {}, "inbox": [], "session": "",
+             "edits": [], "result": ""}]}))
+        self.brain.holds["work"] = asyncio.Event()
+        self.brain.quick.append({"reply": "On it.", "job": {"title": "a well", "brief": "x"}})
+        self.clock.t += 10
+        self.fire("chat", player=DAD, name=DAD, text="build a well", verified=True)
+        self.wait_until(lambda: len(self.brain.of("work")) == 1)
+        self.brain.quick.append({"reply": ""})
+        self.clock.t += 10
+        self.fire("chat", player=DAD, name=DAD, text="thanks", verified=True)
+        self.wait_until(lambda: len(self.brain.of("quick")) == 2)
+        status = {j["title"]: j["status"] for j in self.jobs()}
+        self.assertEqual(status, {"a road": "failed", "a well": "running"})
+        self.brain.holds.pop("work").set()
+        self.settle()
+
     def test_a_restart_in_a_house_without_jobs_writes_nothing(self):
         import shutil
         shutil.rmtree(self.shared / "minecraft")
@@ -727,7 +750,10 @@ class TestTheServiceIsRegistered(unittest.TestCase):
         setup = src.split("async def async_setup", 1)[1]
         self.assertIn('"minecraft_job"', setup)
         self.assertIn("SupportsResponse", setup)
-        self.assertIn("companion.restore()", setup)
+        # The restore reads jobs.json, so it waits for the faculty's first
+        # event or minute rather than running inside Home Assistant's setup.
+        self.assertNotIn("companion.restore()", setup)
+
 
     def test_the_service_is_described(self):
         root = Path(mc.__file__).parent

@@ -2860,6 +2860,21 @@ def _addon_call(domain, service, data=None):
     return response if isinstance(response, dict) else {}
 
 
+def _job_call(data):
+    """brAIn's own `brain.minecraft_job` (the Minecraft faculty keeps the
+    jobs), with response data. Not `_addon_call`: that one's failure tells
+    the person to install another add-on, and this service is brAIn's."""
+    result = call_service("brain", "minecraft_job", data or {}, return_response=True)
+    if isinstance(result, dict) and result.get("error"):
+        text = str(result["error"])
+        if "not found" in text.lower() and "service" in text.lower():
+            return {"error": "brAIn's Minecraft companion is not running, so it keeps no "
+                             "jobs right now (BRUH Minecraft's integration is not set up)."}
+        return {"error": text}
+    response = result.get("response") if isinstance(result, dict) else None
+    return response if isinstance(response, dict) else {}
+
+
 def _voice_admin_refusal(what):
     return {"error": ADDON_VOICE_REFUSAL.format(what=what)} if EXPOSED_ONLY else None
 
@@ -3424,8 +3439,7 @@ def _mc_edit(value, player, blocks, fills, shapes=None, job=None):
         # even from an add-on that does not log the job on the edit. A
         # record that could not be written costs the cancel one edit; the
         # edit itself stands, and its own undo id is in the answer.
-        _addon_call("brain", "minecraft_job", {"action": "edit", "job": job,
-                                               "edit": str(act["id"])})
+        _job_call({"action": "edit", "job": job, "edit": str(act["id"])})
     return _tag_text({"done": True, "action": "edit", "id": act.get("id"),
                       "text": act.get("text"), "changed": result.get("changed"),
                       "note": result.get("note", ""),
@@ -3627,7 +3641,7 @@ def minecraft_job(action, job=None, text=None, percent=None):
         data["text"] = " ".join(str(text or "").split())[:120]
         if isinstance(percent, (int, float)) and not isinstance(percent, bool):
             data["percent"] = max(0, min(100, int(percent)))
-    result = _addon_call("brain", "minecraft_job", data)
+    result = _job_call(data)
     if result.get("error"):
         return result
     if action == "inbox":

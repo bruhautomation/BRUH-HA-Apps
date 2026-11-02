@@ -230,6 +230,7 @@ class Companion:
     async def handle(self, kind: str, data: dict) -> None:
         """One game event. Never raises: the game goes on whatever brAIn did."""
         try:
+            await self._restored_once()
             await self._handle(kind, data or {})
         except Exception:  # noqa: BLE001
             _LOGGER.exception("minecraft: the %s event could not be handled", kind)
@@ -787,6 +788,13 @@ class Companion:
                         model=model or "", job=job_id)
         await self._pump()
 
+    async def _restored_once(self) -> None:
+        """The restore, before the first event or minute this faculty
+        handles — not at Home Assistant's setup, which reads no files."""
+        if not getattr(self, "_restored", False):
+            self._restored = True
+            await self.restore()
+
     async def restore(self) -> None:
         """At start: a job that was running when Home Assistant stopped did
         not finish ("interrupted"); the queue is kept and started."""
@@ -1246,6 +1254,7 @@ class Companion:
     # -- the beat: identity, the handover, bedtime ----------------------------------
     async def tick(self) -> None:
         try:
+            await self._restored_once()
             await self._tick()
         except Exception:  # noqa: BLE001
             _LOGGER.exception("minecraft: the faculty's minute could not run")
@@ -1369,14 +1378,18 @@ async def async_setup(hass, bridge, track_interval=None) -> Callable[[], None]:
         respond = {"supports_response": SupportsResponse.ONLY}
     except ImportError:  # outside Home Assistant (tests)
         respond = {}
-    hass.services.async_register("brain", "minecraft_job", _job_call, **respond)
-    companion._start(companion.restore())
+    # Registered unless something already holds the name — the rule every
+    # brAIn service follows, so a second entry or a reload never doubles it.
+    registered = not hass.services.has_service("brain", "minecraft_job")
+    if registered:
+        hass.services.async_register("brain", "minecraft_job", _job_call, **respond)
 
     def teardown() -> None:
         for unsub in unsubs:
             unsub()
         try:
-            hass.services.async_remove("brain", "minecraft_job")
+            if registered:
+                hass.services.async_remove("brain", "minecraft_job")
         except Exception:  # noqa: BLE001 — a teardown never raises
             pass
         hass.data.pop("brain_minecraft", None)
