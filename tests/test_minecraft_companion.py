@@ -96,7 +96,8 @@ class FakeWorld:
                 return "No entity was found"
             value = {"Pos": f"[{pos[0]}d, {pos[1]}d, {pos[2]}d]",
                      "Dimension": '"minecraft:overworld"', "Health": "20.0f",
-                     "foodLevel": "20", "playerGameType": "0"}[path]
+                     "foodLevel": "20", "playerGameType": "0",
+                     "Rotation": "[0.0f, 0.0f]"}[path]
             return f"{name} has the following entity data: {value}"
         dim = "minecraft:overworld"
         m = re.match(r"minecraft:execute in (\S+) (.*)$", cmd)

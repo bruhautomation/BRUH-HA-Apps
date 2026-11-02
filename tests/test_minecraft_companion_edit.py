@@ -72,14 +72,17 @@ class EditingHandsBase(HandsBase):
                             world.blocks[n] = "minecraft:air"
                 return f"Changed the block at {x}, {y}, {z}"
             m = re.match(r"run minecraft:fill (-?\d+) (-?\d+) (-?\d+) (-?\d+) (-?\d+) (-?\d+) "
-                         r"(\S+) replace$", rest)
+                         r"(\S+) replace(?: (\S+))?$", rest)
             if m:
                 world.commands.append(cmd)
                 x1, y1, z1, x2, y2, z2 = (int(v) for v in m.groups()[:6])
+                only = m.group(8)             # `replace <filter>`: just the cells holding it
                 n = 0
                 for x in range(x1, x2 + 1):
                     for y in range(y1, y2 + 1):
                         for z in range(z1, z2 + 1):
+                            if only is not None and world.block(dim, x, y, z) != only:
+                                continue
                             if world.block(dim, x, y, z) != m.group(7):
                                 world.blocks[(dim, x, y, z)] = m.group(7)
                                 n += 1

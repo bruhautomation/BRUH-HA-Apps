@@ -407,7 +407,7 @@ companion_appear:
 
 ask_choice:
   name: Ask with choice pads
-  description: Put a two-picture question to a player. A green and a red pad go beside them with a picture above each; standing on one for two seconds is the answer, announced as the bruh_minecraft_answer event. Asked the next time they play if they are not on.
+  description: Put a two- or three-picture question to a player. A green, a red (and a blue) pad go beside them with a picture above each, and an item floating over it when the option names one; standing on one for two seconds is the answer, announced as the bruh_minecraft_answer event. Asked the next time they play if they are not on.
   fields:
     player:
       name: Player
@@ -423,7 +423,7 @@ ask_choice:
         text: {}
     options:
       name: Options
-      description: Two options, each either a label, or an object with a label, a picture (a block id), a gift (an item) and a gift_count. Leave out for yes and no.
+      description: Two or three options, each either a label, or an object with a label, a picture (a block id), an item (an item id shown floating over its pad, which nobody can pick up), a gift (an item) and a gift_count. Leave out for yes and no.
       selector:
         object: {}
     person:
@@ -477,7 +477,7 @@ companion_build:
 
 companion_edit:
   name: Change blocks (trusted)
-  description: Any block, anywhere — placed, replaced or removed, and boxes filled — for a person the companion's caller trusts to ask for anything. Not held to the companion's own building rules. Every block's state before is saved first, so undo_action puts it all back; a large change is backed up first.
+  description: Any block, anywhere — placed, replaced or removed, boxes filled and shapes made — for a person the companion's caller trusts to ask for anything. Not held to the companion's own building rules. Every block's state before is saved first, so undo_action puts it all back; a large change is backed up first. At most 131,072 blocks in one edit.
   fields:
     blocks:
       name: Blocks
@@ -489,6 +489,16 @@ companion_edit:
       description: 'Boxes to fill, each with x1, y1, z1, x2, y2, z2 and a block (air clears it).'
       selector:
         object: {}
+    shapes:
+      name: Shapes
+      description: 'Shapes, each with a kind and a block: line (from, to, radius, radius_end — a tapering trunk or branch), ellipsoid (center, radii [x, y, z], hollow), blob (center, radius, density 0–1, seed — foliage, rock), cylinder (base, height, radius, radius_top, hollow) or box (from, to, hollow). Points are [x, y, z]. Leaves far from a log need persistent=true.'
+      selector:
+        object: {}
+    job:
+      name: Job
+      description: The caller's id for the work this edit is part of; undo_action with the job undoes every edit of it.
+      selector:
+        text: {}
     player:
       name: Beside
       description: A Minecraft name; the coordinates are then offsets from where they stand.
@@ -553,10 +563,183 @@ look_blocks:
 
 undo_action:
   name: Undo the companion's action
-  description: Put back what one of the companion's actions changed in the world (blocks that still hold what it placed, and its entities). Leave the id out for the newest one that can still be undone.
+  description: Put back what one of the companion's actions changed in the world (blocks that still hold what it placed, and its entities). Leave the id out for the newest one that can still be undone; give a job to undo every edit recorded for it, newest first.
   fields:
     id:
       name: Action id
+      selector:
+        text: {}
+    job:
+      name: Job
+      description: Undo every edit made with this job id.
+      selector:
+        text: {}
+
+companion_progress:
+  name: Show progress
+  description: A line on named players' action bar, above the hotbar — how a long job is going. Never in chat; it fades after a few seconds.
+  fields:
+    to:
+      name: To
+      description: A Minecraft name, a list of names, or everyone.
+      required: true
+      selector:
+        text: {}
+    text:
+      name: Text
+      required: true
+      selector:
+        text: {}
+    percent:
+      name: Percent
+      description: How far along it is, shown after the text.
+      selector:
+        number:
+          min: 0
+          max: 100
+    colour:
+      name: Colour
+      selector:
+        text: {}
+
+give_spyglass:
+  name: Give a named spyglass
+  description: One spyglass with this name, unless the player already has a spyglass by that name. Looking through any spyglass points at what is in the middle of it (the bruh_minecraft_point event).
+  fields:
+    player:
+      name: Player
+      required: true
+      selector:
+        text: {}
+    name:
+      name: Name
+      description: The spyglass's name, at most 32 characters.
+      required: true
+      selector:
+        text: {}
+
+atlas:
+  name: The atlas
+  description: What is where in the world, worked out from the saved region files in the background — the buildings and roads near a player or a point (each building with its rooms), the building and room it is in, and a search of names and signs.
+  fields:
+    player:
+      name: Around
+      description: A Minecraft name; or give x and z (and y).
+      selector:
+        text: {}
+    x:
+      name: X
+      selector:
+        number:
+          min: -30000000
+          max: 30000000
+    y:
+      name: Y
+      selector:
+        number:
+          min: -64
+          max: 319
+    z:
+      name: Z
+      selector:
+        number:
+          min: -30000000
+          max: 30000000
+    dimension:
+      name: Dimension
+      selector:
+        text: {}
+    radius:
+      name: Radius
+      description: Blocks around the point (64 unless given, at most 256).
+      selector:
+        number:
+          min: 8
+          max: 256
+    query:
+      name: Search
+      description: Words to find in the names of buildings, rooms, places and signs.
+      selector:
+        text: {}
+
+room:
+  name: A room
+  description: One room in full — its floor height and area, the free floor cells, doors, windows, light, furniture, the floor, wall and ceiling blocks and its kind — where a player stands, by its id, or at a point.
+  fields:
+    player:
+      name: Where
+      description: A Minecraft name.
+      selector:
+        text: {}
+    room:
+      name: Room id
+      description: A room id from the atlas.
+      selector:
+        text: {}
+    x:
+      name: X
+      selector:
+        number:
+          min: -30000000
+          max: 30000000
+    y:
+      name: Y
+      selector:
+        number:
+          min: -64
+          max: 319
+    z:
+      name: Z
+      selector:
+        number:
+          min: -30000000
+          max: 30000000
+    dimension:
+      name: Dimension
+      selector:
+        text: {}
+
+label_place:
+  name: Name a place
+  description: Give a room, a building or a point a name ("Ben's room"); a newer name for the same thing replaces the older. Kept with the world.
+  fields:
+    room:
+      name: Room id
+      selector:
+        text: {}
+    building:
+      name: Building id
+      selector:
+        text: {}
+    x:
+      name: X
+      selector:
+        number:
+          min: -30000000
+          max: 30000000
+    y:
+      name: Y
+      selector:
+        number:
+          min: -64
+          max: 319
+    z:
+      name: Z
+      selector:
+        number:
+          min: -30000000
+          max: 30000000
+    dimension:
+      name: Dimension
+      selector:
+        text: {}
+    name:
+      name: Name
+      required: true
+      selector:
+        text: {}
+    by:
+      name: Named by
       selector:
         text: {}
 

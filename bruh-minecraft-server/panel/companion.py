@@ -18,9 +18,10 @@ and it only ever does what it is asked through the integration's services:
   reach them). Every entity carries the tag `bruh_companion`, the action's
   own tag and this process's epoch tag, so a sweep removes any left by an
   earlier run and an undo removes exactly one action's.
-* **Choice pads** — `ask`: a question with two pictures. Two 2×2 carpets
-  beside the child on flat, natural ground, each with a fence post and a
-  picture block; standing on one for `PAD_HOLD` seconds is the answer,
+* **Choice pads** — `ask`: a question with two or three pictures. A 2×2
+  carpet per option beside the child on flat, natural ground, each with a
+  fence post, a picture block and maybe an item floating over it (an item
+  entity nobody can pick up); standing on one for `PAD_HOLD` seconds is the answer,
   confirmed with a chime and sparkles, announced as the Home Assistant
   event `bruh_minecraft_answer`, and the pads are taken away again.
 * **Blocks** — `build` and `place_blocks`, the one path that changes
@@ -29,14 +30,22 @@ and it only ever does what it is asked through the integration's services:
   places with `setblock … keep`, records what each cell was, and snapshots
   first when the change is large. An undo puts back only cells that still
   hold what was placed, so it never undoes a child's later change.
+* **Progress and the spyglass** — `progress`: a line on a player's action
+  bar; `give_spyglass`: one named spyglass, unless they have it (what a
+  player points with: panel/spyglass.py).
+* **A trusted edit** — `edit`: anything, anywhere, including `shapes`
+  (panel/shapes.py), snapshotted first and undone by runs (`fill …
+  replace <what was set>`); `undo_job` undoes every edit of a caller's job.
 * **The account check** — `account_check`: whether the server checks the
   accounts behind the names in chat, which the chat events carry so a
   companion knows whether a name may be believed.
 
 Hard limits live in `check_command`, the chokepoint every command passes:
-only an allay is ever summoned, only gentle sounds at a capped volume are
-played, only the companion's own entities are killed or moved, words go to
-one named player, and blocks change only through `place_blocks`/undo.
+only an allay (and a pad's icon, which cannot be picked up) is ever
+summoned, only gentle sounds at a capped volume are played, only the
+companion's own entities are killed or moved, words go to one named player,
+an item given carries at most a name and what a player has is only ever
+counted (`clear … 0`), and blocks change only through `place_blocks`/undo.
 Nothing is sent while nobody is online.
 
 The old engine's state (up to 1.17.7) is found and retired by
@@ -58,20 +67,20 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-def _load_legacy():
-    """companion_legacy, beside this file (the panel loads modules by path)."""
-    name = "bruh_mc_companion_legacy"
+def _beside(name: str, filename: str):
+    """A module beside this file (the panel loads modules by path)."""
     if name in sys.modules:
         return sys.modules[name]
     spec = importlib.util.spec_from_file_location(
-        name, Path(__file__).resolve().parent / "companion_legacy.py")
+        name, Path(__file__).resolve().parent / filename)
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
 
 
-legacy = _load_legacy()
+legacy = _beside("bruh_mc_companion_legacy", "companion_legacy.py")
+shapes = _beside("bruh_mc_shapes", "shapes.py")
 
 # ---------------------------------------------------------------------------
 # Tuning
@@ -93,10 +102,15 @@ BUILD_MAX = 64                # blocks in one build
 BUILD_REACH = 48              # relative offsets, and how far from a player an absolute one may be
 # A trusted edit (`edit`): what a grown-up who "can ask for anything" asks
 # for through brAIn. Not a guard on size — a ceiling on one request so the
-# snapshot that makes it undoable fits in the action log — and a fill this
-# big is one `fill` command (Minecraft's own limit).
-EDIT_MAX = 32768
+# snapshot that makes it undoable stays a file the panel can hold — and one
+# `fills` box is one `fill` command, so at most FILL_MAX (Minecraft's limit).
+EDIT_MAX = 131072
+FILL_MAX = 32768
 EDIT_REACH = 128              # relative offsets in a trusted edit
+# An action whose cells are more than this many records keeps them beside
+# the log (`actions/<id>.json`), so the log stays small to read and rewrite.
+INLINE_CELLS = 400
+_JOB = re.compile(r"^[A-Za-z0-9_.:\-]{1,40}$")
 LOOK_DEFAULT = (16, 8, 16)    # a look's box, x by y by z
 LOOK_MAX = (32, 16, 32)
 ACCOUNT_STALE = 60            # seconds the account check is trusted
@@ -140,9 +154,22 @@ _ACTION_ID = re.compile(r"^[0-9]{8}-[0-9a-f]{6}$")
 _UNQUOTED = re.compile(r"^[0-9A-Za-z_\-.+]+$")
 _PLAYER = re.compile(r"^[A-Za-z0-9_.*]{1,17}$")
 _COLOUR_CODE = re.compile(r"§.")
+# `give`/`clear` the chokepoint lets through: one named player, an item, at
+# most its custom name as data, and a count.
+_ITEM_COMMAND = re.compile(
+    r"^(?:minecraft:)?(?:give|clear) (?P<who>\S+) (?P<item>[a-z0-9_:]+)"
+    r"(?:\[(?:minecraft:)?custom_name=[^\[\]{}]*\]|\{display:\{Name:'[^{}]*'\}\})?"
+    r"(?: (?P<count>\d+))?$")
 
-PAD_COLOURS = (("minecraft:lime_carpet", "minecraft:lime_wool", "yes"),
-               ("minecraft:red_carpet", "minecraft:red_wool", "no"))
+PAD_COLOURS = (("minecraft:lime_carpet", "minecraft:lime_wool"),
+               ("minecraft:red_carpet", "minecraft:red_wool"),
+               ("minecraft:light_blue_carpet", "minecraft:light_blue_wool"))
+# Where each option's pad goes across the player's view (two cells wide)
+# and its post, for two and for three options.
+PAD_LAYOUTS = {2: ((-3, -2, -3), (2, 3, 3)),
+               3: ((-5, -4, -5), (-1, 0, -1), (3, 4, 4))}
+ICON_TAG = "_o"               # an option's icon: the action's tag + _o<index>
+SPYGLASS_NAME_MAX = 32
 POST_BLOCK = "minecraft:oak_fence"
 EVERYONE = ("", "everyone", "everybody", "all", "@a")
 
@@ -263,6 +290,40 @@ def modern_text(version: str | None) -> bool:
     if nums[0] != 1:
         return True          # 26.x and on: the new numbering, newest format
     return tuple(nums) >= (1, 21, 5)
+
+
+def item_syntax(version: str | None) -> str:
+    """How this server writes an item's data in a command: `snbt` (1.21.5
+    and on: components, text as SNBT), `json` (1.20.5–1.21.4: components,
+    text as a JSON string) or `nbt` (before 1.20.5: `{display:{Name:…}}`)."""
+    nums = [int(n) for n in re.findall(r"\d+", str(version or ""))[:3]]
+    if not nums or nums[0] != 1:
+        return "snbt"
+    while len(nums) < 3:
+        nums.append(0)
+    if tuple(nums) >= (1, 21, 5):
+        return "snbt"
+    return "json" if tuple(nums) >= (1, 20, 5) else "nbt"
+
+
+def item_id(value: Any) -> str:
+    """An item id shown as a pad's icon (never handed over, so any item)."""
+    text = str(value or "").strip().lower().replace(" ", "_")
+    if not _BLOCK_ID.match(text):
+        raise CompanionError("An option's item is an id like minecraft:cake.")
+    return text if ":" in text else f"minecraft:{text}"
+
+
+def named_item(item: str, name: str, syntax: str) -> str:
+    """`item` with a custom name, in the server's syntax."""
+    if syntax == "nbt":
+        js = json.dumps(name, ensure_ascii=False).replace("\\", "\\\\").replace("'", "\\'")
+        return f"{item}{{display:{{Name:'{js}'}}}}"
+    if syntax == "json":
+        js = json.dumps(name, ensure_ascii=False).replace("\\", "\\\\").replace("'", "\\'")
+        return f"{item}[custom_name='{js}']"
+    snbt = '"' + name.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return f"{item}[custom_name={snbt}]"
 
 
 def split_reply(text: Any, width: int = REPLY_LINE_CHARS, lines: int = REPLY_LINES) -> list[str]:
@@ -407,7 +468,8 @@ def check_command(cmd: str, placing: bool = False) -> None:
             raise GuardError("an execute that runs nothing is a test")
         return
     if verb == "summon":
-        if len(words) < 2 or words[1] not in SAFE_SUMMONS:
+        icon = len(words) > 1 and words[1] == "minecraft:item" and "PickupDelay:32767" in cmd
+        if len(words) < 2 or (words[1] not in SAFE_SUMMONS and not icon):
             raise GuardError(f"the companion never summons {words[1] if len(words) > 1 else 'nothing'}")
         if f'"{TAG}"' not in cmd:
             raise GuardError(f"every entity the companion summons carries the {TAG} tag")
@@ -438,17 +500,18 @@ def check_command(cmd: str, placing: bool = False) -> None:
         if len(words) < 2 or words[1].startswith("@"):
             raise GuardError("words go to one named player")
         return
-    if verb == "give":
-        if len(words) < 3 or words[1].startswith("@"):
-            raise GuardError("a gift is for one named player")
+    if verb in ("give", "clear"):
+        tail = cmd.rsplit(" run ", 1)[-1] if " run " in cmd else cmd
+        m = _ITEM_COMMAND.match(tail)
+        if not m or m.group("who").startswith("@"):
+            raise GuardError("an item is for one named player, with no data but a name")
         try:
-            block_id(words[2])
+            block_id(m.group("item"))
         except CompanionError as exc:
             raise GuardError(str(exc)) from None
-        try:
-            count = int(words[3]) if len(words) > 3 else 1
-        except ValueError:
-            raise GuardError("an unreadable count") from None
+        count = int(m.group("count") or 1)
+        if verb == "clear" and (m.group("count") is None or count != 0):
+            raise GuardError("the companion only counts what a player has (clear … 0)")
         if count > GIFT_MAX:
             raise GuardError("too many")
         return
@@ -554,7 +617,16 @@ class ActionLog:
         return acts[:max(0, limit)]
 
     def get(self, action_id: str) -> dict[str, Any] | None:
-        return next((a for a in self.list(MAX_ACTIONS) if a.get("id") == action_id), None)
+        """One action, with its cells (read from beside the log when kept there)."""
+        act = next((a for a in self.list(MAX_ACTIONS) if a.get("id") == action_id), None)
+        if act is not None and act.get("cells_file"):
+            data = _read_json(self._cells_path(action_id), {})
+            act = dict(act, cells=data.get("cells") if isinstance(data, dict) else [])
+            act.pop("cells_file", None)
+        return act
+
+    def _cells_path(self, action_id: str) -> Path:
+        return self.path.parent / "actions" / f"{action_id}.json"
 
     def start(self, kind: str, player: str | None, text: str, **extra) -> dict[str, Any]:
         now = self.clock()
@@ -566,11 +638,23 @@ class ActionLog:
         return act
 
     def put(self, act: dict[str, Any]) -> None:
+        cells = act.get("cells") or []
+        if len(cells) > INLINE_CELLS:
+            _atomic_write_json(self._cells_path(act["id"]), {"cells": cells})
+            act = dict(act, cells=[], cells_file=True,
+                       placed_left=any(c.get("placed") for c in cells))
         with self._lock:
             acts = [a for a in self.list(MAX_ACTIONS) if a.get("id") != act["id"]]
             acts.append(act)
             acts.sort(key=lambda a: a.get("t") or 0, reverse=True)
             _atomic_write_json(self.path, {"actions": acts[:MAX_ACTIONS]})
+            for gone in acts[MAX_ACTIONS:]:
+                if gone.get("cells_file"):
+                    try:
+                        self._cells_path(gone["id"]).unlink()
+                    except OSError:
+                        # Already gone: nothing is left to undo of it either way.
+                        pass
 
 
 class SaidLog:
@@ -602,9 +686,25 @@ class SaidLog:
         return row
 
 
+def _runs(cells: dict[tuple[int, int, int], Any]) -> list[tuple[int, int, int, int, Any]]:
+    """Cells as runs along +x of one value: (x1, x2, y, z, value)."""
+    out: list[list[Any]] = []
+    for (x, y, z) in sorted(cells, key=lambda c: (c[1], c[2], c[0])):
+        v = cells[(x, y, z)]
+        last = out[-1] if out else None
+        if last and last[2] == y and last[3] == z and last[1] == x - 1 and last[4] == v \
+                and x - last[0] < FILL_MAX:
+            last[1] = x
+        else:
+            out.append([x, x, y, z, v])
+    return [tuple(r) for r in out]
+
+
 def undoable(act: dict[str, Any]) -> bool:
     if act.get("status") in ("undone", "failed"):
         return False
+    if act.get("cells_file"):
+        return act.get("status") == "active" or bool(act.get("placed_left"))
     return act.get("status") == "active" or any(c.get("placed") for c in act.get("cells") or [])
 
 
@@ -635,22 +735,25 @@ class Questions:
 
 
 def clean_options(options: Any) -> list[dict[str, Any]]:
-    """Two choices, each a label, a picture block and maybe a gift."""
+    """Two or three choices, each a label, a picture block, maybe an item
+    shown above its pad, and maybe a gift."""
     if options in (None, "", []):
         options = [{"label": "yes"}, {"label": "no"}]
-    if not isinstance(options, list) or len(options) != 2:
-        raise CompanionError("A pad question has exactly two options.")
+    if not isinstance(options, list) or len(options) not in PAD_LAYOUTS:
+        raise CompanionError("A pad question has two or three options.")
     out = []
     for i, o in enumerate(options):
         if isinstance(o, str):
             o = {"label": o}
         if not isinstance(o, dict):
-            raise CompanionError("Each option is a label, or {label, picture, gift}.")
+            raise CompanionError("Each option is a label, or {label, picture, item, gift}.")
         label = str(o.get("label") or "").strip()[:40]
         if not label:
             raise CompanionError("Each option needs a label.")
-        carpet, picture, _ = PAD_COLOURS[i]
+        carpet, picture = PAD_COLOURS[i]
         opt = {"label": label, "picture": block_id(o.get("picture"), picture), "pad": carpet}
+        if o.get("item"):
+            opt["item"] = item_id(o["item"])
         if o.get("gift"):
             opt["gift"] = block_id(o["gift"])
             try:
@@ -681,6 +784,7 @@ class Companion:
                  emit: Callable[[str, dict], Any] | None = None,
                  snapshot: Callable[[], str | None] | None = None,
                  modern: Callable[[], bool] = lambda: True,
+                 item_syntax: Callable[[], str] = lambda: "snbt",
                  accounts: Callable[[], dict] | None = None,
                  reader: Callable[[str, tuple], Any] | None = None,
                  clock: Callable[[], float] = time.time):
@@ -693,6 +797,7 @@ class Companion:
         self.emit_fn = emit or (lambda kind, data: None)
         self.snapshot_fn = snapshot
         self.modern = modern
+        self.item_syntax = item_syntax
         self.accounts_fn = accounts or (lambda: account_check(self.col.server_dir))
         data_dir = Path(collector.data_dir)
         self.root = data_dir / DIR_NAME
@@ -860,20 +965,7 @@ class Companion:
             if not self.col.sessions:
                 raise CompanionError("Nobody is in the game, so there is nobody to say it to.")
             name, col = self._speaker(name, colour_)
-            targets = to if isinstance(to, list) else [to]
-            players: list[str] = []
-            missing: list[str] = []
-            for t in targets:
-                t = str(t or "").strip()
-                if t.lower() in EVERYONE:
-                    players.extend(sorted(self.col.sessions))
-                    continue
-                found = self._online(t)
-                if found:
-                    players.append(found)
-                else:
-                    missing.append(t)
-            players = list(dict.fromkeys(players))
+            players, missing = self._players(to)
             if not players:
                 raise CompanionError(f"{', '.join(missing) or 'Nobody'} is not in the game right now.")
             lines = split_reply(text)
@@ -884,6 +976,76 @@ class Companion:
                     self._chime(p, pitches=(1.26, 1.5), volume=0.5)
             self.said.add(to=players, text=text, name=name, by=str(by or "")[:40])
             return {"sent": players, "missing": missing, "lines": lines, "name": name}
+
+    def _players(self, to: Any) -> tuple[list[str], list[str]]:
+        """The online players a name, a list of names or "everyone" means,
+        and the names that are not on."""
+        targets = to if isinstance(to, list) else [to]
+        players: list[str] = []
+        missing: list[str] = []
+        for t in targets:
+            t = str(t or "").strip()
+            if t.lower() in EVERYONE:
+                players.extend(sorted(self.col.sessions))
+                continue
+            found = self._online(t)
+            if found:
+                players.append(found)
+            else:
+                missing.append(t)
+        return list(dict.fromkeys(players)), missing
+
+    def progress(self, to: Any, text: Any, percent: Any = None, colour_: Any = None
+                 ) -> dict[str, Any]:
+        """A long job's progress on named players' action bar (above the
+        hotbar): seen, never in chat, gone after a few seconds."""
+        with self._lock:
+            line = " ".join(str(text or "").split())[:REPLY_LINE_CHARS]
+            if not line:
+                raise CompanionError("What is the progress? (text is empty)")
+            if percent not in (None, ""):
+                try:
+                    pct = max(0, min(100, int(round(float(percent)))))
+                except (TypeError, ValueError):
+                    raise CompanionError("percent is a number from 0 to 100.") from None
+                line = f"{line} — {pct}%"
+            players, missing = self._players(to)
+            if not players:
+                raise CompanionError(f"{', '.join(missing) or 'Nobody'} is not in the game "
+                                     "right now.")
+            _, col = self._speaker(None, colour_)
+            comp = text_component(line, col)
+            for p in players:
+                self._try(f"minecraft:title {quote_name(p)} actionbar {comp}")
+            return {"sent": players, "missing": missing, "text": line}
+
+    def give_spyglass(self, player: Any, name: Any) -> dict[str, Any]:
+        """One spyglass named `name` for a player, unless they already have
+        a spyglass by that name (counted with `clear … 0`, which takes
+        nothing). The spyglass is how anybody points at something for the
+        companion (the bruh_companion data pack)."""
+        with self._lock:
+            found = self._online(str(player or ""))
+            if not found:
+                raise CompanionError(f"{player} is not in the game right now.")
+            label = " ".join(re.sub(r"[^\w '\-.!?]", "", str(name or "")).split())
+            label = label[:SPYGLASS_NAME_MAX].strip()
+            if not label:
+                raise CompanionError("Give the spyglass a name.")
+            item = named_item("minecraft:spyglass", label, self.item_syntax())
+            who = quote_name(found)
+            reply = self._try(f"minecraft:clear {who} {item} 0")
+            text = _COLOUR_CODE.sub("", reply or "")
+            m = re.search(r"Found (\d+) matching item", text, re.I)
+            if m and int(m.group(1)) > 0:
+                return {"player": found, "name": label, "given": False, "had": int(m.group(1))}
+            if not m and not re.search(r"No items were found", text, re.I):
+                raise CompanionError("The server would not say what they have: "
+                                     f"{(reply or 'no answer')[:120]}")
+            reply = self._try(f"minecraft:give {who} {item} 1")
+            if reply is None or not re.search(r"^Gave ", _COLOUR_CODE.sub("", reply).strip()):
+                raise CompanionError(f"The server would not give it: {(reply or 'no answer')[:120]}")
+            return {"player": found, "name": label, "given": True, "had": 0}
 
     # -- a body ----------------------------------------------------------------
     def appear(self, player: Any, seconds: Any = 25, kind: str = "greet", name: Any = None,
@@ -1188,10 +1350,11 @@ class Companion:
                 "player": who, "feet": feet, "blocks": runs,
                 "note": "Runs are [x, y, z, length] along +x; everything else in the box is air."}
 
-    def _edit_targets(self, blocks: Any, fills: Any, base: list[int] | None
-                      ) -> tuple[dict[tuple[int, int, int], str], list[tuple]]:
+    def _edit_targets(self, blocks: Any, fills: Any, base: list[int] | None,
+                      shape_list: Any = None) -> tuple[dict[tuple[int, int, int], str], list[tuple]]:
         """{cell: new state} for every cell the edit sets, and the fill boxes
-        (applied first, as one `fill` each)."""
+        (applied first, as one `fill` each). Fills first, then shapes in
+        order, then single blocks: a later one wins a cell."""
         def at(item: dict, keys: tuple[str, ...]) -> list[int]:
             try:
                 vals = [int(item[k]) for k in keys]
@@ -1206,6 +1369,7 @@ class Companion:
                     raise CompanionError("That is outside the world's height.")
             return vals
 
+        too_many = f"At most {EDIT_MAX} blocks in one edit; split it in two."
         targets: dict[tuple[int, int, int], str] = {}
         boxes: list[tuple] = []
         for f in (fills or []) if isinstance(fills, list) else []:
@@ -1216,13 +1380,28 @@ class Companion:
             y1, y2 = sorted((y1, y2))
             z1, z2 = sorted((z1, z2))
             st = block_state(f.get("block"))
-            if (x2 - x1 + 1) * (y2 - y1 + 1) * (z2 - z1 + 1) + len(targets) > EDIT_MAX:
-                raise CompanionError(f"At most {EDIT_MAX} blocks in one edit; split it in two.")
+            size = (x2 - x1 + 1) * (y2 - y1 + 1) * (z2 - z1 + 1)
+            if size > FILL_MAX:
+                raise CompanionError(f"One fill is at most {FILL_MAX} blocks; use a box shape "
+                                     "or split it.")
+            if size + len(targets) > EDIT_MAX:
+                raise CompanionError(too_many)
             boxes.append((x1, y1, z1, x2, y2, z2, st))
             for bx in range(x1, x2 + 1):
                 for by in range(y1, y2 + 1):
                     for bz in range(z1, z2 + 1):
                         targets[(bx, by, bz)] = st
+        for sh in (shape_list or []) if isinstance(shape_list, list) else []:
+            st = block_state(sh.get("block") if isinstance(sh, dict) else None)
+            try:
+                cells = shapes.expand(sh, base=base, reach=EDIT_REACH,
+                                      limit=EDIT_MAX - len(targets))
+            except shapes.ShapeError as exc:
+                raise CompanionError(str(exc)) from None
+            for c in cells:
+                targets[c] = st
+            if len(targets) > EDIT_MAX:
+                raise CompanionError(too_many)
         for b in (blocks or []) if isinstance(blocks, list) else []:
             if not isinstance(b, dict):
                 raise CompanionError("Each block is {x, y, z, block}.")
@@ -1230,10 +1409,10 @@ class Companion:
             remove = str(b.get("mode") or "").lower() == "remove"
             targets[(bx, by, bz)] = block_state("air" if remove else b.get("block"))
             if len(targets) > EDIT_MAX:
-                raise CompanionError(f"At most {EDIT_MAX} blocks in one edit; split it in two.")
+                raise CompanionError(too_many)
         if not targets:
-            raise CompanionError("Give blocks ({x, y, z, block}) or fills "
-                                 "({x1, y1, z1, x2, y2, z2, block}).")
+            raise CompanionError("Give blocks ({x, y, z, block}), fills "
+                                 "({x1, y1, z1, x2, y2, z2, block}) or shapes ({kind, block, …}).")
         return targets, boxes
 
     def _snapshot_states(self, dim: str, cells: list[tuple[int, int, int]]) -> Any:
@@ -1258,18 +1437,26 @@ class Companion:
 
     def edit(self, blocks: Any = None, fills: Any = None, player: Any = None,
              dimension: Any = None, title: Any = "", by: str = "",
-             name: Any = None) -> dict[str, Any]:
+             name: Any = None, shapes: Any = None, job: Any = None) -> dict[str, Any]:
         """A trusted edit: what a grown-up who can ask for anything asked for
         through brAIn. Any block, anywhere — over existing blocks, inside or
         next to a build, in a protected place — placed, replaced or removed
-        (`mode: "remove"`, or block air), and boxes filled. None of
-        `place_blocks`' rules: those hold the companion's OWN acts.
+        (`mode: "remove"`, or block air), boxes filled, and shapes (a
+        tapering line, an ellipsoid, a blob, a cylinder, a box; panel/
+        shapes.py). None of `place_blocks`' rules: those hold the
+        companion's OWN acts. `job` is the caller's id for the work this is
+        part of, recorded so `undo_job` can take all of it back.
 
         What makes it safe is the undo. Before anything changes, the world is
         saved and every cell's block state is read (with the other half of a
         bed or a door beside one), and the action records each before and
-        after; an edit whose before cannot be read is not made. A large one
-        is backed up first; a backup that fails is said, never a refusal."""
+        after (as runs along x); an edit whose before cannot be read is not
+        made. A large one is backed up first; a backup that fails is said,
+        never a refusal. Cells are written as `fill` runs along x."""
+        job = None if job in (None, "") else str(job).strip()
+        if job is not None and not _JOB.match(job):
+            raise CompanionError("A job id is letters, digits, dots, dashes and underscores, "
+                                 "at most 40.")
         with self._lock:
             speaker, _ = self._speaker(name, None)
             base = None
@@ -1287,19 +1474,18 @@ class Companion:
                 dim = str(dimension or "minecraft:overworld")
                 if not re.fullmatch(r"[a-z0-9_.\-]+:[a-z0-9_./\-]+", dim):
                     raise CompanionError("dimension is an id like minecraft:overworld.")
-            targets, boxes = self._edit_targets(blocks, fills, base)
+            targets, boxes = self._edit_targets(blocks, fills, base, shapes)
             before = self._snapshot_states(dim, list(targets))
             if not isinstance(before, dict):
                 raise CompanionError(f"{unread_why(before)} So the change could not be made "
                                      "undoable and was not made.")
-            changed = [(c, st) for c, st in targets.items()
-                       if before.get(c, "minecraft:air") != st]
-            touched = {c for c, _ in changed}
+            changed = {c: st for c, st in targets.items()
+                       if before.get(c, "minecraft:air") != st}
             neighbours: list[tuple[int, int, int]] = []
-            for (cx, cy, cz), _st in changed:
+            for (cx, cy, cz) in changed:
                 for d in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)):
                     n = (cx + d[0], cy + d[1], cz + d[2])
-                    if n in touched or n in neighbours:
+                    if n in changed or n in neighbours:
                         continue
                     if _MULTI_PART.search(before.get(n, "")):
                         neighbours.append(n)
@@ -1312,10 +1498,16 @@ class Companion:
             who = str(by or "")[:40]
             text = f"{speaker} changed {title}" + (f" beside {beside}" if beside else "") + \
                 (f" (asked by {who})" if who else "")
-            act = self.actions.start("edit", beside, text, by=who, name=speaker, trusted=True)
-            cells = [{"x": c[0], "y": c[1], "z": c[2], "dim": dim, "before": before.get(
-                c, "minecraft:air"), "after": st, "placed": True} for c, st in changed]
-            cells += [{"x": n[0], "y": n[1], "z": n[2], "dim": dim, "before": before[n],
+            act = self.actions.start("edit", beside, text, by=who, name=speaker, trusted=True,
+                                     job=job)
+            # Runs of one before and one after along x; a bed's or door's
+            # half is a cell of its own, because its undo checks its partner.
+            pairs = {c: (before.get(c, "minecraft:air"), st, c if _MULTI_PART.search(st) else None)
+                     for c, st in changed.items()}
+            cells = [{"x": x1, "y": y, "z": z, "n": x2 - x1 + 1, "dim": dim, "before": b,
+                      "after": st, "placed": True}
+                     for x1, x2, y, z, (b, st, _) in _runs(pairs)]
+            cells += [{"x": n[0], "y": n[1], "z": n[2], "n": 1, "dim": dim, "before": before[n],
                        "after": None, "placed": True} for n in neighbours]
             # Recorded before anything is set: a server that goes away half
             # way leaves an action Undo can still put back.
@@ -1328,17 +1520,23 @@ class Companion:
                 if reply is None or not re.search(r"filled|no blocks were filled", reply, re.I):
                     failed = f"The server would not fill a box: {(reply or 'no answer')[:120]}"
                     break
-            singles = {c: st for c, st in changed}
+            singles = dict(changed)
             for box in boxes:
                 for c in list(singles):
                     if (box[0] <= c[0] <= box[3] and box[1] <= c[1] <= box[4]
                             and box[2] <= c[2] <= box[5] and singles[c] == box[6]):
                         singles.pop(c)
             if not failed:
-                for (x, y, z), st in singles.items():
-                    reply = self._raw(f"minecraft:execute in {dim} run minecraft:setblock "
-                                      f"{x} {y} {z} {st} replace")
-                    if reply is None or not re.search(r"changed the block", reply, re.I):
+                for x1, x2, y, z, st in _runs(singles):
+                    if x1 == x2:
+                        reply = self._raw(f"minecraft:execute in {dim} run minecraft:setblock "
+                                          f"{x1} {y} {z} {st} replace")
+                        ok = reply is not None and re.search(r"changed the block", reply, re.I)
+                    else:
+                        reply = self._raw(f"minecraft:execute in {dim} run minecraft:fill "
+                                          f"{x1} {y} {z} {x2} {y} {z} {st} replace")
+                        ok = reply is not None and re.search(r"filled", reply, re.I)
+                    if not ok:
                         failed = ("The server would not place a block: "
                                   f"{(reply or 'no answer')[:120]}")
                         break
@@ -1352,8 +1550,8 @@ class Companion:
             self.actions.put(act)
             self.col.record({"kind": "companion", "player": beside,
                              "action": act["id"], "text": text[:240]})
-            return dict(act, cells=len(cells), changed=len(changed), undoable=undoable(act),
-                        backup_note=backup_note)
+            return dict(act, cells=sum(c["n"] for c in cells), changed=len(changed),
+                        undoable=undoable(act), backup_note=backup_note)
 
     def _restore(self, act: dict[str, Any]) -> dict[str, int]:
         """Put back each cell that still holds what was placed."""
@@ -1389,14 +1587,17 @@ class Companion:
 
     def _restore_edit(self, act: dict[str, Any]) -> dict[str, int]:
         """A trusted edit's undo: every cell that still holds what the edit
-        set goes back to its saved state, then the neighbours it broke (the
-        other half of a bed or door) are put back where they are missing."""
+        set goes back to its saved state — a run at a time, with `fill …
+        replace <what was set>`, which leaves a cell somebody changed since
+        alone — then the neighbours it broke (the other half of a bed or
+        door) are put back where they are missing."""
         restored = changed = 0
         cells = act.get("cells") or []
         for c in sorted(cells, key=lambda c: c.get("after") is None):
             if not c.get("placed"):
                 continue
             dim = c.get("dim") or "minecraft:overworld"
+            n = int(c.get("n") or 1)
             where = f"{c['x']} {c['y']} {c['z']}"
             if c.get("after") is None:
                 same = self._raw(f"minecraft:execute in {dim} if block {where} {c['before']}")
@@ -1405,23 +1606,55 @@ class Companion:
                               f"{c['before']} replace")
                 c["placed"] = False
                 continue
-            still = self._raw(f"minecraft:execute in {dim} if block {where} {c['after']}")
-            verdict = None if still is None else parse_test(still)
-            if verdict is False and _MULTI_PART.search(c["after"]):
-                # Half of a bed or door this edit set, which fell when its
-                # other half was put back a moment ago: gone, not changed.
-                gone = self._raw(f"minecraft:execute in {dim} if block {where} minecraft:air")
-                verdict = True if gone is not None and parse_test(gone) else verdict
-            if verdict:
-                self._raw(f"minecraft:execute in {dim} run minecraft:setblock {where} "
-                          f"{c['before']} replace")
-                restored += 1
-            elif verdict is False:
-                changed += 1
-            else:
+            if n == 1 and _MULTI_PART.search(c["after"]):
+                still = self._raw(f"minecraft:execute in {dim} if block {where} {c['after']}")
+                verdict = None if still is None else parse_test(still)
+                if verdict is False:
+                    # Half of a bed or door this edit set, which fell when its
+                    # other half was put back a moment ago: gone, not changed.
+                    gone = self._raw(f"minecraft:execute in {dim} if block {where} minecraft:air")
+                    verdict = True if gone is not None and parse_test(gone) else verdict
+                if verdict:
+                    self._raw(f"minecraft:execute in {dim} run minecraft:setblock {where} "
+                              f"{c['before']} replace")
+                    restored += 1
+                elif verdict is False:
+                    changed += 1
+                else:
+                    continue      # the server did not answer: try again on the next undo
+                c["placed"] = False
+                continue
+            reply = self._raw(f"minecraft:execute in {dim} run minecraft:fill {where} "
+                              f"{c['x'] + n - 1} {c['y']} {c['z']} {c['before']} replace "
+                              f"{c['after']}")
+            if reply is None:
                 continue          # the server did not answer: try again on the next undo
+            m = re.search(r"filled (\d+)", reply, re.I)
+            if m:
+                done = min(n, int(m.group(1)))
+            elif re.search(r"no blocks were filled", reply, re.I):
+                done = 0
+            else:
+                continue          # a refusal we cannot read: leave it for another undo
+            restored += done
+            changed += n - done
             c["placed"] = False
         return {"restored": restored, "changed": changed}
+
+    def undo_job(self, job: Any) -> dict[str, Any]:
+        """Undo every edit recorded for a job, newest first."""
+        job = str(job or "").strip()
+        if not _JOB.match(job):
+            raise CompanionError("That is not a job id.")
+        with self._lock:
+            undone, restored, changed = [], 0, 0
+            for act in self.actions.list(MAX_ACTIONS):
+                if act.get("job") == job and undoable(act):
+                    out = self.undo(act["id"])
+                    undone.append(act["id"])
+                    restored += out.get("restored", 0)
+                    changed += out.get("changed", 0)
+            return {"job": job, "undone": undone, "restored": restored, "changed": changed}
 
     # -- choice pads -----------------------------------------------------------
     def ask(self, player: Any, text: Any, options: Any = None, by: str = "",
@@ -1460,7 +1693,7 @@ class Companion:
             self._pose(q, now)
             return
 
-    def _site(self, player: str) -> tuple[list[dict[str, Any]] | None, dict[str, Any], str]:
+    def _site(self, player: str, n: int = 2) -> tuple[list[dict[str, Any]] | None, dict[str, Any], str]:
         here = self._pos(player)
         if not here:
             return None, {}, "Where they are is not known yet."
@@ -1475,10 +1708,10 @@ class Companion:
                 return {"x": px + a * dx + b * perp[0], "y": y, "z": pz + a * dz + b * perp[1]}
             layout: dict[str, Any] = {"dim": dim, "y": gy + 1, "pads": []}
             cells = []
-            for i, side in enumerate((-1, 1)):
-                pad = [at(a, side * b, gy + 1) for a in (2, 3) for b in (2, 3)]
-                post = at(4, side * 3, gy + 1)
-                pic = at(4, side * 3, gy + 2)
+            for i, (b1, b2, bp) in enumerate(PAD_LAYOUTS[n]):
+                pad = [at(a, b, gy + 1) for a in (2, 3) for b in (b1, b2)]
+                post = at(4, bp, gy + 1)
+                pic = at(4, bp, gy + 2)
                 layout["pads"].append({"cells": pad, "post": post, "picture": pic,
                                        "min_x": min(c["x"] for c in pad),
                                        "min_z": min(c["z"] for c in pad)})
@@ -1497,7 +1730,8 @@ class Companion:
 
     def _pose(self, q: dict[str, Any], now: float) -> None:
         player = q["player"]
-        cells, layout, why = self._site(player)
+        opts = q["options"]
+        cells, layout, why = self._site(player, len(opts))
         q["attempts"] = int(q.get("attempts") or 0) + 1
         if cells is None:
             q["note"] = why
@@ -1506,11 +1740,10 @@ class Companion:
                 q["status"] = "expired"
             self.questions.put(q)
             return
-        opts = q["options"]
         name = speaker_name(q.get("name"), self.identity()["name"])
         act = self.actions.start(
             "pads", player, f"{name} asked {q.get('person') or player}: {q['text']} "
-                            f"({opts[0]['label']} or {opts[1]['label']})",
+                            f"({' or '.join(o['label'] for o in opts)})",
             question=q["id"], by=q.get("by") or "", name=name)
         for c in cells:
             kind, i = c["role"]
@@ -1527,11 +1760,16 @@ class Companion:
             self.questions.put(q)
             return
         mid = layout["pads"]
-        cx = (mid[0]["min_x"] + mid[1]["min_x"]) / 2 + 1
-        cz = (mid[0]["min_z"] + mid[1]["min_z"]) / 2 + 1
+        cx = (mid[0]["min_x"] + mid[-1]["min_x"]) / 2 + 1
+        cz = (mid[0]["min_z"] + mid[-1]["min_z"]) / 2 + 1
         self._try(f"minecraft:execute in {layout['dim']} positioned {cx} {layout['y'] + 1.5} {cz} "
                   f"run minecraft:summon minecraft:allay ~ ~ ~ "
                   f"{self._body_nbt(act['tag'], name, colour(q.get('colour')))}")
+        for i, opt in enumerate(opts):
+            if opt.get("item"):
+                pic = layout["pads"][i]["picture"]
+                self._icon(layout["dim"], pic, opt["item"], f"{act['tag']}{ICON_TAG}{i}",
+                           act["tag"])
         self._chime(player, pitches=(1.0, 1.5))
         q.update(status="open", asked_at=int(now), action=act["id"], note="")
         self.questions.put(q)
@@ -1539,7 +1777,19 @@ class Companion:
                        "layout": layout, "on": {}, "since": now, "beats": 0,
                        "answered": None, "remove_at": None}
         self.col.record({"kind": "companion", "player": player, "action": act["id"],
-                         "text": f"{name} put two choice pads beside {q.get('person') or player}"})
+                         "text": f"{name} put {len(opts)} choice pads beside "
+                                 f"{q.get('person') or player}"})
+
+    def _icon(self, dim: str, pic: dict[str, int], item: str, tag: str, act_tag: str) -> None:
+        """An option's item, floating still above its picture block: an item
+        entity nobody can pick up and that never despawns (Bedrock players
+        see item entities through Geyser)."""
+        count = "Count:1b" if self.item_syntax() == "nbt" else "count:1"
+        self._try(f"minecraft:execute in {dim} run minecraft:summon minecraft:item "
+                  f"{pic['x'] + 0.5} {pic['y'] + 1.15} {pic['z'] + 0.5} "
+                  f'{{Item:{{id:"{item}",{count}}},PickupDelay:32767,Age:-32768,NoGravity:1b,'
+                  f'Invulnerable:1b,Motion:[0.0d,0.0d,0.0d],'
+                  f'Tags:["{TAG}","{self.epoch}","{act_tag}","{tag}"]}}')
 
     def _watch_pads(self, now: float) -> None:
         a = self.asking
@@ -1578,22 +1828,28 @@ class Companion:
         if q is None:
             self._close_question(requeue=False)
             return
-        chosen, other = q["options"][i], q["options"][1 - i]
+        chosen = q["options"][i]
+        others = [o for j, o in enumerate(q["options"]) if j != i]
         lay = a["layout"]
-        pad, gone = lay["pads"][i], lay["pads"][1 - i]
+        pad = lay["pads"][i]
+        gone = [p for j, p in enumerate(lay["pads"]) if j != i]
         dim = lay["dim"]
         player = a["player"]
         self._chime(player, pitches=(1.0, 1.26, 1.5, 2.0), volume=0.7)
         self._try(f"minecraft:execute in {dim} run minecraft:particle minecraft:happy_villager "
                   f"{pad['min_x'] + 1} {lay['y'] + 1} {pad['min_z'] + 1} 1 1 1 0 40")
-        # The result in the world: the other picture goes, the chosen one stays.
+        # The result in the world: the other pictures (and their items) go,
+        # the chosen one stays.
         act = self.actions.get(a["action"])
         if act:
-            pic = gone["picture"]
+            pics = {(p["picture"]["x"], p["picture"]["y"], p["picture"]["z"]) for p in gone}
             for c in act["cells"]:
-                if (c["x"], c["y"], c["z"]) == (pic["x"], pic["y"], pic["z"]) and c.get("placed"):
+                if (c["x"], c["y"], c["z"]) in pics and c.get("placed"):
                     self._restore({"cells": [c]})
             self.actions.put(act)
+            for j in range(len(lay["pads"])):
+                if j != i and q["options"][j].get("item"):
+                    self._try(f"minecraft:kill @e[tag={act['tag']}{ICON_TAG}{j}]")
         if chosen.get("gift"):
             self._try(f"minecraft:give {quote_name(player)} {chosen['gift']} "
                       f"{chosen.get('gift_count', 1)}")
@@ -1607,7 +1863,8 @@ class Companion:
         try:
             self.emit_fn("bruh_minecraft_answer", {
                 "player": player, "question_id": q["id"], "question": q["text"],
-                "answer": chosen["label"], "other": other.get("label"),
+                "answer": chosen["label"], "index": i, "other": others[0].get("label"),
+                "others": [o.get("label") for o in others],
                 "options": [o.get("label") for o in q["options"]], "by": q.get("by") or "",
                 "time": int(now), "world": self.col.level_name()})
         except Exception:  # noqa: BLE001 — Home Assistant away is not the game's problem
@@ -1710,5 +1967,6 @@ class Companion:
 
 __all__ = ["Companion", "Zones", "ActionLog", "SaidLog", "Questions", "GuardError",
            "CompanionError", "check_command", "clean_options", "block_id", "modern_text",
+           "item_syntax", "item_id", "named_item", "unread_why", "shapes",
            "bare", "undoable", "split_reply", "account_check", "trusted", "speaker_name",
            "colour", "TAG"]
