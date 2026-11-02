@@ -2,7 +2,7 @@
 
     /config/.brain/features.json
     {"morph": true, "personality": true, "learning_loop": true,
-     "development_loop": false, "name": "Vesper", "updated_at": 1700000000}
+     "development_loop": false, "name": "Aria", "updated_at": 1700000000}
 
 * **morph** — the Morph dashboard: the Home tab, and Morph's service in this
   container (`brain/morph/service`), which does nothing while it is off.

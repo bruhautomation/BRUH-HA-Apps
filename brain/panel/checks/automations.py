@@ -19,6 +19,7 @@ import os
 import re
 
 from ._util import (DAY, House, age_days, evidence_for, join_names, listify,
+                    target_offline_error,
                     parse_ts, walk, when)
 
 log = logging.getLogger("brain.checks.automations")
@@ -360,6 +361,10 @@ def _trace_end_ts(trace: dict) -> float:
 
 
 def _errored(trace: dict) -> bool:
+    """A run that failed. One that only found nobody in the game to aim at
+    (`target_offline_error`) did what it should with nobody playing."""
+    if target_offline_error(trace.get("error")):
+        return False
     return (str(trace.get("script_execution") or "") == "error"
             or bool(trace.get("error")))
 

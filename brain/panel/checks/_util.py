@@ -943,3 +943,19 @@ def load_yaml_file(path: str) -> Any:
     except yaml.YAMLError as exc:
         log.warning("could not parse %s: %s", path, str(exc)[:200])
         return None
+
+
+_TARGET_OFFLINE = re.compile(
+    r"no (?:player|entity|entities|targets?)\b.{0,30}?(?:was|were|found|matched)"
+    r"|no targets? matched"
+    r"|not in the game(?: right now)?",
+    re.IGNORECASE)
+
+
+def target_offline_error(error: Any) -> bool:
+    """A game server's answer that the thing aimed at is not there.
+
+    "No player was found" is what Minecraft says when a command names a
+    player who is not in the game: the expected outcome with nobody playing,
+    not a broken automation. Every other error is still an error."""
+    return bool(_TARGET_OFFLINE.search(str(error or "")))

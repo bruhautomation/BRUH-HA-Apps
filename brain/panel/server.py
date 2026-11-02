@@ -12515,7 +12515,7 @@ def _record_garden(snapshot: dict, now: float) -> int | None:
 
 
 def _record_game(snapshot: dict, now: float) -> int | None:
-    """Keep what the Minecraft companion learned as facts, one per person
+    """Keep what brAIn learned in the game as facts, one per person
     and key (`minecraft_facts`), read off its memory file. None when it
     could not be read. `snapshot` is the pass's, unused: the memory is
     brAIn's own, not a sensor's."""
@@ -12523,7 +12523,7 @@ def _record_game(snapshot: dict, now: float) -> int | None:
         return minecraft_facts.sync(now)
     except Exception as exc:  # noqa: BLE001 — accounting must not fail the
         # pass it is accounting for; same rule as `journal.record`.
-        log.warning("could not file what the Minecraft companion learned: %s", exc)
+        log.warning("could not file what brAIn learned in the game: %s", exc)
         return None
 
 
@@ -26497,7 +26497,7 @@ async def h_minecraft_undo(request: web.Request) -> web.Response:
     import ha_data  # noqa: PLC0415 — deferred, as everywhere in this module
     action_id = str((body or {}).get("id") or "")
     if action_id and not re.fullmatch(r"[0-9]{8}-[0-9a-f]{6}", action_id):
-        raise web.HTTPBadRequest(text="that is not one of the companion's action ids")
+        raise web.HTTPBadRequest(text="that is not one of the game's action ids")
     try:
         done = await ha_data.call_with_response(
             "bruh_minecraft", "undo_action", {"id": action_id} if action_id else {}, 60)
