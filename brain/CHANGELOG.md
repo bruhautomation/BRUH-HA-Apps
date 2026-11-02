@@ -19,7 +19,7 @@ The Minecraft companion, rebuilt around how a family actually plays: everything 
 
 - **Children build too.** A child's request is handled like a grown-up's in the game: it can build and change anything in the world, and all of it can be undone. Bedtime, the rule that a child never hears about another child, and no control of the house stay as they were.
 - **No line is dropped.** "Still thinking about your last one" and "One at a time" are gone: lines that arrive while the companion is busy are read together with the next answer.
-- **Stop, start, undo and status need the companion's name** ("Vesper stop"), so "stop!" said to another player pauses nothing.
+- **Stop, start, undo and status need the companion's name** ("*name* stop"), so "stop!" said to another player pauses nothing.
 
 ### Security
 
