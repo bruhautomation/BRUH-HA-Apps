@@ -63,6 +63,7 @@ import datetime as dt
 import math
 
 import notify_router
+from checks._util import target_offline_error
 
 # ---------------------------------------------------------------------------
 # The vocabulary
@@ -736,7 +737,7 @@ def from_trace(trace_row: dict, now: float) -> dict | None:
     if not isinstance(trace_row, dict):
         return None
     error = str(trace_row.get("error") or "").strip()
-    if not error:
+    if not error or target_offline_error(error):
         return None
     item = str(trace_row.get("item_id") or trace_row.get("id") or "").strip()
     if not item:

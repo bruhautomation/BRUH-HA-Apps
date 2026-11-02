@@ -332,7 +332,7 @@ def _load() -> list[dict]:
 # A question brAIn asks
 # ---------------------------------------------------------------------------
 #
-# A model-written row that IS a question the assistant asks — "Vesper asks:
+# A model-written row that IS a question the assistant asks — "Aria asks:
 # why does the porch light come on at 3am?", "Still open from an earlier
 # conversation" — was filed as a problem: listed among the faults on the
 # Findings tab and by `get_findings`, with To Do and Ignore under it and
@@ -1010,6 +1010,7 @@ def shown_look(record: dict, entry: dict) -> dict:
     # no tool name, hex code or build string (#562, #563). A file name stays
     # (`tests/test_open_row_look_reason.py` holds it on screen).
     said = house_words.household(house_words.technical(said, files=False)[0])
+    said = house_words.one_name(said)   # one assistant, one name
     if said == record["reason"]:
         return record
     return {**record, "reason": said}

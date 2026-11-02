@@ -18875,7 +18875,7 @@ function ensureMinecraftSection() {
   nav.id = "setNavMinecraft";
   nav.setAttribute("role", "tab");
   nav.setAttribute("aria-controls", "setsecMinecraft");
-  nav.innerHTML = '<span class="setnavname">Minecraft</span><span class="setnavsum" id="setSumMinecraft">The companion that plays with your family</span>';
+  nav.innerHTML = '<span class="setnavname">Minecraft</span><span class="setnavsum" id="setSumMinecraft">brAIn, playing with your family</span>';
   nav.addEventListener("click", () => showSettingsSection("minecraft"));
   after.after(nav);
   const sec = document.createElement("section");
@@ -18886,7 +18886,7 @@ function ensureMinecraftSection() {
   sec.hidden = true;
   sec.innerHTML = '<header class="setsechead"><button type="button" class="setback" aria-label="All settings">‹ Settings</button>'
     + '<h2 class="setsecname">Minecraft</h2></header>'
-    + '<div class="setsecbody"><div id="mcBody">Open this section to load the Minecraft companion.</div></div>';
+    + '<div class="setsecbody"><div id="mcBody">Open this section to load the Minecraft settings.</div></div>';
   sec.querySelector(".setback").addEventListener("click", () => showSettingsIndex());
   secAfter.after(sec);
   return nav;
