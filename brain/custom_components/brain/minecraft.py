@@ -41,7 +41,8 @@ and nothing is decided anywhere else (docs/design/minecraft-companion.md):
   shapes, a few reads; never a house service — the listener, the MCP server
   and the action gate each hold it), its words wrapped as untrusted data.
   A name is only believed when the server checks accounts (`verified` on
-  the event is not False); otherwise nothing runs. A grown-up whose row has
+  the event is not False); otherwise nothing runs. A line tied to no
+  player (a nickname) has no verdict and keeps the game's own scope. A grown-up whose row has
   "Can ask for anything" on, and whose name the server checked (`verified`
   true, never merely absent), gets brAIn's chat instead
   (`minecraft_trusted`): every tool the chat has, full control of the
@@ -391,8 +392,12 @@ class Companion:
                 return
             rest = said
         # A name the server does not check is anybody's: nothing runs, and
-        # the speaker is told once why.
-        if data.get("verified") is False:
+        # the speaker is told once why. That is a name somebody IS playing
+        # under: a line the add-on could not tie to a player (a nickname) has
+        # no account to check, so it keeps the game's own scope below (never
+        # the trusted one), whether the add-on omits the verdict or an older
+        # one stamped it false.
+        if data.get("verified") is False and data.get("player"):
             why = str(data.get("why_unverified") or "the server does not check accounts")
             if player not in self.told_untrusted:
                 self.told_untrusted.add(player)
@@ -686,9 +691,9 @@ class Companion:
                                                 "read": False})
             await self._save_jobs()
 
-    async def _job_edits(self, job: dict) -> list[str]:
-        """Every edit made for the job, newest first: the ones the worker
-        recorded, and the ones BRUH Minecraft logged against the job."""
+    async def _edit_ids(self, job: dict) -> tuple[list[str], set[str]]:
+        """(every edit made for the job, newest first; the ones BRUH Minecraft
+        logged against the job). The rest were only recorded by the worker."""
         seen = [str(e) for e in job.get("edits") or []]
         hands = await self._act("get_companion", {}) or {}
         logged = sorted((a for a in hands.get("actions") or []
@@ -697,25 +702,35 @@ class Companion:
         for a in logged:
             if str(a["id"]) not in seen:
                 seen.append(str(a["id"]))
-        return list(reversed(seen))
+        return list(reversed(seen)), {str(a["id"]) for a in logged}
+
+    async def _job_edits(self, job: dict) -> list[str]:
+        """Every edit made for the job, newest first: the ones the worker
+        recorded, and the ones BRUH Minecraft logged against the job."""
+        return (await self._edit_ids(job))[0]
 
     async def _undo_job(self, job: dict) -> int:
-        """Put back every edit the job made, newest first. How many.
+        """Put back every edit the job made, newest first. How many were.
 
         BRUH Minecraft undoes a whole job itself (`undo_action {job}`, every
         edit it logged against the job, newest first); an edit it did not
         log against the job (the faculty's own record of it), or an add-on
-        older than that, is put back one id at a time."""
+        older than that, is put back one id at a time. An edit the add-on
+        logged and its job undo skipped has nothing left in the world, so it
+        is neither sent again nor counted."""
         done = 0
         answer = await self._act("undo_action", {"job": job.get("id")})
         undone = {str(i) for i in (answer or {}).get("undone") or []}
         done += len(undone)
-        for edit in await self._job_edits(job):
+        edits, logged = await self._edit_ids(job)
+        for edit in edits:
             if edit in undone:
                 continue
-            if answer is not None and edit not in (job.get("edits") or []):
+            if answer is not None and edit in logged:
                 continue        # the add-on's own log: its job undo had it
-            if await self._act("undo_action", {"id": edit}) is not None:
+            put = await self._act("undo_action", {"id": edit})
+            # "Nothing of it is left" is an answer, not a restore.
+            if put is not None and (put.get("restored") or put.get("changed")):
                 done += 1
         job["undone"] = int(self.clock())
         return done
@@ -917,7 +932,7 @@ class Companion:
             return
         self._keep_session(player, tools, answer)
         data = self._data(answer)
-        ideas = [dict(rules.clean_job_request(i) or {}, item=str(i.get("item") or "")[:60])
+        ideas = [dict(rules.clean_job_request(i) or {}, item=rules.pad_item(i.get("item")))
                  for i in data.get("ideas") or [] if isinstance(i, dict)
                  and rules.clean_job_request(i)][:3]
         line = self._reply(answer).strip()

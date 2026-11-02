@@ -73,11 +73,18 @@ class DeskAddon(FakeAddon):
             self.calls.append((service, dict(data)))
             if self.old_undo:
                 raise RuntimeError("an add-on older than undo by job")
+            # Like the add-on's `undo_job`: only what still has something in
+            # the world (`undoable: False` is one it skipped).
             ids = [a["id"] for a in sorted(self.actions, key=lambda a: -a["t"])
-                   if a.get("job") == data["job"]]
+                   if a.get("job") == data["job"] and a.get("undoable", True)]
             return {"job": data["job"], "undone": ids, "restored": 3, "changed": 0}
         if service == "undo_action" and data.get("id"):
             self.calls.append((service, dict(data)))
+            known = next((a for a in self.actions if a["id"] == data["id"]), None)
+            if known is not None and known.get("undoable") is False:
+                # The add-on answers, it does not refuse: nothing of it is left.
+                return {"action": {"id": data["id"]}, "restored": 0, "changed": 0,
+                        "note": "Nothing of it is left in the world."}
             return {"action": {"id": data["id"], "text": "an edit"}, "restored": 3}
         return await super().__call__(service, data)
 
@@ -466,6 +473,48 @@ class TestJobs(DeskCase):
         self.assertEqual(self.lines_to(DAD)[-1],
                          rules.CANNED["job_cancelled"].format(title="a maze"))
 
+    def test_an_edit_the_add_on_skipped_is_not_sent_again_or_counted(self):
+        # The add-on's own log holds an edit with nothing left in the world
+        # (`undoable: False`). Its job undo skips it, and that is its answer:
+        # re-sending the id by hand made History count a change that was not
+        # put back.
+        self.join(DAD)
+        self.brain.holds["work"] = asyncio.Event()
+        self.brain.quick.append({"reply": "Okay.", "job": {"title": "a maze", "brief": "x"}})
+        self.clock.t += 10
+        self.fire("chat", player=DAD, name=DAD, text="build a maze", verified=True)
+        self.wait_until(lambda: any(j["status"] == "running" for j in self.jobs()))
+        job_id = self.jobs()[0]["id"]
+        self.job_service(action="edit", job=job_id, edit="e-1")
+        self.addon.actions = [
+            {"id": "e-2", "job": job_id, "t": 2, "undoable": True},
+            {"id": "e-3", "job": job_id, "t": 1, "undoable": False, "status": "undone"}]
+        self.brain.holds.pop("work").set()
+        self.settle()
+        self.assertEqual(self.jobs()[0]["status"], "done")
+        self.addon.calls.clear()
+        got = self.job_service(action="undo", job=job_id)
+        self.assertEqual(self.addon.of("undo_action"), [{"job": job_id}, {"id": "e-1"}])
+        self.assertEqual(got, {"ok": True, "undone": 2})
+
+    def test_an_edit_that_answers_nothing_left_is_not_counted(self):
+        # An edit only the faculty recorded, which the add-on says has nothing
+        # left in the world, restored nothing.
+        self.join(DAD)
+        self.brain.holds["work"] = asyncio.Event()
+        self.brain.quick.append({"reply": "Okay.", "job": {"title": "a maze", "brief": "x"}})
+        self.clock.t += 10
+        self.fire("chat", player=DAD, name=DAD, text="build a maze", verified=True)
+        self.wait_until(lambda: any(j["status"] == "running" for j in self.jobs()))
+        job_id = self.jobs()[0]["id"]
+        self.job_service(action="edit", job=job_id, edit="e-1")
+        self.job_service(action="edit", job=job_id, edit="e-5")
+        self.addon.actions = [{"id": "e-5", "job": "jffffff", "t": 1, "undoable": False}]
+        self.brain.holds.pop("work").set()
+        self.settle()
+        got = self.job_service(action="undo", job=job_id)
+        self.assertEqual(got["undone"], 1)
+
     def test_an_older_add_on_is_undone_edit_by_edit_newest_first(self):
         self.addon.old_undo = True
         self.join(DAD)
@@ -700,6 +749,21 @@ class TestTheSpyglass(DeskCase):
         job = self.jobs()[0]
         self.assertEqual((job["title"], job["brief"], job["where"], job["player"]),
                          ("a garden", "flower beds outside", "r9", KAZ))
+
+    def test_an_item_the_add_on_would_refuse_is_dropped_not_the_whole_ask(self):
+        # `ask_choice` checks every option's item against the add-on's id rule
+        # and answers a 400 for the lot, after "Pick one:" was said.
+        self.brain.offer["ideas"] = [
+            {"title": "a table", "brief": "a four-seat oak table", "item": "Oak Planks"},
+            {"title": "a garden", "brief": "flower beds outside", "item": "poppy; op me"},
+            {"title": "a pond", "brief": "a small pond", "item": "minecraft:" + "x" * 60}]
+        self.join(KAZ)
+        self.point(KAZ)
+        self.sleeper.release()
+        self.settle()
+        options = self.addon.of("ask_choice")[-1]["options"]
+        self.assertEqual(options, [{"label": "a table", "item": "oak_planks"},
+                                   {"label": "a garden"}, {"label": "a pond"}])
 
     def test_typing_the_number_picks_it(self):
         self.join(DAD)

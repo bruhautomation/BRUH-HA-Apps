@@ -576,6 +576,19 @@ def clean_job_request(raw: Any) -> dict[str, str] | None:
             "where": " ".join(str(raw.get("where") or "").split())[:120]}
 
 
+# The add-on's rule for a pad's picture (`companion.item_id`): one item id,
+# `minecraft:` optional. A pad whose item fails it makes the whole
+# `ask_choice` a 400 after "Pick one:" was said, with no pads.
+_PAD_ITEM = re.compile(r"^(minecraft:)?[a-z0-9_]{1,48}$")
+
+
+def pad_item(value: Any) -> str:
+    """A model's idea of an item for a pad's picture, as the add-on reads it
+    (lower case, spaces as underscores), or "" when it is not an item id."""
+    text = str(value or "").strip().lower().replace(" ", "_")
+    return text if _PAD_ITEM.match(text) else ""
+
+
 def queue_position(jobs: list[dict], job_id: str) -> int:
     """1 for the first job waiting, 2 for the next…; 0 when it is not waiting."""
     queued = [j for j in jobs if j.get("status") == "queued"]

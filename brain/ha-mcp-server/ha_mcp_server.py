@@ -2939,7 +2939,10 @@ def _mc_online():
     """
     status = _addon_call("bruh_minecraft", "get_status")
     if status.get("error"):
-        return None, ""
+        # A bridge timeout or a reloading integration is also "no list": the
+        # callers test the sentence, so an empty one sent them on to iterate
+        # the None.
+        return None, str(status["error"]).strip() or MC_DOWN.format(note="")
     if status.get("reachable") is False:
         note = str(status.get("note") or "").strip()
         return None, MC_DOWN.format(note=f" ({note})" if note else "")

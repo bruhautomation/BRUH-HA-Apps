@@ -143,6 +143,18 @@ class GameCore(FakeCore):
         return super().__call__(payload, timeout)
 
 
+class StatusErrorCore(GameCore):
+    """The bridge timing out: get_status answers an error, not a status."""
+
+    def __call__(self, payload, timeout=15):
+        if (payload.get("type") == "call_service"
+                and (payload.get("domain"), payload.get("service"))
+                == ("bruh_minecraft", "get_status")):
+            self.calls.append((("bruh_minecraft", "get_status"), payload["service_data"]))
+            return {"error": "The Minecraft add-on did not answer in time."}
+        return super().__call__(payload, timeout)
+
+
 # The family, as ⚙ › Minecraft keeps it; FakeCore has Steve, .EmmaPlays and
 # DadCraft42 online.
 FAMILY = [{"person": "Steve", "role": "child", "players": ["Steve"]},
@@ -274,6 +286,53 @@ class TestTheToolPathsElsewhere(Base):
         self.assertIn("build", tool["inputSchema"]["properties"]["action"]["enum"])
         self.assertIn("blocks", tool["inputSchema"]["properties"])
         self.assertIn("never one child's news", tool["description"])
+
+
+class TestAServerThatDoesNotAnswerIsSaidNotRaised(Base):
+    """`get_status` answering an error (the bridge timed out, the integration
+    is reloading) used to leave `_mc_online` with `(None, "")`, and the three
+    tools that walk the player list raised "'NoneType' object is not
+    iterable" at the model instead of saying the server is not answering."""
+
+    def setUp(self):
+        super().setUp()
+        self.core.__class__ = StatusErrorCore
+        faculty(self)
+
+    def test_the_online_check_says_why_it_has_no_list(self):
+        online, down = m._mc_online()
+        self.assertIsNone(online)
+        self.assertIn("did not answer", down)
+
+    def test_say_to_the_family_answers_with_the_sentence(self):
+        got = m.minecraft_world("say", "Dinner time!", player="Emma")
+        self.assertIn("did not answer", got["error"])
+        got = m.minecraft_world("say", "Dinner time!", player="family")
+        self.assertIn("did not answer", got["error"])
+
+    def test_an_edit_at_a_player_answers_with_the_sentence(self):
+        got = m.minecraft_world("edit", "a bed", player="Dad", blocks=[
+            {"x": 0, "y": 0, "z": 0, "block": "red_bed"}])
+        self.assertIn("did not answer", got["error"])
+
+    def test_a_build_at_a_player_answers_with_the_sentence(self):
+        got = m.minecraft_world("build", "a post", player="Steve", blocks=[
+            {"x": 2, "y": 0, "z": 0, "block": "oak_planks"}])
+        self.assertIn("did not answer", got["error"])
+
+    def test_the_other_callers_say_it_too_and_send_nothing(self):
+        for got in (m.minecraft_teleport("Emma", x=1, y=2, z=3),
+                    m.minecraft_player("Emma", "give", "diamond"),
+                    m.minecraft_world("look", "", player="Emma")):
+            self.assertIn("did not answer", got["error"])
+        self.assertEqual(self.core.acted(), [])
+
+    def test_a_server_that_is_down_still_says_so_in_its_own_words(self):
+        self.core.__class__ = GameCore
+        self.core.reachable = False
+        online, down = m._mc_online()
+        self.assertIsNone(online)
+        self.assertIn("not answering", down)
 
 
 # ---------------------------------------------------------------------------
