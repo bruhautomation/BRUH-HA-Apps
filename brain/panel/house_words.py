@@ -455,8 +455,21 @@ _DEV_TOKEN = re.compile(
     r"|\b[a-z_]+\.[a-z0-9_]+\b", re.I)
 
 
+# The same assistant under other names a model reaches for: "the
+# companion", "the in-game companion", "the brAIn engine". One assistant,
+# one name (the companion APP is the phone's, and stays).
+_THE_COMPANION = re.compile(r"\bthe\s+companion\b(?!\s+app\b)", re.I)
+
+
+def one_name(text: str) -> str:
+    """``text`` with the assistant's other names turned to "brAIn"."""
+    out = _THE_COMPANION.sub("brAIn", text)
+    return re.sub(r"\b(?:the\s+)?(?:in-game|minecraft)\s+companion\b|"
+                  r"\bbrAIn\s+engine\b", "brAIn", out, flags=re.I)
+
+
 def _third_person(sentence: str) -> str:
-    out = sentence
+    out = one_name(sentence)
     for pattern, repl in _I_CONTRACTIONS:
         out = pattern.sub(repl, out)
 
