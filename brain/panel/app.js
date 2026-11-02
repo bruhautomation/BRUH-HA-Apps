@@ -19017,6 +19017,8 @@ function renderMinecraft() {
       <span><b>Answer every line from the family</b><span class="subtext">On: everything the family types in chat is for ${esc(d.name)}, and it stays quiet when a line isn't. Off: only lines that start with “${esc(d.name)}”.</span></span></label>
     <label class="check bigcheck"><input id="mcSpyglass" class="tog" type="checkbox"${s.spyglass !== false ? " checked" : ""}>
       <span><b>Give everyone a spyglass</b><span class="subtext">“${esc(d.name)}'s Spyglass” when they join. Point it at something and ${esc(d.name)} offers ideas to pick from.</span></span></label>
+    <label class="check bigcheck"><input id="mcThoughts" class="tog" type="checkbox"${s.thoughts !== false ? " checked" : ""}>
+      <span><b>Show what ${esc(d.name)} is thinking</b><span class="subtext">A small bubble only the person it's working for can see, over ${esc(d.name)}'s allay when it's near — what it's doing now and how each job is going. Everyone gets “${esc(d.name)}'s Thoughts”, a book that opens the whole stream. Never in chat. Needs a Paper or Purpur server.</span></span></label>
     <label for="mcWorkers">Jobs at once</label>
     <select id="mcWorkers">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}"${n === (s.workers || 5) ? " selected" : ""}>${n}</option>`).join("")}</select>
     <p class="hint">Bigger requests — a build, a room made over — become jobs that run while you keep playing. More than this wait their turn, and so does one in the same place as a job already going.</p>
@@ -19098,6 +19100,7 @@ document.addEventListener("click", async (ev) => {
     const body = {
       enabled: $("#mcEnabled").checked, greet: $("#mcGreet").checked,
       every_line: $("#mcEveryLine").checked, spyglass: $("#mcSpyglass").checked,
+      thoughts: $("#mcThoughts").checked,
       workers: parseInt($("#mcWorkers").value, 10) || 5,
       people: mcReadPeople().filter((p) => p.person || p.players.length),
       bedtime_entity: $("#mcBedtime").value.trim(), budgets,

@@ -409,9 +409,17 @@ class TestJobs(DeskCase):
         job_id = self.jobs()[0]["id"]
         got = self.job_service(action="progress", job=job_id, text="walls up", percent=40)
         self.assertTrue(got["ok"])
+        # The job's own line in the thought bubble (test_minecraft_thoughts); the
+        # action bar only for an add-on without `companion_thought`.
+        last = [t for t in self.addon.of("companion_thought") if t["key"] == job_id][-1]
+        self.assertEqual((last["player"], last["text"], last["percent"]), (DAD, "walls up", 40))
+        self.assertFalse(self.addon.of("companion_progress"))
+        self.addon.refuse.add("companion_thought")
+        self.job_service(action="progress", job=job_id, text="roof on", percent=70)
         self.assertEqual(self.addon.of("companion_progress")[-1],
-                         {"to": [DAD], "text": "walls up", "percent": 40})
-        self.assertEqual(self.jobs()[0]["progress"]["text"], "walls up")
+                         {"to": [DAD], "text": "roof on", "percent": 70})
+        self.addon.refuse.discard("companion_thought")
+        self.assertEqual(self.jobs()[0]["progress"]["text"], "roof on")
         # Amend: a running job gets an inbox message, read once.
         self.brain.quick.append({"reply": "I'll tell it.", "amend": {"job": job_id,
                                                                      "message": "red roof"}})

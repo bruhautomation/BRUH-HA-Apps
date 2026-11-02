@@ -423,6 +423,14 @@ class Chunk:
         return None
 
 
+def has_sections(root: dict[str, Any]) -> bool:
+    """Whether a chunk's NBT carries block sections where every known layout
+    puts them (`sections` since 1.18, `Level.Sections` before). An all-air
+    chunk still has the list; a chunk without it is a layout not known."""
+    level = root.get("Level") if isinstance(root.get("Level"), dict) else root
+    return isinstance(level.get("sections"), list) or isinstance(level.get("Sections"), list)
+
+
 def _short(name: str) -> str:
     return name.split(":", 1)[1] if ":" in name else name
 
@@ -469,6 +477,9 @@ def unread(region: Path, chunk: tuple[int, int], status: str) -> Unread:
     if what == "damaged":
         return Unread("unreadable", f"The saved data of {where} is damaged or cut short, so it "
                       "cannot be read.", chunk)
+    if what.startswith("layout"):
+        return Unread("unreadable", f"Part of that area ({where}) is saved in a chunk {what}, "
+                      "so its blocks cannot be read from disk.", chunk)
     return Unread("unreadable", f"Part of that area ({where}) is stored with a {what} this "
                   "panel cannot read.", chunk)
 
@@ -498,6 +509,12 @@ def box_states(region: Path, x1: int, y1: int, z1: int, x2: int, y2: int,
                 root, status = load_chunk(region, *key)
                 if root is None:
                     return unread(region, key, status)
+                if not has_sections(root):
+                    # A chunk with no block sections where every known
+                    # layout keeps them is a format this reader does not
+                    # know: all air would be a confident wrong answer (#620).
+                    return unread(region, key, "unreadable:layout this panel does not know "
+                                  f"(it holds {', '.join(sorted(map(str, root))[:12])})")
                 chunk = chunks[key] = Chunk(root)
             for y in range(y1, y2 + 1):
                 out[(x, y, z)] = chunk.state(x & 15, y, z & 15)

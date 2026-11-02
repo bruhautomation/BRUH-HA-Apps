@@ -766,6 +766,58 @@
           "description": "Named by."
         }
       }
+    },
+    "companion_thought": {
+      "name": "Show a thought",
+      "description": "One step of what the companion is thinking or doing for one player, shown where it is not in the way — a small bubble only that player sees, over the companion's allay when it is near (BRUH Sight, on Paper and Purpur), and in the journal book. Never in chat. Without BRUH Sight, a step of work shows on the action bar.",
+      "fields": {
+        "player": {
+          "name": "Player",
+          "description": "Player."
+        },
+        "text": {
+          "name": "Text",
+          "description": "What it is doing now, in a few words."
+        },
+        "state": {
+          "name": "State",
+          "description": "thinking (shown only if it lasts), working, done, failed, or clear (take the line away)."
+        },
+        "key": {
+          "name": "Key",
+          "description": "Which line this is — \"talk\" for an answer being worked out, a job id for a job. Each key is its own line."
+        },
+        "title": {
+          "name": "Title",
+          "description": "A short name for the line (a job's title)."
+        },
+        "percent": {
+          "name": "Percent",
+          "description": "Percent."
+        },
+        "name": {
+          "name": "Name",
+          "description": "The companion's name, shown at the top of the bubble and in the journal."
+        },
+        "colour": {
+          "name": "Colour",
+          "description": "Colour."
+        }
+      }
+    },
+    "give_journal": {
+      "name": "Give the journal",
+      "description": "A book named after the companion, unless the player already has one. Using it opens the companion's whole stream of thought — what it is doing now, every job, and the recent steps. Needs BRUH Sight (Paper and Purpur).",
+      "fields": {
+        "player": {
+          "name": "Player",
+          "description": "Player."
+        },
+        "name": {
+          "name": "Name",
+          "description": "The book's name, at most 32 characters."
+        }
+      }
     }
   }
 }

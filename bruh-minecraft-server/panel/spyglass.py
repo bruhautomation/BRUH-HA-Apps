@@ -157,8 +157,13 @@ class Pointer:
                  emit: Callable[[dict[str, Any]], Any],
                  save: Callable[[], Any] = lambda: None,
                  here: Callable[[str, float, float, float], dict[str, Any]] | None = None,
+                 live: Callable[[str], dict[str, Any] | None] | None = None,
                  clock: Callable[[], float] = time.time):
         self.col = col
+        # The player as BRUH Sight sees them (`sight.Sight.player`): with it,
+        # the server's own ray says what is in the spyglass's middle — the
+        # world as it is now, no save, no region files.
+        self.live = live
         self.world_dir = world_dir
         self.emit = emit
         self.save = save
@@ -234,17 +239,45 @@ class Pointer:
     def _data(self, who: str, path: str) -> str | None:
         return mcworld.data_value(self._ask(f"minecraft:data get entity {who} {path}") or "")
 
+    def _live_point(self, player: str) -> tuple | None:
+        """(dimension, eye, yaw, pitch, target) from BRUH Sight, or None."""
+        if self.live is None:
+            return None
+        try:
+            p = self.live(player)
+        except Exception:  # noqa: BLE001 — the plugin's trouble is the old way's turn
+            return None
+        if not isinstance(p, dict) or not isinstance(p.get("pos"), list):
+            return None
+        try:
+            x, y, z = (float(c) for c in p["pos"])
+            yaw, pitch = float(p.get("yaw")), float(p.get("pitch"))
+        except (TypeError, ValueError):
+            return None
+        at = p.get("looking_at")
+        target = None
+        if isinstance(at, dict) and all(isinstance(at.get(k), int) for k in ("x", "y", "z")):
+            target = {"x": at["x"], "y": at["y"], "z": at["z"],
+                      "block": str(at.get("block") or "")}
+        return (str(p.get("dimension") or "minecraft:overworld"), (x, y + EYE, z),
+                yaw, pitch, target)
+
     def _point(self, player: str) -> None:
-        who = mcworld.quote_name(player)
-        pos = mcworld.snbt_pos(self._data(who, "Pos"))
-        facing = mcworld.snbt_floats(self._data(who, "Rotation"))
-        dim = mcworld.snbt_string(self._data(who, "Dimension")) or "minecraft:overworld"
-        if not pos or not facing or len(facing) != 2:
-            return
-        self.save()
-        region = mcmap.region_dir(Path(self.world_dir()), dim)
-        eye = (pos[0], pos[1] + EYE, pos[2])
-        target = ray_target(region, eye, facing[0], facing[1])
+        got = self._live_point(player)
+        if got is not None:
+            dim, eye, yaw, pitch, target = got
+            facing = [yaw, pitch]
+        else:
+            who = mcworld.quote_name(player)
+            pos = mcworld.snbt_pos(self._data(who, "Pos"))
+            facing = mcworld.snbt_floats(self._data(who, "Rotation"))
+            dim = mcworld.snbt_string(self._data(who, "Dimension")) or "minecraft:overworld"
+            if not pos or not facing or len(facing) != 2:
+                return
+            self.save()
+            region = mcmap.region_dir(Path(self.world_dir()), dim)
+            eye = (pos[0], pos[1] + EYE, pos[2])
+            target = ray_target(region, eye, facing[0], facing[1])
         place: dict[str, Any] = {"building": None, "room": None}
         if target is not None and self.here is not None:
             try:

@@ -572,13 +572,30 @@ All services are routed through a file-based IPC bridge at `/config/.bruh_minecr
 
 ### What is going on in the world
 
-The panel watches the world while the server runs, with no plugin: who is on
-and where (asked over RCON every 5 seconds while anybody is on, once a minute
-while nobody is), the time and weather, and the server log for joins, leaves,
+The panel watches the world while the server runs: who is on and where
+(from BRUH Sight every second on Paper and Purpur; otherwise asked over RCON
+every 5 seconds while anybody is on), once a minute while nobody is, the time and weather, and the server log for joins, leaves,
 deaths, advancements and chat. The last 50 events are the feed; every day
 gets a journal in the world folder (`.bruh-world/journal/YYYY-MM-DD.jsonl`).
 Named places for "near …" are spawn, the builds in the build log, and any you
 list in `.bruh-world/places.json` (`[{"name": "Village", "x": 120, "z": -40}]`).
+
+**BRUH Sight (Paper and Purpur).** The add-on builds a small plugin of its
+own and puts it in `plugins/` on every start. It answers the panel from the
+running server over a private local connection (loopback only, with a token
+in `plugins/BruhSight/`). Where everybody is is then a second old instead of
+five. Each player also comes with the block and creature under their
+crosshair, what they hold and carry, what is near them, and the blocks they
+just placed or broke. Looking at blocks, an edit's undo snapshot and the
+spyglass read the world as it is now, unsaved builds included. The plugin
+changes no block. What it adds to the game is the companion's thoughts:
+`companion_thought` shows one step of its work in a small bubble that only
+the player it is for can see. The bubble floats over the companion's allay
+when it is near, and otherwise up and to the side. A short "thinking" never
+shows, and a finished line goes after a few seconds. `give_journal` hands
+out a book that opens the whole stream of thought. Neither is saved with the
+world. On vanilla, Fabric, Forge and Folia the panel reads RCON and the saved
+world as it always did, and a step of work shows on the action bar.
 
 **Chat in other shapes.** A plugin or a Skript script that rewrites the chat
 format or the join messages (nicknames, ranks: `[Not Secure] Dad: hi`,

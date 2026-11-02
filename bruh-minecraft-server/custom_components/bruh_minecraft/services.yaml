@@ -602,6 +602,68 @@ companion_progress:
       selector:
         text: {}
 
+companion_thought:
+  name: Show a thought
+  description: One step of what the companion is thinking or doing for one player, shown where it is not in the way — a small bubble only that player sees, over the companion's allay when it is near (BRUH Sight, on Paper and Purpur), and in the journal book. Never in chat. Without BRUH Sight, a step of work shows on the action bar.
+  fields:
+    player:
+      name: Player
+      required: true
+      selector:
+        text: {}
+    text:
+      name: Text
+      description: What it is doing now, in a few words.
+      selector:
+        text: {}
+    state:
+      name: State
+      description: thinking (shown only if it lasts), working, done, failed, or clear (take the line away).
+      selector:
+        select:
+          options: [thinking, working, done, failed, clear]
+    key:
+      name: Key
+      description: Which line this is — "talk" for an answer being worked out, a job id for a job. Each key is its own line.
+      selector:
+        text: {}
+    title:
+      name: Title
+      description: A short name for the line (a job's title).
+      selector:
+        text: {}
+    percent:
+      name: Percent
+      selector:
+        number:
+          min: 0
+          max: 100
+    name:
+      name: Name
+      description: The companion's name, shown at the top of the bubble and in the journal.
+      selector:
+        text: {}
+    colour:
+      name: Colour
+      selector:
+        text: {}
+
+give_journal:
+  name: Give the journal
+  description: A book named after the companion, unless the player already has one. Using it opens the companion's whole stream of thought — what it is doing now, every job, and the recent steps. Needs BRUH Sight (Paper and Purpur).
+  fields:
+    player:
+      name: Player
+      required: true
+      selector:
+        text: {}
+    name:
+      name: Name
+      description: The book's name, at most 32 characters.
+      required: true
+      selector:
+        text: {}
+
 give_spyglass:
   name: Give a named spyglass
   description: One spyglass with this name, unless the player already has a spyglass by that name. Looking through any spyglass points at what is in the middle of it (the bruh_minecraft_point event).

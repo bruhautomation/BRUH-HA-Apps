@@ -77,6 +77,8 @@ from .const import (
     SERVICE_COMPANION_EDIT,
     SERVICE_COMPANION_PROGRESS,
     SERVICE_GIVE_SPYGLASS,
+    SERVICE_COMPANION_THOUGHT,
+    SERVICE_GIVE_JOURNAL,
     SERVICE_LABEL_PLACE,
     SERVICE_LOOK_BLOCKS,
     SERVICE_ROOM,
@@ -362,6 +364,19 @@ def _register_services(hass: HomeAssistant) -> None:
         return _strip(await _ask("companion_spyglass", {
             "player": call.data["player"], "name": _one_line(call.data["name"])}))
 
+    async def handle_companion_thought(call: ServiceCall) -> dict[str, Any]:
+        payload = {"player": call.data["player"], "state": call.data.get("state", "working")}
+        for key in ("text", "key", "title", "name", "colour"):
+            if key in call.data:
+                payload[key] = _one_line(call.data[key])
+        if "percent" in call.data:
+            payload["percent"] = call.data["percent"]
+        return _strip(await _ask("companion_thought", payload))
+
+    async def handle_give_journal(call: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("companion_journal", {
+            "player": call.data["player"], "name": _one_line(call.data["name"])}))
+
     async def handle_atlas(call: ServiceCall) -> dict[str, Any]:
         return _strip(await _ask("atlas", {
             k: call.data[k] for k in ("player", "x", "y", "z", "dimension", "radius", "query")
@@ -567,6 +582,20 @@ def _register_services(hass: HomeAssistant) -> None:
         vol.Optional("percent"): vol.All(vol.Coerce(float), vol.Range(0, 100)),
         vol.Optional("colour"): colour_name,
     })
+    companion_thought_schema = vol.Schema({
+        vol.Required("player"): player_name,
+        vol.Optional("text"): vol.All(cv.string, vol.Length(max=160)),
+        vol.Optional("state"): vol.In(["thinking", "working", "done", "failed", "clear"]),
+        vol.Optional("key"): vol.All(cv.string, vol.Length(min=1, max=24)),
+        vol.Optional("title"): vol.All(cv.string, vol.Length(max=32)),
+        vol.Optional("percent"): vol.All(vol.Coerce(float), vol.Range(0, 100)),
+        vol.Optional("name"): vol.All(cv.string, vol.Length(max=16)),
+        vol.Optional("colour"): colour_name,
+    })
+    give_journal_schema = vol.Schema({
+        vol.Required("player"): player_name,
+        vol.Required("name"): vol.All(cv.string, vol.Length(min=1, max=32)),
+    })
     give_spyglass_schema = vol.Schema({
         vol.Required("player"): player_name,
         vol.Required("name"): vol.All(cv.string, vol.Length(min=1, max=32)),
@@ -650,6 +679,9 @@ def _register_services(hass: HomeAssistant) -> None:
     register(SERVICE_COMPANION_PROGRESS, handle_companion_progress, companion_progress_schema,
              optional)
     register(SERVICE_GIVE_SPYGLASS, handle_give_spyglass, give_spyglass_schema, optional)
+    register(SERVICE_COMPANION_THOUGHT, handle_companion_thought, companion_thought_schema,
+             optional)
+    register(SERVICE_GIVE_JOURNAL, handle_give_journal, give_journal_schema, optional)
     register(SERVICE_ATLAS, handle_atlas, atlas_schema, only)
     register(SERVICE_ROOM, handle_room, room_schema, only)
     register(SERVICE_LABEL_PLACE, handle_label_place, label_place_schema, optional)
