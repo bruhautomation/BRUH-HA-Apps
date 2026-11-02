@@ -87,6 +87,15 @@ class TestACutPersonaIsSaid(Case):
         personality.save("Juniper", self.cut_at_the_old_cap(), path=self.file)
         self.assertTrue(personality.payload(self.file)["cut_at_old_limit"])
 
+    def test_a_cut_on_a_word_at_half_the_cap_is_flagged(self):
+        # textclip cuts on the last whole word when it is past HALF the
+        # room (a sentence end needs 60%), so the old cap could leave a
+        # persona of 2,100 characters; the 60% floor showed it as whole.
+        long = "x" * 2100 + " " + "y" * 3000
+        cut = textclip.clip(long, personality.OLD_PERSONA_MAX)
+        self.assertEqual(len(cut), 2101)
+        self.assertTrue(personality.looks_cut(cut))
+
     def test_the_bare_slice_the_cap_once_was_is_flagged_too(self):
         cut = ("x" * 5000)[:3999] + "…"
         self.assertTrue(personality.looks_cut(cut))

@@ -26382,7 +26382,70 @@ async def _open_terminal(session_id: str = "", prompt: str = "") -> dict:
 # brAIn's own config (`personality.py`). The file is also the wire Morph
 # reads; the chat, the terminal, the generated CLAUDE.md and the voice
 # prompt carry it. A save rewrites the terminal's appended prompt so the
-# next window opened has it.
+# next window opened has it, and regenerates /config/CLAUDE.md, whose
+# personality section otherwise kept the old words until a restart or the
+# next memory filing.
+
+# The context generator, found where the consolidator finds it
+# (`brain-memory-consolidate.sh` `refresh_context`).
+CONTEXT_GENERATORS = (
+    os.environ.get("BRAIN_CONTEXT_GEN", "/usr/local/bin/ha-context-gen.sh"),
+    "/opt/scripts/ha-context-gen.sh")
+CONTEXT_GEN_TIMEOUT_S = 120
+# One regeneration at a time; a save during one asks for one more after it.
+_CONTEXT_REFRESH = {"running": False, "again": False}
+_CONTEXT_REFRESH_LOCK = threading.Lock()
+
+
+def _regenerate_claude_md() -> None:
+    """Run the generator once. Never raises: the file is derived, and what
+    it is derived from is already saved."""
+    gen = next((g for g in CONTEXT_GENERATORS if g and os.access(g, os.X_OK)), "")
+    if not gen:
+        return
+    try:
+        done = subprocess.run([gen], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=CONTEXT_GEN_TIMEOUT_S)
+        if done.returncode:
+            log.warning("could not refresh /config/CLAUDE.md (the generator "
+                        "exited %s); it has the previous personality until the "
+                        "next restart or memory filing", done.returncode)
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.warning("could not refresh /config/CLAUDE.md: %s", exc)
+
+
+def _refresh_claude_md() -> None:
+    """Regenerate /config/CLAUDE.md off the request's path, the way the
+    consolidator does. Returns at once; overlapping asks run one more pass
+    after the current one rather than two generators at once."""
+    with _CONTEXT_REFRESH_LOCK:
+        if _CONTEXT_REFRESH["running"]:
+            _CONTEXT_REFRESH["again"] = True
+            return
+        _CONTEXT_REFRESH["running"] = True
+
+    def run() -> None:
+        try:
+            while True:
+                with _CONTEXT_REFRESH_LOCK:
+                    _CONTEXT_REFRESH["again"] = False
+                _regenerate_claude_md()
+                with _CONTEXT_REFRESH_LOCK:
+                    if not _CONTEXT_REFRESH["again"]:
+                        _CONTEXT_REFRESH["running"] = False
+                        return
+        except Exception:  # noqa: BLE001 — never leave the flag stuck
+            log.exception("the CLAUDE.md refresh stopped")
+            with _CONTEXT_REFRESH_LOCK:
+                _CONTEXT_REFRESH["running"] = False
+
+    try:
+        threading.Thread(target=run, name="claude-md-refresh", daemon=True).start()
+    except RuntimeError:  # no thread to be had: the next save tries again
+        log.warning("could not start the CLAUDE.md refresh")
+        with _CONTEXT_REFRESH_LOCK:
+            _CONTEXT_REFRESH["running"] = False
+
 
 async def _personality_body(request: web.Request) -> dict:
     try:
@@ -26411,6 +26474,7 @@ async def h_features_put(request: web.Request) -> web.Response:
     why = features.refusal(body)
     if why:
         raise web.HTTPBadRequest(text=why)
+    named = await asyncio.to_thread(personality.enabled)
     try:
         await asyncio.to_thread(features.save, body)
     except ValueError:
@@ -26423,6 +26487,9 @@ async def h_features_put(request: web.Request) -> web.Response:
     # Personality and the development loop are both in what a new terminal
     # window is told.
     await asyncio.to_thread(_write_terminal_prompt)
+    # ...and the personality is a section of /config/CLAUDE.md.
+    if await asyncio.to_thread(personality.enabled) != named:
+        _refresh_claude_md()
     return web.json_response(await asyncio.to_thread(_features_payload))
 
 
@@ -26527,6 +26594,7 @@ async def h_personality_put(request: web.Request) -> web.Response:
             text="brAIn could not save that; the add-on log says why.")
     await asyncio.to_thread(features.publish)
     await asyncio.to_thread(_write_terminal_prompt)
+    _refresh_claude_md()
     return web.json_response(await asyncio.to_thread(personality.payload))
 
 
@@ -26579,6 +26647,7 @@ async def h_personality_growth(request: web.Request) -> web.Response:
         raise web.HTTPInternalServerError(
             text="brAIn could not record that; the add-on log says why.")
     await asyncio.to_thread(_write_terminal_prompt)
+    _refresh_claude_md()
     return web.json_response({"ok": True, "entry": entry})
 
 
@@ -27243,6 +27312,8 @@ def _context_sources() -> dict:
         DEVELOPMENT_MODE_ON if development_mode() else DEVELOPMENT_MODE_OFF) + (
         "\n\n" + YOLO_MODE_ON if yolo_mode() else "")
     src["personality"] = _personality_lines()
+    # Off is not "none set": the page says which (⚙ › Features).
+    src["personality_on"] = read(personality.enabled, True)
     src["house_now"] = "; ".join(read(_chat_house_lines, []))
     src["claude_md"] = read(lambda: Path(ha_data.CONTEXT_FILE).read_text(
         encoding="utf-8", errors="replace"))

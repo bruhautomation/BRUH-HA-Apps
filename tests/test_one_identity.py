@@ -85,6 +85,86 @@ class TestTheStoredAnswer(StoreCase):
         self.assertIn("never from memory", line)
 
 
+class TestOnlyAVoiceChangeSetsTheVoice(StoreCase):
+    """A growth note that merely mentions a voice is not a voice change.
+
+    The pattern took anything after "voice … to/now": "Keep a calm voice
+    when talking to children." stored the voice "children", and every card
+    prompt then said "brAIn's spoken voice is children." A note names a
+    voice only when it says the voice changed, and only a name is taken."""
+
+    FALSE_POSITIVES = (
+        "Keep a calm voice when talking to children.",
+        "I now use my voice to reply on the kitchen speaker",
+        "Lower the voice volume to 40 percent at night.",
+    )
+
+    def test_a_sentence_that_mentions_a_voice_names_none(self):
+        for note in self.FALSE_POSITIVES:
+            with self.subTest(note=note):
+                self.assertEqual(personality.voice_named(note), "")
+
+    def test_and_such_a_note_leaves_the_stored_voice(self):
+        personality.save("Juniper", "", path=self.file, voice="Aurora")
+        for note in self.FALSE_POSITIVES:
+            personality.add_growth(note, path=self.file)
+        self.assertEqual(personality.load(self.file)["voice"], "Aurora")
+
+    def test_a_change_said_outright_still_names_it(self):
+        for note, voice in (
+                ("The spoken voice changed from Aurora to Ember for the "
+                 + "kitchen speaker.", "Ember"),
+                ("My voice is now Nova.", "Nova"),
+                ("The voice was switched to Jenny Neural.", "Jenny Neural"),
+                ("We switched the voice to en_GB-alba-medium.",
+                 "en_GB-alba-medium"),
+                ("brAIn speaks with the Ember voice now.", "Ember"),
+                ("Voice set to “Aurora”.", "Aurora")):
+            with self.subTest(note=note):
+                self.assertEqual(personality.voice_named(note), voice)
+
+    def test_what_follows_a_change_must_look_like_a_name(self):
+        for note in ("The voice is now quieter at night.",
+                     "The voice changed to the one we had before.",
+                     "Its voice is now used for the doorbell and the alarms "
+                     + "and the timers too."):
+            with self.subTest(note=note):
+                self.assertEqual(personality.voice_named(note), "")
+
+
+class TestTheSwitchHoldsForTheVoice(StoreCase):
+    """With Personality switched off nothing reads the stored personality,
+    the voice included: the card prompt and `self_said` get no voice."""
+
+    def setUp(self):
+        super().setUp()
+        self.features = str(Path(self.tmp.name) / "features.json")
+        self._old_features = personality.FEATURES_FILE
+        personality.FEATURES_FILE = self.features
+        personality.save("Juniper", "", path=self.file, voice="Aurora")
+
+    def tearDown(self):
+        personality.FEATURES_FILE = self._old_features
+        super().tearDown()
+
+    def switch(self, on: bool):
+        Path(self.features).write_text(json.dumps({"personality": on}),
+                                       encoding="utf-8")
+
+    def test_off_the_voice_is_not_read(self):
+        self.switch(False)
+        self.assertEqual(personality.identity(path=self.file),
+                         {"name": "brAIn", "voice": ""})
+        line = personality.identity_line(path=self.file)
+        self.assertNotIn("Aurora", line)
+        self.assertIn("not recorded", line)
+
+    def test_on_it_is(self):
+        self.switch(True)
+        self.assertEqual(personality.identity(path=self.file)["voice"], "Aurora")
+        self.assertIn("Aurora", personality.identity_line(path=self.file))
+
+
 class TestSelfSaid(unittest.TestCase):
     def test_a_voice_claim_reads_the_stored_answer(self):
         said = house_words.self_said(

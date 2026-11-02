@@ -99,13 +99,17 @@ class TestTheCommandReadsBrainsFile(unittest.TestCase):
 
 class TestMorphKeepsNoPersonalityOfItsOwn(unittest.TestCase):
 
-    def test_the_name_is_read_through_the_command_and_the_switches(self):
+    def test_the_name_is_read_off_the_switches(self):
         # Morph's Settings page went into brAIn's ⚙ in 4.0; Morph still
-        # reads the name, off brAIn's switches first (`features.name`).
+        # reads the name, off brAIn's switches (`features.name`, on every
+        # load, "brAIn" with Personality off). Its fallback to the
+        # `morph/personality` command could never be reached, and would have
+        # said the stored name with the switch off: it is gone, and the
+        # command stays for an older copy a house may still run.
         js = PANEL_JS.read_text()
-        self.assertIn("type: 'morph/personality'", js)
-        self.assertIn("loadPersona", js)
         self.assertIn("f.name", js)
+        self.assertNotIn("type: 'morph/personality'", js)
+        self.assertNotIn("loadPersona", js)
         self.assertNotIn("<h2>Personality</h2>", js)
 
     def test_no_shipped_module_holds_or_imports_a_personality(self):

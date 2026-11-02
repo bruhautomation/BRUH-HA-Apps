@@ -149,7 +149,7 @@ class MorphPanel extends HTMLElement {
     this.s = {
       edit: false, view: null, fading: null, previews: {}, memberPreview: null,
       secEdit: null, asks: [], story: {}, confirm: {}, hold: null, add: null,
-      sugNo: null, toast: null, yaml: null, hist: null, persona: undefined, upcHost: null, upcShown: null,
+      sugNo: null, toast: null, yaml: null, hist: null, upcHost: null, upcShown: null,
       unfold: {}, pending: {}, replyOpen: {}, todoOpen: null, thenAt: null,
     };
     // The Tell box shows one tell. A tell it stops showing while brAIn is
@@ -358,7 +358,6 @@ class MorphPanel extends HTMLElement {
       }
       this._salDirty = true;
       this.loadModules((d.mirror && d.mirror.card_modules) || []);
-      if (!this._personaAsked) { this._personaAsked = true; this.loadPersona(); }
       this.schedule();
     } catch (e) {
       if (!this.data || this.data.error) this.data = { error: String((e && e.message) || e) };
@@ -3246,14 +3245,11 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
 
   // The household's name for the assistant, which is how Morph's own words
   // name it (#452): brAIn's switches carry it (`features.name`, "brAIn"
-  // while Personality is off), and brAIn's personality (morph/personality,
-  // read once) stands in for an integration that does not send it.
+  // while Personality is off), on every load. Before the first load there is
+  // no name to say but "brAIn".
   who() {
     const f = this.data && this.data.features;
-    if (f && typeof f.name === 'string' && f.name.trim()) return f.name.trim();
-    const p = this.s.persona && this.s.persona.personality;
-    const n = p && typeof p.name === 'string' ? p.name.trim() : '';
-    return n || 'brAIn';
+    return f && typeof f.name === 'string' && f.name.trim() ? f.name.trim() : 'brAIn';
   }
 
   // With Personality on, nothing on the page says "brAIn": the product's
@@ -3271,11 +3267,6 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
   // section. Outside the shell (a test page) there is nothing to open.
   openBrain(view, sec) {
     this.dispatchEvent(new CustomEvent('brain-open', { bubbles: true, composed: true, detail: { view: view || 'insights', sec: sec || '' } }));
-  }
-
-  async loadPersona() {
-    try { this.s.persona = await this.hass.callWS({ type: 'morph/personality' }); } catch (e) { this.s.persona = { brain: null, personality: null }; }
-    this.schedule();
   }
 
   // ---------------------------------------------------------- learning io

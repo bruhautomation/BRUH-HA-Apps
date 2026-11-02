@@ -27,6 +27,7 @@ import uuid
 from pathlib import Path
 
 import paths
+import settings
 
 CLAIM_GRACE_S = 30
 # Who sent a task, as brAIn reads it (its chat lists Morph's under Morph).
@@ -67,7 +68,11 @@ def who() -> str:
     """The household's name for the assistant, from brAIn's personality
     (``/config/.brain/personality.json``), or "brAIn" without one. Morph's
     own words — the steps a Tell or a conversation shows — use it, so the
-    assistant has one name wherever it is looked at (#452)."""
+    assistant has one name wherever it is looked at (#452). With Personality
+    switched off in brAIn (⚙ › Features) it is "brAIn", as everywhere else;
+    switches never written leave it on (`personality.enabled`'s rule)."""
+    if settings.features().get("personality") is False:
+        return "brAIn"
     data = paths.read_json(paths.BRAIN_SHARED / "personality.json", {})
     name = " ".join(str(data.get("name") or "").split()) if isinstance(data, dict) else ""
     return name[:NAME_MAX] or "brAIn"

@@ -18,7 +18,9 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -47,6 +49,11 @@ export const GROWTH = [
   'Calls the side door the garden door.',
 ];
 """
+
+
+# A JavaScript \u escape, spelled in pieces so nothing on the way turns
+# an escaped pair into the character it stands for.
+U = "\\" + "u"
 
 
 class StoreCase(unittest.TestCase):
@@ -123,7 +130,7 @@ class TestThePromptBlock(StoreCase):
         long = {"name": "Juniper", "persona": "word " * 900, "growth": [
             {"date": "2026-01-0%d" % i, "text": "grew " * 100} for i in range(1, 9)]}
         block = personality.prompt_block(long)
-        self.assertLess(len(block), personality.PROMPT_PERSONA_CHARS
+        self.assertLess(len(block), personality.PERSONA_MAX
                         + personality.PROMPT_GROWTH_ENTRIES
                         * (personality.PROMPT_GROWTH_CHARS + 20) + 200)
         self.assertEqual(block.count("\n- "), personality.PROMPT_GROWTH_ENTRIES)
@@ -174,6 +181,55 @@ class TestTheMorphMigration(StoreCase):
     def test_no_morph_file_is_silent(self):
         self.assertEqual(personality.migrate_from_morph(
             str(Path(self.tmp.name) / "absent.js"), self.file), "")
+
+    def test_an_escaped_emoji_is_one_character(self):
+        # JavaScript writes a character past U+FFFF as a pair of \u escapes.
+        # Each was read as a lone surrogate, and the write raised
+        # UnicodeEncodeError out of the panel's startup.
+        src = self.write_morph(
+            'export const PERSONA = { name: "Wren", persona: "Cheerful '
+            + U + 'D83D' + U + 'DE00 and quick." };\n')
+        said = personality.migrate_from_morph(src, self.file)
+        self.assertIn("moved", said)
+        self.assertEqual(personality.load(self.file)["persona"],
+                         "Cheerful \U0001F600 and quick.")
+        self.assertIn("\U0001F600", Path(self.file).read_text(encoding="utf-8"))
+
+    def test_a_lone_surrogate_is_unreadable_and_said(self):
+        for bad in (f'"{U}D83D alone"', f'"{U}DE00 alone"', f'"ends {U}D83D"',
+                    f'"{U}D83D{U}0041"'):
+            with self.subTest(bad=bad):
+                src = self.write_morph(f"const PERSONA = {bad};\n")
+                said = personality.migrate_from_morph(src, self.file)
+                self.assertIn("nothing was moved", said)
+                self.assertFalse(os.path.exists(self.file))
+
+    def test_a_write_that_cannot_encode_is_said_never_raised(self):
+        src = self.write_morph(MORPH_JS)
+        refused = UnicodeEncodeError("utf-8", "x", 0, 1, "surrogates not allowed")
+        with unittest.mock.patch.object(personality, "_write", side_effect=refused):
+            said = personality.migrate_from_morph(src, self.file)
+        self.assertIn("could not save", said)
+        # ...and the same for a repair.
+        Path(self.file).write_text(
+            '{"name": "Juniper", "persona": "", "growth": []}', encoding="utf-8")
+        with unittest.mock.patch.object(personality, "_write", side_effect=refused):
+            said = personality.repair_from_morph(src, self.file)
+        self.assertIn("could not repair", said)
+
+    def test_a_comment_naming_a_key_does_not_stop_the_import(self):
+        # `GROWTH:` in a comment is not the assignment: the reader tried to
+        # parse "entries below" as a value and the whole import failed.
+        src = self.write_morph(
+            "// PERSONA: who the assistant is, and GROWTH: entries below\n"
+            "// NAME: set in the object\n" + MORPH_JS.replace(
+                "/* How it has grown */",
+                "/* How it has grown */\n// GROWTH: entries below, oldest first"))
+        said = personality.migrate_from_morph(src, self.file)
+        self.assertIn("moved", said)
+        data = personality.load(self.file)
+        self.assertEqual(data["name"], "Juniper")
+        self.assertEqual(len(data["growth"]), 3)
 
 
 class TestTheRoutes(unittest.TestCase):
@@ -270,6 +326,119 @@ class TestTheRoutes(unittest.TestCase):
         self.assertIn("Juniper", out["personality_summary"])
 
 
+class TestClaudeMdFollowsASave(unittest.TestCase):
+    """/config/CLAUDE.md carries the personality section, and it kept the
+    old one until a restart or a memory filing: a save rewrote only the
+    terminal's appended prompt. A save, a growth note and the Personality
+    switch now regenerate the file the way the consolidator does, off the
+    request's path, and a generator that fails never fails the route."""
+
+    @classmethod
+    def setUpClass(cls):
+        import server
+        cls.server = server
+
+    def setUp(self):
+        import features
+        self.features = features
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        (root / ".brain").mkdir()
+        self.file = str(root / ".brain" / "personality.json")
+        self.switches = str(root / ".brain" / "features.json")
+        self.ran = root / "ran.txt"
+        self.saved = (personality.STORE, personality.FEATURES_FILE, features.FILE,
+                      self.server.TERMINAL_PROMPT_FILE,
+                      self.server.CONTEXT_GENERATORS)
+        personality.STORE = self.file
+        personality.FEATURES_FILE = self.switches
+        features.FILE = self.switches
+        self.server.TERMINAL_PROMPT_FILE = root / "term.md"
+        self.generator(0)
+
+    def tearDown(self):
+        (personality.STORE, personality.FEATURES_FILE, self.features.FILE,
+         self.server.TERMINAL_PROMPT_FILE,
+         self.server.CONTEXT_GENERATORS) = self.saved
+        self.tmp.cleanup()
+
+    def generator(self, code: int):
+        script = Path(self.tmp.name) / f"gen-{code}.sh"
+        script.write_text(f"#!/bin/sh\necho ran >> '{self.ran}'\nexit {code}\n",
+                          encoding="utf-8")
+        script.chmod(0o755)
+        self.server.CONTEXT_GENERATORS = (str(Path(self.tmp.name) / "absent.sh"),
+                                          str(script))
+
+    def runs(self, at_least: int) -> int:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            n = (len(self.ran.read_text(encoding="utf-8").splitlines())
+                 if self.ran.exists() else 0)
+            if n >= at_least:
+                return n
+            time.sleep(0.02)
+        return n
+
+    def drive(self, calls):
+        from aiohttp import web
+        from aiohttp.test_utils import TestClient, TestServer
+        statuses = []
+
+        async def run():
+            app = web.Application()
+            app.router.add_put("/api/personality", self.server.h_personality_put)
+            app.router.add_post("/api/personality/growth",
+                                self.server.h_personality_growth)
+            app.router.add_put("/api/features", self.server.h_features_put)
+            async with TestClient(TestServer(app)) as client:
+                for method, url, body in calls:
+                    res = await client.request(method, url, json=body)
+                    statuses.append(res.status)
+        asyncio.run(run())
+        return statuses
+
+    def test_a_save_and_a_growth_note_regenerate_it(self):
+        got = self.drive([("PUT", "/api/personality",
+                           {"name": "Juniper", "persona": "Warm."})])
+        self.assertEqual(got, [200])
+        self.assertGreaterEqual(self.runs(1), 1)
+        before = self.runs(1)
+        got = self.drive([("POST", "/api/personality/growth",
+                           {"text": "Learned the den is the office."})])
+        self.assertEqual(got, [200])
+        self.assertGreater(self.runs(before + 1), before)
+
+    def test_the_personality_switch_regenerates_it(self):
+        personality.save("Juniper", "Warm.", path=self.file)
+        got = self.drive([("PUT", "/api/features", {"personality": False})])
+        self.assertEqual(got, [200])
+        self.assertGreaterEqual(self.runs(1), 1)
+
+    def test_another_switch_does_not(self):
+        personality.save("Juniper", "Warm.", path=self.file)
+        with unittest.mock.patch.object(self.server, "_refresh_claude_md") as refresh:
+            got = self.drive([("PUT", "/api/features", {"learning_loop": False})])
+            self.assertEqual(got, [200])
+            refresh.assert_not_called()
+            got = self.drive([("PUT", "/api/features", {"personality": False})])
+            self.assertEqual(got, [200])
+            refresh.assert_called_once_with()
+
+    def test_a_generator_that_fails_never_fails_the_route(self):
+        self.generator(1)
+        got = self.drive([("PUT", "/api/personality",
+                           {"name": "Juniper", "persona": "Warm."})])
+        self.assertEqual(got, [200])
+        self.assertGreaterEqual(self.runs(1), 1)
+
+    def test_no_generator_is_nothing(self):
+        self.server.CONTEXT_GENERATORS = (str(Path(self.tmp.name) / "absent.sh"),)
+        got = self.drive([("PUT", "/api/personality",
+                           {"name": "Juniper", "persona": "Warm."})])
+        self.assertEqual(got, [200])
+
+
 class TestTheVoicePrompt(StoreCase):
     def setUp(self):
         super().setUp()
@@ -328,6 +497,16 @@ class TestTheGeneratedClaudeMd(StoreCase):
         out = self.run_section()
         self.assertIn("## Personality", out)
         self.assertIn("Your name is Juniper.", out)
+
+    def test_section_is_the_one_verb(self):
+        # `block` had no caller; the generator asks for `section` only.
+        personality.save("Juniper", "Warm and brief.", path=self.file)
+        out = subprocess.run(
+            [sys.executable, str(PANEL / "personality.py"), "block", self.file],
+            capture_output=True, text=True)
+        self.assertEqual(out.returncode, 2)
+        self.assertEqual(out.stdout, "")
+        self.assertIn("usage: personality.py section [file]", out.stderr)
 
 
 class TestTheMcpTool(unittest.TestCase):

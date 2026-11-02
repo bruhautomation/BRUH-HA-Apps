@@ -225,6 +225,12 @@ def report(src: dict) -> dict:
     # the chat's own settings and the terminal's carry the same one, so
     # what a conversation is handed does not depend on the face.
     hook = bool(s.get("context_hook"))
+    # Switched off is not "none set": nothing is sent either way, and the
+    # page says which, and where it is turned back on.
+    personality_off = s.get("personality_on") is False
+    personality_where = ({"change": "⚙ › Features", "sec": "features"}
+                         if personality_off else
+                         {"change": "⚙ › Personality", "sec": "personality"})
 
     def facts_or_doc(key: str, cap: int, head: int, label: str) -> dict:
         # `_memory_block` and `ha_data._memory_for`: the facts about this
@@ -251,9 +257,9 @@ def report(src: dict) -> dict:
                  sec="instructions"),
             part("personality", "The personality you gave it",
                  "Its name and how it speaks." if s.get("personality")
-                 else "None is set, so nothing is sent.",
-                 size(s.get("personality")), change="⚙ › Personality",
-                 sec="personality"),
+                 else "Personality is switched off, so nothing is sent."
+                 if personality_off else "None is set, so nothing is sent.",
+                 size(s.get("personality")), **personality_where),
             part("house_now", "How the house stands as it starts",
                  "How many things are waiting on you, brAIn's own health and "
                  "when the house wakes and settles — as of the start.",
@@ -338,9 +344,10 @@ def report(src: dict) -> dict:
              "reach.", int(s.get("voice_rules") or 0)),
         part("personality", "The personality you gave it",
              "Unless the voice agent has one of its own." if s.get("personality")
+             else "Personality is switched off, so it speaks in brAIn's own "
+             "short style." if personality_off
              else "None is set, so it speaks in brAIn's own short style.",
-             size(s.get("voice_personality")), change="⚙ › Personality",
-             sec="personality"),
+             size(s.get("voice_personality")), **personality_where),
         part("room_map", "Every room and what is in it",
              "Refreshed every few minutes. Only devices exposed to voice, "
              "unless the agent may reach the whole house.",

@@ -217,6 +217,29 @@ class TestThePieces(unittest.TestCase):
                        "<!-- bruh:user-notes:end -->")
         self.assertEqual(context_map.claude_md_split(placeholder)["notes"], 0)
 
+    def personality_says(self, **src) -> list[str]:
+        out = context_map.report(src)
+        return [p["about"] for run in out["runs"] for p in run["given"]
+                if p["key"] == "personality"]
+
+    def test_a_personality_switched_off_is_said_as_off_not_as_none_set(self):
+        off = self.personality_says(personality="", personality_on=False)
+        self.assertEqual(len(off), 2)
+        for about in off:
+            self.assertIn("switched off", about)
+            self.assertNotIn("None is set", about)
+        for about in self.personality_says(personality="", personality_on=True):
+            self.assertIn("None is set", about)
+
+    def test_the_route_says_whether_the_switch_is_on(self):
+        import personality
+        import server
+        with tempfile.TemporaryDirectory() as tmp:
+            switches = Path(tmp) / "features.json"
+            switches.write_text(json.dumps({"personality": False}), encoding="utf-8")
+            with unittest.mock.patch.object(personality, "FEATURES_FILE", str(switches)):
+                self.assertIs(server._context_sources()["personality_on"], False)
+
 
 if __name__ == "__main__":
     unittest.main()

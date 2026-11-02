@@ -9,9 +9,15 @@ read by the chat, the terminal, the generated `/config/CLAUDE.md` and the
 voice prompt, and served at `GET /api/personality` for Morph to read.
 
     /config/.brain/personality.json
-    {"name": "…", "persona": "…",
-     "growth": [{"date": "YYYY-MM-DD", "at": 1700000000, "text": "…"}],
-     "updated_at": 1700000000}
+    {"name": "…", "voice": "…", "persona": "…",
+     "growth": [{"date": "YYYY-MM-DD", "at": 1700000000, "text": "…",
+                 "by": "self"}],
+     "updated_at": 1700000000, "morph_import": 1700000000 | false}
+
+`by` is on a note the assistant wrote itself (the presence loop), and
+`morph_import` is the `updated_at` of the import from Morph's copy while the
+file is still exactly that import, false once anything else has written it
+(`repair_from_morph` reads it).
 
 Four rules. **Reading never raises**: an absent, unreadable or malformed
 file is "no personality set", which changes nothing anywhere. **Everything
@@ -51,7 +57,8 @@ VOICE_MAX = 80
 # One ceiling for the persona everywhere it is stored, shown or typed.
 PERSONA_MAX = 32000
 # The ceiling before 4.0.1. A persona saved or moved over under it was cut
-# with textclip's "…" (on a sentence end past 60% of it, else a word), and
+# with textclip's "…" (on a sentence end past 60% of it, else on a word past
+# 50%), and
 # is stored that way: `looks_cut` lets ⚙ › Personality say so once rather
 # than show it as whole. Nothing is ever written back on a guess.
 OLD_PERSONA_MAX = 4000
@@ -66,7 +73,6 @@ MORPH_READ_MAX_BYTES = 512 * 1024
 # and the household chose it; a clip here showed up as a cut-off persona), and
 # the newest few growth entries. Morph's websocket.py holds its own PERSONA_MAX
 # (it cannot import this module); tests/test_personality_long.py keeps them equal.
-PROMPT_PERSONA_CHARS = PERSONA_MAX
 PROMPT_GROWTH_ENTRIES = 3
 PROMPT_GROWTH_CHARS = 200
 
@@ -166,6 +172,14 @@ def normalise(data) -> dict:
     stamp = data.get("updated_at")
     if isinstance(stamp, (int, float)) and not isinstance(stamp, bool) and stamp > 0:
         out["updated_at"] = int(stamp)
+    # Whether the file is still exactly the import from Morph's copy
+    # (`repair_from_morph`): the import's `updated_at`, or False once
+    # anything else wrote it. Absent on a file from before the mark.
+    mark = data.get("morph_import")
+    if mark is False:
+        out["morph_import"] = False
+    elif isinstance(mark, (int, float)) and not isinstance(mark, bool) and mark > 0:
+        out["morph_import"] = int(mark)
     return out
 
 
@@ -310,6 +324,7 @@ def save(name, persona, path: str | None = None, voice=None) -> dict:
         if isinstance(voice, str):
             data["voice"] = _one_line(voice, VOICE_MAX)
         data["updated_at"] = int(time.time())
+        data["morph_import"] = False
         _write(data, target)
     return data
 
@@ -345,6 +360,7 @@ def add_growth(text, when: float | None = None, path: str | None = None,
             data["voice"] = said
         data["growth"] = data["growth"][-GROWTH_MAX:]
         data["updated_at"] = at
+        data["morph_import"] = False
         _write(data, target)
     return entry
 
@@ -373,28 +389,73 @@ def remove_growth(at, text, path: str | None = None) -> bool:
             return False
         data["growth"] = keep
         data["updated_at"] = int(time.time())
+        data["morph_import"] = False
         _write(data, target)
     return True
 
 
-# A growth note saying which voice brAIn now speaks with: "the spoken voice
-# changed from A to B", "my voice is now B", "switched the voice to B".
-_VOICE_NOTE = re.compile(
-    r"\bvoice\b[^.\n]*?\b(?:to|is now|now)\s+(?:the\s+)?[“\"']?"
-    r"([^.,;”\"'\n]{2,%d}?)[”\"']?\s*(?:voice\b|for\b|on\b|in\b|[.,;]|$)"
-    % VOICE_MAX, re.I)
+# A growth note saying which voice brAIn now speaks with, said outright:
+# "the spoken voice changed from A to B", "my voice is now B", "switched the
+# voice to B", "speaks with the B voice". Anything looser took ordinary
+# sentences for a change ("keep a calm voice when talking to children" set
+# the voice to "children"), and the stored voice is quoted on every card.
+_CHANGED = r"(?:changed|switched|set|moved|updated)"
+_FROM = r"(?:\s+from\s+[^.;\n]{1,%d}?)?" % VOICE_MAX
+_VOICE_NAME = r"[“\"']?(?P<v>[^\W_][\w'’-]*(?: [\w'’-]+){0,3}?)[”\"']?"
+_NAME_ENDS = (r"(?=\s*(?:\b(?:voice|for|on|in|at|when|while|now|after|from|"
+              r"instead)\b|[.,;:!?)]|$))")
+_VOICE_NOTES = tuple(re.compile(p, re.I) for p in (
+    # "the voice changed (from A) to B", "the voice is now B"
+    r"\bvoice\s+(?:(?:has|had|was|is|got)\s+)?(?:now\s+)?(?:been\s+)?"
+    r"(?:" + _CHANGED + _FROM + r"\s+to|is\s+now)\s+(?:the\s+)?"
+    + _VOICE_NAME + _NAME_ENDS,
+    # "switched the voice (from A) to B"
+    r"\b" + _CHANGED + r"\s+(?:my|the|its|our|brAIn['’]s)\s+(?:spoken\s+)?voice"
+    + _FROM + r"\s+to\s+(?:the\s+)?" + _VOICE_NAME + _NAME_ENDS,
+    # "speaks with the B voice", "now uses the B voice"
+    r"\b(?:speaks?|speaking|talks?|answers?|uses?|using)\s+(?:with\s+|in\s+)?"
+    r"the\s+" + _VOICE_NAME + r"\s+voice\b",
+))
+# Words a voice's name is not made of: what a sentence goes on with.
+_NOT_A_NAME = frozenset("""
+    a an the to for on in at of with by from as when while and or but so
+    that this these those it its my your our their his her is are was were
+    be been being now not no than then if because about after before
+    instead also too very just only one used same
+""".split())
+
+
+def _name_like(words: str) -> bool:
+    """A voice's name: one to four words, none of them a sentence's, and
+    written as a name (capitalised, or an id like en_GB-alba-medium)."""
+    parts = words.split()
+    if not 1 <= len(parts) <= 4:
+        return False
+    if any(w.lower().strip("'’") in _NOT_A_NAME for w in parts):
+        return False
+    return words[:1].isupper() or any(c in words for c in "_-0123456789")
 
 
 def voice_named(text) -> str:
-    """The voice a growth note says brAIn now speaks with, or ""."""
-    m = _VOICE_NOTE.search(str(text or ""))
-    return _one_line(m.group(1), VOICE_MAX) if m else ""
+    """The voice a growth note says brAIn now speaks with, or "" when the
+    note does not say outright that the voice changed to a named one."""
+    s = str(text or "")
+    for pattern in _VOICE_NOTES:
+        for m in pattern.finditer(s):
+            said = _one_line(m.group("v"), VOICE_MAX)
+            if _name_like(said):
+                return said
+    return ""
 
 
 def identity(data: dict | None = None, path: str | None = None) -> dict:
-    """THE answer to who brAIn is here: `{name, voice}`, read off the store
-    (the name through `assistant_name`, so the Personality switch holds).
-    Findings and cards quote this and never a model's memory of it."""
+    """THE answer to who brAIn is here: `{name, voice}`, read off the store.
+    Findings and cards quote this and never a model's memory of it.
+
+    With Personality switched off nothing reads the stored personality, the
+    voice included: the name is "brAIn" and the voice is not recorded."""
+    if not enabled():
+        return {"name": DEFAULT_NAME, "voice": ""}
     try:
         data = data if isinstance(data, dict) else load(path)
     except Exception:  # noqa: BLE001 — an unreadable store is no answer
@@ -471,7 +532,9 @@ def looks_cut(persona) -> bool:
     text = str(persona or "").rstrip()
     if not text.endswith("…"):
         return False
-    return int((OLD_PERSONA_MAX - 1) * 0.6) <= len(text) <= OLD_PERSONA_MAX
+    # textclip's floor: a whole word past half the room before the "…" (a
+    # sentence end needs 60%, but a word cut is taken from 50%).
+    return int((OLD_PERSONA_MAX - 1) * 0.5) <= len(text) <= OLD_PERSONA_MAX
 
 
 def summary(data: dict | None) -> str:
@@ -497,7 +560,9 @@ def prompt_block(data: dict | None = None) -> str:
     parts = []
     if data.get("name"):
         parts.append(f"Your name is {data['name']}.")
-    persona = _clip(data.get("persona") or "", PROMPT_PERSONA_CHARS)
+    # Whole: PERSONA_MAX is the ceiling it was stored under, so this bounds
+    # only a dict handed in without `normalise`.
+    persona = _clip(data.get("persona") or "", PERSONA_MAX)
     if persona:
         parts.append(f"Your personality: {persona}")
     text = " ".join(parts)
@@ -581,12 +646,19 @@ class _Literal:
             if c == "\\":
                 nxt = s[self.i + 1:self.i + 2]
                 if nxt == "u":
-                    hexa = s[self.i + 2:self.i + 6]
-                    try:
-                        out.append(chr(int(hexa, 16)))
-                    except ValueError:
-                        raise _Unreadable("a bad \\u escape") from None
+                    code = self._hex4(self.i + 2)
                     self.i += 6
+                    # A character past U+FFFF is written as two escapes, high
+                    # then low. Either alone is half a character, which UTF-8
+                    # cannot hold: writing one raised out of the startup.
+                    if 0xD800 <= code <= 0xDBFF and s.startswith("\\u", self.i):
+                        low = self._hex4(self.i + 2)
+                        if 0xDC00 <= low <= 0xDFFF:
+                            code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00)
+                            self.i += 6
+                    if 0xD800 <= code <= 0xDFFF:
+                        raise _Unreadable("a \\u escape that is half of a character")
+                    out.append(chr(code))
                     continue
                 if nxt == "\n":
                     self.i += 2
@@ -601,6 +673,12 @@ class _Literal:
             out.append(c)
             self.i += 1
         raise _Unreadable("an unclosed string")
+
+    def _hex4(self, at: int) -> int:
+        hexa = self.s[at:at + 4]
+        if not re.fullmatch(r"[0-9A-Fa-f]{4}", hexa):
+            raise _Unreadable("a bad \\u escape")
+        return int(hexa, 16)
 
     def _array(self) -> list:
         self.i += 1
@@ -649,12 +727,23 @@ class _Literal:
 
 
 def _assigned(src: str, name: str):
-    """The literal assigned to `name` (`const NAME = …` or `NAME: …`), or a
-    `_Unreadable` sentinel-free None when the file never assigns it."""
-    m = re.search(rf"(?:\b(?:const|let|var)\s+{name}\s*=|\b{name}\s*:)", src)
-    if not m:
-        return None
-    return _Literal(src, m.end()).value()
+    """The literal assigned to `name` (`const NAME = …` or `NAME: …`), or
+    None when the file never assigns it.
+
+    A declaration is tried before a `NAME:` key, and each place the name is
+    written in turn until one reads as a value: "// GROWTH: entries below"
+    is a comment, and taking it for the assignment failed the whole import.
+    When none reads, the first one's reason is raised."""
+    first = None
+    for pattern in (rf"\b(?:const|let|var)\s+{name}\s*=", rf"\b{name}\s*:"):
+        for m in re.finditer(pattern, src):
+            try:
+                return _Literal(src, m.end()).value()
+            except _Unreadable as exc:
+                first = first or exc
+    if first is not None:
+        raise first
+    return None
 
 
 _PERSONA_TEXT_KEYS = ("persona", "personality", "text", "prompt", "description",
@@ -753,13 +842,16 @@ def migrate_from_morph(src_path: str | None = None, path: str | None = None) -> 
     except (OSError, UnicodeDecodeError, ValueError, RecursionError) as exc:
         return f"could not read the personality out of {src_path} ({exc}); nothing was moved"
     data["updated_at"] = int(time.time())
+    # Marked as the import, so a later repair can tell it from a file that
+    # anything has written since (each write sets the mark to False).
+    data["morph_import"] = data["updated_at"]
     try:
         import atomic_write  # noqa: PLC0415 — panel-local
         with atomic_write.locked(target):
             if exists(target):
                 return ""
             _write(data, target)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:  # ValueError: text UTF-8 cannot hold
         return f"could not save the personality read from Morph ({exc})"
     return (f"moved the personality out of {src_path} into {target} "
             f"({len(data['growth'])} growth entries); Morph's file is left as it was")
@@ -774,13 +866,26 @@ def repair_from_morph(src_path: str | None = None, path: str | None = None) -> s
     import of Morph's file with a full read of it. Returns what happened,
     in a sentence for the log, or "". Never raises.
 
-    Only when nothing in the stored file is missing from a fresh read —
-    the same name (or none), every persona line, every growth entry — and
-    the fresh read holds more. Anything the fresh read does not contain is
-    somebody's edit, and an edit is never replaced."""
+    Only while the stored file is untouched since the import, and only when
+    nothing in it is missing from a fresh read — the same name (or none),
+    every persona line, every growth entry — and the fresh read holds more.
+    Being a subset is not proof of no edit: a section somebody deleted in
+    ⚙ leaves exactly that, and it came back on every restart. So the import
+    is marked (`morph_import`, its `updated_at`) and every other write sets
+    the mark to False. A file from before the mark is repaired only while
+    no voice is set either. The voice and each growth entry's time and
+    author are carried across."""
     src_path = src_path or MORPH_FILE
     target = path or STORE
     if not exists(target) or not os.path.isfile(src_path):
+        return ""
+    stored = load(target)
+    mark = stored.get("morph_import")
+    if mark is False:
+        return ""
+    if mark is None and stored.get("voice"):
+        return ""
+    if mark is not None and mark != stored.get("updated_at"):
         return ""
     try:
         with open(src_path, "rb") as fh:
@@ -790,7 +895,6 @@ def repair_from_morph(src_path: str | None = None, path: str | None = None) -> s
         fresh = parse_morph(raw.decode("utf-8"))
     except (OSError, UnicodeDecodeError, ValueError, RecursionError):
         return ""
-    stored = load(target)
     if stored["name"] and stored["name"] != fresh["name"]:
         return ""
     fresh_lines = set(_lines(fresh["persona"]))
@@ -804,15 +908,23 @@ def repair_from_morph(src_path: str | None = None, path: str | None = None) -> s
     if (len(fresh_lines) <= len(set(_lines(stored["persona"])))
             and len(fresh["growth"]) <= len(stored["growth"])):
         return ""
+    kept = {g["text"]: g for g in stored["growth"]}
+    growth = []
+    for g in fresh["growth"]:
+        was = kept.get(g["text"]) or {}
+        growth.append({**g, **{k: was[k] for k in ("at", "by") if k in was}})
+    now = int(time.time())
+    # A repair is an import too: marked, so a later edit is told from it.
     data = {**fresh, "name": stored["name"] or fresh["name"],
-            "updated_at": int(time.time())}
+            "voice": stored.get("voice") or "", "growth": growth,
+            "updated_at": now, "morph_import": now}
     try:
         import atomic_write  # noqa: PLC0415 — panel-local
         with atomic_write.locked(target):
             if load(target) != stored:
                 return ""
             _write(data, target)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:  # ValueError: text UTF-8 cannot hold
         return f"could not repair the personality read from Morph ({exc})"
     return (f"repaired the personality imported from {src_path}: it now holds "
             f"{len(fresh_lines)} persona lines and {len(data['growth'])} growth "
@@ -835,10 +947,7 @@ def _cli(argv: list[str]) -> int:
     if verb == "section":
         sys.stdout.write(section(path))
         return 0
-    if verb == "block":
-        sys.stdout.write(prompt_block(load(path)))
-        return 0
-    sys.stderr.write("usage: personality.py section|block [file]\n")
+    sys.stderr.write("usage: personality.py section [file]\n")
     return 2
 
 
