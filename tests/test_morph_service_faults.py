@@ -35,7 +35,7 @@ class TestAServiceExceptionIsAFault(unittest.TestCase):
             self.assertEqual(row["where"], "Morph · Tick")
             self.assertRegex(row["what"], r"^TypeError in paths\.py:\d+: ")
             self.assertIn("Traceback", row["body"])
-            self.assertEqual(row["impact"]["times"], 1)
+            self.assertEqual(row["impact"]["count"], 1)
 
     def test_the_same_fault_on_another_line_is_one_row(self):
         with MorphEnv() as env:
@@ -44,7 +44,7 @@ class TestAServiceExceptionIsAFault(unittest.TestCase):
             env.devloop.note_exception("Tick", exc, now=1_700_000_000.0)
             env.devloop.note_exception("Tick", exc, now=1_700_000_100.0)
             [row] = env.devloop.rows(now=1_700_000_100.0)
-            self.assertEqual(row["impact"]["times"], 2)
+            self.assertEqual(row["impact"]["count"], 2)
 
     def test_every_loop_in_morphd_files_what_it_catches(self):
         text = MORPHD.read_text(encoding="utf-8")

@@ -21,13 +21,14 @@ brain devloop — file what brAIn gets wrong as issues in your private repo
 Usage:
   brain devloop                 What is on, what ran last, what is queued
   brain devloop run [stream]    Run now: every switched-on stream, or one
-                                (faults, scorecard, wrongs, unmet, snapshot,
-                                gaps, ideas)
+                                (faults, scorecard, wrongs, outcomes, unmet,
+                                snapshot, gaps, ideas, design, screens, morph,
+                                siblings)
   brain devloop look "<words>"  Say what you want fixed, in your own words.
                                 One read-only Claude run works out the real
                                 problem and files the issue that would fix it
 
-Switch it on and set the repository in ⚙ → Developer.
+Switch it on in ⚙ → Features, and set the repository in ⚙ → Developer.
 EOF
     exit "${1:-0}"
 }

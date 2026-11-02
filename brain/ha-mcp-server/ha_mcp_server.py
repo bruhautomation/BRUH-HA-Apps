@@ -2391,14 +2391,16 @@ def get_health():
 
 # ---------------------------------------------------------------------------
 # The other BRUH add-ons — GardenRX, BRUH Bambu Studio, BRUH Print, BRight,
-# BRUH Minecraft, BRUH Cooking, Morph. Their code lives in their own images, so brAIn can
+# BRUH Minecraft, BRUH Cooking, BRUH Task Manager. Their code lives in their own images, so brAIn can
 # look at them (state, log, integration errors) and file a report the cloud
 # routine fixes upstream; it never patches them in place, because a patch in
 # a container is wiped by the next update and diverges from the repository.
+# Morph is brAIn's own half since 4.0: a report about it is filed as brAIn's.
 # ---------------------------------------------------------------------------
 
 SIBLING_ADDON_NAMES = ("brAIn", "GardenRX", "BRUH Bambu Studio", "BRUH Print",
-                    "BRight", "BRUH Minecraft", "BRUH Cooking", "Morph")
+                    "BRight", "BRUH Minecraft", "BRUH Cooking", "BRUH Task Manager",
+                    "Morph")
 
 
 def bruh_addon_status(addon=""):
@@ -9171,7 +9173,7 @@ TOOLS = [
         "description": (
             "How the other BRUH add-ons are doing: GardenRX, BRUH Bambu "
             "Studio, BRUH Print, BRight, BRUH Minecraft, BRUH Cooking and "
-            "Morph. For each "
+            "BRUH Task Manager (Morph is part of brAIn, not one of these). For each "
             "installed one: version, whether it is running, whether an update "
             "is waiting, the distinct errors in its log with the lines around "
             "them, and what Home Assistant logged about its integration. Use "
@@ -9204,8 +9206,9 @@ TOOLS = [
             "problem (it becomes the issue's title line); `evidence` carries "
             "your diagnosis and what it rests on — the cause you found, the "
             "log lines, errors and readings. Nothing is dropped: a long "
-            "field is kept in the issue's body. Needs the development loop on "
-            "(⚙ › Developer); if it is off, say so. Never for a problem in "
+            "field is kept in the issue's body. Morph is brAIn's dashboard: "
+            "name it for a bug in Morph. Needs the development loop on "
+            "(⚙ › Features); if it is off, say so. Never for a problem in "
             "the house's own configuration, which you fix directly."
         ),
         "inputSchema": {

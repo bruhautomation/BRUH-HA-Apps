@@ -51,6 +51,12 @@ def _load() -> dict:
 
 
 DETAIL_MAX = 5200
+# Where a person's own words are filed: Settings' "What do you want to fix
+# in Morph?" (Looks, From you) and a Tell's issue they chose to send
+# (`tell.answer_issue`). The Tell row was left out, so it was dressed as a
+# count of something Morph noticed and Settings offered no way to take it
+# back.
+PERSON_WHERE = ("Morph · Looks", "Morph · From you", "Morph · Tell")
 
 
 def note_fault(area: str, what: str, detail: str = "", *, source: str = "morph",
@@ -143,7 +149,7 @@ def mine(now: float | None = None) -> list[dict]:
     picked = float(ack.get("at") or 0)
     out = []
     for fp, r in sorted(_load().items(), key=lambda kv: -float(kv[1].get("last") or 0)):
-        if r.get("source") != "person" or r.get("where") not in ("Morph · Looks", "Morph · From you"):
+        if r.get("source") != "person" or r.get("where") not in PERSON_WHERE:
             continue
         if now - float(r.get("last") or 0) > KEEP_S:
             continue
@@ -255,13 +261,13 @@ def rows(now: float | None = None) -> list[dict]:
                 r.get("source") != "person" and _DEBUG.match(str(r.get("what") or ""))):
             continue
         detail = (r.get("detail") or "(none)")[:DETAIL_MAX]
-        if r.get("source") == "person" and r.get("where") in ("Morph · Looks", "Morph · From you"):
+        if r.get("source") == "person" and r.get("where") in PERSON_WHERE:
             # Somebody's own words: quoted as they are, not dressed as a
             # count of something Morph noticed.
             row = {"where": r["where"], "what": r["what"], "detail": detail[:400],
                    "last": float(r.get("last") or 0),
                    "body": detail + "\n\n" + FIX_WHERE,
-                   "impact": {"times": r["count"], "days": len(r.get("days") or [])}}
+                   "impact": {"count": r["count"], "days": len(r.get("days") or [])}}
             if r["where"] == "Morph · Looks":
                 # brAIn's look stream marks a report about how something
                 # looks with `ux`, which is what files it as devloop:ux and
@@ -286,7 +292,10 @@ def rows(now: float | None = None) -> list[dict]:
             FIX_WHERE,
         ])
         out.append({"where": r["where"], "what": r["what"], "detail": r.get("detail", "")[:400],
-                    "last": float(r.get("last") or 0), "body": body, "impact": {"times": r["count"], "days": len(r.get("days") or [])}})
+                    # `count` is the key brAIn's queue reads (`upstream.IMPACT_KEYS`);
+                    # `times` was dropped there, and the issue counted passes.
+                    "last": float(r.get("last") or 0), "body": body,
+                    "impact": {"count": r["count"], "days": len(r.get("days") or [])}})
         if len(out) >= MAX_ROWS:
             break
     return out

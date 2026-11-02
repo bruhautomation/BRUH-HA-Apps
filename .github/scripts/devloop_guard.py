@@ -22,8 +22,12 @@ import re
 import subprocess
 import sys
 
+# A skip in any of its spellings: `@skipIf(` and `@skipUnless(` imported
+# bare, and a `SkipTest` raised from inside a test, skip it as surely as
+# `@unittest.skip` does and were let through.
 SKIP_RE = re.compile(
     r"^\+.*(@unittest\.skip|\.skipTest\(|pytest\.mark\.(skip|xfail)|@skip\b|"
+    r"@skip\w*\(|\bSkipTest\(|"
     r"\bxit\(|\.skip\(|it\.skip|describe\.skip)")
 VERSION_RE = re.compile(r'^[+-]\s*("?version"?\s*:|version:)')
 # What counts as code: a change here with nothing under tests/ is a fix

@@ -214,8 +214,14 @@ def update_issue(token: str, repo: str, number: int, title: str, body: str
 
 # A path inside the reports repository the loop may write: the Screens
 # stream's pictures and nothing else, so a bug that built a path from the
-# wrong string cannot overwrite a file somebody put there by hand.
-FILE_PATH_RE = re.compile(r"^screens/brain-[0-9A-Za-z.-]{1,40}/[a-z0-9-]{1,40}-\d{3,4}-(?:light|dark)\.png$")
+# wrong string cannot overwrite a file somebody put there by hand. The
+# folder is `screens.repo_path`'s, `<product>-<version>` for every BRUH
+# add-on (it admitted only brAIn's, so every other add-on's pictures were
+# refused and its Screens issue was never filed), and the file name is
+# `screens.SHOT_RE`'s, slug length included.
+FILE_PATH_RE = re.compile(
+    r"^screens/[a-z0-9-]{1,40}-[0-9A-Za-z.-]{1,40}/"
+    r"[a-z0-9-]{1,60}-\d{3,4}-(?:light|dark)\.png$")
 
 
 def _blob_sha(data: bytes) -> str:

@@ -135,6 +135,19 @@ class TestTheRows(unittest.TestCase):
         self.assertEqual([r["what"] for r in rows], ["card threw"])
         self.assertIsNone(siblings.read_outbox(siblings.spec_by_name("BRight"), outbox_dir))
 
+    def test_an_outbox_row_in_morphs_shape_is_seen_when_it_says(self):
+        # The documented row shape is Morph's, which says when it last
+        # happened as `last`; read without it, a row was "seen now" on
+        # every pass and an old fault was "Still happening".
+        outbox_dir = Path(self.tmp_dir())
+        (outbox_dir / "bruh-print.json").write_text(
+            '{"rows": [{"where": "BRUH Print · Card", "what": "card threw", "last": 1700000000},'
+            ' {"where": "BRUH Print · Panel", "what": "panel threw", "seen_at": 1700000100}]}',
+            encoding="utf-8")
+        rows = siblings.read_outbox(siblings.spec_by_name("BRUH Print"), outbox_dir)
+        self.assertEqual([r.get("seen_at") for r in rows], [1700000000, 1700000100])
+        self.assertEqual(upstream._seen_at(rows[0], 1800000000.0), 1700000000.0)
+
     def tmp_dir(self):
         import tempfile
         d = tempfile.TemporaryDirectory()
@@ -259,6 +272,22 @@ class TestTheLookKnowsTheAddons(unittest.TestCase):
         self.assertTrue(rows[0]["where"].startswith("GardenRX · Fix: "))
         self.assertEqual(rows[0]["product"], "GardenRX")
 
+    def test_a_look_about_morph_is_brains(self):
+        # The prompt tells the run to name Morph; the schema refused it,
+        # and Morph is brAIn's half, released with brAIn.
+        import devloop.streams as streams
+        enum = streams.reply_schema("look")["properties"]["rows"]["items"][
+            "properties"]["addon"]["enum"]
+        self.assertEqual(set(enum), {"brAIn", "Morph", *siblings.PRODUCTS})
+        rows, problem = streams.parse_reply(
+            {"rows": [{"title": "Fan card is cramped", "what": "The fan card is cramped.",
+                       "why": "", "done_when": "It is not.", "impact": "daily",
+                       "ui": True, "addon": "Morph"}]}, "look", "the fan card")
+        self.assertEqual(problem, "")
+        self.assertTrue(rows[0]["where"].startswith("Morph · Fix: "), rows[0]["where"])
+        self.assertNotIn("product", rows[0])
+        self.assertEqual(upstream.product_of(rows[0]), "brAIn")
+
     def test_a_verbatim_request_naming_one_addon_is_its(self):
         import devloop.streams as streams
         row = streams.verbatim_rows("BRUH Print labels come out blank")[0]
@@ -291,6 +320,47 @@ class TestTheChatsReport(unittest.TestCase):
     def test_brain_is_the_default(self):
         row, _ = self.server.report_row({"title": "t", "what": "w"})
         self.assertNotIn("product", row)
+
+    def test_a_report_about_morph_is_brains(self):
+        # The tool offers Morph; the route refused it with a 400 once Morph
+        # left the catalog for brAIn.
+        row, why = self.server.report_row({"addon": "Morph", "title": "Fan card is cramped",
+                                           "what": "The fan card is cramped."})
+        self.assertEqual(why, "")
+        self.assertTrue(row["where"].startswith("Morph · Fix: "), row["where"])
+        self.assertNotIn("product", row)
+        self.assertEqual(upstream.product_of(row), "brAIn")
+
+    def test_every_addon_the_tool_offers_is_one_the_route_files(self):
+        sys.path.insert(0, str(BASE_DIR / "brain" / "ha-mcp-server"))
+        import ha_mcp_server  # noqa: PLC0415
+        self.assertEqual(set(ha_mcp_server.SIBLING_ADDON_NAMES),
+                         {"brAIn", "Morph", *siblings.PRODUCTS})
+        for addon in ha_mcp_server.SIBLING_ADDON_NAMES:
+            row, why = self.server.report_row({"addon": addon, "title": "t", "what": "w"})
+            self.assertEqual(why, "", addon)
+
+
+class TestTheCatalogIsTheRepository(unittest.TestCase):
+    def test_every_addon_with_a_manifest_the_loop_guards_is_in_the_catalog(self):
+        # `.claude/devloop.json` names each add-on whose version a fix may
+        # bump; BRUH Task Manager was there and nowhere the house could
+        # file a report about it.
+        import json
+        config = json.loads((BASE_DIR / ".claude" / "devloop.json").read_text())
+        dirs = {p.split("/", 1)[0] + "/" for p in config["version_only_files"]}
+        self.assertEqual(dirs - {"brain/"}, {s["dir"] for s in siblings.CATALOG})
+
+    def test_every_catalog_row_is_its_addons_own_slug_and_domain(self):
+        import yaml
+        for spec in siblings.CATALOG:
+            manifest = yaml.safe_load((BASE_DIR / spec["dir"] / "config.yaml").read_text())
+            self.assertEqual(manifest["slug"], spec["key"], spec["name"])
+            self.assertEqual(manifest["name"], spec["name"])
+            self.assertTrue((BASE_DIR / spec["dir"] / "custom_components" / spec["domain"]
+                             / "manifest.json").is_file(), spec["name"])
+        self.assertIsNotNone(siblings.spec_for("a0d7b954_bruh-task-manager",
+                                               "BRUH Task Manager"))
 
 
 if __name__ == "__main__":

@@ -1,17 +1,21 @@
-"""After an update, brAIn settles the "is this fixed?" questions it can.
+"""After an update, the "is this fixed?" questions an update made moot go.
 
 An update fills Today with "Is this fixed now?" questions, and the owner
-asked for the ones brAIn can answer itself to be closed without them. Three
-outcomes, each driven through the real panel:
+asked for the ones that no longer mean anything to be closed without them.
+Two outcomes, each driven through the real panel:
 
-  * a report whose fingerprint the house watches, not seen since the fixed
-    release was installed and looked for again since, is answered Yes
-    through the same ending the owner's press takes — and the comment the
-    send pass posts says brAIn checked, never that the owner confirmed;
   * a question about a fix that is no longer the fix (reopened, re-fixed in
     a newer release, gone from the queue) is withdrawn with nothing posted;
-  * a request with no fingerprint, a fault seen again after the install, or
-    a stream that has not looked since, is left for the person.
+  * a question about a fix that still stands is left for the person, and
+    brAIn never answers it for them.
+
+The questions are only ever about the owner's own requests (`look`) and
+what the chat could not do (`unmet`): neither has a fingerprint to stop,
+so nothing brAIn measures can prove one. A fault proves itself on its own
+issue (upstream's "Held"), and no question is ever asked about one. The
+settle pass once answered Yes "for brAIn" on a fault question the ask pass
+never files; that branch is gone, and these tests hold that no question is
+asked about a fault and none is answered for the owner.
 
 And the second half of the protocol: a checks pass re-runs a while after
 an update, once, so findings left by the restart are cleared.
@@ -45,13 +49,13 @@ class VerifyCase(DispatchCase):
         dl.save_settings({"enabled": True, "repo": "me/reports", "review": False})
         dl.save_token(TOKEN)
         self.now = time.time()
-        self.installed = self.now - 3 * 3600
 
     def seed(self, fp: str, **entry) -> None:
         dl = self.server.devloop
         data = dl.upstream._load()
-        base = {"fp": fp, "stream": "faults", "state": "sent", "issue": 11,
-                "where": "Checks", "what": "the porch check stops every evening",
+        # The shape the ask pass asks about: the owner's own request.
+        base = {"fp": fp, "stream": "look", "state": "sent", "issue": 11,
+                "where": "Fix: Porch check", "what": "the porch check stops every evening",
                 "verdict": "fixed", "fixed_in": "4.1.0",
                 "closed_at": self.now - 2 * DAY, "version": "4.0.9",
                 "first_seen": self.now - 9 * DAY,
@@ -59,9 +63,7 @@ class VerifyCase(DispatchCase):
         base.update(entry)
         data["items"][fp] = base
         data["version"] = "4.1.0"
-        data.setdefault("installed", {})["brAIn"] = {
-            "4.0.9": self.now - 30 * DAY, "4.1.0": self.installed}
-        data.setdefault("last_run", {})["faults"] = self.now - 600
+        data.setdefault("last_run", {})[base["stream"]] = self.now - 600
         dl.upstream._save(data)
 
     def ask(self, fp: str) -> dict:
@@ -85,35 +87,14 @@ class VerifyCase(DispatchCase):
         return self.server.devloop.upstream._load()["items"][fp].get("owner") or {}
 
 
-class TestWhatBrainCanProve(VerifyCase):
-    def test_a_fault_gone_since_the_install_is_answered_as_brains(self):
+class TestBrainNeverAnswersForTheOwner(VerifyCase):
+    def test_no_question_is_ever_asked_about_a_fault(self):
+        # A fault's fix is said on its own issue ("Held"); the settle pass
+        # once answered fault questions "for brAIn", and none is ever asked.
         fp = "aa11bb22cc33dd44"
-        self.seed(fp)
-        row = self.ask(fp)
-        done = self.settle()
-        self.assertEqual(done["answered"], 1)
-        self.assertFalse(self.live(row), "the question is closed")
-        owner = self.owner(fp)
-        self.assertEqual(owner.get("verdict"), "held")
-        self.assertEqual(owner.get("by"), "brain")
-        self.assertIn("brAIn checked", owner.get("note", ""))
-        state = self.server.devloop.verify.load()[fp]
-        self.assertEqual((state["answer"], state["by"]), ("held", "brain"))
-
-        # The comment the send pass posts says who answered.
-        up = self.server.devloop.upstream
-        posted = []
-        with mock.patch.object(up.github, "comment",
-                               lambda tok, repo, n, text, reopen=False:
-                               posted.append((text, reopen)) or (True, "")):
-            items = up._load()["items"]
-            self.assertEqual(up._post_owner_answers(
-                TOKEN, "me/reports", items, up.Aliases.load(), "4.1.0"), 1)
-        [(text, reopen)] = posted
-        self.assertTrue(text.startswith("brAIn checked on brAIn 4.1.0"), text)
-        self.assertNotIn("owner confirms", text.lower())
-        self.assertIn("Not answered by the owner", text)
-        self.assertFalse(reopen)
+        self.seed(fp, stream="faults", where="Checks")
+        self.assertEqual(asyncio.run(self.server._devloop_verify_pass(self.now)), 0)
+        self.assertEqual(self.server.devloop.verify.load(), {})
 
     def test_the_owners_own_yes_still_says_the_owner_confirms(self):
         fp = "ab12ab12ab12ab12"
@@ -128,34 +109,38 @@ class TestWhatBrainCanProve(VerifyCase):
                                    up.Aliases.load(), "4.1.0")
         self.assertEqual(posted, ["The owner confirms this is fixed on brAIn 4.1.0."])
 
-    def test_a_fault_seen_after_the_install_is_left_for_the_person(self):
+    def test_a_request_not_seen_since_the_install_is_still_the_owners(self):
+        # Nobody asking again is not evidence that a request was met.
         fp = "ee55ff66aa77bb88"
-        self.seed(fp, last_seen=self.installed + 600)
+        self.seed(fp)
         row = self.ask(fp)
-        self.assertEqual(self.settle(), {"answered": 0, "withdrawn": 0})
+        self.assertEqual(self.settle(), {"withdrawn": 0})
         self.assertTrue(self.live(row))
         self.assertEqual(self.owner(fp), {})
+        self.assertEqual(self.server.devloop.verify.load()[fp]["answer"], "")
 
-    def test_nothing_looked_since_the_install_proves_nothing(self):
+    def test_nothing_is_posted_until_the_owner_answers(self):
         fp = "1234abcd5678ef90"
         self.seed(fp)
-        data = self.server.devloop.upstream._load()
-        data["last_run"]["faults"] = self.installed - 60
-        self.server.devloop.upstream._save(data)
-        row = self.ask(fp)
+        self.ask(fp)
         self.settle()
-        self.assertTrue(self.live(row))
+        up = self.server.devloop.upstream
+        posted = []
+        with mock.patch.object(up.github, "comment",
+                               lambda tok, repo, n, text, reopen=False:
+                               posted.append(text) or (True, "")):
+            self.assertEqual(up._post_owner_answers(
+                TOKEN, "me/reports", up._load()["items"], up.Aliases.load(), "4.1.0"), 0)
+        self.assertEqual(posted, [])
 
-    def test_a_stream_switched_off_proves_nothing(self):
+    def test_an_unmet_request_is_left_for_the_person(self):
         fp = "0f0f0f0f0f0f0f0f"
-        self.seed(fp)
-        dl = self.server.devloop
-        settings = dl.load_settings()
-        settings["streams"]["faults"] = False
-        dl.save_settings(settings)
+        self.seed(fp, stream="unmet", where="Chat",
+                  what="brAIn could not turn the oven off")
         row = self.ask(fp)
         self.settle()
         self.assertTrue(self.live(row))
+        self.assertEqual(self.owner(fp), {})
 
     def test_a_request_with_no_fingerprint_is_left_for_the_person(self):
         fp = "9a9a9a9a9a9a9a9a"
@@ -166,15 +151,16 @@ class TestWhatBrainCanProve(VerifyCase):
         self.assertTrue(self.live(row))
         self.assertEqual(self.owner(fp), {})
 
-    def test_an_unknown_install_time_proves_nothing(self):
+    def test_a_report_gone_from_the_queue_withdraws_its_question(self):
         fp = "c0ffeec0ffeec0ff"
         self.seed(fp)
-        data = self.server.devloop.upstream._load()
-        data["installed"] = {}
-        self.server.devloop.upstream._save(data)
         row = self.ask(fp)
-        self.settle()
-        self.assertTrue(self.live(row))
+        data = self.server.devloop.upstream._load()
+        del data["items"][fp]
+        self.server.devloop.upstream._save(data)
+        self.assertEqual(self.settle(), {"withdrawn": 1})
+        self.assertFalse(self.live(row))
+        self.assertEqual(self.server.devloop.verify.load()[fp]["answer"], "moot")
 
 
 class TestWhatAnUpdateMadeMoot(VerifyCase):
@@ -201,21 +187,23 @@ class TestWhatAnUpdateMadeMoot(VerifyCase):
         self.assertEqual(asyncio.run(self.server._devloop_verify_pass(self.now)), 1)
 
 
-class TestTheInstallIsRecorded(VerifyCase):
-    def test_a_sweep_notes_when_a_release_was_first_seen(self):
+class TestTheReleaseIsRecorded(VerifyCase):
+    def test_a_sweep_records_the_release_the_house_runs(self):
         up = self.server.devloop.upstream
         diag = {"versions": {"addon": "5.0.1"}, "faults": []}
         up.ingest("faults", [], diag, {}, 1000.0)
-        up.ingest("faults", [], diag, {}, 2000.0)
-        self.assertEqual(up._load()["installed"]["brAIn"]["5.0.1"], 1000.0)
-        self.assertEqual(up.installed_at(up._load(), "brAIn", "5.0.0"), 1000.0)
-        self.assertIsNone(up.installed_at(up._load(), "brAIn", "5.0.2"))
+        self.assertEqual(up._load()["version"], "5.0.1")
+        self.assertEqual(up.running_for({"fixed_in": "5.0.0"}, up._load()["version"],
+                                        up._load().get("products")), "5.0.1")
 
-    def test_another_addons_release_is_noted_under_its_own_name(self):
+    def test_another_addons_release_is_recorded_under_its_own_name(self):
         up = self.server.devloop.upstream
         up.ingest("siblings", [], {"versions": {"addon": "5.0.1"}}, {}, 1500.0,
                   products={"GardenRX": "0.4.2"})
-        self.assertEqual(up.installed_at(up._load(), "GardenRX", "0.4.0"), 1500.0)
+        data = up._load()
+        self.assertEqual(data["products"]["GardenRX"], "0.4.2")
+        self.assertEqual(up.running_for({"product": "GardenRX"}, data["version"],
+                                        data["products"]), "0.4.2")
 
 
 class TestChecksRerunAfterAnUpdate(VerifyCase):

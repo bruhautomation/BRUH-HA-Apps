@@ -4663,7 +4663,7 @@ function devLookOutcome(last) {
       ? `<a href="${esc(f.issue_url)}" target="_blank" rel="noopener">#${esc(String(f.issue))}</a> `
       : "";
     return `${link}${name} (${esc(state)})`;
-  }).join("; ") + ".";
+  }).join("; ") + "." + (last.note ? " (" + esc(last.note) + ".)" : "");
 }
 
 function paintDevloop(data) {

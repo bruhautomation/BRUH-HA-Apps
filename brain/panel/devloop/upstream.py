@@ -237,6 +237,11 @@ def effective_hours(hours: int, slowed: bool) -> int:
 def _clean_impact(raw) -> dict:
     out: dict = {}
     if isinstance(raw, dict):
+        if "count" not in raw and "times" in raw:
+            # Morph published its count as `times` until it wrote `count`;
+            # an outbox already on disk still says `times`, and dropping it
+            # filed "N passes over D days" for a fault Morph had counted.
+            raw = {**raw, "count": raw["times"]}
         for key in IMPACT_KEYS:
             value = raw.get(key)
             if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
@@ -339,38 +344,6 @@ def running_at_least(version, fixed_in) -> bool | None:
         return None
     return have >= need
 
-
-MAX_INSTALLED = 20
-
-
-def _note_installed(data: dict, product: str, version: str, now: float) -> None:
-    """When a sweep first saw this house running a release: the earliest
-    moment brAIn can say a fix was installed, which is what "not reported
-    since the fix arrived" is measured from (`verify.proof`). Kept per
-    add-on and capped; a release already noted keeps its first sighting."""
-    if not version_tuple(version):
-        return
-    seen = data.setdefault("installed", {}).setdefault(product, {})
-    if not isinstance(seen, dict):
-        seen = data["installed"][product] = {}
-    if version not in seen:
-        seen[version] = float(now)
-        if len(seen) > MAX_INSTALLED:
-            for old in sorted(seen, key=lambda v: seen[v])[:-MAX_INSTALLED]:
-                seen.pop(old, None)
-
-
-def installed_at(data: dict, product: str, fixed_in: str) -> float | None:
-    """The first time a sweep saw this house on ``fixed_in`` or later for
-    ``product``; None when no sweep has (or the release is not a number),
-    which no caller may read as "installed long ago"."""
-    seen = ((data or {}).get("installed") or {}).get(product) or {}
-    if not isinstance(seen, dict):
-        return None
-    times = [float(at) for ver, at in seen.items()
-             if isinstance(at, (int, float))
-             and running_at_least(ver, fixed_in) is True]
-    return min(times) if times else None
 
 
 def product_of(entry: dict) -> str:
@@ -531,14 +504,12 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
         for name, ver in products.items():
             if name in PRODUCTS and ver:
                 known[name] = str(ver)[:40]
-                _note_installed(data, name, str(ver)[:40], now)
     _prune(items)
     data["swept_at"] = now
     # The release this house runs, read by `awaiting_update` and the
     # scorecard: the one number that says whether a fix has arrived.
     if version_tuple(version):
         data["version"] = version
-        _note_installed(data, "brAIn", version, now)
     data.setdefault("last_run", {})[stream] = now
     _save(data)
     aliases.save()
@@ -1253,15 +1224,11 @@ OWNER_NOTE_CHARS = 400
 
 
 def owner_answer(fp: str, accepted: bool, note: str = "",
-                 now: float | None = None, *, by: str = "owner") -> bool:
-    """Record the answer to "is this fixed?" on the queue entry; the next
-    send pass posts it (`_post_owner_answers`). Recorded and not posted
-    here because posting needs the token and the lock the send pass
-    already holds, and a press must not wait on GitHub.
-
-    ``by`` is who answered: ``owner`` (a press) or ``brain`` (brAIn proved
-    it from what it measures, `verify.proof`), and the comment says which
-    — brAIn's answer never reads as the owner confirming anything."""
+                 now: float | None = None) -> bool:
+    """Record the owner's answer to "is this fixed?" on the queue entry;
+    the next send pass posts it (`_post_owner_answers`). Recorded and not
+    posted here because posting needs the token and the lock the send pass
+    already holds, and a press must not wait on GitHub."""
     if not FP_RE.match(fp or ""):
         return False
     with _LOCK:
@@ -1271,8 +1238,7 @@ def owner_answer(fp: str, accepted: bool, note: str = "",
             return False
         entry["owner"] = {"verdict": "held" if accepted else "not_fixed",
                           "note": clip(str(note or ""), OWNER_NOTE_CHARS),
-                          "at": now or time.time(), "posted": False,
-                          "by": "brain" if by == "brain" else "owner"}
+                          "at": now or time.time(), "posted": False}
         _save(data)
     return True
 
@@ -1315,15 +1281,7 @@ def _post_owner_answers(token: str, repo: str, items: dict, aliases: Aliases,
         product = product_of(entry)
         version = (running_for(entry, running, products)
                    or str(entry.get("version") or "?"))
-        if owner.get("verdict") == "held" and owner.get("by") == "brain":
-            # brAIn's own proof, said as brAIn's: the owner has not
-            # answered, and nothing here may read as them confirming it.
-            words = scrub(str(owner.get("note") or "")).strip()
-            text = f"brAIn checked on {product} {version}" + (
-                f": {words}" if words else ".")
-            text += " (Not answered by the owner.)"
-            reopen = False
-        elif owner.get("verdict") == "held":
+        if owner.get("verdict") == "held":
             text, reopen = f"The owner confirms this is fixed on {product} {version}.", False
         else:
             words = aliases.apply(scrub(str(owner.get("note") or "")))
@@ -1342,24 +1300,41 @@ def _post_owner_answers(token: str, repo: str, items: dict, aliases: Aliases,
     return posted
 
 
+def _rolling_owner(entry: dict) -> str:
+    """Whose rolling issue an entry is: `product_of`, except that Morph's
+    screens are an issue of their own although Morph ships in brAIn's
+    release (so `product_of` answers brAIn for them). Their ``where``
+    names Morph, as every Morph row's does."""
+    product = product_of(entry)
+    if product == "brAIn" and str((entry or {}).get("where") or "").startswith("Morph"):
+        return "Morph"
+    return product
+
+
 def _retire_superseded(token: str, repo: str, items: dict, newest: dict) -> int:
     """Close the stream's older rolling issues once a new one is filed.
 
     The scorecard is one issue PER RELEASE, so every update filed a new one
     and left the last beside it, open for ever: ten scorecards in the open
     list, nine of them about releases no house runs. The newest is the
-    answer; the older ones are history, closed with a pointer to it."""
+    answer; the older ones are history, closed with a pointer to it.
+
+    Only the same add-on's: the Screens stream files one rolling issue per
+    add-on, and filing Morph's closed brAIn's (and every other add-on's)
+    as "Superseded" by an issue about something else."""
     closed = 0
+    owner = _rolling_owner(newest)
     for entry in items.values():
         if (not isinstance(entry, dict) or entry is newest
                 or entry.get("stream") != newest.get("stream")
+                or _rolling_owner(entry) != owner
                 or not entry.get("rolling") or entry.get("state") != "sent"
                 or not int(entry.get("issue") or 0)
                 or int(entry["issue"]) == int(newest.get("issue") or 0)):
             continue
         ok, err = github.close_issue(
             token, repo, int(entry["issue"]),
-            f"Superseded by #{newest.get('issue')} (brAIn "
+            f"Superseded by #{newest.get('issue')} ({owner} "
             f"{newest.get('version') or '?'}).")
         if not ok:
             entry["error"] = err
