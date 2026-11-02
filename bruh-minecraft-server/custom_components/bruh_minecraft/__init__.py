@@ -70,11 +70,16 @@ from .const import (
     SERVICE_TIME,
     SERVICE_RENAME_WORLD,
     SERVICE_ASK_CHOICE,
+    SERVICE_ATLAS,
     SERVICE_COMPANION,
     SERVICE_COMPANION_APPEAR,
     SERVICE_COMPANION_BUILD,
     SERVICE_COMPANION_EDIT,
+    SERVICE_COMPANION_PROGRESS,
+    SERVICE_GIVE_SPYGLASS,
+    SERVICE_LABEL_PLACE,
     SERVICE_LOOK_BLOCKS,
+    SERVICE_ROOM,
     SERVICE_COMPANION_HANDOVER,
     SERVICE_COMPANION_SAY,
     SERVICE_SET_COMPANION,
@@ -340,11 +345,41 @@ def _register_services(hass: HomeAssistant) -> None:
         return _strip(await _ask("companion_build", payload, timeout=60.0))
 
     async def handle_companion_edit(call: ServiceCall) -> dict[str, Any]:
-        payload = {k: call.data[k] for k in ("blocks", "fills", "player", "dimension", "title",
-                                             "name", "by") if k in call.data}
-        if not payload.get("blocks") and not payload.get("fills"):
-            raise HomeAssistantError("Give blocks or fills to change.")
+        payload = {k: call.data[k] for k in ("blocks", "fills", "shapes", "player", "dimension",
+                                             "title", "name", "by", "job") if k in call.data}
+        if not any(payload.get(k) for k in ("blocks", "fills", "shapes")):
+            raise HomeAssistantError("Give blocks, fills or shapes to change.")
         return _strip(await _ask("companion_edit", payload, timeout=180.0))
+
+    async def handle_companion_progress(call: ServiceCall) -> dict[str, Any]:
+        payload = {"to": call.data["to"], "text": _one_line(call.data["text"])}
+        for key in ("percent", "colour"):
+            if key in call.data:
+                payload[key] = call.data[key]
+        return _strip(await _ask("companion_progress", payload))
+
+    async def handle_give_spyglass(call: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("companion_spyglass", {
+            "player": call.data["player"], "name": _one_line(call.data["name"])}))
+
+    async def handle_atlas(call: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("atlas", {
+            k: call.data[k] for k in ("player", "x", "y", "z", "dimension", "radius", "query")
+            if k in call.data}, timeout=60.0))
+
+    async def handle_room(call: ServiceCall) -> dict[str, Any]:
+        if not any(k in call.data for k in ("player", "room", "x")):
+            raise HomeAssistantError("Give a player, a room id, or x, y and z.")
+        return _strip(await _ask("atlas_room", {
+            k: call.data[k] for k in ("player", "room", "x", "y", "z", "dimension")
+            if k in call.data}, timeout=60.0))
+
+    async def handle_label_place(call: ServiceCall) -> dict[str, Any]:
+        if not any(k in call.data for k in ("room", "building", "x")):
+            raise HomeAssistantError("Give a room id, a building id, or x, y and z.")
+        return _strip(await _ask("atlas_label", {
+            k: call.data[k] for k in ("room", "building", "x", "y", "z", "dimension", "name",
+                                      "by") if k in call.data}, timeout=60.0))
 
     async def handle_look_blocks(call: ServiceCall) -> dict[str, Any]:
         return _strip(await _ask("companion_look", {
@@ -352,6 +387,10 @@ def _register_services(hass: HomeAssistant) -> None:
             if k in call.data}, timeout=60.0))
 
     async def handle_undo_action(call: ServiceCall) -> dict[str, Any]:
+        if call.data.get("job"):
+            # Every edit recorded for a job, newest first (a cancelled job).
+            return _strip(await _ask("companion_undo", {"job": call.data["job"]},
+                                     timeout=150.0))
         return _strip(await _ask("companion_undo", {"id": call.data.get("id") or "last"},
                                  timeout=60.0))
 
@@ -440,6 +479,7 @@ def _register_services(hass: HomeAssistant) -> None:
     option_schema = vol.Any(cv.string, vol.Schema({
         vol.Required("label"): cv.string,
         vol.Optional("picture"): cv.string,
+        vol.Optional("item"): cv.string,
         vol.Optional("gift"): cv.string,
         vol.Optional("gift_count"): vol.All(vol.Coerce(int), vol.Range(1, 16)),
     }))
@@ -478,7 +518,7 @@ def _register_services(hass: HomeAssistant) -> None:
     ask_choice_schema = vol.Schema({
         vol.Required("player"): player_name,
         vol.Required("question"): vol.All(cv.string, vol.Length(min=1, max=200)),
-        vol.Optional("options"): vol.All([option_schema], vol.Length(min=2, max=2)),
+        vol.Optional("options"): vol.All([option_schema], vol.Length(min=2, max=3)),
         vol.Optional("person"): vol.All(cv.string, vol.Length(max=40)),
         vol.Optional("name"): speaker,
         vol.Optional("by"): by_schema,
@@ -506,13 +546,46 @@ def _register_services(hass: HomeAssistant) -> None:
         vol.Required("y2"): vol.Coerce(int), vol.Required("z2"): vol.Coerce(int),
         vol.Required("block"): cv.string,
     })
+    # A shape ({kind, block, from/to, center, radii, …}) and a job id are
+    # checked by the add-on, which expands the shape (panel/shapes.py) and
+    # says in words what is wrong with either.
+    job_id = vol.All(cv.string, vol.Length(min=1, max=40))
     companion_edit_schema = vol.Schema({
         vol.Optional("blocks"): vol.All([edit_block_schema], vol.Length(max=4096)),
         vol.Optional("fills"): vol.All([fill_schema], vol.Length(max=64)),
+        vol.Optional("shapes"): vol.All([dict], vol.Length(max=64)),
         vol.Optional("player"): player_name,
         vol.Optional("dimension"): cv.string,
         vol.Optional("title"): vol.All(cv.string, vol.Length(max=60)),
         vol.Optional("name"): speaker,
+        vol.Optional("by"): by_schema,
+        vol.Optional("job"): job_id,
+    })
+    companion_progress_schema = vol.Schema({
+        vol.Required("to"): vol.Any(player_name, vol.All([player_name], vol.Length(min=1, max=20))),
+        vol.Required("text"): vol.All(cv.string, vol.Length(min=1, max=160)),
+        vol.Optional("percent"): vol.All(vol.Coerce(float), vol.Range(0, 100)),
+        vol.Optional("colour"): colour_name,
+    })
+    give_spyglass_schema = vol.Schema({
+        vol.Required("player"): player_name,
+        vol.Required("name"): vol.All(cv.string, vol.Length(min=1, max=32)),
+    })
+    point_fields = {
+        vol.Optional("x"): vol.Coerce(float), vol.Optional("y"): vol.Coerce(float),
+        vol.Optional("z"): vol.Coerce(float), vol.Optional("dimension"): cv.string,
+    }
+    atlas_schema = vol.Schema({
+        vol.Optional("player"): player_name, **point_fields,
+        vol.Optional("radius"): vol.All(vol.Coerce(int), vol.Range(8, 256)),
+        vol.Optional("query"): vol.All(cv.string, vol.Length(max=60)),
+    })
+    room_schema = vol.Schema({
+        vol.Optional("player"): player_name, vol.Optional("room"): cv.string, **point_fields,
+    })
+    label_place_schema = vol.Schema({
+        vol.Optional("room"): cv.string, vol.Optional("building"): cv.string, **point_fields,
+        vol.Required("name"): vol.All(cv.string, vol.Length(min=1, max=60)),
         vol.Optional("by"): by_schema,
     })
     look_blocks_schema = vol.Schema({
@@ -522,7 +595,8 @@ def _register_services(hass: HomeAssistant) -> None:
         vol.Optional("size"): vol.All([vol.Coerce(int)], vol.Length(min=3, max=3)),
         vol.Optional("dimension"): cv.string,
     })
-    undo_action_schema = vol.Schema({vol.Optional("id"): cv.string})
+    undo_action_schema = vol.Schema({vol.Optional("id"): cv.string,
+                                     vol.Optional("job"): job_id})
     set_zone_schema = vol.Schema({
         vol.Required("name"): cv.string,
         vol.Optional("x"): vol.Coerce(float),
@@ -573,6 +647,12 @@ def _register_services(hass: HomeAssistant) -> None:
     register(SERVICE_COMPANION_BUILD, handle_companion_build, companion_build_schema, optional)
     register(SERVICE_COMPANION_EDIT, handle_companion_edit, companion_edit_schema, optional)
     register(SERVICE_LOOK_BLOCKS, handle_look_blocks, look_blocks_schema, only)
+    register(SERVICE_COMPANION_PROGRESS, handle_companion_progress, companion_progress_schema,
+             optional)
+    register(SERVICE_GIVE_SPYGLASS, handle_give_spyglass, give_spyglass_schema, optional)
+    register(SERVICE_ATLAS, handle_atlas, atlas_schema, only)
+    register(SERVICE_ROOM, handle_room, room_schema, only)
+    register(SERVICE_LABEL_PLACE, handle_label_place, label_place_schema, optional)
     register(SERVICE_UNDO_ACTION, handle_undo_action, undo_action_schema, optional)
     register(SERVICE_SET_ZONE, handle_set_zone, set_zone_schema, optional)
     register(SERVICE_COMPANION_HANDOVER, handle_companion_handover, handover_schema, only)

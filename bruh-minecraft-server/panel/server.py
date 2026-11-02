@@ -34,9 +34,17 @@ POST /api/companion/appear  — {"player", "seconds", "kind", "name", "colour", 
 POST /api/companion/ask     — {"player", "question", "options", "person", "name", "by"}
 POST /api/companion/build   — {"blocks", "player", "dimension", "title", "name", "by"}
 POST /api/companion/look    — {"player" | "x","y","z", "size", "dimension"}: the blocks in a box
-POST /api/companion/edit    — {"blocks", "fills", "player", "dimension", "title", "name", "by"}:
-                              a trusted edit (anything, anywhere), snapshotted for Undo
+POST /api/companion/edit    — {"blocks", "fills", "shapes", "player", "dimension", "title",
+                              "name", "by", "job"}: a trusted edit (anything, anywhere),
+                              snapshotted for Undo
 POST /api/companion/actions/<id>/undo — put back what one action changed (or "last")
+POST /api/companion/jobs/<job>/undo   — put back every edit recorded for a job
+POST /api/companion/progress — {"to", "text", "percent"}: a job's progress on the action bar
+POST /api/companion/spyglass — {"player", "name"}: one named spyglass unless they have it
+POST /api/atlas             — {"player" | "x","z","y","dimension", "radius", "query"}:
+                              buildings, rooms and roads near, where it is, a search
+POST /api/atlas/room        — {"player" | "room" | "x","y","z", "dimension"}: one room in full
+POST /api/atlas/labels      — {"room" | "building" | "x","y","z", "dimension", "name", "by"}
 POST /api/companion/zones   — a named place; DELETE /api/companion/zones/<name>
 GET  /api/companion/legacy  — the 1.17.7 engine's per-world state, for brAIn to keep;
                               POST /api/companion/legacy/retire once it has
@@ -123,6 +131,11 @@ mcmap = _load_beside("bruh_mc_map", "mcmap.py")
 # undoable action log, on top of the world's senses. Mechanics only — a
 # companion (brAIn's) decides, through the integration's services.
 companion = _load_beside("bruh_mc_companion", "companion.py")
+# What is where in the whole world (buildings, rooms, roads, labels), indexed
+# from the region files in the background; and the spyglass a player points
+# with (the bruh_companion data pack, polled over RCON).
+atlas_mod = _load_beside("bruh_mc_atlas", "atlas.py")
+spyglass = _load_beside("bruh_mc_spyglass", "spyglass.py")
 
 # ---------------------------------------------------------------------------
 # Paths / constants
@@ -3026,8 +3039,10 @@ def _world() -> "mcworld.WorldCollector":
 def _world_loop(stop) -> None:
     col = _world()
     hands = _companion()
+    index = _atlas()
+    pointer = _pointer()
     _EVENTS.start()
-    while not stop.wait(hands.interval(mcworld.LOG_INTERVAL)):
+    while not stop.wait(min(hands.interval(mcworld.LOG_INTERVAL), pointer.interval())):
         try:
             col.step()
         except Exception as exc:  # noqa: BLE001 — one bad beat is not the end
@@ -3036,6 +3051,14 @@ def _world_loop(stop) -> None:
             hands.step()
         except Exception as exc:  # noqa: BLE001 — nor is one bad beat of the companion's
             logging.warning("companion: %s", _for_log(str(exc)))
+        try:
+            pointer.step()
+        except Exception as exc:  # noqa: BLE001 — nor the spyglass's
+            logging.warning("spyglass: %s", _for_log(str(exc)))
+        try:
+            index.step()
+        except Exception as exc:  # noqa: BLE001 — nor the atlas's
+            logging.warning("atlas: %s", _for_log(str(exc)))
     col.close()
 
 
@@ -3183,7 +3206,7 @@ def _render_job(job_id: str, save_first: bool = False) -> dict:
             pass
     out = _picture_path(job_id)
     try:
-        result = mcmap.render_bounds(MC_SERVER_DIR / _level_name(), job["bounds"], out)
+        result = mcmap.render_bounds(world_dir(), job["bounds"], out)
     except OSError as exc:
         result = {"error": f"The picture could not be written: {exc}"}
     if result.get("error"):
@@ -3216,7 +3239,7 @@ async def api_builds_render(request: web.Request) -> web.Response:
 # which reach the routes below. With no brAIn installed the panel shows no
 # companion and nothing here logs a word: a server is still a server.
 # ---------------------------------------------------------------------------
-GAME_EVENTS = ("join", "leave", "death", "advancement", "chat", "place")
+GAME_EVENTS = ("join", "leave", "death", "advancement", "chat", "place", "point")
 EVENT_QUEUE = 500
 
 
@@ -3307,7 +3330,12 @@ def game_event(ev: dict, verified=None, world: str = "") -> tuple[str, dict] | N
     elif kind == "place":
         data["place"] = str(ev.get("place") or "")[:60]
         data["dimension"] = ev.get("dimension")
-    if kind in ("chat", "join") and verified is not None:
+    elif kind == "point":
+        # A spyglass use (spyglass.Pointer): what was hit, and where that is.
+        data["name"] = ev.get("shown") or ev.get("player")
+        for key in ("dimension", "target", "building", "room", "eye", "yaw", "pitch"):
+            data[key] = ev.get(key)
+    if kind in ("chat", "join", "point") and verified is not None:
         ok, why = verified(ev.get("player"))
         data["verified"] = bool(ok)
         if not ok:
@@ -3341,31 +3369,59 @@ def _companion_snapshot() -> str | None:
     return None if proc.returncode == 0 else (proc.stdout or proc.stderr or "")[-200:]
 
 
-def _companion_reader(dimension: str, box: tuple) -> dict | None:
-    """The saved block states in a box, for a look and for a trusted edit's
-    undo snapshot: the world is saved first (`save-all flush` waits for the
-    write), then read from its region files (mcmap). None when it cannot be
-    read; never a guess."""
+# A save is asked for at most this often: a large edit reads its undo
+# snapshot one chunk column at a time, and the spyglass reads before each
+# ray, and one `save-all flush` covers them all.
+SAVE_FRESH_S = 3.0
+_SAVED: dict = {"at": -1e12}
+
+
+def save_world() -> None:
+    """`save-all flush` (it waits for the write) unless one just ran."""
+    now = time.monotonic()
+    if now - _SAVED["at"] < SAVE_FRESH_S:
+        return
     try:
         with Rcon(RCON_HOST, _rcon_password(), port=RCON_PORT, timeout=10) as r:
             r.command("save-all flush")
+        _SAVED["at"] = time.monotonic()
     except Exception:  # noqa: BLE001 — read what is on disk; a stale read is
-        # still the world as of the last save, and a cell the edit changes is
+        # still the world as of the last save, and a cell an edit changes is
         # checked again by the undo before it is put back.
         log.debug("save-all before a block read did not answer")
-    region = mcmap.region_dir(MC_SERVER_DIR / _level_name(), dimension)
+
+
+def world_dir() -> Path:
+    return MC_SERVER_DIR / _level_name()
+
+
+def _companion_reader(dimension: str, box: tuple):
+    """The saved block states in a box, for a look and for a trusted edit's
+    undo snapshot: the world is saved first, then read from its region
+    files (mcmap). When it cannot be read, mcmap's `Unread` says which of
+    the causes it was; never a guess."""
+    save_world()
+    region = mcmap.region_dir(world_dir(), dimension)
     try:
         return mcmap.box_states(region, *box, limit=None)
-    except (OSError, ValueError):
-        return None
+    except (OSError, ValueError) as exc:
+        return mcmap.Unread("unreadable", f"The saved world could not be read ({exc}).")
 
 
-def _companion_modern() -> bool:
+def _server_version() -> str | None:
     meta = _read_json(MC_SERVER_DIR / ".server-meta.json", {})
     version = meta.get("version") if isinstance(meta, dict) else None
     if not version:
         version = _read_json(MC_PANEL_STATE / "stats.json", {}).get("version")
-    return companion.modern_text(version)
+    return version
+
+
+def _companion_modern() -> bool:
+    return companion.modern_text(_server_version())
+
+
+def _companion_item_syntax() -> str:
+    return companion.item_syntax(_server_version())
 
 
 # Whether brAIn is installed: its integration's services are on Core
@@ -3401,11 +3457,44 @@ def _companion() -> "companion.Companion":
     col = _world()
     if hands is None or hands.col is not col:
         hands = companion.Companion(col, emit=_companion_emit, snapshot=_companion_snapshot,
-                                    modern=_companion_modern, reader=_companion_reader)
+                                    modern=_companion_modern, reader=_companion_reader,
+                                    item_syntax=_companion_item_syntax)
         col.on_event = _on_world_event
         col.extra = lambda: {"companion": hands.brief()}
         _COMPANION["hands"] = hands
     return hands
+
+
+_ATLAS: dict = {"atlas": None, "pointer": None}
+
+
+def _atlas_players() -> list[dict]:
+    col = _world()
+    return [{"name": n, "dimension": p.get("dimension"), "pos": p.get("pos")}
+            for n, p in list(col.players.items()) if p.get("pos")]
+
+
+def _atlas() -> "atlas_mod.Atlas":
+    """The one atlas (made on first use; it indexes on the world thread)."""
+    index = _ATLAS["atlas"]
+    col = _world()
+    if index is None:
+        index = atlas_mod.Atlas(world_dir, col.data_dir, players=_atlas_players,
+                                places=col.places)
+        _ATLAS["atlas"] = index
+    col.where = lambda dim, pos: index.here(dim, *pos)
+    return index
+
+
+def _pointer() -> "spyglass.Pointer":
+    pointer = _ATLAS["pointer"]
+    if pointer is None:
+        index = _atlas()
+        pointer = spyglass.Pointer(_world(), world_dir=world_dir, emit=_on_world_event,
+                                   save=save_world,
+                                   here=lambda dim, x, y, z: index.here(dim, x, y, z))
+        _ATLAS["pointer"] = pointer
+    return pointer
 
 
 def _action_id(request: web.Request) -> str:
@@ -3543,7 +3632,7 @@ async def api_companion_edit(request: web.Request) -> web.Response:
         act = await asyncio.to_thread(
             _companion().edit, body.get("blocks"), body.get("fills"), body.get("player"),
             body.get("dimension"), body.get("title"), str(body.get("by") or ""),
-            body.get("name"))
+            body.get("name"), body.get("shapes"), body.get("job"))
     except companion.CompanionError as exc:
         return _companion_error(exc)
     _world().write()
@@ -3551,7 +3640,70 @@ async def api_companion_edit(request: web.Request) -> web.Response:
     if act.get("backup_note"):
         note += " " + act["backup_note"]
     return web.json_response({"action": {k: v for k, v in act.items() if k != "cells"},
-                              "changed": act["changed"], "note": note})
+                              "changed": act["changed"], "job": act.get("job"), "note": note})
+
+
+async def api_companion_progress(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    try:
+        result = await asyncio.to_thread(_companion().progress, body.get("to"), body.get("text"),
+                                         body.get("percent"), body.get("colour"))
+    except companion.CompanionError as exc:
+        return _companion_error(exc)
+    return web.json_response(result)
+
+
+async def api_companion_spyglass(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    try:
+        result = await asyncio.to_thread(_companion().give_spyglass, body.get("player"),
+                                         body.get("name"))
+    except companion.CompanionError as exc:
+        return _companion_error(exc)
+    return web.json_response(result)
+
+
+async def api_companion_job_undo(request: web.Request) -> web.Response:
+    try:
+        result = await asyncio.to_thread(_companion().undo_job, request.match_info["job"])
+    except companion.CompanionError as exc:
+        return _companion_error(exc)
+    _world().write()
+    return web.json_response(result)
+
+
+async def api_atlas(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    try:
+        result = await asyncio.to_thread(
+            _atlas().query, body.get("player"), body.get("x"), body.get("z"), body.get("y"),
+            body.get("dimension"), body.get("radius"), body.get("query"))
+    except atlas_mod.AtlasError as exc:
+        return _companion_error(exc)
+    return web.json_response(result)
+
+
+async def api_atlas_room(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    try:
+        result = await asyncio.to_thread(
+            _atlas().room, body.get("player"), body.get("room"), body.get("x"), body.get("y"),
+            body.get("z"), body.get("dimension"))
+    except atlas_mod.AtlasError as exc:
+        return _companion_error(exc)
+    return web.json_response(result)
+
+
+async def api_atlas_label(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    try:
+        result = await asyncio.to_thread(
+            _atlas().label, body.get("name"), body.get("by"), body.get("room"),
+            body.get("building"), body.get("x"), body.get("y"), body.get("z"),
+            body.get("dimension"))
+    except atlas_mod.AtlasError as exc:
+        return _companion_error(exc)
+    return web.json_response(result)
 
 
 async def api_companion_undo(request: web.Request) -> web.Response:
@@ -3732,6 +3884,12 @@ def build_app() -> web.Application:
     app.router.add_post("/api/companion/look", api_companion_look)
     app.router.add_post("/api/companion/edit", api_companion_edit)
     app.router.add_post("/api/companion/actions/{id}/undo", api_companion_undo)
+    app.router.add_post("/api/companion/jobs/{job}/undo", api_companion_job_undo)
+    app.router.add_post("/api/companion/progress", api_companion_progress)
+    app.router.add_post("/api/companion/spyglass", api_companion_spyglass)
+    app.router.add_post("/api/atlas", api_atlas)
+    app.router.add_post("/api/atlas/room", api_atlas_room)
+    app.router.add_post("/api/atlas/labels", api_atlas_label)
     app.router.add_post("/api/companion/zones", api_companion_zone_save)
     app.router.add_delete("/api/companion/zones/{name}", api_companion_zone_delete)
     app.router.add_get("/api/companion/legacy", api_companion_legacy)

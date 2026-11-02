@@ -81,12 +81,22 @@ SERVICE_COMPANION_BUILD = "companion_build"
 # anything, and to understand a room before changing it.
 SERVICE_COMPANION_EDIT = "companion_edit"
 SERVICE_LOOK_BLOCKS = "look_blocks"
+# brAIn's desk: a job's progress on the action bar, and the spyglass a
+# player points with (the bruh_companion data pack; bruh_minecraft_point).
+SERVICE_COMPANION_PROGRESS = "companion_progress"
+SERVICE_GIVE_SPYGLASS = "give_spyglass"
+# The atlas (panel/atlas.py): buildings, rooms, roads and labels, indexed
+# from the region files in the background.
+SERVICE_ATLAS = "atlas"
+SERVICE_ROOM = "room"
+SERVICE_LABEL_PLACE = "label_place"
 SERVICE_UNDO_ACTION = "undo_action"
 SERVICE_SET_ZONE = "set_zone"
 SERVICE_COMPANION_HANDOVER = "companion_handover"
 SERVICE_RENAME_WORLD = "rename_world"
 # Fired by the add-on for every game happening it reads, whether or not
 # anything listens: neutral facts, no scores, caps or persona (DOCS.md, "The
-# companion contract"). `answer` is a choice pad being answered.
-GAME_EVENTS = ("chat", "join", "leave", "death", "advancement", "place", "answer")
+# companion contract"). `answer` is a choice pad being answered, `point` a
+# spyglass use.
+GAME_EVENTS = ("chat", "join", "leave", "death", "advancement", "place", "answer", "point")
 EVENT_PREFIX = "bruh_minecraft_"

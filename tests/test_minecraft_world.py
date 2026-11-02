@@ -50,9 +50,11 @@ class FakeServer:
         self.up = True
         self.players = {
             "Alex": {"Pos": "[100.5d, 64.0d, -20.25d]", "Dimension": '"minecraft:overworld"',
-                     "Health": "18.5f", "foodLevel": "17", "playerGameType": "0"},
+                     "Health": "18.5f", "foodLevel": "17", "playerGameType": "0",
+                     "Rotation": "[-90.0f, 10.5f]"},
             ".KidPlays": {"Pos": "[-8.0d, 70.0d, 3.9d]", "Dimension": '"minecraft:the_nether"',
-                          "Health": "20.0f", "foodLevel": "20", "playerGameType": "1"},
+                          "Health": "20.0f", "foodLevel": "20", "playerGameType": "1",
+                          "Rotation": "[180.0f, 0.0f]"},
         }
         self.daytime = 13000
         self.day = 41

@@ -86,7 +86,8 @@ class Session:
             pos = self.world.get(name.strip('"'))
             value = {"Pos": f"[{pos[0]}d, {pos[1]}d, {pos[2]}d]",
                      "Dimension": '"minecraft:overworld"', "Health": "20.0f",
-                     "foodLevel": "20", "playerGameType": "0"}[path]
+                     "foodLevel": "20", "playerGameType": "0",
+                     "Rotation": "[0.0f, 0.0f]"}[path]
             return f"{name} has the following entity data: {value}"
         return "Test failed"
 
