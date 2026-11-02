@@ -7389,8 +7389,10 @@ async def h_change_mcjob_undo(request: web.Request) -> web.Response:
     try:
         answer = await ha_data.call_with_response(
             "brain", "minecraft_job", {"action": "undo", "job": job})
-    except Exception as exc:  # noqa: BLE001 — said, never a 500
-        raise web.HTTPBadGateway(text=f"The game did not answer: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001 — said, never a 500; the detail is logged
+        log.warning("undo of Minecraft job %s: %s", job, exc)
+        raise web.HTTPBadGateway(
+            text="The game did not answer, so nothing was put back. Try again in a minute.") from exc
     if isinstance(answer, dict) and answer.get("error"):
         raise web.HTTPConflict(text=str(answer["error"]))
     n = int((answer or {}).get("undone") or 0) if isinstance(answer, dict) else 0

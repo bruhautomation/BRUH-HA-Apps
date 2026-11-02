@@ -91,7 +91,6 @@ MAX_JOBS = 50                     # jobs kept in jobs.json (every active one, al
 MAX_INBOX = 20
 MAX_EDITS = 200
 JOB_ACTIVE = ("queued", "running")
-JOB_STATUSES = ("queued", "running", "done", "failed", "cancelled")
 JOB_ID = re.compile(r"j[0-9a-f]{6}")
 SPYGLASS_NAME_MAX = 32
 
