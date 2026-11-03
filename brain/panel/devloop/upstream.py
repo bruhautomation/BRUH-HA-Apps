@@ -130,8 +130,8 @@ NOISE = frozenset({"declined", "not_brain", "duplicate"})
 # the list: a request declined once and asked again is the owner saying it
 # still matters, and a pane named in a declined report must not swallow the
 # next, different request about the same pane (it did, for Settings).
-STAND_DOWN_STREAMS = frozenset({"gaps", "ideas", "design", "unmet"})
-CLAUDE_STREAMS = frozenset({"gaps", "ideas", "design", "look"})
+STAND_DOWN_STREAMS = frozenset({"gaps", "ideas", "design", "unmet", "walkthrough"})
+CLAUDE_STREAMS = frozenset({"gaps", "ideas", "design", "walkthrough", "look"})
 # A stream is slowed when at least SLOW_NOISE_SHARE of its last
 # SLOW_WINDOW resolved reports were noise: its interval doubles, capped at
 # SLOW_MAX_HOURS (or its own interval, if that is already longer).
