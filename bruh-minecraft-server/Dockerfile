@@ -8,7 +8,7 @@ ARG ADDON_VERSION=dev
 # BRUH Sight, the server-side plugin that lets the panel (and brAIn) see the
 # live world: built here, copied into plugins/ by run.sh on Paper and its
 # forks. The jar is plain bytecode, so one build serves every architecture.
-FROM gradle:8.14.3-jdk21-alpine AS sight
+FROM gradle:9.8.2-jdk21-alpine AS sight
 WORKDIR /src
 COPY sight/ /src/
 RUN gradle --no-daemon -q jar && cp build/libs/BruhSight.jar /BruhSight.jar
