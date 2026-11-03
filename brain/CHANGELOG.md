@@ -12,6 +12,8 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ### Changed
 
+- The header clock shows the date and AM/PM in a 12-hour preference, with the date stacked over the time on a phone (#567).
+- Settings › Dashboard › Header tabs points to where the top bar's mark is chosen (#568).
 - Findings are asked to open with what is affected now, to do their own lookups, and to put a count beside the device's usual rate (#581, #603, #627).
 - Insight cards must make sense to a reader who saw no earlier card, with no chains of sensor names (#584, #628).
 - Steps and notification bodies are cut on a whole sentence, not mid-text with an ellipsis (#629).
@@ -22,6 +24,7 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ### Fixed
 
+- Morph's room scene buttons are 40px tall on a phone (#646).
 - A finding whose own conclusion says nothing is needed is no longer filed or kept open (#604), and an investigation reply with no step is not shown as a finding (#616).
 - Code names such as event and setting keys no longer appear in finding text (#618).
 - The "you keep undoing" check no longer blames an automation that only reacts to a wall switch or remote press (#626).
