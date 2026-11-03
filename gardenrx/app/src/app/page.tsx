@@ -3,6 +3,7 @@ import { SPRAY_RATING, LOCATION } from '@/config/thresholds';
 import { getSprayRecordsForCrop, computeCoverage } from '@/lib/protection';
 import { buildPhiByProductGroup, computeCropPhi } from '@/lib/phi';
 import { harvestSeason } from '@/lib/harvest-windows';
+import { needsCoverageNow } from '@/lib/coverage-season';
 import { applyPhenology } from '@/lib/phenology';
 import {
   fetchCrops,
@@ -112,9 +113,12 @@ export default async function TodayPage() {
     );
 
     const inSeason = harvestSeason(crop.id, cropVarieties, now).inSeason;
+    // Dormant and post-harvest crops are resting: no coverage nags for them.
+    const active = needsCoverageNow(stages);
 
     return {
       crop,
+      active,
       varieties: cropVarieties,
       stages,
       inBloom,
@@ -148,6 +152,7 @@ export default async function TodayPage() {
 
   // Crops whose coverage has lapsed (red) — or brand-new crops with no history.
   const urgent = cropData
+    .filter((c) => c.active)
     .map((c) => {
       const fc = c.fungicideCoverage,
         ic = c.insecticideCoverage;
@@ -195,6 +200,7 @@ export default async function TodayPage() {
   // As-needed crops are intentionally manual, so they never count here.
   const unprotectedCount = cropData.filter(
     (c) =>
+      c.active &&
       (c.monitorFung || c.monitorIns) &&
       (!c.monitorFung || !c.fungicideCoverage) &&
       (!c.monitorIns || !c.insecticideCoverage)
@@ -203,6 +209,7 @@ export default async function TodayPage() {
   // ── Needs attention — lapsed (red) or degrading (yellow) ──
   const attention: AttentionItem[] = [];
   for (const c of cropData) {
+    if (!c.active) continue;
     const due: string[] = [];
     const soon: string[] = [];
     const fc = c.fungicideCoverage,
