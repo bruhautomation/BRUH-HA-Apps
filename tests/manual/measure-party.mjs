@@ -60,9 +60,6 @@ window.fetch = async (url) => {
 const failures = [];
 const note = (label, message) => failures.push(`${label}: ${message}`);
 
-const overlap = (a, b) => Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1
-  && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1;
-
 const browser = await chromium.launch(
   process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH, args: ['--no-sandbox'] } : {});
 for (const scheme of ['dark', 'light']) {
