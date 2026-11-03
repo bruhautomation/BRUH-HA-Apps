@@ -5,6 +5,16 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.19.3
+
+### Fixed
+
+- The atlas searches names and signs across the whole world when given only a query (#647).
+- `minecraft_status` names the running world (#650).
+- The add-on keeps one RCON connection instead of opening one every 15 seconds, and command-block output is switched off once per world, so the server log is no longer flooded (#648).
+- Edits that fail now say why: renamed blocks suggest the new id, a dropped answer is retried and explained, and shape errors show a valid example (#649).
+- The atlas no longer reads a chunk it cannot understand as empty (#620).
+
 ## 1.19.2
 
 ### Changed
