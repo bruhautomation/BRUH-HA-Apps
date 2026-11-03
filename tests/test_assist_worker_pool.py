@@ -393,6 +393,57 @@ def test_reap_kills_idle_and_caps_pool(tmp_path, monkeypatch):
         shutdown(pool)
 
 
+def test_reap_never_kills_a_worker_in_the_middle_of_a_turn(tmp_path, monkeypatch):
+    """The housekeeping tick runs on the main loop while a turn runs on its
+    own thread. A warm worker last used just under the idle window (or one
+    near its maximum age) that takes a request used to be SIGKILLed by the
+    next tick mid-turn — "stdout closed, exit -9", answered `partial` if it
+    had reached a tool. A worker that is in a turn is not idle, whatever
+    its clock says; the next tick after the turn is soon enough."""
+    import threading
+
+    mod = load_pool_module(
+        tmp_path, monkeypatch, BRAIN_ASSIST_LIMIT_FLOOR="3"
+    )
+    monkeypatch.setenv("FAKE_MODE", "hang")
+    pool = mod.Pool()
+    try:
+        req = make_request("are you there?", conv="busy", timeout=4)
+        turn = threading.Thread(target=pool.handle, args=(req,), daemon=True)
+        turn.start()
+        deadline = time.time() + 10
+        worker = None
+        while time.time() < deadline:
+            worker = pool.workers.get("busy")
+            if worker is not None and worker.lock.locked():
+                break
+            time.sleep(0.02)
+        assert worker is not None and worker.lock.locked(), "turn never started"
+        # Its clock says idle past the window and past its maximum age.
+        worker.last_used -= mod.WORKER_IDLE_REAP + 1
+        worker.created -= mod.WORKER_MAX_AGE + 1
+        pool.reap()
+        assert worker.alive(), "the reaper killed a worker mid-turn"
+        assert pool.workers.get("busy") is worker
+        turn.join(timeout=20)
+    finally:
+        shutdown(pool)
+
+
+def test_reap_reaps_the_same_worker_once_its_turn_is_over(tmp_path, monkeypatch):
+    mod = load_pool_module(tmp_path, monkeypatch)
+    pool = mod.Pool()
+    try:
+        pool.handle(make_request("hi", conv="after"))
+        worker = pool.workers["after"]
+        assert not worker.busy
+        worker.last_used -= mod.WORKER_IDLE_REAP + 1
+        pool.reap()
+        assert "after" not in pool.workers
+    finally:
+        shutdown(pool)
+
+
 def test_no_map_prompt_without_area_cache(tmp_path, monkeypatch):
     mod = load_pool_module(tmp_path, monkeypatch)
     pool = mod.Pool()
