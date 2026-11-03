@@ -14710,6 +14710,22 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
         await _outcome(signal, "refused", run_id, now, why, refines,
                        said=waits)
         return False
+    # A reply whose own step says nothing is needed is a headline withdrawn
+    # by its text (#604), and one with no step at all leaves the reader not
+    # knowing whether to act (#616): neither is filed. A row brAIn filed is
+    # held with the reply's sentence, so the person can still put it back.
+    code, said = resident.unfinished(case)
+    if code:
+        log.info("an investigation of %s was not a finding (%s)",
+                 signal.get("subject"), code)
+        if code == "nothing_needed" and refining is not None:
+            held = await asyncio.to_thread(findings_store.hold_after_look,
+                                           refines, said, run_id, now)
+            await _outcome(signal, "held" if held else "moved_on", run_id,
+                           now, why, refines, row=held, said=said)
+            return False
+        await _outcome(signal, "no_claim", run_id, now, why, refines)
+        return False
     # The signal that started it, folded in — because "what made brAIn look"
     # is evidence about the claim and the run has no way to cite it: it was
     # handed the line rather than reading it off the house.

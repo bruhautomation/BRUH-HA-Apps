@@ -115,6 +115,26 @@ ONE_STEP = (
     "can read settles it, the step is the one question only the household "
     "can answer, asked once.")
 
+# What a finding owes the person who reads it on a phone (#581, #603, #604,
+# #616, #627): the effect first, the lookup already done, a count beside its
+# usual, and nothing filed whose own conclusion is "nothing is needed". Held
+# by tests/test_finding_voice.py in the investigation and the refine, and by
+# `resident.unfinished` where a reply that broke the last two is stored.
+FINDING_VOICE = (
+    "WHAT A FINDING OWES THE READER: (1) The first sentence of \"detail\" "
+    "says what is affected or at risk NOW, in household words with no units, "
+    "hex codes or version strings; when nothing is affected now, make no "
+    "claim. (2) Never send the household to look up what you can read "
+    "(an address, a MAC, which webhook or source, which device): read it and "
+    "write the value, or say plainly that you tried and could not find it. "
+    "A sentence never has a missing subject or a placeholder. (3) A count "
+    "(drops, failures, errors) is written beside that device's own usual "
+    "rate, or whether being off or in standby is normal for it; a count "
+    "with no comparison is not a finding. (4) Make the call yourself: never "
+    "\"if it is still so tomorrow\" or \"let me know\". When your "
+    "conclusion is that nothing is needed, make no claim; a claim ends in "
+    "one step, or in the one question only the household can answer.")
+
 HONEST_EMPTY = (
     "Nothing, or \"unknown\", is a good answer when that is what the data "
     "says. A guess dressed as a finding is the worst answer, because it goes "

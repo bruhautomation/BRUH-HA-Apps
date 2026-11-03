@@ -672,7 +672,7 @@ def compose(rows: list[dict], held: bool = False) -> tuple[str, str]:
         # Counted, never truncated: a list that stops mid-way reads as
         # the whole of what happened.
         lines.append(f"…and {n - LINES_MAX} more on the Findings tab.")
-    return title, textclip.clip("\n".join(lines), MESSAGE_MAX)
+    return title, textclip.shorten("\n".join(lines), MESSAGE_MAX)
 
 
 def _ordinal(n: int) -> str:
@@ -709,7 +709,7 @@ def compose_escalation(row: dict, tz: dt.tzinfo | None = None) -> tuple[str, str
     if last:
         lines.append(f"{assistant()} will not ask about this again; it stays "
                      "on Needs you.")
-    return title, textclip.clip("\n".join(lines), MESSAGE_MAX)
+    return title, textclip.shorten("\n".join(lines), MESSAGE_MAX)
 
 
 
@@ -984,7 +984,7 @@ def compose_released(rows: list[dict]) -> tuple[str, str]:
              for r in rows[:LINES_MAX]]
     if n > LINES_MAX:
         lines.append(f"…and {n - LINES_MAX} more on the Findings tab.")
-    return title, textclip.clip("\n".join(lines), MESSAGE_MAX)
+    return title, textclip.shorten("\n".join(lines), MESSAGE_MAX)
 
 
 # ---------------------------------------------------------------------------
@@ -999,12 +999,12 @@ def compose_released(rows: list[dict]) -> tuple[str, str]:
 
 def compose_brief(body: str) -> tuple[str, str]:
     """The morning brief: a paragraph, under a title that says what it is."""
-    return f"{assistant()} this morning", textclip.clip(str(body or "").strip(), MESSAGE_MAX)
+    return f"{assistant()} this morning", textclip.shorten(str(body or "").strip(), MESSAGE_MAX)
 
 
 def compose_weekly(body: str) -> tuple[str, str]:
     """The weekly report, likewise."""
-    return f"{assistant()}: your week", textclip.clip(str(body or "").strip(), MESSAGE_MAX)
+    return f"{assistant()}: your week", textclip.shorten(str(body or "").strip(), MESSAGE_MAX)
 
 
 __all__ = [

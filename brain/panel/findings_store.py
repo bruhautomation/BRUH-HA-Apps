@@ -1145,7 +1145,7 @@ def _clean_actions(value) -> list[dict]:
             "label": label,
             "shape": shape,
             "consent": item.get("consent", True) is not False,
-            "detail": textclip.clip(str(item.get("detail") or "").strip(), MAX_ACTION_DETAIL),
+            "detail": textclip.shorten(str(item.get("detail") or "").strip(), MAX_ACTION_DETAIL),
         })
         if len(out) >= MAX_ACTIONS:
             break

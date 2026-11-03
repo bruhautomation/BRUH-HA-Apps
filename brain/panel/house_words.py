@@ -796,6 +796,11 @@ _BUILD_RE = re.compile(
     r"\b(v?\d+(?:\.\d+){1,3})[-+](?:build[.\-]?\d+[\w.]*|g?[0-9a-f]{7,}|"
     r"\d{6,}|[a-z]+\d*\.[0-9a-f]{6,})\b", re.I)
 _MCP_RE = re.compile(r"`?\bmcp__\w+`?")
+# A snake_case word with no dot: an event, a service call or a setting's key
+# (`bruh_minecraft_moment`), which is what the code calls a thing and never
+# what the house does (#618). A dotted id (`sensor.hall_motion`) is an
+# entity and is `entities`' to name or leave.
+_SNAKE_RE = re.compile(r"`?(?<![\w.])[a-z][a-z0-9]*(?:_[a-z0-9]+)+(?![\w]|\.\w)`?")
 _TOOL_NAMES: frozenset | None = None
 _TOOL_FILES = ("/opt/ha-mcp-server/ha_mcp_server.py",)
 
@@ -876,6 +881,7 @@ def technical(text: str, files: bool = True) -> tuple[str, list[str]]:
             out = tools.sub(swap("one of brAIn's tools"), out)
         if files:
             out = _FILE_RE.sub(swap("a configuration file"), out)
+        out = _SNAKE_RE.sub(swap("an internal name"), out)
     except Exception:  # noqa: BLE001 — a cleanup must never cost the row
         return text, []
     if not found:
