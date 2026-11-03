@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.5
+
+### Fixed
+
+- Today no longer says coverage is due, or suggests a spray, for crops that are dormant or past harvest (#654).
+
+### Security
+
+- Updated the bundled HTTP server library used by the MCP SDK to 2.1.6, which closes a static-path bypass advisory.
+
 ## 0.1.4
 
 ### Changed
