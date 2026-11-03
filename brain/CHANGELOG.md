@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.2.4
+
+### Added
+
+- `bambu_status` with `files=true` names the slice already made from each file (#653).
+
 ## 4.2.3
 
 ### Fixed
