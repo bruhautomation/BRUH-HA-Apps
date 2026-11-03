@@ -27,7 +27,7 @@ sys.path.insert(0, str(HERE))
 
 from test_minecraft_companion_edit import section_with_states  # noqa: E402
 import test_minecraft_companion as _hands  # noqa: E402
-from test_minecraft_layout import TS, chunk_nbt, write_region  # noqa: E402
+from test_minecraft_layout import TS, chunk_nbt, nbt_root, write_region  # noqa: E402
 from test_minecraft_world import PANEL  # noqa: E402
 
 
@@ -155,6 +155,16 @@ class TestTheIndex(AtlasBase):
         self.assertGreater(self.atlas.pending(), 0)
 
 
+class TestAChunkOfAnUnknownLayout(AtlasBase):
+    def test_it_is_recorded_as_unreadable_not_as_an_empty_chunk(self):
+        write_region(self.region, {(0, 0): nbt_root({"DataVersion": ("int", 9999),
+                                                     "Mystery": ("int", 1)})})
+        self.index()
+        got = self.atlas.summary(OW, 0, 0)
+        self.assertIn("layout", got.get("error", ""))
+        self.assertEqual(self.atlas.query(x=7, z=5)["buildings"], [])
+
+
 class TestBuildingsAndRooms(AtlasBase):
     def setUp(self):
         super().setUp()
@@ -225,6 +235,25 @@ class TestBuildingsAndRooms(AtlasBase):
             self.atlas.room(x=40, y=65, z=40)
         with self.assertRaises(atlas.AtlasError):
             self.atlas.room(room="r:overworld:not:an:id")
+
+
+class TestNameSearchNeedsNoPoint(AtlasBase):
+    """The service advertises a search of names and signs; a query with no
+    player and no point searches the whole dimension instead of refusing."""
+
+    def test_a_query_alone_searches_signs_and_names_world_wide(self):
+        self.index()
+        self.atlas.label("Ben's room", x=4, y=65, z=6)
+        got = self.atlas.query(query="ben")
+        self.assertEqual({m["name"] for m in got["matches"]},
+                         {"Ben's room", "Ben's workshop"})
+        sign = next(m for m in got["matches"] if m["kind"] == "sign")
+        self.assertEqual((sign["x"], sign["z"]), (10, 3))
+        self.assertEqual(got["dimension"], OW)
+
+    def test_no_query_and_no_point_still_says_where_to_look(self):
+        with self.assertRaises(atlas.AtlasError):
+            self.atlas.query()
 
 
 class TestTheSnapshotKnowsWhereEveryoneIs(unittest.TestCase):

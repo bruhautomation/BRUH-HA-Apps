@@ -199,6 +199,41 @@ class TestATrustedEdit(EditingHandsBase):
         self.assertNotIn("op Steve", str(err.exception))
 
 
+class TestAFailedEditSaysWhatToDo(EditingHandsBase):
+    def test_a_renamed_block_names_its_replacement_and_nothing_stays_changed(self):
+        self.join(DAD)
+        plain = self.world.reply
+        self.world.reply = lambda cmd: ("Unknown block type 'minecraft:chain'"
+                                        if "minecraft:chain" in cmd else plain(cmd))
+        with self.assertRaises(companion.CompanionError) as err:
+            self.hands.edit(blocks=[{"x": 2, "y": 64, "z": 0, "block": "chain[axis=y]"}])
+        self.assertIn("minecraft:iron_chain", str(err.exception))
+        self.assertEqual(self.placed(), {})
+
+    def test_a_dropped_answer_is_asked_again_once(self):
+        self.join(DAD)
+        calls = {"n": 0}
+        session = self.hands.col.session
+        command = session.command
+
+        def flaky(cmd):
+            if "setblock" in cmd:
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    raise OSError("connection reset")
+            return command(cmd)
+        session.command = flaky
+        act = self.hands.edit(blocks=[{"x": 2, "y": 64, "z": 0, "block": "dirt"}])
+        self.assertEqual(act["status"], "done")
+
+    def test_no_answer_at_all_is_explained(self):
+        self.join(DAD)
+        self.hands.col.session.command = lambda cmd: (_ for _ in ()).throw(OSError("gone"))
+        with self.assertRaises(companion.CompanionError) as err:
+            self.hands.edit(blocks=[{"x": 2, "y": 64, "z": 0, "block": "dirt"}])
+        self.assertIn("did not answer", str(err.exception))
+
+
 class TestTheCompanionsOwnBuildKeepsItsRules(EditingHandsBase):
     def test_a_build_beside_a_build_is_still_refused(self):
         self.join(KAZ)

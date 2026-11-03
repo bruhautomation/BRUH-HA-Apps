@@ -448,6 +448,9 @@ class Atlas:
         region = mcmap.region_dir(world, dim_id(key))
         root, status = mcmap.load_chunk(region, cx, cz)
         reg = self._region(key, cx >> 5, cz >> 5)
+        if root is not None and not mcmap.has_sections(root):
+            # A layout this reader does not know is not an empty chunk (#620).
+            root, status = None, "unreadable:layout this panel does not know"
         if root is None:
             reg["chunks"][(cx, cz)] = {"ts": int(ts), "cx": cx, "cz": cz, "error": status}
         else:
@@ -771,6 +774,9 @@ class Atlas:
         room it is in (`here`), and a search of names and signs (`query`)."""
         with self._lock:
             self._root()
+            if query and not player and x is None and z is None:
+                return self._search_world(dim_key(str(dimension or "minecraft:overworld")),
+                                          str(query))
             key, fx, fy, fz = self._where(player, x, y, z, dimension)
             try:
                 rad = max(8, min(QUERY_RADIUS_MAX, int(radius or QUERY_RADIUS)))
@@ -812,6 +818,34 @@ class Atlas:
                 out["query"] = str(query)[:NAME_MAX]
                 out["matches"] = self._search(key, str(query), buildings, cx1, cz1, cx2, cz2)
             return out
+
+    def _search_world(self, key: str, text: str) -> dict[str, Any]:
+        """A name search with no place to look: the named places and signs of
+        the whole dimension, from what is already indexed."""
+        words = [w for w in re.findall(r"[\w']+", text.lower()) if w]
+        dim = dim_id(key)
+        out: list[dict[str, Any]] = []
+        if self.last_scan < 0:
+            self._scan()
+
+        def hit(name: Any) -> bool:
+            low = str(name or "").lower()
+            return bool(words) and all(w in low for w in words)
+        for lab in self.labels():
+            if lab.get("dimension") == dim and hit(lab["name"]):
+                out.append({"kind": "place" if lab.get("target") == "point" else lab["target"],
+                            "name": lab["name"], "x": lab["x"], "y": lab["y"], "z": lab["z"]})
+        for rx, rz in sorted(tuple(int(n) for n in name[2:].split("."))
+                             for name in self._index(key)["regions"]):
+            for s in self._region(key, rx, rz)["chunks"].values():
+                if s.get("error"):
+                    continue
+                for t in s.get("things") or []:
+                    if t["id"] == "sign" and hit(t.get("text")):
+                        out.append({"kind": "sign", "name": t["text"], "x": t["x"],
+                                    "y": t["y"], "z": t["z"]})
+        return {"dimension": dim, "query": text[:NAME_MAX], "matches": out[:40],
+                "indexed": {"pending": len(self.queue)}}
 
     def _search(self, key: str, text: str, buildings: list[dict[str, Any]],
                 cx1: int, cz1: int, cx2: int, cz2: int) -> list[dict[str, Any]]:

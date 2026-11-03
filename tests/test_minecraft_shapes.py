@@ -97,6 +97,19 @@ class TestTheShapes(unittest.TestCase):
             self.cells({"kind": "box", "from": [0, 0, 0], "to": [500, 0, 0]}, base=[0, 64, 0])
 
 
+class TestARefusalShowsAValidShape(unittest.TestCase):
+    def test_each_shape_error_carries_a_working_example(self):
+        for bad in ({"kind": "torus"}, {"kind": "ellipsoid", "center": [0, 0, 0], "radii": [1]},
+                    {"kind": "cylinder", "base": 3, "height": 4, "radius": 2},
+                    {"kind": "box", "from": [0, 0], "to": [1, 1, 1]}):
+            with self.assertRaises(shapes.ShapeError) as err:
+                shapes.expand(bad)
+            kind = bad["kind"] if bad["kind"] in shapes.KINDS else "box"
+            self.assertIn("For example", str(err.exception), bad)
+            example = shapes.EXAMPLES[kind]
+            self.assertTrue(shapes.expand(example), kind)
+
+
 class TestAGiantTree(EditingHandsBase):
     def tree(self, job="job-7"):
         return self.hands.edit(player=DAD, title="a giant oak", job=job, shapes=[
