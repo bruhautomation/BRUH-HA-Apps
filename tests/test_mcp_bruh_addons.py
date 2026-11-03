@@ -305,6 +305,14 @@ class TestBambu(Base):
                                          "plates": [1], "seconds": None, "grams": None}])
         self.assertEqual(self.core.acted(), [("bruh_bambu", "list_files")])
 
+    def test_a_source_names_the_slice_made_from_it(self):
+        listing = {"files": [{"path": "imports/rotor.stl", "sliced": False,
+                              "sliced_path": "sliced/rotor-20261102-205207.gcode.3mf"}]}
+        with patch.object(m, "_addon_call", side_effect=[
+                {"printers": []}, listing]):
+            got = m.bambu_status(files=True)
+        self.assertEqual(got["files"][0]["sliced_path"], "sliced/rotor-20261102-205207.gcode.3mf")
+
     def test_a_print_names_the_file_and_the_printer(self):
         got = m.bambu_print("start", printer="X1C", file="sliced/benchy.gcode.3mf", plate=2)
         self.assertTrue(got["done"], got)

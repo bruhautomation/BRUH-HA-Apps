@@ -23,7 +23,7 @@
  * is blank the day it is down.
  */
 
-const CARD_VERSION = '0.1.4';
+const CARD_VERSION = '0.1.5';
 const DOMAIN = 'gardenrx';
 
 console.info(

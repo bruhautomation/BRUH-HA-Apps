@@ -38,6 +38,11 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 - The day's voice and automation debug logs are readable from a brAIn session (#642).
 - A stored voice that is not really a voice name is re-read from your notes or dropped (#640), and your own growth entries stay in every prompt (#633).
 - The nightly self-notes no longer treat an iPhone's silence as ignored messages, repeat themselves, or speak about brAIn in the third person (#632).
+## 4.2.4
+
+### Added
+
+- `bambu_status` with `files=true` names the slice already made from each file (#653).
 
 ## 4.2.3
 

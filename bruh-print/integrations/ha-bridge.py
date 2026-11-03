@@ -106,8 +106,11 @@ def summarise_state(state: dict) -> dict:
         "printer_error": state.get("printer_error") or "",
         # `remaining` is the panel's count down from what was loaded — an
         # estimate: nothing on a LabelWriter reports a real level.
+        # With counting off there is no count to give; 0 would read as empty.
         "rolls": [{"side": r.get("side"), "stock": r.get("stock"),
-                   "remaining": r.get("remaining")}
+                   **({"remaining": r.get("remaining")}
+                      if (state.get("settings") or {}).get("track_remaining", True)
+                      else {})}
                   for r in state.get("rolls") or [] if isinstance(r, dict)],
         "loaded_stocks": [{"id": s.get("id"), "name": s.get("name"),
                            "side": s.get("loaded_side")}
