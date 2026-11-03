@@ -23,6 +23,7 @@ shape its block, takes the cells into its undo snapshot and writes them.
 """
 from __future__ import annotations
 
+import json
 import math
 from typing import Any
 
@@ -31,6 +32,16 @@ MAX_HEIGHT = 384
 Y_MIN, Y_MAX = -64, 319
 KINDS = ("line", "ellipsoid", "blob", "cylinder", "box")
 Cell = tuple[int, int, int]
+EXAMPLES = {
+    "line": {"kind": "line", "from": [0, 0, 0], "to": [0, 8, 0], "radius": 1, "block": "oak_log"},
+    "ellipsoid": {"kind": "ellipsoid", "center": [0, 5, 0], "radii": [3, 2, 3],
+                  "block": "oak_leaves"},
+    "blob": {"kind": "blob", "center": [0, 5, 0], "radius": 3, "density": 0.8, "seed": 1,
+             "block": "oak_leaves"},
+    "cylinder": {"kind": "cylinder", "base": [0, 0, 0], "height": 5, "radius": 2,
+                 "block": "stone"},
+    "box": {"kind": "box", "from": [0, 0, 0], "to": [4, 3, 4], "block": "stone"},
+}
 
 
 class ShapeError(ValueError):
@@ -211,12 +222,23 @@ def box(a: list[int], b: list[int], hollow: bool, limit: int) -> set[Cell]:
 
 def expand(shape: Any, base: list[int] | None = None, reach: int = 128,
            limit: int = 131072) -> set[Cell]:
-    """The cells one shape covers (inside the world's height), or ShapeError."""
+    """The cells one shape covers (inside the world's height), or ShapeError
+    (whose message ends with a valid shape of that kind to copy)."""
     if not isinstance(shape, dict):
-        raise ShapeError("Each shape is {kind, block, …}.")
+        raise ShapeError("Each shape is {kind, block, …}. For example "
+                         f"{json.dumps(EXAMPLES['box'])}")
     kind = str(shape.get("kind") or "").strip().lower()
     if kind not in KINDS:
-        raise ShapeError(f"A shape is one of {', '.join(KINDS)}.")
+        raise ShapeError(f"A shape is one of {', '.join(KINDS)}. For example "
+                         f"{json.dumps(EXAMPLES['box'])}")
+    try:
+        return _expand(shape, kind, base, reach, limit)
+    except ShapeError as exc:
+        raise ShapeError(f"{exc} For example {json.dumps(EXAMPLES[kind])}") from None
+
+
+def _expand(shape: dict[str, Any], kind: str, base: list[int] | None, reach: int,
+            limit: int) -> set[Cell]:
     hollow = _flag(shape, "hollow")
     if kind == "line":
         r0 = _num(shape, "radius", 0, MAX_RADIUS, 0)

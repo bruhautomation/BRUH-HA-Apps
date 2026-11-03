@@ -136,7 +136,9 @@ def _coordinators(hass: HomeAssistant) -> list[BrevilleCoordinator]:
 
 
 def _device(hass: HomeAssistant, appliance: Appliance) -> dr.DeviceEntry | None:
-    return dr.async_get(hass).async_get_device(identifiers={(DOMAIN, appliance.serial)})
+    from .coordinator import device_for
+
+    return device_for(hass, appliance.serial)
 
 
 def appliance_name(hass: HomeAssistant, appliance: Appliance) -> str:
@@ -228,18 +230,22 @@ def describe(
     info = MODELS[appliance.model]
     settings = appliance.settings
     device = _device(hass, appliance)
+    online = status.online and coordinator.connected
+    # An offline appliance keeps its last readings on the status object; they are
+    # not a measurement of anything now, so they are not reported as one.
+    live = online
     out: dict[str, Any] = {
         "name": appliance_name(hass, appliance),
         "device_id": device.id if device is not None else None,
         "product": info.product,
         "kind": info.kind.value,
-        "online": status.online and coordinator.connected,
+        "online": online,
         "state": status.state.value,
         "cooking": status.cooking,
         "temperature_unit": hass.config.units.temperature_unit,
-        "current_temperature": _temperature(hass, status.current_temp_c),
+        "current_temperature": _temperature(hass, status.current_temp_c) if live else None,
         "target_temperature": _temperature(hass, status.target_temp_c),
-        "time_remaining_minutes": _minutes(status.time_remaining_s),
+        "time_remaining_minutes": _minutes(status.time_remaining_s) if live else None,
         "ends_at": status.ends_at.isoformat() if status.ends_at else None,
         "preheat_percent": status.preheat_pct,
         "error": None if status.error == "none" else status.error,

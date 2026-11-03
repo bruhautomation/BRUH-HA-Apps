@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.2.3
+
+### Fixed
+
+- The Minecraft atlas tool refuses an empty call with a clear message and keeps name searches within the service's 60-character limit (#634).
+
 ## 4.2.2
 
 ### Changed

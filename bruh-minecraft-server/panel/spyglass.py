@@ -50,6 +50,7 @@ PACK = "bruh_companion"
 PACK_SOURCE = Path(__file__).resolve().parent / "datapack" / PACK
 TAG = "bruh_pointing"
 SEQ = "bruh_spy_n"
+SPY = "bruh_spy"
 POLL_S = 1.0               # seconds between looks while anybody is on
 IDLE_S = 60.0              # the loop's beat this module asks for while nobody is
 INSTALL_S = 60.0           # seconds between checks that the pack is in the world
@@ -209,7 +210,24 @@ class Pointer:
                 # Written while the server ran: it has to look at the folder again.
                 self._ask("minecraft:reload")
                 self._ask(f'minecraft:datapack enable "file/{PACK}"')
+        self._quiet_command_blocks()
         self.enabled_for = world.name
+
+    def _quiet_command_blocks(self) -> None:
+        """A world's command blocks log every reply (particles, fills, "no
+        entity was found") and bury the real lines, so the rule goes off ONCE
+        per world: the pack's scoreboard holds that it was done, and a person
+        who switches it back on keeps it on. The rule's name changed in newer
+        servers, so both spellings are tried."""
+        for rule in ("commandBlockOutput", "minecraft:command_block_output"):
+            reply = mcworld.plain(self._ask(
+                f"minecraft:execute unless score #quiet {SPY} matches 1 run "
+                f"gamerule {rule} false") or "")
+            if re.search(r"unknown|incorrect|incomplete|expected|no such|can't|error", reply, re.I):
+                continue
+            if "now set to" in reply.lower() or "game rule" in reply.lower():
+                self._ask(f"minecraft:scoreboard players set #quiet {SPY} 1")
+            return
 
     def step(self) -> None:
         now = self.clock()

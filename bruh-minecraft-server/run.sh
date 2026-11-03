@@ -358,6 +358,7 @@ def as_int(v, default):
 
 state = {
     "status": "${status}",
+    "active_world": os.environ.get("ACTIVE_WORLD", ""),
     "server_type": os.environ["SERVER_TYPE"],
     "minecraft_version": os.environ["MINECRAFT_VERSION"],
     "memory_mb": int(os.environ["MEMORY_MB"]),

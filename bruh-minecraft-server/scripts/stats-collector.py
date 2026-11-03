@@ -76,43 +76,73 @@ def _atomic_write(path: Path, data: dict) -> None:
     tmp.replace(path)
 
 
-def _probe_rcon(password: str, want_version: bool = True) -> dict[str, Any]:
+def _close_link(link: dict[str, Any]) -> None:
+    r = link.pop("conn", None)
+    if r is not None:
+        try:
+            r.__exit__(None, None, None)
+        except Exception:  # noqa: BLE001 — closing a broken socket
+            pass
+
+
+def _probe_rcon(password: str, want_version: bool = True,
+                link: dict[str, Any] | None = None) -> dict[str, Any]:
+    """One poll. With a `link` the connection is kept for the next poll (the
+    server logs a line for every RCON session opened and closed, and a poll
+    every 15 s was most of its log); a command that fails drops it."""
     out: dict[str, Any] = {}
+    one_shot = link is None
+    if link is None:
+        link = {}
     try:
-        with Rcon(RCON_HOST, password, port=RCON_PORT, timeout=5) as r:
+        r = link.get("conn")
+        if r is None:
+            r = Rcon(RCON_HOST, password, port=RCON_PORT, timeout=5)
+            r.__enter__()
+            link["conn"] = r
+
+        def ask(cmd: str) -> str:
             try:
-                # `minecraft:list`, not `list`: Essentials overrides /list
-                # and logs "Rcon issued server command" for every command it
-                # handles — at our 15s cadence that's a third of console.log.
-                # The namespaced form bypasses plugin overrides entirely and
-                # always yields the vanilla format our regex parses.
-                parsed = _parse_list(r.command("minecraft:list"))
-                # Only adopt the parsed result if the regex actually matched
-                # something useful. A zeros-only payload means the regex
-                # missed the server's `/list` format and would otherwise
-                # overwrite mcstatus's online/max during the later merge,
-                # hiding any players from the panel.
-                if parsed["max"] > 0 or parsed["players"]:
-                    out.update(parsed)
-            except Exception:  # noqa: BLE001
-                pass
+                return r.command(cmd)
+            except Exception:
+                _close_link(link)
+                raise
+        try:
+            # `minecraft:list`, not `list`: Essentials overrides /list
+            # and logs "Rcon issued server command" for every command it
+            # handles — at our 15s cadence that's a third of console.log.
+            # The namespaced form bypasses plugin overrides entirely and
+            # always yields the vanilla format our regex parses.
+            parsed = _parse_list(ask("minecraft:list"))
+            # Only adopt the parsed result if the regex actually matched
+            # something useful. A zeros-only payload means the regex
+            # missed the server's `/list` format and would otherwise
+            # overwrite mcstatus's online/max during the later merge,
+            # hiding any players from the panel.
+            if parsed["max"] > 0 or parsed["players"]:
+                out.update(parsed)
+        except Exception:  # noqa: BLE001
+            pass
+        if link.get("conn") is not None:
             try:
-                tps = _parse_tps(r.command("tps"))
+                tps = _parse_tps(ask("tps"))
                 if tps:
                     out["tps_1m"], out["tps_5m"], out["tps_15m"] = tps
             except Exception:  # noqa: BLE001
                 pass
-            # The brand string never changes while the JVM lives, and every
-            # /version invocation makes Paper re-run its update check — which
-            # now stack-traces into the server log for older MC versions
-            # (api.papermc.io v2 is gone). Fetch it once and cache upstream.
-            if want_version:
-                try:
-                    out["version_brand"] = r.command("version").strip()[:200]
-                except Exception:  # noqa: BLE001
-                    pass
+        # The brand string never changes while the JVM lives, and every
+        # /version invocation makes Paper re-run its update check — which
+        # now stack-traces into the server log for older MC versions
+        # (api.papermc.io v2 is gone). Fetch it once and cache upstream.
+        if want_version and link.get("conn") is not None:
+            try:
+                out["version_brand"] = ask("version").strip()[:200]
+            except Exception:  # noqa: BLE001
+                pass
     except Exception:  # noqa: BLE001 — server may simply be offline
-        pass
+        _close_link(link)
+    if one_shot:
+        _close_link(link)
     return out
 
 
@@ -183,13 +213,18 @@ def main() -> int:
     PANEL.mkdir(parents=True, exist_ok=True)
     started_at = time.time()
     version_brand: str | None = None
+    link: dict[str, Any] = {}
 
     while True:
         password = _pw()
-        rcon_payload = (
-            _probe_rcon(password, want_version=version_brand is None)
-            if password else {}
-        )
+        rcon_payload = {}
+        if password:
+            kept = link.get("conn") is not None
+            rcon_payload = _probe_rcon(password, want_version=version_brand is None, link=link)
+            if kept and not rcon_payload:
+                # The kept connection died (the server restarted): one fresh try.
+                rcon_payload = _probe_rcon(password, want_version=version_brand is None,
+                                           link=link)
         rcon_ok = bool(rcon_payload)
         if rcon_payload.get("version_brand"):
             version_brand = rcon_payload["version_brand"]

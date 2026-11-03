@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2
+
+### Fixed
+
+- An offline appliance no longer reports its last temperature and time remaining, and the deprecated device-registry lookup is gone (#658).
+
 ## 0.1.1
 
 ### Changed

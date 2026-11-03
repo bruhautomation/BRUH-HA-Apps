@@ -134,6 +134,14 @@ class CompanionCore(WorldCore):
         return super().__call__(payload, timeout)
 
 
+class AtlasCore(WorldCore):
+    def __call__(self, payload, timeout=15):
+        if payload.get("type") == "call_service" and payload.get("service") == "atlas":
+            self.calls.append((("bruh_minecraft", "atlas"), payload["service_data"]))
+            return {"response": {"matches": []}}
+        return super().__call__(payload, timeout)
+
+
 class TestTheCompanionThroughBrain(Base):
     """brAIn's companion in the game: read through minecraft_status (brAIn's
     own settings and memory beside BRUH Minecraft's action log), changed
@@ -193,6 +201,18 @@ class TestTheCompanionThroughBrain(Base):
         self.assertIn("error", m.minecraft_world("ask", "Castle?"))
         self.assertIn("error", m.minecraft_world("rename", ""))
         self.assertEqual(len(self.core.calls), before)
+
+    def test_an_atlas_with_nothing_to_look_for_is_refused_before_it_is_sent(self):
+        before = len(self.core.calls)
+        got = m.minecraft_world("atlas", "")
+        self.assertIn("error", got)
+        self.assertIn("player", got["error"])
+        self.assertEqual(len(self.core.calls), before)
+
+    def test_an_atlas_name_search_is_cut_to_what_the_service_accepts(self):
+        self.core.__class__ = AtlasCore
+        m.minecraft_world("atlas", "x" * 80)
+        self.assertEqual(len(self.core.calls[-1][1]["query"]), 60)
 
     def test_voice_reads_the_companion_and_changes_nothing(self):
         self.voice()
