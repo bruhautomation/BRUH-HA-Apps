@@ -259,6 +259,66 @@ def classify(findings: list[dict],
 
 
 # ---------------------------------------------------------------------------
+# Said once
+# ---------------------------------------------------------------------------
+#
+# A finding is a new row each time its producer files it, so the store's
+# dedupe — against every status and the settled ledger — does not see a
+# subject that was told to a phone on Tuesday and filed again on Thursday.
+# The delivery ledger does: it keeps what each message was about.
+
+# How long a subject that reached a phone is not sent again unchanged.
+SAID_ONCE_S = 7 * 24 * 60 * 60
+# …counted from a day back. The last day's messages are what the
+# dispatcher is shown (`deliveries.recent`) and judges a repeat against;
+# what nothing remembered was the day before that.
+SAID_ONCE_AFTER_S = 24 * 60 * 60
+# The message kinds that carried a finding to a phone.
+_FINDING_KINDS = ("notify", "escalate", "held", "reminder")
+
+
+def said_before(row: dict, sent: list[dict] | None, now: float,
+                window_s: float = SAID_ONCE_S) -> dict | None:
+    """The earlier message that already told a phone about this row's
+    subject, or None.
+
+    The subject is the producer AND the device: the same check about the
+    same entity. A row about no device is matched by producer only when
+    that producer is one check (`check:…`): "resident" or "followup" files
+    about anything, and two of their rows share nothing but the name. What
+    changed makes it news again: another device, or a worse severity than
+    the message carried. Only a message that went (`ok`) counts, and only
+    one from before the last day, which the dispatcher already reads.
+    """
+    import findings_store  # noqa: PLC0415 — panel-local
+
+    source = str((row or {}).get("source") or "")
+    entity = str((row or {}).get("entity_id") or "")
+    if not source or (not entity and not source.startswith("check:")):
+        return None
+    order = findings_store.SEVERITIES
+    sev = str(row.get("severity") or "warning")
+    rank = order.index(sev) if sev in order else order.index("warning")
+    for msg in sent or ():
+        if not isinstance(msg, dict) or not msg.get("ok", True):
+            continue
+        if msg.get("kind") not in _FINDING_KINDS:
+            continue
+        age = now - float(msg.get("at") or 0)
+        if age > window_s or age < SAID_ONCE_AFTER_S:
+            continue
+        if source not in (msg.get("sources") or ()):
+            continue
+        if entity and entity not in (msg.get("entities") or ()):
+            continue
+        said = str(msg.get("severity") or "")
+        if said in order and order.index(said) < rank:
+            continue
+        return msg
+    return None
+
+
+# ---------------------------------------------------------------------------
 # The hold queue
 # ---------------------------------------------------------------------------
 
@@ -612,7 +672,7 @@ def compose(rows: list[dict], held: bool = False) -> tuple[str, str]:
         # Counted, never truncated: a list that stops mid-way reads as
         # the whole of what happened.
         lines.append(f"…and {n - LINES_MAX} more on the Findings tab.")
-    return title, textclip.clip("\n".join(lines), MESSAGE_MAX)
+    return title, textclip.shorten("\n".join(lines), MESSAGE_MAX)
 
 
 def _ordinal(n: int) -> str:
@@ -649,7 +709,7 @@ def compose_escalation(row: dict, tz: dt.tzinfo | None = None) -> tuple[str, str
     if last:
         lines.append(f"{assistant()} will not ask about this again; it stays "
                      "on Needs you.")
-    return title, textclip.clip("\n".join(lines), MESSAGE_MAX)
+    return title, textclip.shorten("\n".join(lines), MESSAGE_MAX)
 
 
 
@@ -915,14 +975,16 @@ def compose_released(rows: list[dict]) -> tuple[str, str]:
     if len(rows) == 1 and rows[0].get("title") and rows[0].get("body"):
         return str(rows[0]["title"]), str(rows[0]["body"])
     n = len(rows)
-    title = (f"{assistant()} kept one thing for now" if n == 1
-             else f"{assistant()} kept {n} things for now")
+    # Said as what it is: the thing kept back, now arriving. "kept one
+    # thing for now" read as a push about holding back a push (#639).
+    title = ("One thing from earlier" if n == 1
+             else f"{n} things from earlier")
     lines = [str(r.get("body") or "").strip()
              or f"[{r.get('severity', 'warning')}] {r.get('text', '')}"
              for r in rows[:LINES_MAX]]
     if n > LINES_MAX:
         lines.append(f"…and {n - LINES_MAX} more on the Findings tab.")
-    return title, textclip.clip("\n".join(lines), MESSAGE_MAX)
+    return title, textclip.shorten("\n".join(lines), MESSAGE_MAX)
 
 
 # ---------------------------------------------------------------------------
@@ -937,12 +999,12 @@ def compose_released(rows: list[dict]) -> tuple[str, str]:
 
 def compose_brief(body: str) -> tuple[str, str]:
     """The morning brief: a paragraph, under a title that says what it is."""
-    return f"{assistant()} this morning", textclip.clip(str(body or "").strip(), MESSAGE_MAX)
+    return f"{assistant()} this morning", textclip.shorten(str(body or "").strip(), MESSAGE_MAX)
 
 
 def compose_weekly(body: str) -> tuple[str, str]:
     """The weekly report, likewise."""
-    return f"{assistant()}: your week", textclip.clip(str(body or "").strip(), MESSAGE_MAX)
+    return f"{assistant()}: your week", textclip.shorten(str(body or "").strip(), MESSAGE_MAX)
 
 
 __all__ = [
@@ -957,7 +1019,8 @@ __all__ = [
     "parse_hour", "prune_escalations", "quiet_ends_at", "record_reminder",
     "save_escalations", "save_queue", "stop_escalation", "take_queue",
     "tier_of", "urgency_of", "worth_sending",
-    "HOLD_MAX_S", "TITLE_MAX", "WORDS_MAX", "compose_brief",
+    "HOLD_MAX_S", "SAID_ONCE_S", "said_before", "TITLE_MAX", "WORDS_MAX",
+    "compose_brief",
     "compose_released", "compose_weekly", "held_until", "hold_timed",
     "next_hold_at",
 ]

@@ -1283,6 +1283,10 @@ def overridden(snap: dict, now: float) -> list[dict]:
     history = _override_history()
     house = House(snap)
     out = []
+    # A rule every trigger of which is a press is somebody's hand with a
+    # rule in between (`_relays`): undoing what it did is the person changing
+    # their mind, and there is no rule of its own to be wrong for the house.
+    pressed = _relays(house)[0]
 
     # Two routes in, and the second is the one that matters most. The
     # acute case is a bad evening; the chronic one is somebody putting
@@ -1313,6 +1317,8 @@ def overridden(snap: dict, now: float) -> list[dict]:
                    float(shape["last"]) if shape else 0.0)
 
         subject = key if key.startswith("automation.") else ""
+        if subject in pressed:
+            continue
         if subject and not house.should_report(subject, "auto.overridden"):
             continue
         if acute:

@@ -915,6 +915,11 @@ RESIDENT_STATE: dict = {
     "duplicates": 0,         # cases the store already held
     "resolved": 0,           # filed rows looked into and set aside, unasked
     "last_error": "",
+    # Since when the looks themselves have been held by an allowance (the
+    # ledger's, or the day's count), or 0 while they run. A gate a person
+    # chose (paused, the usage budget) is not this: that is a refusal, not
+    # a fault. `health` turns a long hold into a sentence.
+    "held_since": 0.0,
 }
 # What producers hand signals to. A module global bound to whichever loop
 # touches it first, so it is rebound at startup beside `QUEUE` for the same
@@ -2174,6 +2179,7 @@ async def _brief_loop():
     """Wake often, send at most once, and only when there is something to say."""
     await asyncio.sleep(BRIEF_FIRST_DELAY_S)
     while True:
+        _beat("brief")
         try:
             on, fallback = _brief_enabled()
             service, _sev = _findings_notify_target()
@@ -2517,6 +2523,7 @@ async def _weekly_loop():
     """Once a week, on the day, at or after the hour this house is up."""
     await asyncio.sleep(WEEKLY_FIRST_DELAY_S)
     while True:
+        _beat("weekly")
         try:
             on, want_day = _weekly_enabled()
             service, _sev = _findings_notify_target()
@@ -4554,6 +4561,7 @@ async def _requests_loop():
     """Watch the drop directories. Cheap, and empty nearly every pass."""
     await asyncio.sleep(REQUESTS_FIRST_DELAY_S)
     while True:
+        _beat("requests")
         try:
             await _apply_finding_requests()
         except asyncio.CancelledError:
@@ -4640,6 +4648,7 @@ async def _evening_loop():
     """
     await asyncio.sleep(EVENING_FIRST_DELAY_S)
     while True:
+        _beat("evening")
         try:
             now = time.time()
             local = _local_now(now)
@@ -4814,6 +4823,7 @@ async def _heal_loop():
     """Once a night, inside the window, and only when it is switched on."""
     await asyncio.sleep(HEAL_FIRST_DELAY_S)
     while True:
+        _beat("healing")
         try:
             if _healing_enabled():
                 now = time.time()
@@ -4960,6 +4970,7 @@ async def _notify_flush_loop():
     """
     await asyncio.sleep(NOTIFY_FLUSH_FIRST_DELAY_S)
     while True:
+        _beat("notify_flush")
         try:
             await _escalation_tick()
             start, end = _quiet_hours()
@@ -4998,6 +5009,28 @@ async def _notify_flush_loop():
                           _findings_notify_target()[0], str(exc),
                           context="quiet-hours flush pass")
             await asyncio.sleep(NOTIFY_FLUSH_POLL_S)
+
+
+def _not_said_before(rows: list[dict], now: float) -> list[dict]:
+    """The rows whose subject no phone has been told about this week; the
+    rest are noted on the decision trail with the day they were said."""
+    try:
+        sent = deliveries.fold(now) or []
+    except Exception as exc:  # noqa: BLE001 — no ledger is no memory of it
+        log.debug("could not read the delivery ledger: %s", exc)
+        return rows
+    keep, told = [], []
+    for row in rows:
+        earlier = notify_router.said_before(row, sent, now)
+        if earlier is None:
+            keep.append(row)
+            continue
+        day = _local_now(float(earlier.get("at") or now)).strftime("%A %d %b")
+        told.extend(decision_trail.rows_for(
+            [row], "said_before", f"a phone was told about this on {day}"))
+    if told:
+        decision_trail.note_many(told)
+    return keep
 
 
 async def _announce_findings(created: list[dict]) -> None:
@@ -5059,6 +5092,12 @@ async def _announce_findings(created: list[dict]) -> None:
         log.info("escalating %d of %d critical finding(s)",
                  started, len(escalating))
 
+    if not once:
+        return
+    # Said once: a subject a phone was told about this week is not sent
+    # again unless something about it is new — another device, a worse
+    # severity (#639). It is on the list either way.
+    once = await asyncio.to_thread(_not_said_before, once, now)
     if not once:
         return
     # Said aloud in the room somebody is in, when it is switched on and the
@@ -5745,6 +5784,7 @@ async def _notify_learn_loop():
     (`schedule_store`), because a restart is not a new week."""
     await asyncio.sleep(NOTIFY_LEARN_FIRST_DELAY_S)
     while True:
+        _beat("notify_learn")
         try:
             now = time.time()
             last = schedule_store.get(NOTIFY_LEARN_KEY)
@@ -7433,6 +7473,7 @@ FOLLOWUP_STATE: dict = {"running": False, "last_tick": 0, "looks": 0,
 
 async def _followup_loop() -> None:
     while True:
+        _beat("followups")
         await asyncio.sleep(FOLLOWUP_TICK_S)
         try:
             await _followup_tick(time.time())
@@ -8310,6 +8351,18 @@ def _loop_ended(name: str, task: asyncio.Task) -> None:
         log.warning("the %s loop stopped: %s", name, row["error"])
 
 
+# What one pass of a loop may take before "it has not gone round" means it
+# is hung: the longest passes run Claude turns behind the run queue (a
+# look and three investigations, a brief, a weekly report).
+LOOP_PASS_S = 2 * 3600
+
+
+def _stall_after(first_delay_s: float, poll_s: float) -> float:
+    """How long a beating loop may go without one before health says it is
+    stuck: its first wait, three of its own ticks, and a pass's length."""
+    return float(first_delay_s) + 3 * float(poll_s) + LOOP_PASS_S
+
+
 def _beat(name: str) -> None:
     """A supervised loop went round. Cheap on purpose: one dict write."""
     row = LOOPS.get(name)
@@ -9136,6 +9189,7 @@ async def _options_sync() -> None:
 async def _options_poller() -> None:
     """Pick up Configuration-tab edits without waiting for a restart."""
     while True:
+        _beat("options")
         await asyncio.sleep(OPTIONS_POLL_SECONDS)
         try:
             await addon_options.refresh(force=True)
@@ -9525,9 +9579,10 @@ def _brain_status(settings: dict | None = None, budget: dict | None = None,
                 restart_since = RESTART_MARKER_FILE.stat().st_mtime
             except OSError:
                 restart_since = 0.0
-        last_check = (CHECKS_STATE.get("last") or {}).get("finished_at") or 0
-        look = max(float(RESIDENT_STATE.get("last_look_at") or 0),
-                   float(last_check or 0))
+        # The Resident's own last look. A routine checks pass is not a
+        # look: read as one, a Resident held for hours said "last look 46
+        # min ago" because a checks pass had just finished (#631).
+        look = float(RESIDENT_STATE.get("last_look_at") or 0)
         style = _clock_style()
 
         def clock(ts: float) -> str:
@@ -12186,6 +12241,7 @@ async def _maint_tick(now: float) -> list[str]:
 async def _maint_loop() -> None:
     await asyncio.sleep(MAINT_FIRST_DELAY_S)
     while True:
+        _beat("maintainer")
         try:
             started = await _maint_tick(time.time())
             if started:
@@ -13980,6 +14036,7 @@ async def _resident_pass(now: float) -> dict:
                          for sig in RESIDENT_PENDING)
     if _triage_runs_today(now) >= triage.MAX_PER_DAY and not safety_waiting:
         RESIDENT_STATE["last_error"] = "the day's looks are spent"
+        _resident_held(now)
         if not TRIAGE_STATE.get("capped_said"):
             TRIAGE_STATE["capped_said"] = True
             log.warning("the Resident has spent its %d looks for today; %d "
@@ -13991,8 +14048,16 @@ async def _resident_pass(now: float) -> dict:
     allowed, why = LEDGER.allows(
         _resident_tier(resident.JOB_FIRST_LOOK, thinking), thinking, now=now)
     if not allowed:
+        RESIDENT_STATE["last_error"] = why
+        _resident_held(now)
         return {**out, "held": why}
     return await _resident_look(now, settings, thinking, len(surfaced))
+
+
+def _resident_held(now: float) -> None:
+    """The looks are being held by an allowance: keep when that began."""
+    if not RESIDENT_STATE.get("held_since"):
+        RESIDENT_STATE["held_since"] = now
 
 
 async def _resident_look(now: float, settings: dict, thinking: str,
@@ -14084,6 +14149,7 @@ async def _resident_look(now: float, settings: dict, thinking: str,
         inputs=look_inputs)
     TRIAGE_STATE["runs"] = _triage_runs_today(now) + 1
     RESIDENT_STATE["last_look_at"] = now
+    RESIDENT_STATE["held_since"] = 0.0
     await asyncio.to_thread(_note_first_look, now)
     try:
         # No tools: this is a LOOK, not a search. What it is asked is
@@ -14624,6 +14690,24 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
         await _outcome(signal, "refused", run_id, now, why, refines,
                        said=ungrounded)
         return False
+    # A conclusion drawn from a sensor the owner called broken is a
+    # conclusion about nothing (`corrections.known_faulty`). A signal the
+    # never-ignore floors hold (safety, protected, hot) is still looked at.
+    if not resident.never_ignore(signal)[0]:
+        faulty = await asyncio.to_thread(corrections.known_faulty)
+        broken = resident.faulty_case(case, _signal_entities(signal), faulty)
+        if broken:
+            RESIDENT_STATE["refused"] = RESIDENT_STATE.get("refused", 0) + 1
+            log.info("an investigation of %s rests on a sensor the owner "
+                     "called broken; refused", signal.get("subject"))
+            await asyncio.to_thread(decision_trail.note_many, [{
+                "kind": "explained",
+                "subject": str(signal.get("subject") or ""),
+                "check": "resident", "reason": broken,
+                "text": str(case.get("claim") or "")}], now)
+            await _outcome(signal, "refused", run_id, now, why, refines,
+                           said=broken)
+            return False
     # "It is idle" about a machine whose every starting automation waits on
     # a reading that is not past its threshold now is the rule working
     # (#558); "where is it?" or "how is it disarmed?" put to the owner while
@@ -14643,6 +14727,22 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
             "text": str(case.get("claim") or "")}], now)
         await _outcome(signal, "refused", run_id, now, why, refines,
                        said=waits)
+        return False
+    # A reply whose own step says nothing is needed is a headline withdrawn
+    # by its text (#604), and one with no step at all leaves the reader not
+    # knowing whether to act (#616): neither is filed. A row brAIn filed is
+    # held with the reply's sentence, so the person can still put it back.
+    code, said = resident.unfinished(case)
+    if code:
+        log.info("an investigation of %s was not a finding (%s)",
+                 signal.get("subject"), code)
+        if code == "nothing_needed" and refining is not None:
+            held = await asyncio.to_thread(findings_store.hold_after_look,
+                                           refines, said, run_id, now)
+            await _outcome(signal, "held" if held else "moved_on", run_id,
+                           now, why, refines, row=held, said=said)
+            return False
+        await _outcome(signal, "no_claim", run_id, now, why, refines)
         return False
     # The signal that started it, folded in — because "what made brAIn look"
     # is evidence about the claim and the run has no way to cite it: it was
@@ -14793,6 +14893,7 @@ async def _resident_loop() -> None:
     await asyncio.sleep(RESIDENT_FIRST_DELAY_S)
     expired_at = 0.0
     while True:
+        _beat("resident")
         try:
             now = time.time()
             if now - expired_at >= 3600:
@@ -16846,15 +16947,14 @@ async def _occasions_fetch(calendars: list[str], now: float):
     errors: dict[str, str] = {}
     async with aiohttp.ClientSession() as session:
         states = await ha_data._rest_get(session, "/states", timeout=60)
-        weather = next((s for s in states or [] if isinstance(s, dict)
-                        and str(s.get("entity_id") or "").startswith("weather.")),
-                       None)
+        weather = occasions.pick_weather(states)
         weather_id = str((weather or {}).get("entity_id") or "")
         unit = str(((weather or {}).get("attributes") or {})
                    .get("temperature_unit") or "°C")
         if not weather_id:
             errors["weather"] = "this house has no weather entity"
-        cmds = occasions.commands(weather_id, calendars, now)
+        cmds = occasions.commands(weather_id, calendars, now,
+                                  occasions._features(weather or {}))
         answers = await ha_data._ws_calls(session, cmds) if cmds else []
     daily = hourly = None
     cal: dict = {}
@@ -17042,6 +17142,7 @@ async def _situation_pass(now: float | None, states, run_model: bool) -> dict:
 async def _situation_loop() -> None:
     await asyncio.sleep(SITUATION_FIRST_DELAY_S)
     while True:
+        _beat("situation")
         try:
             await _situation_refresh()
         except Exception as exc:  # noqa: BLE001 — never let this kill the loop
@@ -20224,6 +20325,27 @@ async def h_devloop_look(request: web.Request) -> web.Response:
                              status=202)
 
 
+def _sibling_log_state(obs: dict) -> str:
+    """What reading one add-on's log came to: "read", "empty", or
+    "unreadable: <why>". The Supervisor's refusal arrives either as an
+    error the collector caught (`log_error`) or as its JSON error body in
+    place of the log; both are a log nobody has read, not a clean one."""
+    if obs.get("log_error"):
+        return f"unreadable: {str(obs['log_error'])[:200]}"
+    text = str(obs.get("log") or "").strip()
+    if not text:
+        return "empty"
+    if text.startswith("{"):
+        try:
+            body = json.loads(text)
+        except ValueError:
+            body = None
+        if isinstance(body, dict) and body.get("result") == "error":
+            why = str(body.get("message") or "the Supervisor refused")[:200]
+            return f"unreadable: {why}"
+    return "read"
+
+
 async def h_bruh_addons(request: web.Request) -> web.Response:
     """Every installed BRUH add-on: its state, version, the distinct errors
     in its log and what Home Assistant logged about its integration. The
@@ -20233,6 +20355,15 @@ async def h_bruh_addons(request: web.Request) -> web.Response:
         return web.json_response({"error": collected["error"]}, status=503)
     want = str(request.query.get("addon") or "").strip().lower()
     every = devloop.siblings.status(collected)
+    logs = {str(o.get("slug")): _sibling_log_state(o)
+            for o in collected.get("addons") or [] if isinstance(o, dict)}
+    for row in every:
+        state = logs.get(str(row.get("slug")), "read")
+        row["log"] = state
+        if state.startswith("unreadable"):
+            # No list at all, rather than an empty one: [] read as "its log
+            # has no errors" on add-ons whose log could not be read (#657).
+            row["log_errors"] = None
     rows = [r for r in every if not want or want in str(r["addon"]).lower()
             or want == str(r["slug"]).lower()]
     installed = {r["addon"] for r in every}
@@ -25481,6 +25612,12 @@ async def h_memory_cleanup_run(request: web.Request) -> web.Response:
                               "started": started})
 
 
+# The consolidation tasks a press started, held so they are not collected
+# mid-run. A module set rather than an app key: the app is frozen by the
+# time a request arrives, and aiohttp warns on every write to a started one.
+_CONSOLIDATIONS: set = set()
+
+
 async def h_memory_cleanup_apply(request: web.Request) -> web.Response:
     """Remove the ticked lines: facts from the store at once, document lines
     as `FORGET:` requests the consolidator carries out — it stays the one
@@ -25502,8 +25639,8 @@ async def h_memory_cleanup_apply(request: web.Request) -> web.Response:
                       or await asyncio.to_thread(_consolidation_running)):
         MEMORY_STATE.update(merging=True, error="", filed=0)
         task = asyncio.create_task(_consolidate_task())
-        request.app.setdefault("consolidations", set()).add(task)
-        task.add_done_callback(lambda t: request.app["consolidations"].discard(t))
+        _CONSOLIDATIONS.add(task)
+        task.add_done_callback(_CONSOLIDATIONS.discard)
         started = True
     log.info("memory clean-up: %d fact(s) removed, %d document line(s) "
              "queued to forget", removed, len(lines))
@@ -25535,8 +25672,8 @@ async def h_memory_consolidate(request: web.Request) -> web.Response:
                                   "inbox_pending": await asyncio.to_thread(_inbox_pending)})
     MEMORY_STATE.update(merging=True, error="", filed=0)
     task = asyncio.create_task(_consolidate_task())
-    request.app.setdefault("consolidations", set()).add(task)
-    task.add_done_callback(lambda t: request.app["consolidations"].discard(t))
+    _CONSOLIDATIONS.add(task)
+    task.add_done_callback(_CONSOLIDATIONS.discard)
     return web.json_response({
         "started": True, "running": True,
         "inbox_pending": await asyncio.to_thread(_inbox_pending),
@@ -26912,15 +27049,7 @@ def _presence_inputs(now: float, people: dict[str, str]) -> str:
                 titles.append(str(row.get("title") or ""))
     except Exception as exc:  # noqa: BLE001
         log.debug("presence could not list conversations: %s", exc)
-    answered: dict[str, int] = {}
-    for row in deliveries.fold(now) or []:
-        if now - float(row.get("at") or 0) > 7 * 86400:
-            break
-        if row.get("kind") == "presence":
-            continue
-        out = str(row.get("outcome") or "")
-        if out in ("answered", "cleared", "ignored"):
-            answered[out] = answered.get(out, 0) + 1
+    answered = presence.answer_counts(deliveries.fold(now), now)
     try:
         upcoming = occasions.lines(occasions.load(), _house_date(now))
     except Exception:  # noqa: BLE001
@@ -28781,7 +28910,7 @@ def make_app() -> web.Application:
         # route reports it, so it is "checking" from the first request.
         if engine.get_auth():
             start_auth_check()
-        app["startup"] = asyncio.create_task(_startup_work(app))
+        app["tasks"]["startup"] = asyncio.create_task(_startup_work(app))
 
     async def _startup_work(app: web.Application) -> None:
         try:
@@ -28855,28 +28984,47 @@ def make_app() -> web.Application:
         # each is alive and when the ones that beat last went round —
         # which `health.problems` reads. The stall windows are several of
         # each loop's own ticks, plus a pass's own length.
-        app["worker"] = _supervise("worker", _worker())
-        app["scheduler"] = _supervise("scheduler", _scheduler(),
+        app["tasks"]["worker"] = _supervise("worker", _worker())
+        app["tasks"]["scheduler"] = _supervise("scheduler", _scheduler(),
                                       stall_after_s=600)
-        app["checks"] = _supervise("checks", _checks_loop(),
+        app["tasks"]["checks"] = _supervise("checks", _checks_loop(),
                                    stall_after_s=CHECKS_FIRST_DELAY_S + 3600)
-        app["baselines"] = _supervise("baselines", _baseline_loop(),
+        app["tasks"]["baselines"] = _supervise("baselines", _baseline_loop(),
                                       stall_after_s=BASELINE_FIRST_DELAY_S
                                       + 3 * 3600)
-        app["notify_flush"] = _supervise("notify_flush", _notify_flush_loop())
-        app["brief"] = _supervise("brief", _brief_loop())
-        app["evening"] = _supervise("evening", _evening_loop())
-        app["healing"] = _supervise("healing", _heal_loop())
-        app["weekly"] = _supervise("weekly", _weekly_loop())
-        app["maintainer"] = _supervise("maintainer", _maint_loop())
-        app["requests"] = _supervise("requests", _requests_loop())
+        app["tasks"]["notify_flush"] = _supervise(
+            "notify_flush", _notify_flush_loop(),
+            stall_after_s=_stall_after(NOTIFY_FLUSH_FIRST_DELAY_S, NOTIFY_FLUSH_POLL_S))
+        app["tasks"]["brief"] = _supervise(
+            "brief", _brief_loop(),
+            stall_after_s=_stall_after(BRIEF_FIRST_DELAY_S, BRIEF_POLL_S))
+        app["tasks"]["evening"] = _supervise(
+            "evening", _evening_loop(),
+            stall_after_s=_stall_after(EVENING_FIRST_DELAY_S, EVENING_POLL_S))
+        app["tasks"]["healing"] = _supervise(
+            "healing", _heal_loop(),
+            stall_after_s=_stall_after(HEAL_FIRST_DELAY_S, HEAL_POLL_S))
+        app["tasks"]["weekly"] = _supervise(
+            "weekly", _weekly_loop(),
+            stall_after_s=_stall_after(WEEKLY_FIRST_DELAY_S, WEEKLY_POLL_S))
+        app["tasks"]["maintainer"] = _supervise(
+            "maintainer", _maint_loop(),
+            stall_after_s=_stall_after(MAINT_FIRST_DELAY_S, MAINT_POLL_S))
+        app["tasks"]["requests"] = _supervise(
+            "requests", _requests_loop(),
+            stall_after_s=_stall_after(REQUESTS_FIRST_DELAY_S, REQUESTS_POLL_S))
         # Morph's Ask line, and the two files it draws from (`_morph_loop`):
         # a glob of a folder nearly always empty, every second.
-        app["morph"] = _supervise("morph", _morph_loop(), stall_after_s=120)
-        app["notify_learn"] = _supervise("notify_learn", _notify_learn_loop())
+        app["tasks"]["morph"] = _supervise("morph", _morph_loop(), stall_after_s=120)
+        app["tasks"]["notify_learn"] = _supervise(
+            "notify_learn", _notify_learn_loop(),
+            stall_after_s=_stall_after(NOTIFY_LEARN_FIRST_DELAY_S,
+                                       NOTIFY_LEARN_POLL_S))
         # The presence loop (⚙ › Personality's "How it is growing"): idle
         # unless Personality and the Learning loop are both on.
-        app["presence"] = _supervise("presence", _presence_loop())
+        app["tasks"]["presence"] = _supervise(
+            "presence", _presence_loop(),
+            stall_after_s=_stall_after(PRESENCE_FIRST_DELAY_S, PRESENCE_POLL_S))
         # The first thing in brAIn that is watched rather than polled, and
         # the loop that reads it. The bus files nothing and asks nothing —
         # its only output is a signal on the queue — and `_resident_loop`
@@ -28903,24 +29051,33 @@ def make_app() -> web.Application:
             # says (`signals.RegistryContext.safety_class_of`).
             safety_roles=_world_safety_roles)
         await EVENT_BUS.start()
-        app["resident"] = _supervise("resident", _resident_loop())
+        app["tasks"]["resident"] = _supervise(
+            "resident", _resident_loop(),
+            stall_after_s=_stall_after(RESIDENT_FIRST_DELAY_S, RESIDENT_TICK_S))
         # What the house is doing now: a frame every few minutes, a cheap
         # sentence only when it moved.
-        app["situation"] = _supervise("situation", _situation_loop())
+        app["tasks"]["situation"] = _supervise(
+            "situation", _situation_loop(),
+            stall_after_s=_stall_after(SITUATION_FIRST_DELAY_S,
+                                       situation.REFRESH_S))
         # The follow-up looks at every applied fix, and the tripwire file
         # rewritten so a tripwire named in settings guards from boot.
-        app["followups"] = _supervise("followups", _followup_loop())
-        app["timed"] = _supervise("timed", _timed_loop(), stall_after_s=120)
+        app["tasks"]["followups"] = _supervise(
+            "followups", _followup_loop(),
+            stall_after_s=_stall_after(0, FOLLOWUP_TICK_S))
+        app["tasks"]["timed"] = _supervise("timed", _timed_loop(), stall_after_s=120)
         try:
             await asyncio.to_thread(security.publish)
         except Exception as exc:  # noqa: BLE001 — a guard that could not
             # be republished is a fault row, not a panel that will not start
             log.warning("could not publish the tripwire file: %s", exc)
         if addon_options.available():
-            app["options"] = _supervise("options", _options_poller())
+            app["tasks"]["options"] = _supervise(
+                "options", _options_poller(),
+                stall_after_s=_stall_after(0, OPTIONS_POLL_SECONDS))
 
     async def on_cleanup(app: web.Application) -> None:
-        task = app.get("startup")
+        task = app["tasks"].get("startup")
         if task is not None and not task.done():
             task.cancel()
             try:
@@ -28937,6 +29094,10 @@ def make_app() -> web.Application:
             # socket under a read that is still in it.
             await EVENT_BUS.stop()
 
+    # The loops on_startup starts, by name. Made here, before the app is
+    # frozen: a key set on a started app is aiohttp's DeprecationWarning,
+    # once per loop per start, and an error in a later aiohttp.
+    app["tasks"] = {}
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
     return app

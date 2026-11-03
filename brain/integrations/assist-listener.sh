@@ -63,6 +63,21 @@ SESSIONS_DIR="$SHARED_DIR/sessions"
 CACHE_DIR="$SHARED_DIR/cache"
 LOG_DIR="$SHARED_DIR/logs"
 
+# The day's debug log for `kind`, by path. Created owner-only (it holds full
+# transcripts) and owned by the claude user, who reads it back from a
+# session; this listener runs as root, and a root-owned 0600 file is one the
+# session cannot open (#642). Root can still append to a claude-owned file.
+today_log() {
+    local file="$LOG_DIR/$1-$(date +%Y%m%d).log"
+    if [ ! -e "$file" ]; then
+        ( umask 077; : >> "$file" ) 2>/dev/null || true
+        if [ "$(id -u)" = "0" ]; then
+            chown claude:claude "$file" 2>/dev/null || true
+        fi
+    fi
+    printf '%s' "$file"
+}
+
 # Touched when the installed Claude CLI doesn't support --session-id/--resume;
 # the listener then sticks to legacy stateless invocations with history replay.
 SESSION_FLAGS_MARKER="$CACHE_DIR/session_flags_unsupported"
@@ -299,13 +314,13 @@ JINJA
     case "$rendered" in
         "{"*|"")
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] AREA-MAP refresh FAILED: ${rendered:0:300}" \
-                >> "$LOG_DIR/assist-$(date +%Y%m%d).log"
+                >> "$(today_log assist)"
             return 1
             ;;
     esac
     echo "$rendered" | grep -q ":" || {
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] AREA-MAP refresh produced no entries" \
-            >> "$LOG_DIR/assist-$(date +%Y%m%d).log"
+            >> "$(today_log assist)"
         return 1
     }
 
@@ -328,11 +343,11 @@ JINJA
     if filtered=$(printf '%s\n' "$rendered" | python3 \
             "${BRAIN_SCRIPTS_DIR:-/opt/scripts}/brain_exposed.py" filter \
             "$CACHE_DIR/exposed_entities.json" \
-            2>> "$LOG_DIR/assist-$(date +%Y%m%d).log"); then
+            2>> "$(today_log assist)"); then
         rendered="$filtered"
     else
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] AREA-MAP emptied: Home Assistant's exposure settings could not be read (an agent set to Whole house is not gated)" \
-            >> "$LOG_DIR/assist-$(date +%Y%m%d).log"
+            >> "$(today_log assist)"
         rendered=""
     fi
 
@@ -342,7 +357,7 @@ JINJA
     map_tmp=$(area_map_scratch "$AREA_MAP_FILE") || return 1
     if [ "${#rendered}" -gt "$AREA_MAP_MAX_BYTES" ]; then
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] AREA-MAP truncated: ${#rendered} chars > ${AREA_MAP_MAX_BYTES} (some areas omitted — raise AREA_MAP_MAX_BYTES if entities are missed)" \
-            >> "$LOG_DIR/assist-$(date +%Y%m%d).log"
+            >> "$(today_log assist)"
         printf '%s\n' "$rendered" | head -c "$AREA_MAP_MAX_BYTES" | sed '$d' > "$map_tmp"
         # Said in the prompt, not only in the log: a map that claims to be
         # complete tells the model not to search for the room it cannot see.
@@ -457,7 +472,7 @@ log_request_debug() {
     local prompt_chars="$4"
     local session_mode="$5"
     local area_map_chars="$6"
-    local log_file="$LOG_DIR/assist-$(date +%Y%m%d).log"
+    local log_file="$(today_log assist)"
 
     {
         echo "================================================================"
@@ -479,7 +494,7 @@ log_response_debug() {
     local response="$2"
     local duration="$3"
     local stderr_output="$4"
-    local log_file="$LOG_DIR/assist-$(date +%Y%m%d).log"
+    local log_file="$(today_log assist)"
 
     local response_chars=${#response}
     local response_lines

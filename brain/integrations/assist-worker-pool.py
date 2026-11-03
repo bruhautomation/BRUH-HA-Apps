@@ -541,6 +541,22 @@ def redact_tail(text: str) -> str:
     return _STDERR_SECRET_RE.sub("[redacted]", str(text or ""))
 
 
+def _own_log(path: str) -> None:
+    """Hand a new day's log to the claude user, who reads it back from a
+    session. The pool runs as root, and a root-owned 0600 transcript is one
+    the session cannot open (#642); root can still append to it."""
+    if os.geteuid() != 0:
+        return
+    try:
+        import pwd  # noqa: PLC0415 — POSIX only, and only needed as root
+        user = pwd.getpwnam("claude")
+        os.chown(path, user.pw_uid, user.pw_gid)
+    except (KeyError, OSError):
+        # No claude user (a dev box), or a filesystem that refuses: the log
+        # is still written, and still owner-only.
+        pass
+
+
 def debug_log(lines: list[str]) -> None:
     """Append to the same daily debug log the classic listener uses.
 
@@ -550,7 +566,10 @@ def debug_log(lines: list[str]) -> None:
     path = os.path.join(LOG_DIR, f"assist-{time.strftime('%Y%m%d')}.log")
     stamp = time.strftime("%Y-%m-%d %H:%M:%S")
     try:
+        new = not os.path.exists(path)
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        if new:
+            _own_log(path)
         with os.fdopen(fd, "a") as fh:
             for line in lines:
                 fh.write(line.replace("{ts}", stamp) + "\n")
@@ -978,6 +997,11 @@ class Worker:
         self.last_used = self.created
         self.session_id: str | None = None
         self.lock = threading.Lock()  # serializes turns on this worker
+        # True from the moment a request takes this worker until its turn
+        # is over, set and read under the pool's lock: the reaper runs on
+        # the main loop while a turn runs on its own thread, and a worker in
+        # a turn is not idle whatever its clock says (`Pool.reap`).
+        self.busy = False
         self._events: Queue = Queue()
         # What the last turn did, read by Pool.process: whether it reached a
         # tool before it ended (see `ask`), and the CLI's own result event
@@ -1308,6 +1332,7 @@ class Pool:
                     worker.kill()
                     self.workers.pop(conv_id, None)
                 else:
+                    worker.busy = True
                     return worker, "warm"
             elif worker:
                 worker.kill()
@@ -1321,6 +1346,7 @@ class Pool:
             ):
                 worker = self.spare
                 self.spare = None
+                worker.busy = True
                 self.workers[conv_id] = worker
                 self._spawn_spare(profile)
                 return worker, "spare"
@@ -1328,6 +1354,7 @@ class Pool:
         # Cold spawn (outside the lock — process startup can take seconds).
         worker = Worker(profile, resume=resume)
         with self.lock:
+            worker.busy = True
             self.workers[conv_id] = worker
         if self.spare is None or not self.spare.alive():
             self._spawn_spare(profile)
@@ -1376,7 +1403,14 @@ class Pool:
     def reap(self) -> None:
         now = time.time()
         with self.lock:
+            # A worker in a turn is never reaped here: this tick runs on the
+            # main loop while the turn runs on its own thread, and killing it
+            # answered the turn "stdout closed, exit -9" — `partial` when it
+            # had reached a tool. The turn's own thread drops a worker that
+            # died or hung; the next tick after the turn reaps an idle one.
             for conv_id, worker in list(self.workers.items()):
+                if worker.busy:
+                    continue
                 if (
                     not worker.alive()
                     or now - worker.last_used > WORKER_IDLE_REAP
@@ -1386,7 +1420,10 @@ class Pool:
                     self.workers.pop(conv_id, None)
             # Enforce the cap (LRU), keeping the most recently used.
             while len(self.workers) > MAX_WORKERS - 1:
-                oldest = min(self.workers, key=lambda c: self.workers[c].last_used)
+                idle = [c for c, w in self.workers.items() if not w.busy]
+                if not idle:
+                    break
+                oldest = min(idle, key=lambda c: self.workers[c].last_used)
                 evicted = self.workers.pop(oldest)
                 evicted.kill()
             # Recycle a stale spare so its baked-in area map stays fresh.
@@ -1478,9 +1515,11 @@ class Pool:
         run_id = ""
         ran_model = voice_model(model)[0]
         conv_lock = self.conv_locks.setdefault(conv_id, threading.Lock())
+        taken: Worker | None = None
         with conv_lock:
             try:
                 worker, mode = self._take_worker(conv_id, profile)
+                taken = worker
                 message = local_time_line() + preamble + text
                 # A truly fresh session can't see earlier turns — replay the
                 # transcript the integration sends (like the classic
@@ -1544,6 +1583,10 @@ class Pool:
                     req, system_prompt, model, deadline, denied_csv, access,
                     preamble)
                 envelope = None
+            finally:
+                if taken is not None:
+                    with self.lock:
+                        taken.busy = False
 
         duration = time.time() - start
         if response and not error and AUTH_ERROR_RE.search(response):

@@ -379,17 +379,74 @@ def react(state: dict, touch_id: str, reaction: str, now: float, *,
     return touch
 
 
+def _could_answer(row: dict) -> bool:
+    """Whether this message had buttons to press: a touch or a message about
+    one finding, on a companion app (`notify_router.actions_for`'s rule)."""
+    import notify_router  # noqa: PLC0415 — panel-local, read per pass
+
+    one = row.get("kind") == "presence" or len(row.get("ts") or []) == 1
+    return one and notify_router.can_answer(str(row.get("service") or ""))
+
+
+def silent_services(folded: list[dict] | None) -> set[str]:
+    """Notify services the ledger has never once heard an answer or a swipe
+    back from. Some phones never report a swipe (iOS), so on those a day
+    with no answer is not a message somebody ignored — it is no signal."""
+    heard, sent = set(), set()
+    for row in folded or []:
+        if not isinstance(row, dict):
+            continue
+        service = str(row.get("service") or "")
+        sent.add(service)
+        if row.get("outcome") in ("answered", "cleared"):
+            heard.add(service)
+    return sent - heard
+
+
+def unanswered_counts(row: dict, silent: set[str]) -> bool:
+    """Whether an `ignored` outcome on this message says anything: only
+    when it could have been answered and its phone reports answers."""
+    return (_could_answer(row)
+            and str(row.get("service") or "") not in silent)
+
+
+def answer_counts(folded: list[dict] | None, now: float,
+                  days: float = 7) -> dict[str, int]:
+    """How the household answered brAIn's other messages over `days`: the
+    nightly reflection's one line about it (#632). An `ignored` from a
+    message with no buttons, or from a phone that never reports a swipe,
+    is left out — it was counted, and every night the reflection was told
+    a dozen messages went unanswered on a phone that cannot say otherwise."""
+    silent = silent_services(folded)
+    out: dict[str, int] = {}
+    for row in folded or []:
+        if now - float(row.get("at") or 0) > days * 86400:
+            break
+        if row.get("kind") == "presence":
+            continue
+        outcome = str(row.get("outcome") or "")
+        if outcome == "ignored" and not unanswered_counts(row, silent):
+            continue
+        if outcome in ("answered", "cleared", "ignored"):
+            out[outcome] = out.get(outcome, 0) + 1
+    return out
+
+
 def absorb(state: dict, folded: list[dict] | None, now: float) -> int:
     """What the delivery ledger says happened to phone touches: a swipe,
-    or a day with no answer. Returns how many touches it changed."""
+    or a day with no answer. Returns how many touches it changed. A day
+    with no answer from a phone that never reports one is not read."""
     by_id = {str(d.get("id") or ""): d for d in folded or []
              if isinstance(d, dict)}
+    silent = silent_services(folded)
     changed = 0
     for touch in state.get("touches") or []:
         if touch.get("reaction") or not touch.get("delivery"):
             continue
         row = by_id.get(str(touch["delivery"]))
         outcome = str((row or {}).get("outcome") or "")
+        if outcome == "ignored" and not unanswered_counts(row or {}, silent):
+            continue
         if outcome in ("cleared", "ignored"):
             if react(state, touch["id"], outcome, now):
                 changed += 1
@@ -577,7 +634,16 @@ _JUDGED = re.compile(
 _ENTITY_ID = re.compile(r"\b[a-z_]{2,}\.[a-z0-9_]{2,}\b")
 
 
-def refusal_of(text: str, *, growth: bool = False) -> str:
+_NOT_CONTENT = frozenset("""
+    a an the to for on in at of with by from as when while and or but so
+    that this these those it its i me my you your our their is are was were
+    be been being now not no than then if because about after before also
+    too very just only should would will can
+""".split())
+_BRAIN = re.compile(r"(?i)\bbrain\b")
+
+
+def refusal_of(text: str, *, growth: bool = False, name: str = "") -> str:
     """Why this text may not be kept, or "". Pure."""
     s = str(text or "")
     if not s.strip():
@@ -590,15 +656,27 @@ def refusal_of(text: str, *, growth: bool = False) -> str:
         return "it carries an id"
     if growth and personality.voice_named(s):
         return "it would change the voice, which is the household's"
+    if growth and (_BRAIN.search(s) or (name and re.search(
+            r"(?<![\w])" + re.escape(name) + r"(?![\w])", s))):
+        # A note is the assistant's own, in the first person; one that
+        # names it ("so brAIn should...") talks about itself in the third.
+        return "it names the assistant instead of speaking as it"
     return ""
 
 
 _TOKEN = re.compile(r"[a-z0-9']+")
 
 
+def _words(text: str) -> set[str]:
+    """The words that carry what a note says: no numbers (a nightly note
+    whose only change is "17 went ignored" for "16" is the same note) and
+    none of the words every sentence has."""
+    return {w for w in _TOKEN.findall(str(text).lower())
+            if not w.isdigit() and w not in _NOT_CONTENT}
+
+
 def _similar(a: str, b: str) -> bool:
-    ta = set(_TOKEN.findall(str(a).lower()))
-    tb = set(_TOKEN.findall(str(b).lower()))
+    ta, tb = _words(a), _words(b)
     if not ta or not tb:
         return False
     return len(ta & tb) / len(ta | tb) >= 0.6
@@ -687,6 +765,8 @@ def write_growth(growth: list[dict], now: float,
     own (`personality.add_growth(by="self")`), under the weekly cap and
     never twice. Returns how many were written."""
     data = personality.load(path)
+    name = personality.assistant_name(data)
+    name = "" if name == personality.DEFAULT_NAME else name
     mine = [g for g in data.get("growth") or [] if g.get("by") == personality.SELF]
     recent = [g["text"] for g in (data.get("growth") or [])[-20:]]
     week = sum(1 for g in mine if abs(_num(g.get("at")) - now) < 7 * 86400)
@@ -695,7 +775,7 @@ def write_growth(growth: list[dict], now: float,
         text = str(item.get("text") or "")
         if week >= GROWTH_PER_WEEK:
             break
-        if not text or refusal_of(text, growth=True) \
+        if not text or refusal_of(text, growth=True, name=name) \
                 or any(_similar(text, g) for g in recent):
             continue
         try:
@@ -770,7 +850,11 @@ SYSTEM = prompt_kit.assemble(
   touches for anybody who left recent ones unanswered.
 - No entity ids, no emoji, no exclamation marks; under 160 characters.
 - A growth note is about brAIn, never a rule for the household, and
-  never about its voice or its name.""",
+  never about its voice or its name. Write it as a note to yourself
+  ("Keep evening touches to one line"), never naming brAIn or its name.
+- A message nobody answered is not one somebody disliked: some phones
+  never say whether a message was swiped, so only the answers and swipes
+  you are shown count.""",
     person_facing=False,
 )
 

@@ -621,6 +621,13 @@ def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
                              str(row.get("why") or "").strip()), MAX_WHY),
                          "forced": False}
             already = str(row.get("already") or "").strip().lower()
+            if (already not in ALREADY and verdict == "watch"
+                    and triage.says_nothing_to_do(said[idx]["why"])):
+                # "Nothing needs doing", kept on the list: the reason
+                # withdraws the card, so the card is set aside (#604). Only
+                # `watch` — an investigation or an act said something is
+                # worth a closer look — and the floors still run below.
+                already = "explained"
             if already not in ALREADY and triage.says_duplicate(
                     said[idx]["why"]):
                 # The word written as a sentence ("already an open problem
@@ -771,9 +778,10 @@ Answer with ONE JSON object and nothing else. What it means:
 - "fix" — ONE action, in one sentence, specific to this house: the
   entity, the integration, the automation, the setting. Never a category,
   never generic advice restated and never a list of things to try.
-  """ + prompt_kit.ONE_STEP + """ If you
-  concluded it is normal here or nothing is needed, say that nothing is
-  needed and why. Never tell the person to press a button on the card
+  """ + prompt_kit.ONE_STEP + """ When
+  nothing is needed (it is normal here, it has cleared, nothing was
+  triggered) there is no claim to make: leave "claim" empty and say why
+  in "detail". Never tell the person to press a button on the card
   (Ignore, Snooze) — those are always there. Never tell the
   person to check, look at or confirm something your tools can read —
   read it first and write what you found: not "check whether the hub is
@@ -794,6 +802,7 @@ Answer with ONE JSON object and nothing else. What it means:
   rules should win. When the answer is in something brAIn cannot see (a
   router's or access point's own app, a phone, the device itself), say
   once what it is and that brAIn cannot see it, then the one step there.
+- """ + prompt_kit.FINDING_VOICE + """
 - "todo_text" — the same errand as ONE imperative sentence for a to-do
   list, naming the thing ("Replace the battery in the hallway motion
   sensor."). Never the claim, never a question; empty when nothing needs
@@ -1297,6 +1306,26 @@ def not_due(case: dict, drivers: dict, value_of, aliases=None) -> str:
                          MAX_WHY)
 
 
+def faulty_case(case: dict, entities, faulty: dict) -> str:
+    """Why a case rests on a sensor the owner called broken, or "".
+
+    ``entities`` is what the signal was about; the case's own entity and
+    every entity its evidence cites are read too. A case drawn from a
+    reading somebody said is broken is a conclusion about nothing.
+    """
+    if not isinstance(case, dict) or not faulty:
+        return ""
+    named = [str(case.get("entity_id") or ""), *[str(e) for e in entities or ()],
+             *[str(r.get("entity") or "") for r in case.get("evidence") or ()
+               if isinstance(r, dict)]]
+    for eid in named:
+        if eid in faulty:
+            return textclip.clip(
+                f"{eid} was called broken or finished with by the owner "
+                f"({faulty[eid]})", MAX_WHY)
+    return ""
+
+
 def ungrounded_did_not_run(case: dict, drivers: dict) -> str:
     """Why a "did not run" case is not grounded, or "" when it is (or when
     it is not that kind of claim).
@@ -1345,6 +1374,35 @@ def _no_placeholder(value) -> str:
     (#446) — the row then keeps the sentence it had."""
     text = str(value or "").strip()
     return "" if house_words.placeholder(text) else text
+
+
+def unfinished(case: dict) -> tuple[str, str]:
+    """``(code, why)`` for a reply that is not a finding yet, or ``("", "")``.
+
+    ``nothing_needed``: its own step or detail says nothing is needed, so
+    the claim above it is a headline withdrawn by its own text (#604) — the
+    honest answer is no claim, or a held row. ``no_step``: a problem or an
+    opportunity with no step, no errand and no action, which leaves the
+    reader unable to tell whether to do, answer or ignore (#616). A
+    high-stakes reply is never dropped for the second: silence there costs
+    more than a card without a step.
+    """
+    if not isinstance(case, dict) or case.get("kind") == "question":
+        return "", ""
+    fix = str(case.get("fix") or "").strip()
+    said = fix if triage.NOTHING_RE.match(fix) else ""
+    if not said and not fix:
+        for sentence in re.split(r"(?<=[.!?])\s+",
+                                 str(case.get("detail") or "")):
+            if triage.NOTHING_RE.match(sentence.strip()):
+                said = sentence.strip()
+                break
+    if said:
+        return "nothing_needed", textclip.shorten(said, MAX_WHY)
+    if (not fix and not str(case.get("todo_text") or "").strip()
+            and not case.get("actions") and case.get("stakes") != "high"):
+        return "no_step", ""
+    return "", ""
 
 
 def _one_step(value) -> str:
@@ -1725,6 +1783,6 @@ __all__ = [
     "CLAIM_RULE", "DISMISS_RULE", "REFINE_SYSTEM", "investigate_system",
     "note_withheld", "parse_case", "parse_dismissal", "parse_first_look",
     "rejudge_due", "tier_for", "watch", "watch_note", "watched",
-    "READING_DOMAINS", "drivers_of", "ungrounded_did_not_run",
+    "READING_DOMAINS", "drivers_of", "faulty_case", "ungrounded_did_not_run",
     "device_aliases", "not_due",
 ]

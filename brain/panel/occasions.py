@@ -153,22 +153,69 @@ def _num(value) -> float | None:
 # What is asked
 # ---------------------------------------------------------------------------
 
-def commands(weather_id: str, calendar_ids, now: float) -> list[dict]:
+# Home Assistant's `WeatherEntityFeature` bits: which forecasts an entity
+# can answer `weather.get_forecasts` with.
+FORECAST_DAILY, FORECAST_HOURLY, FORECAST_TWICE_DAILY = 1, 2, 4
+
+
+def _features(state: dict) -> int:
+    try:
+        return int(((state or {}).get("attributes") or {})
+                   .get("supported_features") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def pick_weather(states) -> dict | None:
+    """The weather entity to read: the one whose forecasts serve best.
+
+    The first `weather.*` in the state list was taken whatever it could
+    answer, and on a house whose first one had no daily forecast every
+    read failed "does not support 'daily' forecast" while another entity
+    that had one sat beside it (#635). Ranked daily, then twice-daily,
+    then hourly; one that is unavailable last; the state list's order
+    breaks a tie, so a house with one entity reads that one as before.
+    """
+    found = [s for s in states or () if isinstance(s, dict)
+             and str(s.get("entity_id") or "").startswith("weather.")]
+
+    def rank(item):
+        index, state = item
+        bits = _features(state)
+        serves = (0 if bits & FORECAST_DAILY else
+                  1 if bits & FORECAST_TWICE_DAILY else
+                  2 if bits & FORECAST_HOURLY else 3)
+        down = str(state.get("state") or "") in ("unavailable", "unknown")
+        return (down, serves, index)
+
+    if not found:
+        return None
+    return min(enumerate(found), key=rank)[1]
+
+
+def commands(weather_id: str, calendar_ids, now: float,
+             features: int = 0) -> list[dict]:
     """The WebSocket commands one read sends, in one round trip.
 
     `call_service` with `return_response` is how a service answers with
-    data over the socket; both services are read-only.
+    data over the socket; both services are read-only. `features` is the
+    entity's `supported_features`: a forecast type it does not have is not
+    asked for (asking is a refusal, and a refusal is a reported error).
+    Unknown (0) asks for both, which is what every read did before.
     """
     out: list[dict] = []
-    if weather_id:
+    kinds = ("daily", "hourly")
+    if features:
+        kinds = tuple(k for k, bit in (("daily", FORECAST_DAILY),
+                                       ("hourly", FORECAST_HOURLY))
+                      if features & bit)
+        if not kinds and features & FORECAST_TWICE_DAILY:
+            # Half-days are read the way hourly rows are: by their time.
+            kinds = ("twice_daily",)
+    for kind in kinds if weather_id else ():
         out.append({"type": "call_service", "domain": "weather",
                     "service": "get_forecasts",
-                    "service_data": {"type": "daily"},
-                    "target": {"entity_id": weather_id},
-                    "return_response": True})
-        out.append({"type": "call_service", "domain": "weather",
-                    "service": "get_forecasts",
-                    "service_data": {"type": "hourly"},
+                    "service_data": {"type": kind},
                     "target": {"entity_id": weather_id},
                     "return_response": True})
     ids = [c for c in (calendar_ids or ()) if str(c).startswith("calendar.")]
@@ -540,6 +587,7 @@ def file_facts(rows: list[dict], *, run_id: str = "") -> int:
 
 
 __all__ = [
+    "pick_weather",
     "INTERVAL_S", "JOB", "KINDS", "SCHEMA", "SYSTEM", "calendar_events",
     "commands", "current", "due", "fence", "file_facts", "forecast_days",
     "line", "lines", "load", "notable_weather", "parse", "prompt", "save",

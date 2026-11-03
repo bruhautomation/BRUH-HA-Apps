@@ -84,6 +84,21 @@ SHARED_DIR="/config/.brain"
 TASKS_DIR="$SHARED_DIR/tasks"
 RESULTS_DIR="$SHARED_DIR/task_results"
 LOG_DIR="$SHARED_DIR/logs"
+
+# The day's debug log for `kind`, by path. Created owner-only (it holds full
+# transcripts) and owned by the claude user, who reads it back from a
+# session; this listener runs as root, and a root-owned 0600 file is one the
+# session cannot open (#642). Root can still append to a claude-owned file.
+today_log() {
+    local file="$LOG_DIR/$1-$(date +%Y%m%d).log"
+    if [ ! -e "$file" ]; then
+        ( umask 077; : >> "$file" ) 2>/dev/null || true
+        if [ "$(id -u)" = "0" ]; then
+            chown claude:claude "$file" 2>/dev/null || true
+        fi
+    fi
+    printf '%s' "$file"
+}
 # One line per tool call a task makes (scripts/brain-task-progress.sh, a hook
 # in headless_settings.json), read by whoever handed the task over.
 PROGRESS_DIR="$SHARED_DIR/task_progress"
@@ -362,24 +377,34 @@ task_tool_flags() {
     # server's question, asked of the panel's opt-in list and daily count.
     local cameras="${2:-}"
 
+    # A refusal says why on stderr, one line: process_task puts it in the
+    # log and the journal, where "could not be honoured" alone named
+    # neither the word nor the step that failed.
     case "$mode" in
         ''|full) return 0 ;;
         house|read_only|minecraft|minecraft_trusted) ;;
-        *) return 1 ;;
+        *) echo "no scope is called '${mode:0:40}'" >&2; return 1 ;;
     esac
 
     local panel_dir lists allow deny
     panel_dir="${BRAIN_PANEL_DIR:-/opt/panel}"
-    if ! lists=$(BRAIN_PANEL_DIR="$panel_dir" BRAIN_TASK_CAMERAS="$cameras" python3 - <<'PYTOOLS' 2>/dev/null
+    # `-P`: the listener runs in /config (the image's WORKDIR), and without
+    # it `python3 -` puts the working directory on sys.path ahead of the
+    # standard library, so a file in the house's config named like a module
+    # the engine imports decided whether every narrow task ran at all.
+    if ! lists=$(BRAIN_PANEL_DIR="$panel_dir" BRAIN_TASK_CAMERAS="$cameras" python3 -P - <<'PYTOOLS'
 import os
 import sys
 sys.path.insert(0, os.environ.get("BRAIN_PANEL_DIR", "/opt/panel"))
 try:
     import engine
-except Exception:
+except Exception as exc:
+    print(f"the panel's engine could not be imported ({type(exc).__name__}: "
+          f"{' '.join(str(exc).split())[:120]})", file=sys.stderr)
     raise SystemExit(1)
 allow, deny = list(engine.ANALYST_TOOLS), list(engine.ANALYST_DENIED)
 if not allow or not deny:
+    print("the engine's analyst tool lists are empty", file=sys.stderr)
     raise SystemExit(1)
 if os.environ.get("BRAIN_TASK_CAMERAS") == "true":
     camera = engine.CAMERA_TOOL
@@ -401,10 +426,12 @@ for tool in allow + deny:
         house_allow.append(tool)
 house_deny = [t for t in deny if not t.startswith("mcp__")]
 if not house_allow or not house_deny:
+    print("the house scope's tool lists came out empty", file=sys.stderr)
     raise SystemExit(1)
 # The game's scope: its own short list, and everything else named denied.
 game_allow = list(getattr(engine, "MINECRAFT_CHAT_TOOLS", []) or [])
 if not game_allow or any(not t.startswith("mcp__") for t in game_allow):
+    print("the engine's game tool list is empty or not all MCP tools", file=sys.stderr)
     raise SystemExit(1)
 game_deny = [t for t in deny if t not in game_allow]
 game_deny += [t for t in allow if t not in game_allow and t not in game_deny]
@@ -434,7 +461,10 @@ PYTOOLS
         allow=$(printf '%s' "$lists" | sed -n '3p')
         deny=$(printf '%s' "$lists" | sed -n '4p')
     fi
-    [ -n "$allow" ] && [ -n "$deny" ] || return 1
+    if [ -z "$allow" ] || [ -z "$deny" ]; then
+        echo "the '${mode}' scope's tool lists came out empty" >&2
+        return 1
+    fi
 
     printf '%s\n%s\n%s\n%s\n' \
         "--allowedTools" "$allow" "--disallowedTools" "$deny"
@@ -516,7 +546,7 @@ AUTH_REMEDY="Open brAIn from the sidebar and press ⚙ → Claude account → Si
 # settings" must not silently stop every scheduled report a house has.
 task_gate() {
     local panel_dir="${BRAIN_PANEL_DIR:-/opt/panel}"
-    BRAIN_PANEL_DIR="$panel_dir" python3 - <<'PYGATE' 2>/dev/null || true
+    BRAIN_PANEL_DIR="$panel_dir" python3 -P - <<'PYGATE' 2>/dev/null || true
 import os
 import sys
 sys.path.insert(0, os.environ.get("BRAIN_PANEL_DIR", "/opt/panel"))
@@ -563,7 +593,7 @@ PYGATE
 task_memory_block() {
     local prompt_file="$1"
     local panel_dir="${BRAIN_PANEL_DIR:-/opt/panel}"
-    BRAIN_PANEL_DIR="$panel_dir" python3 - "$prompt_file" <<'PYMEM' 2>/dev/null || true
+    BRAIN_PANEL_DIR="$panel_dir" python3 -P - "$prompt_file" <<'PYMEM' 2>/dev/null || true
 import os
 import re
 import sys
@@ -630,7 +660,7 @@ extract_claude_data() {
 # Prints the stream-json user message on stdout, or nothing.
 # Args: the task's `images` as JSON, the file holding the prompt.
 task_images_message() {
-    python3 - "$1" "$2" "$TASK_IMAGE_DIR" <<'PYIMAGES' 2>/dev/null
+    python3 -P - "$1" "$2" "$TASK_IMAGE_DIR" <<'PYIMAGES' 2>/dev/null
 import base64, json, os, sys
 try:
     wanted = json.loads(sys.argv[1])
@@ -883,12 +913,18 @@ process_task() {
     if [ -n "$task_schema" ]; then
         schema_flags=(--json-schema "$task_schema")
     fi
-    if ! tool_flags_out=$(task_tool_flags "$task_tools" "$task_cameras"); then
-        bashio::log.error "Task [$task_id] asked for tools='${task_tools}' and it could not be honoured"
-        write_task_result "$task_id" "brAIn refused this task: tools='${task_tools}' is not one of full, house, read_only, minecraft or minecraft_trusted, or the analyst's tool lists could not be read from the panel. A task that cannot be scoped is not run with the full grant." "" refused
-        journal_task error 0 "" "${task_model:-}" "tools scope could not be honoured" "$task_scheduled"
+    local scope_err scope_why
+    scope_err=$(mktemp 2>/dev/null || echo "/tmp/brain-scope.$$.$RANDOM")
+    if ! tool_flags_out=$(task_tool_flags "$task_tools" "$task_cameras" 2>"$scope_err"); then
+        scope_why=$(grep -v '^[[:space:]]*$' "$scope_err" 2>/dev/null | tail -n 1 | tr -d '\000-\037' | cut -c1-200)
+        rm -f "$scope_err"
+        scope_why="${scope_why:-no reason was given}"
+        bashio::log.error "Task [$task_id] asked for tools='${task_tools}' and it could not be honoured: ${scope_why}"
+        write_task_result "$task_id" "brAIn refused this task: tools='${task_tools}' could not be honoured (${scope_why}). A task that cannot be scoped is not run with the full grant." "" refused
+        journal_task error 0 "" "${task_model:-}" "tools scope could not be honoured: ${scope_why}" "$task_scheduled"
         return
     fi
+    rm -f "$scope_err"
     if [ -n "$tool_flags_out" ]; then
         mapfile -t tool_flags <<< "$tool_flags_out"
     fi
@@ -966,7 +1002,7 @@ ${prompt}"
     fi
 
     # Log request for debugging
-    local log_file="$LOG_DIR/automation-$(date +%Y%m%d).log"
+    local log_file="$(today_log automation)"
     {
         echo "================================================================"
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] TASK REQUEST $task_id"
@@ -1262,7 +1298,7 @@ ${prompt}"
         notify_payload=$(jq -n \
             --arg msg "Claude task ${verb}: ${message}" \
             '{"message": $msg}')
-        curl -s -X POST \
+        curl -s -o /dev/null -X POST \
             -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "$notify_payload" \
@@ -1279,7 +1315,7 @@ ${prompt}"
         --arg status "$event_status" \
         --arg error "$fail_code" \
         '{"task_id": $id, "status": $status} + (if $error != "" then {"error": $error} else {} end)')
-    curl -s -X POST \
+    curl -s -o /dev/null -X POST \
         -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
         -H "Content-Type: application/json" \
         -d "$event_payload" \

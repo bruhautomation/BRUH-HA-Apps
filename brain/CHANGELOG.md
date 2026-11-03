@@ -2,6 +2,42 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.2.5
+
+### Added
+
+- Every background loop reports a heartbeat, so a hung one turns health degraded (#638).
+- Health turns degraded when brAIn has not been able to look at the house for over an hour or its queue is nearly full, and the status line shows its real last look (#631).
+- `bruh_addon_status` says when an add-on's log could not be read, instead of reporting no errors (#657).
+
+### Changed
+
+- The header clock shows the date and AM/PM in a 12-hour preference, with the date stacked over the time on a phone (#567).
+- Settings › Dashboard › Header tabs points to where the top bar's mark is chosen (#568).
+- Findings are asked to open with what is affected now, to do their own lookups, and to put a count beside the device's usual rate (#581, #603, #627).
+- Insight cards must make sense to a reader who saw no earlier card, with no chains of sensor names (#584, #628).
+- Steps and notification bodies are cut on a whole sentence, not mid-text with an ellipsis (#629).
+- A lock left unlocked at bedtime is described as unlocked, and a car as a car (#614).
+- The chat and terminal carry your chosen voice as the answer that overrides any older instruction naming another (#624).
+- A problem you were already told about this week is not pushed again unless it got worse or involves another device (#639).
+- What's coming up reads the weather entity that has a daily forecast (#635).
+
+### Fixed
+
+- Morph's room scene buttons are 40px tall on a phone (#646).
+- A finding whose own conclusion says nothing is needed is no longer filed or kept open (#604), and an investigation reply with no step is not shown as a finding (#616).
+- Code names such as event and setting keys no longer appear in finding text (#618).
+- The "you keep undoing" check no longer blames an automation that only reacts to a wall switch or remote press (#626).
+- The "holding this rule back" notice shows for rules with two or three Wrong answers, matching when brAIn holds them (#611).
+- The Resident no longer draws conclusions from a sensor you called broken or retired (#600).
+- A finding's look no longer shows "already on your dashboard" as its reason (#615).
+- A voice request is no longer cut off when housekeeping stops the worker still answering it (#609).
+- A task asked to run with a narrow tool scope is no longer refused because of an unrelated file in the config folder, and a refusal says why (#621).
+- The startup cleanup removes the retired plugin's entry, so boots stop logging a stale plugin reference (#636).
+- Log hygiene: no blocking file read on Home Assistant's event loop, no glued task replies in log lines, no aiohttp warning at startup (#637).
+- The day's voice and automation debug logs are readable from a brAIn session (#642).
+- A stored voice that is not really a voice name is re-read from your notes or dropped (#640), and your own growth entries stay in every prompt (#633).
+- The nightly self-notes no longer treat an iPhone's silence as ignored messages, repeat themselves, or speak about brAIn in the third person (#632).
 ## 4.2.4
 
 ### Added
