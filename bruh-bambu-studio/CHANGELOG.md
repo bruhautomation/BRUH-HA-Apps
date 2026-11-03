@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.4
+
+### Added
+
+- Files in the Bambu list now name the slice already made from them, so a reprint needs no reslice (#653).
+
+### Changed
+
+- The design chat says it cannot open a link or see a photo and asks for the measurements instead (#623).
+
+### Fixed
+
+- A finished print's plate clears when the finish look sees it empty or lifted out (#651).
+- An A1 no longer shows a chamber temperature or 100% for spools it cannot measure, look marks on the layer line no longer overlap, and the panel no longer 404s on noVNC's package file (#652).
+
 ## 0.4.3
 
 ### Changed

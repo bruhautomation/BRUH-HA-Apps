@@ -707,6 +707,15 @@ class PrinterWatch:
             self.looking = False
             self.owner.changed()
 
+    def _plate_from_answer(self, answer: dict, now: float) -> None:
+        """What a look says about the plate: empty (and sure) clears it, a print on it keeps it."""
+        if answer["plate"] == "empty" and answer["confidence"] >= 0.7:
+            self._plate_clear(now, f"brAIn looked: {answer['summary']}")
+        elif answer["plate"] == "has_print":
+            self.plate = {"state": "occupied", "since": self.plate.get("since") or now,
+                          "why": answer["summary"]}
+            self._save_plate()
+
     def _record_look(self, trigger: dict, summary: dict, frame: bytes, answer: dict | None,
                      error: str, plate_only: bool, extra: dict) -> str | None:
         """Write one look down; the alert's id when the printer is to be paused."""
@@ -716,15 +725,14 @@ class PrinterWatch:
             if answer is None:
                 self.brain = {"state": "error", "sentence": error or "brAIn did not answer."}
                 return None
-            if answer["plate"] == "empty" and answer["confidence"] >= 0.7:
-                self._plate_clear(now, f"brAIn looked: {answer['summary']}")
-            elif answer["plate"] == "has_print":
-                self.plate = {"state": "occupied", "since": self.plate.get("since") or now,
-                              "why": answer["summary"]}
-                self._save_plate()
+            self._plate_from_answer(answer, now)
             return None
         if rec is None:
             return None
+        if answer is not None and trigger["kind"] == "finish":
+            # The finish look sees the plate too: a plate lifted out of the
+            # printer is a cleared plate, and nothing else would ask again.
+            self._plate_from_answer(answer, now)
         if answer is None:
             self.brain = {"state": "error", "sentence": error or "brAIn did not answer."}
             if trigger["kind"] == "checkpoint":

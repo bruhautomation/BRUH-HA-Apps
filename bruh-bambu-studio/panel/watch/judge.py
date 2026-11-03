@@ -122,8 +122,8 @@ def prompt(ctx: dict) -> str:
         "problem: the main problem, or `none`.",
         "summary: one plain sentence for the owner's phone, under 30 words, saying what you " +
         "see (\"Spaghetti is building up behind the left part.\"). No advice, no hedging words.",
-        "plate: `empty` if nothing at all is on the build plate, `has_print` if a print is on " +
-        "it, `unknown` if you cannot tell.",
+        "plate: `empty` if nothing at all is on the build plate (or the plate has been taken " +
+        "out of the printer), `has_print` if a print is on it, `unknown` if you cannot tell.",
         "where: optional, where in picture 1 the problem is (\"left front corner\").",
     ])
 
@@ -134,7 +134,7 @@ def plate_prompt(ctx: dict) -> str:
         + (f" ({ctx['file']})" if ctx.get("file") else "") + ".",
         "Has the finished print been taken off? Say whether the build plate is empty.",
         "Ignore the purge line's leftover and the toolhead. A plate with any part, brim or " +
-        "large piece left on it is not empty.",
+        "large piece left on it is not empty; a plate taken out of the printer counts as empty.",
         "Answer verdict `ok`, problem `none`, and plate `empty`, `has_print` or `unknown`; " +
         "summary one sentence; confidence how sure you are about the plate.",
     ])

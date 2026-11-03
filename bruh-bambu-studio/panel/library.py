@@ -78,6 +78,34 @@ def listing(working: bool = False) -> list[dict]:
     return out
 
 
+def slice_stem(name: str) -> str:
+    """The source's name a slice was made from: `part-20260101-010101.gcode.3mf` is `part`."""
+    stem = re.sub(r"\.gcode\.3mf$", "", name, flags=re.I)
+    return re.sub(r"-\d{8}-\d{6}$", "", stem)
+
+
+def link_slices(rows: list[dict]) -> None:
+    """Give each source row `sliced_path`, the newest slice made from it (slicer
+    names its output after the source), so a reprint needs no second slice."""
+    newest: dict[str, tuple[int, str]] = {}
+    folder = ROOT / SLICED
+    if folder.is_dir():
+        for path in folder.glob("*.gcode.3mf"):
+            if path.name.startswith("."):
+                continue
+            key = slice_stem(path.name).lower()
+            mtime = int(path.stat().st_mtime)
+            if key not in newest or mtime > newest[key][0]:
+                newest[key] = (mtime, relative(path))
+    for row in rows:
+        if row.get("sliced") or str(row.get("name", "")).lower().endswith(".gcode.3mf"):
+            continue
+        source = Path(row.get("path") or "").name
+        key = re.sub(r"\.[^.]+$", "", source).lower()
+        if key in newest:
+            row["sliced_path"] = newest[key][1]
+
+
 def safe_upload_name(name: str) -> str:
     base = os.path.basename(str(name or "").replace("\\", "/")).strip()
     if not NAME.match(base) or base.startswith(".") or not base.lower().endswith(SUFFIXES):
