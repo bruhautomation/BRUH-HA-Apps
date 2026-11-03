@@ -16885,15 +16885,14 @@ async def _occasions_fetch(calendars: list[str], now: float):
     errors: dict[str, str] = {}
     async with aiohttp.ClientSession() as session:
         states = await ha_data._rest_get(session, "/states", timeout=60)
-        weather = next((s for s in states or [] if isinstance(s, dict)
-                        and str(s.get("entity_id") or "").startswith("weather.")),
-                       None)
+        weather = occasions.pick_weather(states)
         weather_id = str((weather or {}).get("entity_id") or "")
         unit = str(((weather or {}).get("attributes") or {})
                    .get("temperature_unit") or "°C")
         if not weather_id:
             errors["weather"] = "this house has no weather entity"
-        cmds = occasions.commands(weather_id, calendars, now)
+        cmds = occasions.commands(weather_id, calendars, now,
+                                  occasions._features(weather or {}))
         answers = await ha_data._ws_calls(session, cmds) if cmds else []
     daily = hourly = None
     cal: dict = {}
