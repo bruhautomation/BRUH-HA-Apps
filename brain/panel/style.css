@@ -7208,7 +7208,15 @@ html.in-shell .topbar .btn.icon.statusdot[data-state="watching"] { display: none
 html.in-shell .shellclock:not([hidden]) {
   display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px;
   font-size: 16px; font-weight: 600; color: var(--ink-2);
-  font-variant-numeric: tabular-nums; white-space: nowrap;
+  font-variant-numeric: tabular-nums; white-space: nowrap; gap: 0 6px;
+}
+/* Narrow: the date stacks over the time, small, so ⚙ is not crowded. */
+@media (max-width: 600px) {
+  html.in-shell .shellclock:not([hidden]) {
+    flex-direction: column; justify-content: center; gap: 0; padding: 0 2px;
+    font-size: 13px; line-height: 1.15; text-align: right;
+  }
+  html.in-shell .shellclock .shdate { font-size: 11px; font-weight: 500; }
 }
 html.in-shell .viewtab.active {
   color: var(--ink);

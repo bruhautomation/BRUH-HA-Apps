@@ -12714,22 +12714,32 @@ async function loadHeaderTabs() {
 setTimeout(loadHeaderTabs, 0);
 
 // ---- the clock beside ⚙ ---------------------------------------------------
-// The owner: "I think a clock should be visible all the time." h:mm, in the
+// The owner: "I think a clock should be visible all the time." The time, in the
 // 12- or 24-hour preference Home Assistant holds for this person when it
-// holds one (the shell sends it as `state.clock`), else the browser's.
+// holds one (the shell sends it as `state.clock`), else the browser's, with
+// AM/PM when it is 12-hour and the date ("Fri, Oct 30") beside it, stacked
+// over the time on a phone (style.css).
+function shellClockParts(now, clock) {
+  const opts = { hour: "numeric", minute: "2-digit" };
+  if (clock === 12) opts.hour12 = true;
+  if (clock === 24) opts.hourCycle = "h23";
+  const time = new Intl.DateTimeFormat([], opts).format(now).trim();
+  const date = new Intl.DateTimeFormat([], { weekday: "short", month: "short", day: "numeric" }).format(now).trim();
+  return { date, time };
+}
+
 function syncShellClock() {
   const c = $("#shellClock");
   if (!c) return;
   c.hidden = !SHELL;
   if (!SHELL) return;
   const now = new Date();
-  const opts = { hour: "numeric", minute: "2-digit" };
-  if (shellState.clock === 12) opts.hour12 = true;
-  if (shellState.clock === 24) opts.hourCycle = "h23";
-  const text = new Intl.DateTimeFormat([], opts).formatToParts(now)
-    .filter((p) => p.type !== "dayPeriod").map((p) => p.value).join("").trim();
-  if (c.textContent !== text) c.textContent = text;
-  c.setAttribute("datetime", `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`);
+  const { date, time } = shellClockParts(now, shellState.clock);
+  const d = c.querySelector(".shdate");
+  const t = c.querySelector(".shtime");
+  if (d && d.textContent !== date) d.textContent = date;
+  if (t && t.textContent !== time) t.textContent = time;
+  c.setAttribute("datetime", `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}T${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`);
 }
 
 // ---- the header on a phone, and a tab row that gets out of the way ------
@@ -18772,7 +18782,8 @@ function renderDashboard() {
   parts.push(`<h4 class="sethead">Appearance</h4>` + dashPick("theme", "Theme", s.theme)
     + dashSwitch("reduce_motion", "Reduce motion", "Things move straight to where they belong instead of springing there.", s.reduce_motion));
   parts.push(`<h4 class="sethead">Header tabs</h4>` + dashTabsHtml(s.header_tabs || {})
-    + `<p class="hint tight">The name and icon of each tab in the header, on every device of the house. A blank name is the tab's own.</p>`);
+    + `<p class="hint tight">The name and icon of each tab in the header, on every device of the house. A blank name is the tab's own.</p>`
+    + `<p class="hint tight">What the top bar's mark shows (the logo, the assistant's name or your own) is set in <a class="linkish" href="#" data-dash-act="header_mark">Personality › Header</a>.</p>`);
   parts.push(`<h4 class="sethead">Learning loop</h4>`
     + (learningOn ? "" : `<p class="hint">The learning loop is off in <a class="linkish" href="#" data-dash-act="features">Features</a>, so nothing below runs on its own.</p>`)
     + dashPick("learning_hours", "How often", s.learning_hours)
@@ -18859,6 +18870,7 @@ $("#dashBody").addEventListener("click", async (ev) => {
   const act = b.dataset.dashAct;
   const v = b.dataset.v || "";
   if (act === "features") { ev.preventDefault(); showSettingsSection("features"); return; }
+  if (act === "header_mark") { ev.preventDefault(); showSettingsSection("personality"); return; }
   if (act === "regenerate" && !dashRegenSure) { dashRegenSure = true; renderDashboard(); return; }
   b.disabled = true;
   let r;

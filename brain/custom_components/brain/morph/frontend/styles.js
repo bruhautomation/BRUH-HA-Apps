@@ -95,7 +95,7 @@ section.sec.nowband .secbg{background:transparent!important}
 .sectitle{flex:1;min-width:0;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;position:relative}
 .roomname{background:none;border:0;padding:0;margin:0;font:inherit;color:inherit;cursor:pointer;text-align:left}
 .secscenes{display:inline-flex;gap:0 14px;flex-wrap:wrap}
-.secscenes .wd{font-size:15px;color:var(--muted);min-height:32px}
+.secscenes .wd{font-size:15px;color:var(--muted)}
 .needs{font-size:13px;color:var(--rose);white-space:nowrap}
 .trace{background:none;border:0;padding:0;margin:0;font:inherit;font-size:13px;cursor:pointer;min-height:28px;white-space:nowrap}
 .secbecause{flex-basis:100%;font-size:13px;margin:-2px 0 0}
