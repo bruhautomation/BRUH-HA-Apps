@@ -469,8 +469,8 @@ def clean_settings(raw: Any, strict: bool = False) -> dict[str, Any]:
         # A named spyglass for everyone on the list, when they join.
         "spyglass": raw.get("spyglass") is not False,
         # What the companion is thinking, shown where it is not in the way:
-        # a bubble only the asking player sees (over the allay when it is
-        # near) and a journal book on join that opens the whole stream.
+        # a bubble over the companion's allay, which hovers by the work, and a
+        # journal book on join that opens the whole stream.
         "thoughts": raw.get("thoughts") is not False,
         "colour": (str(raw.get("colour")) if str(raw.get("colour") or "") in COLOURS
                    else DEFAULT_COLOUR),

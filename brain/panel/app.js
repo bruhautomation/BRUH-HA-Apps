@@ -19018,7 +19018,7 @@ function renderMinecraft() {
     <label class="check bigcheck"><input id="mcSpyglass" class="tog" type="checkbox"${s.spyglass !== false ? " checked" : ""}>
       <span><b>Give everyone a spyglass</b><span class="subtext">“${esc(d.name)}'s Spyglass” when they join. Point it at something and ${esc(d.name)} offers ideas to pick from.</span></span></label>
     <label class="check bigcheck"><input id="mcThoughts" class="tog" type="checkbox"${s.thoughts !== false ? " checked" : ""}>
-      <span><b>Show what ${esc(d.name)} is thinking</b><span class="subtext">A small bubble only the person it's working for can see, over ${esc(d.name)}'s allay when it's near — what it's doing now and how each job is going. Everyone gets “${esc(d.name)}'s Thoughts”, a book that opens the whole stream. Never in chat. Needs a Paper or Purpur server.</span></span></label>
+      <span><b>Show what ${esc(d.name)} is thinking</b><span class="subtext">${esc(d.name)}'s allay stays by what it's building, with a small bubble over it saying what it's doing now and how each job is going. Everyone can see everyone's. Everyone gets “${esc(d.name)}'s Thoughts”, a book that opens the whole stream. Never in chat. Needs a Paper or Purpur server.</span></span></label>
     <label for="mcWorkers">Jobs at once</label>
     <select id="mcWorkers">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}"${n === (s.workers || 5) ? " selected" : ""}>${n}</option>`).join("")}</select>
     <p class="hint">Bigger requests — a build, a room made over — become jobs that run while you keep playing. More than this wait their turn, and so does one in the same place as a job already going.</p>

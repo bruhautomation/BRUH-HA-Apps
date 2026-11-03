@@ -78,7 +78,7 @@ import java.util.concurrent.TimeUnit;
  *
  * It changes no block: every edit still goes through the panel's undoable
  * path. What it adds to the game is the companion's thoughts ({@link
- * Thoughts}): a bubble only the asking player sees, never saved with the
+ * Thoughts}): its allay by the build with a bubble over it, never saved with the
  * world, and a book that opens the whole stream. Reads of the world happen on the server thread
  * (block data is copied in chunk snapshots there and encoded off it).
  */

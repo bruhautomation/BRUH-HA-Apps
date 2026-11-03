@@ -7,7 +7,7 @@ it's not super annoying. It could be represented over vesper's allay or be
 shown in an item the player can use."*
 
 So the faculty and the MCP server tell BRUH Minecraft's `companion_thought`
-each step (a bubble only the player it works for sees, over the allay when it
+each step (a bubble over the companion's allay, which hovers by the work, when it
 is near, and the journal book), never chat:
 
 * a quick answer is a "thinking" line the add-on shows only once it lasts,

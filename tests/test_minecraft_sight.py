@@ -10,7 +10,7 @@ build stood came back empty (#620). BRUH Sight is a plugin inside the server
 token: players as they are this second (and what is under each crosshair),
 and blocks as they are now. And — *"Make sure it's not super annoying. It
 could be represented over vesper's allay or be shown in an item"* — it shows
-the companion's thinking in a bubble only the asking player sees and in a
+the companion's thinking in a bubble over its allay by the build and in a
 journal book, never chat.
 
 These drive `panel/sight.py` against a fake plugin on a real loopback
@@ -308,7 +308,47 @@ class TestTheBodyHoversByTheWork(SightCase):
             self.assertIn(call, body)
         tick = src.split("private void tick()", 1)[1].split("\n    }\n", 1)[0]
         self.assertIn("removeBody(m);", tick, "no work, no body")
-        self.assertIn("p.showEntity(plugin, d);", tick, "shown after it is in the world")
+
+    def test_its_own_block_commands_say_where_it_is_working(self):
+        """The owner: *"Can vesper stay close to where it is building rather
+        than staying in the players top right corner?"* Only an edit used to
+        say where the work was, so a build by any other road (its own
+        placing, a raw fill) left the body by the player. The plugin reads
+        the companion's own server commands; this runs its pattern (Java
+        and Python agree on this syntax) over the commands the panel sends."""
+        src = (ADDON / "sight" / "src" / "main" / "java" / "com" / "bruhautomation" / "sight"
+               / "Thoughts.java").read_text()
+        import re
+
+        def java_pattern(name):
+            body = src.split(f"Pattern {name} = Pattern.compile(", 1)[1].split(");", 1)[0]
+            parts = re.findall(r'"((?:[^"\\]|\\.)*)"', body)
+            return re.compile("".join(parts).encode().decode("unicode_escape"))
+
+        work, in_dim = java_pattern("WORK"), java_pattern("IN_DIM")
+        fill = ("minecraft:execute in minecraft:overworld run minecraft:fill 10 64 -4 20 70 6 "
+                "minecraft:oak_planks replace")
+        m = work.search(fill)
+        self.assertEqual(m.groups(), ("10", "64", "-4", "20", "70", "6"))
+        self.assertEqual(in_dim.search(fill).group(1), "minecraft:overworld")
+        m = work.search("minecraft:setblock -3 65 12 minecraft:torch replace")
+        self.assertEqual(m.groups()[:3], ("-3", "65", "12"))
+        self.assertIsNone(m.group(4))
+        self.assertIsNone(work.search("minecraft:fill ~ ~ ~ ~2 ~2 ~2 stone"),
+                          "relative coordinates say nothing about where")
+        self.assertIsNone(work.search("minecraft:summon minecraft:allay 1 2 3"))
+        self.assertIn("onRcon(RemoteServerCommandEvent", src)
+
+    def test_without_a_site_it_circles_the_player_not_their_screen(self):
+        src = (ADDON / "sight" / "src" / "main" / "java" / "com" / "bruhautomation" / "sight"
+               / "Thoughts.java").read_text()
+        anchor = src.split("private Location anchor(", 1)[1].split("private Allay spawnBody", 1)[0]
+        self.assertNotIn("getDirection()", anchor, "not placed by where they look")
+        self.assertIn("NEAR_PLAYER", anchor)
+
+    def test_a_look_is_where_it_is_about_to_work(self):
+        server = (PANEL / "server.py").read_text()
+        self.assertIn("_focus_after_look(seen, body)", server)
 
 
 class TestThePluginShips(unittest.TestCase):
@@ -328,8 +368,10 @@ class TestThePluginShips(unittest.TestCase):
         self.assertIn("MessageDigest.isEqual", main)
         thoughts = (src / "Thoughts.java").read_text()
         self.assertIn("setPersistent(false)", thoughts)
-        self.assertIn("setVisibleByDefault(false)", thoughts)
-        self.assertIn("showEntity(plugin", thoughts)
+        # Everybody sees everybody's companion and its thoughts (the owner:
+        # "everybody should be able to see everybody elses vesper").
+        self.assertNotIn("setVisibleByDefault(false)", thoughts)
+        self.assertNotIn("showEntity(", thoughts)
         plugin_yml = (ADDON / "sight" / "src" / "main" / "resources" / "plugin.yml").read_text()
         self.assertIn("main: com.bruhautomation.sight.BruhSight", plugin_yml)
 
