@@ -908,7 +908,9 @@ _ROUTING_RE = re.compile(
     r"\b(?:in front of (?:the )?(?:homeowner|owner|person|user|them)"
     r"|already (?:(?:been )?(?:filed|raised|reported|listed|surfaced|shown"
     r"|flagged|queued|tracked|known|told)"
-    r"|(?:on|in) (?:the|their|your|a) (?:list|queue|feed|tab|screen))"
+    r"|(?:(?:open|showing|shown|listed) )?(?:on|in) (?:the|their|your|a) "
+    r"(?:list|queue|feed|tab|screen|dashboard)"
+    r"|(?:an?|the) (?:clean-?up |tidy-?up )?(?:chore|to-?do))"
     r"|(?:is|are|sits?) (?:already )?(?:on|in) (?:the|their|your) "
     r"(?:list|queue|feed)"
     r"|has (?:already )?been told about)\b", re.I)
