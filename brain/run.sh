@@ -1258,6 +1258,14 @@ cleanup_all_mcp_references() {
                             )
                         )
                     else . end |
+                    reduce ("enabledPlugins", "extraKnownMarketplaces") as $k (.;
+                        if (.[$k] | type) == "object" then
+                            .[$k] |= with_entries(select(
+                                (.key | contains("homeassistant-config") | not) and
+                                (.key | contains("claude-homeassistant-plugins") | not)
+                            ))
+                        else . end
+                    ) |
                     del(.plugins) | del(.extensions)
                 ' "$config_file" > "$tmp_file" 2>/dev/null; then
                     mv "$tmp_file" "$config_file"
