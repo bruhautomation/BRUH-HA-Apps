@@ -74,6 +74,8 @@ MORPH_READ_MAX_BYTES = 512 * 1024
 # the newest few growth entries. Morph's websocket.py holds its own PERSONA_MAX
 # (it cannot import this module); tests/test_personality_long.py keeps them equal.
 PROMPT_GROWTH_ENTRIES = 3
+# …and of the assistant's own notes, apart from those: one.
+PROMPT_SELF_ENTRIES = 1
 PROMPT_GROWTH_CHARS = 200
 
 # Who wrote a growth entry when it was not the household: the assistant
@@ -169,6 +171,12 @@ def normalise(data) -> dict:
         "persona": _block(data.get("persona"), PERSONA_MAX),
         "growth": clean_growth(data.get("growth")),
     }
+    # A stored voice that no longer reads as one (an older parser stored
+    # "says so" off "…the persona now says so.") is re-read from the
+    # household's own notes, newest first, or dropped — every prompt and
+    # finding quotes this field (#640).
+    if out["voice"] and not _voice_holds(out["voice"]):
+        out["voice"] = _voice_from_growth(out["growth"])
     stamp = data.get("updated_at")
     if isinstance(stamp, (int, float)) and not isinstance(stamp, bool) and stamp > 0:
         out["updated_at"] = int(stamp)
@@ -436,6 +444,26 @@ def _name_like(words: str) -> bool:
     return words[:1].isupper() or any(c in words for c in "_-0123456789")
 
 
+def _voice_holds(voice: str) -> bool:
+    """A stored voice that still reads as a name: one to four words, none of
+    them a sentence's. Looser than `_name_like` on case, because ⚙ takes
+    what a person typed ("sara")."""
+    parts = str(voice or "").split()
+    return 1 <= len(parts) <= 4 and not any(
+        w.lower().strip("'’\"“”.,;:!?()") in _NOT_A_NAME for w in parts)
+
+
+def _voice_from_growth(growth) -> str:
+    """The voice the household's newest note naming one says, or ""."""
+    for entry in reversed(growth or []):
+        if entry.get("by") == SELF:
+            continue
+        said = voice_named(entry.get("text"))
+        if said:
+            return said
+    return ""
+
+
 def voice_named(text) -> str:
     """The voice a growth note says brAIn now speaks with, or "" when the
     note does not say outright that the voice changed to a named one."""
@@ -549,6 +577,18 @@ def summary(data: dict | None) -> str:
     return name or first
 
 
+def prompt_growth(growth: list[dict]) -> list[dict]:
+    """The growth entries a prompt carries, oldest first: the household's
+    newest `PROMPT_GROWTH_ENTRIES`, and at most `PROMPT_SELF_ENTRIES` of
+    the assistant's own. Taking the last N of both together let three
+    nightly self-notes push every entry the household settled out of the
+    window (#633)."""
+    mine = [g for g in growth if g.get("by") == SELF][-PROMPT_SELF_ENTRIES:]
+    theirs = [g for g in growth if g.get("by") != SELF][-PROMPT_GROWTH_ENTRIES:]
+    keep = {id(g) for g in mine + theirs}
+    return [g for g in growth if id(g) in keep]
+
+
 def prompt_block(data: dict | None = None) -> str:
     """The lines a prompt carries, or "" when no personality is set or
     Personality is switched off."""
@@ -565,8 +605,14 @@ def prompt_block(data: dict | None = None) -> str:
     persona = _clip(data.get("persona") or "", PERSONA_MAX)
     if persona:
         parts.append(f"Your personality: {persona}")
+    if data.get("voice"):
+        # The one stored answer, where the chat and the terminal read it:
+        # an older line in an instruction override naming another voice is
+        # outranked here rather than quoted (#624).
+        parts.append(f"Your spoken voice is {data['voice']}; where any other "
+                     "instruction names a different voice, this one stands.")
     text = " ".join(parts)
-    growth = (data.get("growth") or [])[-PROMPT_GROWTH_ENTRIES:]
+    growth = prompt_growth(data.get("growth") or [])
     if growth:
         lines = [f"- {g.get('date') or 'undated'}"
                  f"{' (your own note)' if g.get('by') == SELF else ''}: "

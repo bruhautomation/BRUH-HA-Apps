@@ -1258,6 +1258,14 @@ cleanup_all_mcp_references() {
                             )
                         )
                     else . end |
+                    reduce ("enabledPlugins", "extraKnownMarketplaces") as $k (.;
+                        if (.[$k] | type) == "object" then
+                            .[$k] |= with_entries(select(
+                                (.key | contains("homeassistant-config") | not) and
+                                (.key | contains("claude-homeassistant-plugins") | not)
+                            ))
+                        else . end
+                    ) |
                     del(.plugins) | del(.extensions)
                 ' "$config_file" > "$tmp_file" 2>/dev/null; then
                     mv "$tmp_file" "$config_file"
@@ -2004,7 +2012,7 @@ no_restart_needed() {
     fi
     # The running integration takes down a Repairs issue an earlier
     # update raised.
-    curl -s -X POST \
+    curl -s -o /dev/null -X POST \
         -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
         -H "Content-Type: application/json" \
         -d '{}' \
@@ -2071,7 +2079,7 @@ notify_restart_required() {
     echo "$marker_payload" > /config/.brain/restart_required
 
     # Fire an event so the running integration (if loaded) can create a repair issue
-    curl -s -X POST \
+    curl -s -o /dev/null -X POST \
         -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
         -H "Content-Type: application/json" \
         -d '{}' \
@@ -2090,7 +2098,7 @@ notify_restart_required() {
             --arg msg "The brAIn integration has been installed. Please restart Home Assistant to load it.\n\nGo to **Settings > System > Restart**, then check **Settings > Devices & Services** for brAIn." \
             --arg nid "brain_restart_needed" \
             '{"title": $title, "message": $msg, "notification_id": $nid}')
-        curl -s -X POST \
+        curl -s -o /dev/null -X POST \
             -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "$notify_payload" \

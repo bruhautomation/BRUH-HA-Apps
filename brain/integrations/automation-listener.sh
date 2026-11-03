@@ -84,6 +84,21 @@ SHARED_DIR="/config/.brain"
 TASKS_DIR="$SHARED_DIR/tasks"
 RESULTS_DIR="$SHARED_DIR/task_results"
 LOG_DIR="$SHARED_DIR/logs"
+
+# The day's debug log for `kind`, by path. Created owner-only (it holds full
+# transcripts) and owned by the claude user, who reads it back from a
+# session; this listener runs as root, and a root-owned 0600 file is one the
+# session cannot open (#642). Root can still append to a claude-owned file.
+today_log() {
+    local file="$LOG_DIR/$1-$(date +%Y%m%d).log"
+    if [ ! -e "$file" ]; then
+        ( umask 077; : >> "$file" ) 2>/dev/null || true
+        if [ "$(id -u)" = "0" ]; then
+            chown claude:claude "$file" 2>/dev/null || true
+        fi
+    fi
+    printf '%s' "$file"
+}
 # One line per tool call a task makes (scripts/brain-task-progress.sh, a hook
 # in headless_settings.json), read by whoever handed the task over.
 PROGRESS_DIR="$SHARED_DIR/task_progress"
@@ -987,7 +1002,7 @@ ${prompt}"
     fi
 
     # Log request for debugging
-    local log_file="$LOG_DIR/automation-$(date +%Y%m%d).log"
+    local log_file="$(today_log automation)"
     {
         echo "================================================================"
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] TASK REQUEST $task_id"
@@ -1283,7 +1298,7 @@ ${prompt}"
         notify_payload=$(jq -n \
             --arg msg "Claude task ${verb}: ${message}" \
             '{"message": $msg}')
-        curl -s -X POST \
+        curl -s -o /dev/null -X POST \
             -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "$notify_payload" \
@@ -1300,7 +1315,7 @@ ${prompt}"
         --arg status "$event_status" \
         --arg error "$fail_code" \
         '{"task_id": $id, "status": $status} + (if $error != "" then {"error": $error} else {} end)')
-    curl -s -X POST \
+    curl -s -o /dev/null -X POST \
         -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
         -H "Content-Type: application/json" \
         -d "$event_payload" \
