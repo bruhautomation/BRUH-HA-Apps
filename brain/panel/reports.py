@@ -1020,7 +1020,8 @@ def _faults(diag) -> list[dict]:
         last_wrong = float(row.get("last_wrong_ts") or 0)
         if last_wrong and stamp and stamp - last_wrong > SCORE_RECENT_S:
             continue  # nobody has said it is wrong for a fortnight
-        if total >= SCORE_MIN_ENDINGS and wrong > total - wrong:
+        if (total >= SCORE_MIN_ENDINGS and wrong > total - wrong) \
+                or rule_record.qualifies(row):
             # Named by its title where the scorecard carries one, because
             # the id (`check:auto.conflict`) is what nobody recognises; the
             # id rides after it, since this is also a bug report.

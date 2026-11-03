@@ -1521,6 +1521,23 @@ def exception_map(now: float | None = None) -> dict[str, set]:
     return out
 
 
+def exception_reasons(now: float | None = None) -> dict[str, list[str]]:
+    """``{entity_id: [reason, …]}`` for every live exception rule, with the
+    words the person gave. `exception_map` says which checks are stood down;
+    this is what they said, for the readers that classify it."""
+    now = time.time() if now is None else float(now)
+    out: dict[str, list[str]] = {}
+    for row in _load():
+        if _expired(row, now):
+            continue
+        if not str(row.get("predicate") or "").startswith(EXCEPTION_PREFIX):
+            continue
+        for subject in _subjects_of(row):
+            if subject_kind(subject) == "entity":
+                out.setdefault(subject, []).append(str(row.get("text") or ""))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # The prompt block
 # ---------------------------------------------------------------------------

@@ -1297,6 +1297,26 @@ def not_due(case: dict, drivers: dict, value_of, aliases=None) -> str:
                          MAX_WHY)
 
 
+def faulty_case(case: dict, entities, faulty: dict) -> str:
+    """Why a case rests on a sensor the owner called broken, or "".
+
+    ``entities`` is what the signal was about; the case's own entity and
+    every entity its evidence cites are read too. A case drawn from a
+    reading somebody said is broken is a conclusion about nothing.
+    """
+    if not isinstance(case, dict) or not faulty:
+        return ""
+    named = [str(case.get("entity_id") or ""), *[str(e) for e in entities or ()],
+             *[str(r.get("entity") or "") for r in case.get("evidence") or ()
+               if isinstance(r, dict)]]
+    for eid in named:
+        if eid in faulty:
+            return textclip.clip(
+                f"{eid} was called broken or finished with by the owner "
+                f"({faulty[eid]})", MAX_WHY)
+    return ""
+
+
 def ungrounded_did_not_run(case: dict, drivers: dict) -> str:
     """Why a "did not run" case is not grounded, or "" when it is (or when
     it is not that kind of claim).
@@ -1725,6 +1745,6 @@ __all__ = [
     "CLAIM_RULE", "DISMISS_RULE", "REFINE_SYSTEM", "investigate_system",
     "note_withheld", "parse_case", "parse_dismissal", "parse_first_look",
     "rejudge_due", "tier_for", "watch", "watch_note", "watched",
-    "READING_DOMAINS", "drivers_of", "ungrounded_did_not_run",
+    "READING_DOMAINS", "drivers_of", "faulty_case", "ungrounded_did_not_run",
     "device_aliases", "not_due",
 ]

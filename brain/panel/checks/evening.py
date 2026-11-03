@@ -29,6 +29,7 @@ than about the house, the same cap `base.unusual` carries.
 from __future__ import annotations
 
 import logging
+import re
 
 from ._util import House, join_names
 
@@ -46,6 +47,13 @@ WINDOW_MIN = 90
 FALLBACK_HOUR = 23
 # More than this and it is the house, not a door.
 MAX_ROWS = 4
+
+
+_CAR_RE = re.compile(r"\b(car|vehicle|truck|suv|van)\b", re.I)
+
+
+def _car(house: House, eid: str) -> bool:
+    return eid.startswith("lock.") and bool(_CAR_RE.search(house.name(eid)))
 
 
 def _bedtime(now: float) -> tuple[bool, int | None]:
@@ -124,17 +132,29 @@ def left_open(snap: dict, now: float) -> list[dict]:
             "this house usually settles"
             if settles is not None else
             f"after {FALLBACK_HOUR}:00")
+    # A lock is unlocked and a car is a car: "open" is a door's word, and a
+    # car left unlocked read as a door left open told nobody which it was.
+    locks = all(eid.startswith("lock.") for _u, eid, _e in hits)
+    cars = locks and all(_car(house, eid) for _u, eid, _e in hits)
+    if cars:
+        text = "A car is unlocked when it is usually locked at this hour"
+    elif locks:
+        text = "Something is unlocked that is usually locked at this hour"
+    else:
+        text = "Something is open that is usually shut at this hour"
+    now_word, usual_word = (("unlocked", "locked") if locks
+                            else ("open", "shut"))
     return [{
         # One row, not one per door: this is a single thing to do before
         # bed, and four rows to dismiss one at a time is a chore.
-        "text": "Something is open that is usually shut at this hour",
-        "detail": (join_names(names) + " — open now, and "
-                   + ("normally shut at this hour of the week"
+        "text": text,
+        "detail": (join_names(names) + f" — {now_word} now, and "
+                   + (f"normally {usual_word} at this hour of the week"
                       if len(hits) > 1 else
-                      f"open for under {int(RARE_OPEN * 60)} minutes of "
-                      "this hour in an ordinary week")
+                      f"{now_word} for under {int(RARE_OPEN * 60)} minutes "
+                      "of this hour in an ordinary week")
                    + f". Checked {when}."),
-        "fix": "Shut it if it should be shut.",
+        "fix": f"{usual_word.capitalize()} it if it should be {usual_word}.",
         "severity": "warning",
         "fixable": False,
         "entity_id": hits[0][1],

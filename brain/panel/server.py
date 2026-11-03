@@ -14624,6 +14624,24 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
         await _outcome(signal, "refused", run_id, now, why, refines,
                        said=ungrounded)
         return False
+    # A conclusion drawn from a sensor the owner called broken is a
+    # conclusion about nothing (`corrections.known_faulty`). A signal the
+    # never-ignore floors hold (safety, protected, hot) is still looked at.
+    if not resident.never_ignore(signal)[0]:
+        faulty = await asyncio.to_thread(corrections.known_faulty)
+        broken = resident.faulty_case(case, _signal_entities(signal), faulty)
+        if broken:
+            RESIDENT_STATE["refused"] = RESIDENT_STATE.get("refused", 0) + 1
+            log.info("an investigation of %s rests on a sensor the owner "
+                     "called broken; refused", signal.get("subject"))
+            await asyncio.to_thread(decision_trail.note_many, [{
+                "kind": "explained",
+                "subject": str(signal.get("subject") or ""),
+                "check": "resident", "reason": broken,
+                "text": str(case.get("claim") or "")}], now)
+            await _outcome(signal, "refused", run_id, now, why, refines,
+                           said=broken)
+            return False
     # "It is idle" about a machine whose every starting automation waits on
     # a reading that is not past its threshold now is the rule working
     # (#558); "where is it?" or "how is it disarmed?" put to the owner while

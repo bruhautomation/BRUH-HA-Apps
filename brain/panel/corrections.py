@@ -471,6 +471,26 @@ def gone_for_good(note: str) -> bool:
     return bool(_GONE_RE.search(text)) and not temporary(text)
 
 
+def known_faulty(now: float | None = None) -> dict[str, str]:
+    """``{entity_id: reason}`` for every entity somebody said is broken or
+    finished with, read off the rules a Wrong wrote (`gone_for_good`).
+
+    A Wrong's rule is keyed on the row it ended, so a Resident case about a
+    pump marked "this sensor is broken" stood only that case down. This is
+    what lets a look be told, in code, that the sensor is not evidence.
+    """
+    out: dict[str, str] = {}
+    try:
+        for eid, texts in facts_store.exception_reasons(now).items():
+            for text in texts:
+                if gone_for_good(text):
+                    out[eid] = text
+                    break
+    except Exception as exc:  # noqa: BLE001 — unread holds nothing back
+        log.debug("known_faulty: %s", exc)
+    return out
+
+
 # A reason that asks not to be reminded: "don't remind me", "it's on my to
 # do list, stop reminding me", "I am aware, don't bring this up again". It is
 # not a statement that the report is wrong (a rule would be for ever) and
