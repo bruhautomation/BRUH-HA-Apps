@@ -12,8 +12,8 @@ import asyncio
 import json
 import sys
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "brain" / "panel"))
 
@@ -40,9 +40,9 @@ class TestTheRouteSaysSo(unittest.TestCase):
         async def fake():
             return COLLECTED
 
-        request = mock.Mock()
+        request = unittest.mock.Mock()
         request.query = {}
-        with mock.patch.object(server, "_bruh_addons", fake):
+        with unittest.mock.patch.object(server, "_bruh_addons", fake):
             resp = asyncio.run(server.h_bruh_addons(request))
         return {r["addon"]: r for r in json.loads(resp.text)["addons"]}
 

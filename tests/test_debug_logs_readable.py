@@ -21,8 +21,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -76,11 +76,11 @@ class TestThePoolHandsItsFileOver(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mod = load_pool(tmp, {})
             owned = []
-            user = mock.Mock(pw_uid=1234, pw_gid=5678)
-            with mock.patch.object(mod.os, "geteuid", return_value=0), \
-                    mock.patch.object(mod.os, "chown",
+            user = unittest.mock.Mock(pw_uid=1234, pw_gid=5678)
+            with unittest.mock.patch.object(mod.os, "geteuid", return_value=0), \
+                    unittest.mock.patch.object(mod.os, "chown",
                                       side_effect=lambda *a: owned.append(a)), \
-                    mock.patch("pwd.getpwnam", return_value=user):
+                    unittest.mock.patch("pwd.getpwnam", return_value=user):
                 mod.debug_log(["first"])
                 mod.debug_log(["second"])
             [path] = [p for p in os.listdir(mod.LOG_DIR) if p.startswith("assist-")]
