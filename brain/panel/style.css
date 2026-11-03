@@ -7213,9 +7213,10 @@ html.in-shell .shellclock:not([hidden]) {
 /* Narrow: the date stacks over the time, small, so ⚙ is not crowded. */
 @media (max-width: 600px) {
   html.in-shell .shellclock:not([hidden]) {
-    flex-direction: column; justify-content: center; gap: 0; padding: 0 4px;
+    flex-direction: column; justify-content: center; gap: 0; padding: 0 2px;
     font-size: 13px; line-height: 1.15; text-align: right;
   }
+  html.in-shell .shellclock .shdate { font-size: 11px; font-weight: 500; }
 }
 html.in-shell .viewtab.active {
   color: var(--ink);

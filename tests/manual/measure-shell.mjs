@@ -45,7 +45,7 @@
 //     and stays whole; with reduce motion nothing slides. A drag on the
 //     header moves neither the page under it nor the window around brAIn,
 //     and nothing lets a drag run on into Home Assistant's window.
-//   * the owner's header (#539): a clock (h:mm) beside ⚙ on every tab and
+//   * the owner's header (#539): a clock (date and time) beside ⚙ on every tab and
 //     at both widths, and no status dot at rest (one with a sign-in to fix);
 //     the first tab reads "Morph UI" with an icon, and ⚙ › Dashboard ›
 //     Header tabs renames it and changes its icon; no Edit in the header at
@@ -510,7 +510,7 @@ const frame = (p) => p.frames().find((f) => f.url().includes('/api/hassio_ingres
         if (fr.names[0] !== 'Morph UI' || !fr.homeIcon) fail(here, `the first tab reads "${fr.names[0]}"${fr.homeIcon ? '' : ' with no icon'}, not "Morph UI"`);
         for (const n of ['Morph UI', 'Insights', 'Ask', 'Memory']) if (!fr.names.includes(n)) fail(here, `the header has no ${n} (it has ${fr.names.join(', ')})`);
         // A clock beside ⚙, always (#539).
-        if (!/^\d{1,2}:\d{2}$/.test(fr.clock)) fail(here, `the header's clock reads "${fr.clock}"`);
+        if (!/^[A-Z][a-z]{2}, [A-Z][a-z]{2} \d{1,2}\s+(\d{1,2}:\d{2}( ?[AP]M)?)$/.test(fr.clock)) fail(here, `the header's clock reads "${fr.clock}"`);
         else if (fr.clockGap < 0 || fr.clockGap > 24) fail(here, `the clock is ${fr.clockGap}px from ⚙, not beside it`);
         if (!fr.tabsInBar) fail(here, 'a tab is outside the header');
         if (!fr.settings) fail(here, '⚙ is not in the header');
