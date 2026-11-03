@@ -91,6 +91,16 @@ class TestTheFacultyThinksOutLoud(DeskCase):
         self.assertEqual(given[0]["player"], DAD)
         self.assertTrue(given[0]["name"].endswith("'s Thoughts"))
 
+    def test_an_add_on_without_the_service_is_said_once_in_the_log(self):
+        self.addon.refuse.add("companion_thought")
+        self.join(DAD)
+        with self.assertLogs(level="WARNING") as logs:
+            self.chat(DAD, "hello")
+            self.chat(DAD, "hello again")
+        said = [r for r in logs.output if "restart Home Assistant" in r]
+        self.assertEqual(len(said), 1)
+        self.assertEqual(self.lines_to(DAD)[-1], "Sure!", "the answer still comes")
+
     def test_switched_off_there_is_no_bubble_no_journal_no_steps(self):
         self.write_settings(**{**self.settings, "thoughts": False})
         self.join(DAD)

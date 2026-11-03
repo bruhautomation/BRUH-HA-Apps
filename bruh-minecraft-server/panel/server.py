@@ -3410,6 +3410,7 @@ def world_dir() -> Path:
 
 
 _SIGHT: dict = {"sight": None}
+SIGHT_WARN_S = 600
 
 
 def _sight() -> "sight_mod.Sight":
@@ -3677,6 +3678,7 @@ async def api_companion_edit(request: web.Request) -> web.Response:
     except companion.CompanionError as exc:
         return _companion_error(exc)
     _world().write()
+    _focus_after_edit(act, body)
     note = f"Changed {act['changed']} blocks. Undo with its id: {act['id']}."
     if act.get("backup_note"):
         note += " " + act["backup_note"]
@@ -3695,6 +3697,25 @@ async def api_companion_progress(request: web.Request) -> web.Response:
 
 
 THOUGHT_STATES = ("thinking", "working", "done", "failed", "clear")
+
+
+def _focus_after_edit(act: dict, body: dict) -> None:
+    """Tell BRUH Sight where the companion just worked, so its body hovers
+    by the build (the job's line, or the player the edit was beside).
+    Fails soft: no plugin, no body, nothing else changes."""
+    focus = act.get("focus")
+    if not isinstance(focus, dict):
+        return
+    payload = dict(focus)
+    if act.get("job"):
+        payload["key"] = str(act["job"])[:24]
+    player = act.get("beside") or body.get("player")
+    if isinstance(player, str) and re.fullmatch(r"[A-Za-z0-9_.*]{1,17}", player):
+        payload["player"] = player
+    try:
+        _sight().focus(payload)
+    except Exception:  # noqa: BLE001 — a body that does not move changes nothing
+        pass
 
 
 def companion_thought(body: dict) -> dict:
@@ -3723,6 +3744,13 @@ def companion_thought(body: dict) -> dict:
     got = _sight().thought(payload)
     if isinstance(got, dict) and "error" not in got:
         return {"shown": bool(got.get("shown")), "via": "bubble"}
+    now = time.monotonic()
+    if now - _SIGHT.get("warned_at", -1e12) > SIGHT_WARN_S:
+        # Once in a while in the log, so "nothing shows in the game" says why.
+        _SIGHT["warned_at"] = now
+        log.warning("The companion's thought bubble needs BRUH Sight, which is not answering "
+                    "(%s). It runs on Paper and Purpur servers; check the server log for "
+                    "BruhSight.", _sight().last_error or (got or {}).get("error") or "no answer")
     if state in ("thinking", "clear") or not text:
         return {"shown": False, "via": None}
     line = f"{payload['title']}: {text}" if payload.get("title") else text

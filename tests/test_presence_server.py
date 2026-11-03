@@ -267,7 +267,10 @@ class TestTheNightlyReflection(PresenceCase):
 
     def test_one_cheap_run_a_night_read_strictly(self):
         self.looks.append(self.answer())
-        now = time.time()
+        # Midday UTC (the case's house timezone): `time.time()` failed this
+        # within ten minutes of midnight, where "+600" is the next night and
+        # a second reflection is rightly due.
+        now = (int(time.time()) // 86400) * 86400 + 12 * 3600
         out = asyncio.run(self.server._presence_pass(now))
         self.assertEqual(len(self.look_calls), 1)
         call = self.look_calls[0]
