@@ -236,8 +236,10 @@ def _fan(value):
     return None if n is None else round(max(0, min(15, n)) / 15 * 100)
 
 
-def _tray(tray: dict, slot: int) -> dict:
-    remain = tray.get("remain")
+def _tray(tray: dict, slot: int, measured: bool = True) -> dict:
+    """One tray. An AMS Lite cannot measure what is left (it reports 100 for
+    every tray), so `measured` False says unknown rather than full."""
+    remain = tray.get("remain") if measured else None
     return {
         "slot": slot,
         "type": str(tray.get("tray_type")),
@@ -307,7 +309,7 @@ def summarise(status: dict, model: str | None = None, serial: str | None = None)
         for tray in unit.get("tray") or []:
             if not isinstance(tray, dict) or not tray.get("tray_type"):
                 continue
-            trays.append(_tray(tray, uid * 4 + (_int(tray.get("id")) or 0)))
+            trays.append(_tray(tray, uid * 4 + (_int(tray.get("id")) or 0), not sensorless))
     # tray_now is the slot feeding the nozzle: 254 the external spool, 255 none.
     now = _int(ams.get("tray_now"))
     active = "external" if now == 254 else now if now is not None and now < 64 else None
@@ -338,7 +340,8 @@ def summarise(status: dict, model: str | None = None, serial: str | None = None)
         "nozzle_target_c": _num(p.get("nozzle_target_temper")),
         "bed_c": _num(p.get("bed_temper")),
         "bed_target_c": _num(p.get("bed_target_temper")),
-        "chamber_c": _num(p.get("chamber_temper")),
+        # An A1 has no chamber sensor: what it reports there is not a reading.
+        "chamber_c": None if lite_only else _num(p.get("chamber_temper")),
         "speed": SPEED_NAMES.get(p.get("spd_lvl")),
         "chamber_light": lights.get("chamber_light"),
         "ams": trays,

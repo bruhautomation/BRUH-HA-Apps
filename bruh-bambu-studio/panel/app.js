@@ -497,7 +497,7 @@ function spool(t, active, p) {
   el("span", { class: "reel", style: `--c:${colour};--l:${level}` }, el("i", {})),
   el("b", {}, t.slot === "external" ? "Ext" : `${(t.slot % 4) + 1}`),
   el("span", { class: "mat" }, t.type || "?"),
-  el("span", { class: "tsub" }, t.name && t.name !== t.type ? t.name : t.remaining != null ? `${t.remaining}%` : ""),
+  el("span", { class: "tsub" }, t.name && t.name !== t.type ? t.name : t.remaining != null ? `${t.remaining}%` : "level unknown"),
   active ? el("span", { class: "feeding" }, "in use") : null);
 }
 

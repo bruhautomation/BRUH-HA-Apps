@@ -496,6 +496,15 @@ async def h_health(_request):
     return web.json_response({"ok": True})
 
 
+async def h_novnc_package(_request):
+    """noVNC's page reads its version from package.json, which the distro's
+    copy leaves out: answer it, or every load logs a 404."""
+    own = NOVNC_DIR / "package.json"
+    if own.is_file():
+        return web.FileResponse(own)
+    return web.json_response({"name": "@novnc/novnc", "version": ""})
+
+
 async def h_state(request):
     return web.json_response(await asyncio.to_thread(_panel(request).state))
 
@@ -1787,6 +1796,7 @@ def build_app(panel: Panel | None = None, *, ticker: bool = True) -> web.Applica
     r.add_get("/style.css", _asset("style.css", "text/css"))
     r.add_get("/favicon.svg", _asset("favicon.svg", "image/svg+xml"))
     r.add_get("/websockify", vnc_bridge.handle)
+    r.add_get("/novnc/package.json", h_novnc_package)
     if NOVNC_DIR.is_dir():
         r.add_static("/novnc/", NOVNC_DIR)
     r.add_get("/api/health", h_health)
