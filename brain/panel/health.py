@@ -169,6 +169,12 @@ LOOPS = {
 }
 
 
+# The Resident's looks held by an allowance this long is a house nobody is
+# watching, not a pause (#631); and a queue this full is one about to drop.
+RESIDENT_HELD_DEGRADED_S = 3600
+RESIDENT_QUEUE_FULL = 0.8
+
+
 def _problem(state: str, what: str, fix: str, key: str) -> dict:
     return {"state": state, "what": what, "fix": fix, "id": key}
 
@@ -213,6 +219,36 @@ def _loop_problems(diag: dict) -> list[dict]:
                 "That is longer than any card or fix is allowed to take, so "
                 "everything queued behind it is waiting. Restart the add-on.",
                 f"loop:{name}:busy"))
+    return found
+
+
+def _resident_problems(diag: dict, now: float) -> list[dict]:
+    """A Resident whose looks have been held by an allowance for more than
+    an hour, and one whose queue is nearly full. Both read "everything is
+    running" from every other rule: the loop is alive and beating."""
+    res = diag.get("resident")
+    if not isinstance(res, dict):
+        return []
+    found = []
+    since = _num(res.get("held_since"))
+    if since and now - since > RESIDENT_HELD_DEGRADED_S:
+        why = str(res.get("last_error") or "").strip() or "an allowance is spent"
+        found.append(_problem(
+            "degraded",
+            f"brAIn has not looked at the house for {int((now - since) // 3600)} "
+            "hour(s)",
+            f"Its looks are held: {why}. Nothing new is being looked at until "
+            "that resets; what it has already filed is still on Today.",
+            "resident:held"))
+    queued, cap = _num(res.get("queue_len")), _num(res.get("queue_max"))
+    if queued is not None and cap and queued / cap > RESIDENT_QUEUE_FULL:
+        found.append(_problem(
+            "degraded",
+            f"brAIn's queue of things to look at is nearly full ({int(queued)} "
+            f"of {int(cap)})",
+            "It is taking in more than it looks at; past the limit the oldest "
+            "are dropped unlooked-at. The add-on log says what is holding it.",
+            "resident:queue"))
     return found
 
 
@@ -389,6 +425,7 @@ def problems(diag: dict, options: dict | None = None,
                                   spec["fix"], f"daemon:{name}"))
     found.extend(_assist_daemon(diag, options))
     found.extend(_loop_problems(diag))
+    found.extend(_resident_problems(diag, now))
     found.extend(_restart_owed(diag))
 
     consol = (daemons.get("memory_consolidator") or {})

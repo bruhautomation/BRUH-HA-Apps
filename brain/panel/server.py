@@ -915,6 +915,11 @@ RESIDENT_STATE: dict = {
     "duplicates": 0,         # cases the store already held
     "resolved": 0,           # filed rows looked into and set aside, unasked
     "last_error": "",
+    # Since when the looks themselves have been held by an allowance (the
+    # ledger's, or the day's count), or 0 while they run. A gate a person
+    # chose (paused, the usage budget) is not this: that is a refusal, not
+    # a fault. `health` turns a long hold into a sentence.
+    "held_since": 0.0,
 }
 # What producers hand signals to. A module global bound to whichever loop
 # touches it first, so it is rebound at startup beside `QUEUE` for the same
@@ -9546,9 +9551,10 @@ def _brain_status(settings: dict | None = None, budget: dict | None = None,
                 restart_since = RESTART_MARKER_FILE.stat().st_mtime
             except OSError:
                 restart_since = 0.0
-        last_check = (CHECKS_STATE.get("last") or {}).get("finished_at") or 0
-        look = max(float(RESIDENT_STATE.get("last_look_at") or 0),
-                   float(last_check or 0))
+        # The Resident's own last look. A routine checks pass is not a
+        # look: read as one, a Resident held for hours said "last look 46
+        # min ago" because a checks pass had just finished (#631).
+        look = float(RESIDENT_STATE.get("last_look_at") or 0)
         style = _clock_style()
 
         def clock(ts: float) -> str:
@@ -14002,6 +14008,7 @@ async def _resident_pass(now: float) -> dict:
                          for sig in RESIDENT_PENDING)
     if _triage_runs_today(now) >= triage.MAX_PER_DAY and not safety_waiting:
         RESIDENT_STATE["last_error"] = "the day's looks are spent"
+        _resident_held(now)
         if not TRIAGE_STATE.get("capped_said"):
             TRIAGE_STATE["capped_said"] = True
             log.warning("the Resident has spent its %d looks for today; %d "
@@ -14013,8 +14020,16 @@ async def _resident_pass(now: float) -> dict:
     allowed, why = LEDGER.allows(
         _resident_tier(resident.JOB_FIRST_LOOK, thinking), thinking, now=now)
     if not allowed:
+        RESIDENT_STATE["last_error"] = why
+        _resident_held(now)
         return {**out, "held": why}
     return await _resident_look(now, settings, thinking, len(surfaced))
+
+
+def _resident_held(now: float) -> None:
+    """The looks are being held by an allowance: keep when that began."""
+    if not RESIDENT_STATE.get("held_since"):
+        RESIDENT_STATE["held_since"] = now
 
 
 async def _resident_look(now: float, settings: dict, thinking: str,
@@ -14106,6 +14121,7 @@ async def _resident_look(now: float, settings: dict, thinking: str,
         inputs=look_inputs)
     TRIAGE_STATE["runs"] = _triage_runs_today(now) + 1
     RESIDENT_STATE["last_look_at"] = now
+    RESIDENT_STATE["held_since"] = 0.0
     await asyncio.to_thread(_note_first_look, now)
     try:
         # No tools: this is a LOOK, not a search. What it is asked is
