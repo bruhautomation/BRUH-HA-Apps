@@ -198,6 +198,60 @@ class TestAScopingThatCannotBeReadRefuses(unittest.TestCase):
             self.assertEqual(flags, [], mode)
 
 
+def flags_in(mode: str, cwd: str):
+    """`task_tool_flags` run from `cwd`, as the listener runs it from
+    /config: (rc, stdout lines, stderr)."""
+    harness = lift("task_tool_flags") + f'\ntask_tool_flags "{mode}"\n'
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+           "BRAIN_PANEL_DIR": str(PANEL_DIR)}
+    result = subprocess.run(["bash", "-c", harness], capture_output=True,
+                            text=True, check=False, env=env, cwd=cwd)
+    out = [line for line in result.stdout.splitlines() if line != ""]
+    return result.returncode, out, result.stderr
+
+
+class TestTheScopeDoesNotDependOnWhatIsInConfig(unittest.TestCase):
+    """The listener's working directory is /config (the image's WORKDIR),
+    and `python3 -` puts its working directory on sys.path ahead of the
+    standard library — so a `.py` file in somebody's /config named like a
+    module the engine imports refused every narrow task with "tools scope
+    could not be honoured", and the refusal said nothing of why."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        for name in ("json.py", "uuid.py", "subprocess.py"):
+            Path(self.tmp, name).write_text(
+                "raise ImportError('a file in the house config')\n",
+                encoding="utf-8")
+
+    def test_a_module_named_file_in_the_working_directory_changes_nothing(self):
+        for mode in ("house", "read_only", "minecraft"):
+            rc, flags, err = flags_in(mode, self.tmp)
+            self.assertEqual(rc, 0, f"{mode}: {err}")
+            self.assertEqual(flags, flags_for(mode)[1], mode)
+
+    def test_a_refusal_says_why_on_stderr(self):
+        rc, _, err = flags_in("readonly", self.tmp)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("readonly", err)
+        empty = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, empty, True)
+        harness = lift("task_tool_flags") + '\ntask_tool_flags "house"\n'
+        result = subprocess.run(
+            ["bash", "-c", harness], capture_output=True, text=True,
+            check=False, cwd=self.tmp,
+            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                 "BRAIN_PANEL_DIR": empty})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("engine", result.stderr)
+
+    def test_the_listener_journals_the_reason_it_was_given(self):
+        src = LISTENER.read_text(encoding="utf-8")
+        refusal = src.split("if ! tool_flags_out=", 1)[1][:1200]
+        self.assertIn("tools scope could not be honoured: ", refusal)
+
+
 class TestTheListenerCarriesTheFlagsToEveryInvocation(unittest.TestCase):
     """A run, its landing and its post-cleanup retry are one task: a scope
     that reached only the first would be widened by a retry."""
