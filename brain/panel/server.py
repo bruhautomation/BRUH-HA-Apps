@@ -20291,6 +20291,27 @@ async def h_devloop_look(request: web.Request) -> web.Response:
                              status=202)
 
 
+def _sibling_log_state(obs: dict) -> str:
+    """What reading one add-on's log came to: "read", "empty", or
+    "unreadable: <why>". The Supervisor's refusal arrives either as an
+    error the collector caught (`log_error`) or as its JSON error body in
+    place of the log; both are a log nobody has read, not a clean one."""
+    if obs.get("log_error"):
+        return f"unreadable: {str(obs['log_error'])[:200]}"
+    text = str(obs.get("log") or "").strip()
+    if not text:
+        return "empty"
+    if text.startswith("{"):
+        try:
+            body = json.loads(text)
+        except ValueError:
+            body = None
+        if isinstance(body, dict) and body.get("result") == "error":
+            why = str(body.get("message") or "the Supervisor refused")[:200]
+            return f"unreadable: {why}"
+    return "read"
+
+
 async def h_bruh_addons(request: web.Request) -> web.Response:
     """Every installed BRUH add-on: its state, version, the distinct errors
     in its log and what Home Assistant logged about its integration. The
@@ -20300,6 +20321,15 @@ async def h_bruh_addons(request: web.Request) -> web.Response:
         return web.json_response({"error": collected["error"]}, status=503)
     want = str(request.query.get("addon") or "").strip().lower()
     every = devloop.siblings.status(collected)
+    logs = {str(o.get("slug")): _sibling_log_state(o)
+            for o in collected.get("addons") or [] if isinstance(o, dict)}
+    for row in every:
+        state = logs.get(str(row.get("slug")), "read")
+        row["log"] = state
+        if state.startswith("unreadable"):
+            # No list at all, rather than an empty one: [] read as "its log
+            # has no errors" on add-ons whose log could not be read (#657).
+            row["log_errors"] = None
     rows = [r for r in every if not want or want in str(r["addon"]).lower()
             or want == str(r["slug"]).lower()]
     installed = {r["addon"] for r in every}
