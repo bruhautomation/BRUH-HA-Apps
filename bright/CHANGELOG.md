@@ -5,6 +5,12 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.23.5
+
+### Fixed
+
+- The Party tab fits a phone's width, long speaker and scene names no longer push the page sideways or put controls on top of each other, and the panel follows the light colour scheme (#656).
+
 ## 0.23.4
 
 ### Changed
