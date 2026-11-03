@@ -240,6 +240,26 @@ DUPLICATE_RE = re.compile(
     r"(?:finding|card|case|problem|report))\b", re.I)
 
 
+# A look's sentence that withdraws its own row: nothing is needed, nothing
+# to do, no need to ask. Shown under a problem headline it costs the reader
+# a read and teaches them to skip the next one (#604), so a conclusion that
+# says it is not set aside like the word it stands for.
+NOTHING_RE = re.compile(
+    r"\b(?:nothing (?:else |more )?(?:is |was )?(?:needed|required)"
+    r"|nothing (?:needs|requires) (?:doing|to be done|action|attention|fixing)"
+    r"|nothing (?:is )?left (?:open|to do)"
+    r"|nothing to (?:do|fix|act on)(?! with)\b"
+    r"|no (?:action|step|change|fix) (?:is |was )?(?:needed|required|necessary)"
+    r"|no need (?:to (?:ask|act|worry|do anything|change anything)|for (?:you|anybody|anyone|action))"
+    r"|(?:does(?:n'?t| not)|did(?:n'?t| not)) need (?:asking|doing|to be asked))",
+    re.I)
+
+
+def says_nothing_to_do(text) -> bool:
+    """Whether a look's reason (or a claim's step) says nothing is needed."""
+    return bool(NOTHING_RE.search(str(text or "")))
+
+
 def says_duplicate(reason) -> bool:
     """Whether a look's reason only says the row repeats another one."""
     return bool(DUPLICATE_RE.search(str(reason or "")))
