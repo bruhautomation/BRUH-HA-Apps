@@ -1071,6 +1071,16 @@ class TestMirror(unittest.TestCase):
         self.assertIn("edcc-082wh", payload["stocks"])
         self.assertIn("printed_today", payload)
 
+    def test_a_roll_count_nobody_keeps_is_not_published(self):
+        panel = server.Panel(self.data)
+        panel.discover = lambda force=False: []
+        panel.rolls.load_roll("left", "edcc-082wh", count=1000)
+        panel.settings.update({"track_remaining": False})
+        panel.mirror_state()
+        payload = json.loads((self.shared / "state.json").read_text())
+        self.assertNotIn("remaining", payload["rolls"]["left"])
+        self.assertEqual("edcc-082wh", payload["rolls"]["left"]["stock"])
+
     def test_a_dev_checkout_with_no_config_grows_no_stray_folder(self):
         server.SHARED = Path(tempfile.mkdtemp()) / "no-config" / ".bruh_print"
         panel = server.Panel(self.data)
