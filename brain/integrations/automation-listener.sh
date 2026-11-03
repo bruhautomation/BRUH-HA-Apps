@@ -1262,7 +1262,7 @@ ${prompt}"
         notify_payload=$(jq -n \
             --arg msg "Claude task ${verb}: ${message}" \
             '{"message": $msg}')
-        curl -s -X POST \
+        curl -s -o /dev/null -X POST \
             -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "$notify_payload" \
@@ -1279,7 +1279,7 @@ ${prompt}"
         --arg status "$event_status" \
         --arg error "$fail_code" \
         '{"task_id": $id, "status": $status} + (if $error != "" then {"error": $error} else {} end)')
-    curl -s -X POST \
+    curl -s -o /dev/null -X POST \
         -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
         -H "Content-Type: application/json" \
         -d "$event_payload" \

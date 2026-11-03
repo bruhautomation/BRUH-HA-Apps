@@ -25481,6 +25481,12 @@ async def h_memory_cleanup_run(request: web.Request) -> web.Response:
                               "started": started})
 
 
+# The consolidation tasks a press started, held so they are not collected
+# mid-run. A module set rather than an app key: the app is frozen by the
+# time a request arrives, and aiohttp warns on every write to a started one.
+_CONSOLIDATIONS: set = set()
+
+
 async def h_memory_cleanup_apply(request: web.Request) -> web.Response:
     """Remove the ticked lines: facts from the store at once, document lines
     as `FORGET:` requests the consolidator carries out — it stays the one
@@ -25502,8 +25508,8 @@ async def h_memory_cleanup_apply(request: web.Request) -> web.Response:
                       or await asyncio.to_thread(_consolidation_running)):
         MEMORY_STATE.update(merging=True, error="", filed=0)
         task = asyncio.create_task(_consolidate_task())
-        request.app.setdefault("consolidations", set()).add(task)
-        task.add_done_callback(lambda t: request.app["consolidations"].discard(t))
+        _CONSOLIDATIONS.add(task)
+        task.add_done_callback(_CONSOLIDATIONS.discard)
         started = True
     log.info("memory clean-up: %d fact(s) removed, %d document line(s) "
              "queued to forget", removed, len(lines))
@@ -25535,8 +25541,8 @@ async def h_memory_consolidate(request: web.Request) -> web.Response:
                                   "inbox_pending": await asyncio.to_thread(_inbox_pending)})
     MEMORY_STATE.update(merging=True, error="", filed=0)
     task = asyncio.create_task(_consolidate_task())
-    request.app.setdefault("consolidations", set()).add(task)
-    task.add_done_callback(lambda t: request.app["consolidations"].discard(t))
+    _CONSOLIDATIONS.add(task)
+    task.add_done_callback(_CONSOLIDATIONS.discard)
     return web.json_response({
         "started": True, "running": True,
         "inbox_pending": await asyncio.to_thread(_inbox_pending),
@@ -28781,7 +28787,7 @@ def make_app() -> web.Application:
         # route reports it, so it is "checking" from the first request.
         if engine.get_auth():
             start_auth_check()
-        app["startup"] = asyncio.create_task(_startup_work(app))
+        app["tasks"]["startup"] = asyncio.create_task(_startup_work(app))
 
     async def _startup_work(app: web.Application) -> None:
         try:
@@ -28855,28 +28861,28 @@ def make_app() -> web.Application:
         # each is alive and when the ones that beat last went round —
         # which `health.problems` reads. The stall windows are several of
         # each loop's own ticks, plus a pass's own length.
-        app["worker"] = _supervise("worker", _worker())
-        app["scheduler"] = _supervise("scheduler", _scheduler(),
+        app["tasks"]["worker"] = _supervise("worker", _worker())
+        app["tasks"]["scheduler"] = _supervise("scheduler", _scheduler(),
                                       stall_after_s=600)
-        app["checks"] = _supervise("checks", _checks_loop(),
+        app["tasks"]["checks"] = _supervise("checks", _checks_loop(),
                                    stall_after_s=CHECKS_FIRST_DELAY_S + 3600)
-        app["baselines"] = _supervise("baselines", _baseline_loop(),
+        app["tasks"]["baselines"] = _supervise("baselines", _baseline_loop(),
                                       stall_after_s=BASELINE_FIRST_DELAY_S
                                       + 3 * 3600)
-        app["notify_flush"] = _supervise("notify_flush", _notify_flush_loop())
-        app["brief"] = _supervise("brief", _brief_loop())
-        app["evening"] = _supervise("evening", _evening_loop())
-        app["healing"] = _supervise("healing", _heal_loop())
-        app["weekly"] = _supervise("weekly", _weekly_loop())
-        app["maintainer"] = _supervise("maintainer", _maint_loop())
-        app["requests"] = _supervise("requests", _requests_loop())
+        app["tasks"]["notify_flush"] = _supervise("notify_flush", _notify_flush_loop())
+        app["tasks"]["brief"] = _supervise("brief", _brief_loop())
+        app["tasks"]["evening"] = _supervise("evening", _evening_loop())
+        app["tasks"]["healing"] = _supervise("healing", _heal_loop())
+        app["tasks"]["weekly"] = _supervise("weekly", _weekly_loop())
+        app["tasks"]["maintainer"] = _supervise("maintainer", _maint_loop())
+        app["tasks"]["requests"] = _supervise("requests", _requests_loop())
         # Morph's Ask line, and the two files it draws from (`_morph_loop`):
         # a glob of a folder nearly always empty, every second.
-        app["morph"] = _supervise("morph", _morph_loop(), stall_after_s=120)
-        app["notify_learn"] = _supervise("notify_learn", _notify_learn_loop())
+        app["tasks"]["morph"] = _supervise("morph", _morph_loop(), stall_after_s=120)
+        app["tasks"]["notify_learn"] = _supervise("notify_learn", _notify_learn_loop())
         # The presence loop (⚙ › Personality's "How it is growing"): idle
         # unless Personality and the Learning loop are both on.
-        app["presence"] = _supervise("presence", _presence_loop())
+        app["tasks"]["presence"] = _supervise("presence", _presence_loop())
         # The first thing in brAIn that is watched rather than polled, and
         # the loop that reads it. The bus files nothing and asks nothing —
         # its only output is a signal on the queue — and `_resident_loop`
@@ -28903,24 +28909,24 @@ def make_app() -> web.Application:
             # says (`signals.RegistryContext.safety_class_of`).
             safety_roles=_world_safety_roles)
         await EVENT_BUS.start()
-        app["resident"] = _supervise("resident", _resident_loop())
+        app["tasks"]["resident"] = _supervise("resident", _resident_loop())
         # What the house is doing now: a frame every few minutes, a cheap
         # sentence only when it moved.
-        app["situation"] = _supervise("situation", _situation_loop())
+        app["tasks"]["situation"] = _supervise("situation", _situation_loop())
         # The follow-up looks at every applied fix, and the tripwire file
         # rewritten so a tripwire named in settings guards from boot.
-        app["followups"] = _supervise("followups", _followup_loop())
-        app["timed"] = _supervise("timed", _timed_loop(), stall_after_s=120)
+        app["tasks"]["followups"] = _supervise("followups", _followup_loop())
+        app["tasks"]["timed"] = _supervise("timed", _timed_loop(), stall_after_s=120)
         try:
             await asyncio.to_thread(security.publish)
         except Exception as exc:  # noqa: BLE001 — a guard that could not
             # be republished is a fault row, not a panel that will not start
             log.warning("could not publish the tripwire file: %s", exc)
         if addon_options.available():
-            app["options"] = _supervise("options", _options_poller())
+            app["tasks"]["options"] = _supervise("options", _options_poller())
 
     async def on_cleanup(app: web.Application) -> None:
-        task = app.get("startup")
+        task = app["tasks"].get("startup")
         if task is not None and not task.done():
             task.cancel()
             try:
@@ -28937,6 +28943,10 @@ def make_app() -> web.Application:
             # socket under a read that is still in it.
             await EVENT_BUS.stop()
 
+    # The loops on_startup starts, by name. Made here, before the app is
+    # frozen: a key set on a started app is aiohttp's DeprecationWarning,
+    # once per loop per start, and an error in a later aiohttp.
+    app["tasks"] = {}
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
     return app

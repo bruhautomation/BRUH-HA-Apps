@@ -19,6 +19,7 @@ Both conversation agent and sensors are independently toggleable per config entr
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import os
@@ -433,7 +434,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # will not set up: the sensors, voice and the services do not need
         # it, and brAIn's own ingress entry stays while the shell is absent.
         try:
-            from . import morph as morph_part
+            # Imported in the executor, never on the loop: Morph's half reads
+            # files as it is imported (the version off manifest.json), and an
+            # import inside this coroutine is an import on the event loop.
+            morph_part = await hass.async_add_import_executor_job(
+                importlib.import_module, f"{__package__}.morph")
 
             teardown_morph = await morph_part.async_setup(hass)
         except Exception:  # noqa: BLE001
