@@ -239,6 +239,26 @@ def bare(name: str) -> str:
     return re.sub(r"^[.*]", "", str(name or "").strip()).lower()
 
 
+# Blocks the game has renamed: a person or a model still says the old id.
+RENAMED_BLOCKS = {"minecraft:chain": "minecraft:iron_chain"}
+
+
+def why_refused(reply: str | None) -> str:
+    """What a server's refusal of a block or a fill means for the one who
+    asked: the reply, with the new name when the block was renamed, and
+    a sentence when there was no reply at all."""
+    if not reply:
+        return "the server did not answer (it may be busy or restarting); nothing was changed"
+    text = reply[:120]
+    m = re.search(r"unknown block type '?([a-z0-9_:.\-]+)'?", reply, re.I)
+    if m:
+        old = m.group(1).lower()
+        old = old if ":" in old else f"minecraft:{old}"
+        if old in RENAMED_BLOCKS:
+            text += f" - this server calls it {RENAMED_BLOCKS[old]}; use that id"
+    return text
+
+
 def block_state(value: Any) -> str:
     """A block state a trusted edit may place (any block, with its
     properties), with its namespace — or a refusal."""
@@ -1281,10 +1301,15 @@ class Companion:
         act, so not `check_command`'s: one line, and the server's answer."""
         if "\n" in cmd or "\r" in cmd:
             raise GuardError("one line only")
-        try:
-            return self.col.session.command(cmd)
-        except Exception:  # noqa: BLE001 — a server that went away
-            return None
+        for _ in range(2):
+            # The session reconnects on the next command, so one dropped
+            # connection costs a second ask (a fill or a setblock is the same
+            # when said twice), not an edit that fails with no answer.
+            try:
+                return self.col.session.command(cmd)
+            except Exception:  # noqa: BLE001 — a server that went away
+                continue
+        return None
 
     def _box_of(self, player: Any, x: Any, y: Any, z: Any, size: Any,
                 dimension: Any) -> tuple[str, tuple[int, ...], str | None, list[int] | None]:
@@ -1518,7 +1543,7 @@ class Companion:
                 reply = self._raw(f"minecraft:execute in {dim} run minecraft:fill "
                                   f"{x1} {y1} {z1} {x2} {y2} {z2} {st} replace")
                 if reply is None or not re.search(r"filled|no blocks were filled", reply, re.I):
-                    failed = f"The server would not fill a box: {(reply or 'no answer')[:120]}"
+                    failed = f"The server would not fill a box: {why_refused(reply)}"
                     break
             singles = dict(changed)
             for box in boxes:
@@ -1538,7 +1563,7 @@ class Companion:
                         ok = reply is not None and re.search(r"filled", reply, re.I)
                     if not ok:
                         failed = ("The server would not place a block: "
-                                  f"{(reply or 'no answer')[:120]}")
+                                  f"{why_refused(reply)}")
                         break
             now = self.clock()
             if failed:

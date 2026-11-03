@@ -3497,7 +3497,10 @@ def _mc_atlas(action, value, player, options):
         elif point:
             data.update(zip(("x", "z"), (point[0], point[2])))
         if value and not point:
-            data["query"] = value[:80]
+            data["query"] = value[:60]
+        if not data:
+            return {"error": ("Say where to look (player, or value 'x y z') or what to "
+                              "search for (value: a name or sign text).")}
         for key in ("radius", "dimension"):
             if opts.get(key) is not None:
                 data[key] = opts[key]

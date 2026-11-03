@@ -158,6 +158,35 @@ class TestThePoll(unittest.TestCase):
         self.beat()
         self.assertFalse(any("datapack" in c for c in self.rcon.commands))
 
+    def test_command_block_output_is_switched_off_once_per_world(self):
+        """The world's command blocks chatter into the server log (particle,
+        fill and entity replies); a world gets the rule off once, and a
+        person who switches it back on keeps it."""
+        seen = self.rcon.command
+
+        def command(cmd):
+            self.rcon.commands.append(cmd)
+            if cmd.startswith("minecraft:execute unless score #quiet bruh_spy"):
+                if self.rcon.quiet:
+                    return "Test failed"
+                if "gamerule commandBlockOutput" in cmd:
+                    return "Unknown or incomplete command"      # a newer server's spelling
+                self.rcon.quiet = True
+                return "Game rule command_block_output is now set to: false"
+            if cmd == "minecraft:scoreboard players set #quiet bruh_spy 1":
+                return "Set score of bruh_spy for #quiet to 1"
+            n = len(self.rcon.commands)
+            reply = seen(cmd)
+            del self.rcon.commands[n:]
+            return reply
+        self.rcon.quiet = False
+        self.rcon.command = command
+        self.beat()
+        self.assertTrue(self.rcon.quiet)
+        self.assertIn("minecraft:scoreboard players set #quiet bruh_spy 1", self.rcon.commands)
+        self.assertTrue(any("gamerule minecraft:command_block_output false" in c
+                            for c in self.rcon.commands))
+
     def test_one_command_while_nobody_points_then_one_event_per_use(self):
         self.beat()
         self.rcon.commands.clear()

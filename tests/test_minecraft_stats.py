@@ -96,6 +96,56 @@ class TestProbeRcon(unittest.TestCase):
         self.assertNotIn("version_brand", out)
 
 
+class _CountingRcon(_FakeRcon):
+    made = 0
+    fail_next = False
+
+    def __init__(self, *args, **kwargs):
+        _CountingRcon.made += 1
+        self.closed = False
+
+    def __exit__(self, *args):
+        self.closed = True
+        return False
+
+    def command(self, cmd: str) -> str:
+        if _CountingRcon.fail_next:
+            _CountingRcon.fail_next = False
+            raise OSError("broken pipe")
+        return super().command(cmd)
+
+
+class TestOneConnectionAcrossPolls(unittest.TestCase):
+    """Each poll used to open and close an RCON session, and the server logged
+    a start and a shutdown line for every one (86% of the add-on's log)."""
+
+    def setUp(self):
+        _CountingRcon.made = 0
+        _CountingRcon.fail_next = False
+        _CountingRcon.replies = {
+            "minecraft:list": "There are 0 of a max of 20 players online: ",
+            "tps": "TPS from last 1m, 5m, 15m: 20.0, 20.0, 20.0",
+        }
+        self.orig = stats.Rcon
+        stats.Rcon = _CountingRcon
+        self.addCleanup(setattr, stats, "Rcon", self.orig)
+
+    def test_polls_share_one_connection(self):
+        link: dict = {}
+        for _ in range(5):
+            stats._probe_rcon("pw", want_version=False, link=link)
+        self.assertEqual(_CountingRcon.made, 1)
+
+    def test_a_broken_connection_is_dropped_and_reopened_next_poll(self):
+        link: dict = {}
+        stats._probe_rcon("pw", want_version=False, link=link)
+        _CountingRcon.fail_next = True
+        stats._probe_rcon("pw", want_version=False, link=link)
+        self.assertIsNone(link.get("conn"))
+        stats._probe_rcon("pw", want_version=False, link=link)
+        self.assertEqual(_CountingRcon.made, 2)
+
+
 class TestParseList(unittest.TestCase):
     def test_empty_server(self):
         reply = "There are 0 of a max of 20 players online: "
