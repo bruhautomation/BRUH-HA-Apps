@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+### Security
+
+- The panel's test tooling is updated (vitest 5.1.0, which replaces the vulnerable `@vitest/mocker` and `tinypool`, and happy-dom 21.0.4, which closes a code-injection and an SSRF advisory). These are development dependencies only; the shipped panel bundle is unchanged.
+
 ## 0.1.2
 
 ### Fixed
