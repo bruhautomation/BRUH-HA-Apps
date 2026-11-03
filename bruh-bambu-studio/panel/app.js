@@ -501,6 +501,27 @@ function spool(t, active, p) {
   active ? el("span", { class: "feeding" }, "in use") : null);
 }
 
+const TICK_GAP = 18;
+
+function spaceTicks(track) {
+  const width = track.clientWidth;
+  const ticks = [...track.querySelectorAll(".wtick")];
+  if (!width || !ticks.length) return;
+  const x = ticks.map((t) => parseFloat(t.dataset.at) / 100 * width);
+  for (let i = 1; i < x.length; i += 1) x[i] = Math.max(x[i], x[i - 1] + TICK_GAP);
+  const over = x[x.length - 1] - width;
+  if (over > 0) {
+    x[x.length - 1] = width;
+    for (let i = x.length - 2; i >= 0; i -= 1) x[i] = Math.min(x[i], x[i + 1] - TICK_GAP);
+  }
+  ticks.forEach((t, i) => {
+    const room = Math.min(40, (i ? x[i] - x[i - 1] : 40), (i < x.length - 1 ? x[i + 1] - x[i] : 40));
+    t.style.left = `${x[i]}px`;
+    t.style.width = `${room}px`;
+    t.style.marginLeft = `${-room / 2}px`;
+  });
+}
+
 function amsBlock(p) {
   const trays = p.ams || [];
   if (!trays.length && !p.external_spool) return null;
@@ -731,10 +752,16 @@ function watchTimeline(p, w) {
     "aria-label": `${points.length} planned looks over ${total} layers` }, line);
   for (const c of points) {
     const tone = c.state === "done" ? (DECISION_TONE[c.decision] || "live") : c.state;
-    const tick = el("button", { type: "button", class: `wtick ${tone}`, style: `left:${at(c.layer)}%`,
+    const tick = el("button", { type: "button", class: `wtick ${tone}`, style: `left:${at(c.layer)}%`, "data-at": String(at(c.layer)),
       "aria-label": `Layer ${c.layer}: ${KIND_WORDS[c.kind] || c.kind}`,
       onclick: () => { track.querySelectorAll(".wtick.on").forEach((t) => t.classList.remove("on")); tick.classList.add("on"); say(c); } });
     track.append(tick);
+  }
+  // Looks a few layers apart would sit on top of each other (and their
+  // buttons would overlap): once the track has a width, space the dots at
+  // least a dot apart and cut each button off where its neighbour starts.
+  if (typeof ResizeObserver === "function") {
+    new ResizeObserver(() => spaceTicks(track)).observe(track);
   }
   if (p.printing && p.layer) {
     const pos = at(p.layer);

@@ -279,6 +279,13 @@ async function run(label, viewport, touch) {
   await card.locator('section.watch .infopop').getByRole('button', { name: 'Close' }).click();
   if (await card.locator('section.watch details.info').evaluate((d) => d.open)) say("the ⓘ's ✕ did not close it");
   if ((await watch.locator('.wtick').count()) !== 5) say('the plan does not show its five looks on the layer line');
+  const stacked = await watch.evaluate((w) => {
+    const boxes = [...w.querySelectorAll('.wtick')].map((t) => t.getBoundingClientRect());
+    let n = 0;
+    for (let i = 1; i < boxes.length; i += 1) if (boxes[i].left < boxes[i - 1].right - 0.5) n += 1;
+    return n;
+  });
+  if (stacked) say(`${stacked} look marks on the layer line overlap their neighbour`);
   if ((await watch.locator('.wtick.bad').count()) !== 1) say('the failed look is not marked on the layer line');
   const pics = await page.waitForFunction(() => [...document.querySelectorAll('.printer[data-id="a1"] .wpics img')]
     .every((i) => i.complete && i.naturalWidth > 0), null, { timeout: 5000 }).then(() => true).catch(() => false);
@@ -322,6 +329,10 @@ async function run(label, viewport, touch) {
     say('a finished printer whose plate is clear does not say it is ready');
   }
 
+  const outside = await page.evaluate(() => [...document.querySelectorAll('#viewPrinters .printer, #viewPrinters .printer *')]
+    .filter((n) => n.offsetParent && !n.closest('.infopop') && n.getBoundingClientRect().right > window.innerWidth + 0.5)
+    .map((n) => (n.className && n.className.baseVal === undefined ? n.className : n.tagName).toString().slice(0, 30)));
+  if (outside.length) say(`drawn past the right edge: ${[...new Set(outside)].slice(0, 6).join(', ')}`);
   const wide = await page.evaluate(() => document.scrollingElement.scrollWidth - window.innerWidth);
   if (wide > 1) say(`the Printers tab scrolls sideways by ${wide} px`);
   if (touch) {
