@@ -64,6 +64,20 @@ _LOGGER = logging.getLogger(__name__)
 _T = TypeVar("_T")
 
 
+def device_for(hass: HomeAssistant, serial: str) -> dr.DeviceEntry | None:
+    """The device registered for an appliance's serial.
+
+    Read from the lists of this integration's own devices: Home Assistant is
+    retiring the registry's identifier lookup.
+    """
+    registry = dr.async_get(hass)
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
+            if (DOMAIN, serial) in device.identifiers:
+                return device
+    return None
+
+
 def sidebar_panel_enabled(entry: ConfigEntry) -> bool:
     """The sidebar panel shows the entry's appliances unless it's turned off."""
     return entry.options.get(CONF_SHOW_SIDEBAR_PANEL, DEFAULT_SHOW_SIDEBAR_PANEL) is not False
@@ -221,9 +235,10 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
 
     @callback
     def _update_sw_version(self, appliance: Appliance) -> None:
-        registry = dr.async_get(self.hass)
-        if device := registry.async_get_device(identifiers={(DOMAIN, appliance.serial)}):
-            registry.async_update_device(device.id, sw_version=appliance.status.firmware)
+        if device := device_for(self.hass, appliance.serial):
+            dr.async_get(self.hass).async_update_device(
+                device.id, sw_version=appliance.status.firmware
+            )
 
     # -- commands --------------------------------------------------------------
 
