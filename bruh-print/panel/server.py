@@ -411,7 +411,12 @@ class Panel:
             "printer": printer.as_dict() if printer else None,
             "printer_count": len(self.discover()),
             "printer_error": self._printers_error,
-            "rolls": {r.side: r.as_dict() for r in self.rolls.all()},
+            # A count nobody keeps is not published: a sensor reading 0 or a
+            # full roll beside "not counting" reads as an empty roll.
+            "rolls": {r.side: {k: v for k, v in r.as_dict().items()
+                               if k != "remaining"
+                               or self.settings.get("track_remaining", True)}
+                      for r in self.rolls.all()},
             "stocks": {s.id: {"name": s.name, "label": s.as_dict()["label"]}
                        for s in self.stocks.all()},
             "templates": [

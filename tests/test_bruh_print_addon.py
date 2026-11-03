@@ -239,6 +239,19 @@ class TestIntegration(unittest.TestCase):
         self.assertNotIn("fonts", got)
         self.assertNotIn("catalog", got)
 
+    def test_status_omits_the_count_when_counting_is_off(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "bruh_print_bridge_off", ADDON / "integrations" / "ha-bridge.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        got = mod.summarise_state({
+            "settings": {"track_remaining": False},
+            "rolls": [{"side": "left", "stock": "s1", "remaining": 0}],
+        })
+        self.assertNotIn("remaining", got["rolls"][0])
+        self.assertEqual(got["rolls"][0]["stock"], "s1")
+
     def test_the_test_print_is_the_check_label_now(self):
         """The ruler is gone and `print_test` is not. A service id vanishing
         turns an automation written last week into a validation error, which

@@ -5,6 +5,12 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.19.4
+
+### Changed
+
+- The BRUH Sight plugin is built with Gradle 9.8.2 (checked: it builds the same plugin jar).
+
 ## 1.19.3
 
 ### Fixed

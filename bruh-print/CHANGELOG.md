@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.5
+
+### Fixed
+
+- Roll sensors now read unknown, and the status read leaves out the remaining count, while "Keep an estimate" is off, instead of reporting 0 or a full roll (#655).
+
 ## 0.14.4
 
 ### Changed
