@@ -3665,6 +3665,7 @@ async def api_companion_look(request: web.Request) -> web.Response:
             body.get("z"), body.get("size"), body.get("dimension"))
     except companion.CompanionError as exc:
         return _companion_error(exc)
+    _focus_after_look(seen, body)
     return web.json_response(seen)
 
 
@@ -3699,6 +3700,21 @@ async def api_companion_progress(request: web.Request) -> web.Response:
 THOUGHT_STATES = ("thinking", "working", "done", "failed", "clear")
 
 
+def _focus_after_look(seen: dict, body: dict) -> None:
+    """A look is the companion studying the place it is about to change:
+    its body goes there (the middle of the box, over the floor of it)."""
+    box = seen.get("box") if isinstance(seen, dict) else None
+    if not isinstance(box, dict):
+        return
+    try:
+        focus = {"x": (int(box["x1"]) + int(box["x2"])) // 2, "y": int(box["y1"]) + 1,
+                 "z": (int(box["z1"]) + int(box["z2"])) // 2,
+                 "dimension": str(seen.get("dimension") or "minecraft:overworld")}
+    except (KeyError, TypeError, ValueError):
+        return
+    _focus_after_edit({"focus": focus, "beside": seen.get("player")}, body)
+
+
 def _focus_after_edit(act: dict, body: dict) -> None:
     """Tell BRUH Sight where the companion just worked, so its body hovers
     by the build (the job's line, or the player the edit was beside).
@@ -3720,8 +3736,8 @@ def _focus_after_edit(act: dict, body: dict) -> None:
 
 def companion_thought(body: dict) -> dict:
     """One step of what the companion is thinking, for one player, shown
-    where it is not in the way: BRUH Sight's bubble (only that player sees
-    it, over the companion's allay when it is near) and its journal book.
+    where it is not in the way: BRUH Sight's bubble over the companion's
+    allay, which hovers by the work (everybody sees it) and its journal book.
     Without the plugin a step of real work falls back to the action bar and
     a bare "thinking" shows nothing — chat is never used for it."""
     player = str(body.get("player") or "").strip()

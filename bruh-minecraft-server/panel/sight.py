@@ -161,7 +161,7 @@ class Sight:
     # -- the companion's thoughts (the plugin's bubble and journal) ---------------
     def thought(self, payload: dict[str, Any]) -> dict[str, Any] | None:
         """One step of the companion's thinking for one player: the bubble
-        only they see (over the allay when it is near) and the journal's
+        over its allay by the work, which everybody sees, and the journal's
         stream. None when the plugin cannot be asked."""
         got = self._call("/v1/thought", payload, STATE_TIMEOUT_S)
         return got if isinstance(got, dict) else None

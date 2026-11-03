@@ -600,7 +600,7 @@ class Companion:
                      percent: int | None = None, settings: dict | None = None) -> dict | None:
         """One line of what the companion is thinking, for one player, shown
         where it is not in the way (BRUH Minecraft's `companion_thought`: a
-        bubble only they see, over the allay when it is near, and the journal
+        bubble over the companion's allay by the work, and the journal
         book). Never chat. None when ⚙ › Minecraft's "Show what it is
         thinking" is off, or the add-on is older than the service."""
         settings = settings or await self.settings()
@@ -1382,8 +1382,8 @@ class Companion:
             "job, and `stop: true` means stop now and change nothing more. Do not ask "
             "questions; choose sensibly and say what you chose.\n"
             "They can see you work: every game tool you call shows as a step in a small "
-            "bubble only they see. Between big steps, minecraft_world think (value: a few "
-            "words — \"the roof first, then windows\") says what you are working out.\n"
+            "bubble over your allay, which everybody in the game sees. Between big steps, "
+            "minecraft_world think (value: a few words — \"the roof first, then windows\") says what you are working out.\n"
             + SEEING +
             f"Answer as `reply`: the one line {who['person']} hears when it ends — what you "
             "made, or what went wrong — plain text; `ok`: false when it could not be done.\n"

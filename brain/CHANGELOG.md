@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.2.2
+
+### Changed
+
+- **Everyone in Minecraft can see everyone's companion and what it is thinking.** The bubble over its allay is shown to the whole family, not only the person it is working for, and the allay stays by what it is building (with BRUH Minecraft 1.19.2). The setting's wording and the docs say so.
+
 ## 4.2.1
 
 ### Fixed

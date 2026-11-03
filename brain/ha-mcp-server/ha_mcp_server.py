@@ -3231,7 +3231,7 @@ def minecraft_world(action, value=None, player=None, options=None, blocks=None, 
         return {"error": MINECRAFT_CHAT_REFUSAL.format(what=f"Minecraft '{action}'")}
     if action == "think":
         # A step of its own thinking, for the person it is working for: the
-        # bubble only they see and the journal (`_mc_thought`). Not chat.
+        # bubble over the companion's allay and the journal (`_mc_thought`). Not chat.
         if not value:
             return {"error": "think needs value: what you are doing or working out now."}
         shown = _mc_thought(value[:160], wait=True)
@@ -7248,7 +7248,8 @@ TOOLS = [
             "id puts it all back; job: the job id when a job is doing it, so "
             "cancelling the job puts it back); think (value: a few words of what you "
             "are working out or about to do — shown to the person you are working for "
-            "in a small bubble only they see and in their journal book, never in chat; "
+            "in a small bubble over your allay (everybody in the game sees it) and in "
+            "their journal book, never in chat; "
             "each game tool you call is already shown as a step, so think is for the "
             "reasoning between them)."
         ),
@@ -10105,7 +10106,7 @@ VOICE_INSTRUCTIONS = (
 
 # What the person a game run works for sees of it, step by step: each game
 # tool it calls, said in a few words, in the companion's thought bubble
-# (bruh_minecraft.companion_thought — a bubble only they see, over the allay
+# (bruh_minecraft.companion_thought — a bubble over the companion's allay
 # when it is near, and the journal book; never chat). The listener names who
 # (BRAIN_THOUGHT_TO) and which line (BRAIN_THOUGHT_KEY: "talk" or a job id)
 # on the game's two channels only.

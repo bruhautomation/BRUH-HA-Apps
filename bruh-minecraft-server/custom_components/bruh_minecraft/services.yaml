@@ -604,7 +604,7 @@ companion_progress:
 
 companion_thought:
   name: Show a thought
-  description: One step of what the companion is thinking or doing for one player, shown where it is not in the way — a small bubble only that player sees, over the companion's allay when it is near (BRUH Sight, on Paper and Purpur), and in the journal book. Never in chat. Without BRUH Sight, a step of work shows on the action bar.
+  description: One step of what the companion is thinking or doing for one player, shown where it is not in the way — a small bubble over the companion's allay, which hovers by what it is building and which everybody in the game sees (BRUH Sight, on Paper and Purpur), and in the journal book. Never in chat. Without BRUH Sight, a step of work shows on the action bar.
   fields:
     player:
       name: Player

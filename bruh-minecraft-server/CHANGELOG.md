@@ -5,6 +5,14 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.19.2
+
+### Changed
+
+- **The companion goes to what it is building, however it builds it.** Before, only the companion's own undoable edits said where the work was. A build by any other route, such as the companion placing blocks itself or a fill command, left its allay hovering beside you. Now BRUH Sight reads the companion's own block commands as they reach the server. When the companion looks at a room before changing it, it goes there too.
+- **No more corner of the screen.** While it is only thinking and has no work site yet, the allay floats in a slow circle around the player it works for, out in the world. It used to stay pinned to the top right of their view.
+- **Everybody sees everybody's companion.** The thought bubble is no longer private, so the whole family can see what each companion is doing for whom, over its allay.
+
 ## 1.19.1
 
 ### Changed

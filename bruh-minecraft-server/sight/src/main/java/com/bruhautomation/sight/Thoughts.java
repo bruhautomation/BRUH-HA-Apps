@@ -21,6 +21,8 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.server.RemoteServerCommandEvent;
+import org.bukkit.event.server.ServerCommandEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.BookMeta;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -40,15 +42,17 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * What the companion is thinking, shown where it is not in the way.
  *
  * <ul>
- *   <li><b>The bubble</b>: a small text display that only the player it is
- *   working for can see, floating over the companion's allay when it is
- *   near and otherwise up and to the side of them — never in the middle of
- *   the screen, never in chat. One line for what it is doing now, one for
+ *   <li><b>The bubble</b>: a small text display over the companion's allay,
+ *   which hovers by what it is building (or circles the player it works for
+ *   while it only thinks) — never on the screen, never in chat. Everybody
+ *   sees everybody's companion and its thoughts. One line for what it is doing now, one for
  *   each job with its percent. It goes a few seconds after the work ends,
  *   and a quick "thinking" that ends fast never shows at all.</li>
  *   <li><b>The journal</b>: a book named after the companion. Using it opens
@@ -72,6 +76,15 @@ final class Thoughts implements Listener {
     static final long FOCUS_TTL_MS = 10 * 60_000;  // a work site this old is forgotten
     static final double FOCUS_REACH = 128.0;        // ... and one this far from the player
     static final double ORBIT = 2.2;                // blocks from the work site it hovers
+    static final double NEAR_PLAYER = 2.6;          // ... and from the player while it thinks
+    static final double SITE_REACH = 256.0;         // a command this far from a player is not theirs
+    // What the companion's own server commands change: `fill`/`setblock`/`clone`
+    // at whole-number coordinates (the panel's edits and builds, and the
+    // console commands brAIn sends), optionally `execute in <dimension> run`.
+    static final Pattern WORK = Pattern.compile(
+            "(?:^|\\s)(?:minecraft:)?(?:fill|setblock|clone)\\s+(-?\\d+)\\s+(-?\\d+)\\s+(-?\\d+)"
+                    + "(?:\\s+(-?\\d+)\\s+(-?\\d+)\\s+(-?\\d+))?");
+    static final Pattern IN_DIM = Pattern.compile("execute\\s+in\\s+(\\S+)");
     static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm");
 
     static final class Line {
@@ -281,6 +294,63 @@ final class Thoughts implements Listener {
         e.getPlayer().openBook(journal(e.getPlayer()));
     }
 
+    // -- where it is working: its own commands --------------------------------
+
+    @EventHandler(ignoreCancelled = true)
+    public void onRcon(RemoteServerCommandEvent e) {
+        workAt(e.getCommand());
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void onConsole(ServerCommandEvent e) {
+        workAt(e.getCommand());
+    }
+
+    /** A block-changing command is the companion at work: its body goes
+     * there, for the working mind whose player is nearest the spot. */
+    void workAt(String cmd) {
+        if (cmd == null || minds.isEmpty()) {
+            return;
+        }
+        Matcher m = WORK.matcher(cmd);
+        if (!m.find()) {
+            return;
+        }
+        int x = Integer.parseInt(m.group(1)), y = Integer.parseInt(m.group(2)),
+                z = Integer.parseInt(m.group(3));
+        if (m.group(4) != null) {
+            x = (x + Integer.parseInt(m.group(4))) / 2;
+            y = Math.max(y, Integer.parseInt(m.group(5)));
+            z = (z + Integer.parseInt(m.group(6))) / 2;
+        }
+        Matcher d = IN_DIM.matcher(cmd);
+        org.bukkit.World w = d.find() ? plugin.worldOf(d.group(1)) : null;
+        Mind best = null;
+        double bestD = SITE_REACH * SITE_REACH;
+        for (Map.Entry<UUID, Mind> en : minds.entrySet()) {
+            if (en.getValue().active.isEmpty()) {
+                continue;
+            }
+            Player p = Bukkit.getPlayer(en.getKey());
+            if (p == null || (w != null && !p.getWorld().equals(w))) {
+                continue;
+            }
+            Location pl = p.getLocation();
+            double d2 = (pl.getX() - x) * (pl.getX() - x) + (pl.getZ() - z) * (pl.getZ() - z);
+            if (d2 < bestD) {
+                bestD = d2;
+                best = en.getValue();
+                if (w == null) {
+                    w = p.getWorld();
+                }
+            }
+        }
+        if (best != null && w != null) {
+            best.focus = new Location(w, x + 0.5, y + 0.5, z + 0.5);
+            best.focusAt = System.currentTimeMillis();
+        }
+    }
+
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
         Mind m = minds.remove(e.getPlayer().getUniqueId());
@@ -385,8 +455,6 @@ final class Thoughts implements Listener {
                 removeDisplay(m);
                 d = spawn(p, at);
                 m.display = d.getUniqueId();
-                // After it is in the world: shown to its owner only.
-                p.showEntity(plugin, d);
             } else if (d.getLocation().distanceSquared(at) > 0.0025) {
                 d.teleport(at);
             }
@@ -415,16 +483,13 @@ final class Thoughts implements Listener {
             target = m.focus.clone().add(Math.cos(a) * ORBIT, 2.0, Math.sin(a) * ORBIT);
             look = m.focus;
         } else {
-            // Just thinking: beside the player, out of the middle of the screen.
-            Location eye = p.getEyeLocation();
-            Vector fwd = eye.getDirection().setY(0);
-            if (fwd.lengthSquared() < 1e-6) {
-                fwd = new Vector(0, 0, 1);
-            }
-            fwd.normalize();
-            Vector right = new Vector(-fwd.getZ(), 0, fwd.getX());
-            target = eye.clone().add(fwd.clone().multiply(1.6)).add(right.multiply(1.5)).add(0, 0.2, 0);
-            look = eye;
+            // Only thinking, no work site yet: a slow circle round the player,
+            // in the world rather than on their screen.
+            double a = (now % 30_000L) / 30_000.0 * Math.PI * 2;
+            Location feet = p.getLocation();
+            target = new Location(feet.getWorld(), feet.getX() + Math.cos(a) * NEAR_PLAYER,
+                    feet.getY() + 2.0, feet.getZ() + Math.sin(a) * NEAR_PLAYER);
+            look = p.getEyeLocation();
         }
         Vector to = look.toVector().subtract(target.toVector());
         target.setDirection(to.lengthSquared() < 1e-6 ? new Vector(0, 0, 1) : to);
@@ -469,7 +534,6 @@ final class Thoughts implements Listener {
     private TextDisplay spawn(Player owner, Location at) {
         return at.getWorld().spawn(at, TextDisplay.class, d -> {
             d.setPersistent(false);
-            d.setVisibleByDefault(false);
             d.setBillboard(Display.Billboard.CENTER);
             d.setShadowed(false);
             d.setSeeThrough(false);
