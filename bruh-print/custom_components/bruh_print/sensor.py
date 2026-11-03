@@ -139,8 +139,11 @@ class RollSensor(_Base):
         return not printer or bool(printer.get("twin"))
 
     @property
-    def native_value(self) -> int:
-        return int(self._roll.get("remaining", 0) or 0)
+    def native_value(self) -> int | None:
+        # Unknown, not 0, when the panel is not counting.
+        if self._roll.get("remaining") is None:
+            return None
+        return int(self._roll["remaining"])
 
     @property
     def extra_state_attributes(self) -> dict:
