@@ -43,8 +43,11 @@ def panel_path():
     try:
         yield
     finally:
-        with contextlib.suppress(ValueError):
-            sys.path.remove(os.path.abspath(PANEL))
+        # The panel's own server appends its directory too, so there can be
+        # two copies by now; one left behind lets a later BRight import find
+        # BRUH Print's `stores` package.
+        here = os.path.abspath(PANEL)
+        sys.path[:] = [p for p in sys.path if os.path.abspath(p) != here]
         for name in [n for n in list(sys.modules)
                      if n in SHARED or n.split(".", 1)[0] in SHARED]:
             del sys.modules[name]
