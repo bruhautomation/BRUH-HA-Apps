@@ -541,6 +541,22 @@ def redact_tail(text: str) -> str:
     return _STDERR_SECRET_RE.sub("[redacted]", str(text or ""))
 
 
+def _own_log(path: str) -> None:
+    """Hand a new day's log to the claude user, who reads it back from a
+    session. The pool runs as root, and a root-owned 0600 transcript is one
+    the session cannot open (#642); root can still append to it."""
+    if os.geteuid() != 0:
+        return
+    try:
+        import pwd  # noqa: PLC0415 — POSIX only, and only needed as root
+        user = pwd.getpwnam("claude")
+        os.chown(path, user.pw_uid, user.pw_gid)
+    except (KeyError, OSError):
+        # No claude user (a dev box), or a filesystem that refuses: the log
+        # is still written, and still owner-only.
+        pass
+
+
 def debug_log(lines: list[str]) -> None:
     """Append to the same daily debug log the classic listener uses.
 
@@ -550,7 +566,10 @@ def debug_log(lines: list[str]) -> None:
     path = os.path.join(LOG_DIR, f"assist-{time.strftime('%Y%m%d')}.log")
     stamp = time.strftime("%Y-%m-%d %H:%M:%S")
     try:
+        new = not os.path.exists(path)
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        if new:
+            _own_log(path)
         with os.fdopen(fd, "a") as fh:
             for line in lines:
                 fh.write(line.replace("{ts}", stamp) + "\n")
