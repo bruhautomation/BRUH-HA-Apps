@@ -3785,8 +3785,11 @@ def bambu_status(files=False):
     listing = _addon_call("bruh_bambu", "list_files")
     if listing.get("error"):
         return {**status, "files_error": listing["error"]}
+    # sliced_path is the slice already made from a source file: print that
+    # one again rather than slicing the source a second time.
     return {**status, "files": [
-        {k: f.get(k) for k in ("path", "sliced", "plates", "seconds", "grams")}
+        {**{k: f.get(k) for k in ("path", "sliced", "plates", "seconds", "grams")},
+         **({"sliced_path": f["sliced_path"]} if f.get("sliced_path") else {})}
         for f in (listing.get("files") or [])[:60] if isinstance(f, dict)]}
 
 

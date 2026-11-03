@@ -930,6 +930,7 @@ def _file_rows(working: bool) -> list[dict]:
         for row in parts.final_files():
             row.update(threemf.inspect(str(library.path_of(row["path"]))))
             rows.append(row)
+        library.link_slices(rows)
     rows.sort(key=lambda r: r["modified"], reverse=True)
     return rows
 
