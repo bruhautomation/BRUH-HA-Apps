@@ -5011,6 +5011,28 @@ async def _notify_flush_loop():
             await asyncio.sleep(NOTIFY_FLUSH_POLL_S)
 
 
+def _not_said_before(rows: list[dict], now: float) -> list[dict]:
+    """The rows whose subject no phone has been told about this week; the
+    rest are noted on the decision trail with the day they were said."""
+    try:
+        sent = deliveries.fold(now) or []
+    except Exception as exc:  # noqa: BLE001 — no ledger is no memory of it
+        log.debug("could not read the delivery ledger: %s", exc)
+        return rows
+    keep, told = [], []
+    for row in rows:
+        earlier = notify_router.said_before(row, sent, now)
+        if earlier is None:
+            keep.append(row)
+            continue
+        day = _local_now(float(earlier.get("at") or now)).strftime("%A %d %b")
+        told.extend(decision_trail.rows_for(
+            [row], "said_before", f"a phone was told about this on {day}"))
+    if told:
+        decision_trail.note_many(told)
+    return keep
+
+
 async def _announce_findings(created: list[dict]) -> None:
     """Push newly-created findings out, or hold them until morning.
 
@@ -5070,6 +5092,12 @@ async def _announce_findings(created: list[dict]) -> None:
         log.info("escalating %d of %d critical finding(s)",
                  started, len(escalating))
 
+    if not once:
+        return
+    # Said once: a subject a phone was told about this week is not sent
+    # again unless something about it is new — another device, a worse
+    # severity (#639). It is on the list either way.
+    once = await asyncio.to_thread(_not_said_before, once, now)
     if not once:
         return
     # Said aloud in the room somebody is in, when it is switched on and the

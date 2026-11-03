@@ -80,6 +80,8 @@ KINDS = {
     "notify_quiet": "below your notification floor, so it went to the list "
                     "only",
     "quiet_hold": "held for quiet hours",
+    "said_before": "a phone was already told about this in the last week, "
+                   "and nothing about it is worse",
     "gate_hold": "brAIn was not allowed to spend a run on it then",
     "look_ignore": "brAIn looked and let it go",
     "look_watch": "brAIn looked and decided to watch it",
