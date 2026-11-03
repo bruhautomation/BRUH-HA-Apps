@@ -2174,6 +2174,7 @@ async def _brief_loop():
     """Wake often, send at most once, and only when there is something to say."""
     await asyncio.sleep(BRIEF_FIRST_DELAY_S)
     while True:
+        _beat("brief")
         try:
             on, fallback = _brief_enabled()
             service, _sev = _findings_notify_target()
@@ -2517,6 +2518,7 @@ async def _weekly_loop():
     """Once a week, on the day, at or after the hour this house is up."""
     await asyncio.sleep(WEEKLY_FIRST_DELAY_S)
     while True:
+        _beat("weekly")
         try:
             on, want_day = _weekly_enabled()
             service, _sev = _findings_notify_target()
@@ -4554,6 +4556,7 @@ async def _requests_loop():
     """Watch the drop directories. Cheap, and empty nearly every pass."""
     await asyncio.sleep(REQUESTS_FIRST_DELAY_S)
     while True:
+        _beat("requests")
         try:
             await _apply_finding_requests()
         except asyncio.CancelledError:
@@ -4640,6 +4643,7 @@ async def _evening_loop():
     """
     await asyncio.sleep(EVENING_FIRST_DELAY_S)
     while True:
+        _beat("evening")
         try:
             now = time.time()
             local = _local_now(now)
@@ -4814,6 +4818,7 @@ async def _heal_loop():
     """Once a night, inside the window, and only when it is switched on."""
     await asyncio.sleep(HEAL_FIRST_DELAY_S)
     while True:
+        _beat("healing")
         try:
             if _healing_enabled():
                 now = time.time()
@@ -4960,6 +4965,7 @@ async def _notify_flush_loop():
     """
     await asyncio.sleep(NOTIFY_FLUSH_FIRST_DELAY_S)
     while True:
+        _beat("notify_flush")
         try:
             await _escalation_tick()
             start, end = _quiet_hours()
@@ -5745,6 +5751,7 @@ async def _notify_learn_loop():
     (`schedule_store`), because a restart is not a new week."""
     await asyncio.sleep(NOTIFY_LEARN_FIRST_DELAY_S)
     while True:
+        _beat("notify_learn")
         try:
             now = time.time()
             last = schedule_store.get(NOTIFY_LEARN_KEY)
@@ -7433,6 +7440,7 @@ FOLLOWUP_STATE: dict = {"running": False, "last_tick": 0, "looks": 0,
 
 async def _followup_loop() -> None:
     while True:
+        _beat("followups")
         await asyncio.sleep(FOLLOWUP_TICK_S)
         try:
             await _followup_tick(time.time())
@@ -8310,6 +8318,18 @@ def _loop_ended(name: str, task: asyncio.Task) -> None:
         log.warning("the %s loop stopped: %s", name, row["error"])
 
 
+# What one pass of a loop may take before "it has not gone round" means it
+# is hung: the longest passes run Claude turns behind the run queue (a
+# look and three investigations, a brief, a weekly report).
+LOOP_PASS_S = 2 * 3600
+
+
+def _stall_after(first_delay_s: float, poll_s: float) -> float:
+    """How long a beating loop may go without one before health says it is
+    stuck: its first wait, three of its own ticks, and a pass's length."""
+    return float(first_delay_s) + 3 * float(poll_s) + LOOP_PASS_S
+
+
 def _beat(name: str) -> None:
     """A supervised loop went round. Cheap on purpose: one dict write."""
     row = LOOPS.get(name)
@@ -9136,6 +9156,7 @@ async def _options_sync() -> None:
 async def _options_poller() -> None:
     """Pick up Configuration-tab edits without waiting for a restart."""
     while True:
+        _beat("options")
         await asyncio.sleep(OPTIONS_POLL_SECONDS)
         try:
             await addon_options.refresh(force=True)
@@ -12186,6 +12207,7 @@ async def _maint_tick(now: float) -> list[str]:
 async def _maint_loop() -> None:
     await asyncio.sleep(MAINT_FIRST_DELAY_S)
     while True:
+        _beat("maintainer")
         try:
             started = await _maint_tick(time.time())
             if started:
@@ -14793,6 +14815,7 @@ async def _resident_loop() -> None:
     await asyncio.sleep(RESIDENT_FIRST_DELAY_S)
     expired_at = 0.0
     while True:
+        _beat("resident")
         try:
             now = time.time()
             if now - expired_at >= 3600:
@@ -17042,6 +17065,7 @@ async def _situation_pass(now: float | None, states, run_model: bool) -> dict:
 async def _situation_loop() -> None:
     await asyncio.sleep(SITUATION_FIRST_DELAY_S)
     while True:
+        _beat("situation")
         try:
             await _situation_refresh()
         except Exception as exc:  # noqa: BLE001 — never let this kill the loop
@@ -28869,20 +28893,39 @@ def make_app() -> web.Application:
         app["tasks"]["baselines"] = _supervise("baselines", _baseline_loop(),
                                       stall_after_s=BASELINE_FIRST_DELAY_S
                                       + 3 * 3600)
-        app["tasks"]["notify_flush"] = _supervise("notify_flush", _notify_flush_loop())
-        app["tasks"]["brief"] = _supervise("brief", _brief_loop())
-        app["tasks"]["evening"] = _supervise("evening", _evening_loop())
-        app["tasks"]["healing"] = _supervise("healing", _heal_loop())
-        app["tasks"]["weekly"] = _supervise("weekly", _weekly_loop())
-        app["tasks"]["maintainer"] = _supervise("maintainer", _maint_loop())
-        app["tasks"]["requests"] = _supervise("requests", _requests_loop())
+        app["tasks"]["notify_flush"] = _supervise(
+            "notify_flush", _notify_flush_loop(),
+            stall_after_s=_stall_after(NOTIFY_FLUSH_FIRST_DELAY_S, NOTIFY_FLUSH_POLL_S))
+        app["tasks"]["brief"] = _supervise(
+            "brief", _brief_loop(),
+            stall_after_s=_stall_after(BRIEF_FIRST_DELAY_S, BRIEF_POLL_S))
+        app["tasks"]["evening"] = _supervise(
+            "evening", _evening_loop(),
+            stall_after_s=_stall_after(EVENING_FIRST_DELAY_S, EVENING_POLL_S))
+        app["tasks"]["healing"] = _supervise(
+            "healing", _heal_loop(),
+            stall_after_s=_stall_after(HEAL_FIRST_DELAY_S, HEAL_POLL_S))
+        app["tasks"]["weekly"] = _supervise(
+            "weekly", _weekly_loop(),
+            stall_after_s=_stall_after(WEEKLY_FIRST_DELAY_S, WEEKLY_POLL_S))
+        app["tasks"]["maintainer"] = _supervise(
+            "maintainer", _maint_loop(),
+            stall_after_s=_stall_after(MAINT_FIRST_DELAY_S, MAINT_POLL_S))
+        app["tasks"]["requests"] = _supervise(
+            "requests", _requests_loop(),
+            stall_after_s=_stall_after(REQUESTS_FIRST_DELAY_S, REQUESTS_POLL_S))
         # Morph's Ask line, and the two files it draws from (`_morph_loop`):
         # a glob of a folder nearly always empty, every second.
         app["tasks"]["morph"] = _supervise("morph", _morph_loop(), stall_after_s=120)
-        app["tasks"]["notify_learn"] = _supervise("notify_learn", _notify_learn_loop())
+        app["tasks"]["notify_learn"] = _supervise(
+            "notify_learn", _notify_learn_loop(),
+            stall_after_s=_stall_after(NOTIFY_LEARN_FIRST_DELAY_S,
+                                       NOTIFY_LEARN_POLL_S))
         # The presence loop (⚙ › Personality's "How it is growing"): idle
         # unless Personality and the Learning loop are both on.
-        app["tasks"]["presence"] = _supervise("presence", _presence_loop())
+        app["tasks"]["presence"] = _supervise(
+            "presence", _presence_loop(),
+            stall_after_s=_stall_after(PRESENCE_FIRST_DELAY_S, PRESENCE_POLL_S))
         # The first thing in brAIn that is watched rather than polled, and
         # the loop that reads it. The bus files nothing and asks nothing —
         # its only output is a signal on the queue — and `_resident_loop`
@@ -28909,13 +28952,20 @@ def make_app() -> web.Application:
             # says (`signals.RegistryContext.safety_class_of`).
             safety_roles=_world_safety_roles)
         await EVENT_BUS.start()
-        app["tasks"]["resident"] = _supervise("resident", _resident_loop())
+        app["tasks"]["resident"] = _supervise(
+            "resident", _resident_loop(),
+            stall_after_s=_stall_after(RESIDENT_FIRST_DELAY_S, RESIDENT_TICK_S))
         # What the house is doing now: a frame every few minutes, a cheap
         # sentence only when it moved.
-        app["tasks"]["situation"] = _supervise("situation", _situation_loop())
+        app["tasks"]["situation"] = _supervise(
+            "situation", _situation_loop(),
+            stall_after_s=_stall_after(SITUATION_FIRST_DELAY_S,
+                                       situation.REFRESH_S))
         # The follow-up looks at every applied fix, and the tripwire file
         # rewritten so a tripwire named in settings guards from boot.
-        app["tasks"]["followups"] = _supervise("followups", _followup_loop())
+        app["tasks"]["followups"] = _supervise(
+            "followups", _followup_loop(),
+            stall_after_s=_stall_after(0, FOLLOWUP_TICK_S))
         app["tasks"]["timed"] = _supervise("timed", _timed_loop(), stall_after_s=120)
         try:
             await asyncio.to_thread(security.publish)
@@ -28923,7 +28973,9 @@ def make_app() -> web.Application:
             # be republished is a fault row, not a panel that will not start
             log.warning("could not publish the tripwire file: %s", exc)
         if addon_options.available():
-            app["tasks"]["options"] = _supervise("options", _options_poller())
+            app["tasks"]["options"] = _supervise(
+                "options", _options_poller(),
+                stall_after_s=_stall_after(0, OPTIONS_POLL_SECONDS))
 
     async def on_cleanup(app: web.Application) -> None:
         task = app["tasks"].get("startup")
