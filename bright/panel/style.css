@@ -18,6 +18,25 @@
   --bad: #ef5f5f;
 }
 
+/* The light scheme: the same tokens, re-tuned. The stage canvases (the
+   floors, the strips, the Manual pads) paint their own dark and stay dark
+   on purpose — they are lights on a dark floor — while every surface and
+   line of text rides these. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f3f6f9;
+    --panel: #ffffff;
+    --ink: #0b1016;
+    --muted: #4f6174;
+    --azure: #0b78b8;
+    --azure-light: #0b6fa8;
+    --line: #cfd9e3;
+    --ok: #17804f;
+    --warn: #8a5f00;
+    --bad: #c42b2b;
+  }
+}
+
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
@@ -100,7 +119,7 @@ body {
   flex-wrap: wrap;
   margin: 10px 0;
 }
-.demo-controls label { color: var(--muted); font-size: 14px; }
+.demo-controls label { color: var(--muted); font-size: 14px; max-width: 100%; }
 /* Every text control in the panel, not only the ones inside .demo-controls.
    That scoping was the bug: the role picker on each light in the Light Map
    is a bare <select>, so it rendered at the browser's default 19px — a
@@ -117,7 +136,7 @@ input, select {
   min-height: 44px;
 }
 input[type="number"] { width: 90px; }
-select { max-width: 100%; }
+select { max-width: 100%; min-width: 0; }
 
 .list .row {
   display: flex;
@@ -661,6 +680,11 @@ select { max-width: 100%; }
 /* Narrow on purpose: it is a qualifier on the row, not the row's
    subject, and at full width it competes with the song's name. */
 .party-version { max-width: 190px; }
+/* A song's row wraps its controls rather than laying them on one line: the
+   name, the version select and the tick order share a phone's width, and a
+   fixed-width select beside a long title is what put one on the other. */
+.party-pick { flex-wrap: wrap; }
+.party-pick .row-main { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
 /* -- The Manual tab: the room is the instrument, the grid is the clock -- */
 /* One screen. The pane's height is measured at runtime (`mnFit`) rather
    than guessed at in vh, because the top bar's own height depends on how
