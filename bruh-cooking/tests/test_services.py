@@ -163,3 +163,34 @@ async def test_with_nothing_set_up_the_services_say_so(hass: HomeAssistant, entr
         await ask(hass, "get_status", appliance="countertop")
     assert err.value.translation_key == "no_appliances"
     assert await ask(hass, "get_status") == {"appliances": []}
+
+
+async def test_an_offline_appliance_reports_no_temperatures(
+    hass: HomeAssistant, entry: MockConfigEntry, socket: FakeSocket
+) -> None:
+    await push(hass, socket, OVEN_IDLE, csj("ACTIVE", 3, timeRemaining=240, bathTemp=55.1))
+    answer = await ask(hass, "get_status", appliance="countertop")
+    assert answer["appliances"][0]["current_temperature"] == 55.1
+    # The last reading survives on the status object once the appliance drops off.
+    entry.runtime_data.appliances[JOULE].status.online = False
+    answer = await ask(hass, "get_status", appliance="countertop")
+    offline = answer["appliances"][0]
+    assert offline["online"] is False
+    assert offline["current_temperature"] is None
+    assert offline["time_remaining_minutes"] is None
+
+
+async def test_the_registry_is_not_asked_by_identifiers(
+    hass: HomeAssistant, entry: MockConfigEntry, socket: FakeSocket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Home Assistant deprecates the identifier lookup; lists of this entry's devices are stable."""
+
+    def refuse(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("device_registry.async_get_device is deprecated")
+
+    monkeypatch.setattr(dr.DeviceRegistry, "async_get_device", refuse)
+    await push(hass, socket, OVEN_IDLE, csj("ACTIVE", 3, bathTemp=55.1))
+    answer = await ask(hass, "get_status", appliance="countertop")
+    assert answer["appliances"][0]["device_id"] is not None
+    coordinator = entry.runtime_data
+    coordinator._update_sw_version(coordinator.appliances[JOULE])
