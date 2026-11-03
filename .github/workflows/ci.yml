@@ -159,7 +159,7 @@ jobs:
           # add-on or one of the files only that group reads changed. The
           # static groups are brAIn's panel and always run.
           bright=false
-          if grep -qE '^(bright/|tests/manual/(bright_demo_panel\.py|measure-(effects|showeditor|manual|lightmap|library)\.mjs))' <<<"$changed"; then
+          if grep -qE '^(bright/|tests/manual/(bright_demo_panel\.py|measure-(effects|showeditor|manual|lightmap|library|party)\.mjs))' <<<"$changed"; then
             bright=true
           fi
           print=false
@@ -699,6 +699,10 @@ jobs:
       - name: Measure BRight's library tab
         if: matrix.group == 'bright' && env.GROUP_RUNS == 'true'
         run: node tests/manual/measure-library.mjs
+
+      - name: Measure BRight's Party tab
+        if: matrix.group == 'bright' && env.GROUP_RUNS == 'true'
+        run: node tests/manual/measure-party.mjs
 
       # This one needs the real panel behind it: the effect preview is a
       # canvas and a floor of dots, and "the timeline painted" is not
