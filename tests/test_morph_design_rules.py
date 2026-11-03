@@ -146,6 +146,14 @@ class TestTheDesignsNumbers(unittest.TestCase):
         for theme, (bg, surface) in self.THEMES.items():
             self.assertIn(f"{theme}: ['{bg}', '{surface}']", boot, theme)
 
+    def test_a_scene_button_is_never_under_the_40px_tap_minimum(self):
+        styles = (FRONTEND / "styles.js").read_text(encoding="utf-8")
+        rules = re.findall(r"(\.(?:secscenes|scenes|scenesline) \.wd)\{([^}]*)\}", styles)
+        self.assertTrue(rules)
+        for selector, body in rules:
+            for px in re.findall(r"min-height:(\d+)px", body):
+                self.assertGreaterEqual(int(px), 40, selector)
+
 
 if __name__ == "__main__":
     unittest.main()

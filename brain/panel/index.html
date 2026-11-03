@@ -142,10 +142,10 @@
        a hover: it opens the same disclosure as the chips, with the status
        sentence and whatever they would have said, each with its own
        press. Hidden above the phone band, where the chips say it. -->
-  <!-- The time, beside ⚙, inside the shell (`syncShellClock`): h:mm in
-       the house's 12- or 24-hour preference when Home Assistant has one.
+  <!-- The time, beside ⚙, inside the shell (`syncShellClock`): the date and
+       the time, with AM/PM, in the house's 12- or 24-hour preference when Home Assistant has one.
        It stays when the tabs slide away. -->
-  <time id="shellClock" class="shellclock" hidden></time>
+  <time id="shellClock" class="shellclock" hidden><span class="shdate"></span> <span class="shtime"></span></time>
 
   <button id="statusDot" class="btn icon statusdot" data-state="watching"
           aria-expanded="false" aria-label="brAIn status"><span class="sdot" aria-hidden="true"></span></button>
