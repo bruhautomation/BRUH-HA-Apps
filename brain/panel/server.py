@@ -26957,15 +26957,7 @@ def _presence_inputs(now: float, people: dict[str, str]) -> str:
                 titles.append(str(row.get("title") or ""))
     except Exception as exc:  # noqa: BLE001
         log.debug("presence could not list conversations: %s", exc)
-    answered: dict[str, int] = {}
-    for row in deliveries.fold(now) or []:
-        if now - float(row.get("at") or 0) > 7 * 86400:
-            break
-        if row.get("kind") == "presence":
-            continue
-        out = str(row.get("outcome") or "")
-        if out in ("answered", "cleared", "ignored"):
-            answered[out] = answered.get(out, 0) + 1
+    answered = presence.answer_counts(deliveries.fold(now), now)
     try:
         upcoming = occasions.lines(occasions.load(), _house_date(now))
     except Exception:  # noqa: BLE001
