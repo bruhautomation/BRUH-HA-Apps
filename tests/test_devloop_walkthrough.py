@@ -6,21 +6,23 @@ system prompt, its ids come from dashboard.yaml, its rows file as
 read-only by promise alone (it asks for no tool that writes).
 """
 import json
+import sys
 import unittest
+from pathlib import Path
 
-from test_devloop import DevloopCase  # noqa: F401 — shared fixtures
-import devloop
-from devloop import streams as streams_mod, upstream
-import engine
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "brain" / "panel"))
+
+from devloop import AUTOPILOT_HOURS, STREAMS, streams as streams_mod, upstream  # noqa: E402
+import engine  # noqa: E402
 
 
 class TestWalkthrough(unittest.TestCase):
     def test_it_is_a_claude_stream_that_stands_down_on_noise(self):
-        self.assertEqual(devloop.STREAMS["walkthrough"]["cost"], "claude")
-        self.assertFalse(devloop.STREAMS["walkthrough"]["default_on"])
+        self.assertEqual(STREAMS["walkthrough"]["cost"], "claude")
+        self.assertFalse(STREAMS["walkthrough"]["default_on"])
         self.assertIn("walkthrough", upstream.CLAUDE_STREAMS)
         self.assertIn("walkthrough", upstream.STAND_DOWN_STREAMS)
-        self.assertEqual(devloop.AUTOPILOT_HOURS["walkthrough"], 24)
+        self.assertEqual(AUTOPILOT_HOURS["walkthrough"], 24)
 
     def test_the_charter_is_its_own_and_says_what_it_may_do(self):
         system = streams_mod.analyst_system("walkthrough")
