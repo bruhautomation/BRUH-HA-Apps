@@ -5,6 +5,16 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.19.5
+
+### Added
+
+- brAIn can write a Skript script or a data pack function into the running world, load it without a restart and hear back any errors in it, then list or remove what it wrote (`write_script`, `remove_script`, `list_scripts`). A file it did not write is never touched (#667).
+
+### Fixed
+
+- A plugin command run through `rcon_command` or the panel's console (SkinsRestorer's `skin set`, for example) now answers with what the plugin printed, so success and failure can be told apart (#669).
+
 ## 1.19.4
 
 ### Changed

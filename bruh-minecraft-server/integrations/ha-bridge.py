@@ -30,6 +30,7 @@ for _candidate in (_SCRIPTS_DIR, str(Path(__file__).resolve().parent.parent / "s
     if _candidate and _candidate not in sys.path:
         sys.path.insert(0, _candidate)
 from rcon_client import Rcon  # noqa: E402
+import console_reply  # noqa: E402
 
 PANEL_STATE = Path(os.environ.get("MC_PANEL_STATE", "/data/panel"))
 SHARED = Path("/config/.bruh_minecraft")
@@ -44,6 +45,10 @@ PANEL_URL = os.environ.get("BRUH_MC_PANEL_URL", "http://127.0.0.1:8099")
 
 RCON_HOST = "127.0.0.1"
 RCON_PORT = 25575
+
+# The server's console (the launcher's copy of stdout): where a plugin's
+# answer to a console command goes when it sends RCON nothing.
+CONSOLE_LOG = Path(os.environ.get("MC_CONSOLE_LOG", str(PANEL_STATE / "console.log")))
 
 MIRROR_FILES = ("stats.json", "state.json", "players.json", "world.json")
 MIRROR_INTERVAL = 5
@@ -76,6 +81,19 @@ async def _rcon(command: str) -> str:
             return r.command(command)
 
     return await asyncio.to_thread(_exec)
+
+
+async def _rcon_answer(command: str) -> str:
+    """RCON's reply, or the console lines the server wrote right after the
+    command when RCON said nothing (SkinsRestorer, Skript and many other
+    plugins answer the console, not the sender): scripts/console_reply.py."""
+    pw = _rcon_password()
+
+    def _exec(cmd: str) -> str:
+        with Rcon(RCON_HOST, pw, port=RCON_PORT, timeout=5) as r:
+            return r.command(cmd)
+
+    return await asyncio.to_thread(console_reply.command, _exec, command, CONSOLE_LOG)
 
 
 _LIST_RE = re.compile(
@@ -164,6 +182,22 @@ async def addons(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
                                         "kind": str(payload.get("kind") or "")})
     pid = urllib.parse.quote(str(payload.get("id") or ""), safe="")
     return await asyncio.to_thread(_panel, "DELETE", f"/api/addons/{pid}")
+
+
+async def scripts(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Skript scripts and data pack functions in the running world, written by
+    the panel (panel/worldscripts.py), which checks every name and owns the
+    record of what was written."""
+    if kind == "script_list":
+        return await asyncio.to_thread(_panel, "GET", "/api/scripts", None, 15)
+    if kind == "script_write":
+        return await asyncio.to_thread(_panel, "POST", "/api/scripts", {
+            "kind": str(payload.get("kind") or ""), "name": str(payload.get("name") or ""),
+            "content": payload.get("content"), "by": str(payload.get("by") or "")}, 60)
+    path = "/api/scripts/{}/{}".format(
+        urllib.parse.quote(str(payload.get("kind") or ""), safe=""),
+        urllib.parse.quote(str(payload.get("name") or ""), safe=""))
+    return await asyncio.to_thread(_panel, "DELETE", path, None, 60)
 
 
 _JOB_ID = re.compile(r"^[0-9]{8}-[0-9a-f]{6}$")
@@ -299,7 +333,7 @@ async def handle(request: dict[str, Any]) -> dict[str, Any]:
             command = str(payload.get("command", "")).strip().lstrip("/")
             if not command:
                 return {"ok": False, "error": "No command given."}
-            reply = await _rcon(command.replace("\n", " "))
+            reply = await _rcon_answer(command.replace("\n", " "))
             return {"ok": True, "reply": reply}
 
         if kind == "status":
@@ -307,6 +341,9 @@ async def handle(request: dict[str, Any]) -> dict[str, Any]:
 
         if kind in ("addon_list", "addon_search", "addon_install", "addon_remove"):
             return await addons(kind, payload)
+
+        if kind in ("script_list", "script_write", "script_remove"):
+            return await scripts(kind, payload)
 
         if kind in ("world", "builds_list", "build_save", "build_delete"):
             return await world(kind, payload)
