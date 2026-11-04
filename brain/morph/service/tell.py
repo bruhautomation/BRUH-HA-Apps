@@ -57,6 +57,7 @@ import brain
 import devloop
 import gitrepo
 import learning
+import lovelace
 import morphcode
 import paths
 import settings
@@ -175,8 +176,9 @@ KIND_WORDS = {
     "story": "the story line", "upcoming": "the Coming up timeline",
     "scenes": "the house-wide scenes line", "dashboard": "the whole dashboard",
     "code": "Morph's own code",
+    "lovelace": "the dashboard",
 }
-LABELLED = ("card", "section", "floor", "code")
+LABELLED = ("card", "section", "floor", "code", "lovelace")
 
 # Where the thing a Tell is about actually lives. The story and Coming up
 # are drawn by Morph's own code from the house's state; dashboard.yaml only
@@ -207,6 +209,8 @@ def what_of(target: dict) -> str:
     label = str(target.get("label") or "").strip()[:120]
     if kind == "code" and label:
         return f"Morph's own {label}"
+    if kind == "lovelace" and label:
+        return label
     if kind in LABELLED and label:
         return f"{words} “{label}”"
     return words
@@ -317,6 +321,8 @@ def target_yaml(target: dict) -> str:
     kind, tid = target.get("kind"), target.get("id")
     if kind == "code":
         return ""  # a change to Morph's own module: the request names the files to read
+    if kind == "lovelace":
+        return lovelace_yaml(target)
     dash, _, text = store.read()
     import yaml
     rest = "Read /config/morph/dashboard.yaml for the rest."
@@ -339,6 +345,28 @@ def target_yaml(target: dict) -> str:
         return dump({"story": dash.get("story", True)})
     if kind == "upcoming":
         return dump({"coming_up": dash.get("coming_up", True)})
+    return clip_lines(text, TARGET_CHARS, rest)
+
+
+def target_at(target: dict) -> list:
+    try:
+        return lovelace.clean_at(json.loads(target.get("at") or "[]"))
+    except ValueError:
+        return []
+
+
+def lovelace_yaml(target: dict) -> str:
+    """The held part of a Home Assistant dashboard, from the YAML kept in
+    git (the same config Home Assistant holds), or the whole file."""
+    import yaml
+    key = str(target.get("dashboard") or "")
+    if not lovelace.KEY_RE.match(key):
+        return ""
+    cfg, problem, text = lovelace.read(key)
+    rest = f"Read /config/morph/{lovelace.rel(key)} for the rest."
+    part = lovelace.at_path(cfg, target_at(target)) if cfg is not None and target_at(target) else None
+    if part is not None:
+        return clip_lines(yaml.safe_dump(part, sort_keys=False, allow_unicode=True), TARGET_CHARS, rest)
     return clip_lines(text, TARGET_CHARS, rest)
 
 
@@ -404,7 +432,25 @@ def lessons() -> str:
 from dashdiff import FLAG_WORDS, MAX_SHOWS, _cards, _sections, describe_change  # noqa: E402,F401 — re-exported
 
 
-def read_back(base: str, commit: str) -> dict:
+def read_back_lovelace(base: str, commit: str, key: str) -> dict:
+    """read_back for a Home Assistant dashboard: what the commit changed in
+    its YAML, as a person would see it."""
+    files = gitrepo.changed_files(commit) if commit else []
+    out = {"files": files, "shows": [], "dropped": [], "unreadable": ""}
+    rel = lovelace.rel(key)
+    if rel not in files:
+        return out
+    new, problem, _ = lovelace.read(key)
+    if problem:
+        out["unreadable"] = problem[:300]
+        return out
+    before = gitrepo.file_at(base, rel) if base else None
+    old = lovelace.load_text(before)[0] if before else {}
+    out["shows"] = lovelace.describe_change(old or {}, new)
+    return out
+
+
+def read_back(base: str, commit: str, target: dict | None = None) -> dict:
     """Read the dashboard back after a Tell and say what is true NOW.
 
     ``files`` is what the commit touched; ``unreadable`` is the parser's
@@ -412,6 +458,8 @@ def read_back(base: str, commit: str) -> dict:
     last version that did, so nothing the change meant is on screen);
     ``dropped`` is what Morph could not use out of a file that does read;
     ``shows`` is the difference a person would see."""
+    if (target or {}).get("kind") == "lovelace":
+        return read_back_lovelace(base, commit, str(target.get("dashboard") or ""))
     files = gitrepo.changed_files(commit) if commit else []
     out = {"files": files, "shows": [], "dropped": [], "unreadable": ""}
     if "dashboard.yaml" not in files:
@@ -425,6 +473,53 @@ def read_back(base: str, commit: str) -> dict:
     out["dropped"] = [p[:200] for p in problems if p not in old_problems][:6]
     out["shows"] = describe_change(old, new)
     return out
+
+
+def lovelace_where(target: dict) -> list[str]:
+    key = str(target.get("dashboard") or "")
+    at = target_at(target)
+    return [
+        f"This is a Home Assistant dashboard, drawn by Home Assistant itself. brAIn keeps it as",
+        f"/config/morph/{lovelace.rel(key)}: Home Assistant's own dashboard YAML (views, sections,",
+        "cards, badges), exactly what its Raw configuration editor shows. Edit that file: the moment",
+        "you write it Morph saves it to Home Assistant and every open screen redraws it.",
+        (f"What was held is at {json.dumps(at)} in it (a path through the YAML: views, then the view's"
+         " index, and so on)." if at else "The request is about the whole dashboard."),
+    ]
+
+
+def lovelace_how(target: dict) -> list[str]:
+    key = str(target.get("dashboard") or "")
+    return [
+        "HOW",
+        "- Make the change now, by writing the file: the person is watching it happen, and describing",
+        "  a change in your answer changes nothing.",
+        f"- Edit /config/morph/{lovelace.rel(key)} and nothing under .storage (never write Home",
+        "  Assistant's storage files; never call update_dashboard for this one).",
+        "- Make the smallest change that does what was asked; keep every card you were not asked about,",
+        "  byte for byte, and keep the file valid YAML with `views:` at the top.",
+        "- Any card Home Assistant draws works: its built-in cards (tile, thermostat, entities, heading,",
+        "  grid, conditional…), every HACS card this house has installed (check `lovelace_resources`",
+        "  before using one), and Morph's own cards (`custom:morph-<kind>-card`, AGENTS.md).",
+        "- A HACS card is changed through its own config and, for looks, a `card_mod:` block when",
+        "  card-mod is installed. Never edit a HACS card's JavaScript: an update overwrites it.",
+        "- When what you build is a card the household will want again, or in several places, make it",
+        "  a card type (AGENTS.md, “Card types”) and use it here: then changing the type changes every",
+        "  copy.",
+        "- Themes are Home Assistant themes (/config/themes/; AGENTS.md, “Themes”). A view's look is its",
+        "  `theme:` key.",
+        "- Never run git in /config/morph: Morph commits your change as one commit when you answer, and",
+        "  that commit is what Undo reverts. Morph then reads the file back and tells the person what is",
+        "  different on screen.",
+        "- Use `question` only for a choice that is the person's to make; otherwise act.",
+        "- The rest (Morph's cards, card types, themes, checking your change) is in",
+        "  /config/morph/AGENTS.md. Read the sections you need.",
+        "",
+        "ANSWER with the JSON object the schema describes (each field's description says when):",
+        "summary, files, home_assistant, and when they apply saw, needs_person, question, lesson,",
+        "code_issue and facts. What you learned about the HOUSE goes to brAIn's memory:",
+        "put it in `facts`, because remember_fact is refused in a task run like this one.",
+    ]
 
 
 ORIGIN_LINES = {
@@ -518,9 +613,13 @@ def build_prompt(target: dict, words: str, current: str, previous: list[dict] | 
     # Home Assistant and must not be handed the dashboard to "fix".
     if origin != "undo":
         lines.append("WHERE THIS LIVES")
-        lines.append(WHERE_LIVES.get(kind, WHERE_LIVES["dashboard"]).format(shipped=paths.SHIPPED))
+        if kind == "lovelace":
+            lines += lovelace_where(target)
+        else:
+            lines.append(WHERE_LIVES.get(kind, WHERE_LIVES["dashboard"]).format(shipped=paths.SHIPPED))
         if current.strip():
             form = ("the file as it is" if kind == "dashboard" else
+                    "the YAML of what was held" if kind == "lovelace" else
                     "Morph's normalized form of it (ids and defaults filled in); edit the real file, "
                     "keeping its own layout")
             lines += [f"This is {form}:", "```yaml", current.strip(), "```"]
@@ -551,6 +650,9 @@ def build_prompt(target: dict, words: str, current: str, previous: list[dict] | 
                   "A line marked (you) is one the household wrote itself):", learned.strip(), ""]
 
     # 6. How.
+    if kind == "lovelace":
+        lines += lovelace_how(target)
+        return "\n".join(lines)
     lines += [
         "HOW",
         "- Make the change now, by writing the files: the person pressed Send and is watching, and",
@@ -605,8 +707,21 @@ def start(target: dict, words: str, previous_id: str = "", *, shot: str = "",
     if not brain.available():
         return {"error": brain.status()["sentence"]}
     origin = origin if origin in ORIGINS else "panel"
-    target = {k: str(v)[:240] for k, v in (target or {}).items()
-              if k in ("kind", "id", "label", "path", "entity")}
+    raw = target or {}
+    target = {k: str(v)[:240] for k, v in raw.items()
+              if k in ("kind", "id", "label", "path", "entity", "dashboard")}
+    if target.get("kind") == "lovelace":
+        # A Home Assistant dashboard: which one, and where in it (a list
+        # path into its config), checked here and never trusted as a path.
+        if not lovelace.KEY_RE.match(target.get("dashboard") or "") or target["dashboard"] not in lovelace.morphed():
+            return {"error": "brAIn does not keep that dashboard. Turn on Morph this dashboard first."}
+        at = raw.get("at")
+        if isinstance(at, str):
+            try:
+                at = json.loads(at)
+            except ValueError:
+                at = []
+        target["at"] = json.dumps(lovelace.clean_at(at))
     previous: list[dict] = []
     earlier = 0
     prev = read_state(previous_id) if previous_id else None
@@ -756,7 +871,7 @@ async def _run(state: dict) -> None:
         # watcher's next pass, so what the person is told and what their
         # screen shows are the same file (house report: "it says it's
         # making changes, but none of them are applied").
-        back = await asyncio.to_thread(read_back, base, commit)
+        back = await asyncio.to_thread(read_back, base, commit, target)
         if ON_PUBLISH:
             mirror = await asyncio.to_thread(ON_PUBLISH)
             if isinstance(mirror, dict) and mirror.get("revision"):
@@ -991,9 +1106,10 @@ def outcome(state: dict, summary: str, commit: str, back: dict) -> tuple[str, st
         if (state.get("target") or {}).get("kind") == "code":
             return "done", "brAIn changed nothing in Morph's code." + said
         return "done", "Nothing on the dashboard changed." + said
-    if morph_files == ["dashboard.yaml"] and not back["shows"]:
+    if len(morph_files) == 1 and morph_files[0] in ("dashboard.yaml", lovelace.rel(
+            str((state.get("target") or {}).get("dashboard") or "-"))) and not back["shows"]:
         state["unchanged"] = True
-        return "done", "brAIn rewrote dashboard.yaml, but nothing on the dashboard is different." + said
+        return "done", f"brAIn rewrote {morph_files[0]}, but nothing on the dashboard is different." + said
     text = summary or "Done."
     if back["dropped"]:
         text += " Morph could not use part of it: " + "; ".join(back["dropped"][:3]) + "."

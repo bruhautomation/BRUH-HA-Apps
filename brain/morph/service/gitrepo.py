@@ -174,6 +174,21 @@ def _restore_locked(sha: str) -> tuple[bool, str]:
     return True, new
 
 
+def restore_path(sha: str, path: str, label: str = "") -> tuple[bool, str]:
+    """Put ONE file back as it was at a version (a Home Assistant dashboard's
+    YAML), as a new commit; everything else stays as it is now."""
+    with _LOCK:
+        if not sha or not all(c in "0123456789abcdef" for c in sha.lower()) or len(sha) > 40:
+            return False, "That is not a version of this dashboard."
+        if _git("cat-file", "-e", f"{sha}:{path}", check=False).returncode:
+            return False, "That version is not in this dashboard's history."
+        _commit_pending_locked()
+        _git("checkout", sha, "--", path)
+        subject = _git("log", "-1", "--format=%s", sha, check=False).stdout.strip()
+        new = _commit_locked(f"Restored {label or path} to the version from “{subject}”", "person")
+        return True, new
+
+
 def log(limit: int = 60, path: str = "") -> list[dict]:
     """The newest commits (only those touching ``path`` when given)."""
     args = ["log", f"-{max(1, min(500, limit))}", "--abbrev=12", "--format=%h%x1f%an%x1f%at%x1f%s"]
