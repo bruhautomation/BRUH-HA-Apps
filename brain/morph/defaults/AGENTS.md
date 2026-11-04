@@ -199,6 +199,7 @@ Morph's own panel modules are in `/config/custom_components/brain/morph/frontend
 | `morph-cards.js` | Morph's card kinds as Home Assistant custom cards (`custom:morph-<kind>-card`), with HA's visual editor and card picker |
 | `morph-types.js` | Card types (`types/*.yaml`) as Home Assistant custom cards (`custom:morph-type-<slug>`), redrawn everywhere when a type changes |
 | `brain-layer.js` | The brAIn button on a Home Assistant dashboard: Tell brAIn about a card or the dashboard, History, and letting brAIn keep a dashboard |
+| `morph-features.js` | Morph on a Home Assistant dashboard: the `custom:morph-view` view type (rooms that need you lifted, quiet rooms folded, the room rail), the cases card and the Ask card |
 | `morph-panel.js` | The page: the verdict, Now, the rooms, brAIn's cases, To Do, Ask, Edit, Tell, Settings |
 | `cards.js` | The built-in card types (`TYPES`) |
 | `engine.js` | The layout engine: springs, masonry, opening in place |

@@ -167,7 +167,7 @@ jobs:
             print=true
           fi
           morph=false
-          if grep -qE '^(brain/morph/|brain/custom_components/brain/morph/|tests/manual/(morph-fixture|measure-morph|measure-morph-cards|measure-brain-layer|measure-shell)\.mjs)' <<<"$changed"; then
+          if grep -qE '^(brain/morph/|brain/custom_components/brain/morph/|tests/manual/(morph-fixture|measure-morph|measure-morph-cards|measure-brain-layer|measure-morph-features|measure-shell)\.mjs)' <<<"$changed"; then
             morph=true
           fi
           gardenrx=false
@@ -800,6 +800,7 @@ jobs:
         run: |
           node tests/manual/measure-morph-cards.mjs
           node tests/manual/measure-brain-layer.mjs
+          node tests/manual/measure-morph-features.mjs
 
       # brAIn's one sidebar entry (4.0): the shell holding brAIn's framed page
       # and Morph as its Home tab, for an administrator with the dashboard on
