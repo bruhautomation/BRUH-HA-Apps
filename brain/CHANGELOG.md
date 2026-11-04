@@ -2,6 +2,19 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.3.2
+
+### Fixed
+
+- When you mark an overnight-check card about an automation Wrong and say why (for example that it switches a bulb off but leaves the lamp powered on purpose), that error on that automation is not raised again; a different error from the same automation still is (#578).
+- The overnight check no longer reports a TV or speaker as unreachable when it simply drops off the network while switched off: it reads the player's own on, off and unavailable history first, and still reports one that dropped while on or has not come back (#612).
+- When brAIn says how long a door, gate or cover has been open, the time is checked against its own history first: a door that has since closed is not reported as open, and one still open is reported with the time its history shows; only the door itself is read, never a motion sensor beside it (#580).
+- When brAIn looks into something and finds the house already holds the answer, or that you already said so (a remote you no longer use), it says so and the card is set aside instead of staying open — while a card that only mentions what the house knows on its way to a problem (a door an automation locks that was found unlocked) is still shown; house-book questions read the facts brAIn holds, earlier answers among them, before asking; and a device you said you no longer use on any card is not reminded about for its battery (#697).
+
+### Changed
+
+- An "Is this fixed now?" card after an update says that brAIn cannot check that kind of report itself, which release you reported it on, and the one thing to try to tell; a question nobody answers is withdrawn after 14 days (#605).
+
 ## 4.3.1
 
 ### Fixed

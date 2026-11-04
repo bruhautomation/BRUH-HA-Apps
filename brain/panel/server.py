@@ -11839,14 +11839,22 @@ async def _run_sre(reason: str = "schedule") -> None:
     now = time.time()
     async with aiohttp.ClientSession() as session:
         collected = await sre.collect(session)
+    state = await asyncio.to_thread(sre.load)
+    # The automation errors the owner explained on an earlier card (#578).
+    try:
+        settled = await asyncio.to_thread(findings_store.settled_listing)
+    except Exception as exc:  # noqa: BLE001 — unread explains nothing
+        log.debug("sre: settled answers unread: %s", exc)
+        settled = []
     dig = sre.digest(collected, now,
                      set_aside=await asyncio.to_thread(
-                         _sre_set_aside, now, collected.get("states")))
-    state = await asyncio.to_thread(sre.load)
+                         _sre_set_aside, now, collected.get("states")),
+                     explained_keys=sre.explained(state, settled, now))
     summary = {"at": int(now), "reason": reason,
                "records": len(dig["records"]), "available": dig["available"],
-               "ran": False, "causes": 0, "filed": 0, "cleared": 0,
-               "refused": 0, "invented": 0, "note": ""}
+               "explained": dig.get("explained", 0), "ran": False,
+               "causes": 0, "filed": 0, "cleared": 0, "refused": 0,
+               "invented": 0, "note": ""}
     if not dig["available"].get("log"):
         # "I could not look" at the log is not a healthy night: nothing is
         # judged and nothing is cleared.
@@ -13645,6 +13653,52 @@ _LIVE_READINGS: dict[str, float | None] = {}
 _OPERATED: dict[str, list[dict]] = {}
 
 
+async def _recent_history(ids: list[str], hours: float,
+                          now: float | None = None) -> dict | None:
+    """Raw state changes for ``ids`` over the last ``hours``
+    (`closures.fetch_history`), or None when Core could not be read."""
+    ids = [e for e in dict.fromkeys(ids) if e][:30]
+    if not ids:
+        return {}
+    import datetime as dt  # noqa: PLC0415 — one call per case
+
+    import aiohttp  # noqa: PLC0415
+
+    end = dt.datetime.fromtimestamp(now if now is not None else time.time(),
+                                    dt.timezone.utc)
+    try:
+        async with aiohttp.ClientSession() as session:
+            return await closures.fetch_history(
+                session, ids, end - dt.timedelta(hours=hours), end)
+    except Exception as exc:  # noqa: BLE001 — could not look refuses nothing
+        log.debug("history for a case: %s", exc)
+        return None
+
+
+async def _resident_history_gates(case: dict, now: float) -> tuple[str, dict]:
+    """``(why, case)``: why the history refuses a case, or "" with the case
+    as it may be filed — its stated open duration corrected when the door
+    is still open for a different time than it said (#580)."""
+    stated = resident.stated_open(case, _device_class)
+    if stated:
+        history = await _recent_history(stated[1], stated[0] / 60.0 + 3, now)
+        verdict, fixed, why = resident.open_duration(case, history, now,
+                                                     _device_class)
+        if verdict == "refuse":
+            return why, case
+        if verdict == "correct":
+            log.info("a case's open duration was corrected from the "
+                     "history: %s", why)
+            return "", fixed
+    return "", case
+
+
+def _device_class(eid: str) -> str:
+    """What kind of thing an entity is, by the registry's word (`_NAMES`),
+    or "" where nothing says."""
+    return str((_NAMES.get(str(eid or "")) or {}).get("class") or "")
+
+
 def _registry_answers(case: dict, subject: str = "") -> str:
     """What already answers a question an investigation would ask the
     owner — the entity's room, or the automation that does what it asks
@@ -13656,7 +13710,12 @@ def _registry_answers(case: dict, subject: str = "") -> str:
     dig = {"placed": [e for e, v in _NAMES.items() if v.get("area")],
            "names": {e: [v["name"]] for e, v in _NAMES.items()
                      if v.get("name")},
-           "operated": _OPERATED}
+           "operated": _OPERATED,
+           # What the house was already told: an earlier answer, a fact
+           # filed under the thing (#697).
+           "facts": house_book._fact_rows(),
+           "areas": [{"name": v.get("area")} for v in _NAMES.values()
+                     if v.get("area")]}
     for said in (case.get("claim"), case.get("text")):
         why = house_book.registry_answers(str(said or ""), about, dig)
         if why:
@@ -14925,6 +14984,10 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     # (#561). Nothing is filed, and the trail says what answered it.
     waits = (resident.not_due(case, _DRIVEN_BY, _live_reading, _DRIVEN_ALIASES)
              or _registry_answers(case, str(signal.get("subject") or "")))
+    # "Open for 70 minutes" is read against the door's own last open and
+    # close (#580).
+    if not waits:
+        waits, case = await _resident_history_gates(case, now)
     if waits:
         RESIDENT_STATE["refused"] = RESIDENT_STATE.get("refused", 0) + 1
         log.info("an investigation of %s claimed what the house already "
@@ -14942,18 +15005,35 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     # by its text (#604), and one with no step at all leaves the reader not
     # knowing whether to act (#616): neither is filed. A row brAIn filed is
     # held with the reply's sentence, so the person can still put it back.
-    code, said = resident.unfinished(case)
+    # A reply that says the house already holds the answer (#697) says so
+    # in a word, and the word is not read over a never-ignore floor: a
+    # tripped detector or a protected lock is looked at whatever a run
+    # says about what the house knows (the same floor the gate above and
+    # the first look hold).
+    code, said = resident.unfinished(case, resident.never_ignore(signal)[0])
     if code:
         log.info("an investigation of %s was not a finding (%s)",
                  signal.get("subject"), code)
-        if code == "nothing_needed" and refining is not None:
+        if code in ("nothing_needed", "already_known") and refining is not None:
             held = await asyncio.to_thread(findings_store.hold_after_look,
                                            refines, said, run_id, now)
             await _outcome(signal, "held" if held else "moved_on", run_id,
                            now, why, refines, row=held, said=said)
             return False
-        await _outcome(signal, "no_claim", run_id, now, why, refines)
+        if code == "already_known":
+            # Nothing to hold for a fresh signal: the trail says what
+            # answered it, the way the registry's and the history's
+            # answers are written, so the reason is not lost in a run.
+            await asyncio.to_thread(decision_trail.note_many, [{
+                "kind": "explained",
+                "subject": str(signal.get("subject") or ""),
+                "check": "resident", "reason": said,
+                "text": str(case.get("claim") or "")}], now)
+        await _outcome(signal, "no_claim", run_id, now, why, refines,
+                       said=said)
         return False
+    # The word, read: a case that is filed past it does not carry it.
+    case.pop("already", None)
     # The signal that started it, folded in — because "what made brAIn look"
     # is evidence about the claim and the run has no way to cite it: it was
     # handed the line rather than reading it off the house.
@@ -19840,7 +19920,8 @@ async def _devloop_verify_settle(now: float | None = None) -> dict:
                    if not (state.get(fp) or {}).get("answer")]
             if not fps:
                 continue
-            said = [devloop.verify.moot(data["items"].get(fp), state.get(fp))
+            said = [devloop.verify.moot(data["items"].get(fp), state.get(fp),
+                                        now)
                     for fp in fps]
             if not all(said):
                 continue

@@ -926,6 +926,13 @@ async def collect(now: float | None = None) -> dict:
         snap["answers"] = findings_store.answered_checks()
     except Exception as exc:  # noqa: BLE001
         log.debug("could not read the settled answers: %s", exc)
+    # Every device somebody said is finished with or broken, on whichever
+    # card they said it (`House.answered_off`).
+    try:
+        import corrections  # noqa: PLC0415
+        snap["faulty"] = corrections.known_faulty(now)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not read the devices said to be finished: %s", exc)
 
     # What each entity IS (`world_model`): the readings whose fingerprint
     # still matches the registry this pass fetched. Read, never built —
