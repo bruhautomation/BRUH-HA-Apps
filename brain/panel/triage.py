@@ -255,6 +255,33 @@ NOTHING_RE = re.compile(
     re.I)
 
 
+# A conclusion that the house already holds the answer, or that the owner
+# already gave it: a room the registry has, an automation that already does
+# the thing, a reason in memory, an answer the owner gave before (#697).
+# Shown as an open card it asks somebody for what brAIn already has.
+ALREADY_KNOWN_RE = re.compile(
+    r"\b(?:already (?:has|have|is in|sits in|is assigned to|belongs to)"
+    r" (?:an? |its |a )?(?:area|room)"
+    r"|(?:is|are) already (?:in|assigned to|placed in) (?:the |an? )?"
+    r"[\w' -]{0,30}?(?:area|room)"
+    r"|(?:owner|homeowner|household|you) (?:has |have |had )?already"
+    r" (?:said|told|answered|explained|addressed|confirmed|noted|replied|"
+    r"dealt with|handled|retired|stopped using)"
+    r"|(?:already|previously) (?:answered|explained|addressed) (?:by|in|on)"
+    r"|the house already (?:knows|says|answers|records)"
+    r"|already (?:known|recorded|noted|written down) in (?:memory|the house"
+    r" book|brAIn's memory)"
+    r"|(?:memory|the house book|a saved fact) already (?:says|records|notes|"
+    r"holds|answers)"
+    r"|(?:an |the )?automation (?:\S+ ){0,4}already (?:does|handles|covers|"
+    r"disarms|unlocks|arms|locks|switches|turns))\b", re.I)
+
+
+def says_already_known(text) -> bool:
+    """Whether a conclusion says the house or the owner already answers it."""
+    return bool(ALREADY_KNOWN_RE.search(str(text or "")))
+
+
 def says_nothing_to_do(text) -> bool:
     """Whether a look's reason (or a claim's step) says nothing is needed."""
     return bool(NOTHING_RE.search(str(text or "")))

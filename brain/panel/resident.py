@@ -628,6 +628,11 @@ def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
                 # `watch` — an investigation or an act said something is
                 # worth a closer look — and the floors still run below.
                 already = "explained"
+            if already not in ALREADY and triage.says_already_known(
+                    said[idx]["why"]):
+                # "The sensor already has a room", "the owner already said
+                # they retired it": the house answers it (#697).
+                already = "answered"
             if already not in ALREADY and triage.says_duplicate(
                     said[idx]["why"]):
                 # The word written as a sentence ("already an open problem
@@ -1191,6 +1196,10 @@ _DID_NOT_RUN_RE = re.compile(
     r"|\b(?:been|is|was|sat|sitting|stayed|remain(?:ed|s)?|went|gone)\s+idle\b(?!-)"
     r"|\bstopped\s+(?:running|working)\b"
     r"|\b(?:drew|drawn|drawing|draws?)\s+(?:only\s+)?(?:no|standby)\s+power\b"
+    # "It drew 0 W", "reading zero watts": a plug's power read as a claim
+    # that the machine behind it did not run (#625).
+    r"|\b(?:drew|drawn|drawing|draws?|reads?|reading|read|showed|shows|at|stuck\s+at)"
+    r"\s+(?:only\s+|just\s+)?(?:0(?:\.0+)?\s*W|0(?:\.0+)?\s*watts?|zero\s+watts?)\b"
     r"|\b(?:is|was|may\s+be|might\s+be|seems|looks|appears)\s+"
     r"(?:to\s+be\s+)?broken\b", re.I)
 _ENTITY_IN_WORDS_RE = re.compile(r"\b([a-z_]+)\.([a-z0-9_]+)\b")
@@ -1326,7 +1335,7 @@ def faulty_case(case: dict, entities, faulty: dict) -> str:
     return ""
 
 
-def ungrounded_did_not_run(case: dict, drivers: dict) -> str:
+def ungrounded_did_not_run(case: dict, drivers: dict, aliases=None) -> str:
     """Why a "did not run" case is not grounded, or "" when it is (or when
     it is not that kind of claim).
 
@@ -1334,7 +1343,9 @@ def ungrounded_did_not_run(case: dict, drivers: dict) -> str:
     case has to name a device some automation drives and a reading beside
     it, and NONE of the readings may be anything those automations read.
     A device nothing drives, or a claim that compares it with no reading,
-    is left alone: there is no rule to read it against.
+    is left alone: there is no rule to read it against. ``aliases``
+    (`device_aliases`) makes a claim about the plug's own power sensor a
+    claim about the plug, and that sensor is not "a reading beside it".
     """
     if not isinstance(case, dict) or not drivers:
         return ""
@@ -1349,10 +1360,16 @@ def ungrounded_did_not_run(case: dict, drivers: dict) -> str:
                 + [m.group(0) for m in _ENTITY_IN_WORDS_RE.finditer(words)]):
         if "." in eid and eid not in named:
             named.append(eid)
+    aliases = aliases or {}
     actuators = [e for e in named if drivers.get(e)]
+    for e in named:
+        owner = aliases.get(e, "")
+        if owner and drivers.get(owner) and owner not in actuators:
+            actuators.append(owner)
     if not actuators:
         return ""
     readings = [e for e in named if e not in actuators
+                and aliases.get(e, "") not in actuators
                 and e.split(".", 1)[0] in READING_DOMAINS]
     if not readings:
         return ""
@@ -1369,6 +1386,274 @@ def ungrounded_did_not_run(case: dict, drivers: dict) -> str:
         f"{', '.join(readings)}, which none of them reads", MAX_WHY)
 
 
+# How far back a "did not run" claim is held against what starts the
+# machine (`never_due`): the day a case is usually about.
+NOT_RUN_WINDOW_H = 24
+_ON_WORDS = frozenset({"on", "heat", "cool", "dry", "auto", "running"})
+
+
+def _named_actuators(case: dict, drivers: dict, aliases=None) -> list[str]:
+    """The driven devices a "not running" claim is about, or []."""
+    if not isinstance(case, dict) or not drivers:
+        return []
+    words = " ".join(str(case.get(k) or "") for k in ("claim", "text",
+                                                       "detail"))
+    if not _DID_NOT_RUN_RE.search(words):
+        return []
+    aliases = aliases or {}
+    out: list[str] = []
+    for eid in ([str(case.get("entity_id") or "")]
+                + [str(r.get("entity") or "") for r in case.get("evidence") or ()
+                   if isinstance(r, dict)]
+                + [m.group(0) for m in _ENTITY_IN_WORDS_RE.finditer(words)]):
+        actuator = eid if drivers.get(eid) else aliases.get(eid, "")
+        if actuator and drivers.get(actuator) and actuator not in out:
+            out.append(actuator)
+    return out
+
+
+def history_wanted(case: dict, drivers: dict, aliases=None) -> list[str]:
+    """The entities `never_due` reads: each driven device a not-running
+    claim names, and every sensor a rule that starts it is bounded on."""
+    out: list[str] = []
+    for actuator in _named_actuators(case, drivers, aliases):
+        rules = [r for r in drivers[actuator] if r.get("starts")]
+        if not rules or any(r.get("trigger_bounds") is None for r in rules):
+            continue
+        for eid in [actuator] + [b["entity"] for r in rules for b in
+                                 (r.get("trigger_bounds") or [])
+                                 + (r.get("condition_bounds") or [])]:
+            if eid not in out:
+                out.append(eid)
+    return out
+
+
+def _points(series) -> list[tuple[float, str]]:
+    """Raw history rows ``[[stamp, state], ...]`` as ``(epoch, state)``,
+    oldest first; rows that will not read are dropped."""
+    out = []
+    for row in series or ():
+        if not isinstance(row, (list, tuple)) or len(row) < 2:
+            continue
+        stamp = row[0]
+        if isinstance(stamp, (int, float)) and not isinstance(stamp, bool):
+            ts = float(stamp)
+        else:
+            try:
+                when = dt.datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=dt.timezone.utc)
+            ts = when.timestamp()
+        out.append((ts, str(row[1] if row[1] is not None else "")))
+    out.sort(key=lambda p: p[0])
+    return out
+
+
+def _at(points: list[tuple[float, str]], ts: float) -> str | None:
+    """The state a series held at ``ts``, or None before its first row."""
+    said = None
+    for when, word in points:
+        if when > ts:
+            break
+        said = word
+    return said
+
+
+def _number(word) -> float | None:
+    try:
+        return float(word)
+    except (TypeError, ValueError):
+        return None
+
+
+def never_due(case: dict, drivers: dict, history: dict | None, aliases=None,
+              value_of=None) -> str:
+    """Why a "did not run" claim is about a machine that was never due in
+    the window, or ran every time it was, or "" when it may be filed.
+
+    `not_due` reads the sensors NOW; a claim is about the day behind it
+    (#625: "the dehumidifier did not run" while its automation's humidity
+    sensor never reached the set point). ``history`` is the raw history of
+    `history_wanted`'s entities over `NOT_RUN_WINDOW_H`. For every rule
+    that starts the device on numeric thresholds, each moment one of its
+    sensors changed is read: when a trigger was past its bound and every
+    numeric condition held, the rule was due. The claim is filed only when
+    the rule was due at a moment the device was not on. Any rule a time,
+    a state or an event can start, and any sensor whose history could not
+    be read, lets the claim through: "could not look" refuses nothing.
+    """
+    import shadow  # noqa: PLC0415 — panel-local, a leaf
+
+    if not isinstance(history, dict) or not history:
+        return ""
+    value_of = value_of or (lambda _e: None)
+    said = []
+    for actuator in _named_actuators(case, drivers, aliases):
+        rules = [r for r in drivers[actuator] if r.get("starts")]
+        if not rules:
+            continue
+        if any(r.get("trigger_bounds") is None for r in rules):
+            return ""
+        own = _points(history.get(actuator))
+        due_at: list[float] = []
+        quiet = []
+        for rule in rules:
+            trig = list(rule.get("trigger_bounds") or [])
+            cond = list(rule.get("condition_bounds") or [])
+            series = {b["entity"]: _points(history.get(b["entity"]))
+                      for b in trig + cond}
+            if not trig or any(not pts for pts in series.values()):
+                return ""
+            moments = sorted({t for pts in series.values() for t, _w in pts})
+            highest: dict[str, float] = {}
+            rule_due: list[float] = []
+            for t in moments:
+                def met(bound: dict) -> bool:
+                    value = _number(_at(series[bound["entity"]], t))
+                    if value is not None:
+                        top = highest.get(bound["entity"])
+                        if bound.get("above") not in (None, ""):
+                            highest[bound["entity"]] = max(
+                                value, top if top is not None else value)
+                        else:
+                            highest[bound["entity"]] = min(
+                                value, top if top is not None else value)
+                    return bool(shadow.bound_met(bound, value, value_of))
+                hit = [met(b) for b in trig]
+                if any(hit) and all(met(b) for b in cond):
+                    rule_due.append(t)
+            due_at += rule_due
+            if not rule_due:
+                bits = []
+                for b in trig[:2]:
+                    side = (f"above {b['above']}"
+                            if b.get("above") not in (None, "")
+                            else f"below {b['below']}")
+                    seen = highest.get(b["entity"])
+                    bits.append(f"{b['entity']} {side}, and it never got there "
+                                + (f"(it reached {seen:g})"
+                                   if isinstance(seen, float) else ""))
+                quiet.append(f"“{rule['alias']}” starts {actuator} when "
+                             + "; ".join(bits).strip())
+        if due_at:
+            if not own:
+                return ""
+            if any(str(_at(own, t) or "").lower() not in _ON_WORDS
+                   for t in due_at):
+                return ""
+            said.append(f"{actuator} was on each time what starts it was due")
+            continue
+        said.extend(quiet)
+    if not said:
+        return ""
+    return textclip.clip("; ".join(said) + f" in the last {NOT_RUN_WINDOW_H} "
+                         "hours — so it was not due to run", MAX_WHY)
+
+
+# A stated "open for 70 minutes" about a door, a gate or a cover (#580).
+_OPEN_FOR_RE = re.compile(
+    r"\bopen(?:ed)?\s+(?:for\s+)?(?:about\s+|around\s+|roughly\s+|over\s+|"
+    r"nearly\s+|almost\s+|more\s+than\s+|at\s+least\s+)?"
+    r"(?P<n>\d+(?:\.\d+)?)\s*(?P<unit>minutes?|mins?|hours?|hrs?)\b", re.I)
+_CLOSURE_DOMAINS = ("cover", "binary_sensor", "lock")
+_OPEN_WORDS = frozenset({"on", "open", "opening", "unlocked"})
+_SHUT_WORDS = frozenset({"off", "closed", "closing", "locked"})
+# How far a stated duration may be from the history before it is wrong.
+OPEN_TOLERANCE_MIN = 5.0
+
+
+def stated_open(case: dict) -> tuple[float, list[str]] | None:
+    """``(minutes, [closure entities])`` for a case that says how long a
+    door or cover has been open, or None. The entities are the case's own
+    and its evidence's, in that order, of a domain a closure can be."""
+    if not isinstance(case, dict):
+        return None
+    words = " ".join(str(case.get(k) or "") for k in ("claim", "text",
+                                                       "detail"))
+    m = _OPEN_FOR_RE.search(words)
+    if not m:
+        return None
+    minutes = float(m.group("n")) * (60.0 if m.group("unit").lower()
+                                     .startswith("h") else 1.0)
+    ents = []
+    for eid in ([str(case.get("entity_id") or "")]
+                + [str(r.get("entity") or "") for r in case.get("evidence") or ()
+                   if isinstance(r, dict)]
+                + [e.group(0) for e in _ENTITY_IN_WORDS_RE.finditer(words)]):
+        if eid.split(".", 1)[0] in _CLOSURE_DOMAINS and eid not in ents:
+            ents.append(eid)
+    return (minutes, ents) if ents else None
+
+
+def _clock(ts: float) -> str:
+    return time.strftime("%H:%M", time.localtime(ts))
+
+
+def _minutes_words(minutes: float) -> str:
+    n = max(1, int(round(minutes)))
+    if n >= 120:
+        hours = round(n / 60.0, 1)
+        return f"{hours:g} hours"
+    return f"{n} minute" + ("" if n == 1 else "s")
+
+
+def open_duration(case: dict, history: dict | None,
+                  now: float) -> tuple[str, dict, str]:
+    """``(verdict, case, why)`` for a case that says how long a door has
+    been open, read against that door's own history (#580).
+
+    ``ok``: the history agrees within `OPEN_TOLERANCE_MIN`, or there is no
+    such claim, or nothing could be read. ``refuse``: the door has closed
+    since it opened (or never opened in the window), so "has been open N
+    minutes" is not true of it. ``correct``: it is still open, for a time
+    the history says — the case comes back with that duration in place of
+    the stated one, and ``why`` says what was read.
+    """
+    stated = stated_open(case)
+    if stated is None or not isinstance(history, dict):
+        return "ok", case, ""
+    minutes, ents = stated
+    for eid in ents:
+        pts = _points(history.get(eid))
+        if not pts:
+            continue
+        opened = closed = None
+        for i, (ts, word) in enumerate(pts):
+            low = word.lower()
+            if low in _OPEN_WORDS and (i == 0 or pts[i - 1][1].lower()
+                                       not in _OPEN_WORDS):
+                opened, closed = ts, None
+            elif low in _SHUT_WORDS and opened is not None and closed is None:
+                closed = ts
+        if opened is None:
+            if pts[-1][1].lower() in _SHUT_WORDS:
+                return "refuse", case, textclip.clip(
+                    f"{eid}'s history shows it closed throughout the time the "
+                    f"case says it was open {_minutes_words(minutes)}", MAX_WHY)
+            continue
+        actual = ((closed if closed is not None else now) - opened) / 60.0
+        if abs(actual - minutes) <= OPEN_TOLERANCE_MIN:
+            return "ok", case, ""
+        if closed is not None:
+            return "refuse", case, textclip.clip(
+                f"{eid} opened at {_clock(opened)} and closed at "
+                f"{_clock(closed)}, {_minutes_words(actual)} later — not "
+                f"{_minutes_words(minutes)}", MAX_WHY)
+        fixed = dict(case)
+        for key in ("claim", "text", "detail"):
+            if fixed.get(key):
+                fixed[key] = _OPEN_FOR_RE.sub(
+                    lambda m: m.group(0)[:m.start("n") - m.start(0)]
+                    + _minutes_words(actual), str(fixed[key]))
+        return "correct", fixed, textclip.clip(
+            f"{eid} has been open since {_clock(opened)}, "
+            f"{_minutes_words(actual)} — the case said "
+            f"{_minutes_words(minutes)}", MAX_WHY)
+    return "ok", case, ""
+
+
 def _no_placeholder(value) -> str:
     """A reply's sentence, or "" when it holds a hole where a value belongs
     (#446) — the row then keeps the sentence it had."""
@@ -1378,6 +1663,9 @@ def _no_placeholder(value) -> str:
 
 def unfinished(case: dict) -> tuple[str, str]:
     """``(code, why)`` for a reply that is not a finding yet, or ``("", "")``.
+
+    ``already_known``: its step or detail says the house already holds the
+    answer or the owner already gave it (#697); held like ``nothing_needed``.
 
     ``nothing_needed``: its own step or detail says nothing is needed, so
     the claim above it is a headline withdrawn by its own text (#604) — the
@@ -1399,6 +1687,12 @@ def unfinished(case: dict) -> tuple[str, str]:
                 break
     if said:
         return "nothing_needed", textclip.shorten(said, MAX_WHY)
+    # Its own investigation says the house already holds the answer, or the
+    # owner already gave it (#697): a card asking for it again is not one.
+    for sentence in [fix, *re.split(r"(?<=[.!?])\s+",
+                                    str(case.get("detail") or ""))]:
+        if triage.says_already_known(sentence):
+            return "already_known", textclip.shorten(sentence.strip(), MAX_WHY)
     if (not fix and not str(case.get("todo_text") or "").strip()
             and not case.get("actions") and case.get("stakes") != "high"):
         return "no_step", ""
@@ -1839,6 +2133,7 @@ __all__ = [
     "CLAIM_RULE", "DISMISS_RULE", "REFINE_SYSTEM", "investigate_system",
     "note_withheld", "parse_case", "parse_dismissal", "parse_first_look",
     "rejudge_due", "tier_for", "watch", "watch_note", "watched",
-    "READING_DOMAINS", "drivers_of", "faulty_case", "ungrounded_did_not_run",
+    "READING_DOMAINS", "drivers_of", "faulty_case", "history_wanted",
+    "never_due", "open_duration", "stated_open", "ungrounded_did_not_run",
     "device_aliases", "not_due", "look_tier",
 ]

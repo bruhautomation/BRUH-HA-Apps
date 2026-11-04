@@ -11839,14 +11839,22 @@ async def _run_sre(reason: str = "schedule") -> None:
     now = time.time()
     async with aiohttp.ClientSession() as session:
         collected = await sre.collect(session)
+    state = await asyncio.to_thread(sre.load)
+    # The automation errors the owner explained on an earlier card (#578).
+    try:
+        settled = await asyncio.to_thread(findings_store.settled_listing)
+    except Exception as exc:  # noqa: BLE001 — unread explains nothing
+        log.debug("sre: settled answers unread: %s", exc)
+        settled = []
     dig = sre.digest(collected, now,
                      set_aside=await asyncio.to_thread(
-                         _sre_set_aside, now, collected.get("states")))
-    state = await asyncio.to_thread(sre.load)
+                         _sre_set_aside, now, collected.get("states")),
+                     explained_keys=sre.explained(state, settled, now))
     summary = {"at": int(now), "reason": reason,
                "records": len(dig["records"]), "available": dig["available"],
-               "ran": False, "causes": 0, "filed": 0, "cleared": 0,
-               "refused": 0, "invented": 0, "note": ""}
+               "explained": dig.get("explained", 0), "ran": False,
+               "causes": 0, "filed": 0, "cleared": 0, "refused": 0,
+               "invented": 0, "note": ""}
     if not dig["available"].get("log"):
         # "I could not look" at the log is not a healthy night: nothing is
         # judged and nothing is cleared.
@@ -13645,6 +13653,52 @@ _LIVE_READINGS: dict[str, float | None] = {}
 _OPERATED: dict[str, list[dict]] = {}
 
 
+async def _recent_history(ids: list[str], hours: float,
+                          now: float | None = None) -> dict | None:
+    """Raw state changes for ``ids`` over the last ``hours``
+    (`closures.fetch_history`), or None when Core could not be read."""
+    ids = [e for e in dict.fromkeys(ids) if e][:30]
+    if not ids:
+        return {}
+    import datetime as dt  # noqa: PLC0415 — one call per case
+
+    import aiohttp  # noqa: PLC0415
+
+    end = dt.datetime.fromtimestamp(now if now is not None else time.time(),
+                                    dt.timezone.utc)
+    try:
+        async with aiohttp.ClientSession() as session:
+            return await closures.fetch_history(
+                session, ids, end - dt.timedelta(hours=hours), end)
+    except Exception as exc:  # noqa: BLE001 — could not look refuses nothing
+        log.debug("history for a case: %s", exc)
+        return None
+
+
+async def _resident_history_gates(case: dict, now: float) -> tuple[str, dict]:
+    """``(why, case)``: why the history refuses a case, or "" with the case
+    as it may be filed — its stated open duration corrected when the door
+    is still open for a different time than it said."""
+    wanted = resident.history_wanted(case, _DRIVEN_BY, _DRIVEN_ALIASES)
+    if wanted:
+        history = await _recent_history(wanted, resident.NOT_RUN_WINDOW_H, now)
+        never = resident.never_due(case, _DRIVEN_BY, history, _DRIVEN_ALIASES,
+                                   _live_reading)
+        if never:
+            return never, case
+    stated = resident.stated_open(case)
+    if stated:
+        history = await _recent_history(stated[1], stated[0] / 60.0 + 3, now)
+        verdict, fixed, why = resident.open_duration(case, history, now)
+        if verdict == "refuse":
+            return why, case
+        if verdict == "correct":
+            log.info("a case's open duration was corrected from the "
+                     "history: %s", why)
+            return "", fixed
+    return "", case
+
+
 def _registry_answers(case: dict, subject: str = "") -> str:
     """What already answers a question an investigation would ask the
     owner — the entity's room, or the automation that does what it asks
@@ -13656,7 +13710,12 @@ def _registry_answers(case: dict, subject: str = "") -> str:
     dig = {"placed": [e for e, v in _NAMES.items() if v.get("area")],
            "names": {e: [v["name"]] for e, v in _NAMES.items()
                      if v.get("name")},
-           "operated": _OPERATED}
+           "operated": _OPERATED,
+           # What the house was already told: an earlier answer, a fact
+           # filed under the thing (#697).
+           "facts": house_book._fact_rows(),
+           "areas": [{"name": v.get("area")} for v in _NAMES.values()
+                     if v.get("area")]}
     for said in (case.get("claim"), case.get("text")):
         why = house_book.registry_answers(str(said or ""), about, dig)
         if why:
@@ -14886,7 +14945,8 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     # "It did not run" compared with a reading its own automations never
     # read is a claim about a rule the house does not have: refused, with
     # the automations' own triggers as the reason on the trail.
-    ungrounded = resident.ungrounded_did_not_run(case, _DRIVEN_BY)
+    ungrounded = resident.ungrounded_did_not_run(case, _DRIVEN_BY,
+                                                 _DRIVEN_ALIASES)
     if ungrounded:
         RESIDENT_STATE["refused"] = RESIDENT_STATE.get("refused", 0) + 1
         log.info("an investigation of %s said a device did not run against a "
@@ -14925,6 +14985,12 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     # (#561). Nothing is filed, and the trail says what answered it.
     waits = (resident.not_due(case, _DRIVEN_BY, _live_reading, _DRIVEN_ALIASES)
              or _registry_answers(case, str(signal.get("subject") or "")))
+    # "It did not run" is about the day behind it: what starts the machine
+    # is read over that day, and the claim stands only when the rule was
+    # due while the machine stayed off (#625). "Open for 70 minutes" is
+    # read against the door's own last open and close (#580).
+    if not waits:
+        waits, case = await _resident_history_gates(case, now)
     if waits:
         RESIDENT_STATE["refused"] = RESIDENT_STATE.get("refused", 0) + 1
         log.info("an investigation of %s claimed what the house already "
@@ -14946,7 +15012,7 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     if code:
         log.info("an investigation of %s was not a finding (%s)",
                  signal.get("subject"), code)
-        if code == "nothing_needed" and refining is not None:
+        if code in ("nothing_needed", "already_known") and refining is not None:
             held = await asyncio.to_thread(findings_store.hold_after_look,
                                            refines, said, run_id, now)
             await _outcome(signal, "held" if held else "moved_on", run_id,
@@ -19840,7 +19906,8 @@ async def _devloop_verify_settle(now: float | None = None) -> dict:
                    if not (state.get(fp) or {}).get("answer")]
             if not fps:
                 continue
-            said = [devloop.verify.moot(data["items"].get(fp), state.get(fp))
+            said = [devloop.verify.moot(data["items"].get(fp), state.get(fp),
+                                        now)
                     for fp in fps]
             if not all(said):
                 continue
