@@ -341,7 +341,7 @@
         },
         "name": {
           "name": "Name",
-          "description": "1 to 48 lowercase letters, digits, _ and -. A function is run as bruh_scripts:<name>."
+          "description": "1 to 48 lowercase letters, digits, _ and -. A function is run as bruh_scripts: followed by the name."
         },
         "content": {
           "name": "Content",
