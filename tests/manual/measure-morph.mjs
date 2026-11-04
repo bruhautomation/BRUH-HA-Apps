@@ -1529,24 +1529,25 @@ for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
   {
     const said = await p.evaluate(async () => {
       const P = window.__panel; const H = P.hass; const states = { ...H.states };
-      const text = () => { const r = P.shadowRoot.querySelector('.story'); return r ? r.textContent : ''; };
+      // The words a person reads, from the markup the story would draw.
+      const words = (html) => { const t = document.createElement('template'); t.innerHTML = html; return t.content.textContent; };
       const put = (eid, state, attrs) => { states[eid] = { entity_id: eid, state, attributes: attrs, last_changed: new Date(Date.now() - 6 * 3600000).toISOString(), last_updated: new Date().toISOString() }; };
       const out = {};
       // Locks locked, a garage door and a window open, nobody home: the away line.
       Object.keys(states).filter((e) => e.startsWith('lock.')).forEach((e) => { states[e] = { ...states[e], state: 'locked' }; });
       put('binary_sensor.spare_window', 'on', { device_class: 'window', friendly_name: 'Spare Window' });
       put('cover.shed_door', 'open', { device_class: 'garage', friendly_name: 'Shed Door' });
-      P.hass = { ...H, states }; P.form_ = 'away'; P.salApplied = P.salApplied; 
+      P.hass = { ...H, states }; P.form_ = 'away';
       const html = P.verdictHtml(P.dash);
-      out.away = html.replace(/<[^>]+>/g, '');
+      out.away = words(html);
       P.form_ = '';
-      out.plain = P.verdictHtml(P.dash).replace(/<[^>]+>/g, '');
+      out.plain = words(P.verdictHtml(P.dash));
       P.brain().situation = { sentence: 'Every door is locked and the house is quiet.', at: Date.now() / 1000 };
-      out.sit = P.verdictHtml(P.dash).replace(/<[^>]+>/g, '');
+      out.sit = words(P.verdictHtml(P.dash));
       // And with nothing open the same words may stand.
       delete states['binary_sensor.spare_window']; delete states['cover.shed_door'];
       P.hass = { ...H, states };
-      out.shut = P.verdictHtml(P.dash).replace(/<[^>]+>/g, '');
+      out.shut = words(P.verdictHtml(P.dash));
       P.hass = H; P.schedule();
       return out;
     });
