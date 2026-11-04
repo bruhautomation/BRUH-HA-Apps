@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: triggers-on-house-reports-drain
+expected_outcome: |
+  [should] The fix-from-house skill is used: every issue is parsed with scripts/issue_parse.py before triage, and every closure carries evidence.

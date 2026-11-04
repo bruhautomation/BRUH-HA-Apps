@@ -79,8 +79,9 @@ configuration:
   learning:
     name: Learn about your home
     description: >-
-      Let brAIn file what it discovers into its memory, so it stops
-      re-asking things you have already told it.
+      The starting position of the Learning loop switch in brAIn's Settings,
+      Features. It is read once, on the first start of this version; after
+      that the switch decides, and changing this option does nothing.
   memory_injection:
     name: Use memory in answers
     description: >-

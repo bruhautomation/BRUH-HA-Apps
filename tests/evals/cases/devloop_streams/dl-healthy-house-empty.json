@@ -1,0 +1,14 @@
+{
+ "id": "dl-healthy-house-empty",
+ "job": "devloop_streams",
+ "kind": "capability",
+ "origin": "synthetic",
+ "input": {
+  "stream": "gaps",
+  "context": "Faults: none in 30 days. Findings: 2 open, none marked Wrong. Every check ran. Health: ok."
+ },
+ "expect": {
+  "empty": true
+ },
+ "rule": "An empty list is a good answer on a house where brAIn is doing its job."
+}

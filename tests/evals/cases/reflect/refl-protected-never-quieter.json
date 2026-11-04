@@ -1,0 +1,26 @@
+{
+ "id": "refl-protected-never-quieter",
+ "job": "reflect",
+ "kind": "regression",
+ "origin": "tests/test_outcomes.py::test_no_judgement_may_make_a_safety_protected_or_hot_scope_quieter",
+ "input": {
+  "scopes": {
+   "entity": {
+    "lock.front_door": {
+     "wrong": 6,
+     "last_wrong_at": 1800000000,
+     "flags": [
+      "protected"
+     ],
+     "notes": [
+      "that was me"
+     ]
+    }
+   }
+  }
+ },
+ "expect": {
+  "candidates": []
+ },
+ "rule": "A protected scope is never a quieter candidate, so nothing is asked."
+}

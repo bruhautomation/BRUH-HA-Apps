@@ -161,6 +161,9 @@ import devloop.screens
 import devloop.streams
 import devloop.upstream
 import devloop.verify
+import devloop.after
+import devloop.canary
+import devloop.corpus
 import devloop.siblings
 import devloop_archive
 import card_tags
@@ -199,6 +202,7 @@ import feedback_store
 import finding_requests
 import findings_store
 import features
+import learning_report
 import fixer
 import morph_service
 import personality
@@ -9371,6 +9375,25 @@ async def h_house_file(request: web.Request) -> web.Response:
                                  "X-Content-Type-Options": "nosniff"})
 
 
+async def h_house_outcome(request: web.Request) -> web.Response:
+    """POST {name, v, outcome: confirm|revert, why}: the page's verdict on a
+    house.css/house.js version it has not seen work before. A revert puts
+    the last good copy back (or takes the file away) without anybody
+    pressing anything — the automatic undo of `house_ui`."""
+    try:
+        body = await request.json()
+    except (ValueError, UnicodeDecodeError):
+        raise web.HTTPBadRequest(text="send a JSON object")
+    try:
+        out = await asyncio.to_thread(house_ui.outcome, body)
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+    if out.get("reverted"):
+        log.warning("the page took back %s: %s (%s)", body.get("name"),
+                    log_safe(out.get("why")), out.get("restored"))
+    return web.json_response(out)
+
+
 def _static(name: str, ctype: str):
     async def handler(request: web.Request) -> web.Response:
         return web.Response(
@@ -15113,15 +15136,11 @@ def _capture_look(settings: dict, run_id: str, batch: list[dict],
 
 
 def _learning_on() -> bool:
-    """The `learning` option: may brAIn file what it works out? Live from
-    the Supervisor, the run.sh export otherwise — `_curiosity_enabled`'s
-    shape. A judgement is something brAIn learned, so it answers to it."""
-    snap = addon_options.snapshot() or {}
-    value = snap.get("learning")
-    if value is None:
-        raw = os.environ.get("BRAIN_ASSIST_LEARNING", "true").strip().lower()
-        return raw not in ("false", "0", "no", "")
-    return bool(value)
+    """⚙ › Features › Learning loop: may brAIn file what it works out?
+    Read off the switches' file at call time (`features.learning_on`); the
+    add-on option `learning` is only that switch's default, folded in once.
+    A judgement is something brAIn learned, so it answers to it."""
+    return features.learning_on()
 
 
 def _label_first_look_captures(graded: list[dict]) -> int:
@@ -19024,6 +19043,11 @@ def _diagnostics_payload() -> dict:
     options = addon_options.snapshot() or {}
     safe_options = {k: v for k, v in options.items()
                     if not any(w in k for w in _OPTION_SECRET_WORDS)}
+    # `learning` is ⚙ › Features › Learning loop now (the option is only
+    # its default), and run.sh starts the consolidator and the study
+    # watcher by the switch: health asks the switch, or a house that turned
+    # learning off in ⚙ reads as two dead daemons.
+    safe_options["learning"] = features.learning_on()
     listing = findings_store.listing()
     rows = listing.get("findings") or []
     by_status: dict[str, int] = {}
@@ -19577,7 +19601,9 @@ async def _devloop_tick(force: bool = False) -> dict:
         # After the send, so the verdicts it read back are what decides
         # whether a fix has landed and is worth asking about.
         asked = await _devloop_verify_pass()
-        return {"ran": ran, "sent": sent, "asked": asked}
+        # A fixed screen, photographed again once its fix is here (plan 3.4).
+        after = await _devloop_after_pass()
+        return {"ran": ran, "sent": sent, "asked": asked, "after": after}
     finally:
         devloop.upstream.STATE["running"] = False
 
@@ -19622,6 +19648,61 @@ async def _devloop_verify_pass(now: float | None = None) -> int:
         return asked
     except Exception as exc:  # noqa: BLE001 — a question, not the loop
         log.warning("devloop: could not ask about a fix: %s", exc)
+        return 0
+
+
+async def _devloop_after_pass() -> int:
+    """Photograph each fixed screen report once its fix is installed and
+    post the picture on its issue (`devloop/after.py`). Redacted and guarded
+    as the Screens stream is; nothing waits on the owner. Never raises."""
+    try:
+        if not devloop.screens.find_browser():
+            return 0
+        data = await asyncio.to_thread(devloop.upstream._load)
+        state = await asyncio.to_thread(devloop.after.load)
+        version = str(data.get("version") or "")
+        if not devloop.after.due(data["items"], version, data.get("products"), state):
+            return 0
+        token = await asyncio.to_thread(devloop.read_token)
+        repo = (await asyncio.to_thread(devloop.load_settings))["repo"]
+        ok, _why = await asyncio.to_thread(devloop.github.check_repo, token, repo)
+        if not ok:
+            return 0
+        import aiohttp
+
+        import ha_data
+        async with aiohttp.ClientSession() as session:
+            states = await ha_data._rest_get(session, "/states", timeout=60)
+        if not isinstance(states, list):
+            return 0  # what could not be looked up could not be blanked
+        confidential = devloop.screens.confidential_strings(
+            states, await asyncio.to_thread(occasions.load))
+        aliases = devloop.upstream.Aliases.load()
+        aliases.learn(dict(_NAMES))
+        located = await _screen_catalog()
+        catalog = [devloop.screens.own_target(_own_panel_url())] + located["targets"]
+
+        async def one(target: dict, screen: dict) -> tuple[bytes, str]:
+            tmp = Path(tempfile.mkdtemp(prefix="brain-after-"))
+            try:
+                result = await asyncio.wait_for(devloop.screens.capture(
+                    tmp, confidential=confidential, aliases=aliases,
+                    views=[devloop.after.VIEW], targets=[{**target, "screens": [screen]}],
+                    own=False), SCREENSHOT_TIMEOUT_S)
+                shots = result.get("shots") or []
+                if not shots:
+                    raise RuntimeError("; ".join(_error_text(e) for e in
+                                                 result.get("errors") or [])[:200]
+                                       or "the screen could not be photographed")
+                return (tmp / shots[0]["name"]).read_bytes(), shots[0]["name"]
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+
+        return await devloop.after.run_pass(
+            token=token, repo=repo, items=data["items"], version=version,
+            products=data.get("products"), catalog=catalog, capture=one)
+    except Exception as exc:  # noqa: BLE001 — a picture, not the loop
+        log.warning("devloop: could not photograph a fixed screen: %s", exc)
         return 0
 
 
@@ -19775,6 +19856,17 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
             return await _devloop_morph(payload, names)
         if stream == "siblings":
             return await _devloop_siblings(payload, names)
+        if stream == "canary":
+            # The house's health on each new release (`devloop/canary.py`).
+            settled = await asyncio.to_thread(findings_store._load_settled)
+            rows = await asyncio.to_thread(devloop.canary.pass_rows, version, settled)
+            return await asyncio.to_thread(up.ingest, stream, rows, payload, names)
+        if stream == "corpus":
+            # First looks the household disagreed with, while capture is on.
+            on = bool((await asyncio.to_thread(settings_store.load)).get("capture"))
+            rows = devloop.corpus.rows(
+                await asyncio.to_thread(capture.first_looks) if on else [], on)
+            return await asyncio.to_thread(up.ingest, stream, rows, payload, names)
         # The Claude-run streams. A scheduled one answers to the three gates
         # every unattended run answers to; a press needs only a credential.
         # Both spend from the day's cap, which refuses rather than queues.
@@ -20309,7 +20401,7 @@ async def h_devloop_put(request: web.Request) -> web.Response:
         return web.json_response({"error": "expected an object"}, status=400)
     changes = {k: body[k] for k in (
         "enabled", "autopilot", "repo", "review", "streams", "schedule",
-        *devloop.CAP_LIMITS) if k in body}
+        *devloop.CAP_LIMITS, *devloop.NUMBER_LIMITS, "house_login") if k in body}
     try:
         await asyncio.to_thread(devloop.save_settings, changes)
     except ValueError as exc:
@@ -25672,10 +25764,16 @@ async def _run_memory_cleanup() -> None:
     if answer is None:
         raise RuntimeError("the reply could not be read")
     parsed = memory_cleanup.parse(answer, dig)
+    # Plan section 0: wrong, duplicate and stale removals apply at once, as
+    # one checked, undoable memory version; the rest wait for a press.
+    # ...and only while ⚙ › Features › Learning loop is on: applying a
+    # removal unasked is brAIn changing what it knows (plan 2.1). Off, every
+    # row waits for a press.
+    applied = (await asyncio.to_thread(memory_cleanup.auto_apply, parsed, dig,
+                                       script=CONSOLIDATE_SCRIPT)
+               if await asyncio.to_thread(features.learning_on) else [])
     await asyncio.to_thread(memory_cleanup.save, parsed, run_id=_run_id(result))
-    n = len(parsed["rows"])
-    state["last_note"] = (f"{n} line(s) to review" if n else
-                          "Nothing in memory looks wrong or useless.")
+    state["last_note"] = memory_cleanup.note(len(parsed["rows"]), applied)
 
 
 def _memory_cleanup_payload() -> dict:
@@ -26420,6 +26518,8 @@ For a NEW standing automation you can also offer brAIn's replay: describe it in 
 
 When something in another BRUH add-on is broken (GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft, BRUH Cooking, BRUH Task Manager), look first with bruh_addon_status and its log. Do what can be done here (restart it, fix its options or the house's own config) and say so. Its code is in its own image and is never patched in place: when the cause is in that code, file it with report_bug — your diagnosis, the log lines and the owner's words — and it is fixed upstream and arrives as an update, which brAIn then checks held. Do the same for a bug in brAIn itself. When the problem is how a screen looks or reads — brAIn's own, another add-on's panel, Morph's dashboard or a Lovelace card — take a picture of it with screenshot_panel and look before you answer, at a phone's width (390) and a laptop's (1200), and file what you saw with report_bug and ui: true.
 
+brAIn's own surfaces are brAIn's to change without waiting for a press, whatever the other settings say (the owner's decision): the house layer over its page (/config/.brain/ui/house.css and house.js), Morph's code copies and /config/morph/LEARNED.md, removing lines from its memory, and its own personality notes. Each change is snapshotted or versioned, and a house.css or house.js that breaks the page is undone automatically the next time the page loads it, so reload and look after changing one.
+
 Protected entities and the household's house rules hold whatever route you take. A refusal is their decision: tell them, and never route around it."""
 
 
@@ -26689,6 +26789,9 @@ def _features_payload() -> dict:
     out = features.resolved()
     out["shell"] = shell_link.shell_fresh()
     out["shell_url"] = "/" + shell_link.SHELL_URL
+    # Under the Learning loop switch: what each learner wrote in the last
+    # week, counted off its own ledger (`learning_report`).
+    out["learned"] = learning_report.last_days()
     return out
 
 
@@ -28651,6 +28754,7 @@ def make_app() -> web.Application:
     app.router.add_get("/house-layer.js",
                        _static("house-layer.js", "application/javascript"))
     app.router.add_get("/{name:house\\.(?:css|js)}", h_house_file)
+    app.router.add_post("/api/house/outcome", h_house_outcome)
     app.router.add_get("/api/status", h_status)
     app.router.add_get("/api/changelog", h_changelog)
     app.router.add_get("/api/settings", h_settings_get)
@@ -28946,6 +29050,9 @@ def make_app() -> web.Application:
         journal.on_record(_journal_usage_listener)
         # And a usage limit met by any run holds the scheduled cards.
         journal.on_record(_journal_rate_listener)
+        # The canary's heartbeat: a start per release, so one that keeps
+        # restarting is a regression the cloud reverts (`devloop/canary.py`).
+        await asyncio.to_thread(devloop.canary.note_start, ADDON_VERSION)
         # The work queue belongs to the loop the worker runs on, and it
         # is a module global — so the first loop to touch it owns it for
         # the life of the process. In the add-on that is one loop and one

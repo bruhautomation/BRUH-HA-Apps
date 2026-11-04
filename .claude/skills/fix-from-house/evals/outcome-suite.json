@@ -1,0 +1,22 @@
+{
+  "_what": "Plan item 4.2: the fix-from-house outcome suite. Ten closed reports issues, each replayed against the repository as it was when the issue was filed (base_sha), in a clean container, by the skill under test; graded by the tests the real fix added and by the reviewer gate. Fill each entry in at the retro that first runs the suite: the reports issue number, the merged PR that fixed it, and that PR's base commit. Leave an entry's numbers null until then; the suite runs only entries with all three set. See README.md for the procedure.",
+  "version": 1,
+  "pass_rule": "An entry passes when the replayed fix makes every test in `grading_tests` pass, changes no line of a test that existed at base_sha, passes devloop-guard from base_sha, and gets `approve` from the reviewer gate. The suite's score is pass^3 (an entry passes only when all three replays pass).",
+  "replays_per_entry": 3,
+  "pinned": {
+    "fixer_model": null,
+    "reviewer_model": null
+  },
+  "entries": [
+    {"slot": 1, "kind": "faults", "issue": null, "fixed_by_pr": null, "base_sha": null, "grading_tests": []},
+    {"slot": 2, "kind": "faults", "issue": null, "fixed_by_pr": null, "base_sha": null, "grading_tests": []},
+    {"slot": 3, "kind": "came-back", "issue": null, "fixed_by_pr": null, "base_sha": null, "grading_tests": []},
+    {"slot": 4, "kind": "look", "issue": null, "fixed_by_pr": null, "base_sha": null, "grading_tests": []},
+    {"slot": 5, "kind": "look", "issue": null, "fixed_by_pr": null, "base_sha": null, "grading_tests": []},
+    {"slot": 6, "kind": "ux", "issue": null, "fixed_by_pr": null, "base_sha": null, "grading_tests": []},
+    {"slot": 7, "kind": "wrongs", "issue": null, "fixed_by_pr": null, "base_sha": null, "grading_tests": []},
+    {"slot": 8, "kind": "siblings", "issue": null, "fixed_by_pr": null, "base_sha": null, "grading_tests": []},
+    {"slot": 9, "kind": "declined-correctly", "issue": null, "fixed_by_pr": null, "base_sha": null, "grading_tests": []},
+    {"slot": 10, "kind": "unverified", "issue": null, "fixed_by_pr": null, "base_sha": null, "grading_tests": []}
+  ]
+}

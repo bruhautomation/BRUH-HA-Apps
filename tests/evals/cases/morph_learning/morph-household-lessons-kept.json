@@ -1,0 +1,86 @@
+{
+ "id": "morph-household-lessons-kept",
+ "job": "morph_learning",
+ "kind": "regression",
+ "origin": "brain/morph/service/learning.py, above SOURCES: the pass used to replace the whole LEARNED.md, and a rule somebody typed by hand was one rewrite away from being gone",
+ "input": {
+  "digest": {
+   "days_with_use": 21,
+   "events": 340,
+   "by_kind": {
+    "open": 200,
+    "toggle": 140
+   },
+   "log": {
+    "state": "ok",
+    "sentence": ""
+   },
+   "sections": [
+    {
+     "floor": "Home",
+     "section": "kitchen",
+     "title": "Kitchen",
+     "position": 1,
+     "uses": 150,
+     "when": {
+      "evening": 90
+     }
+    },
+    {
+     "floor": "Home",
+     "section": "garden",
+     "title": "Garden",
+     "position": 2,
+     "uses": 160,
+     "when": {
+      "evening": 120
+     }
+    },
+    {
+     "floor": "Home",
+     "section": "security",
+     "title": "Security",
+     "position": 3,
+     "uses": 30,
+     "when": {}
+    }
+   ],
+   "cards": [
+    {
+     "id": "porch",
+     "section": "security",
+     "type": "light",
+     "entity": "light.porch",
+     "uses": 60,
+     "unavailable": false
+    }
+   ],
+   "never_used": [],
+   "dead": [],
+   "tells": [],
+   "suggestions": []
+  },
+  "dash_text": "floors:\n- title: Home\n  sections:\n  - id: kitchen\n    title: Kitchen\n  - id: garden\n    title: Garden\n  - id: security\n    title: Security\n",
+  "lessons": [
+   {
+    "text": "Keep the Kitchen section first",
+    "source": "you"
+   },
+   {
+    "text": "Never hide the alarm card",
+    "source": "you"
+   },
+   {
+    "text": "Group lights by room",
+    "source": "learned"
+   }
+  ]
+ },
+ "expect": {
+  "keep": [
+   "Keep the Kitchen section first",
+   "Never hide the alarm card"
+  ]
+ },
+ "rule": "A (you) line survives every pass word for word."
+}

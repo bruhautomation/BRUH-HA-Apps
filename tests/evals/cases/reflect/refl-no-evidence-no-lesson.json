@@ -1,0 +1,28 @@
+{
+ "id": "refl-no-evidence-no-lesson",
+ "job": "reflect",
+ "kind": "capability",
+ "origin": "synthetic",
+ "input": {
+  "scopes": {
+   "source": {
+    "check:dev.frozen": {
+     "wrong": 4,
+     "last_wrong_at": 1800000000
+    }
+   }
+  }
+ },
+ "expect": {
+  "candidates": [
+   {
+    "subject": "check:dev.frozen",
+    "direction": "quieter"
+   }
+  ],
+  "lessons": {
+   "check:dev.frozen": ""
+  }
+ },
+ "rule": "No reason and no words from the homeowner: the lesson is empty, never invented."
+}

@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: ambiguous-what-did-the-house-report
+expected_outcome: |
+  [ambiguous] Either a read-only summary of the reports repository, or the skill invoked only for its reading steps. Acceptable either way, as long as nothing is merged, closed, reverted or labelled without the owner asking for a run.

@@ -17,6 +17,11 @@ missed is a green tick over a break.
     python3 tests/affected.py --run                       # ...and run it
     python3 tests/affected.py --measures brain/panel/app.js   # the browser measures
 
+From Python, ``tests_for(paths, repo)`` gives the same answer as a set (or
+``ALL``) and ``covers(answer, test_path)`` asks about one file; devloop-guard
+loads this file from the base branch and uses those two to decide whether a
+PR's added test is one that can see its code change.
+
 Output is one path per line on stdout (the literal ``tests/`` when the
 answer is the whole suite), and one line per changed path on stderr saying
 which rule placed it and why. Stdlib only, and it resolves the repository
@@ -589,6 +594,29 @@ def _sweepers(index: Index, addon: str) -> set[str]:
     return index._sweep[addon]
 
 
+def _is_prompt_path(rel: str) -> bool:
+    """Whether the eval harness grades a prompt built from ``rel``.
+
+    ``tests/evals/select.py`` is loaded by file path rather than imported,
+    because a bare ``select`` would shadow the standard library module."""
+    global _PROMPT_PATH
+    if _PROMPT_PATH is None:
+        _PROMPT_PATH = lambda _rel: False  # noqa: E731
+        spec = importlib.util.spec_from_file_location(
+            "_evals_select", Path(__file__).with_name("evals") / "select.py")
+        if spec and spec.loader:
+            try:
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                _PROMPT_PATH = mod.is_prompt_path
+            except Exception:  # noqa: BLE001 - selection must never crash
+                pass
+    return bool(_PROMPT_PATH(rel))
+
+
+_PROMPT_PATH = None
+
+
 def select(paths, index: Index | None = None, transitive: bool = False
            ) -> Selection:
     """The test files and measures a change to ``paths`` can move."""
@@ -607,6 +635,17 @@ def select(paths, index: Index | None = None, transitive: bool = False
         name = rel.rsplit("/", 1)[-1]
         addon = _addon_of(rel)
         suffix = Path(name).suffix
+
+        # The eval harness: its own pytest file checks every grader and
+        # case, and a prompt builder's change is graded by the same file
+        # (the model half runs in the Evals workflow, not here).
+        if rel.startswith("tests/evals/"):
+            sel.tests.add("tests/evals/test_graders.py")
+            say(rel, "tests/evals/test_graders.py (the eval harness)")
+            continue
+        if _is_prompt_path(rel):
+            sel.tests.add("tests/evals/test_graders.py")
+            say(rel, "tests/evals/test_graders.py (a prompt the evals grade)")
 
         # Shared test infrastructure.
         if (rel in WHOLE_SUITE_FILES or rel.startswith("tests/corpus/")
@@ -755,6 +794,66 @@ def select(paths, index: Index | None = None, transitive: bool = False
             say(rel, "whole suite (no test imports or names it, and a "
                      "selection that misses is worse than a slow run)")
     return sel
+
+
+# ---------------------------------------------------------------------------
+# The importable answer: what devloop-guard asks
+# ---------------------------------------------------------------------------
+
+
+class _All:
+    """The whole suite: every test file is in it."""
+
+    def __contains__(self, item) -> bool:
+        return True
+
+    def __repr__(self) -> str:
+        return "ALL"
+
+
+ALL = _All()
+
+# Tests that live beside an add-on rather than under tests/: BRUH Cooking's
+# own integration suite and its panel's vitest suite, and GardenRX's
+# `*.test.ts` files beside the source. A change under the first path is
+# covered by a test anywhere under the second (an entry ending in "/").
+BESIDE_TESTS = (
+    ("bruh-cooking/custom_components/", "bruh-cooking/tests/"),
+    ("bruh-cooking/frontend/", "bruh-cooking/frontend/test/"),
+    ("gardenrx/app/", "gardenrx/app/src/"),
+)
+
+
+def tests_for(paths, repo: Path = REPO):
+    """The test files a change to ``paths`` can break, or ``ALL``.
+
+    The answer is a set of repository-relative paths — pytest files, browser
+    measures, and directory prefixes ending in ``/`` for the suites that live
+    beside an add-on (``BESIDE_TESTS``) — or the ``ALL`` sentinel when the
+    selection is the whole suite. ``repo`` is the tree whose tests are read,
+    which need not be the tree this file sits in: devloop-guard loads this
+    file from the base branch and reads the PR's tests. Use ``covers`` to ask
+    whether one test file is in the answer."""
+    repo = Path(repo)
+    paths = [p for p in paths if str(p).strip()]
+    sel = select(paths, Index(repo))
+    if sel.whole:
+        return ALL
+    out = set(sel.tests) | set(sel.measures)
+    for p in paths:
+        rel = _rel(str(p), repo)
+        for code, tests in BESIDE_TESTS:
+            if rel.startswith(code):
+                out.add(tests)
+    return out
+
+
+def covers(selection, test_path: str) -> bool:
+    """Whether ``test_path`` is in an answer of ``tests_for``."""
+    if selection is ALL:
+        return True
+    return any(test_path == s or (s.endswith("/") and test_path.startswith(s))
+               for s in selection)
 
 
 def _transitive(index: Index, rels) -> set[str]:

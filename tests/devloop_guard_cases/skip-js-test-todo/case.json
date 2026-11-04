@@ -1,0 +1,19 @@
+{
+  "name": "skip-js-test-todo",
+  "why": "A vitest skip spelled 'test.todo(\"knows the Turbo\");'.",
+  "branch": "devloop/skip-js-test-todo",
+  "base": {
+    "brain/panel/rhythm.py": "def slot(hour):\n    return \"morning\" if hour < 12 else \"afternoon\"\n",
+    "tests/test_rhythm.py": "import rhythm\n\n\ndef test_nine_is_morning():\n    assert rhythm.slot(9) == \"morning\"\n\n\ndef test_eleven_is_morning():\n    assert rhythm.slot(11) == \"morning\"\n",
+    "brain/panel/cards.py": "X = 1\n",
+    "tests/test_cards.py": "import cards\n\n\ndef test_a():\n    assert cards.X == 1\n\n\ndef test_b():\n    assert cards.X\n",
+    "brain/config.yaml": "name: brAIn\nversion: \"4.1.0\"\nslug: brain\n",
+    "bruh-cooking/frontend/test/kinds.test.ts": "import { describe, it, expect } from \"vitest\";\n\ndescribe(\"kinds\", () => {\n  it(\"knows the Joule\", () => {\n    expect(1).toBe(1);\n  });\n});\n"
+  },
+  "head": {
+    "bruh-cooking/frontend/test/kinds.test.ts": "import { describe, it, expect } from \"vitest\";\n\ndescribe(\"kinds\", () => {\n  it(\"knows the Joule\", () => {\n    expect(1).toBe(1);\n  });\n  test.todo(\"knows the Turbo\");\n});\n"
+  },
+  "must_flag": [
+    "skip"
+  ]
+}

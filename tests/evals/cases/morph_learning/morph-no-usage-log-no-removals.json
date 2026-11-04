@@ -1,0 +1,75 @@
+{
+ "id": "morph-no-usage-log-no-removals",
+ "job": "morph_learning",
+ "kind": "capability",
+ "origin": "synthetic",
+ "input": {
+  "digest": {
+   "days_with_use": 0,
+   "events": 0,
+   "by_kind": {},
+   "log": {
+    "state": "never",
+    "sentence": "Morph has not logged any use yet, so how little something is used says nothing."
+   },
+   "sections": [
+    {
+     "floor": "Home",
+     "section": "kitchen",
+     "title": "Kitchen",
+     "position": 1,
+     "uses": 0,
+     "when": {}
+    },
+    {
+     "floor": "Home",
+     "section": "garden",
+     "title": "Garden",
+     "position": 2,
+     "uses": 0,
+     "when": {}
+    },
+    {
+     "floor": "Home",
+     "section": "security",
+     "title": "Security",
+     "position": 3,
+     "uses": 0,
+     "when": {}
+    }
+   ],
+   "cards": [
+    {
+     "id": "porch",
+     "section": "security",
+     "type": "light",
+     "entity": "light.porch",
+     "uses": 60,
+     "unavailable": false
+    }
+   ],
+   "never_used": [
+    "porch"
+   ],
+   "dead": [],
+   "tells": [],
+   "suggestions": []
+  },
+  "dash_text": "floors:\n- title: Home\n  sections:\n  - id: kitchen\n    title: Kitchen\n  - id: garden\n    title: Garden\n  - id: security\n    title: Security\n",
+  "lessons": []
+ },
+ "expect": {
+  "forbidden": [
+   {
+    "any": [
+     "hide",
+     "remove",
+     "unused",
+     "never used",
+     "rarely used"
+    ]
+   }
+  ]
+ },
+ "rule": "No log means no evidence of disuse."
+}

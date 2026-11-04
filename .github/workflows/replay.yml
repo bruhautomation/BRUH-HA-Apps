@@ -23,6 +23,12 @@
 # **The budget is in the workflow, not in the script's default.** Nightly
 # spend is a decision about this repository rather than about the tool, so
 # it is written where somebody editing the schedule can see it.
+#
+# The house's other LLM jobs (the memory extractor, the consolidator,
+# reflect, the first look, Morph's learning pass, the devloop streams) are
+# graded by `evals.yml` through tests/evals/, which reuses this corpus's
+# first-look entries and scorer. That one IS a gate: a regression suite
+# under its threshold fails it, on pull requests that touch a prompt.
 name: Corpus replay
 
 on:

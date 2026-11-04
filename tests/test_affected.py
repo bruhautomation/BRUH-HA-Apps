@@ -288,6 +288,41 @@ class TestTheIntegration(unittest.TestCase):
             loaders, select("brain/custom_components/brain/todo.py").tests)
 
 
+class TestTheImportableAnswer(unittest.TestCase):
+    """tests_for/covers: what devloop-guard asks, from base, of a PR's tree."""
+
+    def test_a_module_answers_with_its_importers(self):
+        answer = affected.tests_for(["brain/panel/findings_store.py"])
+        self.assertIsNot(answer, affected.ALL)
+        self.assertIn("tests/test_findings.py", answer)
+        self.assertTrue(affected.covers(answer, "tests/test_findings.py"))
+        self.assertFalse(affected.covers(answer, "tests/test_ci_timeouts.py"))
+
+    def test_nothing_placed_is_all(self):
+        answer = affected.tests_for([UNHEARD])
+        self.assertIs(answer, affected.ALL)
+        self.assertTrue(affected.covers(answer, "tests/anything.py"))
+
+    def test_the_suites_beside_an_addon_are_prefixes(self):
+        answer = affected.tests_for(["bruh-cooking/frontend/src/kinds.ts"])
+        self.assertTrue(affected.covers(
+            answer, "bruh-cooking/frontend/test/kinds.test.ts"))
+        self.assertFalse(affected.covers(
+            answer, "gardenrx/app/src/lib/dose.test.ts"))
+
+    def test_it_reads_the_tests_of_the_tree_it_is_given(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "brain" / "panel").mkdir(parents=True)
+            (root / "brain" / "panel" / "zz_widget.py").write_text("x = 1\n")
+            (root / "tests").mkdir()
+            (root / "tests" / "test_zz_widget_edges.py").write_text(
+                "import zz_widget\n")
+            (root / "tests" / "test_other.py").write_text("import json\n")
+            answer = affected.tests_for(["brain/panel/zz_widget.py"], repo=root)
+        self.assertEqual(answer, {"tests/test_zz_widget_edges.py"})
+
+
 class TestTheseTwoFiles(unittest.TestCase):
     def test_this_file_selects_itself(self):
         self.assertEqual(select("tests/test_affected.py").tests,

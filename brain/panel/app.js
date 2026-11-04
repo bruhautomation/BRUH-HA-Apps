@@ -4703,6 +4703,7 @@ function paintDevloop(data) {
     }
   }
   $("#devStatus").textContent = line;
+  $("#devEfficacy").innerHTML = devEfficacy(st.efficacy);
   devQ.data = data;
   $("#devQueue").innerHTML = devQueueRows(data);
   // One row per stream, from the server's own list: a switch, how often it
@@ -4762,6 +4763,30 @@ function paintDevloop(data) {
   if (document.activeElement !== $("#devCapRuns")) {
     $("#devCapRuns").value = s.max_runs_per_day ?? 4;
   }
+}
+
+// Whether the cloud's fixes held on this house, as the server counted them
+// (`upstream.efficacy`): the share still silent seven days after install,
+// the share seen again, what waits for an update, and each new release's
+// canary verdict. Numbers only; a share with nothing under it says so.
+const DEV_CANARY_WORDS = { pending: "watching", healthy: "healthy",
+  regressed: "regressed — the cloud reverts it" };
+
+function devEfficacy(e) {
+  if (!e) return "";
+  const share = (part) => (part && part.of
+    ? `${part.rate}% (${part.held ?? part.count} of ${part.of})` : "none decided yet");
+  let html = diagRow("Held for 7 days", esc(share(e.held_7d)))
+    + diagRow("Came back after the fix", esc(share(e.came_back)),
+      !!(e.came_back && e.came_back.count))
+    + diagRow("Inside their 7 days", esc(String(e.watching || 0)))
+    + diagRow("Waiting for an update", esc(String(e.awaiting_update || 0)));
+  (e.canaries || []).forEach((c, i) => {
+    html += diagRow(i ? "" : "New releases",
+      esc(`${c.product} ${c.release}: ${DEV_CANARY_WORDS[c.verdict] || c.verdict}`),
+      c.verdict === "regressed");
+  });
+  return html;
 }
 
 const DEV_HOURS = { 0: "Only when asked", 1: "Every hour", 3: "Every 3 hours",
@@ -18627,7 +18652,33 @@ function paintFeatures() {
   $("#featLearning").checked = !!f.learning_loop;
   $("#setDevloop").checked = !!f.development_loop;
   $("#setNavDashboard").hidden = !f.morph;
+  paintLearned(f.learned);
   setSummary("setSumFeatures", featSummary(f));
+}
+
+// Under the Learning loop: what each learner wrote in the last week, counted
+// off its own ledger on the server (panel/learning_report.py).
+function learnedWords(learned) {
+  const rows = (learned && Array.isArray(learned.learners)) ? learned.learners : [];
+  const days = (learned && learned.days) || 7;
+  const said = rows.filter((r) => r && r.count > 0).map((r) => {
+    if (r.key === "memory") {
+      const by = Object.entries(r.by_source || {}).map(([k, n]) => `${n} ${k}`).join(", ");
+      return `memory ${r.count}${by ? ` (${by})` : ""}`;
+    }
+    if (r.key === "presence") return `presence ${r.count} (${r.growth || 0} about itself, ${r.notes || 0} about people)`;
+    if (r.key === "morph") return `Morph learning ${r.count} change${r.count === 1 ? "" : "s"} (${r.learned_md || 0} to LEARNED.md)`;
+    return `${String(r.label || r.key).toLowerCase()} ${r.count}`;
+  });
+  return said.length ? `In the last ${days} days learning wrote: ${said.join("; ")}.`
+    : `Learning wrote nothing in the last ${days} days.`;
+}
+
+function paintLearned(learned) {
+  const line = $("#featLearned");
+  if (!line) return;
+  line.hidden = !learned;
+  if (learned) line.textContent = learnedWords(learned);
 }
 
 async function loadFeatures() {
@@ -18645,8 +18696,8 @@ const FEATURE_SAID = {
     "The Morph dashboard is off. Its files and history are kept."],
   personality: ["brAIn speaks as the personality you gave it.",
     "brAIn is brAIn again. The personality is kept for when you switch it back on."],
-  learning_loop: ["The learning loop is on: brAIn suggests improvements to itself here.",
-    "The learning loop is off: brAIn changes itself only when you ask."],
+  learning_loop: ["The learning loop is on: brAIn learns from this house and improves itself here.",
+    "The learning loop is off: brAIn learns and changes nothing on its own."],
 };
 
 document.querySelectorAll("input[data-feature]").forEach((inp) =>

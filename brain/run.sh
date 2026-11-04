@@ -91,6 +91,21 @@ publish_permission_switch() {
     fi
 }
 
+# The Learning loop switch (⚙ › Features), with the add-on option `learning`
+# folded in once: features.py is the switches' one writer, so it does the
+# migration and prints the answer. Without the panel (an image under test)
+# the option is the answer.
+learning_switch() {
+    local option="${1:-true}" value=""
+    if [ -f /opt/panel/features.py ]; then
+        value=$(BRAIN_LEARNING_OPTION="$option" python3 /opt/panel/features.py learning 2>/dev/null) || value=""
+    fi
+    case "$value" in
+        true|false) echo "$value" ;;
+        *) echo "$option" ;;
+    esac
+}
+
 init_environment() {
     local data_home="/data/home"
     local config_dir="/data/.config"
@@ -385,8 +400,17 @@ MEMORYMD
     # Memory / learning options — exported here too (not just written to the
     # env file) so the worker pool and listeners launched by this script
     # inherit them directly.
-    local assist_learning memory_injection memory_max_kb edit_journal_days
-    assist_learning=$(bashio::config 'learning' 'true')
+    # `learning` is ⚙ › Features › Learning loop now; the add-on option is
+    # only its default, folded into /config/.brain/features.json once
+    # (features.migrate_learning), so `learning: false` starts with the
+    # switch off and from then on the switch decides. The readers ask the
+    # file at call time; BRAIN_ASSIST_LEARNING is the switch at boot, their
+    # fallback, and what decides whether the consolidator and the study
+    # watcher start below.
+    local learning_option assist_learning memory_injection memory_max_kb edit_journal_days
+    learning_option=$(bashio::config 'learning' 'true')
+    export BRAIN_LEARNING_OPTION="$learning_option"
+    assist_learning=$(learning_switch "$learning_option")
     memory_injection=$(bashio::config 'memory_injection' 'true')
     memory_max_kb=$(bashio::config 'memory_max_kb' '32')
     edit_journal_days=$(bashio::config 'edit_journal_days' '14')
@@ -495,6 +519,7 @@ export HA_TOKEN="${SUPERVISOR_TOKEN}"
 export HA_BASE_URL="http://supervisor/core/api"
 export SUPERVISOR_API_URL="http://supervisor"
 export BRAIN_ASSIST_LEARNING="${assist_learning}"
+export BRAIN_LEARNING_OPTION="${learning_option}"
 export BRAIN_MEMORY_INJECTION="${memory_injection}"
 export BRAIN_MEMORY_MAX_KB="${memory_max_kb}"
 export BRAIN_EDIT_JOURNAL_DAYS="${edit_journal_days}"
@@ -2230,10 +2255,9 @@ start_usage_limits_tracker() {
 # ============================================================================
 
 start_study_watcher() {
-    local learning
-    learning=$(bashio::config 'learning' 'true')
+    local learning="${BRAIN_ASSIST_LEARNING:-true}"
     if [ "$learning" != "true" ]; then
-        bashio::log.info "Study watcher disabled (learning: false)"
+        bashio::log.info "Study watcher disabled (learning: false): the Learning loop is off in ⚙ › Features"
         return
     fi
     if [ -f "/opt/scripts/brain-study-watcher.sh" ]; then
@@ -2259,11 +2283,15 @@ start_memory_consolidator() {
         fi
     fi
 
-    local learning
-    learning=$(bashio::config 'learning' 'true')
+    # The memory document's applied versions (brain memory undo) live here,
+    # written by the consolidator as `claude`; made whether or not learning
+    # is on, so an undo still has its history.
+    mkdir -p /data/memory-history && chown claude:claude /data/memory-history
+
+    local learning="${BRAIN_ASSIST_LEARNING:-true}"
 
     if [ "$learning" != "true" ]; then
-        bashio::log.info "Memory consolidator disabled (learning: false)"
+        bashio::log.info "Memory consolidator disabled (learning: false): the Learning loop is off in ⚙ › Features"
         return
     fi
 

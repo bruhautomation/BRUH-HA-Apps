@@ -45,6 +45,8 @@ BRUH-HA-Apps/
 │   │   ├── habit_lookup.py      # The join over the three ledgers for one entity (never inside habits: the ledgers import it)
 │   │   ├── circular.py          # Clock arithmetic around midnight — a leaf, re-exported by rhythm
 │   │   ├── facts_store.py       # Facts with provenance under memory.md: subjects, source, run, exceptions
+│   │   ├── memory_history.py    # memory.md versions: the check, the diff, eviction, undo, the nightly self-check
+│   │   ├── learning_report.py   # What each learner wrote in the last 7 days (under the Learning loop switch)
 │   │   ├── context_map.py       # What each kind of run is handed and may look up, measured (Knowledge › What brAIn brings)
 │   │   ├── ideas.py             # Cards brAIn thinks this house is missing, before you agree
 │   ├── episodes.py          # What HAPPENED, rather than every value that changed
@@ -111,7 +113,7 @@ BRUH-HA-Apps/
 │   │   ├── engine.py            # How Claude is invoked (argv, env, credential, job → model/effort/schema)
 │   │   ├── model_plan.py        # Which model does which job: Haiku looks, Sonnet thinks, Opus acts, Fable is a press
 │   │   ├── app.js / style.css / index.html / docs.js  # The whole UI
-│   │   ├── house_ui.py / house-layer.js  # The house's own layer over the page (/config/.brain/ui)
+│   │   ├── house_ui.py / house-layer.js  # The house's own layer over the page (/config/.brain/ui); a version that breaks the page is undone automatically
 │   │   ├── run_sources.py       # Which face started a conversation (session-id ledger)
 │   │   ├── chat_session.py      # …and the endings a discussion can offer as buttons
 │   │   ├── todo_store.py        # Work you accepted — a list that outlives the card
@@ -215,8 +217,14 @@ BRUH-HA-Apps/
 │   ├── tests/                   # the integration's own suite, against a real Home Assistant
 │   └── docs/api.md              # the Breville cloud protocol
 ├── tests/
-│   └── corpus/                  # Houses and what was true of them — the frozen entries,
-│                                #   the schema, the one scorer's corpus shape, and replay.py
+│   ├── corpus/                  # Houses and what was true of them — the frozen entries,
+│   │                            #   the schema, the one scorer's corpus shape, and replay.py
+│   ├── evals/                   # Eval harness for the house's LLM jobs: cases, deterministic
+│   │                            #   graders, run.py (pinned models, pass^3); the Evals workflow
+│   └── devloop_guard_cases/     # Frozen known-bad diffs a new devloop-guard must still flag
+├── .github/scripts/devloop_guard.py  # What a devloop PR may not do; always run from base
+├── .claude/skills/fix-from-house/    # The cloud half of the devloop: SKILL.md, lessons.json,
+│                                #   scripts/ (verdicts computed in code), evals/
 ├── docs/design/                 # The roadmap pages the checks and capabilities are built against
 ├── .gitignore
 ├── LICENSE

@@ -1,7 +1,7 @@
 ---
 name: "brAIn"
 description: "Give your smart home a mind — Claude with full run of Home Assistant: every entity, device, area, dashboard and automation, plus insights, findings, memory, voice and a terminal"
-version: "4.2.7"
+version: "4.3.0"
 slug: "brain"
 init: false
 
@@ -129,6 +129,9 @@ options:
   dangerously_skip_permissions: false
   assist_fast_mode: true
   study_timeout_minutes: 30
+  # Only the default of ⚙ › Features › Learning loop: folded into
+  # /config/.brain/features.json once (features.migrate_learning), and the
+  # switch is the authority from then on.
   learning: true
   memory_injection: true
   memory_max_kb: 32

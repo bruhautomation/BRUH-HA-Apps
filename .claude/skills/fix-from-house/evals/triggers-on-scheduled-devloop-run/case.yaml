@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: triggers-on-scheduled-devloop-run
+expected_outcome: |
+  [should] The fix-from-house skill is invoked (or its steps followed): the run reads .claude/devloop.json, takes the run lock in the reports repository, and starts with the canary step before draining.

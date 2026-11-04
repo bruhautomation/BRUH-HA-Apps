@@ -62,7 +62,7 @@ import reports
 from textclip import clip
 
 from . import STREAMS, data_dir, enabled, load_settings, read_token, stream_on
-from . import github
+from . import blocks, github
 from .aliases import Aliases
 from .siblings import PRODUCTS, spec_by_name
 
@@ -141,6 +141,10 @@ SLOW_FACTOR = 2
 SLOW_MAX_HOURS = 336
 MAX_RESOLVED = 400
 MAX_STOOD_DOWN = 400
+MAX_HELD = 400
+# A fix is held when its fault stays silent this long after the house
+# installed it (plan 1.3): the pass^k of the loop, measured on the house.
+HELD_DAYS = 7
 MAX_DAYS = 60
 # What a row may say about its own impact, all counts.
 IMPACT_KEYS = ("count", "conversations", "days", "rows", "runs",
@@ -182,14 +186,49 @@ def _vload() -> dict:
         data = {}
     if not isinstance(data, dict):
         data = {}
-    for key in ("resolved", "stood_down", "filed", "slowed", "unslowed"):
+    for key in ("resolved", "stood_down", "filed", "slowed", "unslowed",
+                "held", "refiled"):
         if not isinstance(data.get(key), dict):
             data[key] = {}
+    # A stand-down was for ever until it was given 90 days (plan 0.5); one
+    # recorded before then with no date starts its 90 days now, the first
+    # time it is read, and is saved with that date the next time the file
+    # is written.
+    now = time.time()
+    for row in data["stood_down"].values():
+        if isinstance(row, dict):
+            try:
+                at = float(row.get("at") or 0)
+            except (TypeError, ValueError):
+                at = 0.0
+            if at <= 0:
+                row["at"] = now
     return data
 
 
+def stand_down_s(settings: dict | None = None) -> float:
+    """How long a noise verdict silences a report, in seconds: the
+    devloop setting ``stand_down_days`` (90 unless the owner changed it)."""
+    settings = settings if settings is not None else load_settings()
+    try:
+        days = int(settings.get("stand_down_days") or 90)
+    except (TypeError, ValueError):
+        days = 90
+    return max(1, days) * 86400.0
+
+
+def live_stood(stood: dict, now: float, settings: dict | None = None) -> dict:
+    """The stand-downs still in force: recorded less than
+    `stand_down_s` ago. An expired one silences nothing; a report that
+    recurs after it is filed again, pointing at the old issue."""
+    span = stand_down_s(settings)
+    return {k: r for k, r in (stood or {}).items()
+            if isinstance(r, dict) and now - float(r.get("at") or 0) < span}
+
+
 def _vsave(data: dict) -> None:
-    for key, cap in (("resolved", MAX_RESOLVED), ("stood_down", MAX_STOOD_DOWN)):
+    for key, cap in (("resolved", MAX_RESOLVED), ("stood_down", MAX_STOOD_DOWN),
+                     ("held", MAX_HELD), ("refiled", MAX_STOOD_DOWN)):
         rows = data.get(key) or {}
         if len(rows) > cap:
             for k in sorted(rows, key=lambda k: float(rows[k].get("at") or 0)
@@ -412,8 +451,12 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
     abridged = _abridged(diagnostics) if stream == "faults" else ""
     rolling = bool(STREAMS[stream].get("rolling"))
     seen_now: set[str] = set()
-    added = stood_down = 0
-    stood = _vload()["stood_down"] if stream in STAND_DOWN_STREAMS else {}
+    added = stood_down = refiled = 0
+    verdicts = _vload() if stream in STAND_DOWN_STREAMS else None
+    every_stood = verdicts["stood_down"] if verdicts else {}
+    # Only a stand-down still inside its days silences (plan 0.5): a wrong
+    # decline used to silence the house for good.
+    stood = live_stood(every_stood, now, settings)
     for row in rows:
         where, what = str(row.get("where") or ""), str(row.get("what") or "")
         if not what:
@@ -428,16 +471,34 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
         seen_now.add(fp)
         # The cloud called this noise: not under its fingerprint, and not
         # under the part of brAIn it names.
-        if stood and stand_down_keys(stream, fp, where) & stood.keys():
+        keys = stand_down_keys(stream, fp, where)
+        if stood and keys & stood.keys():
             stood_down += 1
             continue
+        # A stand-down whose days are over: the report came back after
+        # them, so it is filed again as a NEW issue that names the old one.
+        expired = sorted(keys & every_stood.keys())
+        old = every_stood[expired[0]] if expired else None
+        if old is not None:
+            for key in [k for k, r in every_stood.items()
+                        if k in keys or (isinstance(r, dict) and r.get("fp") == old.get("fp"))]:
+                every_stood.pop(key, None)
         entry = items.get(fp)
         if entry is None:
             entry = items[fp] = {
                 "fp": fp, "first_seen": now, "seen": 0, "stream": stream,
-                "state": "pending" if settings["review"] else "ready",
+                # The canary is measured, and under the owner's decision
+                # (plan section 0) waits for nobody's press.
+                "state": "pending" if settings["review"] and stream != "canary"
+                else "ready",
             }
             added += 1
+        if old is not None:
+            _reopen_for_refile(entry, old, settings, now)
+            verdicts["refiled"][fp] = {"at": now, "issue": int(old.get("issue") or 0),
+                                       "verdict": str(old.get("verdict") or ""),
+                                       "stream": stream}
+            refiled += 1
         # A row that says when it was last true (Morph's ledger keeps a
         # fault for a fortnight after it last happened, and republishes it
         # every pass) is seen THEN, not now: re-reading an old row is not
@@ -485,6 +546,18 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
         entry.pop("unlooked", None)
         if "impact" in row:
             entry["impact"] = _clean_impact(row.get("impact"))
+        # The machine half's own fields (`blocks`), where a stream has them
+        # apart from its body; `compose` reads them back out of the body
+        # for a stream that does not.
+        for key, cap in (("owner_words", streams_owner_chars()), ("done_when", 1500),
+                         ("log_excerpt", 8000)):
+            if isinstance(row.get(key), str) and row[key].strip():
+                entry[key] = clip(row[key].strip(), cap)
+        if isinstance(row.get("canary"), dict):
+            entry["canary"] = row["canary"]
+            entry["canary_final"] = bool(row.get("final"))
+        if isinstance(row.get("corpus"), dict):
+            entry["corpus_entry"] = row["corpus"]
         # A report about a screen of the panel. The label tells the cloud to
         # look at that pane: a Screens issue brings the house's own pictures
         # of it, and anything else is driven and photographed on a fixture.
@@ -505,6 +578,8 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
             if name in PRODUCTS and ver:
                 known[name] = str(ver)[:40]
     _prune(items)
+    if verdicts is not None and refiled:
+        _vsave(verdicts)
     data["swept_at"] = now
     # The release this house runs, read by `awaiting_update` and the
     # scorecard: the one number that says whether a fix has arrived.
@@ -515,7 +590,28 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
     aliases.save()
     STATE["last_sweep"] = now
     return {"stream": stream, "rows": len(seen_now), "added": added,
-            "stood_down": stood_down}
+            "stood_down": stood_down, "refiled": refiled}
+
+
+def streams_owner_chars() -> int:
+    from . import streams  # noqa: PLC0415 — streams imports this module's peers
+    return streams.OWNER_WORDS_CHARS
+
+
+def _reopen_for_refile(entry: dict, old: dict, settings: dict, now: float) -> None:
+    """A report the cloud called noise that came back after its stand-down
+    ended: a fresh report, filed as a NEW issue (never a comment on the
+    closed one, which the cloud has already answered), that says it was
+    declined before and links the old issue."""
+    entry.update(
+        state="pending" if settings.get("review") else "ready",
+        previous_issue=int(old.get("issue") or 0),
+        previous_verdict=str(old.get("verdict") or ""),
+        previous_at=float(old.get("at") or 0))
+    for key in ("issue", "issue_url", "sent_at", "created_here", "body_digest",
+                "stood_down", "verdict", "verdict_at", "closed_at", "cleared_noted",
+                "returned", "error", "owner", "fixed_in", "noted_version"):
+        entry.pop(key, None)
 
 
 # ---------------------------------------------------------------------------
@@ -662,6 +758,87 @@ def _gallery_lines(entry: dict) -> list[str]:
     return lines + [""]
 
 
+_DONE_RE = re.compile(r"\*\*Done when:\*\*[ \t]*(.+?)(?:\n\s*\n|\Z)", re.S)
+_OWNER_RE = re.compile(r"The owner said:\n\n((?:>[^\n]*(?:\n|\Z))+)")
+_LOG_RE = re.compile(r"<summary>Add-on log[^<]*</summary>\s*```\n(.*?)\n```", re.S)
+
+
+def product_slug(entry: dict) -> str:
+    """``brain`` for brAIn's own reports (Morph's included), else the
+    sibling add-on's slug as its config.yaml names it."""
+    spec = spec_by_name(product_of(entry))
+    return str(spec["key"]) if spec else "brain"
+
+
+def _field(entry: dict, key: str, pattern: re.Pattern) -> str:
+    """A field a stream stored apart, else read out of its body."""
+    value = str(entry.get(key) or "").strip()
+    if value:
+        return value
+    m = pattern.search(str(entry.get("body") or ""))
+    if not m:
+        return ""
+    text = m.group(1)
+    if key == "owner_words":
+        text = "\n".join(re.sub(r"^> ?", "", ln) for ln in text.rstrip("\n").split("\n"))
+    return text.strip()
+
+
+def evidence_refs(entry: dict) -> list[str]:
+    """What the issue carries beside its words, by name: each picture's
+    path in the reports repository, and the sections a fix is aimed at."""
+    from . import screens  # noqa: PLC0415 — screens imports scrub from here
+    refs: list[str] = []
+    uploaded = entry.get("uploaded") or {}
+    for g in entry.get("gallery") or []:
+        if (uploaded.get(g.get("name")) or {}).get("sha") == g.get("sha"):
+            refs.append(screens.repo_path(entry.get("version", "dev"), g["name"],
+                                          product_of(entry)))
+    body = str(entry.get("body") or "")
+    if "from the run journal" in body:
+        refs.append("body:journal")
+    if entry.get("log_excerpt") or _LOG_RE.search(body):
+        refs.append("body:log_excerpt")
+    if entry.get("abridged"):
+        refs.append("body:diagnostics")
+    return refs
+
+
+def block_object(entry: dict, clean) -> dict:
+    """The ``brain-devloop`` block's object (plan 3.2), every string already
+    through ``clean`` — the scrub and the aliases the human half got."""
+    def opt(text: str):
+        return clean(text) if text else None
+    return {
+        "v": 1,
+        "fp": str(entry.get("fp") or ""),
+        "stream": str(entry.get("stream") or "faults"),
+        "product": product_slug(entry),
+        "release": clean(str(entry.get("version") or "?")),
+        "where": clean(str(entry.get("where") or "")),
+        "what": clean(str(entry.get("what") or "")),
+        # A string always (the cloud requires one); "" when nobody wrote
+        # the line. Only the two quoted fields are null when absent.
+        "done_when": opt(_field(entry, "done_when", _DONE_RE)) or "",
+        "evidence_refs": evidence_refs(entry),
+        "owner_words": opt(_field(entry, "owner_words", _OWNER_RE)),
+        "log_excerpt": opt(_field(entry, "log_excerpt", _LOG_RE)),
+    }
+
+
+def _fit(human: list[str], block: str) -> str:
+    """The body with its block whole: GitHub cuts a body at its limit, and
+    a cut block is no block (`blocks.parse_block` refuses its digest), so
+    the human half is what is shortened."""
+    room = github.MAX_BODY - len(block) - 200
+    text = "\n".join(human)
+    if len(text) > room:
+        text = text[:max(0, room)] + "\n\n…(cut to fit)"
+        if text.count("```") % 2:
+            text += "\n```"
+    return text + "\n\n" + block if block else text
+
+
 def compose(entry: dict, aliases: Aliases | None = None) -> dict:
     """``{"title", "body"}`` exactly as they would be sent."""
     aliases = aliases or Aliases.load()
@@ -671,6 +848,8 @@ def compose(entry: dict, aliases: Aliases | None = None) -> dict:
 
     where, what = clean(entry.get("where", "")), clean(entry.get("what", ""))
     title = clip(f"[{where}] {what}" if where else what, 120)
+    if entry.get("stream") == "canary":
+        return _compose_canary(entry, title, clean)
     lines = [
         github.MARKER.format(fp=entry.get("fp", "")),
         ("Filed by brAIn's development loop from a house that switched it "
@@ -682,6 +861,12 @@ def compose(entry: dict, aliases: Aliases | None = None) -> dict:
     ]
     if entry.get("detail"):
         lines.append(f"**Detail:** {clean(entry['detail'])}")
+    if entry.get("previous_issue"):
+        lines.append(
+            f"**Filed again:** #{int(entry['previous_issue'])} was closed as "
+            f"{str(entry.get('previous_verdict') or 'declined').replace('_', ' ')} "
+            f"on {_date(entry.get('previous_at'))}. This came back after its "
+            "stand-down ended, so it is filed again rather than kept silent.")
     # A rolling issue is rewritten when what it says changes, so it carries
     # no impact counts: they move every pass.
     if not entry.get("rolling"):
@@ -709,7 +894,49 @@ def compose(entry: dict, aliases: Aliases | None = None) -> dict:
             "</details>",
         ]
     lines += ["", f"Stream: `{entry.get('stream') or 'faults'}`"]
-    return {"title": title, "body": "\n".join(lines)}
+    block = blocks.make_block("devloop", block_object(entry, clean))
+    if isinstance(entry.get("corpus_entry"), dict):
+        from . import corpus  # noqa: PLC0415
+        block += "\n\n" + corpus.block(entry["corpus_entry"], clean)
+    return {"title": title, "body": _fit(lines, block)}
+
+
+def _deep_clean(value, clean):
+    if isinstance(value, str):
+        return clean(value)
+    if isinstance(value, list):
+        return [_deep_clean(v, clean) for v in value]
+    if isinstance(value, dict):
+        return {k: _deep_clean(v, clean) for k, v in value.items()}
+    return value
+
+
+def canary_object(entry: dict, clean) -> dict:
+    """The ``brain-canary`` block's object, its words cleaned."""
+    raw = dict(entry.get("canary") or {})
+    raw.pop("digest", None)
+    obj = _deep_clean(raw, clean)
+    obj["v"] = 1
+    return obj
+
+
+CANARY_LEAD = (
+    "Filed by brAIn's development loop: how this house has run since "
+    "it installed this release. Measured, not judged by a model; "
+    "rewritten every hour of the window, with the verdict posted at "
+    "its end, or at once on a regression.")
+
+
+def _compose_canary(entry: dict, title: str, clean) -> dict:
+    """A canary issue: the house's health on one release, as one sentence
+    for a person and the ``brain-canary`` block the cloud reverts by."""
+    obj = canary_object(entry, clean)
+    lines = [github.MARKER.format(fp=entry.get("fp", "")),
+             CANARY_LEAD, ""]
+    if entry.get("body"):
+        lines += [clean(entry["body"]), ""]
+    lines += ["Stream: `canary`"]
+    return {"title": title, "body": _fit(lines, blocks.make_block("canary", obj))}
 
 
 # ---------------------------------------------------------------------------
@@ -802,7 +1029,7 @@ def _send_due(now: float) -> dict:
     verdicts = _vload()
     if now - float(verdicts.get("at") or 0) >= VERDICT_INTERVAL_S:
         _refresh_verdicts(token, repo, items, verdicts, now)
-    stood = verdicts["stood_down"]
+    stood = live_stood(verdicts["stood_down"], now, settings)
     sent = updated = 0
     # The day's cap counts only issues this house CREATED: a fingerprint
     # found again by its marker, a comment and a rewritten scorecard file
@@ -831,9 +1058,15 @@ def _send_due(now: float) -> dict:
         elif entry.get("rolling"):
             if _rewrite(token, repo, entry, aliases):
                 updated += 1
-        elif _follow_up(token, repo, entry, now, aliases,
-                        running=running_for(entry, str(data.get("version") or ""),
-                                            data.get("products"))):
+        else:
+            running = running_for(entry, str(data.get("version") or ""),
+                                  data.get("products"))
+            if _follow_up(token, repo, entry, now, aliases, running=running):
+                updated += 1
+            if _held_check(token, repo, entry, now, running, verdicts):
+                updated += 1
+        if (entry.get("stream") == "canary" and entry.get("state") == "sent"
+                and _post_canary_final(token, repo, entry, aliases)):
             updated += 1
     # The owner's answers to "is this fixed?", posted after the follow-ups
     # so a "Not fixed" reopen is the last word on the issue this pass.
@@ -900,17 +1133,24 @@ def _refresh_verdicts(token: str, repo: str, items: dict, v: dict,
             resolved[fp] = row
             if row.get("fixed_in"):
                 entry["fixed_in"] = row["fixed_in"]
+        # The days a stand-down lasts are counted from the verdict, so a
+        # verdict read again an hour later keeps its first date (it was
+        # restamped every hour, which made 90 days never end).
+        since = [float(row.get("at") or 0) for row in stood.values()
+                 if row.get("fp") == fp and row.get("issue") == number
+                 and row.get("verdict") == verdict and float(row.get("at") or 0) > 0]
         for key in [k for k, row in stood.items() if row.get("fp") == fp]:
             stood.pop(key)
         if verdict in NOISE and stream in STAND_DOWN_STREAMS:
             for key in stand_down_keys(stream, fp, entry.get("where") or ""):
                 stood[key] = {"fp": fp, "stream": stream, "verdict": verdict,
-                              "issue": number, "at": now}
+                              "issue": number, "at": min(since) if since else now}
     # A report still waiting for a press that the cloud has since called
     # noise (under its title) is not one anybody needs to review.
+    live = live_stood(stood, now)
     for entry in items.values():
         if isinstance(entry, dict) and entry.get("state") in ("pending", "ready"):
-            _stand_down(entry, stood)
+            _stand_down(entry, live)
     _fetch_reasons(token, repo, resolved)
     _fetch_fixed_in(token, repo, resolved, tracked)
     _evaluate_slow(v, now)
@@ -1192,6 +1432,10 @@ def _file(token: str, repo: str, entry: dict, aliases: Aliases, now: float,
     if err:
         entry["error"] = err
         return False
+    if number and number == int(entry.get("previous_issue") or 0):
+        # The marker found the issue the cloud closed as noise. A report
+        # back after its stand-down is a new issue that names that one.
+        number = None
     if number:
         issue, err = github.get_issue(token, repo, number)
     else:
@@ -1325,6 +1569,11 @@ def _retire_superseded(token: str, repo: str, items: dict, newest: dict) -> int:
     closed = 0
     owner = _rolling_owner(newest)
     for entry in items.values():
+        if (isinstance(entry, dict) and entry.get("stream") == "canary"
+                and (entry.get("canary") or {}).get("verdict") != "healthy"):
+            # A canary that regressed, or whose window never ended, is what
+            # the cloud reverts by: never closed as merely superseded.
+            continue
         if (not isinstance(entry, dict) or entry is newest
                 or entry.get("stream") != newest.get("stream")
                 or _rolling_owner(entry) != owner
@@ -1428,6 +1677,7 @@ def _follow_up(token: str, repo: str, entry: dict, now: float,
                 # Not evidence yet: say nothing, and look again next pass.
                 return False
             reopen = True
+            entry["came_back_at"] = now
             text = (f"Back again on {product} {version} after this was closed "
                     f"(last seen {_date(entry.get('last_seen'))}).")
         elif entry.get("returned"):
@@ -1459,6 +1709,144 @@ def _follow_up(token: str, repo: str, entry: dict, now: float,
     return True
 
 
+def iso(epoch) -> str:
+    """An instant as the blocks carry it: UTC, ISO 8601, to the second."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(float(epoch or 0)))
+
+
+def _held_check(token: str, repo: str, entry: dict, now: float, running: str,
+                verdicts: dict) -> bool:
+    """Seven days after the house installs a fix, say once whether its fault
+    stayed silent (plan 1.3): a ``brain-held`` comment, ``held: true`` when
+    nothing was seen since the install, ``held: false`` the moment it is
+    seen again inside the seven days. Only a stream that can tell silence
+    from not looking (`clears`) is asked, and ``true`` is said only while
+    that stream is on and looked. True when a comment was posted."""
+    stream = str(entry.get("stream") or "faults")
+    if not STREAMS.get(stream, {}).get("clears"):
+        return False
+    fp = str(entry.get("fp") or "")
+    fixed_in = str(entry.get("fixed_in") or "")
+    held = verdicts.setdefault("held", {})
+    rec = held.get(fp)
+    if (isinstance(rec, dict) and fixed_in and rec.get("fixed_in") != fixed_in
+            and entry.get("verdict") == "fixed"):
+        rec = None  # fixed again in a newer release: a new fix to hold
+    if not isinstance(rec, dict):
+        if entry.get("verdict") != "fixed" or not fixed_in \
+                or running_at_least(running, fixed_in) is not True:
+            return False
+        # The first pass that saw the house running the fix: the install.
+        rec = held[fp] = {"fixed_in": fixed_in, "installed_at": now, "at": now,
+                          "product": product_of(entry), "stream": stream,
+                          "issue": int(entry.get("issue") or 0)}
+        return False
+    if rec.get("posted"):
+        return False
+    installed = float(rec.get("installed_at") or now)
+    seen_after = (float(entry.get("last_seen") or 0) > installed
+                  and running_at_least(entry.get("version"), rec["fixed_in"]) is True)
+    if seen_after:
+        ok_held = False
+    elif now - installed >= HELD_DAYS * 86400:
+        if not stream_on(stream) or entry.get("unlooked"):
+            return False  # nobody looked: silence is not evidence
+        ok_held = True
+    else:
+        return False
+    product = product_of(entry)
+    obj = {"v": 1, "fp": fp, "release": rec["fixed_in"], "installed_at": iso(installed),
+           "held_days": HELD_DAYS, "held": ok_held}
+    text = (f"Held: not seen in the {HELD_DAYS} days since this house installed "
+            f"{product} {running or rec['fixed_in']} (fixed in {rec['fixed_in']})."
+            if ok_held else
+            f"Came back within {HELD_DAYS} days of installing {product} "
+            f"{rec['fixed_in']}: seen again {_date(entry.get('last_seen'))}.")
+    ok, err = github.comment(token, repo, int(entry.get("issue") or 0),
+                             text + "\n\n" + blocks.make_block("held", obj))
+    if not ok:
+        entry["error"] = err
+        return False
+    rec.update(posted=True, held=ok_held, posted_at=now, at=now)
+    if not ok_held:
+        entry["came_back_at"] = float(entry.get("last_seen") or now)
+    entry.pop("error", None)
+    return True
+
+
+def _post_canary_final(token: str, repo: str, entry: dict, aliases: Aliases) -> bool:
+    """A canary's verdict, said once as a comment the moment it is final:
+    the cloud is told by a notification rather than having to re-read a
+    body it already read an hour ago."""
+    if not entry.get("canary_final") or entry.get("canary_final_posted"):
+        return False
+
+    def clean(text: str) -> str:
+        return aliases.apply(scrub(text))
+    obj = canary_object(entry, clean)
+    signals = []
+    if obj.get("start_crash"):
+        signals.append("brAIn restarted repeatedly or failed to start")
+    for key, words in (("new_faults", "new fault"), ("came_back", "fix that came back"),
+                       ("scorecard_drops", "rule that got less right")):
+        n = len(obj.get(key) or [])
+        if n:
+            signals.append(f"{n} {words}{'s' if n != 1 else ''}")
+    text = (f"Canary verdict for {obj.get('product')} {obj.get('release')}: "
+            f"**{obj.get('verdict')}**"
+            + (f" ({'; '.join(signals)})." if signals else "."))
+    ok, err = github.comment(token, repo, int(entry.get("issue") or 0),
+                             text + "\n\n" + blocks.make_block("canary", obj))
+    if not ok:
+        entry["error"] = err
+        return False
+    entry["canary_final_posted"] = True
+    entry.pop("error", None)
+    return True
+
+
+def efficacy(data: dict | None = None, v: dict | None = None) -> dict:
+    """How well the loop's fixes hold on this house (plan 1.4), counted by
+    code from what the house itself recorded — never a model's estimate.
+
+    * ``held_7d``: of the fixes whose seven days are decided, how many
+      stayed silent;
+    * ``came_back``: of the fixes this house saw installed, how many were
+      seen again afterwards (at any time);
+    * ``awaiting_update``: fixed reports whose release is not installed;
+    * ``canaries``: the newest releases' canary verdicts."""
+    data = _load() if data is None else data
+    v = _vload() if v is None else v
+    items = data.get("items") or {}
+    recs = [r for r in (v.get("held") or {}).values() if isinstance(r, dict)]
+    decided = [r for r in recs if r.get("posted")]
+    kept = sum(1 for r in decided if r.get("held"))
+    back = 0
+    for fp, r in (v.get("held") or {}).items():
+        entry = items.get(fp) if isinstance(items.get(fp), dict) else {}
+        if (r.get("posted") and not r.get("held")) or \
+                float(entry.get("came_back_at") or 0) > float(r.get("installed_at") or 0):
+            back += 1
+
+    def rate(n: int, of: int):
+        return round(100.0 * n / of, 1) if of else None
+    try:
+        from . import canary  # noqa: PLC0415 — canary reads this module
+        canaries = canary.recent()
+    except Exception as exc:  # noqa: BLE001 — a figure, not the loop
+        log.info("devloop: could not read the canary verdicts: %s", exc)
+        canaries = []
+    waiting = awaiting_update(items, str(data.get("version") or ""),
+                              data.get("products") or {})
+    return {
+        "held_7d": {"held": kept, "of": len(decided), "rate": rate(kept, len(decided))},
+        "came_back": {"count": back, "of": len(recs), "rate": rate(back, len(recs))},
+        "watching": len(recs) - len(decided),
+        "awaiting_update": len(waiting),
+        "canaries": canaries,
+    }
+
+
 def status() -> dict:
     data = _load()
     v = _vload()
@@ -1485,4 +1873,6 @@ def status() -> dict:
         # Claude replies that could not be read, per stream: count, when the
         # last one was, and why (`note_unreadable`).
         "unreadable": data.get("unreadable") or {},
+        # Whether the fixes held, counted on this house (plan 1.4).
+        "efficacy": efficacy(data, v),
     }

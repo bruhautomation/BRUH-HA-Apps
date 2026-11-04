@@ -1134,13 +1134,13 @@
             <div class="setrow top">
               <label class="check bigcheck"><input id="featLearning" class="tog" type="checkbox" data-feature="learning_loop">
                 <span><b>Learning loop (self-improvement)</b>
-                <span class="subtext">brAIn improves itself here: it watches how its dashboard is
-                  used, suggests changes, keeps this household's lessons and may propose changes
-                  to its own dashboard code. Off, it still does what you ask, and never changes
-                  itself on its own.</span></span></label>
+                <span class="subtext">Everything brAIn learns here: what you say in a conversation
+                  or to voice, the nightly lessons from how its reports ended, the presence loop,
+                  the Morph dashboard's lessons and memory clean-up. Off, it still does what you
+                  ask, and learns and changes nothing on its own.</span></span></label>
             </div>
-            <p class="hint setgroupnote featwhere">Stays in this house. It works on the Morph
-              dashboard, so it does nothing while that is off.</p>
+            <p class="hint setgroupnote" id="featLearned" hidden></p>
+            <p class="hint setgroupnote featwhere">Stays in this house.</p>
           </div>
 
           <div class="setgroup">
@@ -1718,6 +1718,11 @@
               <button id="devForget" class="btn" hidden aria-label="Remove the saved token">Remove</button>
             </div>
             <p id="devStatus" class="hint tight"></p>
+
+            <!-- Whether the fixes held on this house (plan 1.4): counted by
+                 `upstream.efficacy`, never estimated. -->
+            <h5 class="setsubhead">Did the fixes hold?</h5>
+            <div id="devEfficacy" class="diag"></div>
 
             <h5 class="setsubhead">What it sends</h5>
             <div id="devStreams" class="devstreams"></div>

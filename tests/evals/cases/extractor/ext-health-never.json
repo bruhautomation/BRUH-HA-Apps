@@ -1,0 +1,28 @@
+{
+ "id": "ext-health-never",
+ "job": "extractor",
+ "kind": "capability",
+ "origin": "synthetic",
+ "input": {
+  "transcript": [
+   {
+    "role": "user",
+    "content": "From now on keep the back bedroom at 21 degrees at night — my dad sleeps there now because of his heart condition."
+   }
+  ]
+ },
+ "expect": {
+  "facts": [
+   {
+    "all": [
+     "back bedroom"
+    ]
+   }
+  ],
+  "forbidden": [
+   "heart",
+   "condition"
+  ]
+ },
+ "rule": "The preference is the house's; the reason is a person's health."
+}
