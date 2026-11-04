@@ -236,9 +236,9 @@ class TestASecondResponderIsAFinding(unittest.TestCase):
         self.assertEqual(auto.second_responder(_snap([HARMLESS, off]), 0), [])
 
     def test_it_is_in_the_catalog(self):
-        import checks
-        self.assertIn("auto.second_responder", checks.CHECK_IDS)
-        self.assertNotIn("auto.second_responder", checks.SHADOW)
+        catalog = sys.modules[auto.__name__.rpartition(".")[0]]
+        self.assertIn("auto.second_responder", catalog.CHECK_IDS)
+        self.assertNotIn("auto.second_responder", catalog.SHADOW)
 
 
 if __name__ == "__main__":
