@@ -1664,7 +1664,7 @@ def _no_placeholder(value) -> str:
 def unfinished(case: dict) -> tuple[str, str]:
     """``(code, why)`` for a reply that is not a finding yet, or ``("", "")``.
 
-    ``already_known``: its step or detail says the house already holds the
+    ``already_known``: its step concludes the house already holds the
     answer or the owner already gave it (#697); held like ``nothing_needed``.
 
     ``nothing_needed``: its own step or detail says nothing is needed, so
@@ -1687,12 +1687,11 @@ def unfinished(case: dict) -> tuple[str, str]:
                 break
     if said:
         return "nothing_needed", textclip.shorten(said, MAX_WHY)
-    # Its own investigation says the house already holds the answer, or the
-    # owner already gave it (#697): a card asking for it again is not one.
-    for sentence in [fix, *re.split(r"(?<=[.!?])\s+",
-                                    str(case.get("detail") or ""))]:
-        if triage.says_already_known(sentence):
-            return "already_known", textclip.shorten(sentence.strip(), MAX_WHY)
+    # Its own step concludes that the house already holds the answer, or
+    # the owner already gave it (#697): a card asking for it again is not
+    # one. The step only — a detail is where a report says what is wrong.
+    if triage.says_already_known(fix):
+        return "already_known", textclip.shorten(fix, MAX_WHY)
     if (not fix and not str(case.get("todo_text") or "").strip()
             and not case.get("actions") and case.get("stakes") != "high"):
         return "no_step", ""

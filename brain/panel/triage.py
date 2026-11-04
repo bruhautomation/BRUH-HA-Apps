@@ -277,9 +277,31 @@ ALREADY_KNOWN_RE = re.compile(
     r"disarms|unlocks|arms|locks|switches|turns))\b", re.I)
 
 
+# A sentence that turns on itself: "the automation already locks it, YET it
+# was found unlocked" reports a problem, whatever it says first.
+_CONTRAST_RE = re.compile(
+    r"\b(?:but|yet|however|still|although|though|even\s+so|whereas|"
+    r"nevertheless|nonetheless|despite|except)\b", re.I)
+_SENTENCES_RE = re.compile(r"(?<=[.!?])\s+")
+
+
 def says_already_known(text) -> bool:
-    """Whether a conclusion says the house or the owner already answers it."""
-    return bool(ALREADY_KNOWN_RE.search(str(text or "")))
+    """Whether a CONCLUSION says the house or the owner already answers it.
+
+    Only the last sentence may say it, with nothing after it — a new fact
+    in a later sentence, or a clause after a semicolon or a dash, is the
+    problem the sentence was leading up to — and no sentence may carry a
+    contrast ("but", "yet", "however", "still", "although"…): "you already
+    said it is fine, but the battery is now at 4%" is a report, not a
+    conclusion that nothing is new."""
+    said = " ".join(str(text or "").split())
+    if not said or _CONTRAST_RE.search(said):
+        return False
+    last = [p for p in _SENTENCES_RE.split(said) if p.strip()][-1]
+    m = ALREADY_KNOWN_RE.search(last)
+    if not m:
+        return False
+    return not re.search(r"[;:]|\s[—–-]\s", last[m.end():])
 
 
 def says_nothing_to_do(text) -> bool:

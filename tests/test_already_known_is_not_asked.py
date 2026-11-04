@@ -52,6 +52,17 @@ NOT_KNOWN = (
     "The landing is the warmest room in the house.",
     "Somebody switched the automation off already.",
 )
+# Sentences that say the house knows something and then report a problem:
+# a contrast, or a new fact after it. Each must still be filed.
+STILL_A_PROBLEM = (
+    "The automation Night lock already locks the door at 22:00, yet it was "
+    "found unlocked at 3am.",
+    "You already said it is fine, but the battery is now at 4%.",
+    "The house already knows the keypad disarms the alarm. Tonight it was "
+    "disarmed with no keypad press.",
+    "The sensor is already in the Garage area; it has reported nothing for "
+    "two days.",
+)
 
 
 class TestTheWordsForAlreadyKnown(unittest.TestCase):
@@ -63,16 +74,35 @@ class TestTheWordsForAlreadyKnown(unittest.TestCase):
         for said in NOT_KNOWN:
             self.assertFalse(triage.says_already_known(said), said)
 
+    def test_a_contrast_or_a_new_fact_after_it_is_a_report(self):
+        for said in STILL_A_PROBLEM:
+            self.assertFalse(triage.says_already_known(said), said)
+
 
 class TestAnInvestigationThatConcludesItIsKnownIsNotOpen(unittest.TestCase):
-    def test_its_own_detail_holds_the_card(self):
+    def test_its_own_step_holds_the_card(self):
         case = {"kind": "problem", "claim": "The shed remote battery is low",
-                "detail": "It reads 4%. The owner already said they no "
-                          "longer use the shed remote.",
-                "fix": "Replace the battery."}
+                "detail": "It reads 4%.",
+                "fix": "Leave it: the owner already said they no longer use "
+                       "the shed remote."}
         code, said = resident.unfinished(case)
         self.assertEqual(code, "already_known")
         self.assertIn("no longer use", said)
+
+    def test_the_detail_is_where_a_report_says_what_is_wrong(self):
+        # Only the step is read: a detail saying what the house knows and
+        # then what went wrong is the report itself.
+        case = {"kind": "problem", "claim": "The back door was unlocked at 3am",
+                "detail": "The automation Night lock already locks the door "
+                          "at 22:00. It was found unlocked at 3am.",
+                "fix": "Check the lock's batteries tonight."}
+        self.assertEqual(resident.unfinished(case), ("", ""))
+
+    def test_a_step_that_turns_on_itself_is_still_filed(self):
+        for said in STILL_A_PROBLEM:
+            case = {"kind": "problem", "claim": "Something needs a look",
+                    "detail": "Seen tonight.", "fix": said}
+            self.assertEqual(resident.unfinished(case), ("", ""), said)
 
     def test_a_real_problem_is_still_one(self):
         case = {"kind": "problem", "claim": "The shed remote battery is low",
@@ -84,11 +114,16 @@ class TestAnInvestigationThatConcludesItIsKnownIsNotOpen(unittest.TestCase):
         reply = json.dumps({"verdicts": [
             {"id": 1, "verdict": "watch",
              "why": "The loft smoke alarm already has a room in the registry."},
-            {"id": 2, "verdict": "watch", "why": "The reading keeps rising."}]})
-        out = resident.parse_first_look(reply, 2)
+            {"id": 2, "verdict": "watch", "why": "The reading keeps rising."},
+            {"id": 3, "verdict": "watch", "why": STILL_A_PROBLEM[0]},
+            {"id": 4, "verdict": "investigate", "why": STILL_A_PROBLEM[1]}]})
+        out = resident.parse_first_look(reply, 4)
         self.assertEqual(out[1]["verdict"], "ignore")
         self.assertEqual(out[1]["already"], "answered")
         self.assertEqual(out[2]["verdict"], "watch")
+        self.assertEqual(out[3]["verdict"], "watch")
+        self.assertNotIn("already", out[3])
+        self.assertEqual(out[4]["verdict"], "investigate")
 
 
 def book_dig(facts):
