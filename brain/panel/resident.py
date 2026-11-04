@@ -628,11 +628,11 @@ def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
                 # `watch` — an investigation or an act said something is
                 # worth a closer look — and the floors still run below.
                 already = "explained"
-            if already not in ALREADY and triage.says_already_known(
-                    said[idx]["why"]):
-                # "The sensor already has a room", "the owner already said
-                # they retired it": the house answers it (#697).
-                already = "answered"
+            # No reading of the reason for `answered`: "the automation
+            # already locks the door at night, so the lock motor needs
+            # replacing" is a problem that mentions what the house knows,
+            # and a regex over it held real ones back (#697). The house
+            # answering a row is the `answered` WORD, given on purpose.
             if already not in ALREADY and triage.says_duplicate(
                     said[idx]["why"]):
                 # The word written as a sentence ("already an open problem
@@ -704,6 +704,13 @@ SEVERITY_BY_STAKES = {"high": "serious", "medium": "warning", "low": "info"}
 # something that does not is a run that should have said `watch`.
 ESCALATE_CONFIDENCE = 0.5
 
+# What a case may say it ALREADY is, the way a look says `answered`
+# (`ALREADY`): the house holds the answer — the registry has the room, an
+# automation does the thing, memory or an earlier answer settles it — so a
+# card asking for it again is not one. Set aside like a step that says
+# nothing is needed (`unfinished`), and only ever on this word.
+CASE_ANSWERED = "answered"
+
 CASE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -746,6 +753,12 @@ CASE_SCHEMA = {
         "memory_hint": {"type": "string"},
         "escalate": {"type": "boolean"},
         "dismiss": {"type": "boolean"},
+        # The one word a run gives when what it looked into is a thing the
+        # house already holds the answer to (the first look's `answered`,
+        # `ALREADY`). A word, never a reading of the step or the detail:
+        # a sentence that mentions what the house knows is just as often
+        # the problem ("the automation already locks it, yet…"), #697.
+        "already": {"type": "string", "enum": ["", CASE_ANSWERED]},
     },
     "required": ["claim", "detail", "confidence", "stakes", "evidence",
                  "actions", "escalate"],
@@ -857,6 +870,15 @@ Answer with ONE JSON object and nothing else. What it means:
   say something is important.
 - "dismiss" — leave it false unless you were sent a row brAIn filed;
   what it means then is said below, when it applies.
+- "already" — the one word "answered" when, having looked, you found the
+  house already holds what the card would ask for: the registry says which
+  room the thing is in, an automation already does what the card would ask
+  somebody to do, memory or an answer the person gave before settles it
+  (they said they no longer use that remote). Say in "detail" where the
+  answer is. A reply with this word is set aside whatever "claim" says, so
+  never give it to something you would report for any other reason: a
+  door an automation locks at night that was found unlocked at 3am is a
+  problem, not a thing the house already answers. Leave it out otherwise.
 
 Rules that matter more than anything about style:
 
@@ -1130,6 +1152,11 @@ def parse_case(obj, *, read_entities=None) -> dict | None:
     if stakes not in SEVERITY_BY_STAKES:
         stakes = "medium"
     kind = obj.get("kind") if obj.get("kind") in CASE_KINDS else "problem"
+    # The word, exactly, or nothing: an invented one is not a verdict, and
+    # the key rides only when it was given so a filed row never stores it.
+    already = ({"already": CASE_ANSWERED}
+               if str(obj.get("already") or "").strip().lower() == CASE_ANSWERED
+               else {})
 
     actions = []
     for item in obj.get("actions") if isinstance(obj.get("actions"), list) else []:
@@ -1166,6 +1193,7 @@ def parse_case(obj, *, read_entities=None) -> dict | None:
         "escalate": (bool(obj.get("escalate"))
                      and confidence < ESCALATE_CONFIDENCE
                      and stakes == "high"),
+        **already,
     }
 
 
@@ -1664,8 +1692,14 @@ def _no_placeholder(value) -> str:
 def unfinished(case: dict) -> tuple[str, str]:
     """``(code, why)`` for a reply that is not a finding yet, or ``("", "")``.
 
-    ``already_known``: its step concludes the house already holds the
-    answer or the owner already gave it (#697); held like ``nothing_needed``.
+    ``already_known``: the reply gave the ``answered`` word (`CASE_ANSWERED`):
+    having looked, the house already holds the answer or the owner already
+    gave it (#697); held like ``nothing_needed``, with the detail (where
+    the answer is) as the reason. The word only, a question case included
+    — never a reading of the step or the detail, because "the automation
+    already locks the door at night, so the lock motor needs replacing" is
+    a problem that mentions what the house knows, and a regex over such
+    sentences held real problems back.
 
     ``nothing_needed``: its own step or detail says nothing is needed, so
     the claim above it is a headline withdrawn by its own text (#604) — the
@@ -1675,9 +1709,16 @@ def unfinished(case: dict) -> tuple[str, str]:
     high-stakes reply is never dropped for the second: silence there costs
     more than a card without a step.
     """
-    if not isinstance(case, dict) or case.get("kind") == "question":
+    if not isinstance(case, dict):
         return "", ""
     fix = str(case.get("fix") or "").strip()
+    if case.get("already") == CASE_ANSWERED:
+        said = next((s.strip() for s in re.split(
+            r"(?<=[.!?])\s+", str(case.get("detail") or "")) if s.strip()),
+            "") or fix or "brAIn already holds the answer to this."
+        return "already_known", textclip.shorten(said, MAX_WHY)
+    if case.get("kind") == "question":
+        return "", ""
     said = fix if triage.NOTHING_RE.match(fix) else ""
     if not said and not fix:
         for sentence in re.split(r"(?<=[.!?])\s+",
@@ -1687,11 +1728,6 @@ def unfinished(case: dict) -> tuple[str, str]:
                 break
     if said:
         return "nothing_needed", textclip.shorten(said, MAX_WHY)
-    # Its own step concludes that the house already holds the answer, or
-    # the owner already gave it (#697): a card asking for it again is not
-    # one. The step only — a detail is where a report says what is wrong.
-    if triage.says_already_known(fix):
-        return "already_known", textclip.shorten(fix, MAX_WHY)
     if (not fix and not str(case.get("todo_text") or "").strip()
             and not case.get("actions") and case.get("stakes") != "high"):
         return "no_step", ""
@@ -2129,7 +2165,8 @@ __all__ = [
     "SONNET_PER_DAY", "TIMEOUT_S", "UNREADABLE", "VERDICTS", "WATCH_FILE",
     "WATCH_RETRY_REPEATS", "WATCH_TTL_S", "Ledger", "expire",
     "first_look_prompt", "investigate_prompt", "never_ignore",
-    "CLAIM_RULE", "DISMISS_RULE", "REFINE_SYSTEM", "investigate_system",
+    "CASE_ANSWERED", "CLAIM_RULE", "DISMISS_RULE", "REFINE_SYSTEM",
+    "investigate_system",
     "note_withheld", "parse_case", "parse_dismissal", "parse_first_look",
     "rejudge_due", "tier_for", "watch", "watch_note", "watched",
     "READING_DOMAINS", "drivers_of", "faulty_case", "history_wanted",

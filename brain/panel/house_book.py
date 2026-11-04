@@ -576,12 +576,18 @@ def _named_in(text: str, dig: dict, wanted) -> list[str]:
     return out
 
 
-# A fact that says where something is: "it is on the landing", "mounted
-# above the back door", "kept in the hall cupboard".
+# A fact that says where something is: "mounted above the back door",
+# "kept in the hall cupboard", "it is behind the television". A placing
+# verb takes any preposition; a bare "is"/"are" only one that places a
+# thing in space, because "is in use", "is on the list to replace" and
+# "is at 4%" say nothing about where it is — a room's name beside the
+# thing (`_fact_answers`) is the other way a fact places it.
 _PLACED_RE = re.compile(
-    r"\b(?:is|are|sits|hangs|lives|mounted|located|installed|fitted|kept|"
-    r"placed)\b[^.]{0,40}?\b(?:in|on|under|above|behind|beside|by|inside|"
-    r"outside|next\s+to|at)\b", re.I)
+    r"\b(?:sits|hangs|lives|mounted|located|installed|fitted|kept|placed|"
+    r"screwed|clipped|stuck)\b[^.]{0,40}?\b(?:in|on|under|above|behind|"
+    r"beside|by|inside|outside|next\s+to|at|near|beneath|over)\b"
+    r"|\b(?:is|are|it's|they're)\b[^.]{0,20}?\b(?:under|above|behind|beside|"
+    r"inside|outside|next\s+to|on\s+top\s+of|beneath|near|underneath)\b", re.I)
 
 
 def _fact_answers(text: str, about: str, dig: dict) -> str:
