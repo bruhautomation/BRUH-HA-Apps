@@ -354,6 +354,38 @@
       "enforced_by": "prose",
       "first_seen": "2026-11-03",
       "last_relevant": "2026-11-03"
+    },
+    {
+      "id": "2026-11-04-reload-restores-globals",
+      "rule": "A test that reloads a module must put back what other modules set on it; a failure that comes and goes by xdist worker is an ordering bug to find, not a re-run.",
+      "evidence": "test_discuss_safety reloaded chat_session and set PROMPT_PROVIDER = None in tearDown, so test_ask_face_parity failed on two PRs depending on worker order (2026-11-04).",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-04",
+      "last_relevant": "2026-11-04"
+    },
+    {
+      "id": "2026-11-04-hassfest-service-text",
+      "rule": "Write service help text without angle brackets or colons, and parse services.yaml with yaml.safe_load before pushing.",
+      "evidence": "hassfest refused <name> in a service field's description, and an unquoted description containing ': ' was a YAML mapping error (2026-11-04).",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-04",
+      "last_relevant": "2026-11-04"
+    },
+    {
+      "id": "2026-11-04-sibling-service-first",
+      "rule": "A batch that needs a sibling add-on's new service is split: the add-on's half ships first as its own PR and version, then brAIn's half, which treats the service as optional for an older add-on.",
+      "evidence": "BRUH Minecraft 1.19.6's boss bar shipped before brAIn used it (#579, 2026-11-04).",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-04",
+      "last_relevant": "2026-11-04"
+    },
+    {
+      "id": "2026-11-04-three-subagents-max",
+      "rule": "Run at most three subagents at a time on a 4-CPU container; read a local failure that also fails on main against main and let CI be the gate.",
+      "evidence": "Four subagents killed xdist workers (node down), one Sonnet batch took 80 minutes, and a leftover /config/.brain made test_morph_personality fail locally on main too (2026-11-04).",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-04",
+      "last_relevant": "2026-11-04"
     }
   ],
   "retired": [
