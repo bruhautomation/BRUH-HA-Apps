@@ -629,6 +629,32 @@
         }
       }
     },
+    "companion_bar": {
+      "name": "Show a job's bar",
+      "description": "A boss bar at the top of one player's screen for a long job — its title, the last step and how far along it is. Java and Bedrock players both see it. End takes it away.",
+      "fields": {
+        "player": {
+          "name": "Player",
+          "description": "Player."
+        },
+        "key": {
+          "name": "Key",
+          "description": "The job's id; one bar per key."
+        },
+        "text": {
+          "name": "Text",
+          "description": "Text."
+        },
+        "percent": {
+          "name": "Percent",
+          "description": "Percent."
+        },
+        "end": {
+          "name": "End",
+          "description": "Take the bar away."
+        }
+      }
+    },
     "companion_progress": {
       "name": "Show progress",
       "description": "A line on named players' action bar, above the hotbar — how a long job is going. Never in chat; it fades after a few seconds.",

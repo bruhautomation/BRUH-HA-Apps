@@ -19034,6 +19034,9 @@ function renderMinecraft() {
     <label for="mcWorkers">Jobs at once</label>
     <select id="mcWorkers">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}"${n === (s.workers || 5) ? " selected" : ""}>${n}</option>`).join("")}</select>
     <p class="hint">Bigger requests — a build, a room made over — become jobs that run while you keep playing. More than this wait their turn, and so does one in the same place as a job already going.</p>
+    <label for="mcJobMinutes">Time for one job</label>
+    <select id="mcJobMinutes">${(d.job_minutes || [15, 30, 60, 90, 120]).map((n) => `<option value="${n}"${n === (s.job_minutes || 60) ? " selected" : ""}>${n} minutes</option>`).join("")}</select>
+    <p class="hint">A job stops when this runs out, keeping what it built — say “${esc(d.name.toLowerCase())} continue” in the game to pick it up. Saying stop, or cancelling it, ends it within seconds.</p>
     <h3 class="setsubhead">The family</h3>
     <p class="hint">Only people on this list play with ${esc(d.name)}; anybody else is left alone. Everyone on it can ask for anything in the game — build, change, undo — and nothing new starts for a child at bedtime. The house is only ever a grown-up's with “Can ask for anything” on.</p>
     <div id="mcPeople">${people.map(mcPersonRow).join("") || '<p class="hint">Nobody yet.</p>'}</div>
@@ -19114,6 +19117,7 @@ document.addEventListener("click", async (ev) => {
       every_line: $("#mcEveryLine").checked, spyglass: $("#mcSpyglass").checked,
       thoughts: $("#mcThoughts").checked,
       workers: parseInt($("#mcWorkers").value, 10) || 5,
+      job_minutes: parseInt($("#mcJobMinutes").value, 10) || 60,
       people: mcReadPeople().filter((p) => p.person || p.players.length),
       bedtime_entity: $("#mcBedtime").value.trim(), budgets,
       chat_model: $("#mcChatModel").value, chat_effort: $("#mcChatEffort").value,

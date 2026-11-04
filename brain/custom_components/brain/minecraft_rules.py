@@ -71,7 +71,13 @@ GREETING_SECONDS = 25
 ADULT_GREETING_SECONDS = 8
 VISIT_SECONDS = 15
 TALK_TIMEOUT = 60                 # a quick run: one (coalesced) chat line
-JOB_TIMEOUT = 15 * 60             # a worker run: one job
+# A worker run: one job. The owner (#672): "get rid of the 15 minute
+# timeout. It can time out after an hour or if the user tells it to stop."
+# ⚙ › Minecraft's "Time for one job" picks one of JOB_MINUTES; a stop or a
+# cancel ends the run within seconds whatever this says.
+JOB_MINUTES = (15, 30, 60, 90, 120)
+DEFAULT_JOB_MINUTES = 60
+JOB_TIMEOUT = DEFAULT_JOB_MINUTES * 60
 SESSION_IDLE = 20 * 60            # a player's quick-run session is resumed this long
 POINT_TTL = 2 * 60                # a spyglass point is "this" / "that" this long
 POINT_QUIET = 8                   # no line this long after a point: offer ideas
@@ -90,7 +96,17 @@ WORKERS_MAX = 5                   # jobs running at once (⚙, 1–5)
 MAX_JOBS = 50                     # jobs kept in jobs.json (every active one, always)
 MAX_INBOX = 20
 MAX_EDITS = 200
+MAX_STEPS = 30                    # finished parts kept per job, for a Continue
 JOB_ACTIVE = ("queued", "running")
+# A job that ended with what it built still standing (it ran out of time,
+# brAIn could not be asked, or somebody said stop) is "partial", never
+# "failed": what stands is said, and a Continue picks it up after the last
+# finished part.
+JOB_PARTIAL = "partial"
+# How a job's status is said to a person ("<name> status", the end line).
+JOB_STATUS_WORDS = {"queued": "waiting", "running": "working on it", "done": "done",
+                    "partial": "partly done", "failed": "didn't work",
+                    "cancelled": "cancelled and put back"}
 JOB_ID = re.compile(r"j[0-9a-f]{6}")
 SPYGLASS_NAME_MAX = 32
 
@@ -117,10 +133,53 @@ CANNED = {
     "job_failed": "I couldn't finish {title}: {why}",
     "job_cancelled": "Stopped {title}, and put back what I changed.",
     "job_interrupted": "brAIn restarted while I was on it",
-    "job_timeout": "it took too long",
+    "job_timeout": "I ran out of time",
+    "job_partial": "I got part of {title} done ({what}), then {why}. "
+                   "Say “{name} continue” and I'll pick it up from there.",
+    "job_stopped": "Stopped {title} where it was. Say “{name} continue” to pick it up.",
+    "continued": "Picking up {title} where I left off.",
+    "job_gave_up": "I couldn't work out a way to make it with what I can do in the game",
+    "nothing_to_continue": "There's nothing of yours left half-done.",
     "picked": "On it: {title}.",
     "which": "Which one?",
 }
+# Why a job's run ended without an answer, as a short line a child can read
+# (the closed word the listener wrote — BrainRunError.code — or the time
+# running out). The raw error text goes to the log and the job's record,
+# never into the game.
+RUN_ERROR_LINES = {
+    "timeout": "I ran out of time",
+    "safeguard": "a safety check stopped my thinking, by mistake",
+    "auth": "brAIn needs a grown-up to sign it in again",
+    "paused": "brAIn is paused right now",
+    "budget": "brAIn has used up its thinking for now",
+    "rate_limited": "brAIn has used up its thinking for now",
+    "max_turns": "it was too much for one go",
+    "interrupted": "brAIn restarted while I was on it",
+    "stopped": "it was stopped",
+}
+RUN_ERROR_DEFAULT = "something went wrong on my side"
+
+
+def run_error_line(code: Any) -> str:
+    """The short line for a run that failed with this closed word."""
+    return RUN_ERROR_LINES.get(str(code or "").strip().lower(), RUN_ERROR_DEFAULT)
+
+
+# A worker's own reply that says it was stopped or interrupted, when nobody
+# stopped it (#671): a run that gave up said "the run was stopped" and the
+# child heard an interruption that never happened.
+_FALSE_STOP = re.compile(
+    r"\b(?:was|were|got|been|being|is)\s+(?:stopped|interrupted|cancell?ed|cut\s+off|"
+    r"halted|aborted)\b|\b(?:run|job|work|session)\s+(?:stopped|ended\s+early|"
+    r"was\s+cut)\b", re.IGNORECASE)
+
+
+def claims_a_stop(text: Any) -> bool:
+    """Does this reply say the work was stopped or interrupted?"""
+    return bool(_FALSE_STOP.search(str(text or "")))
+
+
 # A grown-up the family trusts ("Can ask for anything", ⚙ › Minecraft) asks
 # for a house change while "Let brAIn act without asking" is off: the change
 # waits as a question in brAIn › Today (and on the phone, where brAIn's
@@ -138,9 +197,16 @@ APPROVAL_LINES = {
 APPROVAL_TTL = 60 * 60            # an approval nobody answered expires after this
 HELP_LINES = (
     "{n} stop · {n} start — pause me and bring me back",
-    "{n} undo — take back the last thing I did",
-    "{n} status — what I'm doing and who is here",
+    "{n} undo — take back the last thing I did · {n} continue — pick up a job I only "
+    "partly did",
+    "{n} status — what I'm doing, how far along each job is, and who is here",
     "{n} come here · {n} help — or just ask me anything",
+)
+# What a child hears for "<name> help": the built-ins a child may say.
+CHILD_HELP_LINES = (
+    "{n} status — how your jobs are going",
+    "{n} continue — pick up a job I only partly did",
+    "Or just ask me anything!",
 )
 _JOB_REQUEST = {
     "type": "object",
@@ -194,7 +260,8 @@ JOB_SCHEMA = {
 }
 _BUILTINS = {"stop": "stop", "pause": "stop", "stop it": "stop", "be quiet": "stop",
              "start": "start", "resume": "start", "unpause": "start", "go": "start",
-             "undo": "undo", "undo that": "undo", "status": "status",
+             "continue": "continue", "keep going": "continue", "carry on": "continue",
+             "undo": "undo", "undo that": "undo", "status": "status", "jobs": "status",
              "help": "help", "commands": "help", "come here": "come", "come": "come",
              "here": "come"}
 _COLOUR_CODE = re.compile(r"§.")
@@ -432,6 +499,19 @@ def _workers(value: Any) -> int:
     return max(1, min(WORKERS_MAX, n))
 
 
+def _job_minutes(value: Any) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_JOB_MINUTES
+    return n if n in JOB_MINUTES else DEFAULT_JOB_MINUTES
+
+
+def job_timeout(settings: dict) -> int:
+    """How long one worker run may take, in seconds (⚙ "Time for one job")."""
+    return _job_minutes((settings or {}).get("job_minutes")) * 60
+
+
 def clean_settings(raw: Any, strict: bool = False) -> dict[str, Any]:
     """Settings as the listener reads them. `strict` raises on a family list
     that cannot be kept (the panel's save); otherwise a bad one reads as
@@ -466,6 +546,8 @@ def clean_settings(raw: Any, strict: bool = False) -> dict[str, Any]:
         "every_line": raw.get("every_line") is not False,
         # How many jobs run at once; more wait in line.
         "workers": _workers(raw.get("workers")),
+        # How long one job may run before it stops, in minutes (#672).
+        "job_minutes": _job_minutes(raw.get("job_minutes")),
         # A named spyglass for everyone on the list, when they join.
         "spyglass": raw.get("spyglass") is not False,
         # What the companion is thinking, shown where it is not in the way:
@@ -508,7 +590,7 @@ def effective_settings(shared_dir: str) -> dict[str, Any]:
         merged.update({k: v for k, v in clean_settings(raw).items()
                        if k in ("models", "chat_model", "chat_effort", "build_model",
                                 "build_effort", "budgets", "colour", "greet", "every_line",
-                                "workers", "spyglass", "thoughts")})
+                                "workers", "job_minutes", "spyglass", "thoughts")})
         return merged
     return clean_settings(raw)
 
@@ -629,7 +711,38 @@ def job_view(job: dict, jobs: list[dict]) -> dict[str, Any]:
     if progress.get("text"):
         out["progress"] = {"text": untrusted(progress.get("text"), 120),
                            "percent": progress.get("percent")}
+    # What the status means, in words, and how it ended: the one truth a
+    # run says about a job (#671 — a chat turn told a child a job "did get
+    # built after all" while its log said it had failed).
+    out["status_words"] = JOB_STATUS_WORDS.get(str(job.get("status")), str(job.get("status")))
+    if job.get("status") not in JOB_ACTIVE and job.get("result"):
+        out["result"] = untrusted(job.get("result"), 300)
+    if job.get("steps"):
+        out["finished_parts"] = [untrusted(s.get("text"), 120)
+                                 for s in job["steps"][-8:] if isinstance(s, dict)]
     return out
+
+
+def add_step(job: dict, text: Any, percent: Any, now: float) -> None:
+    """A finished part of a job (what its worker reported as progress), kept
+    so a Continue starts after the last one rather than at the beginning."""
+    text = " ".join(str(text or "").split())[:120]
+    if not text:
+        return
+    steps = job.setdefault("steps", [])
+    if steps and steps[-1].get("text") == text:
+        steps[-1].update(percent=percent, t=int(now))
+        return
+    steps.append({"text": text, "percent": percent, "t": int(now)})
+    del steps[:-MAX_STEPS]
+
+
+def bar_title(job: dict) -> str:
+    """A running job's boss bar: its title and the last step, short enough to
+    read on a tablet."""
+    title = " ".join(str(job.get("title") or "a job").split())[:40]
+    step = " ".join(str((job.get("progress") or {}).get("text") or "").split())[:60]
+    return f"{title} — {step}" if step else title
 
 
 # ---------------------------------------------------------------------------

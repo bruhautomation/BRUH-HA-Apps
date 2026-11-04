@@ -159,6 +159,19 @@ _DOWN = {"opus": "sonnet", "sonnet": "haiku", "haiku": "haiku", "fable": "opus"}
 _UP = {"haiku": "sonnet", "sonnet": "opus", "opus": "opus", "fable": "fable"}
 
 
+# A run a safety classifier refused (the CLI's "API Error: … safeguards
+# flagged this message …", #680/#666) is tried once more on another model,
+# because the common case is a false positive on one model's classifier.
+# By the tier the refused run was on; `default` is a run that named none.
+REFUSAL_FALLBACK = {"fable": "opus", "opus": "sonnet", "sonnet": "opus",
+                    "haiku": "sonnet", "default": "sonnet"}
+
+
+def refusal_fallback(model: str) -> str:
+    """The model to try once more on after `model`'s run was refused."""
+    return REFUSAL_FALLBACK[tier_of(model) or "default"]
+
+
 def resolve(job: str, thinking: str = DEFAULT_THINKING, override: str = "",
             *, pressed: bool = False) -> tuple[str, str]:
     """`(model, effort)` for a job.
@@ -274,6 +287,8 @@ def env_exports(override: str = "", thinking: str = DEFAULT_THINKING) -> dict[st
         "BRAIN_EFFORT_VOICE": resolve("voice", thinking, override)[1],
         "BRAIN_MODEL_TASK": model("task"),
         "BRAIN_THINKING": thinking if thinking in THINKING else DEFAULT_THINKING,
+        # The listeners' refusal retry reads this table ("tier=model …").
+        "BRAIN_REFUSAL_FALLBACK": " ".join(f"{k}={v}" for k, v in REFUSAL_FALLBACK.items()),
     }
     return out
 
@@ -287,9 +302,9 @@ def describe(job: str, thinking: str = DEFAULT_THINKING, override: str = "") -> 
             "press_only": job in PRESS_ONLY}
 
 
-__all__ = ["DEFAULT_THINKING", "EFFORTS", "JOBS", "PRESS_ONLY", "THINKING",
-           "TIERS", "describe", "env_exports", "guard_override", "resolve",
-           "run_tier", "tier_of"]
+__all__ = ["DEFAULT_THINKING", "EFFORTS", "JOBS", "PRESS_ONLY", "REFUSAL_FALLBACK",
+           "THINKING", "TIERS", "describe", "env_exports", "guard_override",
+           "refusal_fallback", "resolve", "run_tier", "tier_of"]
 
 
 def _settings_thinking() -> str:

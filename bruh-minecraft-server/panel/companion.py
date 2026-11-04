@@ -117,6 +117,9 @@ ACCOUNT_STALE = 60            # seconds the account check is trusted
 NAME_MAX = 16
 
 TAG = "bruh_companion"
+# A job's boss bar: the companion's namespace and a job's key, nothing else.
+BAR_ID = re.compile(r"^bruh_companion:[a-z0-9_\-]{1,24}$")
+BAR_KEY = re.compile(r"^[a-z0-9_\-]{1,24}$")
 DIR_NAME = "companion"
 DEFAULT_NAME = "Companion"
 DEFAULT_COLOUR = "light_purple"
@@ -515,6 +518,16 @@ def check_command(cmd: str, placing: bool = False) -> None:
     if verb in ("tp", "teleport"):
         if len(words) < 2 or words[1] != "@s" or f"as @e[tag={TAG}" not in cmd:
             raise GuardError("the companion only moves its own entities")
+        return
+    if verb == "bossbar":
+        # A job's boss bar, and only the companion's own (`bruh_companion:…`):
+        # what an iPad player on Geyser sees of a job going on.
+        if len(words) < 3 or words[1] not in ("add", "set", "remove") \
+                or not BAR_ID.fullmatch(words[2]):
+            raise GuardError("the companion only changes its own boss bars")
+        if words[1] == "set" and len(words) > 4 and words[3] == "players" \
+                and words[4].startswith("@"):
+            raise GuardError("a boss bar is for one named player")
         return
     if verb in ("title", "tellraw"):
         if len(words) < 2 or words[1].startswith("@"):
@@ -1038,6 +1051,45 @@ class Companion:
             for p in players:
                 self._try(f"minecraft:title {quote_name(p)} actionbar {comp}")
             return {"sent": players, "missing": missing, "text": line}
+
+    def bar(self, player: Any, key: Any, text: Any = None, percent: Any = None,
+            end: bool = False) -> dict[str, Any]:
+        """A long job's boss bar at the top of one player's screen: its
+        title, the last step and how far along it is. Java and Bedrock (via
+        Geyser) both draw boss bars, so a player on a tablet sees a job going
+        on. `end` takes it away. Its own namespace only (`check_command`)."""
+        with self._lock:
+            key = str(key or "").strip().lower()
+            if not BAR_KEY.fullmatch(key):
+                raise CompanionError("key is a job's id: letters, digits, _ and -.")
+            bar_id = f"{TAG}:{key}"
+            if end:
+                self._try(f"minecraft:bossbar remove {bar_id}")
+                return {"bar": bar_id, "removed": True}
+            line = " ".join(str(text or "").split())[:REPLY_LINE_CHARS]
+            if not line:
+                raise CompanionError("What does the bar say? (text is empty)")
+            pct = None
+            if percent not in (None, ""):
+                try:
+                    pct = max(0, min(100, int(round(float(percent)))))
+                except (TypeError, ValueError):
+                    raise CompanionError("percent is a number from 0 to 100.") from None
+            found = self._online(str(player or ""))
+            if not found:
+                raise CompanionError(f"{player} is not in the game right now.")
+            _, col = self._speaker(None, None)
+            comp = text_component(line, col)
+            # `add` answers an error when the bar is already there: that is
+            # the bar this updates.
+            self._try(f"minecraft:bossbar add {bar_id} {comp}")
+            self._try(f"minecraft:bossbar set {bar_id} name {comp}")
+            self._try(f"minecraft:bossbar set {bar_id} color purple")
+            self._try(f"minecraft:bossbar set {bar_id} max 100")
+            if pct is not None:
+                self._try(f"minecraft:bossbar set {bar_id} value {pct}")
+            self._try(f"minecraft:bossbar set {bar_id} players {quote_name(found)}")
+            return {"bar": bar_id, "player": found, "text": line, "percent": pct}
 
     def give_spyglass(self, player: Any, name: Any) -> dict[str, Any]:
         """One spyglass named `name` for a player, unless they already have

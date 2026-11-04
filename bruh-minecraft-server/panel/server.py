@@ -40,6 +40,7 @@ POST /api/companion/edit    — {"blocks", "fills", "shapes", "player", "dimensi
 POST /api/companion/actions/<id>/undo — put back what one action changed (or "last")
 POST /api/companion/jobs/<job>/undo   — put back every edit recorded for a job
 POST /api/companion/progress — {"to", "text", "percent"}: a job's progress on the action bar
+POST /api/companion/bar — {"player", "key", "text", "percent", "end"}: a job's boss bar
 POST /api/companion/spyglass — {"player", "name"}: one named spyglass unless they have it
 POST /api/companion/thought — {"player", "text", "state", "key", "title", "percent", "name"}:
                               one step of the companion's thinking (BRUH Sight's bubble)
@@ -3697,6 +3698,17 @@ async def api_companion_progress(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+async def api_companion_bar(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    try:
+        result = await asyncio.to_thread(_companion().bar, body.get("player"), body.get("key"),
+                                         body.get("text"), body.get("percent"),
+                                         body.get("end") is True)
+    except companion.CompanionError as exc:
+        return _companion_error(exc)
+    return web.json_response(result)
+
+
 THOUGHT_STATES = ("thinking", "working", "done", "failed", "clear")
 
 
@@ -4035,6 +4047,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/companion/actions/{id}/undo", api_companion_undo)
     app.router.add_post("/api/companion/jobs/{job}/undo", api_companion_job_undo)
     app.router.add_post("/api/companion/progress", api_companion_progress)
+    app.router.add_post("/api/companion/bar", api_companion_bar)
     app.router.add_post("/api/companion/spyglass", api_companion_spyglass)
     app.router.add_post("/api/companion/thought", api_companion_thought)
     app.router.add_post("/api/companion/journal", api_companion_journal)
