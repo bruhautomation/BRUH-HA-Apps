@@ -25,7 +25,9 @@ nothing came back for — every one of those ends with the finding on the
 tab, marked `untriaged`, carrying one of the sentences below. "I could
 not look" and "it is not real" are different claims and only the second
 may hide a problem, which is `clear_resolved`'s rule moved one step
-earlier in the lifecycle.
+earlier in the lifecycle. The one other "said so" is the household's own:
+a rule whose last three answers were Wrong is held at the door
+(`rule_record.holds`), with that record as its reason.
 
 **A held row is a row, not a deletion.** It stays in the store, which is
 what makes the next pass's re-report dedupe against it rather than file
@@ -149,7 +151,34 @@ def _filed(row):
     return {**row, "status": "triaging"}
 
 
-def gate(rows: list[dict], muted: set[str] | None = None) -> list[dict]:
+def _held_by_record(row, held, now):
+    """A row filed held because its rule's last answers were Wrong
+    (`rule_record.holds`), or the row as `_filed` makes it."""
+    filed = _filed(row)
+    if not (isinstance(filed, dict) and held and filed.get("status") == "triaging"):
+        return filed
+    record = held.get(str(filed.get("source") or ""))
+    import rule_record  # noqa: PLC0415 — a leaf; lazily, as settings are
+    if record is None or rule_record.never_held(filed):
+        return filed
+    return {**filed, "status": "held",
+            "triage": {"verdict": "held", "reason": rule_record.held_reason(
+                record), "at": int(now)}}
+
+
+def _held_rules() -> dict:
+    """`rule_record.held_rules` over the scorecard. Unreadable is none: the
+    wrong direction here hides a card."""
+    try:
+        import findings_store  # noqa: PLC0415 — it imports this module
+        import rule_record  # noqa: PLC0415
+        return rule_record.held_rules(findings_store.scorecard())
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def gate(rows: list[dict], muted: set[str] | None = None,
+         held: dict | None = None) -> list[dict]:
     """The wire-shaped findings a producer is about to file, every one of
     them marked as waiting for something to look at it — less the ones
     from a producer the homeowner has muted.
@@ -172,6 +201,14 @@ def gate(rows: list[dict], muted: set[str] | None = None) -> list[dict]:
     nothing back until the producer reports it again, `unsettle`'s rule.
     `muted` is read from the settings when not given, so every producer
     gets the same answer without each caller remembering to ask.
+
+    **A rule three Wrongs deep is filed HELD** (`rule_record.holds`, #698):
+    the household's own record is the reply that said so, about every row
+    of that rule, so the row is kept — deduping the next pass, clearing as
+    any row does, one press from the front under History — and reaches no
+    look, no badge and no phone until fresh evidence sends it to be looked
+    at (`findings_store.refresh_details`). `held` (``{source: scorecard
+    row}``) is read off the scorecard when not given, like `muted`.
     """
     if muted is None:
         try:
@@ -180,9 +217,34 @@ def gate(rows: list[dict], muted: set[str] | None = None) -> list[dict]:
         except Exception:  # noqa: BLE001 — a settings file that cannot
             # be read mutes nothing: the wrong direction here hides a card.
             muted = set()
-    return [_filed(row) for row in rows
+    rows = [row for row in rows
             if not (isinstance(row, dict) and muted
                     and str(row.get("source") or "") in muted)]
+    if held is None:
+        held = _held_rules() if any(
+            isinstance(r, dict) and not is_note(r) for r in rows) else {}
+    now = time.time()
+    out = [_held_by_record(row, held, now) for row in rows]
+    if held:
+        _note_held([r for r in out if isinstance(r, dict)
+                    and r.get("status") == "held"], now)
+    return out
+
+
+def _note_held(rows: list[dict], now: float) -> None:
+    """The decision trail's line for each row held by its rule's record."""
+    if not rows:
+        return
+    try:
+        import decision_trail  # noqa: PLC0415 — never raises, a leaf
+        decision_trail.note_many([
+            {"kind": "record_hold", "subject": str(r.get("entity_id") or ""),
+             "check": str(r.get("source") or "").removeprefix("check:"),
+             "source": str(r.get("source") or ""),
+             "reason": str((r.get("triage") or {}).get("reason") or ""),
+             "text": str(r.get("text") or "")} for r in rows], now)
+    except Exception:  # noqa: BLE001 — accounting never fails a filing
+        pass
 
 
 def waiting_too_long(row: dict, now: float | None = None) -> bool:

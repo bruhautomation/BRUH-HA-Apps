@@ -1383,9 +1383,11 @@ def unfinished(case: dict) -> tuple[str, str]:
     the claim above it is a headline withdrawn by its own text (#604) — the
     honest answer is no claim, or a held row. ``no_step``: a problem or an
     opportunity with no step, no errand and no action, which leaves the
-    reader unable to tell whether to do, answer or ignore (#616). A
-    high-stakes reply is never dropped for the second: silence there costs
-    more than a card without a step.
+    reader unable to tell whether to do, answer or ignore (#616).
+    ``no_change``: a case that blames an automation whose step changes
+    nothing ("review the automation", #698; `house_words.concrete_change`).
+    A high-stakes reply is never dropped for the last two: silence there
+    costs more than a card without a step.
     """
     if not isinstance(case, dict) or case.get("kind") == "question":
         return "", ""
@@ -1402,6 +1404,13 @@ def unfinished(case: dict) -> tuple[str, str]:
     if (not fix and not str(case.get("todo_text") or "").strip()
             and not case.get("actions") and case.get("stakes") != "high"):
         return "no_step", ""
+    if (fix and not case.get("actions") and case.get("stakes") != "high"
+            and house_words.blames_automation(case.get("claim"),
+                                              case.get("detail"))
+            and not house_words.concrete_change(fix)):
+        # A case that blames an automation and offers no change to make
+        # (#698): "it is doing the wrong thing — review it" is noise.
+        return "no_change", ""
     return "", ""
 
 

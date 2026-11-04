@@ -496,17 +496,32 @@ def known_faulty(now: float | None = None) -> dict[str, str]:
 # not a statement that the report is wrong (a rule would be for ever) and
 # not a statement the thing is out of use (that is `temporary`): it is a
 # request to be left alone about it for a while.
+#
+# The words after "stop" are about being TOLD ("stop telling me", "stop
+# bringing up wifi dropping out issues", "quit flagging it"); a verb the
+# house itself does ("stop raising the blinds") is not one of them.
 _DEFERRAL_RE = re.compile(
     r"\b(?:(?:don'?t|do not|stop|quit|no need to|please don'?t|no more)\s+"
     r"(?:\w+\s+){0,2}?(?:remind(?:ing)?|nag(?:ging)?|bother(?:ing)?|"
-    r"bring(?:ing)? (?:this|it|that) up|mention(?:ing)? (?:this|it|that))"
+    r"bring(?:ing)? (?:\w+\s+){0,3}?up|mention(?:ing)?|"
+    r"flag(?:ging)?|tell(?:ing)? me|warn(?:ing)? me|alert(?:ing)? me|"
+    r"notify(?:ing)? me|rais(?:e|ing) (?:this|it|that|these)|"
+    r"ask(?:ing)? me about)"
     r"|(?:i'?m|i am|we'?re|we are|already)\s+(?:well\s+)?aware|"
     r"(?:on|in) (?:my|our|the) (?:to[- ]?do|todo|task) list|"
     r"already (?:on|in) (?:my|our) (?:list|plan)|i know about (?:it|this|that)|"
     r"i'?ll (?:deal with|handle|take care of|sort) (?:it|this|that)|"
     r"leave (?:it|this|that) (?:with|to) me)\b", re.I)
-# How long a deferral keeps a card closed when the reason names no period.
+# How long a deferral keeps a card closed when the reason names no period,
+# on a row no rule reads again (a Resident case, a Morph suggestion). A
+# house check's row is HELD instead (`HOLD_DAYS`): it has a rule that
+# re-reads the fact every pass, so the fact changing is what ends it.
 DEFERRAL_DAYS = 30
+# A hold has no period (#602): this is only the horizon its snooze is
+# stamped with, so every reader of `snoozed_until` keeps the card away.
+# What ends a hold is the check's report changing
+# (`findings_store.refresh_details` / `wake_worse` / `clear_resolved`).
+HOLD_DAYS = 3650
 
 
 def deferral(note: str) -> bool:
@@ -520,6 +535,15 @@ def puts_off(note: str) -> bool:
     """A reason that is a snooze however it was worded: out of use for now,
     or "don't remind me"."""
     return temporary(note) or deferral(note)
+
+
+def held_until_changed(note: str) -> bool:
+    """A deferral that names no period: on a house check's row it holds the
+    card until the check's report about it changes (`HOLD_DAYS`). "Remind
+    me in 3 weeks" asked for its period and gets it."""
+    text = str(note or "")
+    return (deferral(text) and not temporary(text)
+            and not _PERIOD_RE.search(text))
 
 
 def snooze_days(note: str) -> int:

@@ -196,6 +196,32 @@ _FORK_RE = re.compile(
     r"|\bwhichever\b", re.I)
 
 
+# A finding that blames an automation (#698): it names one, by id or by
+# the word. Its step has to be a change a person can make to the house —
+# a trigger, a condition, a delay, a value, the automation switched off —
+# because "it is working, it is doing the wrong thing" with "review it"
+# under it leaves nothing to do but agree. A step is a change when it
+# carries a verb that changes something; "check", "review", "look into",
+# "monitor" and "keep an eye on" change nothing.
+_AUTOMATION_RE = re.compile(r"\bautomation\b|\bautomation\.[a-z0-9_]+", re.I)
+_CHANGE_RE = re.compile(
+    r"\b(?:(?:chang|add|remov|delet|disabl|enabl|mov|replac|rais|"
+    r"increas|decreas|shorten|lengthen|extend|reduc|swap|renam|edit|"
+    r"restrict|split|merg|reschedul|re-?pair|reset|restart|reload|unplug|"
+    r"install)\w*|(?:set|put|point|lower)\b|(?:turn|switch)\s+(?:\w+\s+){0,3}?"
+    r"(?:on|off|to)\b)", re.I)
+
+
+def blames_automation(*texts) -> bool:
+    """Whether a finding's words are about an automation."""
+    return any(_AUTOMATION_RE.search(str(t or "")) for t in texts)
+
+
+def concrete_change(fix) -> bool:
+    """Whether a step names a change somebody can make (above)."""
+    return bool(_CHANGE_RE.search(str(fix or "")))
+
+
 def fork(text: str) -> str:
     """The first unresolved fork ``text`` hands a person, or "" — a step
     that leaves the choice to somebody is not a step they can carry out."""
