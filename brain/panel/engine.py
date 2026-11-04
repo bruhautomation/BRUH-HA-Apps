@@ -1176,6 +1176,26 @@ def overloaded(result: dict) -> bool:
             and bool(_OVERLOADED_RE.search(str(result.get("error") or ""))))
 
 
+# A safety classifier's refusal ("API Error: … safeguards flagged this
+# message …", or the Usage Policy wording) is mostly a false positive on
+# one model's classifier (#680), so `_run_cli` tries the run once more on
+# `model_plan.refusal_fallback` — and a second refusal is said in words,
+# because the raw API text is nobody's sentence. The automation listener
+# holds the same rule for tasks (TASK_REFUSAL_RE there).
+_REFUSED_RE = re.compile(
+    r"safeguards? (?:have |has )?flagged|appears to violate (?:our|the) usage polic"
+    r"|violat(?:e|es|ing) (?:our|the|anthropic.s) usage polic", re.IGNORECASE)
+REFUSED_MESSAGE = ("Claude declined this run: an automatic safety check flagged it, "
+                   "usually by mistake. It was tried on a second model too, and "
+                   "nothing more was done.")
+
+
+def refused(result: dict) -> bool:
+    """Did a safety classifier refuse this run?"""
+    return (not result.get("ok")
+            and bool(_REFUSED_RE.search(str(result.get("error") or ""))))
+
+
 # The flags the runners add that an older CLI may not know. Each is
 # optional in the same sense `--session-id` is: the CLI names an unknown
 # flag on stderr and dies unspoken, and the run is retried without it.
@@ -1354,6 +1374,21 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
             time.sleep(OVERLOAD_RETRY_S)
             result, session_id = spawn(remaining - OVERLOAD_RETRY_S)
             retried = True
+    refused_on = ""
+    if refused(result):
+        remaining = int(timeout - (time.monotonic() - started))
+        if remaining > LANDING_MIN_S:
+            refused_on = model or "default"
+            fallback = model_plan.refusal_fallback(model)
+            log.warning("%s: a safety check refused the run on %s; trying %s",
+                        job or source or "run", refused_on, fallback)
+            base = _without(base, "model") + ["--model", fallback]
+            model = fallback
+            result, session_id = spawn(remaining)
+        if refused(result):
+            log.warning("%s: refused by a safety check: %s", job or source or "run",
+                        str(result.get("error") or "")[:300])
+            result["error"] = REFUSED_MESSAGE
     if schema and result.get("ok") and "data" not in result:
         # The CLI ran without --json-schema (too old, or it was dropped
         # above): read the object out of the text so callers see one shape.
@@ -1382,6 +1417,9 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
         extra["landed"] = True
     if retried:
         extra["retried"] = "overloaded"
+    if refused_on:
+        extra["retried"] = "refused"
+        extra["refused_on"] = refused_on
     if job:
         extra["job"] = job
     if effort:

@@ -6,7 +6,8 @@ game events arrive there and its services are called from there. This
 module is the panel's half and the ONE writer of its settings
 (`/config/.brain/minecraft/settings.json`): the on/off switch, the family
 list and roles, bedtime, the budgets (0 = unlimited, the default), every
-line or only named ones, how many jobs run at once, the spyglass on join,
+line or only named ones, how many jobs run at once and how long one may
+take, the spyglass on join,
 and the model and effort for replies and for builds — "Default" resolved here
 through `model_plan` (the jobs `minecraft_chat` and `minecraft_build`) and
 written beside the choice, so the listener needs no copy of the plan.
@@ -104,6 +105,12 @@ def save(fields: dict, shared_dir: str | None = None) -> dict[str, Any]:
         if isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= rules.WORKERS_MAX:
             raise rules.RulesError(f"Jobs at once is a number from 1 to {rules.WORKERS_MAX}.")
         merged["workers"] = n
+    if "job_minutes" in fields:
+        n = fields["job_minutes"]
+        if isinstance(n, bool) or n not in rules.JOB_MINUTES:
+            raise rules.RulesError("Time for one job is "
+                                   + ", ".join(str(m) for m in rules.JOB_MINUTES) + " minutes.")
+        merged["job_minutes"] = n
     if "people" in fields:
         merged["people"] = rules.clean_people(fields["people"])
     if "bedtime_entity" in fields:
@@ -177,7 +184,7 @@ def view(shared_dir: str | None = None) -> dict[str, Any]:
     name = rules.persona_name(base)
     return {"settings": settings, "name": name, "wake_words": list(rules.wake_words(name)),
             "defaults": resolved_models(), "model_choices": list(MODEL_CHOICES),
-            "efforts": list(rules.EFFORTS),
+            "efforts": list(rules.EFFORTS), "job_minutes": list(rules.JOB_MINUTES),
             "today": {"turns": state.get("turns", 0), "actions": state.get("actions", 0)},
             "paused": bool(state.get("paused")), "paused_by": state.get("paused_by") or "",
             "talks": talks[:20],

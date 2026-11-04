@@ -37,6 +37,12 @@ Behavior switches via env:
                      did to every first look and snapshot card)
                    | ratelimited (one-shot: the account's usage limit,
                      the way the CLI words it in -p mode)
+                   | refused (one-shot: every call is refused by the API's
+                     safety classifier — REFUSED below, as an error
+                     envelope under --output-format json)
+                   | refused_then_ok (one-shot: the first call is refused
+                     that way, every later call answers normally; "first"
+                     is remembered in FAKE_ONCE_FILE)
   FAKE_ONESHOT_TEXT  (one-shot, ok mode) answer with exactly this instead
                    of echoing the prompt
   FAKE_HELP        comma-separated flags `--help` lists (default: none — an
@@ -104,6 +110,9 @@ mode = os.environ.get("FAKE_MODE", "ok")
 AUTH_ERROR = ("Failed to authenticate: OAuth session expired and could not "
               "be refreshed")
 RATE_LIMITED = "You've hit your limit · resets 3pm (UTC)"
+REFUSED = ("API Error: Claude Code is unable to respond to this request because its "
+           "safeguards flagged this message as potentially violating the Usage Policy. "
+           "Try rephrasing the request.")
 
 # The arg parser runs before anything else, so a flag this CLI does not
 # know ends the call before it could have reached the API.
@@ -263,6 +272,22 @@ else:
                 envelope["structured_output"] = json.loads(wanted)
         print(json.dumps(envelope))
         sys.exit(0)
+    if mode in ("refused", "refused_then_ok"):
+        once = os.environ.get("FAKE_ONCE_FILE") or ""
+        first = mode == "refused" or (bool(once) and not os.path.exists(once))
+        if first:
+            if once:
+                with open(once, "w") as fh:
+                    fh.write("1")
+            if json_out:
+                print(json.dumps({
+                    "type": "result", "subtype": "success", "is_error": True,
+                    "result": REFUSED, "session_id": sid, "num_turns": 1,
+                    "duration_ms": 50,
+                }))
+            else:
+                print(REFUSED, file=sys.stderr)
+            sys.exit(1)
     if mode == "overloaded_then_ok":
         once = os.environ.get("FAKE_ONCE_FILE") or ""
         first = bool(once) and not os.path.exists(once)
