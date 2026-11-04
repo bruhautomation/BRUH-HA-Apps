@@ -943,6 +943,9 @@ RESIDENT_STATE: dict = {
     # cap took it). `dropped` is the sum, kept for the screens that read it.
     "dropped_why": {},
 }
+# A row from a rule three Wrongs deep waits for its look (`triage.
+# waiting_too_long`); this is how the store knows whether one has run.
+triage.LAST_LOOK_AT = lambda: RESIDENT_STATE.get("last_look_at")
 # What producers hand signals to. A module global bound to whichever loop
 # touches it first, so it is rebound at startup beside `QUEUE` for the same
 # reason: a second app (a test, the demo panel) would otherwise get
@@ -3400,9 +3403,16 @@ async def _morph_consent(case_id: str, case: dict, finding: dict | None,
             "change": "Got it."}.get(case.get("kind"), "Done.")
 
 
-def _for_now_said(until: int) -> str:
+HELD_SAID = ("Okay — brAIn will leave this until something about it "
+             "changes: if it gets worse, or the report about it does.")
+
+
+def _for_now_said(until: int, held: bool = False) -> str:
     """What a "for now" answer is told: when it comes back, and that it
-    comes back sooner if the thing is working again."""
+    comes back sooner if the thing is working again. A hold (#602) has no
+    date to say, only what ends it."""
+    if held:
+        return HELD_SAID
     when = _when_words(until) if until else "later"
     return (f"Okay — brAIn will leave it until {when}, and drop it sooner "
             "if it is back before then.")
@@ -3444,7 +3454,8 @@ async def _morph_wrong(case_id: str, finding: dict | None, note: str) -> str:
         payload, fact = await _end_finding(finding, spec, note, refine=False)
         _remember_morph_undo(case_id, _ending_undo(finding, spec, fact,
                                                    payload))
-        return _for_now_said(int(payload.get("snoozed_until") or 0))
+        return _for_now_said(int(payload.get("snoozed_until") or 0),
+                             bool(payload.get("held")))
     if finding is None or finding.get("source") == findings_store.MORPH_SOURCE:
         if finding is not None:
             await _end_finding(finding, FINDING_VERBS["wrong"], note)
@@ -12948,6 +12959,10 @@ def _offer_findings(rows: list[dict], now: float) -> int:
         # reason: the batch serves the rows past `triage.SHOW_AFTER_S`
         # oldest-first, and the signal's own `seen_at` is when it was
         # OFFERED (every sweep re-offers), which says nothing about that.
+        if row.get("record_hold"):
+            # The rule's record rides with the row's id: a look that
+            # answers nothing for it holds it (`_resident_apply`).
+            signal = {**signal, "record_hold": str(row["record_hold"])}
         RESIDENT_PENDING.append({**signal, "finding_ts": ts,
                                  "waiting_since":
                                      findings_store.waiting_since(row)})
@@ -14517,6 +14532,16 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
                 # before or a duplicate is held even if silence already
                 # showed it (`findings_store.record_triage`'s third slot).
                 decided[ts] = ("held", why, bool(answer.get("already")))
+            continue
+        if (ts and answer.get("fallback") and signal.get("record_hold")
+                and not resident.never_ignore(signal)[0]):
+            # The reply said nothing about a row from a rule the household
+            # marked wrong three times in a row: held, not shown (#698).
+            # Never over a floor: a protected, safety or hot signal is
+            # shown whatever its rule's record, the gate's own rule
+            # (`rule_record.never_held`) read again on the signal, which
+            # carries the flags a row does not.
+            decided[ts] = ("held", str(signal["record_hold"]))
             continue
         if ts and signal.get("source") == house_book.SOURCE:
             # A house-book question is already on screen as the question it
@@ -21761,25 +21786,58 @@ async def _snooze_for_now(finding: dict, note: str) -> tuple[dict, str]:
     memory line, no label: a light somebody is repairing is not a fact
     about the house, and a rule would outlive the repair. The undo token
     wakes it (`_undo_finding`)."""
-    until = int(time.time() + corrections.snooze_days(note) * 86400)
+    # "Don't remind me" on a house check's card, naming no period, is a
+    # HOLD (#602): the check re-reads the fact every pass, so the fact
+    # changing is what ends it (`findings_store.HOLD_ABSENT_S`), never a
+    # month going by — a static fact (an empty Matter setup, a short
+    # camera retention, a weak router) is the same fact next month.
+    # Never a rule brAIn may not quiet (a safety or security check, an
+    # unmutable producer) and never a critical row — a severity that cannot
+    # rise is a hold nothing ends: those keep the plain 30-day snooze.
+    source = str(finding.get("source") or "")
+    held = (source.startswith("check:")
+            and rule_record.quietable(source)
+            and str(finding.get("severity") or "") != "critical"
+            and corrections.held_until_changed(note))
+    # A deferral that names a time ("until tomorrow", "till spring") asks
+    # for a period, and a season starts on a different day south of the
+    # equator (`corrections.named_time_days`).
+    days = corrections.HOLD_DAYS if held else corrections.snooze_days(
+        note, southern=await asyncio.to_thread(corrections.house_southern))
+    until = int(time.time() + days * 86400)
     # "Out of use for now" is over when the thing reports again; "don't
-    # remind me" is over when its time is, and not before.
+    # remind me" is over when its time is, or its report changes.
     wake = _wake_entities(finding) if corrections.temporary(note) else []
     # "It's on my list" on a card whose thing can get worse stays away for
-    # its whole period, unless it does (`findings_store.wake_worse`).
+    # its whole period, unless it does (`findings_store.wake_worse`). A
+    # hold watches its reading too: with no level of its own, a reading
+    # that has moved a long way is the report changing (#602).
     worse = None
-    if not wake and finding.get("source") in _WORSE_BELOW:
-        worse = {"entities": _wake_entities(finding),
-                 "below": _WORSE_BELOW[finding["source"]]}
+    if not wake and (source in _WORSE_BELOW or held):
+        entities = _wake_entities(finding)
+        if entities:
+            worse = {"entities": entities, "below": _WORSE_BELOW.get(source)}
+
+    said = " ".join(str(note or "").split()) if held else ""
 
     def sleep() -> dict:
         findings_store.snooze(int(finding["ts"]), until, wake=wake,
-                              worse=worse)
+                              worse=worse, hold=said)
+        if said:
+            # The trail says the topic is muted and by which answer.
+            decision_trail.note(
+                "hold", str(finding.get("entity_id") or ""),
+                f"you said: “{textclip.clip(said, 200)}”",
+                check=str(finding.get("source") or "").removeprefix("check:"),
+                source=str(finding.get("source") or ""),
+                text=str(finding.get("text") or ""))
         return _findings_payload()
 
     payload = await asyncio.to_thread(sleep)
     payload["_snoozed"] = until
     payload["snoozed_until"] = until
+    if said:
+        payload["held"] = said
     _morph_dirty()
     return payload, ""
 
@@ -24197,7 +24255,8 @@ async def _reply_routes(finding: dict, said: str,
             ids = list(payload.get("_exception_ids") or [])
             if ending == "wrong" and payload.get("_snoozed"):
                 sentences.append(_for_now_said(
-                    int(payload.get("snoozed_until") or 0)))
+                    int(payload.get("snoozed_until") or 0),
+                    bool(payload.get("held"))))
             elif ending == "wrong":
                 scoped = await _scope_correction(finding, note, ids) \
                     if ids and note.strip() else None

@@ -25,7 +25,9 @@ nothing came back for — every one of those ends with the finding on the
 tab, marked `untriaged`, carrying one of the sentences below. "I could
 not look" and "it is not real" are different claims and only the second
 may hide a problem, which is `clear_resolved`'s rule moved one step
-earlier in the lifecycle.
+earlier in the lifecycle. The one other "said so" is the household's own:
+a row from a rule whose last three answers were Wrong is held when no look
+answers for it (`rule_record.holds`), with that record as its reason.
 
 **A held row is a row, not a deletion.** It stays in the store, which is
 what makes the next pass's re-report dedupe against it rather than file
@@ -149,7 +151,43 @@ def _filed(row):
     return {**row, "status": "triaging"}
 
 
-def gate(rows: list[dict], muted: set[str] | None = None) -> list[dict]:
+def _record_held(row, held):
+    """A row from a rule whose last answers were Wrong (`rule_record.holds`)
+    carries that record (`record_hold`): it waits for its look like any
+    row, and if no look answers for it — the look skipped it, failed, or
+    never came — it is HELD with the record as its reason instead of being
+    shown unjudged (`findings_store.record_triage`, `waiting_too_long`)."""
+    filed = _filed(row)
+    if not (isinstance(filed, dict) and held
+            and filed.get("status") == "triaging"):
+        return filed
+    record = held.get(str(filed.get("source") or ""))
+    import rule_record  # noqa: PLC0415 — a leaf; lazily, as settings are
+    if record is None or rule_record.never_held(filed):
+        return filed
+    return {**filed, "record_hold": rule_record.held_reason(record)}
+
+
+# The producer scorecard, registered by `findings_store` when it is imported
+# (`findings_store.scorecard`): the store imports this module, so asking for
+# it here would be an import cycle. Unset is no record, and no hold.
+SCORECARD = None
+
+
+def _held_rules() -> dict:
+    """`rule_record.held_rules` over the scorecard. Unreadable is none: the
+    wrong direction here hides a card."""
+    if SCORECARD is None:
+        return {}
+    try:
+        import rule_record  # noqa: PLC0415 — a leaf
+        return rule_record.held_rules(SCORECARD())
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def gate(rows: list[dict], muted: set[str] | None = None,
+         held: dict | None = None) -> list[dict]:
     """The wire-shaped findings a producer is about to file, every one of
     them marked as waiting for something to look at it — less the ones
     from a producer the homeowner has muted.
@@ -172,6 +210,14 @@ def gate(rows: list[dict], muted: set[str] | None = None) -> list[dict]:
     nothing back until the producer reports it again, `unsettle`'s rule.
     `muted` is read from the settings when not given, so every producer
     gets the same answer without each caller remembering to ask.
+
+    **A rule three Wrongs deep is held by default** (`rule_record.holds`,
+    #698): its rows are filed `triaging` like any other, carrying the
+    record (`record_hold`), and the first look is told it. A look that
+    keeps the row is the fresh evidence; without one — skipped, failed,
+    stale — the row is held with the record as its reason rather than
+    shown unjudged. `held` (``{source: scorecard row}``) is read off the
+    scorecard when not given, like `muted`.
     """
     if muted is None:
         try:
@@ -180,16 +226,43 @@ def gate(rows: list[dict], muted: set[str] | None = None) -> list[dict]:
         except Exception:  # noqa: BLE001 — a settings file that cannot
             # be read mutes nothing: the wrong direction here hides a card.
             muted = set()
-    return [_filed(row) for row in rows
+    rows = [row for row in rows
             if not (isinstance(row, dict) and muted
                     and str(row.get("source") or "") in muted)]
+    if held is None:
+        held = _held_rules() if any(
+            isinstance(r, dict) and not is_note(r) for r in rows) else {}
+    return [_record_held(row, held) for row in rows]
+
+
+# When the last first look ran (epoch seconds, 0 for never), registered by
+# the server (`RESIDENT_STATE["last_look_at"]`) so a row from a rule three
+# Wrongs deep is not hidden for ever on an install where no look runs.
+# Unset is "unknown", and unknown keeps the row waiting (below).
+LAST_LOOK_AT = None
+
+
+def _last_look() -> float | None:
+    if LAST_LOOK_AT is None:
+        return None
+    try:
+        return float(LAST_LOOK_AT() or 0.0)
+    except Exception:  # noqa: BLE001 — a clock that cannot be read is
+        return None   # no clock
 
 
 def waiting_too_long(row: dict, now: float | None = None) -> bool:
     """A row still `triaging` past `SHOW_AFTER_S` — shown and counted while
     it waits. Keyed on the raw store entry or the shaped row alike (both
     carry `status`, `ts` and `text`); a snoozed row is not waiting on
-    anybody, which is the snooze's own rule."""
+    anybody, which is the snooze's own rule.
+
+    A row carrying `record_hold` waits for its look rather than being
+    shown unjudged — unless no look has run since it started waiting
+    (`LAST_LOOK_AT`; the Resident is off, or never came), in which case
+    it is shown after the same wait as any row: a record is a reason for
+    a look to be careful, not a reason to hide a row for ever.
+    """
     if not isinstance(row, dict) or row.get("status") != "triaging":
         return False
     if not str(row.get("text") or "").strip():
@@ -203,7 +276,12 @@ def waiting_too_long(row: dict, now: float | None = None) -> bool:
         since = int(row.get("triaging_since") or 0)
     except (TypeError, ValueError):
         since = 0
-    return (since or int(row.get("ts") or 0)) <= now - SHOW_AFTER_S
+    since = since or int(row.get("ts") or 0)
+    if row.get("record_hold"):
+        last = _last_look()
+        if last is None or last >= since:
+            return False
+    return since <= now - SHOW_AFTER_S
 
 
 # The most first looks one day may spend. Nothing else bounded the look
