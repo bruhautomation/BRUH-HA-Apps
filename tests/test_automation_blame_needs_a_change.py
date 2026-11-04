@@ -42,7 +42,7 @@ VAGUE = ("Review the automation.", "Check what the automation is doing.",
          "Look into why the automation keeps doing this.",
          "Keep an eye on the porch light automation.", "")
 CONCRETE = ("Change the porch light automation's trigger from sunset to "
-            "after 18:00.",
+            + "after 18:00.",
             "Add a condition that the sun is below the horizon.",
             "Remove the 5 minute delay before it turns the light on.",
             "Turn off the porch light automation.",
