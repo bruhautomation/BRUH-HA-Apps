@@ -21,15 +21,18 @@ safety, protected or hot signal worth less.
 
 And a rule whose latest answers are three Wrongs in a row (`HOLD_STREAK`,
 the scorecard's `streak`) is HELD BY DEFAULT (#698, #500, #501, #599):
-`triage.gate` files its rows `held` with `held_reason` as the verdict —
-kept, under History › Set aside by brAIn, sent nowhere and judged by no
-look — until one carries fresh evidence: its report gets worse or names
-something new (`findings_store.refresh_details` sends it to be looked at),
-somebody puts it back, or the household agrees with one of the rule's
-reports, which ends the streak. Each Wrong was per entity or per pair, so
-the next automation or the next forecast was news again; the streak is
-the rule's own record, read before anything is shown. A critical row is
-never held, and neither is anything `quietable` refuses.
+`triage.gate` files its rows carrying `held_reason` (`record_hold`), the
+look is told the streak, and a row no look keeps — the look let it go,
+skipped it, failed or never came — is held with that record as its
+reason (History › Set aside by brAIn) instead of being shown unjudged.
+Fresh evidence is what brings one forward: a look that keeps it, its
+report getting worse or naming something new
+(`findings_store.refresh_details` sends a held row back to be looked at),
+somebody putting it back, or the household agreeing with one of the
+rule's reports, which ends the streak. Each Wrong was per entity or per
+pair, so the next automation or the next forecast was news again; the
+streak is the rule's own record. A critical row is never held, and
+neither is anything `quietable` refuses.
 
 Never told about: anything that is not a house check or a card a person
 made (`user-…`, the household's own rule), a security check
@@ -169,8 +172,14 @@ def lines(batch, scorecard, floor=None) -> list[str]:
         which = ("Signal " + str(idx[0]) if len(idx) == 1 else
                  "Signals " + ", ".join(str(n) for n in idx[:-1])
                  + f" and {idx[-1]}")
-        out.append(f"{which} came from the rule “{title}”: the household "
-                   f"has marked {int(row['wrong'])} of its "
-                   f"{int(row['total'])} answered reports wrong, the latest "
-                   "included.")
+        line = (f"{which} came from the rule “{title}”: the household "
+                f"has marked {int(row['wrong'])} of its "
+                f"{int(row['total'])} answered reports wrong, the latest "
+                "included.")
+        if holds(row):
+            # Held by default (#698): only a look that keeps it shows it.
+            line += (f" The last {int(row['streak'])} in a row were wrong, "
+                     "so brAIn holds this rule's rows unless you keep one "
+                     "for fresh, specific evidence the others did not have.")
+        out.append(line)
     return out[:MAX_LINES]

@@ -10,11 +10,13 @@ own rule wrote was news again.
 
 Now `rule_record` reads a streak — the household's latest answers about
 the rule, newest first, while they are Wrong — and a rule (a house check or
-a card somebody made) three Wrongs deep is filed HELD by the one door,
-`triage.gate`: kept, visible under History, never sent and never put in
-front of anybody, with the record as its reason. It comes back to be
-looked at when its report gets worse or names something new, or as soon
-as somebody agrees with one of the rule's reports. Safety, security and a
+a card somebody made) three Wrongs deep is held by default: `triage.gate`
+files its rows carrying the record, the first look is told the streak,
+and a row no look keeps (skipped, failed, never looked at) is held with
+the record as its reason instead of shown unjudged — kept under History,
+never sent. It comes back to be looked at when its report gets worse or
+names something new, or as soon as somebody agrees with one of the
+rule's reports. Safety, security and a
 critical row are never held.
 
 The examples are made up: Garden lights / Patio lights conflicting, a
@@ -37,6 +39,8 @@ import rule_record  # noqa: E402
 import test_checks_wrong_in_the_field as field  # noqa: E402
 import triage  # noqa: E402
 from checks import automations as auto  # noqa: E402
+from test_outcomes import OutcomesLoop  # noqa: E402
+from test_resident_loop import reply  # noqa: E402
 
 CONFLICT = "check:auto.conflict"
 FORECAST = "check:forecast.decline"
@@ -113,40 +117,59 @@ class TestTheStreak(StoreCase):
             self.assertFalse(rule_record.holds(row), source)
 
 
-class TestHeldAtTheDoor(StoreCase):
+class TestHeldByDefault(StoreCase):
     def file(self, *rows):
         return findings_store.add_many(triage.gate([dict(r) for r in rows]))
 
-    def test_a_check_rule_three_wrongs_deep_files_held(self):
+    def nothing_looked(self, row):
+        """What every silence does to a waiting row: the stale sweep, a
+        look that failed (`triage.UNJUDGED` / `RUN_FAILED`)."""
+        findings_store.record_triage({row["ts"]: ("untriaged",
+                                                  triage.UNJUDGED)})
+        return findings_store.get(row["ts"])
+
+    def test_a_check_rule_three_wrongs_deep_is_held_when_nothing_looks(self):
         self.answers(FORECAST, "ignored", "ignored", "ignored")
         [row] = self.file(self.row(FORECAST, "Cellar humidity is falling"))
-        self.assertEqual(row["status"], "held")
-        reason = row["triage"]["reason"]
-        self.assertIn("3", reason)
-        self.assertIn("wrong", reason)
-        # not in front of anybody, and nothing to send
+        self.assertTrue(row["record_hold"])
+        # not shown while it waits for its look
+        self.assertFalse(triage.waiting_too_long(
+            {**row, "ts": 1}, now=time.time()))
+        held = self.nothing_looked(row)
+        self.assertEqual(held["status"], "held")
+        self.assertIn("last 3 reports wrong", held["triage"]["reason"])
         self.assertNotIn(row["ts"], [f["ts"] for f in
                                      findings_store.list_all("live")])
 
-    def test_a_person_made_rule_three_wrongs_deep_files_held(self):
+    def test_a_person_made_rule_three_wrongs_deep_is_held(self):
         self.answers(USER_RULE, "ignored", "ignored", "ignored")
         [row] = self.file(self.row(USER_RULE, "The pool pump ran at night"))
-        self.assertEqual(row["status"], "held")
+        self.assertEqual(self.nothing_looked(row)["status"], "held")
 
-    def test_another_rule_still_waits_for_its_look(self):
+    def test_a_look_that_keeps_it_is_the_fresh_evidence(self):
+        self.answers(FORECAST, "ignored", "ignored", "ignored")
+        [row] = self.file(self.row(FORECAST, "Cellar humidity is falling"))
+        findings_store.record_triage({row["ts"]: ("elevated", "it is new")})
+        shown = findings_store.get(row["ts"])
+        self.assertEqual(shown["status"], "open")
+        self.assertNotIn("record_hold", shown)
+
+    def test_another_rule_still_shows_unjudged(self):
         self.answers(FORECAST, "ignored", "ignored", "ignored")
         [row] = self.file(self.row("check:dev.battery_low", "Low"))
-        self.assertEqual(row["status"], "triaging")
+        self.assertNotIn("record_hold", row)
+        self.assertEqual(self.nothing_looked(row)["status"], "open")
 
     def test_a_critical_row_is_never_held(self):
         self.answers(FORECAST, "ignored", "ignored", "ignored")
         [row] = self.file(self.row(FORECAST, "Freezer is warming",
                                    severity="critical"))
-        self.assertEqual(row["status"], "triaging")
+        self.assertEqual(self.nothing_looked(row)["status"], "open")
 
-    def test_fresh_evidence_sends_it_to_be_looked_at(self):
+    def test_fresh_evidence_sends_a_held_row_to_be_looked_at(self):
         self.answers(FORECAST, "ignored", "ignored", "ignored")
         [row] = self.file(self.row(FORECAST, "Cellar humidity is falling"))
+        self.nothing_looked(row)
         findings_store.refresh_details([self.row(
             FORECAST, "Cellar humidity is falling", severity="serious")])
         self.assertEqual(findings_store.get(row["ts"])["status"], "triaging")
@@ -154,6 +177,7 @@ class TestHeldAtTheDoor(StoreCase):
     def test_the_same_report_again_stays_held_and_files_nothing(self):
         self.answers(FORECAST, "ignored", "ignored", "ignored")
         [row] = self.file(self.row(FORECAST, "Cellar humidity is falling"))
+        self.nothing_looked(row)
         self.assertEqual(self.file(self.row(
             FORECAST, "Cellar humidity is falling")), [])
         findings_store.refresh_details([self.row(
@@ -163,13 +187,21 @@ class TestHeldAtTheDoor(StoreCase):
     def test_one_agreement_lifts_the_hold(self):
         self.answers(FORECAST, "ignored", "ignored", "ignored", "fixed")
         [row] = self.file(self.row(FORECAST, "Cellar humidity is falling"))
-        self.assertEqual(row["status"], "triaging")
+        self.assertNotIn("record_hold", row)
 
     def test_a_person_can_still_put_one_back(self):
         self.answers(USER_RULE, "ignored", "ignored", "ignored")
         [row] = self.file(self.row(USER_RULE, "The pool pump ran at night"))
+        self.nothing_looked(row)
         findings_store.elevate(row["ts"])
         self.assertEqual(findings_store.get(row["ts"])["status"], "open")
+
+    def test_the_look_is_told_the_streak(self):
+        self.answers(FORECAST, "ignored", "ignored", "ignored")
+        [line] = rule_record.lines(
+            [{"kind": "check", "subject": "sensor.x", "source": FORECAST}],
+            findings_store.scorecard())
+        self.assertIn("last 3 in a row were wrong", line)
 
 
 class TestTheConflictRule(unittest.TestCase):
@@ -204,18 +236,33 @@ class TestTheConflictRule(unittest.TestCase):
         self.assertEqual(len(new), 1)
         [filed] = findings_store.add_many(triage.gate(
             [{**new[0], "source": CONFLICT}]))
-        self.assertEqual(filed["status"], "held")
+        findings_store.record_triage({filed["ts"]: ("untriaged", "")})
+        self.assertEqual(findings_store.get(filed["ts"])["status"], "held")
 
 
-class TestTheOfferIsNotHandedToTheLook(unittest.TestCase):
-    def test_a_held_row_is_not_offered_as_a_signal(self):
-        import importlib
-        server = importlib.import_module("server")
-        before = len(server.RESIDENT_PENDING)
-        server._offer_findings([{"ts": int(time.time()), "status": "held",
-                                 "text": "x", "source": FORECAST,
-                                 "entity_id": "sensor.x"}], time.time())
-        self.assertEqual(len(server.RESIDENT_PENDING), before)
+class TestThroughTheLook(OutcomesLoop):
+    """The real loop: a look that answers nothing for the row holds it; a
+    look that keeps it shows it."""
+
+    def setUp(self):
+        super().setUp()
+        self.point("decision_trail",
+                   TRAIL_FILE=str(Path(self.tmp.name) / "decisions.jsonl"))
+        for i in range(3):
+            row = self.file_row(f"The larder contact has not changed {i}",
+                                entity=f"binary_sensor.larder_{i}")
+            self.end(row["ts"], "wrong")
+
+    def test_a_reply_that_skips_it_holds_it(self):
+        row = self.file_row("The larder contact has not changed again",
+                            entity="binary_sensor.larder_9")
+        self.looks.append(reply([]))
+        self.fresh_tick(time.time())
+        self.assertIn("last 3 in a row were wrong",
+                      self.look_calls[-1]["prompt"])
+        got = self.fs.get(row["ts"])
+        self.assertEqual(got["status"], "held")
+        self.assertIn("last 3 reports wrong", got["triage"]["reason"])
 
 
 class TestNeverFired(StoreCase):
@@ -268,7 +315,8 @@ class TestNeverFired(StoreCase):
         [row] = auto.never_fired(self.snap_with("automation.four"), NOW)
         [filed] = findings_store.add_many(triage.gate(
             [{**row, "source": "check:auto.never_fired"}]))
-        self.assertEqual(filed["status"], "held")
+        findings_store.record_triage({filed["ts"]: ("untriaged", "")})
+        self.assertEqual(findings_store.get(filed["ts"])["status"], "held")
 
 
 if __name__ == "__main__":

@@ -1056,13 +1056,6 @@ def shown_fix(entry: dict) -> str:
     return fix
 
 
-def _held_at_the_door(obj: dict) -> bool:
-    """A row `triage.gate` filed held by its rule's record (#698): status
-    `held` with the held verdict beside it. Nothing else may file one."""
-    return (obj.get("status") == "held"
-            and _clean_triage(obj.get("triage")).get("verdict") == "held")
-
-
 def _clean_triage(value) -> dict:
     """The triage record on a row, normalized — `{}` when nothing looked.
 
@@ -1573,6 +1566,8 @@ def _shape(entry: dict) -> dict:
         said = entry["earlier_answer"]
         said = said if isinstance(said, str) and said.strip() else EARLIER_ANSWER
         out["detail"] = (out["detail"] + " " + said.strip()).strip()
+    if entry.get("record_hold") and entry.get("status") == "triaging":
+        out["record_hold"] = str(entry["record_hold"])
     # Which answer is holding it (#602), while it is held: the card says
     # it was muted and by what, and History shows it under Snoozed.
     hold = entry.get("snooze_hold")
@@ -1914,8 +1909,7 @@ def coerce(obj: dict) -> dict | None:
         # refused: the safe direction here is the one that shows the
         # finding.
         "status": (obj.get("status")
-                   if obj.get("status") in PRE_STATUSES
-                   or _held_at_the_door(obj) else "open"),
+                   if obj.get("status") in PRE_STATUSES else "open"),
         "result": "",
         "changed": [],
         "settled_at": 0,
@@ -1934,6 +1928,11 @@ def coerce(obj: dict) -> dict | None:
     looked = _clean_triage(obj.get("triage"))
     if looked:
         entry["triage"] = looked
+    # A rule three Wrongs deep (`triage.gate`, #698): the record a silence
+    # holds this row with, while it waits for a look.
+    record = " ".join(str(obj.get("record_hold") or "").split())
+    if record and entry["status"] == "triaging":
+        entry["record_hold"] = textclip.shorten(record, triage.MAX_REASON)
     entry.update(_case_fields(obj))
     morph_key = clean_morph_key(obj.get("morph_key"))
     if morph_key:
@@ -3043,6 +3042,13 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
             continue
         late = entry.get("status") != "triaging"
         verdict, reason = verdicts[ts][:2]
+        if verdict == "untriaged" and not late and entry.get("record_hold"):
+            # Nothing looked at a row from a rule the household marked
+            # wrong three times in a row: it is held with that record,
+            # not shown unjudged (#698, `rule_record.holds`).
+            verdict, reason = "held", str(entry["record_hold"])
+        if verdict != "untriaged" or late:
+            entry.pop("record_hold", None)
         not_news = len(verdicts[ts]) > 2 and verdicts[ts][2] is True
         if verdict not in triage.VERDICTS:
             continue

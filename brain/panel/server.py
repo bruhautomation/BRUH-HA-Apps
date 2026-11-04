@@ -12937,10 +12937,6 @@ def _offer_findings(rows: list[dict], now: float) -> int:
         ts = int(row.get("ts") or 0)
         if not ts or ts in have:
             continue
-        if row.get("status") == "held":
-            # Held at the door by its rule's record (`triage.gate`): no
-            # look is asked about it until fresh evidence sends it back.
-            continue
         try:
             signal = _signal_for_finding(row, now, ctx)
         except Exception as exc:  # noqa: BLE001 — `_resident_offer_many`'s rule
@@ -12952,6 +12948,10 @@ def _offer_findings(rows: list[dict], now: float) -> int:
         # reason: the batch serves the rows past `triage.SHOW_AFTER_S`
         # oldest-first, and the signal's own `seen_at` is when it was
         # OFFERED (every sweep re-offers), which says nothing about that.
+        if row.get("record_hold"):
+            # The rule's record rides with the row's id: a look that
+            # answers nothing for it holds it (`_resident_apply`).
+            signal = {**signal, "record_hold": str(row["record_hold"])}
         RESIDENT_PENDING.append({**signal, "finding_ts": ts,
                                  "waiting_since":
                                      findings_store.waiting_since(row)})
@@ -14470,6 +14470,11 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
                 # before or a duplicate is held even if silence already
                 # showed it (`findings_store.record_triage`'s third slot).
                 decided[ts] = ("held", why, bool(answer.get("already")))
+            continue
+        if ts and answer.get("fallback") and signal.get("record_hold"):
+            # The reply said nothing about a row from a rule the household
+            # marked wrong three times in a row: held, not shown (#698).
+            decided[ts] = ("held", str(signal["record_hold"]))
             continue
         if ts and signal.get("source") == house_book.SOURCE:
             # A house-book question is already on screen as the question it

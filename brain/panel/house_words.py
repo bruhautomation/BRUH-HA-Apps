@@ -209,7 +209,9 @@ _CHANGE_RE = re.compile(
     r"increas|decreas|shorten|lengthen|extend|reduc|swap|renam|edit|"
     r"restrict|split|merg|reschedul|re-?pair|reset|restart|reload|unplug|"
     r"install)\w*|(?:set|put|point|lower)\b|(?:turn|switch)\s+(?:\w+\s+){0,3}?"
-    r"(?:on|off|to)\b)", re.I)
+    r"(?:on|off|to)\b"
+    r"|(?:leave|keep)\s+(?:\w+\s+){0,3}?(?:on|off)\b"
+    r"(?!\s+(?:the|it|this|that|a|an|its|your)\b))", re.I)
 
 
 def blames_automation(*texts) -> bool:

@@ -45,7 +45,8 @@ CONCRETE = ("Change the porch light automation's trigger from sunset to "
             "after 18:00.",
             "Add a condition that the sun is below the horizon.",
             "Remove the 5 minute delay before it turns the light on.",
-            "Turn off the porch light automation.")
+            "Turn off the porch light automation.",
+            "Leave the landing plug on overnight.")
 
 
 class TestTheReading(unittest.TestCase):
