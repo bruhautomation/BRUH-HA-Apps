@@ -1,6 +1,6 @@
 rcon_command:
   name: Run RCON command
-  description: Execute an arbitrary server command. Do not include the leading slash.
+  description: Execute an arbitrary server command. Do not include the leading slash. Returns the server's reply; when a plugin answers only on the server console (SkinsRestorer, Skript), the console lines it wrote right after the command.
   fields:
     command:
       name: Command
@@ -291,6 +291,59 @@ remove_addon:
   fields:
     id:
       name: Project id
+      required: true
+      selector:
+        text: {}
+
+list_scripts:
+  name: List scripts
+  description: The Skript scripts and data pack functions written into the active world through write_script, and whether the Skript plugin is installed. Returns response data.
+
+write_script:
+  name: Write a script
+  description: Write a Skript script or a data pack function into the running world and load it without a restart. A script that does not load is an error carrying the loader's messages. Only a script written through this service can be overwritten.
+  fields:
+    kind:
+      name: Kind
+      required: true
+      selector:
+        select:
+          options:
+            - skript
+            - datapack_function
+    name:
+      name: Name
+      description: 1 to 48 lowercase letters, digits, _ and -. A function is run as bruh_scripts:<name>.
+      required: true
+      selector:
+        text: {}
+    content:
+      name: Content
+      description: The script's text, up to 64 KB.
+      required: true
+      selector:
+        text:
+          multiline: true
+    by:
+      name: Written by
+      required: false
+      selector:
+        text: {}
+
+remove_script:
+  name: Remove a script
+  description: Unload and delete a script written through write_script. Nothing else is removed.
+  fields:
+    kind:
+      name: Kind
+      required: true
+      selector:
+        select:
+          options:
+            - skript
+            - datapack_function
+    name:
+      name: Name
       required: true
       selector:
         text: {}
