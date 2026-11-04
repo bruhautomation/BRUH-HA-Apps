@@ -20,8 +20,9 @@ BRUH-HA-Apps/
 │   ├── run.sh                   # Main startup/entrypoint script (start_morph, retire_morph_addon)
 │   ├── morph/                   # Morph's service (part of brAIn since 4.0; the add-on is retired)
 │   │   ├── service/             # morphd.py (requests, watcher, ticks), store, gitrepo,
-│   │   │                        #   generator, tell, converse, learning, devloop, brain, settings, ha
-│   │   └── defaults/            # AGENTS.md, CLAUDE.md, cards/README.md for /config/morph
+│   │   │                        #   generator, tell, converse, learning, devloop, brain, settings, ha,
+│   │   │                        #   lovelace (HA dashboards kept in git), convert (dashboard.yaml → Lovelace)
+│   │   └── defaults/            # AGENTS.md, CLAUDE.md, cards/README.md, themes/morph.yaml for /config/morph
 │   ├── panel/                   # The ingress panel: aiohttp server + the UI
 │   │   ├── server.py            # Routes, scheduler, the chat terminal's API
 │   │   ├── actions.py           # The action miner: who or what changed something
@@ -161,7 +162,11 @@ BRUH-HA-Apps/
 │   │   └── automation-listener.sh # Task request file watcher
 │   └── custom_components/       # HA custom integration (deployed at runtime)
 │       └── brain/morph/         # Morph's panel half: the shell panel (frontend/shell.js), the
-│                                #   websocket API (morph/*, brain/shell), static views, frontend/
+│                                #   websocket API (morph/*, brain/shell), static views, frontend/;
+│                                #   lovelace.py (HA dashboards: mirror, apply, Morph this dashboard),
+│                                #   cardtypes.py (types/ for the browser), themes.py (themes/ into HA),
+│                                #   frontend/morph-ha.js (on every HA page: morph-cards, morph-types,
+│                                #   brain-layer, morph-features)
 │       └── brain/
 │           ├── __init__.py      # Integration setup + service registration
 │           ├── manifest.json    # HA integration metadata

@@ -2,6 +2,18 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.0.0
+
+### Added
+
+- **Morph works on Home Assistant's own dashboards.** On any dashboard, an administrator now sees a brAIn button at the bottom right. **Let brAIn change it** puts that dashboard in brAIn's care. After that you can tap any card and tell brAIn what to change, or tell it about the whole dashboard, and the change shows on every open screen at once. Every change is kept, including edits made in Home Assistant's own editor, and **History and undo** restores any version. The dashboard stays Home Assistant's own: every built-in and HACS card, the visual editor, the sidebar and your themes work as before.
+- **Morph's cards are Home Assistant cards.** All 21 of Morph's cards are in **Add card** as **Morph · …**, each with Home Assistant's visual editor, and they work on any dashboard. They keep Morph's tap, slide and hold, and an opened card has **Details**, Home Assistant's own more-info. Two new cards: **Morph · brAIn's cases**, with a reply line, and **Morph · Ask**.
+- **Card types: built once, used everywhere.** A card brAIn builds can be a card type. It appears in Add card with an editor for what each copy sets, and changing the type changes every copy on every dashboard at once. When you tell brAIn about a copy, it asks first whether you mean just that one or every copy.
+- **HACS cards, changed in place.** brAIn changes a HACS card through its own settings and, for looks, card-mod. It never edits the card's code, which a HACS update would overwrite; when a change needs the code, brAIn makes a card type from the card instead.
+- **Morph's view.** Morph's view is a new view type beside Masonry and Sections. A room that needs you rises to the top and says why, a room with nothing on folds to one line, and on a phone the room rail runs down the right edge. Each of these can be switched off on its own.
+- **Morph's themes are Home Assistant themes.** **Morph** (light and dark) and **Morph Medium** are in your profile's theme list with no setup. They are files brAIn can change, and every screen repaints when one changes.
+- **Bring over your Morph dashboard.** While you still have a Morph dashboard of the old kind, the brAIn button offers to make it a Home Assistant dashboard of its own, **Home**, in the sidebar, and says anything that could not come along. Morph's old panel is left as it was.
+
 ## 4.3.3
 
 ### Changed

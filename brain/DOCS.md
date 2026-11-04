@@ -3477,6 +3477,88 @@ Somebody in the house who is not a Home Assistant administrator sees the
 dashboard alone, without brAIn's other tabs, as they did before. Tell and
 the learning loop need brAIn's *Automation integration* option on.
 
+### Morph on Home Assistant's own dashboards
+
+Since 5.0 Morph is also a layer on **any Home Assistant dashboard**. The
+dashboard stays Home Assistant's own: every built-in card, every HACS card,
+the visual editor, the card picker, the sidebar and your themes work
+exactly as they always did. What Morph adds is that you can tell brAIn to
+change it, live, and that every change is kept and can be undone.
+
+### Letting brAIn change a dashboard
+
+On any dashboard, an administrator sees a **brAIn button** at the bottom
+right. On a dashboard brAIn does not keep yet it offers **Let brAIn change
+it**; after that it offers:
+
+- **Tell brAIn about a card…** — tap the card you mean (the tap never
+  presses the card), say what should change, and watch it change. brAIn
+  gets a picture of the card and its YAML, and may make the Home Assistant
+  changes the request needs too (a helper, a template sensor, a script).
+  **Keep** and **Undo** work as they do in Morph.
+- **Tell brAIn about this dashboard…** — tabs, layout, theme, behaviour.
+- **History and undo** — every change to this dashboard, including ones
+  made in Home Assistant's own editor, with **Restore** on each.
+- **Stop letting brAIn change this dashboard** — leaves it exactly as it is.
+
+A dashboard kept in YAML files (YAML mode) cannot be changed this way,
+because Home Assistant cannot save it. brAIn keeps each dashboard it may
+change as `/config/morph/dashboards/<name>.yaml` (`default.yaml` for the
+default one): you can edit that file too, and Home Assistant shows the
+change at once.
+
+### Morph cards
+
+Morph's cards are ordinary Home Assistant cards now. In **Add card** they
+are under *Custom cards*, all named **Morph · …** (Light, Light group, Fan,
+Cover, Lock, Switch, Button, Vacuum, Thermostat, Sensor, Readings, Meter,
+Media, Camera, Openings, Person, Weather, Alarm, Scenes, Entity, Note), and
+each has Home Assistant's visual editor. They keep Morph's way of working:
+**tap** does the main thing, **slide** sets a level, and **hold** opens the
+card in place with its options, its history and **Details** (Home
+Assistant's own more-info). Two more: **Morph · brAIn's cases** (what brAIn
+wants you to know or decide, with a reply line — every case, or one
+area's) and **Morph · Ask**.
+
+### Card types: built once, used everywhere
+
+When brAIn builds a card for you, it can build it as a **card type**: it
+then appears in Add card as **Morph · <its name>**, with an editor for what
+each copy sets (which thermostat, which script). Change the type and every
+copy on every dashboard changes at once. When you tell brAIn about a copy,
+it asks first whether you mean **just this one** or **every copy**. The
+types are files in `/config/morph/types/`.
+
+HACS cards keep working exactly as installed. brAIn changes one through its
+own settings and, for its looks, card-mod; it never edits a HACS card's
+code, which an update would overwrite. When a change needs the code, brAIn
+makes a card type from it instead and says so.
+
+### Morph's view, the room rail and themes
+
+- **Morph's view** is a view type, beside Masonry and Sections: pick it in
+  a view's settings (or ask brAIn). It lays out the view's sections the
+  Morph way: a room that needs you (an unlocked lock, an open door, a leak)
+  rises to the top with why, a room with nothing on folds to one line until
+  you tap it, and on a phone or tablet the **room rail** runs down the
+  right edge. Each is a switch: `morph: {order: false, fold: false, rail:
+  false}` in the view's YAML, or ask brAIn.
+- **Themes.** Morph's looks are Home Assistant themes, **Morph** (light and
+  dark) and **Morph Medium**, in your profile's theme list with no setup.
+  They live in `/config/morph/themes/`, so brAIn can change them ("make the
+  cards rounder") and every screen repaints; any other theme dresses Morph's
+  cards too.
+
+### Bringing your Morph dashboard over
+
+While you still have a Morph dashboard of the old kind, the brAIn button
+offers **Bring over your Morph dashboard…**. It makes a new Home Assistant
+dashboard, **Home**, in the sidebar: each floor a tab laid out by Morph's
+view, each room a section, every card its Morph card, your hosted Lovelace
+cards as they were, and brAIn's cases in the room they are about. It tells
+you anything that could not come along (Coming up and the story line are
+the old panel's own). Morph's old panel is left exactly as it was.
+
 ### Updating, and when to reload
 
 A page left open does not change by itself when Morph's code does. When the

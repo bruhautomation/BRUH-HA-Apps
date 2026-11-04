@@ -12,10 +12,36 @@ ability to edit them directly in place with brAIn. Things like the Morph
 scroll rail can be a togglable feature. Themes used elsewhere in Home
 Assistant extend into Morph. Even the sidebar should behave the same."*
 
-This is the plan for that refactor (brAIn 5.0). It is written the way
+This is the plan for that refactor (brAIn 5.0), and below its decisions, the record of what shipped. It is written the way
 `brain-morph-merge.md` was: the decisions and the reasons first, then the
 order of the work. When it ships, the lessons go into `docs/notes/morph.md`
 as usual.
+
+## What shipped in 5.0.0, and what is still to do
+
+Shipped: Morph's cards as HA cards with HA's visual editor (§2.3's
+first-party cards); card types (template and element) with live updates
+and a usage index; HACS cards changed in place through config and card-mod
+(the prompt's rule; the automatic fork-and-pause of a copied HACS card is
+not built); "Let brAIn change it" and the sync with git per dashboard
+(§2.1); the layer with pick-a-card, Tell, Keep/Undo, History/Restore
+(§2.2); Morph's view with order, fold and the room rail, the cases and Ask
+cards (§2.5); Morph's themes added to HA's (§2.6); the converter and
+"Bring over your Morph dashboard" (§3, steps 1 and 3).
+
+Not yet, or done differently:
+
+- **No id sidecar.** Cards are found by their path in the config and by
+  identity in the browser; the learning loop's usage log is not kept for
+  HA dashboards yet.
+- **brAIn's shell is unchanged** (§2.7): Morph's old panel stays the Home
+  tab, and the new dashboard is a sidebar entry beside it. Retiring the
+  classic panel (§3 step 4, §4 phase 7) is the next release's.
+- **No CI job against a real Home Assistant** (§5): the layer is tested on
+  stand-ins for HA's page. That job is the most important thing left.
+- `cards/*.js` are loaded on HA dashboards as they are; converting them to
+  element types (§3 step 2) is not done.
+- The layer floats a button and a sheet rather than joining HA's toolbar.
 
 ## 0. Decisions taken (with the owner, 2026-11-04)
 
