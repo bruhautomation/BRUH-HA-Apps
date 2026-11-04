@@ -21791,17 +21791,24 @@ async def _snooze_for_now(finding: dict, note: str) -> tuple[dict, str]:
             and rule_record.quietable(source)
             and str(finding.get("severity") or "") != "critical"
             and corrections.held_until_changed(note))
-    days = corrections.HOLD_DAYS if held else corrections.snooze_days(note)
+    # A deferral that names a time ("until tomorrow", "till spring") asks
+    # for a period, and a season starts on a different day south of the
+    # equator (`corrections.named_time_days`).
+    days = corrections.HOLD_DAYS if held else corrections.snooze_days(
+        note, southern=await asyncio.to_thread(corrections.house_southern))
     until = int(time.time() + days * 86400)
     # "Out of use for now" is over when the thing reports again; "don't
     # remind me" is over when its time is, or its report changes.
     wake = _wake_entities(finding) if corrections.temporary(note) else []
     # "It's on my list" on a card whose thing can get worse stays away for
-    # its whole period, unless it does (`findings_store.wake_worse`).
+    # its whole period, unless it does (`findings_store.wake_worse`). A
+    # hold watches its reading too: with no level of its own, a reading
+    # that has moved a long way is the report changing (#602).
     worse = None
-    if not wake and finding.get("source") in _WORSE_BELOW:
-        worse = {"entities": _wake_entities(finding),
-                 "below": _WORSE_BELOW[finding["source"]]}
+    if not wake and (source in _WORSE_BELOW or held):
+        entities = _wake_entities(finding)
+        if entities:
+            worse = {"entities": entities, "below": _WORSE_BELOW.get(source)}
 
     said = " ".join(str(note or "").split()) if held else ""
 

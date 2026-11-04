@@ -3419,6 +3419,9 @@ def wake_returned(states, now: float | None = None) -> list[dict]:
 # fall before "I'll handle it" is no longer enough. A reading that wobbles a
 # point or two is the same battery.
 WORSE_DROP = 3
+# How far, as a share of where it stood, a reading on a held row with no
+# level of its own must move before the report has changed (`wake_worse`).
+WORSE_SHARE = 0.25
 EARLIER_ANSWER = ("You said you would handle this, and it has got worse "
                   "since.")
 
@@ -3497,6 +3500,14 @@ def wake_worse(states, now: float | None = None) -> list[dict]:
     the first pass after the answer), or goes unavailable having been
     reporting. Otherwise it sleeps on. A woken row carries
     `EARLIER_ANSWER` in its detail, so the card says the answer was heard.
+
+    A row with no ``below`` — a hold (`snooze(hold=)`) on a check that has
+    no level of its own — is woken when the reading has moved a long way
+    from where it stood: by `WORSE_SHARE` of it and at least `WORSE_DROP`,
+    either way, because a hold ends when the report changes and a battery
+    at 5% or a room at 9 °C is not the report the answer was given about
+    (#602). A wobble is the same reading. Such a row says which answer
+    held it (`hold_changed_sentence`), not that it got worse.
     """
     if not isinstance(states, dict) or not states:
         return []
@@ -3509,7 +3520,7 @@ def wake_worse(states, now: float | None = None) -> list[dict]:
                 or float(entry.get("snoozed_until") or 0) <= now:
             continue
         base = worse.setdefault("from", {})
-        hit = False
+        hit = moved = False
         for eid in clean_items(worse.get("entities")):
             st = states.get(eid)
             raw = str(st.get("state") or "").lower() if isinstance(st, dict) else ""
@@ -3522,15 +3533,24 @@ def wake_worse(states, now: float | None = None) -> list[dict]:
                 continue
             level, was = _numeric(raw), _numeric(base[eid])
             below = worse.get("below")
-            if level is not None and isinstance(below, (int, float)) \
-                    and level <= below \
-                    and (was is None or level <= was - WORSE_DROP):
-                hit = True
-        if hit:
-            entry["snoozed_until"] = 0
-            entry.pop("snooze_worse", None)
-            entry.pop("snooze_hold", None)
-            entry["earlier_answer"] = EARLIER_ANSWER
+            if level is None:
+                continue
+            if isinstance(below, (int, float)):
+                if level <= below and (was is None
+                                       or level <= was - WORSE_DROP):
+                    hit = True
+            elif was is not None and abs(level - was) >= max(
+                    WORSE_DROP, WORSE_SHARE * abs(was)):
+                moved = True
+        if hit or moved:
+            if moved and not hit and isinstance(entry.get("snooze_hold"),
+                                                dict):
+                _wake_hold(entry)
+            else:
+                entry["snoozed_until"] = 0
+                entry.pop("snooze_worse", None)
+                entry.pop("snooze_hold", None)
+                entry["earlier_answer"] = EARLIER_ANSWER
             touched.append(_shape(entry))
     if changed or touched:
         _write(items)

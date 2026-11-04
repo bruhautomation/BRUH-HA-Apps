@@ -81,6 +81,19 @@ class TestACaseWithNoChangeIsNotFiled(unittest.TestCase):
         for fix in CONCRETE:
             self.assertEqual(resident.unfinished(case(fix=fix)), ("", ""), fix)
 
+    def test_never_over_a_floor_or_high_stakes(self):
+        # The store's drop spares a critical, high-stakes, safety, protected
+        # or hot row and the safety/security producers; the case's reading
+        # spares the same ones, which reach it as `never_ignore`'s floor
+        # for the signal (a leak, a protected lock, a hot signal) or as
+        # high stakes. A leak automation "doing the wrong thing" with
+        # "review it" under it is still shown: silence there costs more.
+        for floor in ("act", "investigate", "watch"):
+            self.assertEqual(resident.unfinished(case(), floor), ("", ""),
+                             floor)
+        self.assertEqual(resident.unfinished(case(stakes="high")), ("", ""))
+        self.assertEqual(resident.unfinished(case())[0], "no_change")
+
     def test_a_device_case_with_an_ordinary_step_is_not_this(self):
         self.assertEqual(resident.unfinished(case(
             claim="The leak automation cannot run",

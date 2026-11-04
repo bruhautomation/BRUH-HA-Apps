@@ -246,5 +246,160 @@ class TestHeldForThatSubject(HoldCase):
         self.assertNotIn("hold", kept)
 
 
+COLD = {"text": "Nursery is colder than its heating asks for",
+        "detail": "Nursery is at 14 °C against a setting of 18 °C.",
+        "fix": "Check the radiator valve.", "severity": "warning",
+        "source": "check:climate.underheated",
+        "entity_id": "sensor.nursery_temperature", "fixable": False}
+
+# A deferral that names a time or an occasion asks for a period, not a
+# hold: `(said, days)`, where None is the deferral's own month.
+NAMED_TIMES = (
+    ("don't remind me until tomorrow", 1),
+    ("don't remind me tonight", 1),
+    ("don't bring this up again until next week", 7),
+    ("stop reminding me until next month", 30),
+    ("I'm aware, remind me this weekend", None),
+    ("I am aware, remind me on Monday", None),
+    ("don't remind me till spring", None),
+    ("don't remind me until March", None),
+    ("don't remind me until after the holidays", None),
+    ("I'm aware, remind me later", None),
+    ("I know about it, remind me after christmas", None),
+    ("stop bringing this up for a while", None),
+    ("don't remind me for now", None),
+)
+
+
+class TestANamedTimeIsAPeriodNotAHold(unittest.TestCase):
+    """"Until tomorrow", "next week", "till spring" each name a time, and
+    a time is a period: the hold is only for an answer that names none."""
+
+    def test_a_named_time_keeps_a_finite_snooze(self):
+        for said, days in NAMED_TIMES:
+            self.assertFalse(corrections.held_until_changed(said), said)
+            self.assertTrue(corrections.puts_off(said), said)
+            got = corrections.snooze_days(said)
+            self.assertGreaterEqual(got, 1, said)
+            self.assertLessEqual(got, 366, said)
+            if days is not None:
+                self.assertEqual(got, days, said)
+
+    def test_the_plain_ones_map_to_a_sensible_period(self):
+        import datetime as dt
+        tuesday = dt.date(2026, 11, 3)
+        self.assertEqual(corrections.named_time_days(
+            "remind me this weekend", tuesday), 4)
+        self.assertEqual(corrections.named_time_days(
+            "remind me on Monday", tuesday), 6)
+        self.assertEqual(corrections.named_time_days(
+            "remind me on Tuesday", tuesday), 7)
+        # a season: until it starts, and swapped south of the equator
+        self.assertEqual(corrections.named_time_days(
+            "don't remind me till spring", tuesday), 118)
+        self.assertEqual(corrections.named_time_days(
+            "don't remind me till spring", tuesday, southern=True), 302)
+        self.assertEqual(corrections.named_time_days(
+            "not until winter", tuesday), 28)
+        # a month: until the first of it
+        self.assertEqual(corrections.named_time_days(
+            "remind me in January", tuesday), 59)
+        # an occasion with no date, or no time at all: the month
+        self.assertIsNone(corrections.named_time_days(
+            "after the holidays", tuesday))
+        self.assertIsNone(corrections.named_time_days("later", tuesday))
+        self.assertIsNone(corrections.named_time_days(
+            "don't remind me", tuesday))
+        self.assertEqual(corrections.snooze_days("after the holidays"),
+                         corrections.DEFERRAL_DAYS)
+        self.assertEqual(corrections.snooze_days("I'm aware, remind me later"),
+                         corrections.DEFERRAL_DAYS)
+
+    def test_an_answer_naming_no_time_is_the_hold(self):
+        for said in ("Don't remind me", "stop bringing this up",
+                     "I am aware", "I am aware, don't bring this up again",
+                     "It's on my to do list, stop reminding me",
+                     "quit flagging it",
+                     # "until it changes" is the hold in its own words
+                     "don't remind me until it changes",
+                     "don't remind me unless it gets worse",
+                     "stop telling me about this until something changes"):
+            self.assertTrue(corrections.held_until_changed(said), said)
+
+    def test_a_named_period_is_not_a_hold(self):
+        for said in ("remind me in 3 weeks", "I am aware, ask again in a month",
+                     "don't remind me for 2 days"):
+            self.assertFalse(corrections.held_until_changed(said), said)
+
+
+class TestAStatedFaultIsNotADeferral(unittest.TestCase):
+    """"I'm aware, the pump is leaking" states a fault after "I'm aware";
+    it is not a request to stop reminding."""
+
+    def test_a_fault_after_aware_is_not_a_request(self):
+        for said in ("I'm aware, the pump is leaking",
+                     "I'm already aware, it's the water heater leaking",
+                     "I'm aware the shed battery is flat",
+                     "we're aware, the router keeps dropping out",
+                     "I know about it, the sensor is stuck"):
+            self.assertFalse(corrections.deferral(said), said)
+            self.assertFalse(corrections.puts_off(said), said)
+
+    def test_an_explicit_request_beside_a_fault_is_still_one(self):
+        for said in ("I am aware, don't bring this up again",
+                     "I'm aware the battery is low, stop reminding me",
+                     "the pump is leaking, it's on my to do list",
+                     "I'm aware", "I am well aware"):
+            self.assertTrue(corrections.deferral(said), said)
+
+
+class TestAReadingThatMovesWakesIt(HoldCase):
+    """A hold ends when the report changes, and a reading that moves a
+    long way within the same severity is a changed report."""
+
+    def test_a_battery_falling_within_warning_wakes_it(self):
+        row = self.file(BATTERY)
+        self.answer(row, "Don't remind me")
+        eid = BATTERY["entity_id"]
+        findings_store.wake_worse({eid: {"state": "20"}})
+        self.assertFalse(self.live(row))
+        findings_store.wake_worse({eid: {"state": "5"}})
+        self.assertTrue(self.live(row))
+
+    def test_a_room_temperature_falling_within_warning_wakes_it(self):
+        row = self.file(COLD)
+        self.answer(row, "Don't remind me")
+        eid = COLD["entity_id"]
+        findings_store.wake_worse({eid: {"state": "14"}})
+        for level in ("13.5", "13", "14.2"):
+            findings_store.wake_worse({eid: {"state": level}})
+            self.assertFalse(self.live(row), level)
+        findings_store.wake_worse({eid: {"state": "9"}})
+        self.assertTrue(self.live(row))
+        shown = findings_store.get(row["ts"])
+        self.assertIn("Don't remind me", shown["detail"])
+        self.assertNotIn("hold", shown)
+
+    def test_a_reading_that_is_not_a_number_wakes_nothing(self):
+        row = self.file(ROUTER)
+        self.answer(row, "Don't remind me")
+        eid = ROUTER["entity_id"]
+        findings_store.wake_worse({eid: {"state": "on"}})
+        findings_store.wake_worse({eid: {"state": "off"}})
+        self.assertFalse(self.live(row))
+
+    def test_a_timed_deferral_keeps_its_period_through_a_move(self):
+        row = self.file(COLD)
+        self.answer(row, "don't remind me until tomorrow")
+        kept = findings_store.get(row["ts"])
+        self.assertNotIn("hold", kept)
+        self.assertAlmostEqual(int(kept["snoozed_until"]),
+                               time.time() + DAY, delta=60)
+        eid = COLD["entity_id"]
+        findings_store.wake_worse({eid: {"state": "14"}})
+        findings_store.wake_worse({eid: {"state": "9"}})
+        self.assertFalse(self.live(row))
+
+
 if __name__ == "__main__":
     unittest.main()

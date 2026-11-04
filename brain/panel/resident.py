@@ -1610,7 +1610,11 @@ def unfinished(case: dict, floor: str = "") -> tuple[str, str]:
     ``no_change``: a case that blames an automation whose step changes
     nothing ("review the automation", #698; `house_words.concrete_change`).
     A high-stakes reply is never dropped for the last two: silence there
-    costs more than a card without a step.
+    costs more than a card without a step. Nor is ``no_change`` read over
+    a floor: the store's drop of the same shape spares a critical, safety,
+    protected or hot row and the safety/security producers
+    (`findings_store.blames_automation_idly`), and here those are
+    ``floor``, `never_ignore`'s for the signal.
     """
     if not isinstance(case, dict):
         return "", ""
@@ -1636,6 +1640,7 @@ def unfinished(case: dict, floor: str = "") -> tuple[str, str]:
             and not case.get("actions") and case.get("stakes") != "high"):
         return "no_step", ""
     if (fix and not case.get("actions") and case.get("stakes") != "high"
+            and not floor
             and house_words.blames_automation(case.get("claim"))
             and not house_words.concrete_change(fix)):
         # A case that blames an automation and offers no change to make

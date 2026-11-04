@@ -7,11 +7,11 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 ### Changed
 
 - **A rule you marked wrong three times in a row is held back.** brAIn keeps its next cards out of Today and off your phone, under History › Set aside by brAIn, unless brAIn's own look finds something new in one, it gets worse or names something new, or you agree with one of that rule's reports. This covers brAIn's house checks and the cards you made yourself; a safety, security or critical card is always shown (#698, #500, #501, #599).
-- **"Don't remind me" on a house check's card lasts until something changes, not for a month.** The card stays muted for that router, that Matter setup or that battery until its report gets worse, names something new, or stops for a few days; it then says which of your answers had muted it. A reason that names a period, like "remind me in 3 weeks", still gets that period, and safety, security and critical cards still come back after a month (#602, #694, #698).
+- **"Don't remind me" on a house check's card lasts until something changes, not for a month.** The card stays muted for that router, that Matter setup or that battery until its report gets worse, names something new, its reading moves a long way, or it stops for a few days; it then says which of your answers had muted it. A reason that names a period or a time, like "remind me in 3 weeks", "until tomorrow" or "till spring", still gets that period, and safety, security and critical cards still come back after a month (#602, #694, #698).
 
 ### Fixed
 
-- **"Stop bringing up …", "stop telling me", "quit flagging it" and "please stop mentioning …" are read as "don't remind me"** instead of being kept as a correction while the same card came back (#602, #694).
+- **"Stop bringing up …", "stop telling me", "quit flagging it" and "please stop mentioning …" are read as "don't remind me"** instead of being kept as a correction while the same card came back; "I'm aware, the pump is leaking" tells brAIn what is wrong and is not (#602, #694).
 - **An automation you marked wrong for never firing is not reported for never firing again,** whatever reason you gave; the same holds for an automation switched off for a long time and a condition that never passes (#579).
 - **A finding that blames an automation must say what to change in it.** A card that only says the automation is doing the wrong thing, with "review it" as the step, is no longer shown (#698).
 
