@@ -27,7 +27,7 @@ plain-text log. The patterns, and nothing else:
                            [--batch-size 8] [--model sonnet]
 
 ``consequence`` turns hits into section 0's answer: revert each PR with a
-hit, rerun its batch one model tier higher, and when the week holds two or
+hit, rerun its batch one model tier higher (never past Opus), and when the week holds two or
 more hits (this run's plus ``runs.jsonl``'s) halve the batch size and make
 the fixer Opus.
 """
@@ -385,7 +385,7 @@ def consequence(hits: list[dict], rows: list[dict] | None = None,
         "hits": len(hits),
         "week_hits": week_hits,
         "revert_prs": prs,
-        "rerun_model": (C.next_model(model) or "fable") if hits else model,
+        "rerun_model": (C.escalate_model(model) or C.AUTO_CEILING) if hits else model,
         "batch_size": max(2, batch_size // 2) if repeated else batch_size,
         "fixer_model": "opus" if repeated and C.model_rank(model) < 2 else model,
         "post_to_lock_issue": bool(hits),

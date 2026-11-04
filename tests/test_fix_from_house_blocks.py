@@ -231,6 +231,13 @@ class TestEvidence(unittest.TestCase):
         self.assertIsNone(C.next_model("fable"))
         self.assertEqual(C.next_model(None), "opus")
 
+    def test_automatic_escalation_never_names_fable(self):
+        self.assertEqual(C.escalate_model("sonnet"), "opus")
+        self.assertEqual(C.escalate_model("haiku"), "sonnet")
+        self.assertEqual(C.escalate_model(None), "opus")
+        self.assertIsNone(C.escalate_model("claude-opus-5-5"))
+        self.assertIsNone(C.escalate_model("fable"))
+
 
 if __name__ == "__main__":
     unittest.main()

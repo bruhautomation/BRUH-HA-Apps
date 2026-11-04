@@ -181,10 +181,13 @@ than fixing. In order:
    gate, merge, close its issues. A fix that contradicts an existing test
    waits for a separate `devloop-test/` PR an independent reviewer approves.
    The run itself orchestrates; each batch's fix goes to a subagent on
-   Sonnet when the cause is plain, Opus when it has to be found, and Fable
-   only after an Opus attempt failed (at most three a run), with a failed
-   tier retried once a tier up before the issue is declined with what was
-   tried.
+   Sonnet when the cause is plain and Opus when it has to be found. A
+   failed tier retries only the issues that failed, alone, one tier up,
+   and never past Opus automatically; after that the issue is declined
+   with what was tried. Fable, which spends the owner's usage several
+   times faster, is used at most once a run, for one issue alone that Opus
+   already failed and that is a safety or data risk (the skill's *Fable
+   rule*). Reviewers never run on Fable.
 5. **Final sweep, monitor, record**: anything filed while the run worked is
    drained too, up to three sweeps; `scripts/monitor.py` reads every
    transcript of the run for the closed list of cheating patterns (a hit

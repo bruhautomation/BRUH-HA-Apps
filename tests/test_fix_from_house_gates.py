@@ -168,6 +168,10 @@ class TestTheGate(unittest.TestCase):
                              self.v("unknown", "fable", "r2")], "sonnet")
         self.assertEqual(out["next"], "escalate")
         self.assertEqual(out["escalate_model"], "opus")
+        out = G.decide("A", [self.v("unknown", "sonnet", "r1"),
+                             self.v("unknown", "haiku", "r2")], "opus")
+        self.assertEqual(out["next"], "escalate")
+        self.assertIsNone(out["escalate_model"])   # never Fable automatically
 
     def test_a_raw_reply_is_parsed(self):
         reply = "The diff meets done_when; tests prove it.\nverdict: approve"

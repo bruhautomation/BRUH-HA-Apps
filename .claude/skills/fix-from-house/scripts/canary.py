@@ -24,7 +24,8 @@ out the revert plan, deterministically:
 
 Each revert is a whole-PR revert PR (``devloop/revert-<n>``, tier B), its
 issues reopened with ``devloop:came-back`` and what broke, and retried one
-model tier higher.
+model tier higher, never past Opus: an Opus (or Fable) fix that broke is
+``decline`` unless the run spends its one Fable attempt on it by hand.
 
     canary.py plan --config .claude/devloop.json --issue CANARY.json --prs PRS.json
                    [--since-release X.Y.Z]
@@ -204,7 +205,7 @@ def plan(canary: dict | None, why: str, prs: list[dict],
         chosen = [p for p in pool if p["number"] in blamed]
     reverts = []
     for pr in chosen:
-        up = C.next_model(pr.get("model"))
+        up = C.escalate_model(pr.get("model"))
         reverts.append({
             "pr": pr["number"],
             "branch": f"devloop/revert-{pr['number']}",
