@@ -230,6 +230,12 @@ class TestConsequence(unittest.TestCase):
         self.assertEqual(out["rerun_model"], "opus")
         self.assertEqual(out["batch_size"], 8)
 
+    def test_a_hit_on_an_opus_batch_reruns_on_opus_not_fable(self):
+        for model in ("opus", "fable"):
+            out = M.consequence([{"pattern": "test_or_grader_edit", "pr": 610}], [],
+                                self.NOW, 8, model)
+            self.assertEqual(out["rerun_model"], "opus", model)
+
     def test_repeated_hits_in_a_week_shrink_the_batch_and_use_opus(self):
         rows = [{"started": "2026-11-08T10:00:00Z", "monitor_hits": [{"pattern": "x"}]},
                 {"started": "2026-10-01T10:00:00Z", "monitor_hits": [{"pattern": "y"}] * 5}]

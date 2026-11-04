@@ -19,7 +19,8 @@ reading of the diff.
 - No tier found in the guard's output: treated as **C**, the strictest.
 - A reviewer on the fixer's own model tier does not count.
 - ``unknown`` is not an approve. The first one asks a fresh reviewer again;
-  a second sends the batch back to its fixer one model tier up.
+  a second sends the batch back to its fixer one model tier up, never past
+  Opus (``escalate_model`` is null when the fixer was already Opus).
 
     merge_gate.py tier    GUARD_OUTPUT.txt
     merge_gate.py decide  --guard GUARD_OUTPUT.txt --fixer-model sonnet
@@ -115,7 +116,7 @@ def decide(tier: str | None, verdicts: list[dict], fixer_model: str) -> dict:
                               "ask a fresh reviewer")
     return {"tier": tier, "merge": nxt == "merge", "next": nxt, "reason": why,
             "approvals": approvals, "needed": need, "ignored": ignored,
-            "escalate_model": C.next_model(fixer_model) if nxt == "escalate" else None}
+            "escalate_model": C.escalate_model(fixer_model) if nxt == "escalate" else None}
 
 
 def main(argv: list[str] | None = None) -> int:

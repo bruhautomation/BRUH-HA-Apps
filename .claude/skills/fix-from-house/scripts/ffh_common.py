@@ -30,6 +30,12 @@ HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 MODEL_TIERS = ("haiku", "sonnet", "opus", "fable")
 
+# The highest tier an automatic escalation may name. Fable is a press, not a
+# rung: it costs far more of the account's usage than Opus, so no script ever
+# hands it out. The run may spend its one Fable attempt by hand, under the
+# skill's Fable rule (*Choosing a model*), and nowhere else.
+AUTO_CEILING = "opus"
+
 
 def canonical(obj: dict) -> str:
     body = {k: v for k, v in obj.items() if k != "digest"}
@@ -152,6 +158,18 @@ def next_model(model: str | None) -> str | None:
         if tier in name:
             return MODEL_TIERS[i + 1] if i + 1 < len(MODEL_TIERS) else None
     return "opus"
+
+
+def escalate_model(model: str | None) -> str | None:
+    """One tier up for an automatic retry, never past AUTO_CEILING.
+
+    sonnet → opus; opus (or fable) → None, which means "the ladder is spent":
+    the caller declines the issue with a plan rather than reaching for Fable.
+    """
+    up = next_model(model)
+    if up is None or model_rank(up) > model_rank(AUTO_CEILING):
+        return None
+    return up
 
 
 def model_rank(model: str | None) -> int:

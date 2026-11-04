@@ -120,7 +120,10 @@ class TestAttribution(unittest.TestCase):
     def test_a_came_back_fingerprint_blames_the_pr_that_closed_it(self):
         out = plan(canary(came_back=["fp-chip"]))
         self.assertEqual([r["pr"] for r in out["reverts"]], [602])
-        self.assertEqual(out["reverts"][0]["retry_model"], "fable")
+        # PR 602 was Opus's: the automatic ladder stops there, so the issue
+        # is declined unless the run spends its one Fable attempt by hand.
+        self.assertIsNone(out["reverts"][0]["retry_model"])
+        self.assertTrue(out["reverts"][0]["decline"])
 
     def test_a_scorecard_drop_on_a_producer_a_pr_touched(self):
         out = plan(canary(scorecard_drops=[{"producer": "answers", "before": 0.8,

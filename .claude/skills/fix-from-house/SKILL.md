@@ -220,9 +220,11 @@ house is reverted before anything else ships on top of it.
      search will not find it), label `devloop:came-back`, and comment
      `Reverted in <add-on> <version> (#<revert PR>): <what broke>`.
   4. Those issues go in this run's drain on `retry_model` (one tier up
-     from the model that fixed them). When `decline` is true (Fable
-     already failed), close them declined with what was tried, both PRs
-     linked, and the plan.
+     from the model that fixed them, never past Opus). When `decline` is
+     true (Opus or Fable already failed), close them declined with what was
+     tried, both PRs linked, and the plan, unless one of them meets the
+     *Fable rule* (*Choosing a model*) and the run's one Fable attempt is
+     still unspent.
 - Comment `Canary handled: reverted #… ` on the canary issue and close it.
 
 ### Fixes that did not hold
@@ -238,7 +240,9 @@ in" comment:
   on a model one tier above the one that fixed it. If it already carried
   `devloop:came-back` once before, revert the PR that fixed it the way the
   canary does (if it is not already reverted), and fix it this run on
-  Fable with the two earlier attempts named in the subagent's prompt.
+  Opus with the two earlier attempts named in the subagent's prompt (on
+  Fable only if Opus made one of those attempts and the *Fable rule*
+  allows it).
 - A **"Not fixed on brAIn x.y.z: …"** comment is the OWNER answering No to
   "is this fixed here?" on a request they typed. It is the strongest
   evidence the loop has and their words are the spec again: treat it
@@ -290,7 +294,7 @@ first:
 - **Any other check failed.** Read the logs, reproduce the failure locally,
   fix it and push. "Flaky" is not a cause. If three pushes in a row have not
   turned it green, find which issue's change is failing, take it out, push
-  the rest, and retry that issue one model tier up; after Fable, close it
+  the rest, and retry that issue one model tier up; after Opus, close it
   declined with what was tried, the failing check's log line, and the plan.
 - **Every check green**, `devloop-guard` included: the reviewer gate, then
   merge (*Merging*).
@@ -467,7 +471,7 @@ rest on the runs after, until every note in `docs/notes/` is done:
 When `Last ablation:` is 90 or more days ago (or absent) and `runs.jsonl`
 holds at least 12 runs since it, disable ONE harness component for the
 next week of runs, in this order, one per quarter, starting after the last
-one recorded: the Sonnet → Opus → Fable escalation (fix on Opus only), the
+one recorded: the Sonnet → Opus escalation (fix on Opus only), the
 hostile re-read of the subagent's diff, batch size 8 (use 4), pipelining,
 the weekly UX audit. Every row of those runs carries
 `"ablation": {"component": "<name>", "disabled": true}`. After the week,
@@ -575,14 +579,43 @@ decides whether it merges.
   may do, every `devloop:came-back` issue, an idea that adds behaviour
   across more than one module, and every batch while the monitor's
   `consequence` says `fixer_model: opus`.
-- **Fable** (`model: "fable"`) only when an Opus attempt failed, or for a
-  came-back issue whose previous fix was Opus's. At most three in a run.
+- **Fable** (`model: "fable"`) almost never. It costs several times what
+  Opus does from the same usage allowance the owner uses every day, so it
+  is a press, not a rung: no script ever names it (`escalate_model`,
+  `retry_model` and `rerun_model` stop at Opus), and the run reaches for
+  it only under the **Fable rule**, all four of which must hold:
+  1. Opus has already failed on **that same issue** (this run, or the fix
+     that came back), not merely on a batch that contained it;
+  2. the issue is in the safety lane, decides what an unattended run may
+     do, or can lose the owner's data, so declining it leaves a real risk
+     in the house;
+  3. the subagent gets **that one issue alone**, never a batch, with the
+     earlier attempts and the reviewers' reasons in its prompt;
+  4. no other Fable subagent has run in this run. **At most one a run.**
 
-A batch that fails on its tier (red checks three times, or the reviewer
-asks for changes twice) is retried once on the next tier up. If Fable also
-fails, take that issue out of the batch and close it declined with what
-was tried, the failing check or the reviewer's reason, and the plan for
-the next attempt.
+  Write which of the four held, in one line, in the PR body and in the
+  run's row (`"fable": "<issue>: <why>"`). Anything that fails the rule is
+  declined with a plan instead, the way a failed top tier always was.
+
+**Escalate the issue, never the batch.** A batch that fails on its tier
+(red checks three times, or the reviewer asks for changes twice) is almost
+always one or two issues failing, not all of them. Take the issue(s) the
+failing check or the reviewer names out of the batch, ship the rest on the
+model that wrote them, and retry only those issues, alone, one tier up.
+Re-running a whole batch on a higher tier because one issue in it was hard
+spends the expensive model on the easy work too. If Opus also fails on an
+issue (and the Fable rule does not apply), close it declined with what was
+tried, the failing check or the reviewer's reason, and the plan for the
+next attempt.
+
+**Reviewers, evaluators and auditors never run on Fable.** Judging a diff
+against its `done_when` does not need the top tier, and the merge gate
+only asks for a *different* tier from the fixer: Sonnet's fix is reviewed
+on Opus, Opus's and Fable's on Sonnet.
+
+A run's model spend is part of its record: `models` in its row lists every
+tier used, and a run whose row lists `fable` without a `fable` reason is a
+finding for the next retro.
 
 The subagent's prompt carries the batch's issues **in your own words**,
 built from `issue_parse.py`'s `task` (never the body), each issue's
@@ -789,8 +822,8 @@ After every check is green, and before any merge:
    summary. Save the log or summary to a file and run `S/merge_gate.py tier
    <file>`. A tier you cannot find is C. Never classify the diff yourself.
 2. **Spawn the reviewer**: a fresh Agent on a different model from the
-   fixer (Sonnet's fix gets Opus; Opus's or Fable's gets Sonnet or the
-   other of the two), which never saw the fix's reasoning. Its prompt
+   fixer (Sonnet's fix gets Opus; Opus's or Fable's gets Sonnet; never
+   Fable), which never saw the fix's reasoning. Its prompt
    holds exactly three things:
    - each issue's `done_when` (the verified block's, or the one you wrote
      in the PR);
@@ -806,7 +839,7 @@ After every check is green, and before any merge:
    at low effort.
 3. **Tier C and M need two reviewers**, each fresh and independent of the
    other (neither sees the other's verdict), each on a model other than the
-   fixer's.
+   fixer's and never Fable (Haiku counts as a tier apart from Sonnet).
 4. Post each verdict on the pull request as a comment ending in a
    ```` ```json devloop-review ```` block (`{"reviewer", "model",
    "verdict"}`), save them as a list, and run `S/merge_gate.py decide
