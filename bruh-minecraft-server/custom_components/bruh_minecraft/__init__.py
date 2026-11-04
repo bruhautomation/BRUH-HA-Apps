@@ -50,6 +50,12 @@ from .const import (
     SERVICE_ADDON_REMOVE,
     SERVICE_ADDON_SEARCH,
     SERVICE_ADDONS,
+    SERVICE_SCRIPTS,
+    SERVICE_SCRIPT_REMOVE,
+    SERVICE_SCRIPT_WRITE,
+    SCRIPT_KINDS,
+    SCRIPT_MAX_BYTES,
+    SCRIPT_NAME_PATTERN,
     SERVICE_BACKUP,
     SERVICE_BAN,
     SERVICE_BUILD_DELETE,
@@ -166,6 +172,31 @@ def _coordinate(value: Any) -> str:
 def _one_line(value: Any) -> str:
     """A command or message is one line: a newline is a second command."""
     return str(value or "").replace("\r", " ").replace("\n", " ").strip()
+
+
+_SCRIPT_NAME_RE = re.compile(SCRIPT_NAME_PATTERN)
+
+
+def _script_name(value: Any) -> str:
+    """A script's name: no folders, no extension needed, nothing to escape."""
+    text = str(value or "").strip()
+    for ext in (".sk", ".mcfunction"):
+        if text.endswith(ext):
+            text = text[: -len(ext)]
+    if not _SCRIPT_NAME_RE.match(text):
+        raise vol.Invalid(
+            f"{text!r} is not a script name: 1 to 48 lowercase letters, digits, _ and -")
+    return text
+
+
+def _script_content(value: Any) -> str:
+    text = str(value if value is not None else "")
+    size = len(text.encode("utf-8"))
+    if not text.strip():
+        raise vol.Invalid("The script is empty")
+    if size > SCRIPT_MAX_BYTES:
+        raise vol.Invalid(f"The script is {size} bytes; the most is {SCRIPT_MAX_BYTES}")
+    return text
 
 
 def teleport_command(data: dict[str, Any]) -> str:
@@ -293,6 +324,22 @@ def _register_services(hass: HomeAssistant) -> None:
 
     async def handle_addon_remove(call: ServiceCall) -> dict[str, Any]:
         return _strip(await _ask("addon_remove", {"id": call.data["id"]}, timeout=60.0))
+
+    # Scripts written into the running world (panel/worldscripts.py). A
+    # script that did not load is a refusal carrying the loader's errors.
+    async def handle_scripts(_: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("script_list", {}))
+
+    async def handle_script_write(call: ServiceCall) -> dict[str, Any]:
+        payload = {"kind": call.data["kind"], "name": _script_name(call.data["name"]),
+                   "content": _script_content(call.data["content"])}
+        if "by" in call.data:
+            payload["by"] = _one_line(call.data["by"])
+        return _strip(await _ask("script_write", payload, timeout=60.0))
+
+    async def handle_script_remove(call: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("script_remove", {
+            "kind": call.data["kind"], "name": _script_name(call.data["name"])}, timeout=60.0))
 
     # The world and the build log (panel/mcworld.py). Reading the world
     # asks the panel now, not the mirrored file, so a caller is never
@@ -485,6 +532,16 @@ def _register_services(hass: HomeAssistant) -> None:
         vol.Required("kind"): vol.In(list(ADDON_KINDS)),
     })
     addon_remove_schema = vol.Schema({vol.Required("id"): cv.string})
+    script_write_schema = vol.Schema({
+        vol.Required("kind"): vol.In(list(SCRIPT_KINDS)),
+        vol.Required("name"): _script_name,
+        vol.Required("content"): _script_content,
+        vol.Optional("by"): cv.string,
+    })
+    script_remove_schema = vol.Schema({
+        vol.Required("kind"): vol.In(list(SCRIPT_KINDS)),
+        vol.Required("name"): _script_name,
+    })
     builds_schema = vol.Schema({
         vol.Optional("status"): vol.In(list(BUILD_STATUSES)),
         vol.Optional("limit"): vol.All(vol.Coerce(int), vol.Range(1, 200)),
@@ -681,6 +738,9 @@ def _register_services(hass: HomeAssistant) -> None:
     register(SERVICE_ADDON_SEARCH, handle_addon_search, addon_search_schema, only)
     register(SERVICE_ADDON_INSTALL, handle_addon_install, addon_install_schema, optional)
     register(SERVICE_ADDON_REMOVE, handle_addon_remove, addon_remove_schema, optional)
+    register(SERVICE_SCRIPTS, handle_scripts, empty_schema, only)
+    register(SERVICE_SCRIPT_WRITE, handle_script_write, script_write_schema, optional)
+    register(SERVICE_SCRIPT_REMOVE, handle_script_remove, script_remove_schema, optional)
     register(SERVICE_WORLD, handle_world, empty_schema, only)
     register(SERVICE_BUILDS, handle_builds, builds_schema, only)
     register(SERVICE_BUILD_SAVE, handle_build_save, build_save_schema, optional)
