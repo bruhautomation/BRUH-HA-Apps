@@ -64,13 +64,34 @@ PAGES: dict[str, list[tuple[str, str]]] = {
 _SCRIPT = r"""
 const H = __BASE__, CARDS = __CARDS__, MORPH = __MORPH__;
 const root = document.getElementById('root');
+// Every question a card asks is counted while it is out, so the capture can
+// wait for the answers a chart draws from (`__harnessIdle`).
+let asking = 0, answeredAt = Date.now();
 async function ws(msg) {
-  const r = await fetch(H + '/ws?msg=' + encodeURIComponent(JSON.stringify(msg)));
-  let b = {};
-  try { b = await r.json(); } catch (e) { /* the status says it */ }
-  if (!r.ok || b.error) throw new Error(b.error || ('HTTP ' + r.status));
-  return b.result;
+  asking += 1;
+  try {
+    const r = await fetch(H + '/ws?msg=' + encodeURIComponent(JSON.stringify(msg)));
+    let b = {};
+    try { b = await r.json(); } catch (e) { /* the status says it */ }
+    if (!r.ok || b.error) throw new Error(b.error || ('HTTP ' + r.status));
+    return b.result;
+  } finally {
+    asking -= 1;
+    answeredAt = Date.now();
+  }
 }
+// Resolves once no question is out and none has been answered for a moment
+// (an answer redraws a card, which may ask the next), or after `maxMs`.
+// Answers how many were still out.
+window.__harnessIdle = async (maxMs) => {
+  const until = Date.now() + maxMs;
+  await new Promise((r) => setTimeout(r, 250));
+  while (Date.now() < until) {
+    if (asking === 0 && Date.now() - answeredAt >= 400) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return asking;
+};
 const refuse = () => Promise.reject(new Error("brAIn's preview is read-only"));
 if (!customElements.get('ha-card')) customElements.define('ha-card', class extends HTMLElement {
   constructor() {
