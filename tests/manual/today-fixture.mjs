@@ -234,6 +234,18 @@ export const INTENTS = [
     sentence: 'turn the porch light off when the guests leave', plain: 'Once.' },
 ];
 
+// Long on purpose: the reason an update card rests on is stored whole and
+// must be readable whole, with no cut in the middle of a word.
+export const UPDATE_REASON = 'Nothing this release changes is in your '
+  + 'configuration: the Hue fix touches only how a bridge reports its name, '
+  + 'and your Hue lights are set up through the integration rather than in '
+  + 'YAML, so there is nothing for it to change. The release also renames an '
+  + 'option of the MQTT climate platform, which this house does not use — '
+  + 'the integrations list has no MQTT in it. The one thing to know is that '
+  + 'Home Assistant restarts while it installs, so the lights pause for about '
+  + 'a minute; nothing else in the notes reaches anything this house runs, '
+  + 'and every automation keeps its triggers exactly as they are written.';
+
 export const TODAY_EXTRAS = {
   tidy: { key: 'tidy:1700000000', at: 1700000000, undo_days: 30, refused: [],
           rows: [
@@ -244,11 +256,22 @@ export const TODAY_EXTRAS = {
           ],
           who: { who: 'brain', line: 'brAIn can fix this.', press: '' } },
   updates: [
+    // A CHECKED safe verdict: Apply installs it on the press, and its
+    // reason runs past three lines — stored whole (#660), clamped on the
+    // face, read in full with Details open.
     { key: 'update:update.core:2026.10.2', entity_id: 'update.core',
       title: 'Home Assistant Core', installed: '2026.10.1', latest: '2026.10.2',
-      advice: { verdict: 'safe_tonight', reason: 'Nothing it changes is in your config.',
+      advice: { verdict: 'safe_tonight', checked: true, quote_from: 'config',
+                reason: UPDATE_REASON,
                 note_quote: 'Fixed a typo in the Hue integration',
                 config_quote: 'hue:' },
+      who: { who: 'brain', line: 'brAIn can fix this.', press: '' } },
+    // Can't tell: no Apply, Check again behind the ⋯.
+    { key: 'update:update.workshop_switch:1.3', entity_id: 'update.workshop_switch',
+      title: 'Workshop switch firmware', installed: '1.2', latest: '1.3',
+      advice: { verdict: 'unknown', checked: false, unreached: 'the release notes',
+                reason: 'Home Assistant has no release notes for this update '
+                  + 'that brAIn can read. brAIn could not reach the release notes.' },
       who: { who: 'you', line: 'This needs you.', press: '' } },
   ],
 };
