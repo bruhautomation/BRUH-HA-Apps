@@ -504,9 +504,8 @@ _DEFERRAL_RE = re.compile(
     r"\b(?:(?:don'?t|do not|stop|quit|no need to|please don'?t|no more)\s+"
     r"(?:\w+\s+){0,2}?(?:remind(?:ing)?|nag(?:ging)?|bother(?:ing)?|"
     r"bring(?:ing)? (?:\w+\s+){0,3}?up|mention(?:ing)?|"
-    r"flag(?:ging)?|tell(?:ing)? me|warn(?:ing)? me|alert(?:ing)? me|"
-    r"notify(?:ing)? me|rais(?:e|ing) (?:this|it|that|these)|"
-    r"ask(?:ing)? me about)"
+    r"flag(?:ging)?|tell(?:ing)? me about|"
+    r"rais(?:e|ing) (?:this|it|that|these)|ask(?:ing)? me about)"
     r"|(?:i'?m|i am|we'?re|we are|already)\s+(?:well\s+)?aware|"
     r"(?:on|in) (?:my|our|the) (?:to[- ]?do|todo|task) list|"
     r"already (?:on|in) (?:my|our) (?:list|plan)|i know about (?:it|this|that)|"
@@ -524,11 +523,24 @@ DEFERRAL_DAYS = 30
 HOLD_DAYS = 3650
 
 
+# A reason that asks for the thing to be dealt with, or says what is wrong
+# with it, is not "leave me alone about it" even when it says "I'm aware"
+# or "don't tell me" ("I'm aware, fix it now"; "don't tell me it's
+# offline, it's reporting wrong"): it is a request or a correction.
+_NOT_A_DEFERRAL_RE = re.compile(
+    r"\b(?:please\s+)?(?:fix|repair|sort)\s+(?:it|this|that)\s+"
+    r"(?:now|today|asap|please)\b|\bplease\s+(?:fix|repair)\b|"
+    r"\bcan you\s+(?:fix|repair|sort)\b|"
+    r"\b(?:reporting|reading|showing)\s+(?:it\s+)?wrong\b|"
+    r"\bit'?s\s+(?:offline|broken|not working)\b|\bnot working\b", re.I)
+
+
 def deferral(note: str) -> bool:
     """Whether a reason asks not to be reminded for a while."""
     text = str(note or "")
     return (bool(_DEFERRAL_RE.search(text)) and not temporary(text)
-            and not gone_for_good(text))
+            and not gone_for_good(text)
+            and not _NOT_A_DEFERRAL_RE.search(text))
 
 
 def puts_off(note: str) -> bool:

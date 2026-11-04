@@ -104,6 +104,9 @@ class TestTheWordsAreRead(unittest.TestCase):
                      "the automation should stop raising the blinds at 6",
                      "it should stop when the door opens",
                      "I don't need a reminder", "normal for this sensor",
+                     "they don't notify me when the door opens",
+                     "don't tell me it's offline, it's reporting wrong",
+                     "I'm aware, fix it now", "Don't tell me what to do",
                      ""):
             self.assertFalse(corrections.deferral(said), said)
 
@@ -211,6 +214,28 @@ class TestHeldForThatSubject(HoldCase):
         findings_store.snooze(row["ts"], 0)
         self.assertTrue(self.live(row))
         self.assertNotIn("hold", findings_store.get(row["ts"]))
+
+    def test_a_rule_brain_may_not_quiet_keeps_the_month(self):
+        # A safety check, a security check and a critical row: a hold
+        # nothing could end is the plain 30-day snooze instead.
+        for template in (
+                {**ROUTER, "text": "Cellar leak sensor is wet",
+                 "source": "check:safety.tripped",
+                 "entity_id": "binary_sensor.cellar_leak"},
+                {**ROUTER, "text": "The back door lock answers voice "
+                                   "assistants from the cloud",
+                 "source": "check:sec.lock_cloud_voice",
+                 "entity_id": "lock.back_door"},
+                {**BATTERY, "text": "Loft smoke alarm battery is flat",
+                 "severity": "critical",
+                 "entity_id": "sensor.loft_smoke_battery"}):
+            row = self.file(template)
+            self.answer(row, "Don't remind me")
+            kept = findings_store.get(row["ts"])
+            self.assertNotIn("hold", kept, template["source"])
+            self.assertLess(int(kept["snoozed_until"]),
+                            time.time() + (corrections.DEFERRAL_DAYS + 1)
+                            * DAY, template["source"])
 
     def test_a_named_period_is_still_that_period(self):
         row = self.file(ROUTER)

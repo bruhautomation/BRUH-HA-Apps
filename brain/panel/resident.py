@@ -1636,8 +1636,7 @@ def unfinished(case: dict, floor: str = "") -> tuple[str, str]:
             and not case.get("actions") and case.get("stakes") != "high"):
         return "no_step", ""
     if (fix and not case.get("actions") and case.get("stakes") != "high"
-            and house_words.blames_automation(case.get("claim"),
-                                              case.get("detail"))
+            and house_words.blames_automation(case.get("claim"))
             and not house_words.concrete_change(fix)):
         # A case that blames an automation and offers no change to make
         # (#698): "it is doing the wrong thing — review it" is noise.

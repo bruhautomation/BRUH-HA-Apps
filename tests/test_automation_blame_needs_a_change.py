@@ -57,6 +57,13 @@ class TestTheReading(unittest.TestCase):
         self.assertFalse(house_words.blames_automation(
             "The bathroom fan is stuck on"))
 
+    def test_an_automation_merely_named_is_not_blamed(self):
+        for text in ("The leak automation can't run.",
+                     "The hall motion automation uses the lock.",
+                     "An automation uses the front door lock.",
+                     "Basement leak sensor offline"):
+            self.assertFalse(house_words.blames_automation(text), text)
+
     def test_what_is_a_change(self):
         for fix in CONCRETE:
             self.assertTrue(house_words.concrete_change(fix), fix)
@@ -75,6 +82,10 @@ class TestACaseWithNoChangeIsNotFiled(unittest.TestCase):
             self.assertEqual(resident.unfinished(case(fix=fix)), ("", ""), fix)
 
     def test_a_device_case_with_an_ordinary_step_is_not_this(self):
+        self.assertEqual(resident.unfinished(case(
+            claim="The leak automation cannot run",
+            detail="The basement leak sensor is offline.",
+            fix="Check the sensor is powered.")), ("", ""))
         self.assertEqual(resident.unfinished(case(
             claim="The bathroom fan is stuck on",
             detail="It has run for nine hours.",
@@ -110,6 +121,43 @@ class TestAModelRowWithNoChangeIsNotFiled(unittest.TestCase):
 
     def test_a_change_is_a_row(self):
         self.assertEqual(len(self.file(CONCRETE[0])), 1)
+
+    def row(self, **kw):
+        base = {"text": BLAME, "detail": "It turned the porch light on at noon.",
+                "fix": "Review the automation.", "severity": "warning",
+                "source": "insight-lights",
+                "entity_id": "automation.porch_light"}
+        base.update(kw)
+        return findings_store.add_many(triage.gate([base]))
+
+    def test_a_device_row_that_mentions_an_automation_is_kept(self):
+        # The reviewer's two probes: the automation is named, not blamed.
+        self.assertEqual(len(self.row(
+            text="Basement leak sensor offline",
+            detail="The leak automation can't run.",
+            fix="Check the sensor is powered",
+            entity_id="binary_sensor.basement_leak")), 1)
+        self.assertEqual(len(self.row(
+            text="Front door lock battery at 8%",
+            detail="The hall motion automation uses the lock to lock up "
+                   + "at night.",
+            fix="Check the lock's battery soon",
+            entity_id="sensor.front_door_lock_battery")), 1)
+
+    def test_a_high_stakes_or_critical_row_is_never_dropped(self):
+        for extra in ({"severity": "critical"}, {"stakes": "high"},
+                      {"safety": True}, {"protected": True}):
+            findings_store.FINDINGS_FILE.unlink(missing_ok=True)
+            self.assertEqual(len(self.row(**extra)), 1, extra)
+
+    def test_a_dropped_row_leaves_a_line_on_the_trail(self):
+        import json
+        decision_trail.clear_memory()
+        self.assertEqual(self.row(), [])
+        lines = [json.loads(x) for x in Path(
+            decision_trail.TRAIL_FILE).read_text().splitlines()]
+        self.assertEqual([x["kind"] for x in lines], ["no_change"])
+        self.assertEqual(lines[0]["subject"], "automation.porch_light")
 
     def test_a_check_row_is_left_to_its_rule(self):
         created = findings_store.add_many(triage.gate([{

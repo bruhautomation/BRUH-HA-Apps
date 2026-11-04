@@ -21783,7 +21783,13 @@ async def _snooze_for_now(finding: dict, note: str) -> tuple[dict, str]:
     # changing is what ends it (`findings_store.HOLD_ABSENT_S`), never a
     # month going by — a static fact (an empty Matter setup, a short
     # camera retention, a weak router) is the same fact next month.
-    held = (str(finding.get("source") or "").startswith("check:")
+    # Never a rule brAIn may not quiet (a safety or security check, an
+    # unmutable producer) and never a critical row — a severity that cannot
+    # rise is a hold nothing ends: those keep the plain 30-day snooze.
+    source = str(finding.get("source") or "")
+    held = (source.startswith("check:")
+            and rule_record.quietable(source)
+            and str(finding.get("severity") or "") != "critical"
             and corrections.held_until_changed(note))
     days = corrections.HOLD_DAYS if held else corrections.snooze_days(note)
     until = int(time.time() + days * 86400)

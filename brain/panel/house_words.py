@@ -203,7 +203,18 @@ _FORK_RE = re.compile(
 # under it leaves nothing to do but agree. A step is a change when it
 # carries a verb that changes something; "check", "review", "look into",
 # "monitor" and "keep an eye on" change nothing.
-_AUTOMATION_RE = re.compile(r"\bautomation\b|\bautomation\.[a-z0-9_]+", re.I)
+# Blame is the automation as the one ACTING: "the porch light automation
+# is doing the wrong thing", "automation.porch_light turns the light on at
+# noon". An automation merely named ("the leak automation can't run", "an
+# automation uses the lock") is about something else, and is not blame.
+_AUTOMATION_RE = re.compile(
+    r"(?:\bautomation|\bautomation\.[a-z0-9_]+)(?:\s+\([^)]*\))?\s+"
+    r"(?:is\s+|keeps\s+|still\s+|has\s+been\s+|was\s+)?"
+    r"(?:doing|does|did|turns?|turned|turning|switch(?:es|ed|ing)?|"
+    r"fires?|fired|firing|runs|ran|running|triggers?|triggered|sets?|"
+    r"opens?|opened|closes?|closed|starts?|started|stops?|stopped|undoes|"
+    r"undid|overrides?|overrode|conflicts?|fights?|works|working|sends?|"
+    r"sent|locks?|unlocks?|dims?|dimmed)\b", re.I)
 _CHANGE_RE = re.compile(
     r"\b(?:(?:chang|add|remov|delet|disabl|enabl|mov|replac|rais|"
     r"increas|decreas|shorten|lengthen|extend|reduc|swap|renam|edit|"
