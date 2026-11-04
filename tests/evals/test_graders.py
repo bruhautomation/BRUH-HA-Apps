@@ -26,7 +26,7 @@ if str(TESTS) not in sys.path:
     sys.path.insert(0, str(TESTS))
 
 from evals import jobs, run, schema  # noqa: E402
-from evals import select as selector  # noqa: E402
+from evals import selection as selector  # noqa: E402
 from evals.graders import GRADERS, grade  # noqa: E402
 from evals.graders import judge as judge_mod  # noqa: E402
 from evals.graders.common import dated, matches, mentions, similar  # noqa: E402
@@ -506,3 +506,15 @@ class TestEveryPromptBuilds(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNoModuleShadowsTheStandardLibrary(unittest.TestCase):
+    """A script run from tests/evals/ has that directory first on
+    ``sys.path``: ``select.py`` there shadowed the ``select`` that
+    ``subprocess`` imports, and the consolidator case failed in CI only."""
+
+    def test_no_module_here_is_named_like_a_standard_library_one(self):
+        here = Path(__file__).resolve().parent
+        clashes = sorted(p.name for p in here.glob("*.py")
+                         if p.stem in sys.stdlib_module_names)
+        self.assertEqual(clashes, [])

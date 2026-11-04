@@ -8,9 +8,9 @@
 # Three things about how it is wired:
 #
 # **It runs on a pull request that can move a prompt, and nightly.** The
-# `paths:` below are tests/evals/select.py's `workflow_paths()`, and
+# `paths:` below are tests/evals/selection.py's `workflow_paths()`, and
 # tests/evals/test_graders.py holds the two equal, so a builder added to
-# select.py without its path here (or the reverse) fails the ordinary suite.
+# selection.py without its path here (or the reverse) fails the ordinary suite.
 #
 # **No secret is a pass with a notice, never a failure.** A fork's pull
 # request has no secrets, and a gate that goes red for want of a credential

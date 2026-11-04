@@ -597,13 +597,13 @@ def _sweepers(index: Index, addon: str) -> set[str]:
 def _is_prompt_path(rel: str) -> bool:
     """Whether the eval harness grades a prompt built from ``rel``.
 
-    ``tests/evals/select.py`` is loaded by file path rather than imported,
+    ``tests/evals/selection.py`` is loaded by file path rather than imported,
     because a bare ``select`` would shadow the standard library module."""
     global _PROMPT_PATH
     if _PROMPT_PATH is None:
         _PROMPT_PATH = lambda _rel: False  # noqa: E731
         spec = importlib.util.spec_from_file_location(
-            "_evals_select", Path(__file__).with_name("evals") / "select.py")
+            "_evals_select", Path(__file__).with_name("evals") / "selection.py")
         if spec and spec.loader:
             try:
                 mod = importlib.util.module_from_spec(spec)

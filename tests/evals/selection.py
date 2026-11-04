@@ -8,8 +8,8 @@ import ``is_prompt_path``. A prompt builder added somewhere this list does
 not name is a prompt nothing re-measures, so a new job's builder goes here
 in the same change as its cases.
 
-Import this as ``evals.select``: under its bare name it would shadow the
-standard library's ``select``.
+Import this as ``evals.selection``. It was ``select.py`` and shadowed the
+standard library's ``select`` for every script run from this directory.
 """
 from __future__ import annotations
 

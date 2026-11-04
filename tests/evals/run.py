@@ -35,8 +35,8 @@ from __future__ import annotations
 import os
 import sys
 
-# This directory must not be first on the path: `select.py` here would
-# shadow the standard library's `select`, which `subprocess` imports.
+# This directory must not be first on the path: a module here named like a
+# standard library one would shadow it (it happened, with `select`).
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path[:] = [p for p in sys.path if os.path.abspath(p or os.curdir) != _HERE]
 sys.path.insert(0, os.path.dirname(_HERE))
@@ -54,7 +54,7 @@ from pathlib import Path  # noqa: E402
 from evals import jobs as job_adapters  # noqa: E402
 from evals import model as model_mod  # noqa: E402
 from evals import schema  # noqa: E402
-from evals import select as selector  # noqa: E402
+from evals import selection as selector  # noqa: E402
 from evals.graders import FAIL, PASS, UNKNOWN, grade  # noqa: E402
 from evals.graders import judge as judge_mod  # noqa: E402
 
