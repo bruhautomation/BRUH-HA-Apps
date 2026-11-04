@@ -168,13 +168,20 @@ def _record_held(row, held):
     return {**filed, "record_hold": rule_record.held_reason(record)}
 
 
+# The producer scorecard, registered by `findings_store` when it is imported
+# (`findings_store.scorecard`): the store imports this module, so asking for
+# it here would be an import cycle. Unset is no record, and no hold.
+SCORECARD = None
+
+
 def _held_rules() -> dict:
     """`rule_record.held_rules` over the scorecard. Unreadable is none: the
     wrong direction here hides a card."""
+    if SCORECARD is None:
+        return {}
     try:
-        import findings_store  # noqa: PLC0415 — it imports this module
-        import rule_record  # noqa: PLC0415
-        return rule_record.held_rules(findings_store.scorecard())
+        import rule_record  # noqa: PLC0415 — a leaf
+        return rule_record.held_rules(SCORECARD())
     except Exception:  # noqa: BLE001
         return {}
 

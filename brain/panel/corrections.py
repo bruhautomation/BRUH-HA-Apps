@@ -1036,7 +1036,7 @@ __all__ = [
     "conditional", "conditional_confirmation","LIFETIMES", "NEVER_CHECKS", "NEVER_CLASSES", "NEVER_DOMAINS",
            "SCHEMA", "SCOPES", "SEASONS", "SOURCE", "SYSTEM", "WIDE_SCOPES",
            "accept_offer", "apply_plan", "check_of", "condition_offer_row",
-           "confirmation",
+           "confirmation", "DEFERRAL_DAYS", "HOLD_DAYS", "held_until_changed",
            "expires_for", "find_offer", "house_southern", "is_offer",
            "never_covered", "offer_key_for", "offer_row", "plan", "prompt",
            "resume_date", "scope_map", "season_resume", "summary",

@@ -3932,6 +3932,11 @@ def scorecard(release: str | None = None) -> list[dict]:
     return rows
 
 
+# `triage.gate` reads the scorecard for a rule's record (`rule_record.holds`)
+# without importing this module, which imports it.
+triage.SCORECARD = scorecard
+
+
 def scorecard_by_release() -> dict[str, dict[str, dict]]:
     """``{release: {producer: {"right": n, "wrong": n, "total": n}}}``.
 
