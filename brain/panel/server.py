@@ -629,7 +629,7 @@ def _publish_minecraft_house() -> None:
     try:
         minecraft_companion.publish_house(eff_skip_permissions(), yolo_mode())
     except Exception:  # noqa: BLE001
-        log.debug("could not publish the switch for the Minecraft companion", exc_info=True)
+        log.debug("could not publish the switch for brAIn in Minecraft", exc_info=True)
 
 
 def _answer(result: dict) -> dict | None:

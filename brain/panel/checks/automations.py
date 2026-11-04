@@ -1624,13 +1624,13 @@ def _second_voice(config: dict, names: set[str]) -> str:
     calls = _calls(_enabled_only(config))
     for service, data in calls:
         if service == _COMPANION_SAY:
-            return "it speaks through the companion's own say action"
+            return "it speaks through brAIn's own say action in the game"
         if service in _CONSOLE_SERVICES:
             text = " ".join(str(v) for v in data.values() if isinstance(v, str))
             said = text.strip().lower()
             if (said.startswith(("tellraw", "say", "/tellraw", "/say"))
                     or service.endswith(".say")) and _speaks_as(text, names):
-                return "it sends chat to the game under the companion's name"
+                return "it sends chat to the game under brAIn's name"
     if _hears_game_chat(config) and any(s in _CONVERSATION for s, _ in calls):
         return "it hands the game's chat to a voice assistant, which answers too"
     return ""
@@ -1652,12 +1652,12 @@ def second_responder(snap: dict, now: float) -> list[dict]:
                 continue
             out.append({
                 "text": f"Two things answer as {name} in the game: {_label(kind, item)}",
-                "detail": (f"{_sentence(how)}, while brAIn's Minecraft companion answers "
-                           "every family line itself. Players get two answers that can "
+                "detail": (f"{_sentence(how)}, while brAIn already answers every family "
+                           "line in the game itself. Players get two answers that can "
                            f"disagree — one says it can't do something and the other does "
                            "it — and only brAIn's answer follows the family list and who "
                            "may control the house."),
-                "fix": (f"Turn {_label(kind, item)} off, or delete it: brAIn's companion "
+                "fix": (f"Turn {_label(kind, item)} off, or delete it: brAIn "
                         "already hears the game's chat and answers it."),
                 "severity": "warning",
                 "fixable": True,
