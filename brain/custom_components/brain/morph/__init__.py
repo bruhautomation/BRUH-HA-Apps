@@ -26,7 +26,7 @@ from homeassistant.components import frontend
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_interval
 
-from . import websocket
+from . import cardtypes, lovelace, themes, websocket
 from .switches import read_features
 from .const import (
     CARDS_DIR,
@@ -43,6 +43,9 @@ from .const import (
 )
 
 FEATURE_POLL_S = 5
+# Loaded on every Home Assistant page: Morph's cards, the card types brAIn
+# builds and the layer on a dashboard brAIn may change (frontend/morph-ha.js).
+EXTRA_JS = f"{STATIC_BASE}/{VERSION}/morph-ha.js"
 
 
 def panel_spec(features: dict) -> dict:
@@ -139,12 +142,16 @@ async def _register_static(hass: HomeAssistant) -> None:
         hass.http.register_static_path(CARDS_URL, cards_dir, False)
     hass.http.register_view(MorphStaticView(hass))
     data["static"] = True
+    # Morph's cards work on any dashboard whatever the switches say: a card
+    # on a dashboard must not turn into an error when the Morph panel is off.
+    frontend.add_extra_js_url(hass, EXTRA_JS)
 
 
 async def async_setup(hass: HomeAssistant) -> Callable[[], None]:
     """Set Morph's half up once for the process; returns the teardown."""
     data = hass.data.setdefault(DOMAIN, {})
     await _register_static(hass)
+    await cardtypes.async_setup(hass)
     websocket.async_register(hass)
     features = await hass.async_add_executor_job(read_features)
     data["features"] = features
@@ -152,6 +159,8 @@ async def async_setup(hass: HomeAssistant) -> Callable[[], None]:
     await hass.async_add_executor_job(write_mark)
     data["mark_at"] = time.time()
     unsub_watch = websocket.start_watcher(hass)
+    unsub_lovelace = lovelace.start(hass)
+    unsub_themes = themes.start(hass)
 
     async def _poll(_now=None) -> None:
         now = await hass.async_add_executor_job(read_features)
@@ -169,6 +178,8 @@ async def async_setup(hass: HomeAssistant) -> Callable[[], None]:
     @callback
     def _teardown() -> None:
         unsub_watch()
+        unsub_lovelace()
+        unsub_themes()
         unsub_poll()
         frontend.async_remove_panel(hass, PANEL_URL)
         hass.async_add_executor_job(clear_mark)

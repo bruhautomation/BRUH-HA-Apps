@@ -61,7 +61,7 @@ from .const import (
 WRITE_KINDS = ("save", "save_yaml", "undo_commit", "restore", "history", "tell", "tell_undo",
                "tell_answer", "tell_issue", "settings", "suggestion", "learn_now", "regenerate", "lessons",
                "code_reset", "code_redo", "code_merge_all", "report", "report_withdraw",
-               "converse", "habit", "lesson_add")
+               "converse", "habit", "lesson_add", "convert")
 BRAIN_FILES = ("findings_state.json", "situation.json", "status.json", "morph/cases.json", "morph/feed.json",
                "features.json")
 BRAIN_MORPH = BRAIN_SHARED / "morph"
@@ -623,6 +623,10 @@ def _mtimes() -> dict:
         except OSError:
             pass  # brAIn not installed: nothing to watch in that file
     out["brain"] = stamp
+    # Card types and this house's card code: every page that draws a copy
+    # of a type redraws it the moment its file changes.
+    from .cardtypes import stamp as types_stamp
+    out["types"] = types_stamp()
     return out
 
 

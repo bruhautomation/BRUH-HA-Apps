@@ -195,6 +195,11 @@ Morph's own panel modules are in `/config/custom_components/brain/morph/frontend
 |---|---|
 | `boot.js` | The loader: paints the page's outline, loads the panel, and falls back to Morph's own panel when a copy fails |
 | `shell.js` | brAIn's sidebar entry: holds brAIn's own page in a frame and Morph as its Home tab. Never replaced |
+| `morph-ha.js` | Loaded on every Home Assistant page: loads Morph's cards, card types and the brAIn layer. Never replaced |
+| `morph-cards.js` | Morph's card kinds as Home Assistant custom cards (`custom:morph-<kind>-card`), with HA's visual editor and card picker |
+| `morph-types.js` | Card types (`types/*.yaml`) as Home Assistant custom cards (`custom:morph-type-<slug>`), redrawn everywhere when a type changes |
+| `brain-layer.js` | The brAIn button on a Home Assistant dashboard: Tell brAIn about a card or the dashboard, History, and letting brAIn keep a dashboard |
+| `morph-features.js` | Morph on a Home Assistant dashboard: the `custom:morph-view` view type (rooms that need you lifted, quiet rooms folded, the room rail), the cases card and the Ask card |
 | `morph-panel.js` | The page: the verdict, Now, the rooms, brAIn's cases, To Do, Ask, Edit, Tell, Settings |
 | `cards.js` | The built-in card types (`TYPES`) |
 | `engine.js` | The layout engine: springs, masonry, opening in place |
@@ -415,6 +420,127 @@ A number a card works out from other sensors (a difference, a sum, a rate, a
 cost) is not a question: Home Assistant records entities, so make a template
 sensor that holds it, show that sensor on the card, and say so. A value
 calculated only in the card has no history and nothing an automation can use.
+
+# Home Assistant dashboards (brAIn 5.0)
+
+Morph is now also a layer on **Home Assistant's own dashboards**. A
+dashboard the household has let brAIn change ("Let brAIn change it" on the
+brAIn button, bottom right of any dashboard) stays an ordinary Home
+Assistant dashboard, drawn by Home Assistant: every built-in card, every
+HACS card, the visual editor, the sidebar and themes work exactly as they
+do anywhere else. What Morph adds is that you can change it, and that every
+change is kept.
+
+## The files
+
+| File | What it is | Who writes it |
+|---|---|---|
+| `dashboards/<key>.yaml` | One Home Assistant dashboard (`default` is the default one, otherwise its url path): its Raw configuration editor YAML, `views:` at the top | You, Home Assistant's own editor (Morph copies it here), a person |
+| `types/<slug>.yaml` and `types/<slug>.js` | Card types: a card built once and used anywhere | You |
+| `themes/*.yaml` | Home Assistant themes, loaded into Home Assistant | You, a person |
+
+- **Edit `dashboards/<key>.yaml`, never Home Assistant's `.storage`.** The
+  moment you write the file Morph saves it to Home Assistant and every open
+  screen redraws. Do not use `update_dashboard` for a dashboard kept here.
+- A change made in Home Assistant's own editor is written back into the
+  file and committed as *Edited in Home Assistant*.
+- A file that does not read as YAML is not sent: Home Assistant keeps the
+  last version that did until the file is fixed.
+- Keep every card you were not asked about exactly as it is.
+
+## What to use for a card
+
+1. **A card Home Assistant already has** (tile, thermostat, entities,
+   heading, grid, conditional…), or **a HACS card this house has**
+   installed (check `lovelace_resources` first; never install one without
+   asking).
+2. **Morph's own cards**, which are Home Assistant cards too, each with
+   Home Assistant's visual editor: `custom:morph-<kind>-card` where kind is
+   one of `light`, `light-group`, `fan`, `cover`, `lock`, `switch`,
+   `button`, `vacuum`, `climate`, `sensor`, `readings`, `meter`, `media`,
+   `camera`, `list`, `person`, `weather`, `alarm`, `scenes`, `entity`,
+   `note`. They take `entity` (or `entities` for `readings`, `list`,
+   `scenes`), `name`, `room` (names starting with it are shortened),
+   `color` (amber sand sky violet teal lime rose peach indigo), and a
+   thermostat takes `actions` (up to four scripts, scenes or buttons).
+   `custom:morph-cases-card` (brAIn's cases; `area:` or `entities:` for one
+   room's) and `custom:morph-ask-card` are Morph's too.
+3. **A card type** (below), when the card will be wanted again or in more
+   than one place.
+
+A **HACS card** is changed through its own config and, for looks, a
+`card_mod:` block when card-mod is installed (ask before installing it).
+Never edit a HACS card's JavaScript: HACS overwrites it on update. When the
+change needs its code, make a card type that wraps it (`kind: template`) or
+copies it (`kind: element`), and say so.
+
+## Card types (`types/`)
+
+A card type is built once and used anywhere as `custom:morph-type-<slug>`;
+it appears in Home Assistant's card picker as "Morph · <name>" with a
+visual editor for its variables. A copy holds only its variables, so
+**changing the type changes every copy on every dashboard at once**.
+
+```yaml
+# types/thermo-buttons.yaml
+name: Thermostat with buttons
+description: A thermostat with the scripts that go with it.
+kind: template
+variables:                       # what a copy sets; the editor draws these
+  - name: entity
+    label: Thermostat
+    required: true
+    selector: {entity: {filter: [{domain: climate}]}}
+  - name: boost
+    label: Boost script
+    selector: {entity: {filter: [{domain: script}]}}
+  - name: title
+    default: Climate
+card:                            # any Lovelace card config; [[name]] is a variable
+  type: vertical-stack
+  title: "[[title]]"
+  cards:
+    - type: thermostat
+      entity: "[[entity]]"
+    - type: button
+      entity: "[[boost]]"
+```
+
+A copy: `{type: custom:morph-type-thermo-buttons, entity: climate.downstairs, boost: script.boost}`.
+`"[[name]]"` alone is the value itself (a list stays a list); inside longer
+text it is the value as text; a variable nobody set leaves its key out.
+
+For a card nothing existing can draw, `kind: element` and
+`types/<slug>.js`, whose **default export** is the card's class (the
+contract in "Custom card code" below: `setConfig` gets the copy's
+variables, `hass` is set on every change). A new version of the code is
+picked up by every open page without a reload.
+
+When a Tell is about a copy, the request says whether the person wants
+**just this one** (change its variables in the dashboard, or make it a
+plain card) or **every copy** (change the type). When it does not say,
+change only that copy and say the type could be changed instead.
+
+## Themes (`themes/`)
+
+Ordinary Home Assistant theme files (`Name: {variable: value, modes: {light:
+…, dark: …}}`), loaded into Home Assistant beside its own themes and
+repainted live. `Morph` (light and dark) and `Morph Medium` are here. A
+view's look is its `theme:` key; the house's is `frontend.set_theme`. Every
+Morph card reads Home Assistant's variables (`primary-background-color`,
+`card-background-color`, `primary-text-color`, `secondary-text-color`,
+`divider-color`, `primary-color`, `ha-card-border-radius`) and Morph's
+palette as `morph-amber`, `morph-sand`, `morph-sky`, `morph-violet`,
+`morph-teal`, `morph-lime`, `morph-rose`, `morph-peach`, `morph-indigo`.
+
+## Morph's view
+
+`type: custom:morph-view` on a view lays out Home Assistant's own sections
+the Morph way: a room that needs somebody (an unlocked lock, an open door,
+a leak) is lifted to the top with why, a room with nothing on folds to one
+line, and on a touch screen the room rail runs down the right edge. Each is
+a switch on the view: `morph: {order: false, fold: false, rail: false}`.
+A section's name is its first `heading` card.
 
 # Answering a Tell (reference)
 

@@ -34,12 +34,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import brain  # noqa: E402
+import convert  # noqa: E402
 import converse  # noqa: E402
 import devloop  # noqa: E402
 import generator  # noqa: E402
 import gitrepo  # noqa: E402
 import ha  # noqa: E402
 import learning  # noqa: E402
+import lovelace  # noqa: E402
 import morphcode  # noqa: E402
 import paths  # noqa: E402
 import settings  # noqa: E402
@@ -64,7 +66,7 @@ STATE: dict = {"bootstrapped": False, "last_revision": "", "generate_note": ""}
 # "edited outside Morph" commit must never interleave, or a person's save
 # is committed under the wrong author and its own commit finds nothing.
 LOCK = asyncio.Lock()
-READ_ONLY_KINDS = ("history", "tell", "tell_answer", "learn_now", "tell_issue", "report", "report_withdraw", "converse")
+READ_ONLY_KINDS = ("convert", "history", "tell", "tell_answer", "learn_now", "tell_issue", "report", "report_withdraw", "converse")
 
 
 # ------------------------------------------------------------- bootstrap
@@ -93,6 +95,15 @@ def install_docs() -> None:
         shutil.copyfile(paths.DEFAULTS / "cards-README.md", readme)
     if not paths.LEARNED.exists():
         learning.write_lessons([], commit=False)
+    # Morph's looks as Home Assistant themes, put here once: the folder is
+    # this house's from then on (the integration's themes.py loads it).
+    themes = paths.MORPH_DIR / "themes"
+    if not themes.exists() and (paths.DEFAULTS / "themes").is_dir():
+        themes.mkdir(parents=True, exist_ok=True)
+        for src in (paths.DEFAULTS / "themes").glob("*.yaml"):
+            shutil.copyfile(src, themes / src.name)
+    paths.DASHBOARDS_DIR.mkdir(parents=True, exist_ok=True)
+    paths.TYPES_DIR.mkdir(parents=True, exist_ok=True)
 
 
 async def bootstrap() -> None:
@@ -193,6 +204,30 @@ async def handle(kind: str, p: dict) -> dict:
         sha = await asyncio.to_thread(gitrepo.commit, "Edited dashboard.yaml", "person")
         await asyncio.to_thread(publish)
         return {"ok": True, "commit": sha, "problems": problems}
+    if kind == "convert":
+        # Morph's own dashboard as a Home Assistant one (convert.py): the
+        # config and what could not come along. The browser creates the
+        # dashboard (Home Assistant's own command) and saves this into it.
+        dash, problems, _ = await asyncio.to_thread(store.read)
+        if not (dash.get("floors") or []):
+            return {"ok": False, "error": "There is no Morph dashboard to bring over."}
+        config, report = convert.to_lovelace(dash)
+        return {"ok": True, "config": config, "report": report, "url_path": convert.URL_PATH,
+                "title": dash.get("title") or "Home"}
+    if kind in ("restore", "history") and p.get("dashboard"):
+        # One Home Assistant dashboard's own history (lovelace.py): its
+        # YAML's commits, and a restore of that file alone.
+        key = str(p.get("dashboard") or "")
+        if not lovelace.KEY_RE.match(key):
+            return {"ok": False, "error": "That is not a dashboard brAIn keeps."}
+        rel = lovelace.rel(key)
+        if kind == "history":
+            return {"ok": True, "log": await asyncio.to_thread(gitrepo.log, int(p.get("limit") or 80), rel)}
+        ok, detail = await asyncio.to_thread(gitrepo.restore_path, str(p.get("sha") or ""), rel,
+                                             str(p.get("title") or "the dashboard")[:80])
+        if ok:
+            await sync_dashboards()
+        return {"ok": ok, "commit": detail} if ok else {"ok": False, "error": detail}
     if kind in ("undo_commit", "restore"):
         fn = gitrepo.revert if kind == "undo_commit" else gitrepo.restore
         ok, detail = await asyncio.to_thread(fn, str(p.get("sha") or ""))
@@ -232,6 +267,7 @@ async def handle(kind: str, p: dict) -> dict:
     if kind == "tell_undo":
         out = tell.undo(str(p.get("id") or ""))
         await asyncio.to_thread(publish)
+        await sync_dashboards()
         return out
     if kind == "settings":
         s = await asyncio.to_thread(settings.update, p.get("patch") or {})
@@ -406,6 +442,7 @@ async def watch_loop() -> None:
                     sha = await asyncio.to_thread(gitrepo.commit_pending)
                 if sha:
                     log.info("Committed a change made outside Morph (%s)", sha)
+            await sync_dashboards()
             text = ""
             try:
                 text = paths.DASHBOARD.read_text(encoding="utf-8")
@@ -424,6 +461,30 @@ async def watch_loop() -> None:
             log.exception("watch loop")
             devloop.note_exception("Watcher", exc)
         await asyncio.sleep(WATCH_S)
+
+
+# What a sync pass commits, by what moved (lovelace.sync's `what`).
+SYNC_COMMITS = {"new": ("Started keeping {title}", "morph"),
+                "outside": ("Edited in Home Assistant: {title}", "outside"),
+                "both": ("Edited in Home Assistant: {title}", "outside")}
+
+
+async def sync_dashboards() -> list[dict]:
+    """Keep every Morphed Home Assistant dashboard and its YAML in step
+    (lovelace.py), and commit what Home Assistant's own editor changed.
+    While a Tell runs, a change is still applied (the person watches it
+    happen) but nothing is committed: the Tell's one commit takes it."""
+    events = await asyncio.to_thread(lovelace.sync)
+    await asyncio.to_thread(lovelace.write_usage)
+    commits = [SYNC_COMMITS[e["what"]] for e in events if e["what"] in SYNC_COMMITS]
+    if commits and not tell._RUNNING and not LOCK.locked():
+        async with LOCK:
+            for (message, who), e in zip(commits, [e for e in events if e["what"] in SYNC_COMMITS]):
+                await asyncio.to_thread(gitrepo.commit, message.format(title=e["title"]), who)
+    for e in events:
+        if e["what"] == "held":
+            log.info("Dashboard %s does not read: %s", e["key"], e.get("problem"))
+    return events
 
 
 async def _learn(pressed: bool = False) -> None:

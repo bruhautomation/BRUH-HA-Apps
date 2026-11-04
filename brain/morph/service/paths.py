@@ -41,6 +41,11 @@ DASHBOARD = MORPH_DIR / "dashboard.yaml"
 AGENTS = MORPH_DIR / "AGENTS.md"
 LEARNED = MORPH_DIR / "LEARNED.md"
 CARDS_DIR = MORPH_DIR / "cards"
+# Home Assistant dashboards brAIn may change (lovelace.py): the YAML kept in
+# git, the mirror Core writes of what it holds, what this asks Core to save,
+# and the hash both last agreed on.
+DASHBOARDS_DIR = MORPH_DIR / "dashboards"
+TYPES_DIR = MORPH_DIR / "types"
 # Morph's own panel modules: the copy Home Assistant serves, which brAIn's
 # run.sh deploys with the integration. brAIn reads them here to change one.
 SHIPPED = _p("MORPH_SHIPPED", "/config/custom_components/brain/morph/frontend")
@@ -54,6 +59,8 @@ TELLS = SHARED / "tells"
 # Pictures the panel took of what somebody held, written by the integration
 # (`morph/shot`) and read by brAIn's Read tool — so readable by UID 1000.
 SHOTS = SHARED / "shots"
+LL_MIRROR = SHARED / "lovelace"
+LL_APPLY = SHARED / "lovelace-apply"
 USAGE = SHARED / "usage.jsonl"
 ERRORS = SHARED / "errors.jsonl"
 DEVLOOP_OUTBOX = SHARED / "devloop" / "outbox.json"
@@ -65,6 +72,7 @@ SETTINGS = DATA / "settings.json"
 SUGGESTIONS = DATA / "suggestions.json"
 OUTCOMES = DATA / "outcomes.jsonl"
 LEARN_STATE = DATA / "learning.json"
+LL_SYNC = DATA / "lovelace-sync.json"
 
 # brAIn's own uid, so the files brAIn edits are files brAIn can write.
 BRAIN_UID = int(os.environ.get("MORPH_BRAIN_UID", "1000"))
