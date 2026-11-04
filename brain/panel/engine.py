@@ -859,6 +859,9 @@ ANALYST_TOOLS = [
     f"{MCP}notification_history",  # brAIn's own messages and what became of each
     f"{MCP}get_areas",
     f"{MCP}get_registry",
+    # One device read whole: maker, model, firmware, and a Z-Wave node's
+    # configuration parameters with their current values.
+    f"{MCP}get_device_details",
     # Which entities reach the voice assistants and each HomeKit Bridge.
     f"{MCP}assistant_exposure",
     f"{MCP}get_automations",
@@ -902,6 +905,27 @@ ANALYST_TOOLS = [
     f"{MCP}garden_harvests",
     # BRUH Cooking, the reading half: what the cooking appliances are doing.
     f"{MCP}cooking_status",
+]
+# The upgrade advisor's reading tools (`upgrades`, `server._advise_run`): the
+# device an update is for, its entities, what the house says about them,
+# and the configuration around them. A subset of ANALYST_TOOLS, so every
+# one is a read already held from both ends; the rest of the analyst's
+# reads are denied to it by name (`run_analyst(allow=)`), because the run
+# reads release notes from outside the house and has no business with the
+# panel's screens, the other add-ons or the cameras.
+ADVISOR_TOOLS = [
+    f"{MCP}get_device_details",
+    f"{MCP}get_entity_state",
+    f"{MCP}get_all_states",
+    f"{MCP}get_registry",
+    f"{MCP}get_history",
+    f"{MCP}get_logbook",
+    f"{MCP}recall",
+    f"{MCP}get_ha_config",
+    f"{MCP}get_automation_config",
+    f"{MCP}search_related",
+    f"{MCP}esphome_list_devices",
+    f"{MCP}esphome_get_config",
 ]
 # Named explicitly rather than left to the allow-list, because `--allowedTools`
 # governs what runs WITHOUT a prompt, and a headless run cannot be prompted:
@@ -1009,6 +1033,7 @@ def run_analyst(
     schema: dict | None = None,
     pressed: bool = False,
     camera_grant: tuple[str, ...] = (),
+    allow: list[str] | None = None,
 ) -> dict:
     """Run `claude -p` with READ-ONLY Home Assistant tools. Same envelope.
 
@@ -1042,8 +1067,22 @@ def run_analyst(
     deny list to the allow list for this run only, and the grant rides in
     the CLI's environment to the MCP server, which refuses any camera not
     in it and asks the panel's daily count before every frame.
+
+    ``allow`` narrows the reads to a subset of ANALYST_TOOLS (the upgrade
+    advisor's ``ADVISOR_TOOLS``); every analyst tool outside it moves to
+    the deny list, so a narrowed run is held from both ends like a whole
+    one. A name outside ANALYST_TOOLS is a ValueError, never a widening.
     """
-    allow, deny = list(ANALYST_TOOLS), list(ANALYST_DENIED)
+    if allow is not None:
+        stray = [t for t in allow if t not in ANALYST_TOOLS]
+        if stray:
+            raise ValueError(f"not reading tools: {', '.join(stray)}")
+        narrowed = list(allow)
+        deny = list(ANALYST_DENIED) + [t for t in ANALYST_TOOLS
+                                       if t not in narrowed]
+        allow = narrowed
+    else:
+        allow, deny = list(ANALYST_TOOLS), list(ANALYST_DENIED)
     grant = tuple(c for c in camera_grant or () if str(c).startswith("camera."))
     if grant:
         allow.append(CAMERA_TOOL)

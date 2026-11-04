@@ -11608,20 +11608,50 @@ async def _pending_updates() -> list[dict] | None:
     return upgrades.pending(raw if isinstance(raw, list) else [])
 
 
-def _advise_run(prompt: str, system: str, schema: dict) -> dict:
-    """The upgrade advisor's one Claude call: no tools at all, so a run
-    reading release notes cannot be talked by them into reaching anything
-    — and nothing here could install the update if it were."""
-    return engine.run_claude(prompt, system, "", upgrades.TIMEOUT_S, 4,
-                             "maintenance", job="upgrade_advice",
-                             schema=schema)
+def _advise_run(prompt: str, system: str, schema: dict, *,
+                pressed: bool = False) -> dict:
+    """The upgrade advisor's one Claude call: Home Assistant's READING
+    tools and nothing else (`engine.ADVISOR_TOOLS`, the rest of the
+    analyst's reads denied by name), so release notes that tried to steer
+    the run could make it read, never act — and nothing here could install
+    the update if it were asked to.
+
+    It reads the device before it answers (#663): a firmware question's
+    facts — a Z-Wave node's configuration parameters, the firmware it runs
+    — live on the device, and the tool-less run it replaced could only
+    guess them. What its tools RETURNED (and what it asked them, so an
+    echo is not a read) comes back off the run's own transcript
+    (`conversations.tool_reads`), because that, not the run's own word,
+    is what `upgrades.judge` checks a quote against.
+
+    A person's Check again runs on the chat's model — the same thinking
+    the person gets when they ask in the chat; a timer's run takes the
+    job's planned tier. Neither is charged to the Resident's ledger: the
+    timer asks once per new version (`UPGRADE_TRIED`), behind the same
+    gates as every scheduled run.
+    """
+    model = (eff_chat_model() or "opus") if pressed else ""
+    result = engine.run_analyst(
+        prompt, system, model, upgrades.TIMEOUT_S, upgrades.MAX_TURNS,
+        "maintenance", job="upgrade_advice", schema=schema, pressed=pressed,
+        allow=engine.ADVISOR_TOOLS)
+    session_id = str((result.get("meta") or {}).get("session_id") or "")
+    reads = (conversations.tool_reads(engine.CLAUDE_HOME, session_id)
+             if session_id else None)
+    if reads is not None:
+        result["tool_read"] = reads.get("results") or ""
+        result["tool_asked"] = reads.get("asked") or ""
+        result["tools"] = list(reads.get("tools") or [])
+    return result
 
 
-async def _run_advice(update: dict) -> None:
+async def _run_advice(update: dict, pressed: bool = False) -> None:
     import aiohttp  # noqa: PLC0415
 
     async def run(prompt: str, system: str, schema: dict) -> dict:
-        return await _claude(_advise_run, prompt, system, schema)
+        return await _claude(
+            _advise_run, prompt, system, schema, pressed=pressed,
+            priority=run_queue.PRESS if pressed else run_queue.SCHEDULED)
 
     async with aiohttp.ClientSession() as session:
         verdict = await upgrades.advise(session, update, run)
@@ -11657,10 +11687,76 @@ async def h_upgrades_advise(request: web.Request) -> web.Response:
     update = next((u for u in updates if u["entity_id"] == entity_id), None)
     if update is None:
         raise web.HTTPNotFound(text="that update is not waiting any more")
-    started = _maint_start("upgrades", lambda: _run_advice(update))
+    started = _maint_start("upgrades", lambda: _run_advice(update, pressed=True))
     if started:
         MAINT_STATE["upgrades"]["subject"] = entity_id
     return web.json_response({**_maint_status("upgrades"), "started": started})
+
+
+async def h_upgrades_install(request: web.Request) -> web.Response:
+    """Install one update, on a person's press — and only one brAIn checked.
+
+    The card offers this on a CHECKED "safe tonight" verdict for exactly
+    the version that is waiting (`upgrades.listing` keys a verdict on it),
+    and the press is the approval, the way Apply is on a plan: the call
+    goes through `typed_fix.execute`, so the protected list and the
+    tripwire are asked at the moment of acting and the action ledger gets
+    the row every other press writes. A backup is asked for where the
+    update offers one (`UpdateEntityFeature.BACKUP`).
+
+    Nothing a timer starts reaches this: it is a POST route and nothing
+    else calls it (`tests/test_upgrade_advisor_reads.py` reads that off the
+    AST), so an unattended run — whatever a verdict says, YOLO or not —
+    never installs an update.
+    """
+    body = await _json_body(request)
+    entity_id = str(body.get("entity_id") or "")
+    latest = str(body.get("latest") or "")
+    updates = await _pending_updates()
+    if updates is None:
+        raise web.HTTPConflict(text="Home Assistant did not answer for its "
+                                    "update entities, so nothing was installed.")
+    update = next((u for u in updates if u["entity_id"] == entity_id), None)
+    if update is None:
+        raise web.HTTPNotFound(text="that update is not waiting any more")
+    if latest and update.get("latest") != latest:
+        raise web.HTTPConflict(text=f"the update waiting now is "
+                                    f"{update.get('latest')}, not the {latest} "
+                                    "brAIn checked — nothing was installed")
+    [row] = await asyncio.to_thread(upgrades.listing, [update])
+    advice = row.get("advice") or {}
+    if advice.get("verdict") != "safe_tonight" or not advice.get("checked"):
+        raise web.HTTPConflict(text="brAIn installs only an update it checked "
+                                    "as safe tonight; this one is "
+                                    + upgrades.VERDICT_WORDS.get(
+                                        advice.get("verdict") or "unknown",
+                                        "not checked")
+                                    + ", so nothing was installed")
+    hooks = _typed_hooks()
+    data: dict = {}
+    try:
+        state = await hooks.state(entity_id)
+        features = int(((state or {}).get("attributes") or {})
+                       .get("supported_features") or 0)
+    except Exception:  # noqa: BLE001 — no state read is no backup flag
+        features = 0
+    if features & 8:   # UpdateEntityFeature.BACKUP
+        data["backup"] = True
+    op = {"op": "call_service", "domain": "update", "service": "install",
+          "entities": [entity_id], "data": data}
+    protected = automation_writer.protected_patterns()
+    tokens = await asyncio.to_thread(security.honeytoken_ids)
+    done = await typed_fix.execute([op], hooks, protected=protected,
+                                   honeytokens=tokens, channel="panel",
+                                   intervention=f"update-{entity_id}")
+    if not done["ok"]:
+        raise web.HTTPConflict(text=done["error"] or "it did not install")
+    log.info("update install pressed: %s %s", log_safe(entity_id),
+             log_safe(update.get("latest") or ""))
+    payload = await asyncio.to_thread(_today_payload)
+    payload["open"] = await asyncio.to_thread(_queue_count)
+    payload["installing"] = entity_id
+    return web.json_response(payload)
 
 
 # -- the overnight health check (SRE) -----------------------------------------
@@ -12307,6 +12403,7 @@ def _maint_routes(app: web.Application) -> None:
     app.router.add_post("/api/tidy/undo/{batch}", h_tidy_undo)
     app.router.add_get("/api/upgrades", h_upgrades)
     app.router.add_post("/api/upgrades/advise", h_upgrades_advise)
+    app.router.add_post("/api/upgrades/install", h_upgrades_install)
     app.router.add_get("/api/sre", h_sre)
     app.router.add_post("/api/sre/run", h_sre_run)
     app.router.add_get("/api/house_book", h_book)
@@ -20804,8 +20901,16 @@ def _cases_payload(now: float | None = None) -> dict:
     rows.sort(key=answers_mod.feed_key)
     # The producer in words, worded once (`_producer_label`).
     _name_producers(rows)
+    # The two cards no store owns, beside the cases: `open` counts them, so
+    # a listing that left them out said "open: 2" over an empty list (#660).
+    try:
+        today_cards = _today_payload()
+    except Exception as exc:  # noqa: BLE001 — the cases are the feed's floor
+        log.debug("could not read Today's own cards: %s", exc)
+        today_cards = {"tidy": None, "updates": []}
     return {
         "cases": rows,
+        "today": today_cards,
         "names": names,
         "open": _queue_count(now),
         "ledger": LEDGER.summary(now),
@@ -20819,6 +20924,32 @@ def _cases_payload(now: float | None = None) -> dict:
 
 async def h_cases(request: web.Request) -> web.Response:
     return web.json_response(await asyncio.to_thread(_cases_payload))
+
+
+def _case_or_card(case_id: str) -> dict | None:
+    """One case, or one of Today's own cards, by the id the card carries."""
+    if case_id.startswith(("update:", "tidy:")):
+        payload = _today_payload()
+        if case_id.startswith("update:"):
+            card = next((u for u in payload["updates"]
+                         if u.get("key") == case_id), None)
+            return {"id": case_id, "kind": "update", "card": card} if card else None
+        tidy_card = payload.get("tidy")
+        if tidy_card and tidy_card.get("key") == case_id:
+            return {"id": case_id, "kind": "tidy", "card": tidy_card}
+        return None
+    case = cases.get(case_id)
+    return {"id": case_id, "kind": case.get("kind"), "case": case} if case else None
+
+
+async def h_case_get(request: web.Request) -> web.Response:
+    """One card by its id, whole — a case, or an update or tidy card Today
+    draws without a store (#660: an update card's id answered 404 here, so
+    the full text could be read nowhere)."""
+    found = await asyncio.to_thread(_case_or_card, request.match_info["id"])
+    if found is None:
+        raise web.HTTPNotFound(text="no such case")
+    return web.json_response(found)
 
 
 async def h_case_verb(request: web.Request) -> web.Response:
@@ -20949,14 +21080,22 @@ def _who_for(verb: str, situation: str = "", name: str = "") -> dict:
                 who, name or personality.assistant_name(), situation)}
 
 
+def _installable(update: dict) -> bool:
+    """Whether the card offers Install: a verdict brAIn checked as safe."""
+    advice = update.get("advice") or {}
+    return advice.get("verdict") == "safe_tonight" and bool(advice.get("checked"))
+
+
 def _today_payload() -> dict:
     """Today's two cards no store owns, in the shape the panel renders."""
     cards = _today_cards()
     tidy_card = cards["tidy"]
     name = personality.assistant_name()
-    # An assessed update leads with Add to To Do: installing one is the
-    # person's press in Home Assistant's own Updates, never brAIn's.
-    updates = [{**u, "who": _who_for("todo", name=name)}
+    # A checked "safe tonight" leads with Apply, which installs it on the
+    # press (`h_upgrades_install`); anything else leads with Add to To Do,
+    # because a Wait or a Can't tell is the person's to decide.
+    updates = [{**u, "who": _who_for(
+        "apply" if _installable(u) else "todo", name=name)}
                for u in cards["updates"]]
     out: dict = {"tidy": None, "updates": updates}
     if tidy_card:
@@ -28680,6 +28819,7 @@ def make_app() -> web.Application:
     app.router.add_get("/api/findings", h_findings)
     # The feed. One object over the four stores, and three endings on it.
     app.router.add_get("/api/cases", h_cases)
+    app.router.add_get("/api/case/{id}", h_case_get)
     # Before the verb route, which would answer `wake` as an unknown ending.
     app.router.add_post("/api/case/{id}/wake", h_case_wake)
     app.router.add_post("/api/case/{id}/respond", h_case_respond)

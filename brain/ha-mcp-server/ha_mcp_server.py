@@ -5351,6 +5351,105 @@ def search_related(item_type, item_id):
     return out
 
 
+# One device read whole: what the registry says it is (maker, model,
+# firmware, the integrations that hold it) and, for a Z-Wave JS node, every
+# configuration parameter with its current value — the facts an update's
+# notes are about, which live on the device rather than in any YAML. The
+# upgrade advisor answered "Can't tell" (and guessed a parameter name)
+# about a switch's firmware because nothing it could reach carried them.
+# Three reads, the frontend's own commands, and nothing that writes.
+MAX_DEVICE_PARAMETERS = 250
+MAX_PARAMETER_TEXT = 300
+
+
+def _parameter_line(row):
+    """`parameter 3: LED indicator = Always off (value 2) — what it does`."""
+    meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    number = row.get("property")
+    key = row.get("property_key")
+    name = f"parameter {number}" + (f".{key}" if key not in (None, "") else "")
+    endpoint = row.get("endpoint")
+    if endpoint not in (None, 0):
+        name += f" (endpoint {endpoint})"
+    value = row.get("value")
+    states = meta.get("states") if isinstance(meta.get("states"), dict) else {}
+    shown = states.get(str(value))
+    if shown is None:
+        shown = f"{value} {meta['unit']}" if meta.get("unit") else str(value)
+    line = f"{name}: {meta.get('label') or 'unlabelled'} = {shown} (value {value})"
+    if meta.get("description"):
+        line += f" \u2014 {meta['description']}"
+    return line[:MAX_PARAMETER_TEXT]
+
+
+def get_device_details(entity_id=None, device_id=None):
+    """The device behind an entity (or by its id), and its Z-Wave
+    configuration parameters when it is a Z-Wave JS node. Read-only."""
+    entity_id = str(entity_id or "").strip()
+    device_id = str(device_id or "").strip()
+    if not entity_id and not device_id:
+        return {"error": "Give an entity_id (any entity of the device) or a device_id."}
+    try:
+        if not device_id:
+            entry = _ws_command({"type": "config/entity_registry/get",
+                                 "entity_id": entity_id})
+            if not isinstance(entry, dict) or "error" in entry:
+                return entry if isinstance(entry, dict) else {"error": str(entry)}
+            device_id = str(entry.get("device_id") or "")
+            if not device_id:
+                return {"entity_id": entity_id,
+                        "platform": entry.get("platform"),
+                        "note": "This entity belongs to no device."}
+        devices = _ws_command({"type": "config/device_registry/list"}, timeout=30)
+    except ImportError:
+        return {"error": "websockets package not available in this environment"}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+    if isinstance(devices, dict) and "error" in devices:
+        return devices
+    device = next((d for d in devices or [] if isinstance(d, dict)
+                   and d.get("id") == device_id), None)
+    if device is None:
+        return {"error": f"There is no device {device_id} in the registry."}
+    integrations = sorted({str(i[0]) for i in device.get("identifiers") or []
+                           if isinstance(i, (list, tuple)) and i})
+    info = {
+        "device_id": device_id,
+        "name": device.get("name_by_user") or device.get("name"),
+        "manufacturer": device.get("manufacturer"),
+        "model": device.get("model"),
+        "model_id": device.get("model_id"),
+        "sw_version": device.get("sw_version"),
+        "hw_version": device.get("hw_version"),
+        "area_id": device.get("area_id"),
+        "integrations": integrations,
+    }
+    out = {"device": {k: v for k, v in info.items() if v not in (None, "", [])}}
+    if entity_id:
+        out["entity_id"] = entity_id
+    if "zwave_js" not in integrations:
+        return out
+    try:
+        params = _ws_command({"type": "zwave_js/get_config_parameters",
+                              "device_id": device_id}, timeout=30)
+    except Exception as e:  # noqa: BLE001
+        out["configuration_parameters_error"] = str(e)
+        return out
+    if not isinstance(params, dict) or "error" in params:
+        out["configuration_parameters_error"] = str(
+            (params or {}).get("error") if isinstance(params, dict) else params)
+        return out
+    rows = [r for r in params.values() if isinstance(r, dict)]
+    rows.sort(key=lambda r: (int(r.get("property") or 0)
+                             if str(r.get("property") or "0").isdigit() else 0,
+                             str(r.get("property_key") or "")))
+    out["configuration_parameters"] = [_parameter_line(r) for r in
+                                       rows[:MAX_DEVICE_PARAMETERS]]
+    if len(rows) > MAX_DEVICE_PARAMETERS:
+        out["note"] = f"{len(rows)} parameters; the first {MAX_DEVICE_PARAMETERS} are listed."
+    return out
+
+
 def get_config():
     """Get Home Assistant configuration."""
     return ha_api_request("/api/config")
@@ -8952,6 +9051,29 @@ TOOLS = [
         }
     },
     {
+        "name": "get_device_details",
+        "description": (
+            "One device, read whole: its maker, model, firmware and the "
+            "integrations that hold it — and, for a Z-Wave device, every "
+            "configuration parameter with its current value and what it "
+            "does. Give any entity of the device, or its device_id. "
+            "Read-only."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "Any entity of the device (an update entity works)"
+                },
+                "device_id": {
+                    "type": "string",
+                    "description": "The device's id, if you have it instead"
+                }
+            }
+        }
+    },
+    {
         "name": "search_related",
         "description": (
             "Everything Home Assistant relates to one item — the entities, "
@@ -9825,6 +9947,7 @@ TOOL_IMPLEMENTATIONS = {
     "get_automation_trace": "get_automation_trace",
     "get_automation_config": "get_automation_config",
     "search_related": "search_related",
+    "get_device_details": "get_device_details",
     "get_ha_config": "get_config",
     "get_services": "get_services",
     "get_entity_counts": "get_entity_counts",
@@ -9943,7 +10066,7 @@ _TOOL_SPECS = {
 VOICE_REFUSED_TOOLS = frozenset({
     "get_registry", "get_entity_counts", "list_dashboards", "get_dashboard",
     "get_automations", "get_automation_trace", "get_automation_config",
-    "search_related", "get_activity",
+    "search_related", "get_activity", "get_device_details",
     "get_house_model", "room_physics", "simulate_automation", "get_findings",
     "get_health", "get_error_log", "fire_event", "get_supervisor_info",
     "reload_config", "offer_resolutions", "explain_decision",

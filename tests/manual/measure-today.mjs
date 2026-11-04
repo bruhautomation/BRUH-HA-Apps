@@ -54,12 +54,17 @@
 //     taller neighbour, not from a frame that drew nothing, and not from a
 //     one-line frame held at a minimum height;
 //   * an insight card and a finding about the same thing say so, each
-//     with a link to the other.
+//     with a link to the other;
+//   * an update card's reason is whole (#660): clamped on the face, read in
+//     full with Details open, never cut in the middle of a word; a checked
+//     "safe tonight" leads with Apply, which posts the install, and says
+//     nothing about never installing; a "Can't tell" offers no Apply, and
+//     Check again behind its ⋯ (#663).
 import { chromium } from 'playwright';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stub, COUNTED, VOCAB, CUT, INSIGHTS, openEverything, FEED, LOOSE, kase, A, posts,
-  openToday } from './today-fixture.mjs';
+  openToday, UPDATE_REASON } from './today-fixture.mjs';
 import { controlOverlaps } from './tabs.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -451,6 +456,54 @@ for (const { width, touch, top, fits } of CASES) {
   const refused = await page.evaluate(() =>
     document.querySelector('[data-case-id="f:1105"] .qplanline .qfixhead')?.textContent || '');
   if (refused !== "brAIn can't apply this") note(where, `a refused plan reads "${refused}"`);
+
+  // The update cards (#660, #663).
+  {
+    const safeId = 'update:update.core:2026.10.2';
+    const safe = cards.find((c) => c.id === safeId);
+    const unsure = cards.find((c) => c.id === 'update:update.workshop_switch:1.3');
+    if (!safe) note(where, 'the safe update card is not drawn');
+    else {
+      const lead = safe.buttons.find((b) => b.primary);
+      if (!lead || lead.label !== 'Apply') note(where, `the safe update leads with ${lead && lead.label}`);
+      const whole = await page.evaluate(([id, reason]) => {
+        const c = document.querySelector(`[data-case-id="${id}"]`);
+        const body = c.querySelector(':scope > .card-body');
+        const det = c.querySelector(':scope > details');
+        det.open = true;
+        const out = { text: body.textContent, clipped: body.scrollHeight > body.clientHeight + 1,
+                      never: /never installs/.test(c.textContent), reason };
+        det.open = false;
+        return out;
+      }, [safeId, UPDATE_REASON]);
+      if (whole.text !== UPDATE_REASON) {
+        note(where, `the update reason reads "${whole.text.slice(-40)}" — not the whole reason`);
+      }
+      if (whole.clipped) note(where, 'the update reason is still clamped with Details open');
+      if (whole.never) note(where, 'the card offering Apply says brAIn never installs');
+      await page.evaluate((id) => document.querySelector(
+        `[data-case-id="${id}"] .card-actions .btn-primary`).click(), safeId);
+      await page.waitForTimeout(150);
+      const sent = await posts(page);
+      if (!sent.some((p) => /api\/upgrades\/install$/.test(p.url))) {
+        note(where, `Apply on the safe update sent ${JSON.stringify(sent.map((p) => p.url))}`);
+      }
+    }
+    if (!unsure) note(where, "the Can't tell update card is not drawn");
+    else {
+      if (unsure.apply) note(where, "a Can't tell update offers Apply");
+      await page.evaluate(() => window.scrollTo(0, 0));
+      const dots = page.locator('[data-case-id="update:update.workshop_switch:1.3"] .card-actions .btn.icon');
+      if (!(await dots.count())) note(where, "the Can't tell update has no ⋯");
+      else {
+        await dots.first().evaluate((b) => b.click());
+        const items = await page.evaluate(() => [...document.querySelectorAll('#chipPop .cardmenuitem b')]
+          .map((b) => b.textContent));
+        if (!items.includes('Check again')) note(where, `the Can't tell ⋯ holds ${items.join(' | ')}`);
+        await page.keyboard.press('Escape');
+      }
+    }
+  }
 
   // The page's own text, outside every card's Details.
   const pageCut = await page.evaluate((cutSrc) => {

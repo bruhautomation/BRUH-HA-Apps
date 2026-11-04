@@ -2,6 +2,22 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.2.10
+
+### Added
+
+- An update card that brAIn checked as safe has an Apply button that installs it on your press, with a backup where the update offers one. Nothing installs an update without a press (#663).
+- brAIn can read a device's details, including a Z-Wave device's configuration settings, when it judges whether an update is safe (#663).
+
+### Changed
+
+- The upgrade check now reads the device itself (its settings, state and history) before deciding, can quote what it read as its evidence, and runs with the same model as the chat when you press Check again. A "Can't tell" says what it could not reach (#663, #660).
+
+### Fixed
+
+- An update card's full reason can be read: it is stored whole and opens in Details, instead of being cut mid-word at 500 characters (#660).
+- Opening a case or update card by its link no longer answers "not found" (#660).
+
 ## 4.2.9
 
 ### Added
