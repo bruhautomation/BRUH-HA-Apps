@@ -17,7 +17,7 @@
 
 import { esc, clock, friendly, domainOf } from './util.js';
 
-export const PAST_MIN = 24 * 60;     // how far behind now you can look: a day (vision §2.3, Came up)
+export const PAST_MIN = 0;           // the strip stops at now: there is no past view
 export const AHEAD_MIN = 24 * 60;    // and ahead
 export const ZONE_PX = 14;           // an event this close to the line is "here"
 const STACK_PX = 5;                  // dots closer than this are one dot with a count
@@ -34,7 +34,6 @@ const KINDS = {
   date: { color: 'var(--teal)', word: '' },
   usual: { color: 'var(--violet)', word: 'usually about now' },
   moon: { color: 'var(--indigo)', word: '' },
-  past: { color: 'var(--quiet)', word: 'happened' },
 };
 
 function parseLocal(s) {
@@ -50,7 +49,7 @@ function parseDur(s) {
 
 // Everything worth reading out in the next day, as {at, end?, label, kind,
 // solid, eid}. Times are epoch milliseconds. `extra` is what the panel adds
-// from outside the states: what happened in the last day (then.js).
+// from outside the states: a habit's measured time.
 export function collect(H, now, extra) {
   const out = [];
   const lo = now - PAST_MIN * 60000, hi = now + AHEAD_MIN * 60000;
@@ -100,9 +99,8 @@ export function collect(H, now, extra) {
       }
     }
   });
-  // What happened (then.js) is behind the line; a prediction (a habit's
-  // measured time, a dashed violet dot, §7.1) is ahead of it.
-  (extra || []).forEach((e) => { if (e && e.at > 0 && (e.at <= now || e.kind === 'usual')) out.push(e); });
+  // A prediction (a habit's measured time, a dashed violet dot, §7.1).
+  (extra || []).forEach((e) => { if (e && e.at > 0 && e.kind === 'usual') out.push(e); });
   const seen = new Set();
   return out.filter((e) => {
     if (!(e.at > 0)) return false;
@@ -256,11 +254,11 @@ export function html(m, c) {
   const tickMarks = m.ticks.map((t) => `<i class="cu-tick${t.major ? ' major' : ''}" style="left:${x(t.t)}px"></i>${t.label ? `<span class="cu-tl${t.mid ? ' cu-mid' : ''}" style="left:${x(t.t)}px">${esc(t.label)}</span>` : ''}`).join('');
   const bars = m.durs.map((d) => {
     const done = d.t < 0 ? Math.min(d.t2, 0) - d.t : 0;
-    return `<i class="cu-bar${c >= d.t && c <= d.t2 ? ' on' : ''}${d.t2 < 0 ? ' past' : ''}" data-cu-bar="${d.t},${d.t2}" style="left:${x(d.t)}px;width:${Math.max(6, (d.t2 - d.t) * k).toFixed(1)}px;top:${d.row ? 5 : -3}px;--c:${KINDS[d.kind].color}"><i style="width:${(done * k).toFixed(1)}px"></i></i>`;
+    return `<i class="cu-bar${c >= d.t && c <= d.t2 ? ' on' : ''}" data-cu-bar="${d.t},${d.t2}" style="left:${x(d.t)}px;width:${Math.max(6, (d.t2 - d.t) * k).toFixed(1)}px;top:${d.row ? 5 : -3}px;--c:${KINDS[d.kind].color}"><i style="width:${(done * k).toFixed(1)}px"></i></i>`;
   }).join('');
   const dots = m.stacks.map((s, i) => {
     const f = s.items[0];
-    return `<span class="cu-pin${s.t < -1 ? ' past' : ''}" style="left:${x(s.t)}px"><span class="cu-dot" data-cu-dot="${i}" style="border:2px ${f.solid ? 'solid' : 'dashed'} ${KINDS[f.kind].color};transform:scale(${swell(m, s.t, c)})"></span>${s.items.length > 1 ? `<span class="cu-n">${s.items.length}</span>` : ''}</span>`;
+    return `<span class="cu-pin" style="left:${x(s.t)}px"><span class="cu-dot" data-cu-dot="${i}" style="border:2px ${f.solid ? 'solid' : 'dashed'} ${KINDS[f.kind].color};transform:scale(${swell(m, s.t, c)})"></span>${s.items.length > 1 ? `<span class="cu-n">${s.items.length}</span>` : ''}</span>`;
   }).join('');
   const atNow = Math.abs(c) < 1;
   return `<div class="cu" data-upc>

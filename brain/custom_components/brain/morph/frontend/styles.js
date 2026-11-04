@@ -8,8 +8,8 @@ export const FONTS_URL = 'https://fonts.googleapis.com/css2?family=Bricolage+Gro
 export const CSS = `
 :host{display:block;height:100%}
 .t-dark{--lpull:#FFFFFF;--indigo:#9DAAF5;--peach:#F2B590;--bg:#0A0C0E;--surface:#15181B;--sunk:#0F1114;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.2);--text:#EDEFF1;--muted:#A0A9B3;--quiet:#808994;--chip:rgba(255,255,255,.06);--hover:rgba(255,255,255,.035);--amber:#F4B969;--sand:#E9D3A6;--sky:#9CC2F5;--violet:#BBA6F2;--teal:#63CCC2;--lime:#BCD873;--rose:#F2907F;--ink:#15120D;color-scheme:dark}
-.t-medium{--lpull:#FFFFFF;--indigo:#A9B4F2;--peach:#F0BC9C;--bg:#2A2D31;--surface:#34383D;--sunk:#25282C;--line:rgba(255,255,255,.1);--line2:rgba(255,255,255,.22);--text:#F1F2F3;--muted:#B5BCC4;--quiet:#949CA6;--chip:rgba(255,255,255,.07);--hover:rgba(255,255,255,.04);--amber:#F5C27F;--sand:#E6D3AC;--sky:#A7C8F2;--violet:#C3B1F0;--teal:#72CFC6;--lime:#C3DB86;--rose:#F29C8C;--ink:#15120D;color-scheme:dark}
-.t-light{--lpull:#3A2E1A;--indigo:#4F5FC4;--peach:#B8622F;--bg:#ECEBE6;--surface:#FFFFFF;--sunk:#E4E3DD;--line:rgba(22,24,27,.1);--line2:rgba(22,24,27,.24);--text:#16181B;--muted:#535A63;--quiet:#68707A;--chip:rgba(22,24,27,.06);--hover:rgba(22,24,27,.03);--amber:#C27A1A;--sand:#9C7F3C;--sky:#3B78C9;--violet:#7A5FD0;--teal:#178A80;--lime:#5E8416;--rose:#C9503F;--ink:#FFFFFF;color-scheme:light}
+.t-medium{--lpull:#FFFFFF;--indigo:#A9B4F2;--peach:#F0BC9C;--bg:#2A2D31;--surface:#34383D;--sunk:#25282C;--line:rgba(255,255,255,.1);--line2:rgba(255,255,255,.22);--text:#F1F2F3;--muted:#B5BCC4;--quiet:#9DA5AF;--chip:rgba(255,255,255,.07);--hover:rgba(255,255,255,.04);--amber:#F5C27F;--sand:#E6D3AC;--sky:#A7C8F2;--violet:#C3B1F0;--teal:#72CFC6;--lime:#C3DB86;--rose:#F29C8C;--ink:#15120D;color-scheme:dark}
+.t-light{--lpull:#3A2E1A;--indigo:#4F5FC4;--peach:#B8622F;--bg:#ECEBE6;--surface:#FFFFFF;--sunk:#E4E3DD;--line:rgba(22,24,27,.1);--line2:rgba(22,24,27,.24);--text:#16181B;--muted:#535A63;--quiet:#5B636C;--chip:rgba(22,24,27,.06);--hover:rgba(22,24,27,.03);--amber:#C27A1A;--sand:#9C7F3C;--sky:#3B78C9;--violet:#7A5FD0;--teal:#178A80;--lime:#5E8416;--rose:#C9503F;--ink:#FFFFFF;color-scheme:light}
 .morph{--ease:cubic-bezier(.2,.8,.2,1);--ease-io:cubic-bezier(.65,0,.35,1);min-height:100%;background:var(--bg);color:var(--text);font-family:'Manrope',system-ui,sans-serif;font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased;overflow-anchor:none;box-sizing:border-box}
 .morph *{box-sizing:border-box}
 .morph h1,.morph h2,.morph h3,.morph p,.morph pre{margin:0}
@@ -57,6 +57,8 @@ export const CSS = `
 .date{font-size:13px;color:var(--quiet);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bartoast{font-size:13px;color:var(--muted);margin-left:12px;min-width:0;flex:0 1 auto}
 .toastline{display:flex;align-items:center;min-height:44px;margin:-14px 0 -18px}.toastline .bartoast{margin-left:0}
+.wrap{position:relative}.wrap.toplone>[data-region="bar"]{position:absolute;top:0;right:clamp(14px,3vw,44px);z-index:7}.wrap.toplone .toastline{min-height:0;margin:0}
+@media (max-width:700px){.wrap.toplone [data-region="rooms"]{padding-right:76px}}
 .morph .editquiet{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 4px;font-size:13px;font-weight:600;color:var(--muted)}
 .morph .editquiet:hover{color:var(--text)}
 .bar>.go,.bar>.menu,.bar>.brand{flex-shrink:0}
@@ -67,16 +69,12 @@ export const CSS = `
 .morph .vjump{background:none;border:0;padding:0;margin:0;font:inherit;cursor:pointer;text-align:left;color:var(--vc,var(--text));text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:.28em;text-decoration-color:color-mix(in oklab,var(--vc,var(--text)) 50%,transparent)}
 .morph .vjump.plain{color:var(--muted)}
 .vq{color:var(--quiet);font-size:.6em}
-.vthen{color:var(--violet)}
 .needbrain{color:var(--text);padding:40px 0}
 .topsec{position:relative}
 .bigclock{position:absolute;right:0;top:-6px;display:flex;flex-direction:column;align-items:flex-end;color:var(--quiet);font-family:'Bricolage Grotesque','Manrope',sans-serif;pointer-events:none}
 .bigclock b{font-size:clamp(56px,8vw,96px);font-weight:200;letter-spacing:-.04em;line-height:1;font-variant-numeric:tabular-nums}
 .bigclock span{font-size:clamp(28px,4vw,48px);font-weight:200}
-.thenrule{position:sticky;top:0;height:2px;background:var(--violet);z-index:6;transition:width .3s var(--ease)}
 /* THEN: the page as it was. Desaturated, and nothing can be pressed. */
-.then [data-board]{filter:saturate(.65)}
-.then .mtile{cursor:default!important}
 /* Still, night and away (§10): the rooms recede, the verdict and Now
    stay; at night the page dims to a floor of 40%. */
 .form-still section.sec:not(.nowband),.form-still .flh{opacity:.35;transition:opacity .4s ease}
@@ -209,7 +207,6 @@ h1.hello{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-weight:400;
 .cu-bar{height:6px;border-radius:3px;background:color-mix(in oklab,var(--c) 22%,transparent);overflow:hidden;transition:background-color .2s ease}
 .cu-bar>i{display:block;height:100%;background:color-mix(in oklab,var(--c) 70%,transparent)}
 .cu-bar.on{background:color-mix(in oklab,var(--c) 46%,transparent)}
-.cu-bar.past,.cu-pin.past{opacity:.4}
 .cu-pin{top:-11px;width:22px;height:22px;margin-left:-11px;display:flex;align-items:center;justify-content:center}
 .cu-dot{display:block;width:12px;height:12px;border-radius:50%;background:var(--bg);flex:none;transition:transform .18s ease-out}
 .cu-n{position:absolute;top:-7px;right:-7px;font-size:10px;font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums}
@@ -414,6 +411,7 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .hues{display:flex;flex-wrap:wrap;gap:4px}
 .hue{width:36px;height:36px;border:0;padding:0;background:none;display:grid;place-items:center;cursor:pointer}
 .hue span{width:22px;height:22px;border-radius:7px}
+.llnone{display:block;font-size:13px;color:var(--quiet);padding:8px 4px}
 .code{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12px;line-height:1.55;padding:12px 14px;border-radius:12px;background:var(--sunk);white-space:pre;overflow-x:auto;margin:0;color:var(--muted);user-select:text}
 .settings{display:flex;flex-direction:column;gap:28px;max-width:860px}
 .setsec{display:flex;flex-direction:column;gap:12px;padding:18px 20px;border-radius:24px;background:var(--surface)}
@@ -450,5 +448,8 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(2px)}}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .reduce *,.reduce *::before,.reduce *::after{animation:none!important;transition:none!important}
-@media (prefers-reduced-motion:reduce){.srpanel,.morph.railing section.sec[data-sec],.morph section.sec .sechead h2,.secbg{transition:none!important}.rise,.holdbar,.nowdot,.w,.spin,.breathe,.wave,.bob,.pulse,.mprog{animation:none}.mtile,.cu-track.glide,.cu-dot,.cu-lens,.cu-bar,.todorow,.thenrule{transition:none}.form-night section.sec,.form-night .flh{transition:none}}
+@media (prefers-reduced-motion:reduce){.srpanel,.morph.railing section.sec[data-sec],.morph section.sec .sechead h2,.secbg{transition:none!important}.rise,.holdbar,.nowdot,.w,.spin,.breathe,.wave,.bob,.pulse,.mprog{animation:none}.mtile,.cu-track.glide,.cu-dot,.cu-lens,.cu-bar,.todorow{transition:none}.form-night section.sec,.form-night .flh{transition:none}}
+@media (pointer:coarse),(max-width:700px){.morph input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=color]),.morph textarea,.morph select{font-size:16px}}
 `;
+/* The 16px text floor: below it iOS zooms the page when a field takes focus (#677). Every field Morph draws, and the same floor handed to a card's own shadow root by morph-panel.js (FIELD_FLOOR). */
+export const FIELD_FLOOR = '@media (pointer:coarse),(max-width:700px){input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=color]),textarea,select{font-size:16px!important}}';

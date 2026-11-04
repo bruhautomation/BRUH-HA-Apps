@@ -157,7 +157,7 @@ async function morphSettled(el) {
 async function reveal(el, id) {
   const R = el.shadowRoot;
   const ids = [id, 'c_' + id, 's_' + id];
-  const drawn = (x) => R && R.querySelector(`[data-tile="${CSS.escape(x)}"]`);
+  const drawn = (x) => R && (R.querySelector(`[data-tile="${CSS.escape(x)}"]`) || R.querySelector(`[data-card="${CSS.escape(x)}"]`));
   const hit = ids.find(drawn);
   if (hit) return hit;
   for (const x of ids) {

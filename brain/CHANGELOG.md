@@ -2,6 +2,21 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.2.11
+
+### Removed
+
+- Morph: Then mode is gone. Sliding Coming up no longer shows the house in the past, and the strip stops at now (#662).
+
+### Fixed
+
+- Morph: with the greeting, story and Ask turned off, the first card sits right under brAIn's header instead of below an empty band, and the Edit pencil stays in the corner (#664).
+- Morph: the story never says every door is locked while a door or window is open; it names the open one (#676).
+- Morph: every text box is at least 16px on a phone, including in hosted cards, so iOS no longer zooms the page when you type (#677).
+- Morph: a card with nothing to show says so in a quiet line instead of disappearing (#678).
+- Morph: section labels are readable in every scheme (at least 4.5:1), and the light scheme follows Home Assistant's light mode (#679).
+- Morph: every button shows an icon or a word and has a name; cards brAIn builds are told to draw icons inline, show a disabled button as disabled, say when a reading is outside its target band, and leave no empty space (#682, #683).
+
 ## 4.2.10
 
 ### Added

@@ -38,8 +38,7 @@ One quiet line under the story, as today: a 1 px bottom rule in `--line`, 17 px 
 
 The strip stays as built (`upcoming.js`: a fixed reading point a little left of centre, the day sliding behind it, dots that swell as they near the line, solid rings for the scheduled and dashed for the usual). Two changes make it a time dimension rather than a schedule:
 
-1. It runs **24 hours back** as well as 24 ahead (`PAST_MIN` becomes 1440). Behind the line the dots are what happened: doors, scenes, people arriving, appliances finishing, read off the recorder and the logbook.
-2. Sliding it into the past puts the whole page into **then** (§7.2). The strip is the only scrubber. There is no history page.
+The strip stops at now: there is no past view and no history page (the owner: *"I want to get rid of Then mode. That is completely useless."*, #662). It runs 24 hours ahead (`PAST_MIN` is 0).
 
 ### 2.4 The Now layer
 
@@ -265,15 +264,7 @@ The same mechanism places the garage card in Now when a person's device tracker 
 
 ### 7.2 Time
 
-The Coming up strip is the scrubber. Slide it left and the reading point moves into the past; the page enters **then**:
-
-- The page desaturates 35% and the verdict is rewritten in the past tense from the recorder: *At 2:14 PM the back door opened. Cailin was home; the printer was at 40%.*
-- Every card shows its state at that moment (from `history/period`, fetched for the visible cards only, cached per hour), its strip filled to its brightness then, its lock shackle where it was.
-- Every person card shows the room they were in (from their room's motion and their presence).
-- A 2 px `--violet` rule at the very top of the page spans the share of the day scrubbed to, so the eye knows how far back it is.
-- Now's cards are the things that were salient then.
-
-Tap the strip's *Now* word, let it drift back (the strip already glides to now after 60 s untouched, `IDLE_BACK_MS`), or tap outside, and the page returns over 400 ms. Sliding ahead shows the next hours as predictions: the scenes that usually run, the rooms that will warm (from `room_physics` and the thermostat schedule), the calendar. Hold on a dot behind the line asks brAIn `explain_change` about it and the answer unfolds under Ask. Nothing about this is a mode; it is the same tap, slide and hold on a strip the page already has.
+There is no *then* mode (removed, #662): Coming up never shows the past. Sliding ahead shows the next hours as predictions: the scenes that usually run, the rooms that will warm (from `room_physics` and the thermostat schedule), the calendar. Nothing about this is a mode; it is the same tap, slide and hold on a strip the page already has.
 
 ### 7.3 Conversation
 
@@ -413,7 +404,7 @@ The page never asks for confirmation of its own choices and never shows a dialog
 
 1. **The one rose line at 3 AM.** A dark tablet in a dark kitchen, and one sentence appears: *The back door just opened.* A rose thread runs up the page from Outside to the door's card, and the word *Disarm* waits for its second tap. Nothing else is on the screen, and nothing else needs to be.
 2. **The scene sweeps the room.** Tap *Dinner time* and the kitchen's strips fill one after another, left to right and down, 40 ms apart, each in its own colour, the fans easing up to speed, the whole room arriving in half a second the way a hand would set it.
-3. **Scrubbing the day backwards.** Slide the strip left and the page desaturates and turns into yesterday afternoon: the people cards move room to room, the printer's bar unwinds, the back door's chip opens and closes at the times it did, and the verdict rewrites itself in the past tense as you go.
+3. *(Scrubbing the day backwards was removed with Then mode, #662.)*
 4. **The control that is already there.** At 9:33 PM Cailin picks up her phone and the master bedroom's lights are the first thing under her thumb, with *you usually do this now* in violet. She dims them with one slide and the dashed dot on the strip fills. The page learned that from her and never asked.
 5. **Asking why, and watching the answer draw itself.** *Why is it warm upstairs?* The HVAC card opens to its path, a sky line from the supply through the upstairs zone to the return with a temperature at each point, the warm room lifts beside it with *74°, usually 72 at 2 PM*, and the sentence under Ask says *The upstairs damper has been at 20% since the 1 PM schedule.* — the page reshaped into the answer.
 
@@ -560,7 +551,7 @@ A finding in Morph passes the same test as the house: a glance says whether some
 | `salience.js` (new) | the inputs, score, bands, hysteresis, dwell, decay, anchors, viewer weighting; pure over what it is handed; its cache of brAIn's answers |
 | `morph-panel.js` | the verdict (the story's first clause in colour, from the list), the Now layer, the room line, the five room states, the still, night and away forms, the because line and its hold options, Ask's three kinds of answer, *then* |
 | `engine.js` | takes a section order and fold state from the list instead of the file order; the quiet-moment gate; a lifted card's travel between a room and the Now band without a fade |
-| `upcoming.js` | `PAST_MIN` to 1440, the past's dots from the recorder and logbook, the *then* cursor exported to the panel |
+| `upcoming.js` | the strip stops at now (`PAST_MIN` 0) |
 | `cards.js` | `open(item, level)` for the four levels; the asleep room's one control; the because line as a part of every card's face |
 | `history.js` | state-at-time for the visible cards during *then*, cached per hour |
 | `styles.js` | the still, night and away forms; the room states' tints; the Now layer's scale on a tablet |
