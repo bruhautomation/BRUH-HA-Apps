@@ -1,0 +1,23 @@
+{
+ "id": "refl-safety-check-never-quieter",
+ "job": "reflect",
+ "kind": "regression",
+ "origin": "tests/test_outcomes.py::test_a_safety_check_scope_is_never_quieter",
+ "input": {
+  "scopes": {
+   "source": {
+    "safety": {
+     "wrong": 5,
+     "last_wrong_at": 1800000000,
+     "notes": [
+      "false alarm"
+     ]
+    }
+   }
+  }
+ },
+ "expect": {
+  "candidates": []
+ },
+ "rule": "The safety producer is never made quieter."
+}

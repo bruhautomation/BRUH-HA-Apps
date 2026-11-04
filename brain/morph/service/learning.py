@@ -22,9 +22,12 @@ is getting better rather than louder.
 **Loop two — Morph's own code** lives in `devloop.py`: the faults and
 gaps that need a change to Morph itself, not to this house's dashboard,
 go to brAIn's development loop and on to the private reports repository.
-A gap the learning pass notices is a SUGGESTION of kind ``code`` — "Send
-it as an issue?" — never filed on the model's say-so: a report written by
-a model about code it cannot see is a guess until somebody agrees.
+A gap the learning pass notices is a suggestion of kind ``code``, and
+since brAIn's development loop carries a structured, redacted block and a
+cloud evaluator judges what it files (plan 3.5), it leaves the house with
+the pass while the Development loop is on (`send_code_reports`) — the same
+route, review setting and caps as every other report — rather than
+waiting for somebody to press Send.
 
 **This loop is about the dashboard and only the dashboard.** brAIn learns
 the house on its own (memory, findings, measurements); a Morph pass that
@@ -341,6 +344,30 @@ def code_suggestions(reports: list) -> list[dict]:
                                    "whether to send it to Morph's developers."),
                     "change": f"{what}\n\n{wording.clip(rep.get('detail'), 1100)}"})
     return out
+
+
+def send_code_reports(now: float | None = None) -> int:
+    """File every open ``code`` suggestion through brAIn's development loop
+    without a press (plan 3.5). Only while the Development loop is on —
+    off, nothing leaves this box, and the suggestion keeps its Send. Not
+    recorded as the household's answer: nobody was asked, and the learning
+    digest must not read the loop's filing as somebody agreeing."""
+    if not settings.load()["report_code_issues"]:
+        return 0
+    import devloop
+    now = now or time.time()
+    data = _load()
+    sent = 0
+    for item in data["items"]:
+        if item.get("kind") != "code" or item.get("status") != "open":
+            continue
+        detail = item["change"] + (f"\n\nWhy brAIn suggested it: {item['why']}" if item.get("why") else "")
+        devloop.note_fault("Learning", item["title"], detail, source="learning", now=now)
+        item.update(status="sent", decided=now, auto_sent=True)
+        sent += 1
+    if sent:
+        _save(data)
+    return sent
 
 
 HOUSE_CARD_TITLE = "Fix the card code {name}"
@@ -1072,6 +1099,8 @@ async def run_pass(states: dict | None = None, *, pressed: bool = False) -> dict
         rows = [r for r in (obj.get("suggestions") or []) if isinstance(r, dict)]
         rows = [{**r, "kind": "dashboard"} for r in rows]
         added = add_suggestions(rows + code_suggestions(obj.get("code_reports")), dash)
+        # Morph's own code problems go with the pass (plan 3.5).
+        send_code_reports()
         merged = {"unsupported": 0}
         if isinstance(obj.get("lessons"), list) and obj["lessons"]:
             notes = [s.get("note") for s in d["suggestions"] if s.get("note")]

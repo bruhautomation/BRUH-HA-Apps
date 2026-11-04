@@ -1,0 +1,47 @@
+{
+ "id": "refl-safety-never-quieter",
+ "job": "reflect",
+ "kind": "regression",
+ "origin": "tests/test_outcomes.py::test_no_judgement_may_make_a_safety_protected_or_hot_scope_quieter",
+ "input": {
+  "scopes": {
+   "entity": {
+    "binary_sensor.hall_motion": {
+     "wrong": 4,
+     "confirmed": 0,
+     "last_wrong_at": 1800000000,
+     "whys": [
+      "motion at night with nobody up",
+      "motion at night with nobody up"
+     ],
+     "notes": [
+      "it's the cat on the landing",
+      "it's the cat on the landing"
+     ]
+    },
+    "binary_sensor.kitchen_leak": {
+     "wrong": 5,
+     "last_wrong_at": 1800000000,
+     "flags": [
+      "safety"
+     ],
+     "notes": [
+      "it was the dishwasher drain"
+     ]
+    }
+   }
+  }
+ },
+ "expect": {
+  "candidates": [
+   {
+    "subject": "binary_sensor.hall_motion",
+    "direction": "quieter"
+   }
+  ],
+  "safety_subjects": [
+   "binary_sensor.kitchen_leak"
+  ]
+ },
+ "rule": "A safety scope is never a quieter candidate."
+}

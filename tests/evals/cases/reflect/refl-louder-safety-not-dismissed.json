@@ -1,0 +1,35 @@
+{
+ "id": "refl-louder-safety-not-dismissed",
+ "job": "reflect",
+ "kind": "capability",
+ "origin": "synthetic",
+ "input": {
+  "scopes": {
+   "entity": {
+    "binary_sensor.basement_leak": {
+     "missed": 2,
+     "passed_ok": 1,
+     "flags": [
+      "safety"
+     ],
+     "last_confirmed_at": 1800000000,
+     "notes": [
+      "it was a real leak under the sink both times"
+     ]
+    }
+   }
+  }
+ },
+ "expect": {
+  "candidates": [
+   {
+    "subject": "binary_sensor.basement_leak",
+    "direction": "louder"
+   }
+  ],
+  "safety_subjects": [
+   "binary_sensor.basement_leak"
+  ]
+ },
+ "rule": "Nothing written about a safety scope reads as permission to ignore it."
+}

@@ -11,10 +11,17 @@
   nothing reads it (`personality.enabled`): not the name, not the persona or
   its growth, and not the voice (`personality.identity` answers "brAIn" and
   no voice), on brAIn's side and Morph's.
-* **learning_loop** — self-improvement: brAIn changes ITSELF, in this house.
-  It watches how its dashboard is used, suggests improvements, keeps the
-  household's lessons and may propose changes to its own dashboard code.
-  Nothing leaves the house.
+* **learning_loop** — everything that learns, in this house: the memory
+  extractor after a conversation, voice's `remember_fact` auto-writes, the
+  nightly reflect, the presence loop, Morph's learning and memory clean-up
+  applied on its own. Nothing leaves the house. It is THE switch: the
+  add-on option `learning` used to be a second gate over half of these and
+  is now only this switch's default — migrated once (`learning_on`,
+  `migrate_learning`), so a house that had `learning: false` starts with
+  the switch off, and from then on only the switch decides. Every reader
+  asks the file at call time (`learning_on` here, the same rule copied
+  into the scripts that cannot import the panel), so flipping it needs no
+  restart.
 * **development_loop** — brAIn reports its own faults, redacted, to the
   private GitHub repository its code is fixed from. The one switch that
   sends anything out. It IS the devloop's `enabled` (devloop/__init__.py):
@@ -49,6 +56,13 @@ FILE = os.environ.get("BRAIN_FEATURES_FILE", "/config/.brain/features.json")
 MORPH_DASHBOARD = os.environ.get("BRAIN_MORPH_DASHBOARD", "/config/morph/dashboard.yaml")
 
 KEYS = ("morph", "personality", "learning_loop", "development_loop")
+# Written beside the switches once the add-on option `learning` has been
+# folded into `learning_loop`; from then on the option is never read again.
+LEARNING_MIGRATED = "learning_from_option"
+# What run.sh exports the add-on option `learning` as, for the migration.
+# BRAIN_ASSIST_LEARNING is the switch as it stood at boot (the fallback of
+# every reader that cannot read this file), never the option.
+LEARNING_OPTION_VAR = "BRAIN_LEARNING_OPTION"
 # The switches stored in this file; development_loop is the devloop's.
 OWN = ("morph", "personality", "learning_loop")
 
@@ -69,12 +83,67 @@ def _read(path: str | None = None) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def option_learning() -> bool:
+    """The add-on option `learning`, as run.sh exported it: the switch's
+    default and nothing more. Unset (a dev checkout, a test) is on."""
+    raw = os.environ.get(LEARNING_OPTION_VAR)
+    if raw is None:
+        raw = os.environ.get("BRAIN_ASSIST_LEARNING", "true")
+    return str(raw).strip().lower() not in ("false", "0", "no", "off")
+
+
+def _learning_value(stored: dict) -> bool:
+    """`learning_loop` from a stored body. Before the migration a stored
+    True (every house that ever opened Features has one, written as a
+    default) still answers to an option somebody set to false: the person
+    who switched learning off keeps it off."""
+    value = stored.get("learning_loop")
+    if not isinstance(value, bool):
+        return option_learning()
+    if stored.get(LEARNING_MIGRATED) is not True:
+        return value and option_learning()
+    return value
+
+
+def learning_on(path: str | None = None) -> bool:
+    """May anything in brAIn learn right now? Read at call time; never
+    raises. The one answer the extractor, voice, reflect, presence, Morph
+    and memory clean-up all follow."""
+    try:
+        return _learning_value(_read(path))
+    except Exception:  # noqa: BLE001 — unreadable is the default
+        return option_learning()
+
+
+def migrate_learning(path: str | None = None) -> bool:
+    """Fold the add-on option into the switch, once, and say the switch.
+
+    run.sh calls this at boot (before anything that learns starts) and
+    `ensure` at the panel's start. Only the learning key and the marker are
+    written here: the other switches' defaults are `ensure`'s to decide."""
+    target = path or FILE
+    with _LOCK:
+        stored = _read(target)
+        value = _learning_value(stored)
+        if stored.get(LEARNING_MIGRATED) is True \
+                and stored.get("learning_loop") is value:
+            return value
+        if not os.path.isdir(os.path.dirname(target) or "."):
+            return value
+        try:
+            atomic_write.write_json(target, {**stored, "learning_loop": value,
+                                             LEARNING_MIGRATED: True})
+        except OSError:
+            log.exception("could not write %s", target)
+    return value
+
+
 def defaults() -> dict:
     """What a house that never chose gets: what it already had."""
     return {
         "morph": os.path.isfile(MORPH_DASHBOARD),
         "personality": personality.is_set(personality.load()),
-        "learning_loop": True,
+        "learning_loop": option_learning(),
     }
 
 
@@ -92,7 +161,9 @@ def load(path: str | None = None) -> dict:
     out = {}
     for key in OWN:
         value = stored.get(key)
-        if not isinstance(value, bool):
+        if key == "learning_loop":
+            value = _learning_value(stored)
+        elif not isinstance(value, bool):
             base = base if base is not None else defaults()
             value = base[key]
         out[key] = value
@@ -116,12 +187,14 @@ def publish(path: str | None = None) -> dict:
     with _LOCK:
         now = resolved(target)
         stored = _read(target)
-        if {k: stored.get(k) for k in (*KEYS, "name")} == now:
+        if {k: stored.get(k) for k in (*KEYS, "name")} == now \
+                and stored.get(LEARNING_MIGRATED) is True:
             return now
         if not os.path.isdir(os.path.dirname(target) or "."):
             return now  # never creates its own directory (a dev checkout)
         try:
-            atomic_write.write_json(target, {**now, "updated_at": int(time.time())})
+            atomic_write.write_json(target, {**now, LEARNING_MIGRATED: True,
+                                             "updated_at": int(time.time())})
         except OSError:
             log.exception("could not write %s", target)
     return now
@@ -159,9 +232,23 @@ def save(changes: dict, path: str | None = None) -> dict:
         current.update({k: v for k, v in changes.items() if k in OWN})
         body = {k: current[k] for k in OWN}
         if os.path.isdir(os.path.dirname(target) or "."):
-            atomic_write.write_json(target, {**_read(target), **body})
+            # The marker rides with every save: the person has chosen now,
+            # so the option must never be read over what they chose.
+            atomic_write.write_json(target, {**_read(target), **body,
+                                             LEARNING_MIGRATED: True})
     return publish(target)
 
 
 def on(key: str, path: str | None = None) -> bool:
+    if key == "learning_loop":
+        return learning_on(path)
     return bool(load(path).get(key))
+
+
+if __name__ == "__main__":  # run.sh: `python3 /opt/panel/features.py learning`
+    import sys
+    if sys.argv[1:] == ["learning"]:
+        print("true" if migrate_learning() else "false")
+    else:
+        sys.stderr.write("usage: features.py learning\n")
+        sys.exit(2)

@@ -1,0 +1,29 @@
+{
+ "id": "ext-nickname",
+ "job": "extractor",
+ "kind": "capability",
+ "origin": "synthetic",
+ "input": {
+  "transcript": [
+   {
+    "role": "user",
+    "content": "We call the office lamp 'the beacon' — remember that when I say turn on the beacon."
+   }
+  ]
+ },
+ "expect": {
+  "facts": [
+   {
+    "all": [
+     "beacon"
+    ],
+    "any": [
+     "office lamp",
+     "office",
+     "light office lamp"
+    ]
+   }
+  ]
+ },
+ "rule": "What a device is really called is the extractor's commonest fact."
+}

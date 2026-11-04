@@ -63,6 +63,7 @@ from pathlib import Path
 import atomic_write
 import categories
 import ha_data
+import memory_history
 import textclip
 
 # Under /config, beside the document it is the other half of. `/data` is
@@ -698,7 +699,8 @@ def add(text: str, *, subject: str = "", source: str = "panel",
         extra_subjects=(), about: str = "", finding_key: str = "",
         near_dedupe: bool = False, said: str = "",
         brain_fact: bool | None = None,
-        keyed: bool = False) -> tuple[dict | None, bool]:
+        keyed: bool = False, unverified: bool = False,
+        person_said: bool = False) -> tuple[dict | None, bool]:
     """Record one fact. Returns ``(fact, created)``.
 
     A re-add is not a second fact: the id is the subject plus the
@@ -727,6 +729,16 @@ def add(text: str, *, subject: str = "", source: str = "panel",
     ``keyed`` marks a fact a producer keeps one of per ``predicate``
     (`replace_keyed`): its totals change, so its text — and its id — moves
     with every run, and the predicate is what names the row it replaces.
+
+    ``unverified`` files text from outside brAIn's own judgement (another
+    add-on, an automation, a web page, a file, a tool's output — plan 2.3,
+    `memory_history.provenance`): the row is marked, is never a core fact
+    (`_is_core`), never replaces or folds away a row already held, and is
+    said with "(unverified)" wherever it is read. ``person_said`` is the
+    other side: a person's own words, which clear the mark on a row they
+    corroborate — the same claim about the same subject (`_corroborate`).
+    Nobody presses to confirm anything (the plan's section 0); a person
+    saying the same thing later is the confirmation.
     """
     text = settle_text(text)
     if not text or not writable():
@@ -757,12 +769,16 @@ def add(text: str, *, subject: str = "", source: str = "panel",
         folds: list[dict] = []
         if same is None and near_dedupe and not predicate:
             twin = _near_duplicate(rows, text, subjects)
-            if twin is not None and not _foldable(twin):
+            if twin is not None and (not _foldable(twin) or unverified):
                 # A person's sentence is never replaced by a paraphrase of
-                # it; the paraphrase is a sighting of what they said.
+                # it; the paraphrase is a sighting of what they said. And
+                # unverified text never rewrites a row already held — that
+                # is the injection this mark exists to stop.
                 same = twin
-            else:
+            elif not unverified:
                 folds = _folds(rows, text, subjects, twin)
+        if person_said:
+            _corroborate(rows, text, subjects, source, skip=same)
         if same is not None:
             row = same
             row["ts"] = max(int(now), int(row.get("ts") or 0))
@@ -786,6 +802,9 @@ def add(text: str, *, subject: str = "", source: str = "panel",
                 row["about_brain"] = True
             if keyed:
                 row["keyed"] = True
+            if person_said and row.get("unverified"):
+                row.pop("unverified", None)
+                row["corroborated"] = str(source or "person")[:32]
             kept_said = list(_said_of(row) | set(said_keys))
             row["said"] = sorted(kept_said)[:MAX_SAID]
             # Seen again is seen again, whatever the reconcile last said:
@@ -822,6 +841,8 @@ def add(text: str, *, subject: str = "", source: str = "panel",
             entry["about_brain"] = True
         if keyed:
             entry["keyed"] = True
+        if unverified and not person_said:
+            entry["unverified"] = True
         if about:
             entry["about"] = str(about)[:MAX_TEXT]
         if finding_key:
@@ -833,6 +854,51 @@ def add(text: str, *, subject: str = "", source: str = "panel",
         rows.append(entry)
         _write(_prune(rows))
     return dict(entry), True
+
+
+# How much of the shorter claim a person's sentence must share with an
+# unverified row to be saying the same thing about it. Looser than the
+# near-dedupe bar on purpose: corroboration is somebody stating the claim in
+# their own words, not a rewording of the same sentence.
+CORROBORATE_SHARE = 0.5
+CORROBORATE_MIN_TOKENS = 2
+
+
+def _corroborate(rows: list[dict], text: str, subjects, source: str,
+                 skip: dict | None = None) -> int:
+    """Clear the unverified mark on rows a person's words confirm.
+
+    Same subject (any of them; `house` only matches `house`), the same
+    negation, and `CORROBORATE_SHARE` of the shorter claim's words. Called
+    under the store's lock with the rows about to be written.
+    """
+    # Stemmed words (`memory_history.tokens`, the memory check's own), so
+    # "sprays … Sundays" and "spray … every Sunday" are one claim; the
+    # negation guard reads the plain words, which keep "not" and "never".
+    mine = memory_history.tokens(text)
+    negated = _claim_tokens(text) & _NEGATIONS
+    if len(mine) < CORROBORATE_MIN_TOKENS:
+        return 0
+    wanted = set(subjects or ())
+    cleared = 0
+    for row in rows:
+        if row is skip or not row.get("unverified"):
+            continue
+        if not (wanted & set(_subjects_of(row))):
+            continue
+        theirs = memory_history.tokens(row.get("text", ""))
+        if len(theirs) < CORROBORATE_MIN_TOKENS:
+            continue
+        if negated != (_claim_tokens(row.get("text", "")) & _NEGATIONS):
+            continue
+        common = len(mine & theirs)
+        if common < CORROBORATE_MIN_TOKENS:
+            continue
+        if common / min(len(mine), len(theirs)) >= CORROBORATE_SHARE:
+            row.pop("unverified", None)
+            row["corroborated"] = str(source or "person")[:32]
+            cleared += 1
+    return cleared
 
 
 def replace_keyed(source: str, facts, *, ts: float | None = None) -> int:
@@ -1566,6 +1632,11 @@ def _is_core(row: dict) -> bool:
     """
     if row.get("curation") == "dropped":
         return False
+    if row.get("unverified"):
+        # Plan 2.3: text from outside brAIn's own judgement is never read
+        # to every run as a standing truth until a person's words confirm
+        # it. It still answers a question about its own subject.
+        return False
     for subject in _subjects_of(row):
         if subject in CORE_SUBJECTS or subject_kind(subject) == "person":
             return True
@@ -1589,6 +1660,8 @@ def _line(row: dict) -> str:
         rule = predicate[len(EXCEPTION_PREFIX):] or "*"
         text = (f"{text} [not to be reported again: {rule} on "
                 f"{row.get('subject') or 'house'}]")
+    if row.get("unverified") and memory_history.UNVERIFIED not in text:
+        text = f"{text} {memory_history.UNVERIFIED}"
     return f"- ({stamp}) {text}" if stamp else f"- {text}"
 
 
@@ -1830,6 +1903,10 @@ def ingest_inbox(inbox_dir, processed_dir, *, known_entities=frozenset(),
                     # A torn line is not a fact, and it must not stop the
                     # rest of the file being read.
                     continue
+                if isinstance(obj, dict) and (
+                        path.name.endswith(memory_history.TYPED_SUFFIX)
+                        or path.name.startswith(memory_history.SHARE_PREFIX)):
+                    obj["_file"] = path.name
                 if _ingest_line(obj, ctx):
                     created += 1
             seen[path.name] = mark
@@ -2006,6 +2083,7 @@ def _ingest_line(obj, ctx) -> bool:
         when = float(stamp) if stamp else time.time()
     except (TypeError, ValueError):
         when, stamp = time.time(), None
+    trust = memory_history.provenance(obj, str(obj.get("_file") or ""))
     _row, created = add(
         text, subject=tagged[0], extra_subjects=tagged[1:], source=source,
         confidence=obj.get("confidence", DEFAULT_CONFIDENCE),
@@ -2016,7 +2094,8 @@ def _ingest_line(obj, ctx) -> bool:
                             predicate=str(obj.get("predicate") or "")),
         ts=stamp, near_dedupe=True,
         said=raw_text if raw_text != text else "",
-        brain_fact=about_brain(text, tagged, ctx["self_entities"]))
+        brain_fact=about_brain(text, tagged, ctx["self_entities"]),
+        unverified=trust == "untrusted", person_said=trust == "person")
     return created
 
 
@@ -2483,6 +2562,8 @@ def merge_rows(rows) -> int:
             for field in ("about", "finding_key"):
                 if row.get(field):
                     entry[field] = str(row[field])[:MAX_TEXT]
+            if row.get("unverified"):
+                entry["unverified"] = True
             held.append(entry)
             seen.add(key)
             added += 1

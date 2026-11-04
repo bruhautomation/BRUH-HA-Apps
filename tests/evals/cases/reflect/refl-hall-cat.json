@@ -1,0 +1,41 @@
+{
+ "id": "refl-hall-cat",
+ "job": "reflect",
+ "kind": "regression",
+ "origin": "tests/test_outcomes.py::TestTheNightlyPass (hall motion marked wrong four times: 'it's the cat on the landing')",
+ "input": {
+  "scopes": {
+   "entity": {
+    "binary_sensor.hall_motion": {
+     "wrong": 4,
+     "confirmed": 0,
+     "last_wrong_at": 1800000000,
+     "whys": [
+      "motion at night with nobody up",
+      "motion at night with nobody up"
+     ],
+     "notes": [
+      "it's the cat on the landing",
+      "it's the cat on the landing"
+     ]
+    }
+   }
+  }
+ },
+ "expect": {
+  "candidates": [
+   {
+    "subject": "binary_sensor.hall_motion",
+    "direction": "quieter"
+   }
+  ],
+  "lessons": {
+   "binary_sensor.hall_motion": {
+    "any": [
+     "cat"
+    ]
+   }
+  }
+ },
+ "rule": "The lesson says what the household's words say, and nothing else."
+}

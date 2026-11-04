@@ -169,7 +169,13 @@ def active(features_file: str | None = None) -> tuple[bool, str]:
 
     if not switch("personality") or not personality.enabled(path):
         return False, "Personality is switched off in Features"
-    if not switch("learning_loop"):
+    # The one learning answer (`features.learning_on`): the stored switch,
+    # with the add-on option folded in until the migration has run.
+    try:
+        learning = features.learning_on(path)
+    except Exception:  # noqa: BLE001
+        learning = switch("learning_loop")
+    if not learning:
         return False, "the Learning loop is switched off in Features"
     return True, ""
 

@@ -1,14 +1,22 @@
 name: devloop-guard
 
-# What an automated PR from the development loop may not do — touch the
-# safety-critical files, loosen its own guard, or weaken a test. Runs only
-# on PRs whose branch starts with devloop/, and reads the guard's config
-# from the BASE branch so a PR cannot edit the list it is judged by. See
-# .github/scripts/devloop_guard.py and docs/design/devloop.md.
+# What an automated PR from the development loop may not do: touch a grader,
+# weaken or skip a test, change code without an added test that can see it,
+# or loosen the guard itself. It also prints the PR's risk tier (A/B/C/T/M).
+#
+# Everything that judges comes from the BASE branch, so a PR can never edit
+# its own grader: `pull_request_target` runs this workflow file as base holds
+# it, and the guard script is taken from base with `git show` rather than run
+# from the PR's checkout. No code from the PR runs here, except the PR's own
+# guard on a devloop-meta/ branch, and the base guard runs that one itself,
+# in a subprocess with no secrets and a timeout, over the frozen cases in
+# tests/devloop_guard_cases/. See .github/scripts/devloop_guard.py and
+# docs/notes/devloop.md.
 
 on:
-  pull_request:
+  pull_request_target:
     branches: [main]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
@@ -16,12 +24,42 @@ permissions:
 jobs:
   guard:
     name: devloop-guard
-    if: startsWith(github.head_ref, 'devloop/')
+    # devloop/ (a fix), devloop-test/ (a test dispute), devloop-meta/ (a
+    # grader change): every head branch the loop opens starts with devloop.
+    if: startsWith(github.head_ref, 'devloop')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      # Only the routine opens devloop branches, and it opens them in this
+      # repository. A fork's PR is refused before anything of it is checked
+      # out: refused rather than skipped, because a skipped required check
+      # counts as passing, and the meta case below runs the PR's own guard.
+      - name: Refuse a devloop branch from a fork
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
+        run: |
+          if [ "$HEAD_REPO" != "$THIS_REPO" ]; then
+            echo "devloop-guard: [fork] devloop branches come from $THIS_REPO only, not $HEAD_REPO"
+            exit 1
+          fi
+      # The base repository (so origin/<base> is the real base branch, even
+      # for a PR from a fork), at the PR's head commit, with every branch.
+      - name: Check out the PR head (as data, never run)
+        uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+          persist-credentials: false
+      - name: Take the guard from the base branch
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git show "origin/${BASE_REF}:.github/scripts/devloop_guard.py" \
+            > "$RUNNER_TEMP/guard.py"
       - name: Check what the PR changes
-        run: python3 .github/scripts/devloop_guard.py "origin/${{ github.base_ref }}"
+        id: guard
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: python3 "$RUNNER_TEMP/guard.py" "origin/${BASE_REF}" --branch "$HEAD_REF"
