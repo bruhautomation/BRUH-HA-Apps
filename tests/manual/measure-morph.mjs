@@ -1424,7 +1424,7 @@ for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
     P.data.state.settings = { ...(P.data.state.settings || {}), fold_rooms: false };
     const d = JSON.parse(JSON.stringify(P.dash));
     const yard = d.floors.flatMap((f) => f.sections).find((x) => x.id === 's_yard');
-    yard.groups[0].cards.push({ id: 'c_say', type: 'lovelace', card: { type: 'custom:mx-test-say' } }, { id: 'c_nothing', type: 'lovelace', card: { type: 'custom:mx-test-none' } });
+    yard.groups[0].cards.push({ id: 'c_say', type: 'lovelace', card: { type: 'custom:mx-test-say' } }, { id: 'c_nothing', type: 'lovelace', card: { type: 'custom:mx-test-none' } }, { id: 'c_pause2', type: 'switch', entity: 'input_boolean.guest_mode', name: 'Pause 2', options: { header: true } });
     P.dash = d; P._secEnts = null; P._watch = null; P._forceApply = true; P.engine.invalidate(); P.schedule();
   });
   await settle(p, 2200);
