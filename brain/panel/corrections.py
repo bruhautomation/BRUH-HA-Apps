@@ -572,15 +572,13 @@ def puts_off(note: str) -> bool:
 # (`named_time_days`, else the deferral's month). Only an answer that names
 # no time at all is the hold. "Until it changes" and "unless it gets
 # worse" name no time: they are the hold in the household's own words.
-_MONTHS = ("january", "february", "march", "april", "may", "june", "july",
-           "august", "september", "october", "november", "december")
 _WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday",
              "saturday", "sunday")
 # "May" is a verb far more often than a month ("it may be the router"),
 # so it counts only after a word that puts a date on it.
 _MONTH_RE = re.compile(
     r"\b(?:(?:in|until|till|til|after|before|next|by|from)\s+(may)|("
-    + "|".join(m for m in _MONTHS if m != "may") + r"))\b", re.I)
+    + "|".join(m for m in _MONTHS if m != "May") + r"))\b", re.I)
 _NAMED_TIME_RE = re.compile(
     r"\b(?:until|till|til|after|next|tomorrow|tonight|later|soon|"
     r"this (?:evening|afternoon|week|weekend|month|year)|"
@@ -640,7 +638,8 @@ def named_time_days(note: str, today: dt.date | None = None, *,
         return (_WEEKDAYS.index(m.group(1)) - today.weekday()) % 7 or 7
     m = _MONTH_RE.search(text)
     if m:
-        month = _MONTHS.index((m.group(1) or m.group(2)).lower()) + 1
+        month = [x.lower() for x in _MONTHS].index(
+            (m.group(1) or m.group(2)).lower()) + 1
         return (_next_first(today, month) - today).days
     m = re.search(r"\b(spring|summer|autumn|fall|winter)\b", text)
     if m:
