@@ -23,6 +23,8 @@ The examples are made up: Garden lights / Patio lights conflicting, a
 "Pool pump" card somebody made, a cellar humidity forecast.
 """
 
+import asyncio
+import os
 import sys
 import tempfile
 import time
@@ -59,11 +61,22 @@ class StoreCase(unittest.TestCase):
         self._trail = decision_trail.TRAIL_FILE
         decision_trail.TRAIL_FILE = str(root / "decisions.jsonl")
         self.clock = 1_790_000_000
+        # A look runs on this install (`triage.LAST_LOOK_AT`): a row from a
+        # rule three deep waits for it. `TestNoLookEverRuns` says otherwise.
+        self._look_clock = triage.LAST_LOOK_AT
+        triage.LAST_LOOK_AT = time.time
+        self._protected = os.environ.get("BRAIN_PROTECTED_ENTITIES")
+        os.environ.pop("BRAIN_PROTECTED_ENTITIES", None)
 
     def tearDown(self):
         (findings_store.FINDINGS_FILE, findings_store.SETTLED_FILE,
          findings_store.STATE_FILE) = self._old
         decision_trail.TRAIL_FILE = self._trail
+        triage.LAST_LOOK_AT = self._look_clock
+        if self._protected is None:
+            os.environ.pop("BRAIN_PROTECTED_ENTITIES", None)
+        else:
+            os.environ["BRAIN_PROTECTED_ENTITIES"] = self._protected
         self.tmp.cleanup()
 
     def answers(self, source, *kinds):
@@ -84,6 +97,16 @@ class StoreCase(unittest.TestCase):
     def card(self, source):
         return next(r for r in findings_store.scorecard()
                     if r["source"] == source)
+
+    def file(self, *rows):
+        return findings_store.add_many(triage.gate([dict(r) for r in rows]))
+
+    def nothing_looked(self, row):
+        """What every silence does to a waiting row: the stale sweep, a
+        look that failed (`triage.UNJUDGED` / `RUN_FAILED`)."""
+        findings_store.record_triage({row["ts"]: ("untriaged",
+                                                  triage.UNJUDGED)})
+        return findings_store.get(row["ts"])
 
 
 class TestTheStreak(StoreCase):
@@ -263,6 +286,127 @@ class TestThroughTheLook(OutcomesLoop):
         got = self.fs.get(row["ts"])
         self.assertEqual(got["status"], "held")
         self.assertIn("last 3 reports wrong", got["triage"]["reason"])
+
+
+class TestNeverHeldForAProtectedEntity(StoreCase):
+    """A check's row carries no `protected` flag — the signal does — so the
+    gate works protection out off the row's own entity: a lock on the
+    protected list is shown whatever its rule's record, and the next
+    device from the same rule is held as before."""
+
+    UNAVAILABLE = "check:dev.unavailable"
+
+    def lock_row(self, entity="lock.front_door"):
+        return {"text": "Front door lock has been unavailable for a day",
+                "detail": "Last seen 3 Sep 02:10.",
+                "fix": "Check the lock's power and its hub.",
+                "severity": "warning", "source": self.UNAVAILABLE,
+                "source_title": "Devices unavailable for a day",
+                "entity_id": entity, "fixable": False}
+
+    def test_a_protected_lock_is_never_held_by_a_record(self):
+        os.environ["BRAIN_PROTECTED_ENTITIES"] = "lock.front_door"
+        self.answers(self.UNAVAILABLE, "ignored", "ignored", "ignored")
+        self.assertTrue(rule_record.never_held(self.lock_row()))
+        [row] = self.file(self.lock_row())
+        self.assertNotIn("record_hold", row)
+        # the fallback path: nothing looked, and it is shown unjudged
+        self.assertEqual(self.nothing_looked(row)["status"], "open")
+        # the next device from the same three-deep rule is held as before
+        [other] = self.file({**self.lock_row("switch.loft_plug"),
+                             "text": "Loft plug has been unavailable "
+                                     "for a day"})
+        self.assertTrue(other.get("record_hold"))
+        self.assertEqual(self.nothing_looked(other)["status"], "held")
+
+    def test_a_domain_pattern_and_a_named_item_count(self):
+        os.environ["BRAIN_PROTECTED_ENTITIES"] = "lock.*"
+        self.assertTrue(rule_record.never_held(self.lock_row("lock.back")))
+        self.assertTrue(rule_record.never_held({
+            **self.lock_row("sensor.hub_status"),
+            "items": ["switch.loft_plug", "lock.side_gate"]}))
+        self.assertFalse(rule_record.never_held(
+            self.lock_row("switch.loft_plug")))
+
+    def test_a_check_about_harm_is_never_held(self):
+        for source in ("check:climate.freeze", "check:safety.tripped"):
+            self.assertTrue(rule_record.never_held(
+                {**self.lock_row("sensor.pipe"), "source": source}), source)
+
+    def test_an_unreadable_list_holds_nothing(self):
+        import automation_writer
+
+        def broken():
+            raise OSError("no list")
+        old = automation_writer.protected_patterns
+        automation_writer.protected_patterns = broken
+        try:
+            self.assertTrue(rule_record.never_held(
+                self.lock_row("switch.loft_plug")))
+        finally:
+            automation_writer.protected_patterns = old
+
+
+class TestNoLookEverRuns(StoreCase):
+    """A row carrying a record waits for its look; with no look since it
+    started waiting (the Resident off, or never came) it is shown after
+    the ordinary wait rather than hidden for ever."""
+
+    def test_shown_after_the_ordinary_wait_when_no_look_has_run(self):
+        self.answers(FORECAST, "ignored", "ignored", "ignored")
+        [row] = self.file(self.row(FORECAST, "Cellar humidity is falling"))
+        self.assertTrue(row["record_hold"])
+        filed = int(row["ts"])
+        later = filed + triage.SHOW_AFTER_S + 60
+        # a look ran after it started waiting: it waits
+        triage.LAST_LOOK_AT = lambda: filed + 30
+        self.assertFalse(triage.waiting_too_long(row, now=later))
+        # no look has ever run
+        triage.LAST_LOOK_AT = lambda: 0
+        self.assertFalse(triage.waiting_too_long(row, now=filed + 60))
+        self.assertTrue(triage.waiting_too_long(row, now=later))
+        # the last look is older than this row: the same
+        triage.LAST_LOOK_AT = lambda: filed - 3600
+        self.assertTrue(triage.waiting_too_long(row, now=later))
+        # no clock at all is unknown, and unknown waits
+        triage.LAST_LOOK_AT = None
+        self.assertFalse(triage.waiting_too_long(row, now=later))
+
+
+class TestTheFloorBeatsTheRecord(OutcomesLoop):
+    """`_resident_apply`'s fallback holds a row from a rule three deep when
+    the reply said nothing about it — never a signal the floor keeps: hot,
+    safety or protected (`resident.never_ignore`)."""
+
+    def setUp(self):
+        super().setUp()
+        self.point("decision_trail",
+                   TRAIL_FILE=str(Path(self.tmp.name) / "decisions.jsonl"))
+        for i in range(3):
+            row = self.file_row(f"The larder contact has not changed {i}",
+                                entity=f"binary_sensor.larder_{i}")
+            self.end(row["ts"], "wrong")
+
+    def apply(self, row, **flags):
+        srv = self.server
+        signal = {**srv.signals.make(
+            "check", row["entity_id"], now=time.time(),
+            source=row["source"], text=row["text"], **flags),
+            "finding_ts": row["ts"], "record_hold": row["record_hold"]}
+        asyncio.run(srv._resident_apply([signal], {}, "look-x", time.time(),
+                                        {}, "", 0, 0))
+        return self.fs.get(row["ts"])["status"]
+
+    def test_a_hot_safety_or_protected_signal_is_shown_not_held(self):
+        for i, flags in enumerate(({"hot": True}, {"safety": True},
+                                   {"protected": True})):
+            row = self.file_row(f"The larder contact has not changed {i}x",
+                                entity=f"binary_sensor.larder_{i}x")
+            self.assertTrue(row.get("record_hold"), flags)
+            self.assertEqual(self.apply(row, **flags), "open", flags)
+        plain = self.file_row("The larder contact has not changed again",
+                              entity="binary_sensor.larder_9")
+        self.assertEqual(self.apply(plain), "held")
 
 
 class TestNeverFired(StoreCase):

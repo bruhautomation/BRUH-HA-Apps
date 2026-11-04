@@ -122,13 +122,42 @@ def held_reason(row: dict) -> str:
             "reports.")
 
 
-def never_held(row: dict) -> bool:
-    """A row no record holds back: critical, or flagged as harm."""
+def never_held(row: dict, patterns: list[str] | None = None) -> bool:
+    """A row no record holds back: critical, flagged as harm, from a check
+    about harm, or about a protected entity.
+
+    A check's row carries no `safety`/`protected`/`hot` flag — those live
+    on the SIGNAL (`signals.make`), built later from the row — so a row
+    read here is judged off what it does carry: its severity, its check
+    and its entities. Protection is matched by the one matcher
+    (`automation_writer.is_protected` over `protected_patterns`, the
+    option parsed in one place), on the row's own entity and every item
+    it names that is one; a list that cannot be read is read as
+    protected, the direction that shows a card.
+    """
     if not isinstance(row, dict):
         return True
     if str(row.get("severity") or "") == "critical":
         return True
-    return any(row.get(flag) for flag in ("safety", "protected", "hot"))
+    if any(row.get(flag) for flag in ("safety", "protected", "hot")):
+        return True
+    source = str(row.get("source") or "")
+    if source.removeprefix("check:") in SAFETY_CHECKS:
+        return True
+    entities = [str(row.get("entity_id") or "")] + [
+        str(x) for x in (row.get("items") or []) if isinstance(x, str)]
+    entities = [e for e in entities if "." in e and " " not in e]
+    if not entities:
+        return False
+    try:
+        import automation_writer  # noqa: PLC0415 — a leaf's one matcher
+        if patterns is None:
+            patterns = automation_writer.protected_patterns()
+        return any(automation_writer.is_protected(e, patterns)
+                   for e in entities)
+    except Exception:  # noqa: BLE001 — unreadable is not "nothing is
+        # protected": the record holds nothing it cannot see.
+        return True
 
 
 def lopsided(scorecard) -> dict[str, dict]:

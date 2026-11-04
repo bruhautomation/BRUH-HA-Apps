@@ -235,15 +235,35 @@ def gate(rows: list[dict], muted: set[str] | None = None,
     return [_record_held(row, held) for row in rows]
 
 
+# When the last first look ran (epoch seconds, 0 for never), registered by
+# the server (`RESIDENT_STATE["last_look_at"]`) so a row from a rule three
+# Wrongs deep is not hidden for ever on an install where no look runs.
+# Unset is "unknown", and unknown keeps the row waiting (below).
+LAST_LOOK_AT = None
+
+
+def _last_look() -> float | None:
+    if LAST_LOOK_AT is None:
+        return None
+    try:
+        return float(LAST_LOOK_AT() or 0.0)
+    except Exception:  # noqa: BLE001 — a clock that cannot be read is
+        return None   # no clock
+
+
 def waiting_too_long(row: dict, now: float | None = None) -> bool:
     """A row still `triaging` past `SHOW_AFTER_S` — shown and counted while
     it waits. Keyed on the raw store entry or the shaped row alike (both
     carry `status`, `ts` and `text`); a snoozed row is not waiting on
-    anybody, which is the snooze's own rule."""
+    anybody, which is the snooze's own rule.
+
+    A row carrying `record_hold` waits for its look rather than being
+    shown unjudged — unless no look has run since it started waiting
+    (`LAST_LOOK_AT`; the Resident is off, or never came), in which case
+    it is shown after the same wait as any row: a record is a reason for
+    a look to be careful, not a reason to hide a row for ever.
+    """
     if not isinstance(row, dict) or row.get("status") != "triaging":
-        return False
-    if row.get("record_hold"):
-        # A rule three Wrongs deep is not shown before a look keeps it.
         return False
     if not str(row.get("text") or "").strip():
         return False
@@ -256,7 +276,12 @@ def waiting_too_long(row: dict, now: float | None = None) -> bool:
         since = int(row.get("triaging_since") or 0)
     except (TypeError, ValueError):
         since = 0
-    return (since or int(row.get("ts") or 0)) <= now - SHOW_AFTER_S
+    since = since or int(row.get("ts") or 0)
+    if row.get("record_hold"):
+        last = _last_look()
+        if last is None or last >= since:
+            return False
+    return since <= now - SHOW_AFTER_S
 
 
 # The most first looks one day may spend. Nothing else bounded the look

@@ -943,6 +943,9 @@ RESIDENT_STATE: dict = {
     # cap took it). `dropped` is the sum, kept for the screens that read it.
     "dropped_why": {},
 }
+# A row from a rule three Wrongs deep waits for its look (`triage.
+# waiting_too_long`); this is how the store knows whether one has run.
+triage.LAST_LOOK_AT = lambda: RESIDENT_STATE.get("last_look_at")
 # What producers hand signals to. A module global bound to whichever loop
 # touches it first, so it is rebound at startup beside `QUEUE` for the same
 # reason: a second app (a test, the demo panel) would otherwise get
@@ -14530,9 +14533,14 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
                 # showed it (`findings_store.record_triage`'s third slot).
                 decided[ts] = ("held", why, bool(answer.get("already")))
             continue
-        if ts and answer.get("fallback") and signal.get("record_hold"):
+        if (ts and answer.get("fallback") and signal.get("record_hold")
+                and not resident.never_ignore(signal)[0]):
             # The reply said nothing about a row from a rule the household
             # marked wrong three times in a row: held, not shown (#698).
+            # Never over a floor: a protected, safety or hot signal is
+            # shown whatever its rule's record, the gate's own rule
+            # (`rule_record.never_held`) read again on the signal, which
+            # carries the flags a row does not.
             decided[ts] = ("held", str(signal["record_hold"]))
             continue
         if ts and signal.get("source") == house_book.SOURCE:

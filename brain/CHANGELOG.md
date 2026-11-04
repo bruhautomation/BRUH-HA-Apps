@@ -6,7 +6,7 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ### Changed
 
-- **A rule you marked wrong three times in a row is held back.** brAIn keeps its next cards out of Today and off your phone, under History › Set aside by brAIn, unless brAIn's own look finds something new in one, it gets worse or names something new, or you agree with one of that rule's reports. This covers brAIn's house checks and the cards you made yourself; a safety, security or critical card is always shown (#698, #500, #501, #599).
+- **A rule you marked wrong three times in a row is held back.** brAIn keeps its next cards out of Today and off your phone, under History › Set aside by brAIn, unless brAIn's own look finds something new in one, it gets worse or names something new, or you agree with one of that rule's reports. This covers brAIn's house checks and the cards you made yourself; a safety, security or critical card, or one about an entity on your protected list, is always shown, and nothing is hidden for ever on an install where brAIn's look does not run (#698, #500, #501, #599).
 - **"Don't remind me" on a house check's card lasts until something changes, not for a month.** The card stays muted for that router, that Matter setup or that battery until its report gets worse, names something new, its reading moves a long way, or it stops for a few days; it then says which of your answers had muted it. A reason that names a period or a time, like "remind me in 3 weeks", "until tomorrow" or "till spring", still gets that period, and safety, security and critical cards still come back after a month (#602, #694, #698).
 
 ### Fixed
