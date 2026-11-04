@@ -26,7 +26,7 @@ from homeassistant.components import frontend
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_interval
 
-from . import cardtypes, lovelace, websocket
+from . import cardtypes, lovelace, themes, websocket
 from .switches import read_features
 from .const import (
     CARDS_DIR,
@@ -160,6 +160,7 @@ async def async_setup(hass: HomeAssistant) -> Callable[[], None]:
     data["mark_at"] = time.time()
     unsub_watch = websocket.start_watcher(hass)
     unsub_lovelace = lovelace.start(hass)
+    unsub_themes = themes.start(hass)
 
     async def _poll(_now=None) -> None:
         now = await hass.async_add_executor_job(read_features)
@@ -178,6 +179,7 @@ async def async_setup(hass: HomeAssistant) -> Callable[[], None]:
     def _teardown() -> None:
         unsub_watch()
         unsub_lovelace()
+        unsub_themes()
         unsub_poll()
         frontend.async_remove_panel(hass, PANEL_URL)
         hass.async_add_executor_job(clear_mark)

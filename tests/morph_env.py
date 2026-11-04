@@ -21,7 +21,7 @@ from unittest import mock
 SERVICE = Path(__file__).resolve().parent.parent / "brain" / "morph" / "service"
 FRONTEND = SERVICE.parent.parent / "custom_components" / "brain" / "morph" / "frontend"
 MODULES = ("paths", "wording", "morphcode", "store", "lovelace", "gitrepo", "generator", "brain", "settings",
-           "tell", "converse", "learning", "devloop", "ha", "morphd")
+           "tell", "convert", "converse", "learning", "devloop", "ha", "morphd")
 
 
 class MorphEnv:

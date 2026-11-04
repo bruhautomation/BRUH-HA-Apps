@@ -147,6 +147,70 @@ class Core(unittest.TestCase):
                 self.assertEqual(env.lovelace.config_hash(cfg), self.ll.config_hash(cfg))
 
 
+class Bus:
+    def __init__(self):
+        self.fired, self.listeners = [], {}
+
+    def async_fire(self, name, data=None):
+        self.fired.append(name)
+        for fn in self.listeners.get(name, []):
+            fn(types.SimpleNamespace(data=data or {}))
+
+    def async_listen(self, name, fn):
+        self.listeners.setdefault(name, []).append(fn)
+        return lambda: None
+
+
+class Themes(unittest.TestCase):
+    """themes.py: /config/morph/themes added to Home Assistant's themes, a
+    change repainting every screen, and Home Assistant's own reload never
+    leaving them out."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.th = load(root, "themes")
+        self.dir = root / "themes"
+        self.dir.mkdir()
+        self.hass = types.SimpleNamespace(data={"frontend_themes": {"Theirs": {"primary-color": "red"}}}, bus=Bus())
+
+    def test_the_shipped_themes_read(self):
+        shipped = ROOT / "brain" / "morph" / "defaults" / "themes"
+        themes, problems = self.th.read_themes(shipped)
+        self.assertEqual(problems, [])
+        self.assertEqual(sorted(themes), ["Morph", "Morph Medium"])
+        self.assertEqual(sorted(themes["Morph"]["modes"]), ["dark", "light"])
+        for t in (themes["Morph"]["modes"]["light"], themes["Morph"]["modes"]["dark"], themes["Morph Medium"]):
+            for var in ("primary-background-color", "card-background-color", "primary-text-color", "morph-rose"):
+                self.assertIn(var, t)
+
+    def test_a_bad_file_is_said_and_the_rest_load(self):
+        (self.dir / "a.yaml").write_text("Warm:\n  primary-color: orange\n")
+        (self.dir / "b.yaml").write_text("Broken: [\n")
+        themes, problems = self.th.read_themes(self.dir)
+        self.assertEqual(list(themes), ["Warm"])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("b.yaml", problems[0])
+
+    def test_added_beside_home_assistants_and_put_back_after_a_reload(self):
+        self.hass.bus.async_listen("themes_updated", lambda e: (self.hass.data.setdefault("brain_morph", {}).get("themes_firing") or
+                                                                self.th.inject(self.hass, self.hass.data["brain_morph"].get("themes") or {}, fire=False)))
+        self.hass.data.setdefault("brain_morph", {})["themes"] = {"Morph": {"primary-color": "blue"}}
+        self.th.inject(self.hass, {"Morph": {"primary-color": "blue"}}, fire=True)
+        self.assertEqual(sorted(self.hass.data["frontend_themes"]), ["Morph", "Theirs"])
+        self.assertEqual(self.hass.bus.fired, ["themes_updated"])
+        # frontend.reload_themes: configuration.yaml's themes replace the dict.
+        self.hass.data["frontend_themes"].clear()
+        self.hass.data["frontend_themes"]["Theirs"] = {"primary-color": "green"}
+        self.hass.bus.async_fire("themes_updated")
+        self.assertEqual(sorted(self.hass.data["frontend_themes"]), ["Morph", "Theirs"])
+        # A theme removed from the folder leaves Home Assistant too, and
+        # never takes one of Home Assistant's own with it.
+        self.th.inject(self.hass, {}, fire=True)
+        self.assertEqual(sorted(self.hass.data["frontend_themes"]), ["Theirs"])
+
+
 class Types(unittest.TestCase):
     """cardtypes.py: the folder read for the browser, and only code served."""
 

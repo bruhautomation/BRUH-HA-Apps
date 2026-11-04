@@ -34,6 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import brain  # noqa: E402
+import convert  # noqa: E402
 import converse  # noqa: E402
 import devloop  # noqa: E402
 import generator  # noqa: E402
@@ -65,7 +66,7 @@ STATE: dict = {"bootstrapped": False, "last_revision": "", "generate_note": ""}
 # "edited outside Morph" commit must never interleave, or a person's save
 # is committed under the wrong author and its own commit finds nothing.
 LOCK = asyncio.Lock()
-READ_ONLY_KINDS = ("history", "tell", "tell_answer", "learn_now", "tell_issue", "report", "report_withdraw", "converse")
+READ_ONLY_KINDS = ("convert", "history", "tell", "tell_answer", "learn_now", "tell_issue", "report", "report_withdraw", "converse")
 
 
 # ------------------------------------------------------------- bootstrap
@@ -94,6 +95,15 @@ def install_docs() -> None:
         shutil.copyfile(paths.DEFAULTS / "cards-README.md", readme)
     if not paths.LEARNED.exists():
         learning.write_lessons([], commit=False)
+    # Morph's looks as Home Assistant themes, put here once: the folder is
+    # this house's from then on (the integration's themes.py loads it).
+    themes = paths.MORPH_DIR / "themes"
+    if not themes.exists() and (paths.DEFAULTS / "themes").is_dir():
+        themes.mkdir(parents=True, exist_ok=True)
+        for src in (paths.DEFAULTS / "themes").glob("*.yaml"):
+            shutil.copyfile(src, themes / src.name)
+    paths.DASHBOARDS_DIR.mkdir(parents=True, exist_ok=True)
+    paths.TYPES_DIR.mkdir(parents=True, exist_ok=True)
 
 
 async def bootstrap() -> None:
@@ -194,6 +204,16 @@ async def handle(kind: str, p: dict) -> dict:
         sha = await asyncio.to_thread(gitrepo.commit, "Edited dashboard.yaml", "person")
         await asyncio.to_thread(publish)
         return {"ok": True, "commit": sha, "problems": problems}
+    if kind == "convert":
+        # Morph's own dashboard as a Home Assistant one (convert.py): the
+        # config and what could not come along. The browser creates the
+        # dashboard (Home Assistant's own command) and saves this into it.
+        dash, problems, _ = await asyncio.to_thread(store.read)
+        if not (dash.get("floors") or []):
+            return {"ok": False, "error": "There is no Morph dashboard to bring over."}
+        config, report = convert.to_lovelace(dash)
+        return {"ok": True, "config": config, "report": report, "url_path": convert.URL_PATH,
+                "title": dash.get("title") or "Home"}
     if kind in ("restore", "history") and p.get("dashboard"):
         # One Home Assistant dashboard's own history (lovelace.py): its
         # YAML's commits, and a restore of that file alone.

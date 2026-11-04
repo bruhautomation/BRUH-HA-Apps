@@ -48,6 +48,9 @@ const hass = { user: { is_admin: ${admin} }, states: {}, async callWS(m) {
   if (m.type === 'morph/request' && m.kind === 'tell_undo') return { ok: true };
   if (m.type === 'morph/request' && m.kind === 'history') return { ok: true, log: [{ sha: 'new1', message: 'brAIn: bigger', who: 'brain', at: 1700000000 }, { sha: 'old1', message: 'Started keeping Home', who: 'morph', at: 1690000000 }] };
   if (m.type === 'morph/request' && m.kind === 'restore') return { ok: true };
+  if (m.type === 'morph/load') return { mirror: { dashboard: { floors: [{ sections: [{ title: 'Kitchen' }] }] } } };
+  if (m.type === 'morph/request' && m.kind === 'convert') return { ok: true, url_path: 'morph-home', title: 'Home', config: { views: [{ title: 'First floor' }] }, report: ["Coming up is Morph’s panel’s own and was not brought over."] };
+  if (m.type === 'lovelace/dashboards/create' || m.type === 'lovelace/config/save') return null;
   return {};
 } };
 customElements.define('ha-card', class extends HTMLElement {});
@@ -172,8 +175,23 @@ await p.waitForTimeout(300);
 const t2 = (await ws(p, 'morph/request', 'tell'))[1];
 if (!t2 || !/change the card type “thermo” itself, so every copy of it changes \(3 copies\)/.test(t2.payload.context)) fail('type', `context ${t2 && t2.payload.context}`);
 
-// History and Restore.
+// Bring the Morph dashboard over: create it, save it, keep it, then open it.
 await press(p, '[data-a="close"]');
+await press(p, '.fab');
+if (!/Bring over your Morph dashboard/.test(await L(p, '.sheet') || '')) fail('convert', 'not offered');
+await press(p, '[data-a="convert"]');
+await p.waitForTimeout(400);
+const made = await p.evaluate(() => window.__ws.filter((m) => ['lovelace/dashboards/create', 'lovelace/config/save', 'morph/dashboard_morph'].includes(m.type)).map((m) => [m.type, m.url_path || m.key, m.mode || (m.config && m.config.views[0].title) || m.on]));
+if (JSON.stringify(made) !== JSON.stringify([['lovelace/dashboards/create', 'morph-home', 'storage'], ['lovelace/config/save', 'morph-home', 'First floor'], ['morph/dashboard_morph', 'morph-home', true]])) fail('convert', JSON.stringify(made));
+const conv = await L(p, '.sheet');
+if (!/Your Morph dashboard is here now/.test(conv || '') || !/Coming up is Morph/.test(conv || '')) fail('convert', `sheet says "${(conv || '').slice(0, 160)}"`);
+await press(p, '[data-a="go"]');
+await p.waitForTimeout(100);
+if (await p.evaluate(() => location.pathname) !== '/morph-home') fail('convert', 'Open it did not go to the new dashboard');
+await p.evaluate(() => history.replaceState(null, '', '/lovelace/home'));
+await p.waitForTimeout(200);
+
+// History and Restore.
 await press(p, '.fab');
 await press(p, '[data-a="history"]');
 await p.waitForTimeout(300);

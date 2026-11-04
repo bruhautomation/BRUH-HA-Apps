@@ -184,6 +184,14 @@ export class BrainLayer extends HTMLElement {
       } catch (e) { this.s.list = []; this.s.listAt = Date.now(); }
     }
     this.s.row = this.s.list.find((d) => d.url_path === url) || null;
+    if (this.s.hasMorph == null) {
+      // Whether there is a Morph dashboard of the old kind to bring over.
+      try {
+        const m = await hass.callWS({ type: 'morph/load' });
+        const d = m && m.mirror && m.mirror.dashboard;
+        this.s.hasMorph = !!(d && (d.floors || []).some((f) => (f.sections || []).length));
+      } catch (e) { this.s.hasMorph = false; }
+    }
     this.render();
   }
 
@@ -199,6 +207,33 @@ export class BrainLayer extends HTMLElement {
     this.s.listAt = 0;
     await this.refresh();
     this.open('menu');
+  }
+
+  // Morph's own dashboard (dashboard.yaml) as a Home Assistant dashboard
+  // of its own: the service writes the config (convert.py), Home
+  // Assistant's own commands create and save it, and brAIn keeps it.
+  async bringOver() {
+    this.open('convert');
+    this.s.conv = { phase: 'working' }; this.render();
+    const hass = this.hass;
+    const r = await hass.callWS({ type: 'morph/request', kind: 'convert', payload: {} });
+    if (!r.ok) { this.s.conv = { phase: 'failed', error: r.error }; this.render(); return; }
+    const exists = (this.s.list || []).some((d) => d.url_path === r.url_path);
+    if (exists) { this.s.conv = { phase: 'failed', error: `There is already a dashboard at /${r.url_path}. Delete or rename it in Settings › Dashboards, then try again.` }; this.render(); return; }
+    try {
+      await hass.callWS({ type: 'lovelace/dashboards/create', url_path: r.url_path, title: r.title, icon: 'mdi:view-dashboard-variant', show_in_sidebar: true, require_admin: false, mode: 'storage' });
+      await hass.callWS({ type: 'lovelace/config/save', url_path: r.url_path, config: r.config });
+      await hass.callWS({ type: 'morph/dashboard_morph', key: r.url_path, on: true });
+    } catch (e) { this.s.conv = { phase: 'failed', error: String((e && e.message) || e) }; this.render(); return; }
+    this.s.listAt = 0;
+    this.s.conv = { phase: 'done', report: r.report || [], url: '/' + r.url_path };
+    this.render();
+  }
+
+  go(url) {
+    history.pushState(null, '', url);
+    window.dispatchEvent(new CustomEvent('location-changed', { detail: { replace: false } }));
+    this.close();
   }
 
   // ---------------------------------------------------------- pick a card
@@ -370,6 +405,8 @@ export class BrainLayer extends HTMLElement {
       pick: () => this.startPick(),
       cancel: () => this.stopPick(),
       whole: () => this.tellAbout(null),
+      convert: () => this.bringOver(),
+      go: () => this.go(v),
       history: () => this.history(),
       restore: () => this.restore(v),
       send: () => this.send(),
@@ -398,18 +435,32 @@ export class BrainLayer extends HTMLElement {
     if (ta && draft) ta.value = draft;
   }
 
+  // Offered until the Morph dashboard has been brought over.
+  convertOffer(top) {
+    if (!this.s.hasMorph || (this.s.list || []).some((d) => d.url_path === 'morph-home')) return '';
+    const b = '<button type="button" class="menu" data-a="convert">Bring over your Morph dashboard…</button>';
+    return top ? `${b}<hr style="border:0;border-top:1px solid var(--divider-color,rgba(0,0,0,.1));margin:8px 0">` : b;
+  }
+
   sheetHtml(row) {
     const mode = this.s.mode;
     if (mode === 'menu') {
       if (row.mode !== 'storage') return `<h2>${esc(row.title)}</h2><p class="sm">This dashboard is kept in YAML files, which Home Assistant cannot save. brAIn can change dashboards made in Home Assistant's own editor.</p>`;
       if (!row.morphed) {
-        return `<h2>Let brAIn change ${esc(row.title)}?</h2><p class="sm">Then you can tell brAIn what to change on any card, tab or the whole dashboard, and it changes here, live. Every change is kept, so any one can be undone, including edits made in Home Assistant's own editor.</p><div class="row"><button type="button" class="b go" data-a="morph">Let brAIn change it</button><button type="button" class="b" data-a="close">Not now</button></div>`;
+        return `${this.convertOffer(true)}<h2>Let brAIn change ${esc(row.title)}?</h2><p class="sm">Then you can tell brAIn what to change on any card, tab or the whole dashboard, and it changes here, live. Every change is kept, so any one can be undone, including edits made in Home Assistant's own editor.</p><div class="row"><button type="button" class="b go" data-a="morph">Let brAIn change it</button><button type="button" class="b" data-a="close">Not now</button></div>`;
       }
       return `<h2>${esc(row.title)}</h2>
 <button type="button" class="menu" data-a="pick">Tell brAIn about a card…</button>
 <button type="button" class="menu" data-a="whole">Tell brAIn about this dashboard…</button>
 <button type="button" class="menu" data-a="history">History and undo</button>
-<button type="button" class="menu" data-a="unmorph">Stop letting brAIn change this dashboard</button>`;
+<button type="button" class="menu" data-a="unmorph">Stop letting brAIn change this dashboard</button>${this.convertOffer()}`;
+    }
+    if (mode === 'convert') {
+      const c = this.s.conv || {};
+      if (c.phase === 'working') return '<h2>Bringing over your Morph dashboard…</h2>';
+      if (c.phase === 'failed') return `<h2>Not brought over</h2><p class="sm">${esc(c.error)}</p><div class="row"><button type="button" class="b" data-a="menu">Back</button></div>`;
+      const notes = c.report && c.report.length ? `<p class="sm">What did not come along exactly:</p><ul class="shows">${c.report.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
+      return `<h2>Your Morph dashboard is here now</h2><p class="sm">It is a Home Assistant dashboard of its own in the sidebar, laid out by Morph's view, with every card brought over. Morph's old panel is left as it was.</p>${notes}<div class="row"><button type="button" class="b go" data-a="go" data-v="${esc(c.url)}">Open it</button><button type="button" class="b" data-a="close">Later</button></div>`;
     }
     if (mode === 'history') {
       const h = this.s.hist;
