@@ -1704,9 +1704,22 @@ class Ledger:
         return int((self.today(now).get("tiers") or {})
                    .get(tier, {}).get("runs") or 0)
 
+    @staticmethod
+    def cap(tier: str, thinking: str = model_plan.DEFAULT_THINKING) -> int | None:
+        """Runs a tier may make in a day on this dial, or None for no
+        ceiling (the cheap tier, which is never counted out)."""
+        if thinking not in model_plan.THINKING:
+            thinking = model_plan.DEFAULT_THINKING
+        if tier == "sonnet":
+            return SONNET_PER_DAY[thinking]
+        if tier in ("opus", "fable"):
+            return OPUS_PER_DAY[thinking]
+        return None
+
     def allows(self, tier: str, thinking: str = model_plan.DEFAULT_THINKING,
                blocked: bool = False, *, pressed: bool = False,
-               now: float | None = None) -> tuple[bool, str]:
+               now: float | None = None,
+               reserve: int = 0) -> tuple[bool, str]:
         """`(may it run, why not)` — a sentence rather than a bare bool,
         because both halves of this are read on the diagnostics screen and
         "the budget is spent" and "the account is out" send somebody to
@@ -1717,6 +1730,10 @@ class Ledger:
         a look that cannot be paid for is not a look. It is the one stop
         a press does not get past either, because a press cannot conjure
         a window that is spent.
+
+        `reserve` is how many of the tier's runs this caller must leave for
+        somebody else: a first look on the tier investigations are paid
+        from may spend only what they do not need (`look_tier`).
         """
         if blocked:
             return False, ("the account's usage window is spent, so nothing "
@@ -1737,9 +1754,14 @@ class Ledger:
         if tier == "fable":
             return False, ("the deep review is only ever run by a person's "
                            + "press")
-        cap = (SONNET_PER_DAY if tier == "sonnet" else OPUS_PER_DAY)[thinking]
+        cap = self.cap(tier, thinking) or 0
+        reserve = max(0, min(int(reserve or 0), cap))
         used = self.spent(tier, now)
-        if used >= cap:
+        if used >= cap - reserve:
+            if reserve:
+                return False, (f"the {tier} allowance left for looks today is "
+                               + f"spent ({used} of {cap - reserve}; the other "
+                               + f"{reserve} are kept for investigations)")
             return False, (f"the {tier} allowance for today is spent "
                            + f"({used} of {cap} on the {thinking} thinking "
                            + "setting)")
@@ -1768,6 +1790,40 @@ class Ledger:
         }
 
 
+def look_tier(ledger: "Ledger", tier: str, thinking: str, *,
+              investigate_tier: str = "",
+              now: float | None = None) -> tuple[str, str]:
+    """`(tier the first look runs on, why it is not the one planned)`, or
+    `("", why)` when no look may run.
+
+    `tier` is what the dial and a typed model put the look on
+    (`model_plan.run_tier`). The look's own tier in the table is the cheap
+    one, which the ledger never stops, and the whole plan rests on that:
+    a house nobody looks at is not watched. `generous` steps the look up
+    to Sonnet, and a look every ten minutes is 144 a day against an
+    allowance of 32 — so from early morning the stepped-up look was HELD,
+    and nothing looked at the house until midnight (#661). A typed model
+    the ledger bounds did the same. Now the stepped-up tier is used while
+    its allowance lasts and the look then runs on its planned tier; what
+    the look sends on to be investigated waits for the allowance as it
+    always did (parked).
+
+    And a look on the tier investigations are paid from spends at most
+    half of it: a typed Sonnet put both on one allowance, and looks every
+    ten minutes spent every investigation's share by breakfast.
+    """
+    planned = tier_for(JOB_FIRST_LOOK)
+    reserve = 0
+    if tier != planned and tier == investigate_tier:
+        reserve = (ledger.cap(tier, thinking) or 0) // 2
+    ok, why = ledger.allows(tier, thinking, now=now, reserve=reserve)
+    if ok:
+        return tier, ""
+    if tier != planned and ledger.allows(planned, thinking, now=now)[0]:
+        return planned, why
+    return "", why
+
+
 __all__ = [
     "ACT_JOBS", "CASE_KINDS", "CASE_SCHEMA", "ESCALATE_CONFIDENCE",
     "ALREADY", "FIRST_LOOK_SCHEMA", "FIRST_LOOK_SYSTEM", "FORCED",
@@ -1784,5 +1840,5 @@ __all__ = [
     "note_withheld", "parse_case", "parse_dismissal", "parse_first_look",
     "rejudge_due", "tier_for", "watch", "watch_note", "watched",
     "READING_DOMAINS", "drivers_of", "faulty_case", "ungrounded_did_not_run",
-    "device_aliases", "not_due",
+    "device_aliases", "not_due", "look_tier",
 ]
