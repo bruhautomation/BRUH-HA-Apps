@@ -58,6 +58,7 @@ export const CSS = `
 .bartoast{font-size:13px;color:var(--muted);margin-left:12px;min-width:0;flex:0 1 auto}
 .toastline{display:flex;align-items:center;min-height:44px;margin:-14px 0 -18px}.toastline .bartoast{margin-left:0}
 .wrap{position:relative}.wrap.toplone>[data-region="bar"]{position:absolute;top:0;right:clamp(14px,3vw,44px);z-index:7}.wrap.toplone .toastline{min-height:0;margin:0}
+@media (max-width:700px){.wrap.toplone [data-region="rooms"]{padding-right:76px}}
 .morph .editquiet{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 4px;font-size:13px;font-weight:600;color:var(--muted)}
 .morph .editquiet:hover{color:var(--text)}
 .bar>.go,.bar>.menu,.bar>.brand{flex-shrink:0}

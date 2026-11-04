@@ -1581,10 +1581,12 @@ for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
       const first = [...R.querySelectorAll('section.sec, .flh')].filter((e) => e.getBoundingClientRect().height > 0).map((e) => e.getBoundingClientRect().top).sort((a, b) => a - b)[0];
       const edit = R.querySelector('[data-act="edit"]'); const eb = edit && edit.getBoundingClientRect();
       const hit = eb ? R.elementFromPoint(eb.left + eb.width / 2, eb.top + eb.height / 2) : null;
-      return { empties, gap: first - host.top, edit: !!eb && eb.width > 0, reach: !!(hit && (hit === edit || edit.contains(hit))), top: R.querySelector('[data-region="top"]').hidden };
+      const rooms = R.querySelector('[data-region="rooms"]'); const rb = rooms && !rooms.hidden && getComputedStyle(rooms).display !== 'none' ? rooms.getBoundingClientRect() : null;
+      return { empties, gap: first - (rb ? rb.bottom : host.top), roomline: !!rb, pencilOverRooms: !!(eb && R.querySelector('.roomline') && (() => { const r = R.querySelector('.roomline').getBoundingClientRect(); return r.right > eb.left && r.left < eb.right && r.bottom > eb.top && r.top < eb.bottom; })()), edit: !!eb && eb.width > 0, reach: !!(hit && (hit === edit || edit.contains(hit))), top: R.querySelector('[data-region="top"]').hidden };
     });
     if (!g.top) fail(`reports ${name}`, '#664: the top region is drawn with nothing in it');
     if (g.empties.length) fail(`reports ${name}`, `#664: empty regions that are not hidden: ${g.empties.join(', ')}`);
+    if (g.pencilOverRooms) fail(`reports ${name}`, '#664: the Edit pencil sits on top of the room line');
     if (g.gap > 34) fail(`reports ${name}`, `#664: the first card is ${g.gap.toFixed(0)}px below brAIn's header with nothing on top (limit 34)`);
     if (!g.edit || !g.reach) fail(`reports ${name}`, `#664: Edit is not reachable with nothing on top (${JSON.stringify(g)})`);
     await ctx2.close();
