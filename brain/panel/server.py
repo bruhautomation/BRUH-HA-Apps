@@ -13678,14 +13678,7 @@ async def _recent_history(ids: list[str], hours: float,
 async def _resident_history_gates(case: dict, now: float) -> tuple[str, dict]:
     """``(why, case)``: why the history refuses a case, or "" with the case
     as it may be filed — its stated open duration corrected when the door
-    is still open for a different time than it said."""
-    wanted = resident.history_wanted(case, _DRIVEN_BY, _DRIVEN_ALIASES)
-    if wanted:
-        history = await _recent_history(wanted, resident.NOT_RUN_WINDOW_H, now)
-        never = resident.never_due(case, _DRIVEN_BY, history, _DRIVEN_ALIASES,
-                                   _live_reading)
-        if never:
-            return never, case
+    is still open for a different time than it said (#580)."""
     stated = resident.stated_open(case, _device_class)
     if stated:
         history = await _recent_history(stated[1], stated[0] / 60.0 + 3, now)
@@ -14952,8 +14945,7 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     # "It did not run" compared with a reading its own automations never
     # read is a claim about a rule the house does not have: refused, with
     # the automations' own triggers as the reason on the trail.
-    ungrounded = resident.ungrounded_did_not_run(case, _DRIVEN_BY,
-                                                 _DRIVEN_ALIASES)
+    ungrounded = resident.ungrounded_did_not_run(case, _DRIVEN_BY)
     if ungrounded:
         RESIDENT_STATE["refused"] = RESIDENT_STATE.get("refused", 0) + 1
         log.info("an investigation of %s said a device did not run against a "
@@ -14992,10 +14984,8 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     # (#561). Nothing is filed, and the trail says what answered it.
     waits = (resident.not_due(case, _DRIVEN_BY, _live_reading, _DRIVEN_ALIASES)
              or _registry_answers(case, str(signal.get("subject") or "")))
-    # "It did not run" is about the day behind it: what starts the machine
-    # is read over that day, and the claim stands only when the rule was
-    # due while the machine stayed off (#625). "Open for 70 minutes" is
-    # read against the door's own last open and close (#580).
+    # "Open for 70 minutes" is read against the door's own last open and
+    # close (#580).
     if not waits:
         waits, case = await _resident_history_gates(case, now)
     if waits:

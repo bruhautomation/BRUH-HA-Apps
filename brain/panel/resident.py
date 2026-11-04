@@ -178,16 +178,6 @@ HOT_FLOOR = "watch"
 # about whether anybody heard.
 FLAG_FLOORS = {"safety": "act", "protected": NEVER_IGNORE_FLOOR,
                "hot": HOT_FLOOR}
-# brAIn's own rehearsal (`brain doctor --rehearse`) plants defects under
-# this prefix — `doctor.PREFIX`, spelled here rather than imported because
-# `doctor` carries the engine and the stores and this module is a leaf —
-# precisely to check that the first look notices them. A look that read
-# "brain_test_dead_ref" as a test fixture and ignored it failed the
-# rehearsal it exists to pass, on the house as in the replay, so a signal
-# whose subject or evidence carries the prefix is floored at `watch`:
-# never dropped, and the model's `ignore` is on the record beside it.
-REHEARSAL_PREFIX = "brain_test_"
-REHEARSAL_FLOOR = HOT_FLOOR
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
@@ -222,27 +212,7 @@ def never_ignore(signal: dict) -> tuple[str, str]:
     hit = sorted(words & set(NEVER_IGNORE))
     if hit:
         raise_to(NEVER_IGNORE_FLOOR, f"it is a {hit[0]} signal")
-    if any(_rehearsal_object(e) for e in _signal_subjects(signal)):
-        raise_to(REHEARSAL_FLOOR, "it is one of the defects brAIn's own "
-                 "rehearsal planted to check they are noticed")
     return floor, why
-
-
-def _rehearsal_object(eid) -> bool:
-    """Whether an entity id names a thing the rehearsal planted."""
-    name = str(eid or "")
-    return name.split(".", 1)[-1].startswith(REHEARSAL_PREFIX)
-
-
-def _signal_subjects(signal: dict) -> list[str]:
-    """A signal's subject and the entities its evidence names."""
-    out = [str(signal.get("subject") or "")]
-    for row in signal.get("evidence") or ():
-        eid = (row.get("entity") or row.get("entity_id")) if isinstance(
-            row, dict) else row
-        if eid:
-            out.append(str(eid))
-    return out
 
 
 FIRST_LOOK_SCHEMA = {
@@ -1256,19 +1226,8 @@ _DID_NOT_RUN_RE = re.compile(
     r"|\b(?:been|is|was|sat|sitting|stayed|remain(?:ed|s)?|went|gone)\s+idle\b(?!-)"
     r"|\bstopped\s+(?:running|working)\b"
     r"|\b(?:drew|drawn|drawing|draws?)\s+(?:only\s+)?(?:no|standby)\s+power\b"
-    # "It drew 0 W", "reading zero watts": a plug's power read as a claim
-    # that the machine behind it did not run (#625, `_ZERO_WATTS`).
-    r"|\b(?:drew|drawn|drawing|draws?|reads?|reading|read|showed|shows|at|stuck\s+at)"
-    r"\s+(?:only\s+|just\s+)?(?:0(?:\.0+)?\s*W|0(?:\.0+)?\s*watts?|zero\s+watts?)\b"
     r"|\b(?:is|was|may\s+be|might\s+be|seems|looks|appears)\s+"
     r"(?:to\s+be\s+)?broken\b", re.I)
-# The power reading's form of the claim, on its own: a plug that is ON and
-# drawing 0 W is exactly a machine that did not run (a full tank, a tripped
-# unit), so the switch being on is no answer to it (`never_due`).
-_ZERO_WATTS = re.compile(
-    r"\b(?:drew|drawn|drawing|draws?|reads?|reading|read|showed|shows|at|stuck\s+at)"
-    r"\s+(?:only\s+|just\s+)?(?:0(?:\.0+)?\s*W|0(?:\.0+)?\s*watts?|zero\s+watts?)\b"
-    r"|\b(?:drew|drawn|drawing|draws?)\s+(?:only\s+)?(?:no|standby)\s+power\b", re.I)
 _ENTITY_IN_WORDS_RE = re.compile(r"\b([a-z_]+)\.([a-z0-9_]+)\b")
 # What a claim may compare an actuator with: a reading.
 READING_DOMAINS = frozenset({"sensor", "binary_sensor", "weather"})
@@ -1402,7 +1361,7 @@ def faulty_case(case: dict, entities, faulty: dict) -> str:
     return ""
 
 
-def ungrounded_did_not_run(case: dict, drivers: dict, aliases=None) -> str:
+def ungrounded_did_not_run(case: dict, drivers: dict) -> str:
     """Why a "did not run" case is not grounded, or "" when it is (or when
     it is not that kind of claim).
 
@@ -1410,9 +1369,7 @@ def ungrounded_did_not_run(case: dict, drivers: dict, aliases=None) -> str:
     case has to name a device some automation drives and a reading beside
     it, and NONE of the readings may be anything those automations read.
     A device nothing drives, or a claim that compares it with no reading,
-    is left alone: there is no rule to read it against. ``aliases``
-    (`device_aliases`) makes a claim about the plug's own power sensor a
-    claim about the plug, and that sensor is not "a reading beside it".
+    is left alone: there is no rule to read it against.
     """
     if not isinstance(case, dict) or not drivers:
         return ""
@@ -1427,16 +1384,10 @@ def ungrounded_did_not_run(case: dict, drivers: dict, aliases=None) -> str:
                 + [m.group(0) for m in _ENTITY_IN_WORDS_RE.finditer(words)]):
         if "." in eid and eid not in named:
             named.append(eid)
-    aliases = aliases or {}
     actuators = [e for e in named if drivers.get(e)]
-    for e in named:
-        owner = aliases.get(e, "")
-        if owner and drivers.get(owner) and owner not in actuators:
-            actuators.append(owner)
     if not actuators:
         return ""
     readings = [e for e in named if e not in actuators
-                and aliases.get(e, "") not in actuators
                 and e.split(".", 1)[0] in READING_DOMAINS]
     if not readings:
         return ""
@@ -1451,49 +1402,6 @@ def ungrounded_did_not_run(case: dict, drivers: dict, aliases=None) -> str:
     return textclip.clip(
         f"{', '.join(actuators)} is run by {by} — the claim compares it with "
         f"{', '.join(readings)}, which none of them reads", MAX_WHY)
-
-
-# How far back a "did not run" claim is held against what starts the
-# machine (`never_due`): the day a case is usually about.
-NOT_RUN_WINDOW_H = 24
-_ON_WORDS = frozenset({"on", "heat", "cool", "dry", "auto", "running"})
-
-
-def _named_actuators(case: dict, drivers: dict, aliases=None) -> list[str]:
-    """The driven devices a "not running" claim is about, or []."""
-    if not isinstance(case, dict) or not drivers:
-        return []
-    words = " ".join(str(case.get(k) or "") for k in ("claim", "text",
-                                                       "detail"))
-    if not _DID_NOT_RUN_RE.search(words):
-        return []
-    aliases = aliases or {}
-    out: list[str] = []
-    for eid in ([str(case.get("entity_id") or "")]
-                + [str(r.get("entity") or "") for r in case.get("evidence") or ()
-                   if isinstance(r, dict)]
-                + [m.group(0) for m in _ENTITY_IN_WORDS_RE.finditer(words)]):
-        actuator = eid if drivers.get(eid) else aliases.get(eid, "")
-        if actuator and drivers.get(actuator) and actuator not in out:
-            out.append(actuator)
-    return out
-
-
-def history_wanted(case: dict, drivers: dict, aliases=None) -> list[str]:
-    """The entities `never_due` reads: each driven device a not-running
-    claim names, and every sensor a rule that starts it is bounded on."""
-    out: list[str] = []
-    for actuator in _named_actuators(case, drivers, aliases):
-        rules = [r for r in drivers[actuator] if r.get("starts")]
-        if not rules or any(r.get("trigger_bounds") is None for r in rules):
-            continue
-        for eid in [actuator] + [b["entity"] for r in rules for b in
-                                 (r.get("trigger_bounds") or [])
-                                 + (r.get("condition_bounds") or [])]:
-            if eid not in out:
-                out.append(eid)
-    return out
-
 
 def _points(series) -> list[tuple[float, str]]:
     """Raw history rows ``[[stamp, state], ...]`` as ``(epoch, state)``,
@@ -1517,117 +1425,6 @@ def _points(series) -> list[tuple[float, str]]:
     out.sort(key=lambda p: p[0])
     return out
 
-
-def _at(points: list[tuple[float, str]], ts: float) -> str | None:
-    """The state a series held at ``ts``, or None before its first row."""
-    said = None
-    for when, word in points:
-        if when > ts:
-            break
-        said = word
-    return said
-
-
-def _number(word) -> float | None:
-    try:
-        return float(word)
-    except (TypeError, ValueError):
-        return None
-
-
-def never_due(case: dict, drivers: dict, history: dict | None, aliases=None,
-              value_of=None) -> str:
-    """Why a "did not run" claim is about a machine that was never due in
-    the window, or ran every time it was, or "" when it may be filed.
-
-    `not_due` reads the sensors NOW; a claim is about the day behind it
-    (#625: "the dehumidifier did not run" while its automation's humidity
-    sensor never reached the set point). ``history`` is the raw history of
-    `history_wanted`'s entities over `NOT_RUN_WINDOW_H`. For every rule
-    that starts the device on numeric thresholds, each moment one of its
-    sensors changed is read: when a trigger was past its bound and every
-    numeric condition held, the rule was due. The claim is filed only when
-    the rule was due at a moment the device was not on. Any rule a time,
-    a state or an event can start, and any sensor whose history could not
-    be read, lets the claim through: "could not look" refuses nothing.
-
-    A claim in the power reading's words ("drew 0 W", `_ZERO_WATTS`) is
-    never refused on the switch having been on: a plug that is on while
-    the machine behind it draws nothing is the claim, not its answer. Only
-    a rule that was never due answers it.
-    """
-    import shadow  # noqa: PLC0415 — panel-local, a leaf
-
-    if not isinstance(history, dict) or not history:
-        return ""
-    value_of = value_of or (lambda _e: None)
-    words = " ".join(str(case.get(k) or "") for k in ("claim", "text",
-                                                       "detail"))
-    power_claim = bool(_ZERO_WATTS.search(words))
-    said = []
-    for actuator in _named_actuators(case, drivers, aliases):
-        rules = [r for r in drivers[actuator] if r.get("starts")]
-        if not rules:
-            continue
-        if any(r.get("trigger_bounds") is None for r in rules):
-            return ""
-        own = _points(history.get(actuator))
-        due_at: list[float] = []
-        quiet = []
-        for rule in rules:
-            trig = list(rule.get("trigger_bounds") or [])
-            cond = list(rule.get("condition_bounds") or [])
-            series = {b["entity"]: _points(history.get(b["entity"]))
-                      for b in trig + cond}
-            if not trig or any(not pts for pts in series.values()):
-                return ""
-            moments = sorted({t for pts in series.values() for t, _w in pts})
-            highest: dict[str, float] = {}
-            rule_due: list[float] = []
-            for t in moments:
-                def met(bound: dict) -> bool:
-                    value = _number(_at(series[bound["entity"]], t))
-                    if value is not None:
-                        top = highest.get(bound["entity"])
-                        if bound.get("above") not in (None, ""):
-                            highest[bound["entity"]] = max(
-                                value, top if top is not None else value)
-                        else:
-                            highest[bound["entity"]] = min(
-                                value, top if top is not None else value)
-                    return bool(shadow.bound_met(bound, value, value_of))
-                hit = [met(b) for b in trig]
-                if any(hit) and all(met(b) for b in cond):
-                    rule_due.append(t)
-            due_at += rule_due
-            if not rule_due:
-                bits = []
-                for b in trig[:2]:
-                    side = (f"above {b['above']}"
-                            if b.get("above") not in (None, "")
-                            else f"below {b['below']}")
-                    seen = highest.get(b["entity"])
-                    bits.append(f"{b['entity']} {side}, and it never got there "
-                                + (f"(it reached {seen:g})"
-                                   if isinstance(seen, float) else ""))
-                quiet.append(f"“{rule['alias']}” starts {actuator} when "
-                             + "; ".join(bits).strip()
-                             + f" in the last {NOT_RUN_WINDOW_H} hours, so it "
-                             "was not due to run")
-        if due_at:
-            if power_claim or not own:
-                return ""
-            if any(str(_at(own, t) or "").lower() not in _ON_WORDS
-                   for t in due_at):
-                return ""
-            said.append(f"{actuator} was on each time what starts it was due "
-                        f"in the last {NOT_RUN_WINDOW_H} hours, so it ran "
-                        "when it was due")
-            continue
-        said.extend(quiet)
-    if not said:
-        return ""
-    return textclip.clip("; ".join(said), MAX_WHY)
 
 
 # A stated "open for 70 minutes" about a door, a gate or a cover (#580).
@@ -2267,7 +2064,6 @@ __all__ = [
     "LEDGER_FILE", "MAX_BATCH", "MAX_EXAMPLES", "MAX_EXAMPLE_CHARS",
     "MAX_TURNS", "MAX_WHY", "NEVER_IGNORE",
     "NEVER_IGNORE_FLOOR", "OPUS_PER_DAY", "SEVERITY_BY_STAKES", "SKIPPED",
-    "REHEARSAL_FLOOR", "REHEARSAL_PREFIX",
     "SONNET_PER_DAY", "TIMEOUT_S", "UNREADABLE", "VERDICTS", "WATCH_FILE",
     "WATCH_RETRY_REPEATS", "WATCH_TTL_S", "Ledger", "expire",
     "first_look_prompt", "investigate_prompt", "never_ignore",
@@ -2276,7 +2072,6 @@ __all__ = [
     "note_withheld", "parse_case", "parse_dismissal", "parse_first_look",
     "rejudge_due", "tier_for", "watch", "watch_note", "watched",
     "DOOR_CLASSES", "READING_DOMAINS", "drivers_of", "faulty_case",
-    "history_wanted",
-    "never_due", "open_duration", "stated_open", "ungrounded_did_not_run",
+    "open_duration", "stated_open", "ungrounded_did_not_run",
     "device_aliases", "not_due", "look_tier",
 ]
