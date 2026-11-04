@@ -31,13 +31,12 @@
 // PICTURE of what it is about (snap.js), so "this" means what is on screen.
 
 import { Engine } from './engine.js';
-import { CSS as STYLES, FONTS_URL } from './styles.js';
+import { CSS as STYLES, FONTS_URL, FIELD_FLOOR } from './styles.js';
 import { TYPES, typeOf, tileAria, stateWord } from './cards.js';
 import * as history from './history.js';
 import * as snap from './snap.js';
 import * as upc from './upcoming.js';
 import * as sal from './salience.js';
-import * as then from './then.js';
 import { morph } from './morph-dom.js';
 import { caseFace, todoFace, caseColor, placeCase } from './cases.js';
 import { Rail } from './rail.js';
@@ -113,6 +112,25 @@ async function cardHelpers() {
   return null;
 }
 
+// A card's own shadow root is out of reach of Morph's styles, so a field in
+// it (a text box in a house's own card) would zoom a phone on focus. Hand
+// every open shadow root in the card the 16px floor, once (#677).
+let _floorSheet;
+const _floored = new WeakSet();
+function floorFields(node, depth = 0) {
+  if (!node || depth > 4 || typeof CSSStyleSheet === 'undefined') return;
+  const root = node.shadowRoot;
+  if (!root || !('adoptedStyleSheets' in root)) return;
+  if (!_floored.has(root)) {
+    try {
+      if (!_floorSheet) { _floorSheet = new CSSStyleSheet(); _floorSheet.replaceSync(FIELD_FLOOR); }
+      root.adoptedStyleSheets = [...root.adoptedStyleSheets, _floorSheet];
+      _floored.add(root);
+    } catch (e) { /* a browser without constructable sheets keeps the card's own size */ }
+  }
+  root.querySelectorAll('*').forEach((n) => { if (n.shadowRoot) floorFields(n, depth + 1); });
+}
+
 // A house's own custom card needs nothing from Lovelace: its element is
 // defined, so make it and hand it the config.
 function customCardWithoutHelpers(config) {
@@ -150,7 +168,7 @@ class MorphPanel extends HTMLElement {
       edit: false, view: null, fading: null, previews: {}, memberPreview: null,
       secEdit: null, asks: [], story: {}, confirm: {}, hold: null, add: null,
       sugNo: null, toast: null, yaml: null, hist: null, upcHost: null, upcShown: null,
-      unfold: {}, pending: {}, replyOpen: {}, todoOpen: null, thenAt: null,
+      unfold: {}, pending: {}, replyOpen: {}, todoOpen: null,
     };
     // The Tell box shows one tell. A tell it stops showing while brAIn is
     // still at it (another Tell opened, the box closed) keeps running in
@@ -307,7 +325,7 @@ class MorphPanel extends HTMLElement {
     if (this.engine) return;
     const root = this.shadowRoot;
     root.innerHTML = `<style>${STYLES}</style><div class="morph t-dark" data-morph-root><div class="scroll" style="height:var(--morph-h,100vh);overflow-y:auto;overflow-x:hidden;overscroll-behavior-y:contain"><div class="wrap">
-<div data-region="thenrule"></div><div data-region="bar"></div><div data-region="lede"></div><div data-region="top"></div><div data-region="upcoming"></div><div data-region="scenes"></div><div data-region="rooms"></div><div data-region="notes"></div>
+<div data-region="bar"></div><div data-region="lede"></div><div data-region="top"></div><div data-region="upcoming"></div><div data-region="scenes"></div><div data-region="rooms"></div><div data-region="notes"></div>
 <div data-region="board"><div data-board></div></div></div><div class="srail" data-rail aria-hidden="true"></div></div></div>`;
     if (!document.querySelector('link[data-morph-fonts]')) {
       const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = FONTS_URL; l.dataset.morphFonts = '1'; document.head.appendChild(l);
@@ -322,7 +340,6 @@ class MorphPanel extends HTMLElement {
     this.engine.scrollEl = this.$('.scroll');
     this.engine.onSettle = () => this.audit();
     history.setOnData(() => this.schedule());
-    then.setOnData(() => this.schedule());
     this.bindEvents();
     // The room rail on a touch screen's right edge (rail.js): a column of
     // notches beside the content, opened by a short pull to the left.
@@ -416,7 +433,7 @@ class MorphPanel extends HTMLElement {
     if (!this.engine || !this.hass) return;
     this._roomFaults = new Map();
     const set = this.settings();
-    const theme = set.theme && set.theme !== 'auto' ? set.theme : (this.hass.themes && this.hass.themes.darkMode === false ? 'light' : 'dark');
+    const theme = set.theme && set.theme !== 'auto' ? set.theme : (this.hass.themes && typeof this.hass.themes.darkMode === 'boolean' ? (this.hass.themes.darkMode ? 'dark' : 'light') : window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
     // boot.js draws its outline in the theme this page last used.
     if (theme !== this._savedTheme) { this._savedTheme = theme; try { localStorage.setItem('morph.theme', theme); } catch (e) { /* storage refused */ } }
     this.engine.forceReduce = !!set.reduce_motion;
@@ -431,9 +448,8 @@ class MorphPanel extends HTMLElement {
     // (`night_dim: true`): at 40 % for everybody, a household found it
     // unreadable and had no way to turn it off (#343).
     const dim = form === 'night' && this.dash && this.dash.night_dim === true;
-    const cls = `morph t-${theme}${set.reduce_motion ? ' reduce' : ''}${form ? ' form-' + form : ''}${dim ? ' night-dim' : ''}${this.s.thenAt ? ' then' : ''}`;
+    const cls = `morph t-${theme}${set.reduce_motion ? ' reduce' : ''}${form ? ' form-' + form : ''}${dim ? ' night-dim' : ''}`;
     if (this.rootEl.className !== cls) this.rootEl.className = cls;
-    this.region('thenrule', this.s.thenAt ? `<div class="thenrule" style="width:${(Math.min(1, (Date.now() - this.s.thenAt) / 86400000) * 100).toFixed(1)}%"></div>` : '');
     this.region('bar', this.barHtml());
     this.chrome(theme);
     this.region('lede', this.updateHtml() + (this.s.edit ? `<div class="lede">Editing · <b>hold anything to tell ${esc(this.who())} what to change</b> · drag a section by its title · tap a card to rename, resize or remove it</div>` : '') + this.activityHtml());
@@ -446,33 +462,16 @@ class MorphPanel extends HTMLElement {
     if (!this.brainInstalled()) { ['upcoming', 'scenes', 'rooms', 'notes'].forEach((r) => this.region(r, '')); this.$('[data-region="board"]').hidden = true; this.region('top', `<p class="story needbrain">${esc(NEEDS_BRAIN)}</p>`); return; }
     if (!this.dash) { this.region('top', `<div class="banner">brAIn has not written the dashboard yet. It builds the first one from your floors and rooms within a minute of the Morph dashboard being switched on.</div>`); return; }
     const dash = this.dash;
-    this.prepareThen();
     this.region('top', this.topHtml(dash));
+    // With nothing at the top, Edit's pencil floats in the corner instead
+    // of making a row of its own (#664).
+    this.$('.wrap').classList.toggle('toplone', !!this._shell && this.$('[data-region="top"]').hidden && !this.s.toast && this.s.yaml == null);
     this.region('scenes', (dash.scenes || []).length ? this.scenesHtml(dash) : '');
     this.region('rooms', this.roomLineHtml(dash));
     this.region('notes', this.admin() ? this.problemsHtml() : '');
     this.renderBoard(dash);
     this.applyConfirms();
     this.tickSince();
-  }
-
-  // THEN (vision §7.2): the house at the moment Coming up was slid back to,
-  // read off the recorder. Cards draw from `hassView()`; nothing can be
-  // pressed; the verdict is in the past tense.
-  prepareThen() {
-    if (!this.s.thenAt) { this.thenStates = null; this.thenSal = null; return; }
-    const st = then.statesAt(this.hass, this.watchIds(), this.s.thenAt);
-    this.thenStates = st || null;
-    if (!st) { this.thenSal = null; return; }
-    try { this.thenSal = sal.compute(this.salItems().filter((i) => !i.case), { ...this.salContext(st, this.s.thenAt), pins: {}, asked: {}, touched: {} }, null); } catch (e) { this.thenSal = null; }
-  }
-
-  hassView() { return this.s.thenAt && this.thenStates ? { ...this.hass, states: this.thenStates } : this.hass; }
-
-  setThen(t) {
-    const was = this.s.thenAt;
-    this.s.thenAt = t;
-    if (!!was !== !!t || (t && Math.abs(t - was) > 30000)) this.schedule();
   }
 
   brainInstalled() { return !(this.data && this.data.brain && this.data.brain.installed === false); }
@@ -618,7 +617,7 @@ class MorphPanel extends HTMLElement {
 
   // A card at the top of its room with a because line under it.
   leadsWithReason(id) {
-    if (this.s.edit || this.s.thenAt) return false;
+    if (this.s.edit) return false;
     const a = this.salOf(id); const x = this.salNow(id);
     return a.band === 'lead' && !!(x.why && x.why.kind !== 'none');
   }
@@ -630,7 +629,7 @@ class MorphPanel extends HTMLElement {
 
   // The page's form: night, away or still (§10), or the ordinary page.
   form() {
-    if (this.s.edit || this.s.thenAt) return '';
+    if (this.s.edit) return '';
     const per = this.salApplied && this.salApplied.period;
     if (per === 'night') return 'night';
     if (per === 'away') return 'away';
@@ -768,27 +767,26 @@ class MorphPanel extends HTMLElement {
     return h < 5 ? 'Good night.' : h < 12 ? 'Good morning.' : h < 18 ? 'Good afternoon.' : 'Good evening.';
   }
 
-  // One clause of the verdict for one salience item, in the present or
-  // the past tense, from the entity's own state — never from a number
-  // nobody measured.
-  clauseFor(x, states, past) {
+  // One clause of the verdict for one salience item, from the entity's own
+  // state — never from a number nobody measured.
+  clauseFor(x, states) {
     const H = this.hass;
     if (x.isCase || String(x.id).startsWith('k:')) {
       const c = this.caseById(String(x.id).slice(2));
-      return c && !past ? (c.claim || c.text || '') : '';
+      return c ? (c.claim || c.text || '') : '';
     }
     const st = states[x.eid];
     if (!st) return '';
     const name = friendly(H, x.eid);
-    const is = past ? 'was' : 'is';
+    const is = 'is';
     const d = domainOf(x.eid); const dc = st.attributes.device_class; const i = x.inp || {};
     if (d === 'lock') return st.state === 'unlocked' ? `${name} ${is} unlocked` : st.state === 'jammed' ? `${name} ${is} jammed` : '';
-    if (d === 'binary_sensor' && ['smoke', 'gas', 'carbon_monoxide', 'moisture'].includes(dc) && st.state === 'on') return `${name} ${past ? 'detected' : 'detects'} ${dc === 'moisture' ? 'water' : dc === 'carbon_monoxide' ? 'carbon monoxide' : dc}`;
+    if (d === 'binary_sensor' && ['smoke', 'gas', 'carbon_monoxide', 'moisture'].includes(dc) && st.state === 'on') return `${name} detects ${dc === 'moisture' ? 'water' : dc === 'carbon_monoxide' ? 'carbon monoxide' : dc}`;
     if ((d === 'binary_sensor' || d === 'cover') && ['on', 'open', 'opening'].includes(st.state)) {
-      const recent = !past && st.last_changed && Date.now() - Date.parse(st.last_changed) < 120000;
+      const recent = st.last_changed && Date.now() - Date.parse(st.last_changed) < 120000;
       return recent ? `${name} just opened` : `${name} ${is} open`;
     }
-    if (i.pr && i.pr.finished) return `${name} ${past ? 'had finished' : 'finished'}${i.pr.since && !past ? ' ' + agoWords(Date.now() - i.pr.since * 1000) : ''}`;
+    if (i.pr && i.pr.finished) return `${name} finished${i.pr.since ? ' ' + agoWords(Date.now() - i.pr.since * 1000) : ''}`;
     if (d === 'media_player' && st.state === 'playing') return `${name} ${is} playing${st.attributes.media_title ? ' ' + st.attributes.media_title : ''}`;
     if (i.pr && i.pr.running) return `${name} ${is} running${i.pr.pct != null ? ' · ' + Math.round(i.pr.pct) + '%' : ''}`;
     if (i.dv && i.dv.usual != null) return `${name} ${is} ${fmt(i.dv.value, i.dv.unit)}, usually about ${fmt(i.dv.usual, i.dv.unit)}`;
@@ -800,18 +798,33 @@ class MorphPanel extends HTMLElement {
   // plain clauses; then how many cases are waiting. Each clause is a jump.
   // Nothing salient: brAIn's own sentence about now if it has a fresh one,
   // else "Everything is at rest." in indigo.
-  verdict(states, past, top) {
+  verdict(states) {
     const out = [];
-    const res = past || this.salState;
+    const res = this.salState;
     const seen = new Set();
-    ((top || (res && res.top)) || []).forEach((id) => {
+    ((res && res.top) || []).forEach((id) => {
       if (out.length >= 3) return;
       const x = res.items[id]; if (!x) return;
-      const text = this.clauseFor(x, states, !!past);
+      const text = this.clauseFor(x, states);
       const key = x.eid || id;
       if (!text || seen.has(key)) return;
       seen.add(key);
       out.push({ id, text, color: x.color || 'var(--text)' });
+    });
+    return out;
+  }
+
+  // Doors, windows and garage doors that are open right now, as clauses.
+  // The story may not say everything is locked, closed or at rest while
+  // one of these is open (#676): locks being locked said nothing about a
+  // contact that was open.
+  openClauses() {
+    const H = this.hass; const out = [];
+    Object.values(H.states).forEach((st) => {
+      const d = domainOf(st.entity_id); const dc = (st.attributes || {}).device_class;
+      const door = d === 'binary_sensor' ? ['door', 'window', 'garage_door', 'opening'].includes(dc) && st.state === 'on'
+        : d === 'cover' ? ['garage', 'door', 'window'].includes(dc) && ['open', 'opening'].includes(st.state) : false;
+      if (door) out.push(`${friendly(H, st.entity_id)} is open`);
     });
     return out;
   }
@@ -824,24 +837,21 @@ class MorphPanel extends HTMLElement {
       const rest = parts.slice(1);
       return `<button type="button" class="vjump" data-act="jump" data-v="${esc(first.id)}" style="--vc:${first.color}">${esc(first.text)}.</button>${rest.map((r) => ` <button type="button" class="vjump plain" data-act="jump" data-v="${esc(r.id)}" style="--vc:${r.color}">${esc(r.text)}.</button>`).join('')}`;
     };
-    if (this.s.thenAt) {
-      const states = this.thenStates || this.hass.states;
-      const res = this.thenSal;
-      const parts = res ? this.verdict(states, res, res.top) : [];
-      const at = clock(this.s.thenAt);
-      return `<p class="story">${parts.length ? `<span class="vthen">At ${esc(at)}</span> ${sentence(parts)}` : `<span class="vthen">At ${esc(at)}</span> <span>everything was at rest.</span>`}</p>`;
-    }
     const parts = this.verdict(this.hass.states);
     const open = this.cases().filter((c) => c.kind !== 'chore').length;
     const tail = open ? ` <button type="button" class="vjump plain" data-act="jump" data-v="k:${esc((this.cases()[0] || {}).id || '')}">…and ${open} thing${open === 1 ? '' : 's'} need${open === 1 ? 's' : ''} you.</button>` : '';
+    const opens = parts.length ? [] : this.openClauses();
+    const openHtml = opens.length ? `<span style="color:var(--amber)">${esc(opens.slice(0, 2).join('. '))}${opens.length > 2 ? ` and ${opens.length - 2} more` : ''}.</span>` : '';
     if (this.form_ === 'away') {
-      const sec = parts.length ? ' ' + sentence(parts) : ' <span style="color:var(--indigo)">Everything is locked.</span>';
+      const sec = parts.length ? ' ' + sentence(parts) : ' ' + (openHtml || '<span style="color:var(--indigo)">Everything is locked.</span>');
       return `<p class="story"><span class="hi">Nobody is home.</span>${sec}${tail}${offline}</p>`;
     }
     if (parts.length) return `<p class="story">${sentence(parts)}${tail}${offline}</p>`;
     const sit = this.brain().situation;
-    if (sit && sit.sentence && (!sit.at || Date.now() / 1000 - sit.at < 3600) && this.form_ !== 'night') return `<p class="story"><span class="hi">${esc(sit.sentence)}</span>${tail}${offline}</p>`;
-    return `<p class="story"><span style="color:var(--indigo)">Everything is at rest.</span>${tail}${offline}</p>`;
+    // A model's sentence that claims everything is shut is not shown over an open door.
+    const claimsAllShut = sit && /\b(every|all|everything)\b[^.]*\b(locked|closed|shut|secure)/i.test(sit.sentence || '');
+    if (sit && sit.sentence && !(claimsAllShut && opens.length) && (!sit.at || Date.now() / 1000 - sit.at < 3600) && this.form_ !== 'night') return `<p class="story"><span class="hi">${esc(sit.sentence)}</span>${tail}${offline}</p>`;
+    return `<p class="story">${openHtml || '<span style="color:var(--indigo)">Everything is at rest.</span>'}${tail}${offline}</p>`;
   }
 
   // The clock and the outside temperature a still, night or away page
@@ -858,7 +868,7 @@ class MorphPanel extends HTMLElement {
     const story = dash.story !== false ? `<div class="holdable${holding('top:story')}" data-hold="story">${this.verdictHtml(dash)}${this.tellBox('story')}</div>` : '';
     const edit = this.s.edit;
     let ask = '';
-    if ((dash.ask !== false || edit) && !this.s.thenAt) {
+    if ((dash.ask !== false || edit)) {
       // Every question asked keeps running and its answer stacks here,
       // newest first (the owner: "when asking multiple commands everything
       // keeps running and the answers stack up"). One slot used to be
@@ -872,7 +882,13 @@ ${this.tellBox('dashboard')}
 ${sugs.length && !(this.s.tell && this.s.tell.kind === 'dashboard') ? `<div class="sugs">${sugs.map((s) => `<button type="button" class="wd" data-act="ask-sug" data-v="${esc(s)}" style="font-size:14px;min-height:34px">${esc(s)}</button>`).join('')}</div>` : ''}
 ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
     }
-    return `<section aria-label="Now" class="topsec" style="display:flex;flex-direction:column;gap:14px;max-width:980px">${this.clockHtml()}${dash.greeting !== false && this.form_ !== 'night' ? `<h1 class="hello">${esc(this.greeting())}</h1>` : ''}${this.data.state && this.data.state.note ? `<div class="banner">${esc(this.data.state.note)}</div>` : ''}${story}${ask}</section>`;
+    // Nothing to show is no section at all: an empty one still made its
+    // region take a flex gap (#664).
+    const hello = dash.greeting !== false && this.form_ !== 'night' ? `<h1 class="hello">${esc(this.greeting())}</h1>` : '';
+    const note = this.data.state && this.data.state.note ? `<div class="banner">${esc(this.data.state.note)}</div>` : '';
+    const inner = `${this.clockHtml()}${hello}${note}${story}${ask}`;
+    if (!inner) return '';
+    return `<section aria-label="Now" class="topsec" style="display:flex;flex-direction:column;gap:14px;max-width:980px">${inner}</section>`;
   }
 
   // One asked question and its answer (or what brAIn is doing about it).
@@ -889,7 +905,7 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
     const reg = this.upcRegion();
     const w = (reg && reg.isConnected && reg.clientWidth) || (this.rootEl && this.rootEl.clientWidth) || window.innerWidth;
     const now = Date.now();
-    const m = upc.model(this.hass, now, w < 640 ? 0.9 : 1.25, this.dash ? then.past(this.hass, this.watchIds(), now).concat(this.predictionEvents(now)) : []);
+    const m = upc.model(this.hass, now, w < 640 ? 0.9 : 1.25, this.dash ? this.predictionEvents(now) : []);
     if (!m.stacks.length && !m.durs.length && !this.s.edit) { this._upc = null; return ''; }
     this._upc = m;
     const holding = this.s.hold === 'top:upcoming' ? ' holding' : '';
@@ -994,8 +1010,6 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
       this._upcGlideT = setTimeout(() => { tr.classList.remove('glide'); this._upcGlide = 0; this.schedule(); }, 640);
     }
     upc.paint(el, m, c);
-    // Behind the line is THEN: the page shows the house at that moment.
-    this.setThen(c < -1 ? m.base + c * 60000 : null);
     clearTimeout(this._upcIdle);
     if (c !== 0) this._upcIdle = setTimeout(() => { if (!this.upcD && this._upc) this.upcGo(this._upc, 0); }, upc.IDLE_BACK_MS);
     if (still) this.schedule();
@@ -1616,7 +1630,7 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
           let gl = el.querySelector(`[data-glab="${CSS.escape(gk)}"]`);
           if (g.label && sec) {
             if (!gl) { gl = document.createElement('div'); gl.className = 'glab'; gl.setAttribute('data-glab', gk); gl.dataset.key = 'g:' + gk; el.appendChild(gl); }
-            gl.style.color = mix(hue(sec.color), 55, 'var(--quiet)');
+            gl.style.color = mix(hue(sec.color), 55, 'var(--text)');
             const grp = (sec.groups || [])[Number(gk.split(':').pop())];
             this.setHtml(gl, `<span>${esc(g.label)}</span>${grp && grp.note ? `<i>${esc(grp.note)}</i>` : ''}`);
           } else if (gl) gl.remove();
@@ -1710,7 +1724,7 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
   // On a phone the room line is its own sticky row under the header, for
   // the whole house; on a wider screen the floor headings carry it.
   roomLineHtml(dash) {
-    if (this.s.edit || this.s.thenAt) return '';
+    if (this.s.edit) return '';
     const floors = this._floorsOrdered || this.orderedFloors(dash);
     const rows = floors.map((F) => `<span class="rlfloor">${esc(F.fl.title)}</span>${this.roomWords(F.secs)}`).join('');
     return rows ? `<nav class="roomline" aria-label="Rooms">${rows}</nav>` : '';
@@ -1836,7 +1850,7 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
     }
     const hit = this.findCard(id); if (!hit) return;
     const card = hit.card; const T = typeOf(card);
-    const hv = this.hassView();
+    const hv = this.hass;
     const st = card.entity ? hv.states[card.entity] : null;
     const open = this.s.view && this.s.view.id === id;
     const mode = open ? this.s.view.mode : '';
@@ -1847,15 +1861,15 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
     let faceHtml = '', moreHtml = '';
     try {
       ctx.accent = card.color ? hue(card.color) : T.accent(ctx);
-      const slide = !this.s.edit && !this.s.thenAt && T.slide ? T.slide(ctx) : null;
-      ctx.hint = this.s.edit ? (open ? '' : `tap to edit · hold to tell ${this.who()}`) : (open || T.noOpen || this.s.thenAt) ? '' : slide ? 'slide · tap · hold for more' : T.tap(ctx) ? 'tap · hold for more' : 'tap for more';
+      const slide = !this.s.edit && T.slide ? T.slide(ctx) : null;
+      ctx.hint = this.s.edit ? (open ? '' : `tap to edit · hold to tell ${this.who()}`) : (open || T.noOpen) ? '' : slide ? 'slide · tap · hold for more' : T.tap(ctx) ? 'tap · hold for more' : 'tap for more';
       faceHtml = T.face(ctx);
       // The because line (§11): one sentence, in the item's meaning colour,
       // on a card the list lifted or put at the top of its room. Hold it to
       // ask brAIn why.
       // Whether it leads is the APPLIED list's word (the row it sits in was
       // laid out from it, `leadsWithReason`); what it says is the newest.
-      if (!this.s.edit && !this.s.thenAt && x.why && (lifted || this.leadsWithReason(id)) && x.why.kind !== 'none') faceHtml += `<p class="because" data-why="${esc(id)}" style="color:${x.why.color}">${esc(x.why.text)}</p>`;
+      if (!this.s.edit && x.why && (lifted || this.leadsWithReason(id)) && x.why.kind !== 'none') faceHtml += `<p class="because" data-why="${esc(id)}" style="color:${x.why.color}">${esc(x.why.text)}</p>`;
       else if (lifted && x.why) faceHtml += `<p class="because" data-why="${esc(id)}" style="color:${x.why.color}">${esc(x.why.text)}</p>`;
       if (open && mode === 'adv') moreHtml = `<div class="more rise" data-ctl-scope="1">${this.keepHtml(card, lifted || x.band === 'lead')}${T.more(ctx)}${detailCard(card) ? `<div class="ll" data-ll="${esc(id)}:detail"></div>` : ''}${T.host ? '' : this.moreInfoHtml(card, ctx)}</div>`;
       if (open && mode === 'edit') moreHtml = this.cardEditHtml(hit, name);
@@ -1954,8 +1968,22 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
     }
     if (el.parentNode !== slot) { slot.innerHTML = ''; slot.appendChild(el); }
     // One observer, one lay-out per frame, each slot observed once.
-    if (!this._llRo) this._llRo = new ResizeObserver(() => { cancelAnimationFrame(this._llRaf); this._llRaf = requestAnimationFrame(() => this.engine.layout(false, true)); });
+    floorFields(el);
+    this.markEmptyCard(slot, el);
+    if (!this._llRo) this._llRo = new ResizeObserver((ents) => { this.llCards.forEach((c) => floorFields(c)); ents.forEach((en) => { const sl = en.target; const c = sl.firstElementChild; if (c && sl.classList.contains('ll')) this.markEmptyCard(sl, c); }); cancelAnimationFrame(this._llRaf); this._llRaf = requestAnimationFrame(() => this.engine.layout(false, true)); });
     if (!slot.__llObserved) { slot.__llObserved = true; this._llRo.observe(slot); }
+  }
+
+  // A hosted card with nothing to draw (a conditional or alert card whose
+  // condition is false) is a tile of no height, which is a card that is
+  // gone: nobody can find it, hold it or ask about it. It says so in one
+  // quiet line instead (#678).
+  markEmptyCard(slot, el) {
+    if (!slot || !el || !slot.isConnected) return;
+    const none = slot.querySelector(':scope > .llnone');
+    const empty = el.offsetHeight === 0;
+    if (empty && !none) { const n = document.createElement('span'); n.className = 'llnone'; n.textContent = 'Nothing to show right now'; slot.appendChild(n); }
+    else if (!empty && none) none.remove();
   }
 
   // ------------------------------------------------------------- editing
@@ -2496,8 +2524,6 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
     if (!mt) return;
     const id = mt.dataset.mt;
     if (id.startsWith('k:') || id.startsWith('td:')) return;
-    // THEN is a picture of the past: nothing on it can be pressed.
-    if (this.s.thenAt) return;
     const hit = id.startsWith('add@') ? null : this.findCard(id);
     const T = hit ? typeOf(hit.card) : null;
     const ctx = hit ? { hass: this.hass, card: hit.card, st: hit.card.entity ? this.hass.states[hit.card.entity] : null } : null;

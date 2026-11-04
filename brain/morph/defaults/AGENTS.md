@@ -205,7 +205,6 @@ Morph's own panel modules are in `/config/custom_components/brain/morph/frontend
 | `styles.js` | The styles |
 | `salience.js` | What matters right now: each card's score, its band (Now, Lead, Shown, Folded), its "because" line, and the room states |
 | `cases.js` | brAIn's cases as Morph draws them in a room, and the To Do list |
-| `then.js` | The house as it was at a moment in the last day (Coming up slid into the past) |
 | `morph-dom.js` | Updating the page in place, so nothing a person is touching is rebuilt |
 | `util.js` | Icons and small helpers |
 

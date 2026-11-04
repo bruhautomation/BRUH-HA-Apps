@@ -1390,6 +1390,208 @@ for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
   await ctx.close();
 }
 
+// The house reports of 2026-11-04 (#662 #664 #676 #677 #678 #679 #682), one
+// class each, driven here on a second example the report never named:
+//   * Then mode is gone: Coming up cannot be slid into the past;
+//   * with the greeting, story and Ask off, no empty region takes a gap and
+//     the first card sits near brAIn's header, Edit still reachable;
+//   * the story never says everything is locked or at rest over an open
+//     door, a window or a garage door;
+//   * no form control is under 16px on a phone, in a card's own shadow root
+//     too;
+//   * every card id in the dashboard is on screen, a card with nothing to
+//     show says so, and none is a tile of no height;
+//   * small capital labels are 4.5:1 against what they sit on, in all three
+//     themes, and Home Assistant's light mode draws the light theme;
+//   * every button Morph draws shows an icon or words and has a name.
+for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
+  const touch = name === 'phone';
+  const where = `reports ${name}`;
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, ...(touch ? { hasTouch: true, isMobile: true } : {}) });
+  await route(ctx, { narrow: touch, shell: true });
+  const p = await ctx.newPage();
+  const errors = [];
+  p.on('pageerror', (e) => errors.push(String(e)));
+  await p.goto(ORIGIN + '/');
+  await p.waitForFunction(() => window.__panel && window.__panel.data);
+  await settle(p, 2000);
+  await p.evaluate(() => {
+    customElements.define('mx-test-say', class extends HTMLElement {
+      setConfig(c) { this.c = c; if (!this.shadowRoot) { this.attachShadow({ mode: 'open' }).innerHTML = '<input class="say" type="text" placeholder="Say something" style="font-size:15px"><textarea style="font-size:14px"></textarea>'; } }
+    });
+    customElements.define('mx-test-none', class extends HTMLElement { setConfig(c) { this.c = c; } });
+    const P = window.__panel;
+    P.data.state.settings = { ...(P.data.state.settings || {}), fold_rooms: false };
+    const d = JSON.parse(JSON.stringify(P.dash));
+    const yard = d.floors.flatMap((f) => f.sections).find((x) => x.id === 's_yard');
+    yard.groups[0].cards.push({ id: 'c_say', type: 'lovelace', card: { type: 'custom:mx-test-say' } }, { id: 'c_nothing', type: 'lovelace', card: { type: 'custom:mx-test-none' } });
+    P.dash = d; P._secEnts = null; P._watch = null; P._forceApply = true; P.engine.invalidate(); P.schedule();
+  });
+  await settle(p, 2200);
+
+  // #677: no form control under 16px on a phone, anywhere (a card's own shadow root too).
+  if (touch) {
+    const small = await p.evaluate(() => {
+      const deep = (r) => [...r.querySelectorAll('*')].flatMap((el) => [el, ...(el.shadowRoot ? deep(el.shadowRoot) : [])]);
+      return deep(window.__panel.shadowRoot).filter((el) => /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) && !/^(range|checkbox|radio|hidden|color)$/.test(el.type))
+        .map((el) => ({ n: `${el.tagName.toLowerCase()}.${String(el.className || '').split(' ')[0]}`, fs: parseFloat(getComputedStyle(el).fontSize) })).filter((x) => x.fs < 16);
+    });
+    if (small.length) fail(where, `#677: form controls under 16px zoom a phone on focus: ${small.map((x) => `${x.n} ${x.fs}px`).join(', ')}`);
+    const n = await p.evaluate(() => { const t = window.__panel.shadowRoot.querySelector('[data-tile="c_say"]'); const c = t && t.querySelector('[data-ll]').firstElementChild; return c && c.shadowRoot ? c.shadowRoot.querySelectorAll('input,textarea').length : 0; });
+    if (!n) fail(where, '#677: the test card with a text box in its own shadow root was not drawn');
+  }
+
+  // #678: every card id is on screen with a size, or says it has nothing to show.
+  {
+    const gone = await p.evaluate(() => {
+      const P = window.__panel; const R = P.shadowRoot; const ids = [];
+      const seek = (o) => { if (!o || typeof o !== 'object') return; if (typeof o.id === 'string' && o.type && !o.groups && !o.sections) ids.push(o.id); Object.values(o).forEach(seek); };
+      seek(P.dash.floors);
+      return ids.filter((id) => {
+        const el = R.querySelector(`[data-tile="${CSS.escape(id)}"]`) || R.querySelector(`[data-card="${CSS.escape(id)}"]`);
+        const r = el && el.getBoundingClientRect();
+        return !(r && r.width > 0 && r.height > 0);
+      });
+    });
+    if (gone.length) fail(where, `#678: cards listed in the dashboard that are not on screen: ${gone.join(', ')}`);
+    const none = await p.evaluate(() => { const t = window.__panel.shadowRoot.querySelector('[data-tile="c_nothing"]'); return t ? { text: t.textContent.trim(), h: t.getBoundingClientRect().height } : null; });
+    if (!none || !/nothing to show/i.test(none.text) || none.h < 20) fail(where, `#678: a card with nothing to draw does not say so (${JSON.stringify(none)})`);
+  }
+
+  // #679: small capital labels are 4.5:1 in every theme; Home Assistant's light mode is the light theme.
+  {
+    for (const th of ['dark', 'medium', 'light']) {
+      await p.evaluate((th) => { const P = window.__panel; P.data.state.settings = { ...(P.data.state.settings || {}), theme: th }; P.schedule(); }, th);
+      await settle(p, 700);
+      const low = await p.evaluate(() => {
+        const R = window.__panel.shadowRoot;
+        const cv = document.createElement('canvas'); cv.width = cv.height = 1; const g = cv.getContext('2d', { willReadFrequently: true });
+        const parse = (c) => { g.clearRect(0, 0, 1, 1); g.fillStyle = '#000'; g.fillStyle = c; g.fillRect(0, 0, 1, 1); const d = g.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
+        const bgOf = (el) => { const chain = []; for (let e = el; e; e = e.parentElement || (e.getRootNode() && e.getRootNode().host)) chain.push(e); let base = [255, 255, 255]; for (const e of chain.reverse()) { const c = parse(getComputedStyle(e).backgroundColor); if (c[3] > 0) base = base.map((b, i) => b * (1 - c[3]) + c[i] * c[3]); } return base; };
+        const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+        const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+        const out = [];
+        R.querySelectorAll('*').forEach((el) => {
+          if (![...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim()) || el.closest('[data-ll]')) return;
+          const cs = getComputedStyle(el);
+          if (cs.textTransform !== 'uppercase' && !(parseFloat(cs.fontSize) <= 13 && parseFloat(cs.letterSpacing) > 0)) return;
+          const fg = parse(cs.color); const bg = bgOf(el);
+          const f = fg.slice(0, 3).map((v, i) => v * fg[3] + bg[i] * (1 - fg[3]));
+          const r = ratio(f, bg);
+          if (r < 4.5) out.push(`${el.textContent.trim().slice(0, 18)} ${r.toFixed(2)}:1`);
+        });
+        return { cls: R.querySelector('[data-morph-root]').className, low: out };
+      });
+      if (!low.cls.includes('t-' + th)) fail(where, `#679: theme ${th} was not drawn (${low.cls})`);
+      if (low.low.length) fail(where, `#679: ${th}: small labels under 4.5:1: ${low.low.join(', ')}`);
+    }
+    await p.evaluate(() => { const P = window.__panel; P.data.state.settings = { ...(P.data.state.settings || {}), theme: 'auto' }; P.hass = { ...P.hass, themes: { darkMode: false } }; P.schedule(); });
+    await settle(p, 700);
+    const cl = await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-morph-root]').className);
+    if (!/t-light/.test(cl)) fail(where, `#679: Home Assistant's light mode draws the dark palette (${cl})`);
+    await p.evaluate(() => { const P = window.__panel; P.hass = { ...P.hass, themes: { darkMode: true } }; P.schedule(); });
+    await settle(p, 500);
+  }
+
+  // #682: every button Morph draws shows an icon or words and has a name.
+  {
+    const bare = await p.evaluate(() => {
+      const R = window.__panel.shadowRoot;
+      return [...R.querySelectorAll('button, [role="button"]')].filter((b) => !b.closest('[data-ll]') && b.getBoundingClientRect().width > 0).filter((b) => {
+        const shows = b.textContent.trim() || b.querySelector('svg, img, i, span[style*="background"]');
+        const named = b.textContent.trim() || b.getAttribute('aria-label');
+        return !shows || !named;
+      }).map((b) => `${b.className || b.tagName}${b.dataset.act ? '[' + b.dataset.act + ']' : ''}`);
+    });
+    if (bare.length) fail(where, `#682: buttons with no icon or words, or no name: ${[...new Set(bare)].join(', ')}`);
+  }
+
+  // #662: Coming up stops at now. Drag the strip toward the past: it stays at now.
+  {
+    const vp = await p.evaluate(() => { const v = window.__panel.shadowRoot.querySelector('[data-upc-vp]'); if (!v) return null; v.scrollIntoView({ block: 'center' }); const r = v.getBoundingClientRect(); return { x: r.left + r.width * 0.5, y: r.top + r.height / 2 }; });
+    if (!vp) fail(where, '#662: there is no Coming up strip');
+    else {
+      await settle(p, 400);
+      const v2 = await p.evaluate(() => { const v = window.__panel.shadowRoot.querySelector('[data-upc-vp]'); const r = v.getBoundingClientRect(); return { x: r.left + r.width * 0.5, y: r.top + r.height / 2 }; });
+      await p.mouse.move(v2.x, v2.y); await p.mouse.down();
+      for (let i = 1; i <= 12; i++) { await p.mouse.move(v2.x + i * 25, v2.y); await p.waitForTimeout(20); }
+      await p.mouse.up();
+      await settle(p, 900);
+      const st = await p.evaluate(() => { const P = window.__panel; return { at: P.s.upcAt, then: P.shadowRoot.querySelector('[data-morph-root]').classList.contains('then'), rule: !!P.shadowRoot.querySelector('.thenrule'), setThen: typeof P.setThen, hv: typeof P.hassView, min: P._upc && P._upc.minC, now: Date.now() }; });
+      if (st.at != null && st.at < st.now - 90000) fail(where, `#662: Coming up was slid into the past (${new Date(st.at).toISOString()})`);
+      if (st.then || st.rule || st.setThen !== 'undefined' || st.hv !== 'undefined') fail(where, `#662: Then mode is still in the page (${JSON.stringify(st)})`);
+      if (st.min != null && st.min < 0) fail(where, `#662: the strip reaches ${st.min} minutes into the past`);
+      await p.evaluate(() => window.__panel.shadowRoot.querySelector('.cu-back') && window.__panel.shadowRoot.querySelector('.cu-back').click());
+    }
+  }
+
+  // #676: the story never says everything is locked or at rest over an open door.
+  {
+    const said = await p.evaluate(async () => {
+      const P = window.__panel; const H = P.hass; const states = { ...H.states };
+      const text = () => { const r = P.shadowRoot.querySelector('.story'); return r ? r.textContent : ''; };
+      const put = (eid, state, attrs) => { states[eid] = { entity_id: eid, state, attributes: attrs, last_changed: new Date(Date.now() - 6 * 3600000).toISOString(), last_updated: new Date().toISOString() }; };
+      const out = {};
+      // Locks locked, a garage door and a window open, nobody home: the away line.
+      Object.keys(states).filter((e) => e.startsWith('lock.')).forEach((e) => { states[e] = { ...states[e], state: 'locked' }; });
+      put('binary_sensor.spare_window', 'on', { device_class: 'window', friendly_name: 'Spare Window' });
+      put('cover.shed_door', 'open', { device_class: 'garage', friendly_name: 'Shed Door' });
+      P.hass = { ...H, states }; P.form_ = 'away'; P.salApplied = P.salApplied; 
+      const html = P.verdictHtml(P.dash);
+      out.away = html.replace(/<[^>]+>/g, '');
+      P.form_ = '';
+      out.plain = P.verdictHtml(P.dash).replace(/<[^>]+>/g, '');
+      P.brain().situation = { sentence: 'Every door is locked and the house is quiet.', at: Date.now() / 1000 };
+      out.sit = P.verdictHtml(P.dash).replace(/<[^>]+>/g, '');
+      // And with nothing open the same words may stand.
+      delete states['binary_sensor.spare_window']; delete states['cover.shed_door'];
+      P.hass = { ...H, states };
+      out.shut = P.verdictHtml(P.dash).replace(/<[^>]+>/g, '');
+      P.hass = H; P.schedule();
+      return out;
+    });
+    const claim = /\b(everything|every door|all doors?)\b[^.]*\b(locked|closed|shut|secure|at rest)/i;
+    for (const k of ['away', 'plain', 'sit']) if (claim.test(said[k]) && !/Spare Window|Shed Door/.test(said[k])) fail(where, `#676: the story claims all is shut over an open door (${k}: "${said[k]}")`);
+    if (!/Spare Window is open/.test(said.away) || /Everything is locked/.test(said.away)) fail(where, `#676: the away story does not name the open window ("${said.away}")`);
+    if (/Every door is locked/.test(said.sit)) fail(where, `#676: a sentence claiming every door is locked was shown over an open one ("${said.sit}")`);
+  }
+  await ctx.close();
+
+  // #664: with the greeting, story and Ask off and no clock, no empty region
+  // takes a gap, the first card is near brAIn's header and Edit is reachable.
+  {
+    const ctx2 = await browser.newContext({ viewport: { width: w, height: h }, ...(touch ? { hasTouch: true, isMobile: true } : {}) });
+    await route(ctx2, { narrow: touch, shell: true });
+    const p2 = await ctx2.newPage();
+    await p2.goto(ORIGIN + '/');
+    await p2.waitForFunction(() => window.__panel && window.__panel.data);
+    await settle(p2, 1800);
+    await p2.evaluate(() => {
+      const P = window.__panel; const d = JSON.parse(JSON.stringify(P.dash));
+      d.greeting = false; d.story = false; d.ask = false; d.coming_up = false; d.scenes = [];
+      P.data.state.settings = { ...(P.data.state.settings || {}), fold_rooms: false };
+      P.dash = d; P._forceApply = true; P.engine.invalidate(); P.schedule();
+    });
+    await settle(p2, 1800);
+    await shot(p2, `no-top-${name}`);
+    const g = await p2.evaluate(() => {
+      const P = window.__panel; const R = P.shadowRoot; const host = P.getBoundingClientRect();
+      const kids = [...R.querySelector('.wrap').children].filter((c) => c.hasAttribute('data-region'));
+      const empties = kids.filter((c) => !c.hidden && c.getBoundingClientRect().height < 1 && getComputedStyle(c).display !== 'none').map((c) => c.getAttribute('data-region'));
+      const first = [...R.querySelectorAll('section.sec, .flh')].filter((e) => e.getBoundingClientRect().height > 0).map((e) => e.getBoundingClientRect().top).sort((a, b) => a - b)[0];
+      const edit = R.querySelector('[data-act="edit"]'); const eb = edit && edit.getBoundingClientRect();
+      const hit = eb ? R.elementFromPoint(eb.left + eb.width / 2, eb.top + eb.height / 2) : null;
+      return { empties, gap: first - host.top, edit: !!eb && eb.width > 0, reach: !!(hit && (hit === edit || edit.contains(hit))), top: R.querySelector('[data-region="top"]').hidden };
+    });
+    if (!g.top) fail(`reports ${name}`, '#664: the top region is drawn with nothing in it');
+    if (g.empties.length) fail(`reports ${name}`, `#664: empty regions that are not hidden: ${g.empties.join(', ')}`);
+    if (g.gap > 34) fail(`reports ${name}`, `#664: the first card is ${g.gap.toFixed(0)}px below brAIn's header with nothing on top (limit 34)`);
+    if (!g.edit || !g.reach) fail(`reports ${name}`, `#664: Edit is not reachable with nothing on top (${JSON.stringify(g)})`);
+    await ctx2.close();
+  }
+  if (errors.length) fail(where, `page errors: ${errors.slice(0, 2).join(' | ')}`);
+}
+
 await browser.close();
 if (problems.length) {
   console.error(`measure-morph: ${problems.length} problem(s)`);
