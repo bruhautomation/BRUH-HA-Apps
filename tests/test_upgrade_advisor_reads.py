@@ -40,8 +40,8 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PANEL_DIR = BASE_DIR / "brain" / "panel"
@@ -318,7 +318,7 @@ class TestTheDeviceTool(unittest.TestCase):
 
     def test_a_zwave_node_comes_with_its_parameters(self):
         fake = _FakeWs()
-        with mock.patch.object(self.m, "_ws_command", fake):
+        with unittest.mock.patch.object(self.m, "_ws_command", fake):
             out = self.m.get_device_details(entity_id=UPDATE["entity_id"])
         self.assertEqual(out["device"]["name"], "Workshop switch")
         self.assertEqual(out["device"]["sw_version"], "1.2")
@@ -333,7 +333,7 @@ class TestTheDeviceTool(unittest.TestCase):
 
     def test_another_device_is_read_without_a_zwave_command(self):
         fake = _FakeWs(zwave=False)
-        with mock.patch.object(self.m, "_ws_command", fake):
+        with unittest.mock.patch.object(self.m, "_ws_command", fake):
             out = self.m.get_device_details(device_id="dev1")
         self.assertNotIn("configuration_parameters", out)
         self.assertNotIn("zwave_js/get_config_parameters",
@@ -350,7 +350,7 @@ class TestTheDeviceTool(unittest.TestCase):
 class TestTheAdvisorsRun(unittest.TestCase):
     def test_the_advisor_reads_and_cannot_act(self):
         allow = set(engine.ADVISOR_TOOLS)
-        self.assertTrue(allow <= set(engine.ANALYST_TOOLS))
+        self.assertLessEqual(allow, set(engine.ANALYST_TOOLS))
         self.assertFalse(allow & set(engine.ANALYST_DENIED))
         for name in ("get_device_details", "get_entity_state", "recall",
                      "get_registry", "get_history"):
@@ -363,7 +363,7 @@ class TestTheAdvisorsRun(unittest.TestCase):
             seen["flags"] = flags
             return {"ok": True}
 
-        with mock.patch.object(engine, "_run_cli", fake_cli):
+        with unittest.mock.patch.object(engine, "_run_cli", fake_cli):
             engine.run_analyst("p", "s", allow=list(engine.ADVISOR_TOOLS))
         flags = seen["flags"]
         allowed = flags[flags.index("--allowedTools") + 1].split(",")
@@ -388,10 +388,10 @@ class TestTheAdvisorsRun(unittest.TestCase):
             seen.update(model=model, max_turns=max_turns, **kw)
             return {"ok": True, "meta": {"session_id": "sess-9"}, "data": {}}
 
-        with mock.patch.object(server.engine, "run_analyst", fake_analyst), \
-                mock.patch.object(server.engine, "run_claude",
+        with unittest.mock.patch.object(server.engine, "run_analyst", fake_analyst), \
+                unittest.mock.patch.object(server.engine, "run_claude",
                                   side_effect=AssertionError("tool-less")), \
-                mock.patch.object(server.conversations, "tool_reads",
+                unittest.mock.patch.object(server.conversations, "tool_reads",
                                   lambda cwd, sid: {"results": TOOL_RESULT,
                                                     "tools": READ_TOOLS}):
             out = server._advise_run("p", upgrades.SYSTEM, upgrades.SCHEMA)
@@ -410,8 +410,8 @@ class TestTheAdvisorsRun(unittest.TestCase):
             seen.update(model=model, **kw)
             return {"ok": False, "error": "x"}
 
-        with mock.patch.object(server.engine, "run_analyst", fake_analyst), \
-                mock.patch.object(server, "eff_chat_model", lambda: "opus"):
+        with unittest.mock.patch.object(server.engine, "run_analyst", fake_analyst), \
+                unittest.mock.patch.object(server, "eff_chat_model", lambda: "opus"):
             server._advise_run("p", "s", {}, pressed=True)
         self.assertEqual(seen["model"], "opus")
         self.assertTrue(seen["pressed"])
@@ -424,8 +424,8 @@ def _call(handler, *, body=None, match=None):
 
     async def go():
         import server
-        with mock.patch.object(server, "_json_body",
-                               mock.AsyncMock(return_value=body or {})):
+        with unittest.mock.patch.object(server, "_json_body",
+                               unittest.mock.AsyncMock(return_value=body or {})):
             return await handler(req)
     return asyncio.run(go())
 
@@ -437,10 +437,10 @@ class _Store(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         store = os.path.join(self.tmp.name, "upgrades.json")
-        p = mock.patch.object(upgrades, "STORE", store)
+        p = unittest.mock.patch.object(upgrades, "STORE", store)
         p.start()
         self.addCleanup(p.stop)
-        hidden = mock.patch.object(server.today_mod, "HIDDEN_FILE",
+        hidden = unittest.mock.patch.object(server.today_mod, "HIDDEN_FILE",
                                    Path(self.tmp.name) / "hidden.json")
         hidden.start()
         self.addCleanup(hidden.stop)
@@ -448,7 +448,7 @@ class _Store(unittest.TestCase):
 
         async def pending():
             return self.pending
-        p = mock.patch.object(server, "_pending_updates", pending)
+        p = unittest.mock.patch.object(server, "_pending_updates", pending)
         p.start()
         self.addCleanup(p.stop)
 
@@ -484,10 +484,10 @@ class _Hooks:
 class TestInstallIsAPersonsPress(_Store):
     def install(self, hooks, body=None, protected=()):
         s = self.server
-        with mock.patch.object(s, "_typed_hooks", hooks.make), \
-                mock.patch.object(s.automation_writer, "protected_patterns",
+        with unittest.mock.patch.object(s, "_typed_hooks", hooks.make), \
+                unittest.mock.patch.object(s.automation_writer, "protected_patterns",
                                   lambda *a: list(protected)), \
-                mock.patch.object(s.security, "honeytoken_ids", lambda: []):
+                unittest.mock.patch.object(s.security, "honeytoken_ids", lambda: []):
             return _call(s.h_upgrades_install, body=body or {
                 "entity_id": UPDATE["entity_id"], "latest": UPDATE["latest"]})
 
@@ -564,7 +564,7 @@ class TestTheCardOpens(_Store):
     def test_an_update_key_opens_with_the_whole_reason(self):
         reason = ("word " * 300).strip()
         self.remember(reason=reason)
-        with mock.patch.object(self.server, "UPGRADES_SEEN",
+        with unittest.mock.patch.object(self.server, "UPGRADES_SEEN",
                                {"updates": [dict(UPDATE)], "at": 1}):
             key = self.server.today_mod.update_key(UPDATE)
             resp = _call(self.server.h_case_get, match={"id": key})
@@ -579,11 +579,11 @@ class TestTheCardOpens(_Store):
 
     def test_the_cases_listing_carries_what_its_count_counts(self):
         self.remember()
-        with mock.patch.object(self.server, "UPGRADES_SEEN",
+        with unittest.mock.patch.object(self.server, "UPGRADES_SEEN",
                                {"updates": [dict(UPDATE)], "at": 1}), \
-                mock.patch.object(self.server.cases, "list_cases",
+                unittest.mock.patch.object(self.server.cases, "list_cases",
                                   lambda now=None: []), \
-                mock.patch.object(self.server.cases, "queue_count",
+                unittest.mock.patch.object(self.server.cases, "queue_count",
                                   lambda now=None: 0):
             payload = self.server._cases_payload()
         self.assertEqual(payload["open"], 1)
