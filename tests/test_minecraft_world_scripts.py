@@ -104,13 +104,11 @@ class TestConsoleReply(unittest.TestCase):
                          "There are 0 of a max of 20 players online:")
 
     def test_no_console_file_is_rcon_alone_and_does_not_wait(self):
-        server = FakeServer(self.log)
         missing = self.log.with_name("nope.log")
         slept = []
         self.assertEqual(console_reply.command(lambda c: "", "x", missing,
                                                sleep=slept.append), "")
         self.assertEqual(slept, [])
-        del server
 
     def test_silence_everywhere_is_empty_after_the_wait(self):
         now = [0.0]
