@@ -5,6 +5,12 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.19.6
+
+### Added
+
+- A boss bar for a companion job, which Bedrock players see through Geyser: the job's title, its last step and how far it has got, shown to the player who asked and removed when the job ends (`companion_bar`). Only the companion's own bars can be changed (#671).
+
 ## 1.19.5
 
 ### Added

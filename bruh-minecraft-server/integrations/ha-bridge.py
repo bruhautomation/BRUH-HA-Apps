@@ -235,7 +235,7 @@ async def world(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 COMPANION_KINDS = ("companion", "companion_identity", "companion_say", "companion_appear",
                    "companion_ask", "companion_build", "companion_edit", "companion_look",
-                   "companion_undo", "companion_zone", "companion_progress",
+                   "companion_undo", "companion_zone", "companion_progress", "companion_bar",
                    "companion_spyglass", "companion_thought", "companion_journal", "atlas", "atlas_room", "atlas_label",
                    "companion_legacy", "companion_legacy_retire", "rename_world")
 _JOB = re.compile(r"^[A-Za-z0-9_.:\-]{1,40}$")
@@ -273,6 +273,9 @@ async def companion(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
     if kind == "companion_progress":
         return await asyncio.to_thread(_panel, "POST", "/api/companion/progress", _pick(
             payload, ("to", "text", "percent", "colour")), 15)
+    if kind == "companion_bar":
+        return await asyncio.to_thread(_panel, "POST", "/api/companion/bar", _pick(
+            payload, ("player", "key", "text", "percent", "end")), 15)
     if kind == "companion_spyglass":
         return await asyncio.to_thread(_panel, "POST", "/api/companion/spyglass", _pick(
             payload, ("player", "name")), 15)

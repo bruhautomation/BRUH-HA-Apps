@@ -92,6 +92,7 @@ SERVICE_LOOK_BLOCKS = "look_blocks"
 # brAIn's desk: a job's progress on the action bar, and the spyglass a
 # player points with (the bruh_companion data pack; bruh_minecraft_point).
 SERVICE_COMPANION_PROGRESS = "companion_progress"
+SERVICE_COMPANION_BAR = "companion_bar"
 SERVICE_GIVE_SPYGLASS = "give_spyglass"
 # What the companion is thinking, where it is not in the way: a bubble only
 # the player it works for sees (BRUH Sight), and a book that opens the stream.
