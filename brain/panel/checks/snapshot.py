@@ -455,6 +455,13 @@ async def collect(now: float | None = None) -> dict:
     cfg = load_configs()
     for key in ("automations", "scripts", "scenes"):
         snap[key] = cfg[key]
+    # What the house calls brAIn (⚙ › Personality): a rule that speaks in
+    # the game under that name is a second voice (auto.second_responder).
+    try:
+        import personality
+        snap["assistant_name"] = personality.assistant_name()
+    except Exception:  # noqa: BLE001 — a name is a nicety; "brAIn" is matched anyway
+        snap["assistant_name"] = ""
     _mark("automations", cfg["automations"] is not None,
           "" if cfg["automations"] is not None else "automations.yaml not readable")
 

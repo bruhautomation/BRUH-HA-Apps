@@ -619,6 +619,17 @@ def _publish_permission_mode() -> None:
     """
     _publish_yolo()
     permission_mode.publish(eff_skip_permissions())
+    _publish_minecraft_house()
+
+
+def _publish_minecraft_house() -> None:
+    """The same switch for brAIn's Minecraft companion, whose capability
+    paragraph says whether a trusted grown-up's house change acts at once
+    or waits for approval (#675). A game setting never fails a publish."""
+    try:
+        minecraft_companion.publish_house(eff_skip_permissions(), yolo_mode())
+    except Exception:  # noqa: BLE001
+        log.debug("could not publish the switch for brAIn in Minecraft", exc_info=True)
 
 
 def _answer(result: dict) -> dict | None:
@@ -26770,6 +26781,8 @@ async def h_minecraft_put(request: web.Request) -> web.Response:
         # (nothing an exception carried reaches a response).
         log.info("the Minecraft settings were not kept: %s", exc)
         raise web.HTTPBadRequest(text=MINECRAFT_NOT_SAVED) from None
+    # A first save makes the faculty's folder: the switch goes in beside it.
+    await asyncio.to_thread(_publish_minecraft_house)
     return web.json_response({"settings": saved})
 
 
