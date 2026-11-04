@@ -43,6 +43,9 @@ from .const import (
 )
 
 FEATURE_POLL_S = 5
+# Loaded on every Home Assistant page: Morph's cards, the card types brAIn
+# builds and the layer on a dashboard brAIn may change (frontend/morph-ha.js).
+EXTRA_JS = f"{STATIC_BASE}/{VERSION}/morph-ha.js"
 
 
 def panel_spec(features: dict) -> dict:
@@ -139,6 +142,9 @@ async def _register_static(hass: HomeAssistant) -> None:
         hass.http.register_static_path(CARDS_URL, cards_dir, False)
     hass.http.register_view(MorphStaticView(hass))
     data["static"] = True
+    # Morph's cards work on any dashboard whatever the switches say: a card
+    # on a dashboard must not turn into an error when the Morph panel is off.
+    frontend.add_extra_js_url(hass, EXTRA_JS)
 
 
 async def async_setup(hass: HomeAssistant) -> Callable[[], None]:

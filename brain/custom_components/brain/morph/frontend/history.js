@@ -23,6 +23,14 @@ const TTL = 60000;
 export const CHARTS = new Map();
 let onData = () => {};
 export function setOnData(fn) { onData = fn; }
+// Morph's cards on a Home Assistant dashboard (morph-cards.js) listen too:
+// the panel's one callback is the panel's, and a dashboard card is not in it.
+const LISTENERS = new Set();
+export function listen(fn) { LISTENERS.add(fn); return () => LISTENERS.delete(fn); }
+function landed() {
+  onData();
+  LISTENERS.forEach((fn) => { try { fn(); } catch (e) { /* one card's redraw is not every card's */ } });
+}
 
 // The last answer per question regardless of window, so a window that
 // rolls over to the next minute keeps showing the previous answer while the
@@ -38,7 +46,7 @@ function cached(key, fetcher) {
   CACHE.set(key, entry);
   if (CACHE.size > MAX_CACHE) CACHE.delete(CACHE.keys().next().value);
   fetcher().then((d) => { entry.data = d; LAST.set(family, d); }).catch((e) => { entry.data = { error: String(e && e.message || e) }; })
-    .finally(() => { entry.pending = false; entry.at = Date.now(); onData(); });
+    .finally(() => { entry.pending = false; entry.at = Date.now(); landed(); });
   return entry.data;
 }
 

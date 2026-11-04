@@ -291,10 +291,10 @@ class TestBothHalvesAgree(unittest.TestCase):
     def test_the_fixed_files_and_the_name_rule_are_one_rule(self):
         svc = (ROOT / "brain" / "morph" / "service" / "morphcode.py").read_text()
         static = (COMPONENT / "static.py").read_text()
-        for needle in ('NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}\\.js$")', 'FIXED = ("boot.js", "shell.js")'):
+        for needle in ('NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}\\.js$")', 'FIXED = ("boot.js", "shell.js", "morph-ha.js")'):
             self.assertIn(needle, svc)
         self.assertIn('NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}\\.js$")', static)
-        self.assertIn('FIXED = ("boot.js", "shell.js")', static)
+        self.assertIn('FIXED = ("boot.js", "shell.js", "morph-ha.js")', static)
         self.assertIn('CODE_STATE = SHARED / "code.json"', (COMPONENT / "const.py").read_text())
         self.assertIn('CODE_STATE = SHARED / "code.json"', (ROOT / "brain" / "morph" / "service" / "paths.py").read_text())
 

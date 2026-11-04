@@ -167,7 +167,7 @@ jobs:
             print=true
           fi
           morph=false
-          if grep -qE '^(brain/morph/|brain/custom_components/brain/morph/|tests/manual/(morph-fixture|measure-morph|measure-shell)\.mjs)' <<<"$changed"; then
+          if grep -qE '^(brain/morph/|brain/custom_components/brain/morph/|tests/manual/(morph-fixture|measure-morph|measure-morph-cards|measure-shell)\.mjs)' <<<"$changed"; then
             morph=true
           fi
           gardenrx=false
@@ -791,6 +791,13 @@ jobs:
           wait $wide || status=1
           wait $phone || status=1
           exit $status
+
+      # Morph's cards as Home Assistant cards (morph-cards.js): created by
+      # tag, configured, given `hass`, inside an ha-card — the way HA's own
+      # dashboards drive a custom card — then tapped, slid and held.
+      - name: Measure Morph's cards on a Home Assistant dashboard
+        if: matrix.group == 'morph' && env.GROUP_RUNS == 'true'
+        run: node tests/manual/measure-morph-cards.mjs
 
       # brAIn's one sidebar entry (4.0): the shell holding brAIn's framed page
       # and Morph as its Home tab, for an administrator with the dashboard on

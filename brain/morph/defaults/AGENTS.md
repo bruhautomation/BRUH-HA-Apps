@@ -195,6 +195,8 @@ Morph's own panel modules are in `/config/custom_components/brain/morph/frontend
 |---|---|
 | `boot.js` | The loader: paints the page's outline, loads the panel, and falls back to Morph's own panel when a copy fails |
 | `shell.js` | brAIn's sidebar entry: holds brAIn's own page in a frame and Morph as its Home tab. Never replaced |
+| `morph-ha.js` | Loaded on every Home Assistant page: loads Morph's cards, card types and the brAIn layer. Never replaced |
+| `morph-cards.js` | Morph's card kinds as Home Assistant custom cards (`custom:morph-<kind>-card`), with HA's visual editor and card picker |
 | `morph-panel.js` | The page: the verdict, Now, the rooms, brAIn's cases, To Do, Ask, Edit, Tell, Settings |
 | `cards.js` | The built-in card types (`TYPES`) |
 | `engine.js` | The layout engine: springs, masonry, opening in place |

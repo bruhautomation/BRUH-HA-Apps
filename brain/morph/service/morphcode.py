@@ -41,7 +41,7 @@ NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}\.js$")
 # Never replaceable: brAIn's shell (the sidebar entry itself) and the loader
 # that falls back to Morph's own when a copy fails, the two files that have
 # to keep working.
-FIXED = ("boot.js", "shell.js")
+FIXED = ("boot.js", "shell.js", "morph-ha.js")
 BASE_FILE = ".base.json"
 # Morph's own file as it was when each copy was written. An update replaces
 # Morph's own, so without this a paused copy can only be compared with the

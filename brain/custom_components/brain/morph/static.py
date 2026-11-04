@@ -42,7 +42,7 @@ from .const import CODE_DIR, CODE_STATE, FRONTEND_DIR, STATIC_BASE, VERSION
 NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}\.js$")
 # The shell and the loader are never a house's copy: they are what opens
 # brAIn at all, and what falls back when a copy breaks.
-FIXED = ("boot.js", "shell.js")
+FIXED = ("boot.js", "shell.js", "morph-ha.js")
 HEADERS = {"Cache-Control": "no-cache"}
 FOREVER = {"Cache-Control": "public, max-age=31536000, immutable"}
 STAMP_RE = re.compile(r"^[0-9a-f]{12}$")
