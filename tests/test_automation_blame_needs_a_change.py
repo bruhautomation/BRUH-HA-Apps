@@ -49,7 +49,32 @@ CONCRETE = ("Change the porch light automation's trigger from sunset to "
             "Leave the landing plug on overnight.")
 
 
+# Steps that are a change in everyday words, with no verb from any list
+# (#698c): each is kept. A step is dropped only when it is positively
+# vague — a watching verb and no change named at all.
+KEPT = ("Limit it to weekdays.", "Narrow its trigger to weekdays.",
+        "Make it only run when someone is home.",
+        "Only let it run after sunset.", "Use a 10 minute delay instead.",
+        "Give it a condition on presence.",
+        "Limit it to weekdays and only when someone is home.",
+        "Review the automation and limit it to weekdays.",
+        "Check the trigger, then tighten it to after sunset.")
+HALLWAY = ("The hallway heating automation turns the heating on at 3am "
+           "while nobody is home")
+HALLWAY_FIX = "Limit it to weekdays and only when someone is home."
+VAGUE_TOO = ("Review the automation and the lights.",
+             "Keep an eye on it and see whether it happens again.",
+             "You could look into why it fires at noon.",
+             "Monitor it for a week.", "Consider whether it is needed.")
+
+
 class TestTheReading(unittest.TestCase):
+    def test_a_change_in_everyday_words_is_kept(self):
+        for fix in KEPT:
+            self.assertTrue(house_words.concrete_change(fix), fix)
+        for fix in VAGUE_TOO:
+            self.assertFalse(house_words.concrete_change(fix), fix)
+
     def test_what_blames_an_automation(self):
         self.assertTrue(house_words.blames_automation(BLAME))
         self.assertTrue(house_words.blames_automation(
@@ -78,8 +103,14 @@ class TestACaseWithNoChangeIsNotFiled(unittest.TestCase):
                              "no_change" if fix else "no_step", fix)
 
     def test_a_change_is_filed(self):
-        for fix in CONCRETE:
+        for fix in CONCRETE + KEPT:
             self.assertEqual(resident.unfinished(case(fix=fix)), ("", ""), fix)
+        self.assertEqual(resident.unfinished(case(
+            claim=HALLWAY, detail="It ran at 03:00 on three nights.",
+            fix=HALLWAY_FIX)), ("", ""))
+        for fix in VAGUE_TOO:
+            self.assertEqual(resident.unfinished(case(fix=fix))[0],
+                             "no_change", fix)
 
     def test_never_over_a_floor_or_high_stakes(self):
         # The store's drop spares a critical, high-stakes, safety, protected
@@ -134,6 +165,20 @@ class TestAModelRowWithNoChangeIsNotFiled(unittest.TestCase):
 
     def test_a_change_is_a_row(self):
         self.assertEqual(len(self.file(CONCRETE[0])), 1)
+
+    def test_a_change_in_everyday_words_is_a_row(self):
+        for fix in KEPT:
+            findings_store.FINDINGS_FILE.unlink(missing_ok=True)
+            self.assertEqual(len(self.file(fix)), 1, fix)
+        findings_store.FINDINGS_FILE.unlink(missing_ok=True)
+        self.assertEqual(len(findings_store.add_many(triage.gate([{
+            "text": HALLWAY, "detail": "It ran at 03:00 on three nights.",
+            "fix": HALLWAY_FIX, "severity": "warning",
+            "source": "insight-heating",
+            "entity_id": "automation.hallway_heating"}]))), 1)
+        for fix in VAGUE_TOO:
+            findings_store.FINDINGS_FILE.unlink(missing_ok=True)
+            self.assertEqual(self.file(fix), [], fix)
 
     def row(self, **kw):
         base = {"text": BLAME, "detail": "It turned the porch light on at noon.",

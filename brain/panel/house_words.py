@@ -200,9 +200,17 @@ _FORK_RE = re.compile(
 # the word. Its step has to be a change a person can make to the house —
 # a trigger, a condition, a delay, a value, the automation switched off —
 # because "it is working, it is doing the wrong thing" with "review it"
-# under it leaves nothing to do but agree. A step is a change when it
-# carries a verb that changes something; "check", "review", "look into",
-# "monitor" and "keep an eye on" change nothing.
+# under it leaves nothing to do but agree. A step is read the safe way
+# round (#698c): it is DROPPED only when it is positively vague — every
+# clause of it that starts with a verb starts with a watching one
+# ("check", "review", "look into", "monitor", "keep an eye on",
+# "consider", "see whether", `_VAGUE_RE`) and nothing in it names a
+# change (`_CHANGE_RE`) — and anything else is kept, because "Limit it to
+# weekdays", "Narrow its trigger", "Make it only run when someone is
+# home" and "Use a 10 minute delay instead" are changes in words no verb
+# list holds. A clause that opens with a function word ("the lights",
+# "if it keeps happening", `_CLAUSE_TAIL_RE`) is a continuation, not a
+# step of its own.
 # Blame is the automation as the one ACTING: "the porch light automation
 # is doing the wrong thing", "automation.porch_light turns the light on at
 # noon". An automation merely named ("the leak automation can't run", "an
@@ -223,6 +231,30 @@ _CHANGE_RE = re.compile(
     r"(?:on|off|to)\b"
     r"|(?:leave|keep)\s+(?:\w+\s+){0,3}?(?:on|off)\b"
     r"(?!\s+(?:the|it|this|that|a|an|its|your)\b))", re.I)
+_VAGUE_RE = re.compile(
+    r"^(?:(?:please|maybe|perhaps|also|just|first|then|still|"
+    r"you (?:could|might|should|may|can)|it (?:may|might) be worth|"
+    r"worth|try to|try and)\s+)*"
+    r"(?:review|re-?view|check|double-?check|re-?check|look(?:ing)? "
+    r"(?:into|at|over|through)|take a (?:closer )?look|have a (?:closer )?"
+    r"look|investigate|monitor|watch|keep (?:an eye|a close eye|watch|"
+    r"track|watching)|consider|see (?:whether|if|what|why|how|when|"
+    r"where)|find out|confirm|verify|work out|figure out|think about|"
+    r"decide (?:whether|if)|observe|examine|inspect|wait(?: and see)?|"
+    r"note|bear in mind|be aware|ask (?:yourself|whether|if))\b", re.I)
+# A clause that is the tail of the one before it, not a step of its own.
+_CLAUSE_TAIL_RE = re.compile(
+    r"^(?:the|a|an|it|its|this|that|these|those|if|when|whether|why|what|"
+    r"how|in|on|at|for|with|so|which|since|before|after|until|unless|as|"
+    r"to|or|but|not|no|one|there|here|some|any|more|less|than|is|are|was|"
+    r"were|has|have|had|will|would|can|could|should|may|might|be|been|"
+    r"being|he|she|they|we|you|i|your|their|our|my|nobody|someone|"
+    r"anyone|everything|nothing|especially|particularly|ideally|probably|"
+    r"possibly|likely|most|least|every|each|all|both|either|neither|"
+    r"even|again|now|later|soon|too|of|from|by|about|because|while|"
+    r"once|e\.?g|i\.?e|ie|eg|\d)", re.I)
+_CLAUSE_SPLIT_RE = re.compile(
+    r"\s*(?:[,;:.!?]|\band\b|\bthen\b|\bor\b|\bbut\b|\s[-—–]\s)\s*", re.I)
 
 
 def blames_automation(*texts) -> bool:
@@ -231,8 +263,23 @@ def blames_automation(*texts) -> bool:
 
 
 def concrete_change(fix) -> bool:
-    """Whether a step names a change somebody can make (above)."""
-    return bool(_CHANGE_RE.search(str(fix or "")))
+    """Whether a step names a change somebody can make (above): anything
+    but an empty step or a positively vague one."""
+    text = " ".join(str(fix or "").split())
+    if not text:
+        return False
+    if _CHANGE_RE.search(text):
+        return True
+    vague = False
+    for clause in _CLAUSE_SPLIT_RE.split(text):
+        clause = clause.strip(" \"'“”‘’()")
+        if not clause:
+            continue
+        if _VAGUE_RE.match(clause):
+            vague = True
+        elif not _CLAUSE_TAIL_RE.match(clause):
+            return True
+    return not vague
 
 
 def fork(text: str) -> str:

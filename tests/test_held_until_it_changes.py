@@ -345,6 +345,20 @@ class TestAStatedFaultIsNotADeferral(unittest.TestCase):
             self.assertFalse(corrections.deferral(said), said)
             self.assertFalse(corrections.puts_off(said), said)
 
+    def test_a_request_that_says_the_report_is_wrong_is_a_wrong(self):
+        # "Stop flagging this" with "it's a bad sensor" after it says the
+        # report is wrong: a Wrong, or a correction, never a hold.
+        for said in ("stop flagging this, it's a bad sensor",
+                     "stop telling me about it, it's a false alarm",
+                     "don't remind me, the device was replaced",
+                     "stop bringing this up, the sensor is wrong",
+                     "quit flagging it, it isn't low",
+                     "don't bring this up again, there's no leak",
+                     "stop reminding me, it's not real",
+                     "don't nag me about this, the reading is wrong"):
+            self.assertFalse(corrections.deferral(said), said)
+            self.assertFalse(corrections.puts_off(said), said)
+
     def test_an_explicit_request_beside_a_fault_is_still_one(self):
         for said in ("I am aware, don't bring this up again",
                      "I'm aware the battery is low, stop reminding me",

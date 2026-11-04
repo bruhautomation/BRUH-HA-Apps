@@ -549,6 +549,29 @@ _NOT_A_DEFERRAL_RE = re.compile(
     r"\bcan you\s+(?:fix|repair|sort)\b|"
     r"\b(?:reporting|reading|showing)\s+(?:it\s+)?wrong\b|"
     r"\bit'?s\s+(?:offline|broken|not working)\b|\bnot working\b", re.I)
+# "Stop flagging this, it's a bad sensor": a request to be left alone that
+# also says the REPORT is wrong — a bad sensor, a false alarm, a replaced
+# device, "it isn't low", "there's no leak" — is the Wrong it always was
+# (a correction, or the device finished with), never a hold: a hold would
+# keep a wrong report on the books until the wrong sensor changed.
+_FALSE_REPORT_RE = re.compile(
+    r"\b(?:bad|faulty|dodgy|dud|flaky|wrong|false|incorrect|misreading|"
+    r"unreliable)\s+(?:sensor|reading|report|alarm|alert|device|detector|"
+    r"value|figure|number|data)\b|\bfalse (?:alarm|positive|reading)s?\b|"
+    r"\b(?:sensor|device|reading|report|detector|value|figure|number|"
+    r"this|it|that|which)\s+(?:is|was|'s|are|were)\s+(?:wrong|false|bad|"
+    r"faulty|not real|incorrect|mistaken|misreading|a mistake|a false "
+    r"alarm)\b|"
+    r"\b(?:was|has been|got|been|were|'ve been|already)\s+(?:replaced|"
+    r"swapped(?: out)?|changed out)\b|"
+    r"\b(?:is|it'?s|they'?re|are|was)\s*n[o']t\s+(?:actually |really )?"
+    r"(?:low|offline|weak|leaking|open|on|off|dead|flat|stuck|unavailable|"
+    r"real|true|right|the case)\b|\bisn'?t\s+(?:actually |really )?"
+    r"(?:low|offline|weak|leaking|open|on|off|dead|flat|stuck|unavailable|"
+    r"real|true|right|the case)\b|"
+    r"\b(?:there'?s|there is|there was|it'?s)\s+no\s+(?:leak|problem|issue|"
+    r"fault|such thing)\b|\bnot real\b|\bnever (?:was|has been|happened)\b",
+    re.I)
 
 
 def deferral(note: str) -> bool:
@@ -557,7 +580,8 @@ def deferral(note: str) -> bool:
     asked = bool(_ASKS_QUIET_RE.search(text)) or (
         bool(_AWARE_RE.search(text)) and not _FAULT_RE.search(text))
     return (asked and not temporary(text) and not gone_for_good(text)
-            and not _NOT_A_DEFERRAL_RE.search(text))
+            and not _NOT_A_DEFERRAL_RE.search(text)
+            and not _FALSE_REPORT_RE.search(text))
 
 
 def puts_off(note: str) -> bool:
