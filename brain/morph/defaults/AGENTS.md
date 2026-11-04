@@ -205,7 +205,6 @@ Morph's own panel modules are in `/config/custom_components/brain/morph/frontend
 | `styles.js` | The styles |
 | `salience.js` | What matters right now: each card's score, its band (Now, Lead, Shown, Folded), its "because" line, and the room states |
 | `cases.js` | brAIn's cases as Morph draws them in a room, and the To Do list |
-| `then.js` | The house as it was at a moment in the last day (Coming up slid into the past) |
 | `morph-dom.js` | Updating the page in place, so nothing a person is touching is rebuilt |
 | `util.js` | Icons and small helpers |
 
@@ -302,6 +301,24 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   the story.
 - **Render with no data at all**: `hass` may arrive late, and an entity may be
   unavailable.
+- **Say what the reading is, not what the card is usually.** A reading outside
+  its target, hold or comfort band is stated in the card's status line, with
+  how far outside ("11° below its hold band"): never "Idle", "OK" or
+  "Normal" over a number the card itself shows outside its band, and a status
+  worked out from the mode alone is wrong the moment the reading and the mode
+  disagree. Compare the reading with its band before choosing the word.
+- **No empty space.** The card is as tall as what it draws: no `min-height`,
+  padding or spacer kept for a row that is not there, and a part with
+  nothing to show is left out, not drawn blank.
+- **Fields are 16px or larger.** A text box, textarea or select under 16px
+  makes a phone zoom the page when it is touched. Morph raises them in a
+  card's own shadow root, but write them right.
+- **Every button shows an icon or words, and has a name.** Icons are inline
+  SVG you draw yourself: an `<ha-icon icon="mdi:…">` or any icon font is
+  blank when its set is not loaded in the card, which leaves a round button
+  with nothing on it. An icon-only button carries an `aria-label`. A button
+  that cannot be pressed right now is dimmed or not drawn, never left
+  looking like the others.
 - **A broken card is this house's to fix**, by a Tell or in a chat, not a bug
   in Morph: Morph offers the fix as a suggestion on the dashboard rather than
   sending it to Morph's developers.
@@ -341,6 +358,9 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
 13. **No empty-state text and no tooltips.** A section with nothing in it is
     not drawn; nothing says "All quiet", and no control carries a `title=`
     hover text (nothing floats).
+    The one exception is a hosted Lovelace card that has nothing to draw
+    (a conditional card whose condition is false): it says so in one quiet
+    line rather than vanishing from the page.
 
 When a request conflicts with a rule, do what was asked and say which rule it
 bends.

@@ -327,7 +327,7 @@ def build(*, journal: list[dict], ledger: list[dict], fixes: list[dict],
     # back every edit the job made (the faculty's `minecraft_job undo`).
     for job in mc_jobs or []:
         at = float(job.get("ended") or 0)
-        if (at < since or job.get("status") not in ("done", "failed", "cancelled")
+        if (at < since or job.get("status") not in ("done", "partial", "failed", "cancelled")
                 or not job.get("edits")):
             continue
         person = " ".join(str(job.get("person") or "").split())[:40]
@@ -339,7 +339,8 @@ def build(*, journal: list[dict], ledger: list[dict], fixes: list[dict],
             "Undo", f"/api/changes/mcjob/{job.get('id')}/undo",
             "Puts back every block this job changed in the world, newest first. "
             "A block somebody changed since is left as it is.")
-        title = f"Made “{str(job.get('title') or 'a job')[:80]}” in Minecraft"
+        verb = "Partly made" if job.get("status") == "partial" else "Made"
+        title = f"{verb} “{str(job.get('title') or 'a job')[:80]}” in Minecraft"
         rows.append(_row(f"mcjob:{job.get('id')}", "mcjob", title, at, where, press,
                          reason))
 

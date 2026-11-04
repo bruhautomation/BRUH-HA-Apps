@@ -86,7 +86,8 @@ class BrainShell extends HTMLElement {
     if (GROUND[t]) return t;
     try { const saved = localStorage.getItem('morph.theme'); if (GROUND[saved]) return saved; } catch (e) { /* storage refused */ }
     const h = this._v.hass;
-    return h && h.themes && h.themes.darkMode === false ? 'light' : 'dark';
+    if (h && h.themes && typeof h.themes.darkMode === 'boolean') return h.themes.darkMode ? 'dark' : 'light';
+    return window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
   }
 
   connectedCallback() {

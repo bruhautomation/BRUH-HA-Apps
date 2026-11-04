@@ -39,7 +39,7 @@
 # expired login, a timeout and a run that produced nothing included — and
 # the sentence about the failure was handed back as if Claude had said it.
 # `error` is a closed word beside a failure (refused, paused, budget, auth,
-# timeout, permission, max_turns, empty, error), and the text is still the
+# timeout, permission, max_turns, empty, error, safeguard, stopped), and the text is still the
 # sentence a person reads; BRight's director already raised on any status
 # but "completed", and the integration's bridge raises on it now too.
 #
@@ -269,6 +269,7 @@ cleanup_stale_files() {
     find "$RESULTS_DIR" -name '*.json' -mmin +120 -delete 2>/dev/null || true
     find "$RESULTS_DIR" -name '*.tmp' -mmin +120 -delete 2>/dev/null || true
     find "$TASKS_DIR" -name '*.work.*' -mmin +120 -delete 2>/dev/null || true
+    find "$TASKS_DIR" -name '*.cancel' -mmin +120 -delete 2>/dev/null || true
     find "$PROGRESS_DIR" -name '*.jsonl' -mmin +1440 -delete 2>/dev/null || true
     find "$TASK_IMAGE_DIR" -type f -mmin +60 -delete 2>/dev/null || true
     # Debug logs hold full task prompts: age them out (default 7 days,
@@ -730,6 +731,75 @@ task_envelope_from_stream() {
 process_task() {
     local task_file="$1"
 
+    # The helpers below are this task's own (defined here so every caller
+    # of process_task has them).
+    # A run that a safety classifier refused: the CLI's "API Error: … safeguards
+    # flagged this message …" (or its Usage Policy wording), as the run's error
+    # envelope. Mostly a false positive on one model's classifier (#680), so the
+    # task is tried once more on another model, and a second refusal is said in
+    # words — the raw API text is never the answer a person reads.
+    local TASK_REFUSAL_RE='safeguards? (have |has )?flagged|appears to violate (our|the) usage polic|violat(e|es|ing) (our|the|anthropic.s) usage polic'
+
+    task_refused() {
+        local env="$1" text
+        [ -n "$env" ] && [ -r "$env" ] || return 1
+        text=$(jq -r 'if type == "object" then (.result // "") else "" end' "$env" 2>/dev/null)
+        printf '%s' "$text" | grep -qiE "$TASK_REFUSAL_RE" || return 1
+        [ "$(jq -r 'if type == "object" then (.is_error // false) else false end' "$env" 2>/dev/null)" = "true" ] \
+            || printf '%s' "$text" | grep -qi '^API Error'
+    }
+
+    # The model a refused run is tried on once more: model_plan.REFUSAL_FALLBACK
+    # by the refused run's tier, as run.sh exported it (BRAIN_REFUSAL_FALLBACK,
+    # "tier=model …"). An env file written before the table: Sonnet, or Opus
+    # for a run that was already on Sonnet.
+    refusal_fallback_model() {
+        local low tier=default pair
+        low=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+        case "$low" in
+            *fable*) tier=fable ;; *opus*) tier=opus ;; *sonnet*) tier=sonnet ;; *haiku*) tier=haiku ;;
+        esac
+        for pair in ${BRAIN_REFUSAL_FALLBACK:-}; do
+            if [ "${pair%%=*}" = "$tier" ]; then
+                printf '%s' "${pair#*=}"
+                return 0
+            fi
+        done
+        if [ "$tier" = sonnet ]; then printf 'opus'; else printf 'sonnet'; fi
+    }
+
+    # Stop a process and everything under it (the run's subshell, `timeout`,
+    # the CLI), deepest first.
+    task_kill_tree() {
+        local pid="$1" child
+        for child in $(pgrep -P "$pid" 2>/dev/null); do
+            task_kill_tree "$child"
+        done
+        kill -TERM "$pid" 2>/dev/null || true
+    }
+
+    # Wait for a run started in the background, stopping it within a second
+    # when the integration leaves `<task id>.cancel` beside the tasks (nobody
+    # wants the answer any more: a Minecraft job cancelled or stopped, #672).
+    # Returns the run's own exit status.
+    task_wait() {
+        local pid="$1" marker="$TASKS_DIR/${task_id}.cancel" watcher rc=0
+        (
+            while kill -0 "$pid" 2>/dev/null; do
+                if [ -e "$marker" ]; then
+                    task_kill_tree "$pid"
+                    exit 0
+                fi
+                sleep 1
+            done
+        ) > /dev/null 2>&1 &
+        watcher=$!
+        wait "$pid" || rc=$?
+        kill "$watcher" 2>/dev/null || true
+        wait "$watcher" 2>/dev/null || true
+        return "$rc"
+    }
+
     # Claim the task atomically so the startup-backlog scan, inotify events,
     # and the polling fallback can never double-process one file.
     local work_file="${task_file%.json}.work.${BASHPID:-$$}"
@@ -826,6 +896,16 @@ process_task() {
         fi
     fi
 
+    # Whose line (or job) a game run is for, on both game channels: the
+    # account the faculty heard it from. The MCP server holds a game run's
+    # skin change to this one account (`_mc_skin_refusal`). Plain name only.
+    unset BRAIN_GAME_PLAYER
+    if [ "$task_tools" = "minecraft" ] || [ "$task_tools" = "minecraft_trusted" ]; then
+        local game_player
+        game_player=$(jq -r 'if (.player | type) == "string" then .player else empty end' "$work_file" 2>/dev/null | tr -cd 'A-Za-z0-9_.' | cut -c1-17)
+        [ -n "$game_player" ] && export BRAIN_GAME_PLAYER="$game_player"
+    fi
+
     # A trusted grown-up's request from the game (`minecraft_trusted`): the
     # chat's reach on the game's own channel. The switch decides it here,
     # once, as it does for the chat: on, the full grant without prompts;
@@ -901,6 +981,21 @@ process_task() {
         bashio::log.warning "Discarding stale task [$task_id] (${age}s old > ${task_timeout}s window)"
         rm -f "$work_file"
         return
+    fi
+    # Stopped before it started: nobody is waiting, so nothing runs.
+    if [ -e "$TASKS_DIR/${task_id}.cancel" ]; then
+        bashio::log.info "Task [$task_id] was stopped before it started"
+        rm -f "$work_file" "$TASKS_DIR/${task_id}.cancel"
+        write_task_result "$task_id" "The task was stopped before it started: whoever asked for it no longer wanted the answer." "" stopped
+        return
+    fi
+
+    # The turn cap is a runaway guard sized for a task of up to fifteen
+    # minutes; a longer window (a Minecraft job may run an hour, #672) gets
+    # turns in proportion, so the window and not the cap is what ends it.
+    local MAX_TURNS="$MAX_TURNS"
+    if [ "$task_timeout" -gt 900 ] 2>/dev/null; then
+        MAX_TURNS=$(( MAX_TURNS * task_timeout / 900 ))
     fi
 
     bashio::log.info "Processing task [$task_id]: ${prompt:0:80}..."
@@ -1035,14 +1130,22 @@ ${prompt}"
     # instead of scraping verbose stdout (which now carries MCP/diagnostic
     # lines). See extract_claude_result().
     # shellcheck disable=SC2086
-    (cd /config && task_feed | timeout "$claude_limit" ${CLAUDE_BIN} -p "${format_flags[@]}" --max-turns "$MAX_TURNS" ${model_flag} "${resume_flags[@]}" "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || task_rc=$?
+    (cd /config && task_feed | timeout "$claude_limit" ${CLAUDE_BIN} -p "${format_flags[@]}" --max-turns "$MAX_TURNS" ${model_flag} "${resume_flags[@]}" "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") &
+    task_wait $! || task_rc=$?
     task_envelope_from_stream "$output_file"
+    # Whoever asked stopped it (task_wait killed the run): no retry, no
+    # landing, and the result says so.
+    local task_stopped=""
+    if [ -e "$TASKS_DIR/${task_id}.cancel" ]; then
+        task_stopped=1
+        rm -f "$TASKS_DIR/${task_id}.cancel"
+    fi
 
     # A conversation (or a game line) whose session the CLI no longer holds
     # (pruned, or started on another machine) is begun again rather than
     # failed, and the result says so: the person's words still deserve an
     # answer.
-    if [ -n "$task_session" ] && [ "$task_rc" != "0" ] \
+    if [ -z "$task_stopped" ] && [ -n "$task_session" ] && [ "$task_rc" != "0" ] \
         && grep -qiE "no conversation found|session.*(not found|does not exist)" "$stderr_file" "$output_file" 2>/dev/null; then
         resume_lost=1
         resume_flags=()
@@ -1051,7 +1154,8 @@ ${prompt}"
         if [ "$fresh_left" -ge 30 ]; then
             task_rc=0
             # shellcheck disable=SC2086
-            (cd /config && task_feed | timeout "$fresh_left" ${CLAUDE_BIN} -p "${format_flags[@]}" --max-turns "$MAX_TURNS" ${model_flag} "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || task_rc=$?
+            (cd /config && task_feed | timeout "$fresh_left" ${CLAUDE_BIN} -p "${format_flags[@]}" --max-turns "$MAX_TURNS" ${model_flag} "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") &
+            task_wait $! || task_rc=$?
             task_envelope_from_stream "$output_file"
         fi
     fi
@@ -1059,7 +1163,7 @@ ${prompt}"
     # A task that ended on the turn cap is landed, not failed: resumed on
     # the session the envelope names, with two turns and a prompt to answer
     # with what it has. The landing's envelope replaces the run's.
-    if command -v brain_hit_turn_cap > /dev/null 2>&1 \
+    if [ -z "$task_stopped" ] && command -v brain_hit_turn_cap > /dev/null 2>&1 \
         && brain_hit_turn_cap "$(cat "$output_file" 2>/dev/null)" "$stderr_file"; then
         local land_sid land_left
         land_sid=$(brain_session_from_output "$(cat "$output_file" 2>/dev/null)")
@@ -1108,12 +1212,30 @@ ${prompt}"
     mv -f "$output_file" "$envelope_file" 2>/dev/null || envelope_file=""
     rm -f "$stderr_file"
 
-    # Check for /api/mcp auth errors in stderr — deep-clean configs and retry
-    # within the remaining time budget.
-    if echo "$stderr_output" | grep -qi "/api/mcp\|invalid authentication.*mcp"; then
+    # One more run, within the remaining time budget, for one of two
+    # reasons: /api/mcp auth errors in stderr (deep-clean the configs
+    # first), or a safety classifier's refusal (on another model, #680).
+    local retry_why="" retry_note=""
+    if [ -n "$task_stopped" ]; then
+        retry_why=""
+    elif echo "$stderr_output" | grep -qi "/api/mcp\|invalid authentication.*mcp"; then
+        retry_why=mcp
+        retry_note="the MCP connection failed and the task was retried"
         bashio::log.error "Detected /api/mcp auth error in task [$task_id] — cleaning and retrying"
         verify_mcp_config_full
-
+    elif task_refused "$envelope_file"; then
+        local refused_on="${task_model:-the default model}" fallback_model
+        fallback_model=$(refusal_fallback_model "$task_model")
+        retry_why=refused
+        retry_note="a safety check refused the run on ${refused_on}; it was tried again on ${fallback_model}"
+        bashio::log.warning "Task [$task_id] was refused by a safety check on ${refused_on} — trying it once on ${fallback_model}"
+        task_model="$fallback_model"
+        model_flag="--model $task_model"
+        if [ -n "$task_effort" ]; then
+            model_flag="${model_flag} --effort $task_effort"
+        fi
+    fi
+    if [ -n "$retry_why" ]; then
         local remaining=$((claude_limit - duration)) first_duration="$duration"
         if [ "$remaining" -ge 30 ]; then
             output_file=$(mktemp)
@@ -1121,7 +1243,8 @@ ${prompt}"
 
             task_rc=0
             # shellcheck disable=SC2086
-            (cd /config && task_feed | timeout "$remaining" ${CLAUDE_BIN} -p "${format_flags[@]}" --max-turns "$MAX_TURNS" ${model_flag} "${resume_flags[@]}" "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || task_rc=$?
+            (cd /config && task_feed | timeout "$remaining" ${CLAUDE_BIN} -p "${format_flags[@]}" --max-turns "$MAX_TURNS" ${model_flag} "${resume_flags[@]}" "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") &
+            task_wait $! || task_rc=$?
             task_envelope_from_stream "$output_file"
 
             end_time=$(date +%s)
@@ -1147,12 +1270,17 @@ ${prompt}"
             # removes the file once it has read it).
             if [ -n "$envelope_file" ]; then
                 journal_task error "$first_duration" "$envelope_file" "${task_model:-}" \
-                    "the MCP connection failed and the task was retried" "$task_scheduled"
+                    "$retry_note" "$task_scheduled"
             fi
             envelope_file="${output_file}.envelope"
             mv -f "$output_file" "$envelope_file" 2>/dev/null || envelope_file=""
             rm -f "$stderr_file"
-            bashio::log.info "Retried task [$task_id] after /api/mcp cleanup"
+            if [ -e "$TASKS_DIR/${task_id}.cancel" ]; then
+                task_stopped=1
+                rm -f "$TASKS_DIR/${task_id}.cancel"
+            fi
+            [ "$retry_why" = refused ] && retry_note="tried on a second model too"
+            bashio::log.info "Retried task [$task_id] (${retry_why})"
         else
             bashio::log.warning "No time budget left to retry task [$task_id] (${remaining}s remaining)"
         fi
@@ -1172,10 +1300,19 @@ ${prompt}"
     # an `is_error` result is a failure whatever its text says ("API Error:
     # 529 Overloaded" is not an answer), and a turn cap that the landing
     # could not rescue is that and not a mystery.
+    # `env_answered`: the CLI's envelope says the model answered (success,
+    # not an error). Its words are then the model's reply, never the CLI's
+    # own error — so a reply that happens to say "not logged in" or "please
+    # log in" (a skin, a game account) is an answer, not a sign-in failure
+    # (#670: a game turn that finished its work was recorded as "down").
+    local env_answered=""
     if [ -n "$envelope_file" ] && [ -n "$result" ]; then
         local env_error env_subtype
         env_error=$(jq -r 'if type == "object" then (.is_error // false) else false end' "$envelope_file" 2>/dev/null)
         env_subtype=$(jq -r 'if type == "object" then (.subtype // "") else "" end' "$envelope_file" 2>/dev/null)
+        if [ "$env_error" = "false" ] && [ "$env_subtype" = "success" ]; then
+            env_answered=true
+        fi
         if [ "$env_error" = "true" ]; then
             fail_code="error"
             [ "$env_subtype" = "error_max_turns" ] && fail_code="max_turns"
@@ -1192,15 +1329,34 @@ ${prompt}"
         fi
     fi
 
+    # Refused by a safety check on both models (the retry above): said in
+    # words. The raw "API Error: …" is the log's, never what a person reads.
+    if [ -n "$envelope_file" ] && task_refused "$envelope_file"; then
+        bashio::log.error "Task [$task_id] was refused by a safety check: ${result:0:200}"
+        result="Claude declined this request: an automatic safety check flagged it, usually by mistake."
+        if [ "$retry_note" = "tried on a second model too" ]; then
+            result="${result} It was tried on a second model too."
+        fi
+        result="${result} Nothing more was done; rewording the request usually gets past it."
+        fail_code="safeguard"
+    fi
+
     # Auth failures come back as the result text in -p mode ("Failed to
     # authenticate: OAuth session expired and could not be refreshed").
     # Replace the raw CLI error with something the user can act on — the
     # panel's own sign-in, which every background channel picks up
     # automatically on its next spawn.
-    if printf '%s' "$result" | grep -qiE "OAuth session expired|OAuth token (refresh failed|revoked)|failed to authenticate|please run /login|invalid api key"; then
+    if [ -z "$env_answered" ] \
+        && printf '%s' "$result" | grep -qiE "OAuth session expired|OAuth token (refresh failed|revoked)|failed to authenticate|please run /login|invalid api key"; then
         bashio::log.error "Claude auth failure in task [$task_id]: ${result:0:200}"
         result="Claude's saved login has expired and could not be refreshed automatically. ${AUTH_REMEDY}"
         fail_code="auth"
+    fi
+
+    # Stopped because whoever asked no longer wanted it (task_wait).
+    if [ -n "$task_stopped" ]; then
+        result="The task was stopped: whoever asked for it no longer wanted the answer."
+        fail_code="stopped"
     fi
 
     # If result is empty, something went wrong — check stderr for clues
@@ -1243,7 +1399,8 @@ ${prompt}"
     bashio::log.info "Task completed [$task_id]: ${duration}s, ${#result} chars"
 
     # Check for auth errors in the result text
-    if echo "$result" | grep -qi "not logged in\|please log in\|authentication required"; then
+    if [ -z "$env_answered" ] \
+        && echo "$result" | grep -qi "not logged in\|please log in\|authentication required"; then
         result="Claude is not signed in. ${AUTH_REMEDY}"
         fail_code="auth"
         bashio::log.error "Claude auth error - user needs to sign in from the panel"
@@ -1276,7 +1433,7 @@ ${prompt}"
     local outcome="ok"
     case "$fail_code" in
         '') outcome="ok" ;;
-        auth|timeout|max_turns) outcome="$fail_code" ;;
+        auth|timeout|max_turns|stopped) outcome="$fail_code" ;;
         permission) outcome="denied" ;;
         *) outcome="error" ;;
     esac

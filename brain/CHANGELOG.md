@@ -2,6 +2,77 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.2.11
+
+### Removed
+
+- Morph: Then mode is gone. Sliding Coming up no longer shows the house in the past, and the strip stops at now (#662).
+
+### Fixed
+
+- Morph: with the greeting, story and Ask turned off, the first card sits right under brAIn's header instead of below an empty band, and the Edit pencil stays in the corner (#664).
+- Morph: the story never says every door is locked while a door or window is open; it names the open one (#676).
+- Morph: every text box is at least 16px on a phone, including in hosted cards, so iOS no longer zooms the page when you type (#677).
+- Morph: a card with nothing to show says so in a quiet line instead of disappearing (#678).
+- Morph: section labels are readable in every scheme (at least 4.5:1), and the light scheme follows Home Assistant's light mode (#679).
+- Morph: every button shows an icon or a word and has a name; cards brAIn builds are told to draw icons inline, show a disabled button as disabled, say when a reading is outside its target band, and leave no empty space (#682, #683).
+
+## 4.2.10
+
+### Added
+
+- An update card that brAIn checked as safe has an Apply button that installs it on your press, with a backup where the update offers one. Nothing installs an update without a press (#663).
+- brAIn can read a device's details, including a Z-Wave device's configuration settings, when it judges whether an update is safe (#663).
+
+### Changed
+
+- The upgrade check now reads the device itself (its settings, state and history) before deciding, can quote what it read as its evidence, and runs with the same model as the chat when you press Check again. A "Can't tell" says what it could not reach (#663, #660).
+
+### Fixed
+
+- An update card's full reason can be read: it is stored whole and opens in Details, instead of being cut mid-word at 500 characters (#660).
+- Opening a case or update card by its link no longer answers "not found" (#660).
+
+## 4.2.9
+
+### Added
+
+- Minecraft: the companion can put a skin on a player by Java name or skin link, take it off, and say what the server answered. It offers a child up to three skins on choice pads and remembers each person's current skin. A child can change only their own skin (#670).
+- A finding when something else also answers as the companion in the game, such as an old automation that forwards game chat or speaks in its name, naming what it is (#675).
+
+### Changed
+
+- Minecraft: what the companion says it can do comes from each person's settings at that moment (house control on or off for them, whether changes act at once or wait for approval, bedtime). The chat and a job's worker get the same description, so it never says it can't do something it then does (#675).
+
+### Fixed
+
+- Minecraft: a chat answer that mentions logging in is no longer recorded as the companion being down (#670).
+
+## 4.2.8
+
+### Added
+
+- Minecraft: each running job shows a boss bar to the player who asked, with its name, last step and how far it has got. Bedrock players on a phone or tablet see it too (needs BRUH Minecraft 1.19.6). "<name> status" lists running, waiting and recent jobs (#671).
+- Minecraft: a job that stops with some of its work standing is shown as partly done, says what stands, and can be picked up again with "<name> continue" without redoing the finished parts (#671, #666).
+
+### Changed
+
+- Minecraft: a job may run for up to an hour by default, set in ⚙ › Minecraft (15 minutes to 2 hours). A grown-up's "stop" or a cancel still ends it within seconds (#672).
+- Minecraft: a chat answer reads each job's real status and never says a build is finished unless the job says so (#671).
+
+### Fixed
+
+- A run refused by an automatic safety check, usually by mistake, is tried once more on another model; if that is refused too, it says so in plain words instead of showing the raw error (#680, #666).
+- Minecraft: a child never sees a raw error message; the details go to the log (#666).
+- Minecraft: a job that could not attempt something says plainly what it cannot do, instead of claiming it was stopped (#671).
+
+## 4.2.7
+
+### Fixed
+
+- brAIn keeps looking at the house after the day's allowance for its usual model is spent: looks step down to the light model instead of stopping until the next day, and investigations keep their share (#661).
+- The queue of things to look at no longer fills with repeats: signals about the same thing are folded together as they arrive, and an item that was fixed or dismissed while it waited is dropped (#665).
+
 ## 4.2.6
 
 ### Added
