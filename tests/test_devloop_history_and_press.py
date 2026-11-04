@@ -34,7 +34,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import devloop.harness  # noqa: E402
 import devloop.screen_targets as st  # noqa: E402
 import devloop.screens as screens  # noqa: E402
 from test_devloop_screens import browser, warm_up  # noqa: E402
