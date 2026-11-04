@@ -87,9 +87,18 @@ class TestRule1NothingFloats(unittest.TestCase):
         (re.compile(r"(?<![\w.])(?:window\.)?(alert|confirm|prompt)\s*\("), "a browser dialog"),
     ]
 
+    # The brAIn layer is not Morph's page: it sits on Home Assistant's own
+    # dashboard, where HA's add-card button and dialogs float too, and
+    # placing it in HA's layout would mean reaching into HA's internals for
+    # every release. It floats its button, its sheet, the pick bar and the
+    # ring around the card under the pointer, and nothing else.
+    LAYER = "brain-layer.js"
+
     def test_no_overlay_construct(self):
         found = []
         for name, text in sources().items():
+            if name == self.LAYER:
+                continue
             for n, line in code_lines(text):
                 # An invisible measuring probe off the page (snap.js's
                 # default styles) is fixed so it never moves the layout;
@@ -99,6 +108,14 @@ class TestRule1NothingFloats(unittest.TestCase):
                     if rx.search(line) and not (probe and what == "position: fixed"):
                         found.append(f"{name}:{n}: {what}")
         self.assertEqual(found, [], "rule 1: nothing floats over anything")
+
+
+    def test_the_layer_floats_only_its_four_things(self):
+        text = (FRONTEND / self.LAYER).read_text(encoding="utf-8")
+        fixed = re.findall(r"^\.([\w-]+)\{position:fixed", text, re.M)
+        self.assertEqual(sorted(fixed), ["fab", "pick", "ring", "sheet"])
+        for rx, what in self.FORBIDDEN[1:]:
+            self.assertIsNone(rx.search(text), what)
 
 
 class TestRule3TheShellOwnsTheChrome(unittest.TestCase):
