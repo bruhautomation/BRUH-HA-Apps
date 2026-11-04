@@ -58,5 +58,9 @@ repository (`scripts/runs_record.py render`), not this file.
 - `2026-11-03-overload-flakes` (prose): A subprocess test that fails with an empty prompt only under load (`test_ask_face_parity`) is re-run once and its log read before looking for a code cause.
 - `2026-11-03-two-addon-pr` (prose): A PR that touches two add-ons bumps both versions and keeps both CHANGELOG sections when the next batch conflicts.
 - `2026-11-03-version-is-many-places` (prose): Run `.github/scripts/check-changelog-version.sh <add-on>` and grep the old version across the add-on before pushing a bump: GardenRX and BRUH Print pin it in several files.
+- `2026-11-04-hassfest-service-text` (prose): Write service help text without angle brackets or colons, and parse services.yaml with yaml.safe_load before pushing.
+- `2026-11-04-reload-restores-globals` (prose): A test that reloads a module must put back what other modules set on it; a failure that comes and goes by xdist worker is an ordering bug to find, not a re-run.
+- `2026-11-04-sibling-service-first` (prose): A batch that needs a sibling add-on's new service is split: the add-on's half ships first as its own PR and version, then brAIn's half, which treats the service as optional for an older add-on.
+- `2026-11-04-three-subagents-max` (prose): Run at most three subagents at a time on a 4-CPU container; read a local failure that also fails on main against main and let CI be the gate.
 
 3 retired lesson(s) are kept in `lessons.json`.
