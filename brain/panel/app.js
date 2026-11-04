@@ -6626,7 +6626,15 @@ function caseMeta(row) {
   else if (fs === "fixed") out.push(row.ended && row.ended.when
     ? `Applied ${shortDate(row.ended.when)}` : "Applied");
   if (row.waiting_look || row.unchecked) out.push("Unchecked");
-  if (row.snoozed_until && row.snoozed_until * 1000 > Date.now()) {
+  if (row.hold && row.hold.said) {
+    // "Don't remind me" holds a check's card until its report changes
+    // (#602): no date to give, so the meta says what it waits for and the
+    // answer that asked for it.
+    const said = String(row.hold.said);
+    const short = said.length > 80
+      ? said.slice(0, 80).replace(/\s+\S*$/, "") + "…" : said;
+    out.push(`Muted until it changes — you said “${short}”`);
+  } else if (row.snoozed_until && row.snoozed_until * 1000 > Date.now()) {
     out.push(`Snoozed until ${untilWords(row.snoozed_until)}`);
   }
   if (row.checked_at) {
@@ -7040,7 +7048,8 @@ async function runAnswer(row, answer, btns, note, ignoreAll, change) {
     await refreshToday();
     renderFindings();
     const when = data && data.snoozed_until;
-    toast(when ? `Snoozed until ${untilWords(when)}`
+    toast(data && data.held ? "Muted until something about it changes"
+          : when ? `Snoozed until ${untilWords(when)}`
                : (answer.done || answer.label) + muted, data && data.undo);
     if (answer.verb === "fix" || answer.verb === "apply") {
       refreshStatus().catch(() => {}); fastPoll();

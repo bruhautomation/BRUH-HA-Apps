@@ -318,6 +318,15 @@ DEVICE_FINISHED = DEVICE_QUIET | {"dev.implausible"}
 # How many times a row may be marked Wrong before the check stops filing
 # it for that entity.
 WRONG_LIMIT = 2
+# Checks whose report is a standing fact about an automation rather than an
+# event — it has never fired, it has been off for months, its condition
+# never passes — so the next report is the same fact, and ONE Wrong closes
+# the check for that automation (#579). The rule a Wrong writes usually
+# does this already; this is the answer read off the ledger, which holds
+# whatever the reason said (a condition brAIn cannot watch writes no rule,
+# a correction's lifetime ends one).
+ANSWERED_ONCE = frozenset({"auto.never_fired", "auto.forgotten_off",
+                           "auto.condition_never_passes"})
 
 
 
@@ -593,7 +602,8 @@ class House:
         this entity, read off the settled ledger (`snap["answers"]`), or None.
 
         Two things close it, both read before a card is made: the same row
-        marked Wrong `WRONG_LIMIT` times (a rule that was written and still
+        marked Wrong `WRONG_LIMIT` times (once for `ANSWERED_ONCE`'s standing
+        facts about an automation; a rule that was written and still
         did not hold is not a reason to ask a third time), and a reason that
         says the device is finished with — retired, not used, broken
         (`corrections.gone_for_good`) — for a check that is about the device
@@ -616,8 +626,11 @@ class House:
         except Exception:  # noqa: BLE001
             gone = None
         own = (answers.get(entity_id) or {}).get(check_id)
-        if isinstance(own, dict) and int(own.get("wrong") or 0) >= WRONG_LIMIT:
-            return {"text": f"you marked this wrong {int(own['wrong'])} times",
+        limit = 1 if check_id in ANSWERED_ONCE else WRONG_LIMIT
+        if isinstance(own, dict) and int(own.get("wrong") or 0) >= limit:
+            times = int(own["wrong"])
+            return {"text": "you marked this wrong" + (
+                        "" if times == 1 else f" {times} times"),
                     "scope": "answers"}
         # Said on any card, not only this check's: "I don't use that remote
         # any more" on a Resident case or an overnight card is the same

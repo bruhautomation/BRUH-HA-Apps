@@ -19,7 +19,23 @@ here mutes, settles or drops anything, and the never-ignore floors are
 applied after the reply as they always are, so a record can never make a
 safety, protected or hot signal worth less.
 
-Never told about: anything that is not a house check, a security check
+And a rule whose latest answers are three Wrongs in a row (`HOLD_STREAK`,
+the scorecard's `streak`) is HELD BY DEFAULT (#698, #500, #501, #599):
+`triage.gate` files its rows carrying `held_reason` (`record_hold`), the
+look is told the streak, and a row no look keeps — the look let it go,
+skipped it, failed or never came — is held with that record as its
+reason (History › Set aside by brAIn) instead of being shown unjudged.
+Fresh evidence is what brings one forward: a look that keeps it, its
+report getting worse or naming something new
+(`findings_store.refresh_details` sends a held row back to be looked at),
+somebody putting it back, or the household agreeing with one of the
+rule's reports, which ends the streak. Each Wrong was per entity or per
+pair, so the next automation or the next forecast was news again; the
+streak is the rule's own record. A critical row is never held, and
+neither is anything `quietable` refuses.
+
+Never told about: anything that is not a house check or a card a person
+made (`user-…`, the household's own rule), a security check
 (`check:sec.*`), a check about harm (`signals.SAFETY_FLAG_CHECKS`), and
 the producers that are not rules (`cases.UNMUTABLE_SOURCES`). Those sets
 are restated here, because `reports.py` reads this module and must run
@@ -46,10 +62,18 @@ NEVER_PREFIXES = ("check:sec.",)
 
 MAX_LINES = 6
 
+# Three Wrongs in a row, the latest answers, and the rule is held (above).
+HOLD_STREAK = 3
+# A card somebody made is a rule they wrote (`user_categories.ID_PREFIX`).
+PERSON_RULE_PREFIX = "user-"
+
 
 def quietable(source: str) -> bool:
     """Whether a producer is one brAIn may quiet by its record at all."""
     source = str(source or "")
+    if source.startswith(PERSON_RULE_PREFIX) and len(source) > len(
+            PERSON_RULE_PREFIX):
+        return True
     if not source.startswith("check:") or source in UNMUTABLE_SOURCES:
         return False
     if source.startswith(NEVER_PREFIXES):
@@ -66,9 +90,74 @@ def qualifies(row: dict) -> bool:
         total = int(row.get("total") or 0)
     except (TypeError, ValueError):
         return False
-    return (wrong >= MIN_WRONG and total > 0
-            and wrong >= WRONG_SHARE * total
-            and row.get("last") == "wrong")
+    return holds(row) or (wrong >= MIN_WRONG and total > 0
+                          and wrong >= WRONG_SHARE * total
+                          and row.get("last") == "wrong")
+
+
+def holds(row: dict) -> bool:
+    """A scorecard row whose latest `HOLD_STREAK` answers were all Wrong:
+    its rule's rows are filed held (above)."""
+    if not isinstance(row, dict) or not quietable(row.get("source")):
+        return False
+    try:
+        return int(row.get("streak") or 0) >= HOLD_STREAK
+    except (TypeError, ValueError):
+        return False
+
+
+def held_rules(scorecard) -> dict[str, dict]:
+    """The rules held by their record, by source."""
+    return {str(r["source"]): r for r in (scorecard or [])
+            if isinstance(r, dict) and holds(r)}
+
+
+def held_reason(row: dict) -> str:
+    """The verdict a held row carries: the record, in the household's words,
+    and what brings it back."""
+    streak = int((row or {}).get("streak") or 0)
+    return (f"You marked this rule's last {streak} reports wrong, so brAIn "
+            "set this one aside. It comes back if it gets worse or names "
+            "something new, or once you agree with one of this rule's "
+            "reports.")
+
+
+def never_held(row: dict, patterns: list[str] | None = None) -> bool:
+    """A row no record holds back: critical, flagged as harm, from a check
+    about harm, or about a protected entity.
+
+    A check's row carries no `safety`/`protected`/`hot` flag — those live
+    on the SIGNAL (`signals.make`), built later from the row — so a row
+    read here is judged off what it does carry: its severity, its check
+    and its entities. Protection is matched by the one matcher
+    (`automation_writer.is_protected` over `protected_patterns`, the
+    option parsed in one place), on the row's own entity and every item
+    it names that is one; a list that cannot be read is read as
+    protected, the direction that shows a card.
+    """
+    if not isinstance(row, dict):
+        return True
+    if str(row.get("severity") or "") == "critical":
+        return True
+    if any(row.get(flag) for flag in ("safety", "protected", "hot")):
+        return True
+    source = str(row.get("source") or "")
+    if source.removeprefix("check:") in SAFETY_CHECKS:
+        return True
+    entities = [str(row.get("entity_id") or "")] + [
+        str(x) for x in (row.get("items") or []) if isinstance(x, str)]
+    entities = [e for e in entities if "." in e and " " not in e]
+    if not entities:
+        return False
+    try:
+        import automation_writer  # noqa: PLC0415 — a leaf's one matcher
+        if patterns is None:
+            patterns = automation_writer.protected_patterns()
+        return any(automation_writer.is_protected(e, patterns)
+                   for e in entities)
+    except Exception:  # noqa: BLE001 — unreadable is not "nothing is
+        # protected": the record holds nothing it cannot see.
+        return True
 
 
 def lopsided(scorecard) -> dict[str, dict]:
@@ -112,8 +201,14 @@ def lines(batch, scorecard, floor=None) -> list[str]:
         which = ("Signal " + str(idx[0]) if len(idx) == 1 else
                  "Signals " + ", ".join(str(n) for n in idx[:-1])
                  + f" and {idx[-1]}")
-        out.append(f"{which} came from the rule “{title}”: the household "
-                   f"has marked {int(row['wrong'])} of its "
-                   f"{int(row['total'])} answered reports wrong, the latest "
-                   "included.")
+        line = (f"{which} came from the rule “{title}”: the household "
+                f"has marked {int(row['wrong'])} of its "
+                f"{int(row['total'])} answered reports wrong, the latest "
+                "included.")
+        if holds(row):
+            # Held by default (#698): only a look that keeps it shows it.
+            line += (f" The last {int(row['streak'])} in a row were wrong, "
+                     "so brAIn holds this rule's rows unless you keep one "
+                     "for fresh, specific evidence the others did not have.")
+        out.append(line)
     return out[:MAX_LINES]

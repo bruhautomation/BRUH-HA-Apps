@@ -1563,7 +1563,18 @@ def _shape(entry: dict) -> dict:
     if wake and int(entry.get("snoozed_until") or 0):
         out["snooze_wake"] = wake
     if entry.get("earlier_answer") and not int(entry.get("snoozed_until") or 0):
-        out["detail"] = (out["detail"] + " " + EARLIER_ANSWER).strip()
+        said = entry["earlier_answer"]
+        said = said if isinstance(said, str) and said.strip() else EARLIER_ANSWER
+        out["detail"] = (out["detail"] + " " + said.strip()).strip()
+    if entry.get("record_hold") and entry.get("status") == "triaging":
+        out["record_hold"] = str(entry["record_hold"])
+    # Which answer is holding it (#602), while it is held: the card says
+    # it was muted and by what, and History shows it under Snoozed.
+    hold = entry.get("snooze_hold")
+    if isinstance(hold, dict) and hold.get("said") \
+            and int(entry.get("snoozed_until") or 0):
+        out["hold"] = {"said": str(hold["said"])[:MAX_NOTE],
+                       "at": int(hold.get("at") or 0)}
     out.update(_subject_fields(entry))
     # brAIn's own upkeep (`self_care`): the instruction line its Yes takes
     # out. Absent on every other row.
@@ -1917,6 +1928,11 @@ def coerce(obj: dict) -> dict | None:
     looked = _clean_triage(obj.get("triage"))
     if looked:
         entry["triage"] = looked
+    # A rule three Wrongs deep (`triage.gate`, #698): the record a silence
+    # holds this row with, while it waits for a look.
+    record = " ".join(str(obj.get("record_hold") or "").split())
+    if record and entry["status"] == "triaging":
+        entry["record_hold"] = textclip.shorten(record, triage.MAX_REASON)
     entry.update(_case_fields(obj))
     morph_key = clean_morph_key(obj.get("morph_key"))
     if morph_key:
@@ -3005,6 +3021,13 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
             continue
         late = entry.get("status") != "triaging"
         verdict, reason = verdicts[ts][:2]
+        if verdict == "untriaged" and not late and entry.get("record_hold"):
+            # Nothing looked at a row from a rule the household marked
+            # wrong three times in a row: it is held with that record,
+            # not shown unjudged (#698, `rule_record.holds`).
+            verdict, reason = "held", str(entry["record_hold"])
+        if verdict != "untriaged" or late:
+            entry.pop("record_hold", None)
         not_news = len(verdicts[ts]) > 2 and verdicts[ts][2] is True
         if verdict not in triage.VERDICTS:
             continue
@@ -3253,7 +3276,8 @@ def elevate(ts: int) -> dict | None:
 
 
 @_mutates
-def snooze(ts: int, until: int, wake=None, worse=None) -> dict | None:
+def snooze(ts: int, until: int, wake=None, worse=None,
+           hold: str = "") -> dict | None:
     """Take a finding off the list until ``until`` (epoch seconds).
 
     Deliberately does NOT touch the status. "Remind me later" and "not a
@@ -3270,12 +3294,23 @@ def snooze(ts: int, until: int, wake=None, worse=None) -> dict | None:
     list, don't remind me": the card stays away for the whole period unless
     the thing gets clearly worse (`wake_worse`) — a reading at or under
     ``below``, or the device going unavailable.
+
+    ``hold`` is the answer that asked for it ("don't remind me") on a
+    house check's row (#602): the card is held until the check's report
+    about it changes rather than for a period (`HOLD_*` below), and the
+    answer rides on the row so the card and the trail can say which one.
     """
     items = _load()
     for entry in items:
         if int(entry.get("ts") or 0) != ts:
             continue
         entry["snoozed_until"] = max(0, int(until))
+        said = " ".join(str(hold or "").split())[:MAX_NOTE]
+        if said and until > 0:
+            entry["snooze_hold"] = {"said": said, "at": int(time.time()),
+                                    "absent_since": 0}
+        else:
+            entry.pop("snooze_hold", None)
         if isinstance(worse, dict) and until > 0 and worse.get("entities"):
             entry["snooze_worse"] = {
                 "entities": clean_items(worse["entities"]),
@@ -3342,8 +3377,68 @@ def wake_returned(states, now: float | None = None) -> list[dict]:
 # fall before "I'll handle it" is no longer enough. A reading that wobbles a
 # point or two is the same battery.
 WORSE_DROP = 3
+# How far, as a share of where it stood, a reading on a held row with no
+# level of its own must move before the report has changed (`wake_worse`).
+WORSE_SHARE = 0.25
 EARLIER_ANSWER = ("You said you would handle this, and it has got worse "
                   "since.")
+
+# A hold (`snooze(hold=)`) has no period. It ends when the check's own
+# report about the thing changes: worse (a higher severity), naming
+# something it did not (`names_moved`, a new item), or no longer made for
+# `HOLD_ABSENT_S` — gone that long, the fact is over and a return is news.
+# One pass that missed it (a device rebooting, a read that came back thin)
+# is not the fact ending, so the row waits out the absence before it goes.
+HOLD_ABSENT_S = 3 * 86400
+
+
+def _held_by_answer(entry: dict) -> bool:
+    return (isinstance(entry.get("snooze_hold"), dict)
+            and int(entry.get("snoozed_until") or 0) > 0)
+
+
+def _hold_absences(items: list[dict], sources: set[str], keep_keys: set[str],
+                   now: float) -> tuple[set[int], bool]:
+    """The held rows a pass that did not report them must keep, and whether
+    any row's absence stamp moved. A held row the pass reported is present
+    again; one it missed is stamped the first time and kept until it has
+    been missing `HOLD_ABSENT_S` (`HOLD_ABSENT_S`'s reason)."""
+    keep: set[int] = set()
+    moved = False
+    for f in items:
+        hold = f.get("snooze_hold")
+        if not isinstance(hold, dict) or f.get("source") not in sources:
+            continue
+        if normalize(f.get("text", "")) in keep_keys:
+            if hold.get("absent_since"):
+                hold["absent_since"] = 0
+                moved = True
+            continue
+        since = int(hold.get("absent_since") or 0)
+        if not since:
+            hold["absent_since"] = int(now)
+            moved = True
+            keep.add(int(f.get("ts") or 0))
+        elif now - since < HOLD_ABSENT_S:
+            keep.add(int(f.get("ts") or 0))
+    return keep, moved
+
+
+def hold_changed_sentence(said: str) -> str:
+    """What a held card says when it comes back: which answer held it."""
+    said = " ".join(str(said or "").split())
+    quoted = f" (“{textclip.clip(said, 120)}”)" if said else ""
+    return (f"You asked not to be reminded about this{quoted}, and the "
+            "report has changed since.")
+
+
+def _wake_hold(entry: dict) -> None:
+    """End a hold because the report changed; the card says which answer."""
+    hold = entry.pop("snooze_hold", None)
+    entry["snoozed_until"] = 0
+    entry.pop("snooze_worse", None)
+    entry["earlier_answer"] = hold_changed_sentence(
+        (hold or {}).get("said") if isinstance(hold, dict) else "")
 
 
 def _numeric(state) -> float | None:
@@ -3363,6 +3458,14 @@ def wake_worse(states, now: float | None = None) -> list[dict]:
     the first pass after the answer), or goes unavailable having been
     reporting. Otherwise it sleeps on. A woken row carries
     `EARLIER_ANSWER` in its detail, so the card says the answer was heard.
+
+    A row with no ``below`` — a hold (`snooze(hold=)`) on a check that has
+    no level of its own — is woken when the reading has moved a long way
+    from where it stood: by `WORSE_SHARE` of it and at least `WORSE_DROP`,
+    either way, because a hold ends when the report changes and a battery
+    at 5% or a room at 9 °C is not the report the answer was given about
+    (#602). A wobble is the same reading. Such a row says which answer
+    held it (`hold_changed_sentence`), not that it got worse.
     """
     if not isinstance(states, dict) or not states:
         return []
@@ -3375,7 +3478,7 @@ def wake_worse(states, now: float | None = None) -> list[dict]:
                 or float(entry.get("snoozed_until") or 0) <= now:
             continue
         base = worse.setdefault("from", {})
-        hit = False
+        hit = moved = False
         for eid in clean_items(worse.get("entities")):
             st = states.get(eid)
             raw = str(st.get("state") or "").lower() if isinstance(st, dict) else ""
@@ -3388,14 +3491,24 @@ def wake_worse(states, now: float | None = None) -> list[dict]:
                 continue
             level, was = _numeric(raw), _numeric(base[eid])
             below = worse.get("below")
-            if level is not None and isinstance(below, (int, float)) \
-                    and level <= below \
-                    and (was is None or level <= was - WORSE_DROP):
-                hit = True
-        if hit:
-            entry["snoozed_until"] = 0
-            entry.pop("snooze_worse", None)
-            entry["earlier_answer"] = EARLIER_ANSWER
+            if level is None:
+                continue
+            if isinstance(below, (int, float)):
+                if level <= below and (was is None
+                                       or level <= was - WORSE_DROP):
+                    hit = True
+            elif was is not None and abs(level - was) >= max(
+                    WORSE_DROP, WORSE_SHARE * abs(was)):
+                moved = True
+        if hit or moved:
+            if moved and not hit and isinstance(entry.get("snooze_hold"),
+                                                dict):
+                _wake_hold(entry)
+            else:
+                entry["snoozed_until"] = 0
+                entry.pop("snooze_worse", None)
+                entry.pop("snooze_hold", None)
+                entry["earlier_answer"] = EARLIER_ANSWER
             touched.append(_shape(entry))
     if changed or touched:
         _write(items)
@@ -3738,6 +3851,7 @@ def scorecard(release: str | None = None) -> list[dict]:
     """
     want = None if release is None else (str(release).strip() or UNKNOWN_RELEASE)
     by: dict[str, dict] = {}
+    answered: dict[str, list[tuple[int, str, int]]] = {}
     for e in _load_settled():
         src = str(e.get("source") or "")
         if want is not None and release_of(e) != want:
@@ -3752,7 +3866,7 @@ def scorecard(release: str | None = None) -> list[dict]:
             or src,
             "confirmed": 0, "wrong": 0, "last": "", "last_ts": 0,
             "last_wrong_ts": 0, "example": "", "example_ts": -1,
-            "release": want})
+            "streak": 0, "release": want})
         # One report the rule filed, newest first — what the mute question
         # names as an example of what stopping it stops.
         if str(e.get("text") or "").strip() and int(e.get("ts") or 0) >= \
@@ -3768,6 +3882,10 @@ def scorecard(release: str | None = None) -> list[dict]:
                  else "wrong" if e.get("kind") == "ignored" else "")
         if label:
             row[label] += 1
+            answered.setdefault(src, []).append(
+                (int(e.get("ts") or 0), label,
+                 max(1, int(e.get("wrong_count") or 1))
+                 if label == "wrong" else 1))
             # The latest ending, for `mute_offer`: a rule somebody last
             # agreed with is not offered for muting.
             if int(e.get("ts") or 0) >= row["last_ts"]:
@@ -3780,8 +3898,21 @@ def scorecard(release: str | None = None) -> list[dict]:
     for r in rows:
         r["total"] = r["confirmed"] + r["wrong"]
         r.pop("example_ts", None)
+        # How many of the household's latest answers about this rule, in a
+        # row, were Wrong — a key answered Wrong again counts each time
+        # (`wrong_count`). `rule_record.holds` reads it (#698).
+        for _ts, label, weight in sorted(answered.get(r["source"], ()),
+                                         key=lambda a: a[0], reverse=True):
+            if label != "wrong":
+                break
+            r["streak"] += weight
     rows.sort(key=lambda r: (-r["total"], r["source"]))
     return rows
+
+
+# `triage.gate` reads the scorecard for a rule's record (`rule_record.holds`)
+# without importing this module, which imports it.
+triage.SCORECARD = scorecard
 
 
 def scorecard_by_release() -> dict[str, dict[str, dict]]:
@@ -4222,6 +4353,10 @@ def refresh_details(objs: list[dict]) -> int:
                      and names_moved(cur.get("detail"), entry["detail"]))
             cur["detail"] = entry["detail"]
             cur["severity"] = entry["severity"]
+            if (rose or moved) and _held_by_answer(cur):
+                # "Don't remind me" holds the card until its report
+                # changes, and a worse or a different report is that.
+                _wake_hold(cur)
             if rose and cur.get("status") == "held":
                 _send_to_look(cur)
             elif moved:
@@ -4229,6 +4364,10 @@ def refresh_details(objs: list[dict]) -> int:
             changed += 1
         new_items = clean_items(entry.get("items"))
         if new_items and clean_items(cur.get("items")) != new_items:
+            if _held_by_answer(cur) and set(new_items) - set(
+                    clean_items(cur.get("items"))):
+                # A row about several things naming a new one is news.
+                _wake_hold(cur)
             # What a Wrong pressed on this row will answer is what it names
             # NOW, not what it named when it was filed.
             cur["items"] = new_items
@@ -4612,7 +4751,8 @@ def mark_checked(texts, when: float | None = None) -> int:
 
 
 def resolve_clear(items: list[dict], sources: set[str],
-                  keep_keys: set[str]) -> tuple[list[dict], list[dict]]:
+                  keep_keys: set[str],
+                  exempt: set[int] | None = None) -> tuple[list[dict], list[dict]]:
     """Split rows into what survives a pass and what that pass cleared.
 
     Pure over a list, so the shadow store can hold the *same* rule rather
@@ -4620,12 +4760,15 @@ def resolve_clear(items: list[dict], sources: set[str],
     exactly the way a real one does, or the two numbers being compared are
     measuring different lifecycles. :func:`clear_resolved` is this against
     the real store; ``shadow_findings.clear_resolved`` is it against the
-    other one.
+    other one. ``exempt`` names rows (by ts) this pass keeps whatever it
+    reported — a held card waiting out an absence (`_hold_absences`).
     """
     kept: list[dict] = []
     gone: list[dict] = []
+    exempt = exempt or set()
     for f in items:
         if (f.get("source") in sources
+                and int(f.get("ts") or 0) not in exempt
                 and f.get("status") in CLEARABLE
                 and normalize(f.get("text", "")) not in keep_keys):
             gone.append(_shape(f))
@@ -4651,9 +4794,12 @@ def clear_resolved(sources: set[str], keep_keys: set[str]) -> list[dict]:
     house, and if it comes back the check files it again. Returns the
     rows that were removed.
     """
-    kept, gone = resolve_clear(_load(), sources, keep_keys)
+    items = _load()
+    # A card held by "don't remind me" outlives one pass that missed it.
+    held, stamped = _hold_absences(items, sources, keep_keys, time.time())
+    kept, gone = resolve_clear(items, sources, keep_keys, exempt=held)
     came = _came_back(kept, sources, keep_keys, time.time())
-    if gone or came:
+    if gone or came or stamped:
         _write(kept)
     # And the answers. The same pass that may clear a row it no longer
     # reports may end an answer about one — see `_suppresses`.

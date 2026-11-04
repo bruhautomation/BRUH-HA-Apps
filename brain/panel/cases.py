@@ -579,6 +579,11 @@ def _from_finding(row: dict, snoozes: dict[str, int]) -> dict:
     })
     if isinstance(row.get("confidence"), (int, float)):
         case["confidence"] = row["confidence"]
+    # "Don't remind me" on a check's card (#602): which answer holds it,
+    # so the card says it is muted until it changes, and by what.
+    if isinstance(row.get("hold"), dict) and row["hold"].get("said"):
+        case["hold"] = {"said": str(row["hold"]["said"]),
+                        "at": int(row["hold"].get("at") or 0)}
     # A question the assistant asks (`findings_store.as_asked`): answered
     # in words, under Questions for you.
     if row.get("asked") is True:

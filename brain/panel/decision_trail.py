@@ -86,6 +86,9 @@ KINDS = {
     "look_ignore": "brAIn looked and let it go",
     "look_watch": "brAIn looked and decided to watch it",
     "held": "looked at, and held back from the list",
+    # "Don't remind me" on a check's card: held until its report changes.
+    "hold": "you asked not to be reminded, so brAIn holds it until "
+            "something about it changes",
     # A log error that has stopped, or whose integration is working now: a
     # reconnect around a restart is not a problem to file.
     "transient": "a passing error: what it was about is working now",
@@ -111,6 +114,7 @@ KINDS = {
 # look's verdict or a notification decision is an event at a time and is
 # written again past the window, as before.
 FOLD_KINDS = frozenset({"dedupe", "exception", "mute", "shadow", "cap",
+                        "hold",
                         "drift", "claimed", "explained", "checked",
                         "unchecked", "transient"})
 

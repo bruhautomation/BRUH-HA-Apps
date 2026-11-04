@@ -496,24 +496,92 @@ def known_faulty(now: float | None = None) -> dict[str, str]:
 # not a statement that the report is wrong (a rule would be for ever) and
 # not a statement the thing is out of use (that is `temporary`): it is a
 # request to be left alone about it for a while.
-_DEFERRAL_RE = re.compile(
+#
+# The words after "stop" are about being TOLD ("stop telling me", "stop
+# bringing up wifi dropping out issues", "quit flagging it"); a verb the
+# house itself does ("stop raising the blinds") is not one of them.
+#
+# Two shapes. `_ASKS_QUIET_RE` asks in as many words ("don't remind me",
+# "it's on my list", "I'll deal with it"). `_AWARE_RE` only says the
+# person knows ("I'm aware", "I know about it"), which is a request to be
+# left alone when that is all it says, and a statement when a fault
+# follows it ("I'm aware, the pump is leaking", `_FAULT_RE`): the second
+# tells brAIn what is wrong, and asks for nothing.
+_ASKS_QUIET_RE = re.compile(
     r"\b(?:(?:don'?t|do not|stop|quit|no need to|please don'?t|no more)\s+"
     r"(?:\w+\s+){0,2}?(?:remind(?:ing)?|nag(?:ging)?|bother(?:ing)?|"
-    r"bring(?:ing)? (?:this|it|that) up|mention(?:ing)? (?:this|it|that))"
-    r"|(?:i'?m|i am|we'?re|we are|already)\s+(?:well\s+)?aware|"
-    r"(?:on|in) (?:my|our|the) (?:to[- ]?do|todo|task) list|"
-    r"already (?:on|in) (?:my|our) (?:list|plan)|i know about (?:it|this|that)|"
+    r"bring(?:ing)? (?:\w+\s+){0,3}?up|mention(?:ing)?|"
+    r"flag(?:ging)?|tell(?:ing)? me about|"
+    r"rais(?:e|ing) (?:this|it|that|these)|ask(?:ing)? me about)"
+    r"|(?:on|in) (?:my|our|the) (?:to[- ]?do|todo|task) list|"
+    r"already (?:on|in) (?:my|our) (?:list|plan)|"
     r"i'?ll (?:deal with|handle|take care of|sort) (?:it|this|that)|"
     r"leave (?:it|this|that) (?:with|to) me)\b", re.I)
-# How long a deferral keeps a card closed when the reason names no period.
+_AWARE_RE = re.compile(
+    r"\b(?:(?:i'?m|i am|we'?re|we are|already)\s+(?:well\s+)?aware|"
+    r"i know about (?:it|this|that))\b", re.I)
+_FAULT_RE = re.compile(
+    r"\b(?:is|are|it'?s|they'?re|was|were|keeps?|has been|have been|"
+    r"still)\s+(?:\w+\s+){0,2}?(?:leaking|dripping|broken|faulty|dead|flat|"
+    r"stuck|jammed|offline|down|failing|failed|overheating|not working|"
+    r"playing up|on the blink|unavailable|disconnected|dropping out|"
+    r"cracked|low|weak|empty|wet|tripped)\b"
+    r"|\b(?:leaking|dripping|overheating)\b", re.I)
+# How long a deferral keeps a card closed when the reason names no period,
+# on a row no rule reads again (a Resident case, a Morph suggestion). A
+# house check's row is HELD instead (`HOLD_DAYS`): it has a rule that
+# re-reads the fact every pass, so the fact changing is what ends it.
 DEFERRAL_DAYS = 30
+# A hold has no period (#602): this is only the horizon its snooze is
+# stamped with, so every reader of `snoozed_until` keeps the card away.
+# What ends a hold is the check's report changing
+# (`findings_store.refresh_details` / `wake_worse` / `clear_resolved`).
+HOLD_DAYS = 3650
+
+
+# A reason that asks for the thing to be dealt with, or says what is wrong
+# with it, is not "leave me alone about it" even when it says "I'm aware"
+# or "don't tell me" ("I'm aware, fix it now"; "don't tell me it's
+# offline, it's reporting wrong"): it is a request or a correction.
+_NOT_A_DEFERRAL_RE = re.compile(
+    r"\b(?:please\s+)?(?:fix|repair|sort)\s+(?:it|this|that)\s+"
+    r"(?:now|today|asap|please)\b|\bplease\s+(?:fix|repair)\b|"
+    r"\bcan you\s+(?:fix|repair|sort)\b|"
+    r"\b(?:reporting|reading|showing)\s+(?:it\s+)?wrong\b|"
+    r"\bit'?s\s+(?:offline|broken|not working)\b|\bnot working\b", re.I)
+# "Stop flagging this, it's a bad sensor": a request to be left alone that
+# also says the REPORT is wrong — a bad sensor, a false alarm, a replaced
+# device, "it isn't low", "there's no leak" — is the Wrong it always was
+# (a correction, or the device finished with), never a hold: a hold would
+# keep a wrong report on the books until the wrong sensor changed.
+_FALSE_REPORT_RE = re.compile(
+    r"\b(?:bad|faulty|dodgy|dud|flaky|wrong|false|incorrect|misreading|"
+    r"unreliable)\s+(?:sensor|reading|report|alarm|alert|device|detector|"
+    r"value|figure|number|data)\b|\bfalse (?:alarm|positive|reading)s?\b|"
+    r"\b(?:sensor|device|reading|report|detector|value|figure|number|"
+    r"this|it|that|which)\s+(?:is|was|'s|are|were)\s+(?:wrong|false|bad|"
+    r"faulty|not real|incorrect|mistaken|misreading|a mistake|a false "
+    r"alarm)\b|"
+    r"\b(?:was|has been|got|been|were|'ve been|already)\s+(?:replaced|"
+    r"swapped(?: out)?|changed out)\b|"
+    r"\b(?:is|it'?s|they'?re|are|was)\s*n[o']t\s+(?:actually |really )?"
+    r"(?:low|offline|weak|leaking|open|on|off|dead|flat|stuck|unavailable|"
+    r"real|true|right|the case)\b|\bisn'?t\s+(?:actually |really )?"
+    r"(?:low|offline|weak|leaking|open|on|off|dead|flat|stuck|unavailable|"
+    r"real|true|right|the case)\b|"
+    r"\b(?:there'?s|there is|there was|it'?s)\s+no\s+(?:leak|problem|issue|"
+    r"fault|such thing)\b|\bnot real\b|\bnever (?:was|has been|happened)\b",
+    re.I)
 
 
 def deferral(note: str) -> bool:
     """Whether a reason asks not to be reminded for a while."""
     text = str(note or "")
-    return (bool(_DEFERRAL_RE.search(text)) and not temporary(text)
-            and not gone_for_good(text))
+    asked = bool(_ASKS_QUIET_RE.search(text)) or (
+        bool(_AWARE_RE.search(text)) and not _FAULT_RE.search(text))
+    return (asked and not temporary(text) and not gone_for_good(text)
+            and not _NOT_A_DEFERRAL_RE.search(text)
+            and not _FALSE_REPORT_RE.search(text))
 
 
 def puts_off(note: str) -> bool:
@@ -522,12 +590,98 @@ def puts_off(note: str) -> bool:
     return temporary(note) or deferral(note)
 
 
-def snooze_days(note: str) -> int:
+# A deferral that names WHEN — a time, a day, a season, an occasion — asked
+# for a period, however vague ("until tomorrow", "next week", "till
+# spring", "after the holidays", "later"), and a period is what it gets
+# (`named_time_days`, else the deferral's month). Only an answer that names
+# no time at all is the hold. "Until it changes" and "unless it gets
+# worse" name no time: they are the hold in the household's own words.
+_WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday",
+             "saturday", "sunday")
+# "May" is a verb far more often than a month ("it may be the router"),
+# so it counts only after a word that puts a date on it.
+_MONTH_RE = re.compile(
+    r"\b(?:(?:in|until|till|til|after|before|next|by|from)\s+(may)|("
+    + "|".join(m for m in _MONTHS if m != "May") + r"))\b", re.I)
+_NAMED_TIME_RE = re.compile(
+    r"\b(?:until|till|til|after|next|tomorrow|tonight|later|soon|"
+    r"this (?:evening|afternoon|week|weekend|month|year)|"
+    r"(?:at|on|over) the weekend|another time|some other time|"
+    r"in a (?:bit|while)|holidays?|christmas|easter|new year|"
+    r"spring|summer|autumn|fall|winter|"
+    + "|".join(_WEEKDAYS) + r")\b", re.I)
+_UNTIL_CHANGE_RE = re.compile(
+    r"\b(?:until|till|til|unless)\s+(?:it|this|that|something|things|"
+    r"the \w+)\s+(?:changes?|moves?|is (?:any )?(?:worse|different)|"
+    r"gets? (?:any )?worse|get (?:any )?worse)\b", re.I)
+_SEASON_FIRST = {"spring": 3, "summer": 6, "autumn": 9, "fall": 9,
+                 "winter": 12}
+
+
+def names_a_time(note: str) -> bool:
+    """Whether a reason names when to be reminded, however vaguely."""
+    text = str(note or "")
+    if _PERIOD_RE.search(text):
+        return True
+    stripped = _UNTIL_CHANGE_RE.sub(" ", text)
+    return bool(_NAMED_TIME_RE.search(stripped) or _MONTH_RE.search(stripped))
+
+
+def held_until_changed(note: str) -> bool:
+    """A deferral that names no time: on a house check's row it holds the
+    card until the check's report about it changes (`HOLD_DAYS`). "Remind
+    me in 3 weeks", "until tomorrow" and "till spring" asked for a period
+    and get one (`snooze_days`)."""
+    text = str(note or "")
+    return (deferral(text) and not temporary(text)
+            and not names_a_time(text))
+
+
+def named_time_days(note: str, today: dt.date | None = None, *,
+                    southern: bool = False) -> int | None:
+    """The period a plain named time asks for, in days, or None when the
+    reason names none or one with no date ("after the holidays", "later").
+
+    Tomorrow and tonight are a day; a weekday is the next one of those
+    (a week when it is today); the weekend is the next Saturday; next
+    week, month and year are those; a month name is the first of that
+    month, next time it comes; a season is the day it starts (swapped
+    south of the equator, `_SOUTH`).
+    """
+    text = str(note or "").lower()
+    today = today or dt.date.today()
+    if re.search(r"\b(?:tomorrow|tonight|this (?:evening|afternoon))\b", text):
+        return 1
+    m = re.search(r"\bnext (week|month|year)\b", text)
+    if m:
+        return {"week": 7, "month": 30, "year": 365}[m.group(1)]
+    if re.search(r"\b(?:this|the|at the|on the|over the) weekend\b", text):
+        return (5 - today.weekday()) % 7 or 7
+    m = re.search(r"\b(" + "|".join(_WEEKDAYS) + r")\b", text)
+    if m:
+        return (_WEEKDAYS.index(m.group(1)) - today.weekday()) % 7 or 7
+    m = _MONTH_RE.search(text)
+    if m:
+        month = [x.lower() for x in _MONTHS].index(
+            (m.group(1) or m.group(2)).lower()) + 1
+        return (_next_first(today, month) - today).days
+    m = re.search(r"\b(spring|summer|autumn|fall|winter)\b", text)
+    if m:
+        season = "autumn" if m.group(1) == "fall" else m.group(1)
+        first = _SEASON_FIRST[_SOUTH[season] if southern else season]
+        return (_next_first(today, first) - today).days
+    return None
+
+
+def snooze_days(note: str, today: dt.date | None = None, *,
+                southern: bool = False) -> int:
     """How long a `puts_off` reason keeps the card closed: the period it
-    names, else the repair's two weeks or a deferral's month."""
+    names, the time it names (`named_time_days`), else the repair's two
+    weeks or a deferral's month."""
     if temporary(note) or _PERIOD_RE.search(str(note or "")):
         return temporary_days(note)
-    return DEFERRAL_DAYS
+    named = named_time_days(note, today, southern=southern)
+    return named if named else DEFERRAL_DAYS
 
 
 def temporary_days(note: str) -> int:
@@ -1000,7 +1154,8 @@ __all__ = [
     "conditional", "conditional_confirmation","LIFETIMES", "NEVER_CHECKS", "NEVER_CLASSES", "NEVER_DOMAINS",
            "SCHEMA", "SCOPES", "SEASONS", "SOURCE", "SYSTEM", "WIDE_SCOPES",
            "accept_offer", "apply_plan", "check_of", "condition_offer_row",
-           "confirmation",
+           "confirmation", "DEFERRAL_DAYS", "HOLD_DAYS", "held_until_changed",
+           "named_time_days", "names_a_time",
            "expires_for", "find_offer", "house_southern", "is_offer",
            "never_covered", "offer_key_for", "offer_row", "plan", "prompt",
            "resume_date", "scope_map", "season_resume", "summary",
