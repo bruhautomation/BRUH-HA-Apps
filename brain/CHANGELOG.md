@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.2.7
+
+### Fixed
+
+- brAIn keeps looking at the house after the day's allowance for its usual model is spent: looks step down to the light model instead of stopping until the next day, and investigations keep their share (#661).
+- The queue of things to look at no longer fills with repeats: signals about the same thing are folded together as they arrive, and an item that was fixed or dismissed while it waited is dropped (#665).
+
 ## 4.2.6
 
 ### Added
