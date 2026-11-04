@@ -296,6 +296,10 @@ class TestTheLoopFilesASafetyCaseWhateverTheWordSays(LoopCase):
         self._trail = srv.decision_trail.TRAIL_FILE
         srv.decision_trail.TRAIL_FILE = str(Path(self.tmp.name)
                                             / "decisions.jsonl")
+        # `refused` is a counter `LoopCase` does not reset, and a test down
+        # the same worker asserts its own count from zero.
+        self.addCleanup(srv.RESIDENT_STATE.__setitem__, "refused",
+                        srv.RESIDENT_STATE.get("refused", 0))
 
     def tearDown(self):
         self.server.decision_trail.TRAIL_FILE = self._trail
