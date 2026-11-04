@@ -613,7 +613,9 @@ class House:
         names: a smoke or leak sensor is asked about whatever was said.
         """
         answers = self.snap.get("answers")
-        if not isinstance(answers, dict) or not answers:
+        if not isinstance(answers, dict):
+            answers = {}
+        if not answers and not self.snap.get("faulty"):
             return None
         if self._never_covered(entity_id, check_id):
             return None
@@ -630,6 +632,14 @@ class House:
             return {"text": "you marked this wrong" + (
                         "" if times == 1 else f" {times} times"),
                     "scope": "answers"}
+        # Said on any card, not only this check's: "I don't use that remote
+        # any more" on a Resident case or an overnight card is the same
+        # device finished with (`corrections.known_faulty`, #697).
+        faulty = self.snap.get("faulty")
+        if finished and isinstance(faulty, dict) and faulty:
+            for eid in [entity_id, *self.siblings(entity_id)]:
+                if faulty.get(eid):
+                    return {"text": str(faulty[eid]), "scope": "answers"}
         if not (finished and gone):
             return None
         for eid in [entity_id, *self.siblings(entity_id)]:

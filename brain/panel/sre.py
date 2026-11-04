@@ -180,6 +180,27 @@ async def collect(session) -> dict:
     except Exception as exc:  # noqa: BLE001
         out["available"]["states"] = False
         out["errors"]["states"] = str(exc)[:200]
+    # A media player that reads unavailable now: its own week of on, off
+    # and unavailable, so a TV that leaves the network when it is switched
+    # off is not filed as an integration failing (`sleeps_when_off`, #612).
+    out["history"] = {}
+    asleep = sorted(e for e, st in (out.get("states") or {}).items()
+                    if str(e).startswith("media_player.")
+                    and isinstance(st, dict)
+                    and st.get("state") == "unavailable")[:MAX_SLEEP_CHECKS]
+    if asleep:
+        import datetime as dt
+
+        import closures
+        end = dt.datetime.now(dt.timezone.utc)
+        try:
+            got = await closures.fetch_history(
+                session, asleep, end - dt.timedelta(hours=SLEEP_HISTORY_H), end)
+        except Exception as exc:  # noqa: BLE001 — could not look holds nothing
+            out["errors"]["history"] = str(exc)[:200]
+            got = None
+        out["available"]["history"] = got is not None
+        out["history"] = got or {}
     cfg = load_configs()
     out["automations"] = cfg.get("automations") or []
     out["scripts"] = cfg.get("scripts") or {}
@@ -941,14 +962,99 @@ def answered_down(snoozed, ignored, states, now: float) -> set[str]:
     return out
 
 
-def digest(collected: dict, now: float, set_aside=frozenset()) -> dict:
+# What a log message's identity is NOT: counts, times, ids and hex. Entity
+# ids and the step ("at pos 2") are kept, because they are which error it is.
+_ID_NOISE = re.compile(r"\b[0-9a-f]{6,}\b|\b[0-9a-f]{8}-[0-9a-f-]{20,}\b")
+_ERROR_WORDS = re.compile(r"[a-z_]+\.[a-z0-9_]+|\bpos \d+|[a-z0-9]+")
+_ALIAS_LEAD = re.compile(r"^[^:]{1,120}:\s+")
+
+
+def _error_identity(message: str) -> str:
+    """The words that make an error the error it is, folded: the same
+    failure logged tomorrow with another count, time or context id is the
+    same identity, and a different step or a different target is not."""
+    text = _ALIAS_LEAD.sub("", str(message or "").lower(), count=1)
+    text = _ID_NOISE.sub(" ", text)
+    # A word with a digit in it is a count, a time or an id — except the
+    # step and an entity id, which are which error this is.
+    words = [w for w in _ERROR_WORDS.findall(text)
+             if "." in w or w.startswith("pos ") or w.isalpha()]
+    return " ".join(words)[:240]
+
+
+def explain_key(rec: dict) -> str:
+    """The identity an owner's explanation of an automation's error is
+    remembered under: the automation and the error's own words, or "" for
+    a record that is not about an automation.
+
+    An entity and the producer are not enough (#578): "this automation
+    switches the light off and leaves the lamp powered on purpose" answers
+    that error on that automation, and a different error on the same
+    automation is news."""
+    if not isinstance(rec, dict):
+        return ""
+    if rec.get("kind") == "automation":
+        aid = str(rec.get("automation_id") or rec.get("automation") or "")
+        offs = ",".join(sorted(str(e) for e in rec.get("switches_off") or ()))
+        return f"automation:{aid}|switches off {offs}" if aid else ""
+    if rec.get("kind") != "log":
+        return ""
+    m = _CALLER_LOGGER.match(str(rec.get("logger") or ""))
+    if not m or m.group(1) not in ("automation", "script"):
+        return ""
+    said = _error_identity(rec.get("message") or "")
+    return f"{m.group(1)}:{m.group(2)}|{said}" if said else ""
+
+
+MAX_EXPLAINED = 300
+
+
+def explained(state: dict, settled, now: float) -> set[str]:
+    """The automation errors the owner has explained, by `explain_key`.
+
+    An overnight card about an automation answered Wrong WITH a reason
+    ("it is meant to switch the light and leave the lamp powered") is an
+    explanation of the records that card stood on, which the pass kept on
+    the card's anchor. They are remembered in this check's own state, so
+    the answer holds for as long as the error is the same error — however
+    the card would be worded and whatever entity it would be filed on.
+    Updates ``state["explained"]``; returns every remembered key."""
+    import findings_store  # noqa: PLC0415
+    memo = state.setdefault("explained", {})
+    if not isinstance(memo, dict):
+        memo = state["explained"] = {}
+    by_text: dict[str, set[str]] = {}
+    for anchor in (state.get("anchors") or {}).values():
+        if isinstance(anchor, dict) and anchor.get("explains"):
+            by_text.setdefault(findings_store.normalize(
+                anchor.get("text") or ""), set()).update(
+                    str(k) for k in anchor["explains"])
+    for entry in settled or ():
+        if (not isinstance(entry, dict) or entry.get("source") != SOURCE
+                or entry.get("kind") != "ignored"
+                or not str(entry.get("note") or "").strip()):
+            continue
+        key = str(entry.get("key") or "") or findings_store.normalize(
+            entry.get("text") or "")
+        for k in by_text.get(key, ()):
+            memo.setdefault(k, {"at": int(now),
+                                "note": str(entry["note"]).strip()[:200]})
+    if len(memo) > MAX_EXPLAINED:
+        keep = sorted(memo, key=lambda k: memo[k].get("at", 0))[-MAX_EXPLAINED:]
+        state["explained"] = memo = {k: memo[k] for k in keep}
+    return set(memo)
+
+
+def digest(collected: dict, now: float, set_aside=frozenset(),
+           explained_keys=frozenset()) -> dict:
     """The records a pass reasons over, with ids.
 
     ``set_aside`` is the entities the owner set aside on the offline check
     (answered Wrong, snoozed): a log line about one of them — by an entity
     it names, or the device it is on — is held back the way that check
     holds its row, so the overnight pass does not file the same device
-    under a new name."""
+    under a new name. ``explained_keys`` is the automation errors the owner
+    explained (`explained`): those records are not handed to the run."""
     zha = _zha_records(collected.get("zha") or [], now,
                        collected.get("areas") or {})
     # What each mesh device carries, so a cause about a router can name
@@ -998,6 +1104,14 @@ def digest(collected: dict, now: float, set_aside=frozenset()) -> dict:
                                 collected.get("devices") or [])
                + _router_switch_records(collected.get("automations") or [],
                                         zha, collected.get("entities") or []))
+    # An automation error the owner explained is that error, answered: it
+    # is not handed to the run again, and a different error is (#578).
+    gone = {str(k) for k in explained_keys or ()}
+    explained_n = 0
+    if gone:
+        kept = [r for r in records if explain_key(r) not in gone]
+        explained_n = len(records) - len(kept)
+        records = kept
     # `subjects` rides beside the records and never in the prompt (`frame`
     # sends the records alone): it is the code's answer to which entity a
     # cause is about, not something for the run to choose from.
@@ -1057,14 +1171,23 @@ def digest(collected: dict, now: float, set_aside=frozenset()) -> dict:
                 and isinstance(st, dict):
             health[str(eid)] = {"state": str(st.get("state") or ""),
                                 "since_h": _hours_since(st.get("last_changed"), now)}
+    # Which unavailable media players are only switched off, read off
+    # their own history (`sleeps_when_off`), for `hold_transient`. Beside
+    # the records and never in the prompt.
+    asleep = {}
+    for eid, series in (collected.get("history") or {}).items():
+        if str(eid).startswith("media_player.") and sleeps_when_off(series, now):
+            asleep[str(eid)] = True
     entry_states: dict[str, list[str]] = {}
     for e in collected.get("config_entries") or []:
         if isinstance(e, dict) and e.get("domain") in log_domains:
             entry_states.setdefault(str(e["domain"]), []).append(
                 str(e.get("state") or ""))
     return {"records": records,
+            "explained": explained_n,
             "states_now": states_now,
             "health": health, "entry_states": entry_states,
+            "asleep": asleep,
             "integration_names": integration_names(
                 records, collected.get("config_entries") or [],
                 collected.get("manifests") or []),
@@ -2029,6 +2152,52 @@ BROKEN_H = 3.0
 ENTRY_FAILED_STATES = ("setup_error", "setup_retry")
 
 
+# How far back a media player's own history is read, how many players at
+# most, and the longest it may have been gone after an off and still be
+# "asleep" rather than gone (#612).
+SLEEP_HISTORY_H = 7 * 24
+MAX_SLEEP_CHECKS = 20
+ASLEEP_MAX_H = 72.0
+_OFF_STATES = frozenset({"off", "standby"})
+_GONE_STATES = frozenset({"unavailable"})
+_NO_WORD = frozenset({"unknown", "", "none"})
+
+
+def sleeps_when_off(series, now: float) -> bool:
+    """Whether a media player's unavailable now is it being switched off.
+
+    ``series`` is its raw history, ``[[stamp, state], ...]`` oldest first.
+    True only when the stretch it is in now began straight after an off
+    (or standby), has lasted under `ASLEEP_MAX_H`, and an earlier stretch
+    that began after an off ended on the next power-on — the TV has shown
+    it comes back. Unavailable out of a playing or on state, a first ever
+    drop, or a long absence is a thing that is gone, and stays a finding."""
+    from checks._util import parse_ts
+    points = []
+    for row in series or ():
+        if not isinstance(row, (list, tuple)) or len(row) < 2:
+            continue
+        ts = parse_ts(row[0])
+        word = str(row[1] or "").lower()
+        if ts is None or word in _NO_WORD:
+            continue
+        if points and points[-1][1] == word:
+            continue
+        points.append((ts, word))
+    if not points or points[-1][1] not in _GONE_STATES:
+        return False
+    if now - points[-1][0] > ASLEEP_MAX_H * 3600:
+        return False
+    if len(points) < 2 or points[-2][1] not in _OFF_STATES:
+        return False
+    # An earlier off -> unavailable -> on: it came back when turned on.
+    for i in range(1, len(points) - 2):
+        if (points[i][1] in _GONE_STATES and points[i - 1][1] in _OFF_STATES
+                and points[i + 1][1] not in _GONE_STATES | _OFF_STATES):
+            return True
+    return False
+
+
 def _judge_log(rec: dict, dig: dict) -> tuple[str, str] | None:
     """`(kind, reason)` when this log record is no problem to file now, or
     None when it is one — or is not a record this can judge."""
@@ -2067,10 +2236,22 @@ def _judge_log(rec: dict, dig: dict) -> tuple[str, str] | None:
     health = dig.get("health") or {}
     known = [health[e] for e in subject if e in health]
     if known:
+        known = [{**health[e], "entity": e} for e in subject if e in health]
         down = [h for h in known if h.get("state") == "unavailable"]
         if not down:
             return ("transient", f"everything {name} provides is working "
                     f"now; the errors were last logged {since}")
+        asleep = dig.get("asleep") or {}
+        if all(asleep.get(h.get("entity", "")) for h in down):
+            names = dig.get("names") or {}
+            players = _and([names.get(h["entity"]) or _spoken(h["entity"])
+                            for h in down][:3])
+            one = len(down) == 1
+            return ("transient", f"{players} {'goes' if one else 'go'} off "
+                    "the network when switched off: "
+                    f"{'it' if one else 'they'} went unavailable after being "
+                    "turned off, and came back each time "
+                    f"{'it was' if one else 'they were'} turned on")
         if not persisting:
             return ("transient", f"nothing from {name} has been logged since "
                     f"{since}, so the log is not what this is")
@@ -2143,7 +2324,8 @@ def load(path: str | None = None) -> dict:
     if not isinstance(data, dict):
         return {"anchors": {}, "last": None, "unreadable": True}
     anchors = data.get("anchors") if isinstance(data.get("anchors"), dict) else {}
-    return {"anchors": anchors, "last": data.get("last")}
+    memo = data.get("explained") if isinstance(data.get("explained"), dict) else {}
+    return {"anchors": anchors, "last": data.get("last"), "explained": memo}
 
 
 def save(state: dict, path: str | None = None) -> None:
@@ -2152,7 +2334,8 @@ def save(state: dict, path: str | None = None) -> None:
         keep = sorted(anchors, key=lambda k: anchors[k].get("at", 0))[-MAX_ANCHORS:]
         anchors = {k: anchors[k] for k in keep}
     atomic_write.write_json(path or STORE,
-                            {"anchors": anchors, "last": state.get("last")})
+                            {"anchors": anchors, "last": state.get("last"),
+                             "explained": state.get("explained") or {}})
 
 
 def rows(causes: list[dict], dig: dict, state: dict,
@@ -2183,8 +2366,14 @@ def rows(causes: list[dict], dig: dict, state: dict,
         # A title reused from an earlier night was written before the
         # integration had a name here.
         text = plain_slugs(text, dig)
+        # What the card stands on, by the identity an owner's reason on it
+        # explains (`explained`).
+        explains = sorted({k for k in (explain_key(by_id[r]) for r in
+                                       cause["records"] if r in by_id) if k})
         anchors[cause["anchor"]] = {"text": text, "at": int(now),
-                                    "entity": entity}
+                                    "entity": entity,
+                                    **({"explains": explains[:8]}
+                                       if explains else {})}
         evidence = [{"entity": rid, "value": textclip.clip(
                          _record_label(by_id[rid]), 120),
                      "when": ""} for rid in cause["records"][:8]]
@@ -2248,7 +2437,8 @@ def keep_keys(open_rows: list[dict], state: dict, available: dict,
     return keep
 
 
-__all__ = ["SCHEMA", "SOURCE", "SYSTEM", "collect", "digest", "frame",
+__all__ = ["SCHEMA", "SOURCE", "SYSTEM", "collect", "digest", "explain_key",
+           "explained", "frame",
            "hold_transient", "integration_of", "keep_keys", "load",
            "parse_causes", "read_user_text", "rows", "save", "subject_of",
            "trail_rows", "worth_a_run"]

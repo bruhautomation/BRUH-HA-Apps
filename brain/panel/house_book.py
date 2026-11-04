@@ -318,7 +318,10 @@ def digest(snap: dict) -> dict:
                     or (house.device_of(e) or {}).get("area_id"))
     operated = operated_by(snap.get("automations"))
     names: dict[str, list[str]] = {}
-    for eid in set(placed) | set(operated):
+    fact_subjects = {str(f.get("subject") or "") for f in facts} & set(
+        house.states)
+    for eid in (set(placed) | set(operated) | fact_subjects
+                | {e["id"] for e in entities}):
         device = house.device_of(eid)
         names[eid] = [n for n in (house.name(eid),
                                   house.device_name(device) if device else "")
@@ -573,6 +576,56 @@ def _named_in(text: str, dig: dict, wanted) -> list[str]:
     return out
 
 
+# A fact that says where something is: "mounted above the back door",
+# "kept in the hall cupboard", "it is behind the television". A placing
+# verb takes any preposition; a bare "is"/"are" only one that places a
+# thing in space, because "is in use", "is on the list to replace" and
+# "is at 4%" say nothing about where it is — a room's name beside the
+# thing (`_fact_answers`) is the other way a fact places it.
+_PLACED_RE = re.compile(
+    r"\b(?:sits|hangs|lives|mounted|located|installed|fitted|kept|placed|"
+    r"screwed|clipped|stuck)\b[^.]{0,40}?\b(?:in|on|under|above|behind|"
+    r"beside|by|inside|outside|next\s+to|at|near|beneath|over)\b"
+    r"|\b(?:is|are|it's|they're)\b[^.]{0,20}?\b(?:under|above|behind|beside|"
+    r"inside|outside|next\s+to|on\s+top\s+of|beneath|near|underneath)\b", re.I)
+
+
+def _fact_answers(text: str, about: str, dig: dict) -> str:
+    """A fact the house already holds that answers this question, or "".
+
+    The fact has to be about the thing asked — filed under the entity, or
+    naming it (an earlier answer is filed as "<its name>: <what was said>")
+    — and say the kind of thing asked: where it is, or how the operation
+    asked about is done (#697)."""
+    facts = [f for f in dig.get("facts") or [] if isinstance(f, dict)]
+    if not facts:
+        return ""
+    where = bool(_ASKS_WHERE.search(text))
+    asked = [rx for rx, _svcs in _OPERATIONS if rx.search(text)]
+    how = bool(_ASKS_HOW.search(text) or _ASKS_HOW_PASSIVE.search(text))
+    if not where and not (how and asked):
+        return ""
+    names = dig.get("names") or {}
+    subjects = {about} if about else set()
+    subjects |= set(_named_in(text, dig, sorted(names)))
+    called = {" ".join(_words(n)) for e in subjects for n in names.get(e) or ()
+              if _words(n)}
+    rooms = {" ".join(_words(a.get("name"))) for a in dig.get("areas") or []
+             if isinstance(a, dict) and _words(a.get("name"))}
+    for f in facts:
+        said = str(f.get("text") or "")
+        low = " " + " ".join(_words(said)) + " "
+        if not (str(f.get("subject") or "") in subjects
+                or any(f" {n} " in low for n in called)):
+            continue
+        if where and (_PLACED_RE.search(said)
+                      or any(f" {r} " in low for r in rooms)):
+            return f"brAIn already knows where it is: “{textclip.clip(said, 120)}”"
+        if how and asked and any(rx.search(said) for rx in asked):
+            return f"brAIn already knows how: “{textclip.clip(said, 120)}”"
+    return ""
+
+
 def registry_answers(text: str, about: str, dig: dict) -> str:
     """What already answers a question to the homeowner, or "".
 
@@ -581,8 +634,13 @@ def registry_answers(text: str, about: str, dig: dict) -> str:
     named in its words — is answered by the registry. A how-question about
     operating an entity (its subject, or one it names) that an automation
     operates that way is answered by the automation.
+    A fact the house holds that says where it is, or how that is done
+    (an earlier answer among them), answers either (`_fact_answers`).
     """
     text = str(text or "")
+    known = _fact_answers(text, about, dig)
+    if known:
+        return known
     placed = set(dig.get("placed") or ())
     placed |= {str(e.get("id")) for e in dig.get("entities") or []
                if isinstance(e, dict) and e.get("area")}

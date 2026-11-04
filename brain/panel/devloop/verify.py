@@ -34,7 +34,8 @@ import atomic_write
 from textclip import clip
 
 from . import data_dir
-from .upstream import product_of, running_at_least, running_for, version_tuple
+from .upstream import (
+    _DONE_RE, _field, product_of, running_at_least, running_for, version_tuple)
 
 log = logging.getLogger("brain.devloop")
 
@@ -48,6 +49,9 @@ _LEGACY_FP_RE = re.compile(r"^[0-9a-f]{8,64}$")
 VERIFY_STREAMS = frozenset({"look", "unmet"})
 MAX_PER_PASS = 1
 MAX_STATE = 300
+# How long an unanswered question stays on Today. Past it the question is
+# a leftover nobody recognises (#605): it is withdrawn, nothing is posted.
+QUESTION_TTL_DAYS = 14
 
 
 def state_file() -> Path:
@@ -142,7 +146,8 @@ def _eligible(items: dict, version: str, state: dict, live_ts: set[int],
     return out
 
 
-def moot(entry: dict | None, rec: dict | None) -> str:
+def moot(entry: dict | None, rec: dict | None,
+         now: float | None = None) -> str:
     """Why an open question is about a fix that is no longer the fix, or
     "" while it still stands: the report has gone from the queue, was
     reopened, or was fixed again in a newer release (which is asked about
@@ -165,6 +170,11 @@ def moot(entry: dict | None, rec: dict | None) -> str:
     if asked_for and fixed_in and asked_for != fixed_in:
         return (f"it was fixed again in {fixed_in}, and that fix is "
                 "asked about on its own")
+    asked_at = float(rec.get("at") or 0)
+    if (now is not None and asked_at and not rec.get("answer")
+            and now - asked_at > QUESTION_TTL_DAYS * 86400):
+        return (f"nobody answered it in {QUESTION_TTL_DAYS} days, so brAIn "
+                "stopped asking")
     return ""
 
 
@@ -206,6 +216,48 @@ def _plain_sentences(text: str) -> str:
     return " ".join(kept).strip()
 
 
+def _done_when(entry: dict) -> str:
+    """The report's own bar for the fix, in plain sentences, or ""."""
+    said = _plain_sentences(_field(entry, "done_when", _DONE_RE))
+    return clip(said.rstrip(" ."), 240) if said else ""
+
+
+def _checking(entry: dict, place: str, product: str) -> str:
+    """What brAIn could not check itself, and the one thing to try (#605).
+
+    Only the owner's own requests and the chat's unmet ones are ever asked
+    (`VERIFY_STREAMS`), and neither has an error brAIn can watch for: a
+    fault that stops recurring is said on its own report, never asked. So
+    the card says which it is, and what to do to tell — the report's own
+    "Done when" when it has one."""
+    stream = str(entry.get("stream") or "")
+    bar = _done_when(entry)
+    if stream == "unmet":
+        cannot = ("brAIn cannot check this one itself: it was something the "
+                  "chat could not do, and only asking again shows whether it "
+                  "can now.")
+        step = "Try this: ask the chat again" + (
+            f"; it counts as fixed when: {bar}." if bar else ".")
+    else:
+        where = place or ("" if product == "brAIn" else product)
+        cannot = ("brAIn cannot check this one itself: it is about what you "
+                  "see and use, which brAIn has no error to watch for.")
+        step = (f"Try this: open {where} and do what you reported"
+                if where else "Try this: do what you reported again") + (
+            f"; it counts as fixed when: {bar}." if bar else ".")
+    return f"{cannot} {step}"
+
+
+def _reported(entry: dict) -> str:
+    """Where and when the report was made, for a question that has been
+    waiting: "You reported this on brAIn 4.0.9." ("" when unknown)."""
+    release = str(entry.get("version") or "")
+    if not version_tuple(release):
+        return ""
+    product = product_of(entry)
+    return f"You reported this on {product} {release}."
+
+
 def question_row(entry: dict) -> dict:
     """The question, named by the report's own title and where it was.
 
@@ -236,8 +288,10 @@ def question_row(entry: dict) -> dict:
     look = "" if look == "brAIn" else look
     detail = " ".join(p for p in (
         f"{what}." if what else "",
+        _reported(entry),
         f"The {product} update installed here was meant to fix it.",
-        f"Where to look: {look}." if look else "") if p)
+        f"Where to look: {look}." if look else "",
+        _checking(entry, place, product)) if p)
     return {
         # Stable per fix: the report's words and the release it was fixed
         # in, so the store's dedupe and the settled ledger let the same
@@ -288,7 +342,8 @@ def group_row(entries: list[dict]) -> dict:
     detail = " ".join(p for p in (
         f"The {product} update installed here was meant to fix these: "
         f"{listed}.",
-        f"Where to look: {look}." if look else "") if p)
+        f"Where to look: {look}." if look else "",
+        _checking({"stream": first.get("stream")}, place, product)) if p)
     return {
         # Stable per question: the first change, how many others, the place
         # and the release — so a later question about the same release and
