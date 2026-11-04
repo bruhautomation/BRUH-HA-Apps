@@ -2,6 +2,24 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.2.8
+
+### Added
+
+- Minecraft: each running job shows a boss bar to the player who asked, with its name, last step and how far it has got. Bedrock players on a phone or tablet see it too (needs BRUH Minecraft 1.19.6). "<name> status" lists running, waiting and recent jobs (#671).
+- Minecraft: a job that stops with some of its work standing is shown as partly done, says what stands, and can be picked up again with "<name> continue" without redoing the finished parts (#671, #666).
+
+### Changed
+
+- Minecraft: a job may run for up to an hour by default, set in ⚙ › Minecraft (15 minutes to 2 hours). A grown-up's "stop" or a cancel still ends it within seconds (#672).
+- Minecraft: a chat answer reads each job's real status and never says a build is finished unless the job says so (#671).
+
+### Fixed
+
+- A run refused by an automatic safety check, usually by mistake, is tried once more on another model; if that is refused too, it says so in plain words instead of showing the raw error (#680, #666).
+- Minecraft: a child never sees a raw error message; the details go to the log (#666).
+- Minecraft: a job that could not attempt something says plainly what it cannot do, instead of claiming it was stopped (#671).
+
 ## 4.2.7
 
 ### Fixed
