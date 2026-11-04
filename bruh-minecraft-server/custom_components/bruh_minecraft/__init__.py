@@ -82,6 +82,7 @@ from .const import (
     SERVICE_COMPANION_BUILD,
     SERVICE_COMPANION_EDIT,
     SERVICE_COMPANION_PROGRESS,
+    SERVICE_COMPANION_BAR,
     SERVICE_GIVE_SPYGLASS,
     SERVICE_COMPANION_THOUGHT,
     SERVICE_GIVE_JOURNAL,
@@ -407,6 +408,15 @@ def _register_services(hass: HomeAssistant) -> None:
                 payload[key] = call.data[key]
         return _strip(await _ask("companion_progress", payload))
 
+    async def handle_companion_bar(call: ServiceCall) -> dict[str, Any]:
+        payload = {"player": call.data["player"], "key": call.data["key"]}
+        if "text" in call.data:
+            payload["text"] = _one_line(call.data["text"])
+        for key in ("percent", "end"):
+            if key in call.data:
+                payload[key] = call.data[key]
+        return _strip(await _ask("companion_bar", payload))
+
     async def handle_give_spyglass(call: ServiceCall) -> dict[str, Any]:
         return _strip(await _ask("companion_spyglass", {
             "player": call.data["player"], "name": _one_line(call.data["name"])}))
@@ -639,6 +649,13 @@ def _register_services(hass: HomeAssistant) -> None:
         vol.Optional("percent"): vol.All(vol.Coerce(float), vol.Range(0, 100)),
         vol.Optional("colour"): colour_name,
     })
+    companion_bar_schema = vol.Schema({
+        vol.Required("player"): player_name,
+        vol.Required("key"): vol.All(cv.string, vol.Length(min=1, max=24)),
+        vol.Optional("text"): vol.All(cv.string, vol.Length(max=160)),
+        vol.Optional("percent"): vol.All(vol.Coerce(float), vol.Range(0, 100)),
+        vol.Optional("end"): bool,
+    })
     companion_thought_schema = vol.Schema({
         vol.Required("player"): player_name,
         vol.Optional("text"): vol.All(cv.string, vol.Length(max=160)),
@@ -738,6 +755,7 @@ def _register_services(hass: HomeAssistant) -> None:
     register(SERVICE_LOOK_BLOCKS, handle_look_blocks, look_blocks_schema, only)
     register(SERVICE_COMPANION_PROGRESS, handle_companion_progress, companion_progress_schema,
              optional)
+    register(SERVICE_COMPANION_BAR, handle_companion_bar, companion_bar_schema, optional)
     register(SERVICE_GIVE_SPYGLASS, handle_give_spyglass, give_spyglass_schema, optional)
     register(SERVICE_COMPANION_THOUGHT, handle_companion_thought, companion_thought_schema,
              optional)
