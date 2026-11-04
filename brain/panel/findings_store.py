@@ -2474,41 +2474,6 @@ def _asks_about_own_setup(row: dict) -> bool:
         row.get("text"), row.get("claim"))
 
 
-def blames_automation_idly(entry: dict) -> bool:
-    """A row that blames an automation and whose step changes nothing.
-    A question is asked, not blamed, and a row with no step at all is the
-    `no_step` floor's, not this one's."""
-    if not isinstance(entry, dict) or entry.get("kind") == "question":
-        return False
-    # Never the rows silence costs most on (`resident.unfinished`'s
-    # high-stakes rule): a critical or high-stakes row, one flagged as harm,
-    # or one from the safety/security family is raised whatever its step.
-    if (entry.get("severity") == "critical" or entry.get("stakes") == "high"
-            or any(entry.get(f) for f in ("safety", "protected", "hot"))
-            or str(entry.get("source") or "") in ("safety", "security")):
-        return False
-    fix = str(entry.get("fix") or "").strip()
-    if not fix or entry.get("actions"):
-        return False
-    # The claim is what blames: the automation as the thing acting.
-    return (house_words.blames_automation(entry.get("text"),
-                                          entry.get("claim"))
-            and not house_words.concrete_change(fix))
-
-
-def _note_no_change(entry: dict) -> None:
-    """The decision trail's line for a row `blames_automation_idly` drops."""
-    try:
-        import decision_trail  # noqa: PLC0415 — a leaf that never raises
-        decision_trail.note(
-            "no_change", str(entry.get("entity_id") or ""),
-            "it blamed an automation and named no change to make to it",
-            source=str(entry.get("source") or ""),
-            text=str(entry.get("claim") or entry.get("text") or ""))
-    except Exception:  # noqa: BLE001 — accounting never fails a filing
-        pass
-
-
 @_mutates
 def add_many(objs: list[dict]) -> list[dict]:
     """Record a batch of wire-shaped findings in ONE read and ONE write.
@@ -2580,13 +2545,6 @@ def add_many(objs: list[dict]) -> list[dict]:
             continue
         if _asks_about_own_setup(entry):
             own_question = True
-        if (_model_written(entry.get("source"))
-                and blames_automation_idly({**obj, **entry})):
-            # A model's row that blames an automation and offers no change
-            # to make is not raised (#698, `resident.unfinished`'s
-            # `no_change` for the same shape), and the trail says so.
-            _note_no_change(entry)
-            continue
         if (_sweepable(entry, None) and is_drop_report(entry)
                 and says_recovered(entry.get("detail"))):
             # Its own detail says the trouble has stopped: a card titled as

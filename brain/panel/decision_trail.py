@@ -89,8 +89,6 @@ KINDS = {
     # "Don't remind me" on a check's card: held until its report changes.
     "hold": "you asked not to be reminded, so brAIn holds it until "
             "something about it changes",
-    # A row that blamed an automation with no change to make (#698).
-    "no_change": "it blamed an automation and offered no change to make",
     # A log error that has stopped, or whose integration is working now: a
     # reconnect around a restart is not a problem to file.
     "transient": "a passing error: what it was about is working now",

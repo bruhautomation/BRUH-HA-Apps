@@ -13,7 +13,6 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 - **"Stop bringing up …", "stop telling me", "quit flagging it" and "please stop mentioning …" are read as "don't remind me"** instead of being kept as a correction while the same card came back; "I'm aware, the pump is leaking" tells brAIn what is wrong and is not, and "stop flagging this, it's a bad sensor" is the Wrong it always was (#602, #694).
 - **An automation you marked wrong for never firing is not reported for never firing again,** whatever reason you gave; the same holds for an automation switched off for a long time and a condition that never passes (#579).
-- **A finding that blames an automation must say what to change in it.** A card that only says the automation is doing the wrong thing, with "review it", "check it" or "keep an eye on it" as the step, is no longer shown; a step that says what to change, in any words, is (#698).
 
 ## 4.3.2
 
