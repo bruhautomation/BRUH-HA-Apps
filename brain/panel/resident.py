@@ -178,6 +178,16 @@ HOT_FLOOR = "watch"
 # about whether anybody heard.
 FLAG_FLOORS = {"safety": "act", "protected": NEVER_IGNORE_FLOOR,
                "hot": HOT_FLOOR}
+# brAIn's own rehearsal (`brain doctor --rehearse`) plants defects under
+# this prefix — `doctor.PREFIX`, spelled here rather than imported because
+# `doctor` carries the engine and the stores and this module is a leaf —
+# precisely to check that the first look notices them. A look that read
+# "brain_test_dead_ref" as a test fixture and ignored it failed the
+# rehearsal it exists to pass, on the house as in the replay, so a signal
+# whose subject or evidence carries the prefix is floored at `watch`:
+# never dropped, and the model's `ignore` is on the record beside it.
+REHEARSAL_PREFIX = "brain_test_"
+REHEARSAL_FLOOR = HOT_FLOOR
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
@@ -212,7 +222,27 @@ def never_ignore(signal: dict) -> tuple[str, str]:
     hit = sorted(words & set(NEVER_IGNORE))
     if hit:
         raise_to(NEVER_IGNORE_FLOOR, f"it is a {hit[0]} signal")
+    if any(_rehearsal_object(e) for e in _signal_subjects(signal)):
+        raise_to(REHEARSAL_FLOOR, "it is one of the defects brAIn's own "
+                 "rehearsal planted to check they are noticed")
     return floor, why
+
+
+def _rehearsal_object(eid) -> bool:
+    """Whether an entity id names a thing the rehearsal planted."""
+    name = str(eid or "")
+    return name.split(".", 1)[-1].startswith(REHEARSAL_PREFIX)
+
+
+def _signal_subjects(signal: dict) -> list[str]:
+    """A signal's subject and the entities its evidence names."""
+    out = [str(signal.get("subject") or "")]
+    for row in signal.get("evidence") or ():
+        eid = (row.get("entity") or row.get("entity_id")) if isinstance(
+            row, dict) else row
+        if eid:
+            out.append(str(eid))
+    return out
 
 
 FIRST_LOOK_SCHEMA = {
@@ -324,7 +354,9 @@ Rules:
   security, a device somebody has marked protected, or a signal the home
   has already flagged as urgent. If one of those is in front of you and
   you think it is nothing, the answer is "watch" or "investigate" and your
-  reason says why you think it is nothing.
+  reason says why you think it is nothing. The same goes for a defect
+  brAIn's own rehearsal planted (an automation or helper named
+  brain_test_…): it is there to check you notice it, so "watch" at least.
 - """ + prompt_kit.PRIVACY + """ If the only thing that makes a signal
   interesting is a person rather than the house, ignore it.
 - A reading on a signal was taken once, when the rule filed it, and the
@@ -2235,6 +2267,7 @@ __all__ = [
     "LEDGER_FILE", "MAX_BATCH", "MAX_EXAMPLES", "MAX_EXAMPLE_CHARS",
     "MAX_TURNS", "MAX_WHY", "NEVER_IGNORE",
     "NEVER_IGNORE_FLOOR", "OPUS_PER_DAY", "SEVERITY_BY_STAKES", "SKIPPED",
+    "REHEARSAL_FLOOR", "REHEARSAL_PREFIX",
     "SONNET_PER_DAY", "TIMEOUT_S", "UNREADABLE", "VERDICTS", "WATCH_FILE",
     "WATCH_RETRY_REPEATS", "WATCH_TTL_S", "Ledger", "expire",
     "first_look_prompt", "investigate_prompt", "never_ignore",
