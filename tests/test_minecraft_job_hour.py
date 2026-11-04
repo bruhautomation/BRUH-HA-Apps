@@ -390,7 +390,7 @@ class TestTheBridgeLeavesAStop(unittest.TestCase):
             try:
                 await task
             except asyncio.CancelledError:
-                pass
+                pass  # the cancel this test made: what it checks is the marker left behind
         asyncio.new_event_loop().run_until_complete(main())
         return sorted(os.listdir(bridge.tasks_dir))
 
