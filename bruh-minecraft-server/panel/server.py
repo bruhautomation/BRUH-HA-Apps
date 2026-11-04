@@ -2696,10 +2696,18 @@ async def api_addons_remove(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 # Routes: API — scripts written into the world (panel/worldscripts.py)
 # ---------------------------------------------------------------------------
+# How long a reload is listened to for its errors. Skript says when it is
+# done; the data pack loader says nothing on success, so a clean reload costs
+# the whole window.
+SCRIPT_LISTEN_S = 4.0
+SCRIPT_SETTLE_S = 0.8
+
+
 def _script_run(command: str, listen: bool) -> str:
     if listen:
         return console_reply.command(
-            _rcon_sync, command, MC_CONSOLE_LOG, always=True, wait=5.0, settle=0.8,
+            _rcon_sync, command, MC_CONSOLE_LOG, always=True, wait=SCRIPT_LISTEN_S,
+            settle=SCRIPT_SETTLE_S,
             until=worldscripts.SKRIPT_DONE if command.startswith("sk ") else None)
     return _rcon_sync(command)
 

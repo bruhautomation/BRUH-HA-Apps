@@ -437,5 +437,44 @@ class TestTheBridgeCarriesScripts(unittest.TestCase):
         self.assertIn("did not load", got["error"])
 
 
+import test_minecraft_panel as panel_tests  # noqa: E402
+
+
+class TestThePanelRoutes(panel_tests.PanelTestBase):
+    """The panel is the one writer; its console box hears plugins too."""
+
+    async def test_the_console_box_hears_a_plugin(self):
+        log = self.state_dir / "console.log"
+        log.write_text("")
+        self.panel._rcon_sync = FakeServer(log, {"sr status": ("", [
+            "[12:00:00 INFO]: [SkinsRestorer] Version 15.4.2, all good"])})
+        resp = await self.client.request("POST", "/api/command", json={"command": "sr status"})
+        self.assertEqual(await resp.json(), {"reply": "[SkinsRestorer] Version 15.4.2, all good"})
+
+    async def test_write_list_and_remove(self):
+        (self.server_dir / "world").mkdir()
+        log = self.state_dir / "console.log"
+        log.write_text("")
+        self.panel._rcon_sync = FakeServer(log)
+        self.panel.SCRIPT_LISTEN_S, self.panel.SCRIPT_SETTLE_S = 0.3, 0.1
+        resp = await self.client.request("POST", "/api/scripts", json={
+            "kind": "skript", "name": "wand", "content": "on load:\n"})
+        self.assertEqual(resp.status, 409)
+        self.assertIn("Skript plugin is not installed", (await resp.json())["error"])
+        resp = await self.client.request("POST", "/api/scripts", json={
+            "kind": "datapack_function", "name": "zap", "content": "say hi\n"})
+        body = await resp.json()
+        self.assertEqual(resp.status, 200, body)
+        self.assertEqual(body["call"], "bruh_scripts:zap")
+        listed = await (await self.client.request("GET", "/api/scripts")).json()
+        self.assertEqual([r["name"] for r in listed["scripts"]], ["zap"])
+        resp = await self.client.request("DELETE", "/api/scripts/datapack_function/zap")
+        self.assertEqual(resp.status, 200)
+        resp = await self.client.request("DELETE", "/api/scripts/datapack_function/zap")
+        self.assertEqual(resp.status, 404)
+        resp = await self.client.request("DELETE", "/api/scripts/skript/..%2F..%2Fserver")
+        self.assertIn(resp.status, (400, 404))
+
+
 if __name__ == "__main__":
     unittest.main()
