@@ -3219,10 +3219,45 @@ def _minecraft_chat_refusal(domain, service, data=None):
     if (str(domain).lower(), str(service).lower()) in MINECRAFT_CHAT_SERVICES:
         return None
     if (str(domain).lower(), str(service).lower()) == ("bruh_minecraft", "rcon_command") \
-            and isinstance(data, dict) and isinstance(data.get("command"), str) \
-            and _mc_rules().SKIN_COMMAND.fullmatch(data["command"]):
-        return None
+            and isinstance(data, dict) and set(data) == {"command"}:
+        why = _mc_skin_refusal(data["command"])
+        return {"error": why} if why else None
     return {"error": MINECRAFT_CHAT_REFUSAL.format(what=f"{domain}.{service}")}
+
+
+MC_SKIN_OWN = ("From the game, a skin can only be changed for the person asking ({who}), "
+               "not for {target}. A parent with 'Can ask for anything' on can change "
+               "anyone's. Tell them that plainly; do not retry another way.")
+
+
+def _game_player():
+    """The account a game run is for (the listener's BRAIN_GAME_PLAYER),
+    on the game's two channels; "" anywhere else or when it was not said."""
+    if _channel() not in (MINECRAFT_CHANNEL, "minecraft_trusted"):
+        return ""
+    raw = os.environ.get("BRAIN_GAME_PLAYER", "")
+    return raw if re.fullmatch(r"[A-Za-z0-9_.]{1,17}", raw) else ""
+
+
+def _mc_skin_refusal(command):
+    """Why the guarded game channel may not send this console command, or
+    None. The one command it may send is a skin (#670), and only exactly
+    `skin set <Java name|https://textures.minecraft.net/texture/<hex>> <player>`
+    or `skin clear <player>` (`rules.SKIN_COMMAND`, matched whole: no space,
+    quote, newline, slash or extra word rides it), for the account the run
+    is for, while that account is online."""
+    match = _mc_rules().SKIN_COMMAND.fullmatch(command) if isinstance(command, str) else None
+    if not match:
+        return MINECRAFT_CHAT_REFUSAL.format(what="bruh_minecraft.rcon_command")
+    target, speaker = match.group(1), _game_player()
+    if not speaker or target != speaker:
+        return MC_SKIN_OWN.format(who=speaker or "nobody named", target=target)
+    online, down = _mc_online()
+    if down:
+        return down
+    if target not in online:
+        return f"{target} is not online, so their skin cannot be changed now."
+    return None
 
 
 def minecraft_world(action, value=None, player=None, options=None, blocks=None, fills=None,
@@ -3314,6 +3349,11 @@ def _mc_skin(value, player):
     command = rules.skin_command(skin, target)
     if not command:
         return {"error": f"{target} is not a name the server can take."}
+    if _channel() == MINECRAFT_CHANNEL and target != _game_player():
+        # A child (or anyone without "Can ask for anything") changes only
+        # their own; the trusted scope may change anyone's.
+        return {"error": MC_SKIN_OWN.format(who=_game_player() or "nobody named",
+                                            target=target)}
     result = _addon_call("bruh_minecraft", "rcon_command", {"command": command})
     if result.get("error"):
         return {"error": f"The server refused the skin: {result['error']}"}

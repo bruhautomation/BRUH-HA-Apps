@@ -852,13 +852,15 @@ def capabilities(who: dict, *, trusted: bool, house: dict | None = None,
 # skin's own texture link on Mojang's texture server. Nothing else reaches
 # the console: a value is one token, so no second command can ride it.
 _SKIN_NAME = re.compile(r"[A-Za-z0-9_]{3,16}")
-_SKIN_URL = re.compile(r"https?://textures\.minecraft\.net/texture/[0-9a-f]{32,128}")
-_PLAYER = re.compile(r"[A-Za-z0-9_.*]{1,17}")
+_SKIN_URL = re.compile(r"https://textures\.minecraft\.net/texture/[0-9a-f]{32,128}")
+# An account name as the server knows it (Floodgate's "." prefix for
+# Bedrock): no selector, wildcard, space, quote or slash.
+_PLAYER = re.compile(r"[A-Za-z0-9_.]{1,17}")
 # The only console command a game run may send (`ha_mcp_server` lets exactly
 # this through the game channel's chokepoint, and nothing else).
 SKIN_COMMAND = re.compile(
-    r"skin (?:set (?:[A-Za-z0-9_]{3,16}|https?://textures\.minecraft\.net/texture/[0-9a-f]{32,128})"
-    r"|clear) [A-Za-z0-9_.*]{1,17}")
+    r"skin (?:set (?:[A-Za-z0-9_]{3,16}|https://textures\.minecraft\.net/texture/[0-9a-f]{32,128})"
+    r"|clear) ([A-Za-z0-9_.]{1,17})")
 # SkinsRestorer's answers that mean it did not change the skin (it answers
 # the console, and BRUH Minecraft's rcon_command now returns those lines).
 _SKIN_FAILED = re.compile(

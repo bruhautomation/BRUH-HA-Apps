@@ -513,6 +513,7 @@ class ClaudeBridge:
         session_id: str | None = None,
         thought: dict | None = None,
         stop_on_cancel: bool = False,
+        player: str | None = None,
     ) -> dict:
         """Send a task and wait for the whole result: ``{"text", "data"}``.
 
@@ -605,6 +606,10 @@ class ClaudeBridge:
             key = str(thought.get("key") or "")
             if re.fullmatch(r"[A-Za-z0-9_.*]{1,17}", to) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,24}", key):
                 task["thought"] = {"player": to, "key": key}
+        # Whose line a game run is for (both game scopes): the account the
+        # MCP server holds a skin change to on the guarded one. Plain names only.
+        if isinstance(player, str) and re.fullmatch(r"[A-Za-z0-9_.]{1,17}", player):
+            task["player"] = player
         # A CLI session uuid or nothing: it becomes an argv entry there.
         if isinstance(session_id, str) and re.fullmatch(r"[A-Za-z0-9-]{1,64}", session_id):
             task["session_id"] = session_id

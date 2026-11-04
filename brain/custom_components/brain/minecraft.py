@@ -669,9 +669,13 @@ class Companion:
 
     @staticmethod
     def _speaker(who: dict, tools: str) -> dict:
+        # `player` on every game run: whose skin the guarded scope may
+        # change (only their own). `speaker` is the trusted scope's, for the
+        # gate's approvals and History's "asked by".
+        out = {"player": who["player"]} if who.get("player") else {}
         if tools != TRUSTED_TOOLS:
-            return {}
-        return {"speaker": {"person": who["person"], "player": who["player"]}}
+            return out
+        return {**out, "speaker": {"person": who["person"], "player": who["player"]}}
 
     async def _speak(self, who: dict, line: str, extra: list[str], settings: dict, name: str,
                      roster: rules.Roster) -> None:
@@ -1789,13 +1793,14 @@ async def async_setup(hass, bridge, track_interval=None) -> Callable[[], None]:
         return result if isinstance(result, dict) else {}
 
     async def run_task(*, prompt, tools, schema, model, effort, timeout, speaker=None,
-                       session_id=None, thought=None) -> dict:
+                       session_id=None, thought=None, player=None) -> dict:
         return await bridge.async_send_task_full(
             prompt=prompt, tools=tools, schema=schema, model=model, effort=effort,
             timeout=timeout, memory=tools in GAME_TOOLS, stop_on_cancel=True,
             **({"speaker": speaker} if speaker else {}),
             **({"session_id": session_id} if session_id else {}),
-            **({"thought": thought} if thought else {}))
+            **({"thought": thought} if thought else {}),
+            **({"player": player} if player else {}))
 
     def state_of(entity_id: str) -> str | None:
         st = hass.states.get(entity_id)

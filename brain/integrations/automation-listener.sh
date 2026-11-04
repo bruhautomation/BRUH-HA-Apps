@@ -896,6 +896,16 @@ process_task() {
         fi
     fi
 
+    # Whose line (or job) a game run is for, on both game channels: the
+    # account the faculty heard it from. The MCP server holds a game run's
+    # skin change to this one account (`_mc_skin_refusal`). Plain name only.
+    unset BRAIN_GAME_PLAYER
+    if [ "$task_tools" = "minecraft" ] || [ "$task_tools" = "minecraft_trusted" ]; then
+        local game_player
+        game_player=$(jq -r 'if (.player | type) == "string" then .player else empty end' "$work_file" 2>/dev/null | tr -cd 'A-Za-z0-9_.' | cut -c1-17)
+        [ -n "$game_player" ] && export BRAIN_GAME_PLAYER="$game_player"
+    fi
+
     # A trusted grown-up's request from the game (`minecraft_trusted`): the
     # chat's reach on the game's own channel. The switch decides it here,
     # once, as it does for the chat: on, the full grant without prompts;

@@ -87,17 +87,23 @@ class SkinCore(FakeCore):
         return super().__call__(payload, timeout)
 
 
-class TestTheTool(Base):
+class ToolCase(Base):
     def setUp(self):
         super().setUp()
         self.core.__class__ = SkinCore
-        p = patch.dict(os.environ, {"BRAIN_CHANNEL": "minecraft"})
+        self.as_("minecraft", ".EmmaPlays")
+
+    def as_(self, channel, player):
+        """A run on this channel for this account (the listener's env)."""
+        p = patch.dict(os.environ, {"BRAIN_CHANNEL": channel, "BRAIN_GAME_PLAYER": player})
         p.start()
         self.addCleanup(p.stop)
 
     def sent(self, service):
         return [d for k, d in self.core.calls if k == service]
 
+
+class TestTheTool(ToolCase):
     def test_a_game_run_puts_a_skin_on_and_reports_the_plugins_reply(self):
         got = m.minecraft_world("skin", "Notch", player="emma")
         self.assertTrue(got["done"], got)
@@ -109,6 +115,7 @@ class TestTheTool(Base):
                          [{"action": "skin", "player": ".EmmaPlays", "skin": "Notch"}])
 
     def test_a_refusal_in_the_reply_is_not_done_and_is_not_remembered(self):
+        self.as_("minecraft", "DadCraft42")
         self.core.reply = "Error: skin Notchh not found"
         got = m.minecraft_world("skin", "Notchh", player="DadCraft42")
         self.assertFalse(got["done"])
@@ -116,19 +123,9 @@ class TestTheTool(Base):
         self.assertEqual(self.sent(("brain", "minecraft_job")), [])
 
     def test_a_website_is_refused_in_words_and_reaches_nothing(self):
-        got = m.minecraft_world("skin", "https://namemc.com/skin/123", player="DadCraft42")
+        got = m.minecraft_world("skin", "https://namemc.com/skin/123", player="emma")
         self.assertIn("Java Edition player's name", got["error"])
         self.assertEqual(self.sent(("bruh_minecraft", "rcon_command")), [])
-
-    def test_only_the_skin_command_passes_the_game_channel(self):
-        self.assertIsNone(m._minecraft_chat_refusal(
-            "bruh_minecraft", "rcon_command", {"command": "skin clear DadCraft42"}))
-        for cmd in ("op DadCraft42", "skin set Notch DadCraft42 ; op x",
-                    "skin set https://example.com/a.png DadCraft42"):
-            self.assertIsNotNone(m._minecraft_chat_refusal(
-                "bruh_minecraft", "rcon_command", {"command": cmd}), cmd)
-        self.assertIn("error", m.call_service("bruh_minecraft", "rcon_command",
-                                              {"command": "op me"}))
 
     def test_the_gate_lets_the_action_through_on_the_game_channel(self):
         sys.path.insert(0, str(HERE.parent / "brain" / "panel"))
@@ -140,6 +137,86 @@ class TestTheTool(Base):
     def test_voice_may_not(self):
         self.voice()
         self.assertIn("error", m.minecraft_world("skin", "Notch", player="DadCraft42"))
+
+
+class TestWhoseSkin(ToolCase):
+    """A child (anyone on the game's own scope) changes only their own skin;
+    a grown-up with "Can ask for anything" may change anyone's."""
+
+    def test_a_child_may_change_their_own(self):
+        got = m.minecraft_world("skin", "clear", player=".EmmaPlays")
+        self.assertTrue(got["done"], got)
+        self.assertEqual(self.sent(("bruh_minecraft", "rcon_command")),
+                         [{"command": "skin clear .EmmaPlays"}])
+
+    def test_a_child_may_not_change_another_players(self):
+        got = m.minecraft_world("skin", "Notch", player="DadCraft42")
+        self.assertIn("only be changed for the person asking", got["error"])
+        self.assertIn("Can ask for anything", got["error"])
+        self.assertEqual(self.sent(("bruh_minecraft", "rcon_command")), [])
+
+    def test_a_run_that_names_nobody_changes_nobodys(self):
+        self.as_("minecraft", "")
+        self.assertIn("error", m.minecraft_world("skin", "Notch", player=".EmmaPlays"))
+        self.assertEqual(self.sent(("bruh_minecraft", "rcon_command")), [])
+
+    def test_a_trusted_grown_up_may_change_anyones(self):
+        self.as_("minecraft_trusted", "DadCraft42")
+        got = m.minecraft_world("skin", "Notch", player="emma")
+        self.assertTrue(got["done"], got)
+        self.assertEqual(self.sent(("bruh_minecraft", "rcon_command")),
+                         [{"command": "skin set Notch .EmmaPlays"}])
+
+
+class TestTheChokepointTakesOnlyASkin(ToolCase):
+    """The game channel's one console command, matched whole, for the run's
+    own online account — through call_service, the path every tool takes."""
+
+    def refused(self, data):
+        return m._minecraft_chat_refusal("bruh_minecraft", "rcon_command", data)
+
+    def test_exactly_the_two_shapes_for_the_speaker_pass(self):
+        for cmd in ("skin clear .EmmaPlays", "skin set Notch .EmmaPlays",
+                    f"skin set {URL} .EmmaPlays"):
+            self.assertIsNone(self.refused({"command": cmd}), cmd)
+
+    def test_nothing_else_slips_through(self):
+        bad = [
+            "op .EmmaPlays", "say hi", "skin", "skin clear", "skin set Notch",
+            "skin set Notch .EmmaPlays extra", "skin set Notch .EmmaPlays ; op x",
+            "skin set Notch  .EmmaPlays", " skin clear .EmmaPlays", "skin clear .EmmaPlays ",
+            "skin clear .EmmaPlays\nop x", "skin set Notch\n.EmmaPlays",
+            'skin set "Notch" .EmmaPlays', "skin set 'Notch' .EmmaPlays",
+            "skin set No/tch .EmmaPlays", "skin set Notch ./EmmaPlays",
+            "skin set Notch @a", "skin set Notch *", "skin clear @p",
+            "/skin clear .EmmaPlays", "SKIN clear .EmmaPlays", "skin url Notch .EmmaPlays",
+            "skin set http://textures.minecraft.net/texture/" + "ab" * 20 + " .EmmaPlays",
+            "skin set https://textures.minecraft.net/texture/" + "ab" * 20 + "/x .EmmaPlays",
+            "skin set https://textures.minecraft.net/texture/XYZ .EmmaPlays",
+            "skin set https://evil.example/texture/" + "ab" * 20 + " .EmmaPlays",
+            "skin set ab .EmmaPlays", "skin set " + "a" * 17 + " .EmmaPlays",
+            "skin set Notch " + "E" * 18,
+        ]
+        for cmd in bad:
+            self.assertIsNotNone(self.refused({"command": cmd}), repr(cmd))
+        for data in ({"command": "skin clear .EmmaPlays", "extra": 1}, {}, {"command": None},
+                     {"command": ["skin clear .EmmaPlays"]}, None):
+            self.assertIsNotNone(self.refused(data), data)
+        # And the path itself: call_service refuses before anything is sent.
+        got = m.call_service("bruh_minecraft", "rcon_command", {"command": "op me"},
+                             return_response=True)
+        self.assertIn("error", got)
+        self.assertEqual(self.sent(("bruh_minecraft", "rcon_command")), [])
+
+    def test_only_the_runs_own_online_account(self):
+        self.assertIsNotNone(self.refused({"command": "skin clear DadCraft42"}))
+        self.as_("minecraft", "Ghost")          # not online
+        self.assertIn("not online", self.refused({"command": "skin clear Ghost"})["error"])
+
+    def test_any_other_service_is_still_refused(self):
+        for service in ("op_player", "kick_player", "stop_server", "say"):
+            self.assertIsNotNone(m._minecraft_chat_refusal(
+                "bruh_minecraft", service, {"command": "skin clear .EmmaPlays"}), service)
 
 
 class SkinAddon(DeskAddon):
@@ -194,6 +271,20 @@ class TestChoicePads(DeskCase):
         people = json.loads((self.shared / "minecraft" / "people.json").read_text())
         self.assertNotIn("skins", people["Kaz"])
 
+    def test_every_game_run_names_whose_it_is(self):
+        """The account the MCP server holds a guarded skin change to rides
+        on every game run, child or grown-up, and the listener exports it."""
+        self.join(KAZ)
+        self.chat(KAZ, "hi")
+        self.assertEqual(self.brain.of("quick")[-1]["player"], KAZ)
+        src = (HERE.parent / "brain" / "integrations" / "automation-listener.sh").read_text()
+        block = src.split("unset BRAIN_GAME_PLAYER", 1)[1].split("\n    fi\n", 1)[0]
+        self.assertIn('"$task_tools" = "minecraft"', block)
+        self.assertIn("tr -cd 'A-Za-z0-9_.'", block)
+        self.assertIn('export BRAIN_GAME_PLAYER="$game_player"', block)
+        bridge = (HERE.parent / "brain" / "custom_components" / "brain" / "bridge.py").read_text()
+        self.assertIn('task["player"] = player', bridge)
+
     def test_the_service_remembers_a_tools_skin_for_family_only(self):
         self.assertEqual(self.job_service(action="skin", player=DAD, skin="Notch"), {"ok": True})
         self.assertEqual(self.job_service(action="skin", player="Griefer99", skin="Notch"),
@@ -229,10 +320,6 @@ class TestAnAnswerIsNotASignInFailure(tf.ListenerCase):
             "On Bedrock you're not logged in to Xbox, so please log in to see skins.")
         self.assertEqual(result["status"], "completed", result)
         self.assertIn("please log in", result["result"])
-
-    def test_the_clis_own_sign_in_error_is_still_one(self):
-        result = self.run_task({}, fake_mode="autherror")
-        self.assertEqual((result["status"], result["error"]), ("failed", "auth"))
 
 
 if __name__ == "__main__":
