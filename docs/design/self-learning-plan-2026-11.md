@@ -11,6 +11,33 @@ This compiles what Anthropic has published, up to November 2026, on agents that 
 
 ---
 
+## 0. Owner decision (2026-11-04): no human in the loop
+
+The owner wants the loop fully autonomous and accepts the risk. **Every "human" gate below is replaced by an automated one.** The table at the end of this section is the authority wherever it conflicts with sections 3–5.
+
+Removing the human does not remove the need for an independent judge. Without one, the loop is grading itself, and the guidance [R1, R2, E3] says such a loop drifts toward closing issues rather than fixing them. That is a quality problem, not only a safety one. With no person to catch it, a *person's* judgement has to be replaced by two things the fixer cannot edit:
+
+1. **The house as ground truth.** Did the fault stop, did the owner's behaviour change, did anything new break.
+2. **Graders frozen on `main`** that a devloop PR cannot change in the same breath.
+
+| Was a human gate | Becomes |
+| --- | --- |
+| 0.1 grader files human-only | Grader changes go in their own `devloop-meta/` PR, judged by the **base** guard. The guard may only get stricter: CI runs both the old and the new guard over a frozen set of known-bad diffs (`tests/devloop_guard_cases/`, seeded with the 2026-10-18 tampering), and the new guard must still flag every one. |
+| 0.3 disputed test → human | A separate `devloop-test/` PR. It merges when an independent reviewer (fresh context, different model tier, with the issue's `Done when:` and the house's evidence) agrees the old assertion contradicts observed behaviour. |
+| 0.4 ruleset | A one-time setup by the owner, not a step in the loop. |
+| 0.5 owner samples declines | An auditor agent samples 10% of declined and duplicate closures each retro. Any fingerprint it overturns is reopened automatically. A declined report that recurs after its 90 days is refiled. |
+| 1.2 Tier C human merge | Two independent reviewers must both approve; the house canary (below); automatic revert. |
+| **New: canary and auto-revert** | After a release, the house reports health within hours (faults first seen on the new version, scorecard drop, came-back, crash on start). The cloud loop **reverts the whole PR automatically** on any signal, refiles the issue with what broke, and escalates the retry one model tier. This, not review, is what replaces the human. |
+| 2.2 memory change queued for a person | Always auto-applied and versioned. A deterministic check rejects a version that drops or rewrites person-sourced lines. The consolidator's regression evals run nightly, and a failure rolls memory back one version. |
+| 2.5, 2.6 human-merged retro and notes | Auto-merged when the moved-rule check and the guard pass. |
+| 3.1 monitor hits pause auto-merge | A hit reverts that PR and reruns the batch at a higher tier. Repeated hits in a week shrink batch size and switch the fixer to Opus. |
+| 3.3 YOLO keeps a human press on self-modification | Dropped. Edit snapshots stay, plus **automatic undo** when a self-edit throws or fails its check: Morph already falls back to the shipped module on a load error, and `house.js` gets the same treatment. |
+| 3.4 owner's "is this fixed?" | An evaluator agent compares the before and after screenshots of the same screen target against `Done when:`. The owner's answer stays as an optional extra signal and is never waited on. |
+
+What stays non-negotiable even in autonomous mode is **grader independence**: the guard runs from base, the tests that exist cannot be weakened inside a fix, and the reviewer never saw the fix's reasoning. Everything else can be automated.
+
+---
+
 ## 1. The guidance, consolidated
 
 Anthropic's advice reduces to seven rules.
@@ -275,12 +302,12 @@ Re-run on every model change.
 
 The sibling add-ons (BRight, Print, Bambu, Task Manager, Cooking, GardenRX, Minecraft) file through the `siblings` stream and are fixed by the same routine, so phases 0, 1 and 3 cover them with no per-add-on work. Each add-on's own LLM features (Bambu design, the Minecraft companion) get a regression suite in `tests/evals/` once phase 1.6's harness exists.
 
-## 5. Decisions only the owner can make
+## 5. Decisions
 
-1. **Auto-merge policy.** Tiered (recommended), human on every merge, or keep auto-merge as it is but with the reviewer gate.
-2. **Ruleset on `main`.** Make `devloop-guard` required and confine the routine's pushes (0.4). This is a GitHub setting.
-3. **Whether a declined report may silence the house permanently** (0.5 proposes 90 days).
-4. **YOLO's scope** (3.3).
+Decided 2026-11-04: **no human in the loop** (section 0). What is left for the owner is one-time setup:
+
+1. **Ruleset on `main`.** Make `devloop-guard` and CI required, and confine the routine's pushes to `devloop*/` and `claude/` branches (0.4).
+2. **The `BRAIN_REPLAY_TOKEN` secret**, so the eval and replay gates actually run.
 
 ## Sources
 
