@@ -1290,10 +1290,19 @@ ${prompt}"
     # an `is_error` result is a failure whatever its text says ("API Error:
     # 529 Overloaded" is not an answer), and a turn cap that the landing
     # could not rescue is that and not a mystery.
+    # `env_answered`: the CLI's envelope says the model answered (success,
+    # not an error). Its words are then the model's reply, never the CLI's
+    # own error — so a reply that happens to say "not logged in" or "please
+    # log in" (a skin, a game account) is an answer, not a sign-in failure
+    # (#670: a game turn that finished its work was recorded as "down").
+    local env_answered=""
     if [ -n "$envelope_file" ] && [ -n "$result" ]; then
         local env_error env_subtype
         env_error=$(jq -r 'if type == "object" then (.is_error // false) else false end' "$envelope_file" 2>/dev/null)
         env_subtype=$(jq -r 'if type == "object" then (.subtype // "") else "" end' "$envelope_file" 2>/dev/null)
+        if [ "$env_error" = "false" ] && [ "$env_subtype" = "success" ]; then
+            env_answered=true
+        fi
         if [ "$env_error" = "true" ]; then
             fail_code="error"
             [ "$env_subtype" = "error_max_turns" ] && fail_code="max_turns"
@@ -1327,7 +1336,8 @@ ${prompt}"
     # Replace the raw CLI error with something the user can act on — the
     # panel's own sign-in, which every background channel picks up
     # automatically on its next spawn.
-    if printf '%s' "$result" | grep -qiE "OAuth session expired|OAuth token (refresh failed|revoked)|failed to authenticate|please run /login|invalid api key"; then
+    if [ -z "$env_answered" ] \
+        && printf '%s' "$result" | grep -qiE "OAuth session expired|OAuth token (refresh failed|revoked)|failed to authenticate|please run /login|invalid api key"; then
         bashio::log.error "Claude auth failure in task [$task_id]: ${result:0:200}"
         result="Claude's saved login has expired and could not be refreshed automatically. ${AUTH_REMEDY}"
         fail_code="auth"
@@ -1379,7 +1389,8 @@ ${prompt}"
     bashio::log.info "Task completed [$task_id]: ${duration}s, ${#result} chars"
 
     # Check for auth errors in the result text
-    if echo "$result" | grep -qi "not logged in\|please log in\|authentication required"; then
+    if [ -z "$env_answered" ] \
+        && echo "$result" | grep -qi "not logged in\|please log in\|authentication required"; then
         result="Claude is not signed in. ${AUTH_REMEDY}"
         fail_code="auth"
         bashio::log.error "Claude auth error - user needs to sign in from the panel"

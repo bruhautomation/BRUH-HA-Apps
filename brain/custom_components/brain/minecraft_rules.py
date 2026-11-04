@@ -31,6 +31,10 @@ The files, all under `/config/.brain/minecraft/`:
 * `jobs.json` — the listener's: the desk's jobs (a build, a redecoration,
   anything longer than a reply), queued, running and the last ones ended,
   with what each changed so a cancel can put it back.
+* `house.json` — the panel's: whether a house change acts at once ("Let
+  brAIn act without asking", or YOLO mode) — the live switch the companion's
+  capability paragraph is built from (`capabilities`), rewritten whenever
+  the switch moves.
 """
 from __future__ import annotations
 
@@ -49,6 +53,7 @@ PEOPLE = "people.json"
 TALKS = "talks.json"
 APPROVALS = "approvals.json"
 JOBS = "jobs.json"
+HOUSE = "house.json"
 
 ROLES = ("child", "reader")
 DEFAULT_NAME = "brAIn"
@@ -217,6 +222,16 @@ _JOB_REQUEST = {
     },
     "required": ["title", "brief"],
 }
+# A skin offered on the choice pads: what the pad says and the skin itself
+# (a Java player's name or a textures.minecraft.net link, `skin_value`).
+_SKIN_CHOICE = {
+    "type": "object",
+    "properties": {
+        "label": {"type": "string", "maxLength": 40},
+        "skin": {"type": "string", "maxLength": 120},
+    },
+    "required": ["label", "skin"],
+}
 # A quick run's answer: what the player reads now (empty for chatter that
 # needs none), and the desk's three moves on jobs.
 TALK_SCHEMA = {
@@ -232,6 +247,10 @@ TALK_SCHEMA = {
             "required": ["job", "message"]},
         "cancel": {"type": "object", "properties": {
             "job": {"type": "string", "maxLength": 12}}, "required": ["job"]},
+        # Two or three skins for the speaker to pick from on the choice pads
+        # (#670): the faculty puts them on the pads and applies the one
+        # picked. One skin is applied with minecraft_world skin instead.
+        "skins": {"type": "array", "minItems": 2, "maxItems": 3, "items": _SKIN_CHOICE},
     },
     "required": ["reply"],
 }
@@ -746,6 +765,162 @@ def bar_title(job: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# What a run may do, built from the live settings (#675)
+# ---------------------------------------------------------------------------
+def house_access(shared_dir: str) -> dict[str, Any]:
+    """Whether a house change acts at once, as the panel last published it
+    (`house.json`): `acts` is "Let brAIn act without asking" with YOLO mode
+    on top (True/False, None when brAIn has not said), `yolo` YOLO mode."""
+    raw = read_json(os.path.join(folder(shared_dir), HOUSE), {})
+    acts = raw.get("acts")
+    return {"acts": acts if isinstance(acts, bool) else None, "yolo": raw.get("yolo") is True}
+
+
+def capabilities(who: dict, *, trusted: bool, house: dict | None = None,
+                 bedtime: bool | None = None) -> str:
+    """What this run may do for this person, from the settings as they are
+    this minute: house control on or off for them ("Can ask for anything"),
+    whether a house change acts at once or waits for a person's approval
+    ("Let brAIn act without asking", YOLO mode), which tools the run's channel
+    has, and a child's bedtime. The chat line's run and a job's worker get
+    this same paragraph, so neither says it cannot do what the other does.
+    `trusted` is the run's channel (`minecraft_trusted`), never the row alone:
+    a toggle on with a name the server did not check is still the game's."""
+    person = str(who.get("person") or "they")
+    house = house or {}
+    acts = house.get("acts")
+    head = (f"What you can do for {person} right now (from brAIn's settings this minute; "
+            "they can change between lines, so go by this paragraph, never by what an "
+            "earlier answer said):\n")
+    if trusted:
+        if acts is True:
+            body = ("House control is on for them and "
+                    + ("YOLO mode is on: a house change they ask for — lights, switches, "
+                       "scenes, heating, anything — happens the moment you call it with the "
+                       "house tools, and no house rule holds it back. "
+                       if house.get("yolo") else
+                       "brAIn acts without asking: a house change they ask for — lights, "
+                       "switches, scenes, heating, anything — happens the moment you call it "
+                       "with the house tools; only a house rule or a protected device can "
+                       "refuse one, and the tool then says why. ")
+                    + "So do it, then say in one line that it is done. Never say you cannot "
+                    "reach the house or need a link to it. This run has everything else "
+                    "brAIn's chat has too.\n")
+        elif acts is False:
+            body = ("House control is on for them, but brAIn asks before acting (“Let brAIn "
+                    "act without asking” is off): a house change you call is sent to a person "
+                    "for approval and has NOT happened yet. Call it once; when the tool says "
+                    "it was sent for approval, reply with the sentence it gives (where the "
+                    "approval is waiting) — never that it is done — and do not retry or look "
+                    f"for another route; brAIn tells {person} in the game when it is approved "
+                    "and done.\n")
+        else:
+            body = ("House control is on for them. A house change may wait for a person's "
+                    "approval: if a tool answers that it was sent for approval, reply with "
+                    "the sentence it gives (where the approval is waiting) and do not retry "
+                    f"or look for another route; brAIn tells {person} in the game when it is "
+                    "approved and done.\n")
+        return (head + body
+                + "A link between the game and the house (a word in chat, a lever or a "
+                "button that turns on a light) is yours to make: a Home Assistant automation "
+                "triggered by BRUH Minecraft's events (bruh_minecraft_chat, "
+                "bruh_minecraft_place, …)"
+                + (", which is a house change and waits for approval like any other"
+                   if acts is False else "")
+                + ". If a tool is refused, say so plainly.\n")
+    if who.get("role") == "child":
+        why = f"{person} is a child, and the house is never a child's from the game."
+    elif who.get("trusted"):
+        why = (f"{person} has house control, but this line came under a name the server did "
+               "not check, so it has the game only.")
+    else:
+        why = f"House control (“Can ask for anything”) is off for {person}."
+    out = (head + why + " Anything outside the game — the house, lights, locks, devices, "
+           "game modes, items, teleports, console commands, renaming the world, other "
+           "services — is not yours to do from here, and nothing waits anywhere for a yes: "
+           "do not try, do not say you will, and never say it is done. Reply exactly "
+           f"“{CANNED['outside']}”\n")
+    if who.get("role") == "child" and bedtime:
+        out += f"It is {person}'s bedtime now: start nothing new, and say goodnight kindly.\n"
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Skins (#670): SkinsRestorer's console command, over rcon_command
+# ---------------------------------------------------------------------------
+# What a skin may be: a Java Edition player's name (their skin is used) or a
+# skin's own texture link on Mojang's texture server. Nothing else reaches
+# the console: a value is one token, so no second command can ride it.
+_SKIN_NAME = re.compile(r"[A-Za-z0-9_]{3,16}")
+_SKIN_URL = re.compile(r"https?://textures\.minecraft\.net/texture/[0-9a-f]{32,128}")
+_PLAYER = re.compile(r"[A-Za-z0-9_.*]{1,17}")
+# The only console command a game run may send (`ha_mcp_server` lets exactly
+# this through the game channel's chokepoint, and nothing else).
+SKIN_COMMAND = re.compile(
+    r"skin (?:set (?:[A-Za-z0-9_]{3,16}|https?://textures\.minecraft\.net/texture/[0-9a-f]{32,128})"
+    r"|clear) [A-Za-z0-9_.*]{1,17}")
+# SkinsRestorer's answers that mean it did not change the skin (it answers
+# the console, and BRUH Minecraft's rcon_command now returns those lines).
+_SKIN_FAILED = re.compile(
+    r"unknown or incomplete command|unknown command|not found|no such|invalid|could ?n[o']t|"
+    r"failed|error|usage:|too many|rate.?limit|does not exist|isn't a|is not a", re.IGNORECASE)
+SKIN_LINES = {
+    "set": "Done: you're wearing {skin} now.",
+    "cleared": "Done: you're back in your own skin.",
+    "bedrock": " Leave the game and join again to see it yourself.",
+    "failed": "That skin didn't work: {why}",
+    "unsure": "I asked for {skin}, but the server didn't say whether it worked.",
+    "bad": ("A skin is a Java player's name or a textures.minecraft.net link, "
+            "so I couldn't use that one."),
+}
+
+
+def skin_value(value: Any) -> str | None:
+    """A skin as the console takes it: "clear", a Java player's name, or a
+    texture link; None for anything else (a website, two words, a file)."""
+    text = str(value or "").strip()
+    if text.lower() in ("clear", "reset", "default", "none"):
+        return "clear"
+    if _SKIN_NAME.fullmatch(text) or _SKIN_URL.fullmatch(text):
+        return text
+    return None
+
+
+def skin_command(value: Any, player: Any) -> str | None:
+    """SkinsRestorer's console command for one player's skin, or None."""
+    skin, player = skin_value(value), str(player or "").strip()
+    if skin is None or not _PLAYER.fullmatch(player):
+        return None
+    cmd = f"skin clear {player}" if skin == "clear" else f"skin set {skin} {player}"
+    return cmd if SKIN_COMMAND.fullmatch(cmd) else None
+
+
+def is_bedrock(player: Any) -> bool:
+    """A Bedrock (iPad, phone, console) player through Geyser: their name
+    carries Floodgate's "." prefix. They see their own new skin only after
+    joining again, and an old 64x32 skin draws a black face there."""
+    return str(player or "").startswith(".")
+
+
+def skin_answer(skin: str, player: str, reply: Any) -> tuple[bool | None, str]:
+    """(worked, the line for the player) from SkinsRestorer's answer: False
+    when it said it could not, None when it said nothing at all."""
+    text = " ".join(str(reply or "").split())
+    if text and _SKIN_FAILED.search(text):
+        return False, SKIN_LINES["failed"].format(why=text[:160])
+    if not text:
+        return None, SKIN_LINES["unsure"].format(skin=skin_label(skin))
+    line = (SKIN_LINES["cleared"] if skin == "clear"
+            else SKIN_LINES["set"].format(skin=skin_label(skin)))
+    return True, line + (SKIN_LINES["bedrock"] if is_bedrock(player) else "")
+
+
+def skin_label(skin: str) -> str:
+    """A skin in words: a name as itself, a texture link as "that skin"."""
+    return "that skin" if str(skin).startswith("http") else str(skin)
+
+
+# ---------------------------------------------------------------------------
 # Who is who
 # ---------------------------------------------------------------------------
 class Roster:
@@ -874,6 +1049,11 @@ def remember(mem: dict, who: dict, kind: str, now: float, **data) -> dict:
         kept = rec.setdefault("notes", [])
         kept.extend({"t": int(now), "text": n} for n in notes)
         del kept[:-MAX_NOTES]
+    elif kind == "skin" and who.get("player"):
+        # Each account's current skin ("clear" when it was reset), so the
+        # companion knows what they are wearing (#670).
+        skins = rec.setdefault("skins", {})
+        skins[who["player"]] = str(data.get("skin") or "")[:120]
     return rec
 
 
@@ -941,4 +1121,5 @@ __all__ = ["bare", "Roster", "RulesError", "addressed", "builtin", "split_reply"
            "from_handover", "from_legacy_memory", "left", "persona_name", "game_name",
            "wake_words", "remember", "favourites", "learned_facts", "read_json", "write_json",
            "choice_of", "spyglass_name", "journal_name", "overlaps", "clean_job_request", "queue_position",
-           "trim_jobs", "job_view"]
+           "trim_jobs", "job_view", "house_access", "capabilities", "skin_value",
+           "skin_command", "skin_answer", "is_bedrock"]

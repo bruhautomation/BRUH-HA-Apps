@@ -170,6 +170,28 @@ def publish(shared_dir: str | None = None) -> bool:
     return True
 
 
+def publish_house(acts: bool, yolo: bool, shared_dir: str | None = None) -> bool:
+    """Write whether a house change acts at once ("Let brAIn act without
+    asking", YOLO mode on top) beside the settings, for the integration's
+    companion to build each run's capability paragraph from (#675). Called
+    wherever the switch is published, so the game hears the switch as the
+    chat does. True when written; a house without the faculty's files gets
+    no folder, as `publish`."""
+    base = shared_dir or SHARED_DIR
+    if not (os.path.exists(_path(rules.SETTINGS, base))
+            or os.path.exists(_path(rules.HANDOVER, base))):
+        return False
+    want = {"acts": acts is True, "yolo": yolo is True}
+    path = _path(rules.HOUSE, base)
+    if rules.read_json(path, {}) == want:
+        return False
+    try:
+        rules.write_json(path, want)
+    except OSError:
+        return False
+    return True
+
+
 def view(shared_dir: str | None = None) -> dict[str, Any]:
     """What ⚙ › Minecraft shows, from brAIn's own files."""
     base = shared_dir or SHARED_DIR
@@ -219,4 +241,4 @@ def learned(shared_dir: str | None = None) -> list[dict[str, Any]] | None:
     return rules.learned_facts(memory, rules.persona_name(shared_dir or SHARED_DIR))
 
 
-__all__ = ["load", "save", "publish", "view", "learned", "jobs", "resolved_models", "rules"]
+__all__ = ["load", "save", "publish", "publish_house", "view", "learned", "jobs", "resolved_models", "rules"]
