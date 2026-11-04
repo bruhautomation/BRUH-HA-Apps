@@ -86,15 +86,23 @@ class ChatCase(unittest.IsolatedAsyncioTestCase):
         os.environ["FAKE_CHAT_MODE"] = "ok"
         self.log = Path(tmp) / "argv.jsonl"
         os.environ["FAKE_CHAT_LOG"] = str(self.log)
+        # The reload below resets `chat_session.PROMPT_PROVIDER`, which the
+        # server sets when it is imported (possibly during this very test);
+        # put the server's back after, or a later file on the same worker
+        # (test_ask_face_parity) sees a chat with no prompt at all.
         for name in ("engine", "settings_store", "chat_session"):
             setattr(self, name, importlib.reload(importlib.import_module(name)))
+        self.addCleanup(self._give_the_server_its_prompt_back)
         self.reg = self.chat_session.SessionRegistry()
+
+    def _give_the_server_its_prompt_back(self):
+        server = sys.modules.get("server")
+        self.chat_session.PROMPT_PROVIDER = getattr(server, "_chat_system_prompt", None)
 
     async def asyncTearDown(self):
         await self.reg.stop_all()
         for key in _ENV + ("BRAIN_CHAT_CONTEXT_HOOK",):
             os.environ.pop(key, None)
-        self.chat_session.PROMPT_PROVIDER = None
         self.tmp.cleanup()
 
     async def spawns(self, count, timeout=6.0):

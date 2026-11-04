@@ -381,7 +381,7 @@ _FOCUS_JS = r"""
 ((id) => {
   const sels = [`.tile[data-tile="${CSS.escape(id)}"]`, `[data-tile="${CSS.escape(id)}"]`,
                 `section[data-sec="${CSS.escape(id)}"]`, `[data-sec="${CSS.escape(id)}"]`,
-                `#${CSS.escape(id)}`];
+                `[data-card="${CSS.escape(id)}"]`, `#${CSS.escape(id)}`];
   const find = (root, sel) => {
     const hit = root.querySelector(sel);
     if (hit) return hit;

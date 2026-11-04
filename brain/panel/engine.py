@@ -859,6 +859,9 @@ ANALYST_TOOLS = [
     f"{MCP}notification_history",  # brAIn's own messages and what became of each
     f"{MCP}get_areas",
     f"{MCP}get_registry",
+    # One device read whole: maker, model, firmware, and a Z-Wave node's
+    # configuration parameters with their current values.
+    f"{MCP}get_device_details",
     # Which entities reach the voice assistants and each HomeKit Bridge.
     f"{MCP}assistant_exposure",
     f"{MCP}get_automations",
@@ -902,6 +905,27 @@ ANALYST_TOOLS = [
     f"{MCP}garden_harvests",
     # BRUH Cooking, the reading half: what the cooking appliances are doing.
     f"{MCP}cooking_status",
+]
+# The upgrade advisor's reading tools (`upgrades`, `server._advise_run`): the
+# device an update is for, its entities, what the house says about them,
+# and the configuration around them. A subset of ANALYST_TOOLS, so every
+# one is a read already held from both ends; the rest of the analyst's
+# reads are denied to it by name (`run_analyst(allow=)`), because the run
+# reads release notes from outside the house and has no business with the
+# panel's screens, the other add-ons or the cameras.
+ADVISOR_TOOLS = [
+    f"{MCP}get_device_details",
+    f"{MCP}get_entity_state",
+    f"{MCP}get_all_states",
+    f"{MCP}get_registry",
+    f"{MCP}get_history",
+    f"{MCP}get_logbook",
+    f"{MCP}recall",
+    f"{MCP}get_ha_config",
+    f"{MCP}get_automation_config",
+    f"{MCP}search_related",
+    f"{MCP}esphome_list_devices",
+    f"{MCP}esphome_get_config",
 ]
 # Named explicitly rather than left to the allow-list, because `--allowedTools`
 # governs what runs WITHOUT a prompt, and a headless run cannot be prompted:
@@ -1009,6 +1033,7 @@ def run_analyst(
     schema: dict | None = None,
     pressed: bool = False,
     camera_grant: tuple[str, ...] = (),
+    allow: list[str] | None = None,
 ) -> dict:
     """Run `claude -p` with READ-ONLY Home Assistant tools. Same envelope.
 
@@ -1042,8 +1067,22 @@ def run_analyst(
     deny list to the allow list for this run only, and the grant rides in
     the CLI's environment to the MCP server, which refuses any camera not
     in it and asks the panel's daily count before every frame.
+
+    ``allow`` narrows the reads to a subset of ANALYST_TOOLS (the upgrade
+    advisor's ``ADVISOR_TOOLS``); every analyst tool outside it moves to
+    the deny list, so a narrowed run is held from both ends like a whole
+    one. A name outside ANALYST_TOOLS is a ValueError, never a widening.
     """
-    allow, deny = list(ANALYST_TOOLS), list(ANALYST_DENIED)
+    if allow is not None:
+        stray = [t for t in allow if t not in ANALYST_TOOLS]
+        if stray:
+            raise ValueError(f"not reading tools: {', '.join(stray)}")
+        narrowed = list(allow)
+        deny = list(ANALYST_DENIED) + [t for t in ANALYST_TOOLS
+                                       if t not in narrowed]
+        allow = narrowed
+    else:
+        allow, deny = list(ANALYST_TOOLS), list(ANALYST_DENIED)
     grant = tuple(c for c in camera_grant or () if str(c).startswith("camera."))
     if grant:
         allow.append(CAMERA_TOOL)
@@ -1174,6 +1213,26 @@ def overloaded(result: dict) -> bool:
     """Did this run fail because the API said it was overloaded?"""
     return (not result.get("ok")
             and bool(_OVERLOADED_RE.search(str(result.get("error") or ""))))
+
+
+# A safety classifier's refusal ("API Error: … safeguards flagged this
+# message …", or the Usage Policy wording) is mostly a false positive on
+# one model's classifier (#680), so `_run_cli` tries the run once more on
+# `model_plan.refusal_fallback` — and a second refusal is said in words,
+# because the raw API text is nobody's sentence. The automation listener
+# holds the same rule for tasks (TASK_REFUSAL_RE there).
+_REFUSED_RE = re.compile(
+    r"safeguards? (?:have |has )?flagged|appears to violate (?:our|the) usage polic"
+    r"|violat(?:e|es|ing) (?:our|the|anthropic.s) usage polic", re.IGNORECASE)
+REFUSED_MESSAGE = ("Claude declined this run: an automatic safety check flagged it, "
+                   "usually by mistake. It was tried on a second model too, and "
+                   "nothing more was done.")
+
+
+def refused(result: dict) -> bool:
+    """Did a safety classifier refuse this run?"""
+    return (not result.get("ok")
+            and bool(_REFUSED_RE.search(str(result.get("error") or ""))))
 
 
 # The flags the runners add that an older CLI may not know. Each is
@@ -1354,6 +1413,21 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
             time.sleep(OVERLOAD_RETRY_S)
             result, session_id = spawn(remaining - OVERLOAD_RETRY_S)
             retried = True
+    refused_on = ""
+    if refused(result):
+        remaining = int(timeout - (time.monotonic() - started))
+        if remaining > LANDING_MIN_S:
+            refused_on = model or "default"
+            fallback = model_plan.refusal_fallback(model)
+            log.warning("%s: a safety check refused the run on %s; trying %s",
+                        job or source or "run", refused_on, fallback)
+            base = _without(base, "model") + ["--model", fallback]
+            model = fallback
+            result, session_id = spawn(remaining)
+        if refused(result):
+            log.warning("%s: refused by a safety check: %s", job or source or "run",
+                        str(result.get("error") or "")[:300])
+            result["error"] = REFUSED_MESSAGE
     if schema and result.get("ok") and "data" not in result:
         # The CLI ran without --json-schema (too old, or it was dropped
         # above): read the object out of the text so callers see one shape.
@@ -1382,6 +1456,9 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
         extra["landed"] = True
     if retried:
         extra["retried"] = "overloaded"
+    if refused_on:
+        extra["retried"] = "refused"
+        extra["refused_on"] = refused_on
     if job:
         extra["job"] = job
     if effort:

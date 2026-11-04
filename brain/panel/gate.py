@@ -146,7 +146,7 @@ MINECRAFT_CHANNEL = "minecraft"
 MINECRAFT_WORLD_TOOL = "minecraft_world"
 MINECRAFT_JOB_TOOL = "minecraft_job"
 MINECRAFT_CHAT_ACTIONS = frozenset({"time", "weather", "say", "ask", "undo", "build",
-                                    "look", "edit", "atlas", "room", "label"})
+                                    "look", "edit", "atlas", "room", "label", "skin"})
 # There is nothing to approve on this channel, so the sentence says who can
 # change that and where (minecraft_rules.CANNED["outside"], spelled here too
 # because the gate does not load the integration's rules).
