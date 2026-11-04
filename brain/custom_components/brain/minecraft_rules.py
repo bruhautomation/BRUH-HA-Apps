@@ -203,7 +203,7 @@ APPROVAL_TTL = 60 * 60            # an approval nobody answered expires after th
 HELP_LINES = (
     "{n} stop · {n} start — pause me and bring me back",
     "{n} undo — take back the last thing I did · {n} continue — pick up a job I only "
-    "partly did",
+    + "partly did",
     "{n} status — what I'm doing, how far along each job is, and who is here",
     "{n} come here · {n} help — or just ask me anything",
 )

@@ -931,6 +931,13 @@ RESIDENT_STATE: dict = {
     # chose (paused, the usage budget) is not this: that is a refusal, not
     # a fault. `health` turns a long hold into a sentence.
     "held_since": 0.0,
+    # Why the looks are running below the tier the dial or a typed model
+    # put them on (that allowance is spent), or "" while they are not.
+    "looks_stepped_down": "",
+    # What left the pending list without a look, by why: `stale` (a day
+    # old), `resolved` (a filed row settled while it waited), `cap` (the
+    # cap took it). `dropped` is the sum, kept for the screens that read it.
+    "dropped_why": {},
 }
 # What producers hand signals to. A module global bound to whichever loop
 # touches it first, so it is rebound at startup beside `QUEUE` for the same
@@ -13818,16 +13825,23 @@ def _open_case_rows(limit: int = 12, exclude=None) -> list[str]:
 def _resident_absorb(now: float) -> None:
     """Drain the queue into the pending list, and hold it to its cap.
 
-    Over the cap the live signals are folded by kind and subject first
-    (what the look does anyway), and then the cap drops the LEAST SALIENT
-    live non-hot signal, oldest first among equals, and counts what it
-    took — never a row a rule filed while a live signal is left to take.
-    Hot is spared because hot is what
-    makes a look happen at all — a cap that could drop the reason for the
-    look would be the cap answering the question the look was called to
-    answer — and a pending list that is nothing but hot signals is a house
-    with one fault rather than five hundred, so past the cap there the
-    least salient goes anyway and the count says so.
+    The list holds THINGS to look at, not copies of them: live signals are
+    folded by kind and subject as they arrive (`signals.dedupe` with no
+    window, the repeats summed onto the newest), so a subject that changes
+    every ten minutes through a day of held looks is one row saying how
+    many times, where it was one row per change and filled the list toward
+    its cap with a few subjects (#665). A row a rule filed is never folded:
+    two rules about one sensor are two rows the store already told apart.
+
+    What leaves without a look is counted by why (`_resident_drop`): a day
+    old first, then — over the cap — the LEAST SALIENT live non-hot signal,
+    oldest first among equals, and never a row a rule filed while a live
+    signal is left to take. Hot is spared because hot is what makes a look
+    happen at all — a cap that could drop the reason for the look would be
+    the cap answering the question the look was called to answer — and a
+    pending list that is nothing but hot signals is a house with one fault
+    rather than five hundred, so past the cap there the least salient goes
+    anyway and the count says so.
     """
     while True:
         try:
@@ -13838,26 +13852,20 @@ def _resident_absorb(now: float) -> None:
     # evidence about this afternoon. Dropped rather than judged, because
     # the look's whole answer would be "this already happened" — and
     # counted, because a queue that silently discards is one nobody can
-    # trust, which is `eventbus.stats`' rule one tier up.
+    # trust, which is `eventbus.stats`' rule one tier up. Before the fold,
+    # so a stale copy cannot ride a fresh one's timestamp past its day.
     stale = [s for s in RESIDENT_PENDING
              if now - float(s.get("seen_at") or now) > RESIDENT_SIGNAL_TTL_S]
     for row in stale:
         RESIDENT_PENDING.remove(row)
-        RESIDENT_STATE["dropped"] += 1
-    if len(RESIDENT_PENDING) > RESIDENT_QUEUE_MAX:
-        # Over the cap, the live signals are folded first, exactly as the
-        # look will fold them (`signals.dedupe`, by kind and subject, the
-        # repeats summed): a protected entity that changes every second
-        # puts hundreds of copies of ONE signal here between two looks, and
-        # counting each against the cap is what used to push the rows a
-        # rule filed off the list — the sweep offered them every minute and
-        # the same tick's cap dropped them again, so the least salient of
-        # them (the oldest) never reached a look at all.
-        filed = [s for s in RESIDENT_PENDING if s.get("finding_ts")]
-        live = [s for s in RESIDENT_PENDING if not s.get("finding_ts")]
-        # Folded, not dropped: the repeats ride on the one that is kept, so
-        # nothing the look would have read is lost and nothing is counted.
-        RESIDENT_PENDING[:] = filed + signals.dedupe(live)
+    _resident_drop("stale", len(stale))
+    # Folded, not dropped: the repeats ride on the one that is kept, so
+    # nothing the look would have read is lost and nothing is counted.
+    # `hot`, `safety` and `protected` survive any member of the fold.
+    filed = [s for s in RESIDENT_PENDING if s.get("finding_ts")]
+    live = [s for s in RESIDENT_PENDING if not s.get("finding_ts")]
+    if live:
+        RESIDENT_PENDING[:] = filed + signals.dedupe(live, window_s=math.inf)
     while len(RESIDENT_PENDING) > RESIDENT_QUEUE_MAX:
         # A row a rule filed is never the victim while ANY live signal can
         # be, hot included: it is already in the store with a deadline, and
@@ -13871,10 +13879,48 @@ def _resident_absorb(now: float) -> None:
                      key=lambda s: (float(s.get("salience") or 0.0),
                                     -float(s.get("seen_at") or 0.0)))
         RESIDENT_PENDING.remove(victim)
-        RESIDENT_STATE["dropped"] += 1
+        _resident_drop("cap")
     RESIDENT_STATE["queue_len"] = len(RESIDENT_PENDING)
     RESIDENT_STATE["hot_pending"] = sum(
         1 for s in RESIDENT_PENDING if s.get("hot"))
+
+
+def _resident_drop(why: str, count: int = 1) -> None:
+    """Count what left the pending list without a look, and why."""
+    if count <= 0:
+        return
+    RESIDENT_STATE["dropped"] = int(RESIDENT_STATE.get("dropped") or 0) + count
+    whys = RESIDENT_STATE.get("dropped_why")
+    if not isinstance(whys, dict):
+        whys = RESIDENT_STATE["dropped_why"] = {}
+    whys[why] = int(whys.get(why) or 0) + count
+
+
+def _resident_prune_settled(offered_before: set[int],
+                            still_waiting: set[int]) -> int:
+    """Drop filed rows that stopped waiting for a look while they queued.
+
+    A row a person marked fixed, dismissed or removed — or one a later pass
+    cleared — sat on the pending list until a look reached it, and a look
+    over a settled row is a paid answer to nothing. Only rows offered
+    BEFORE the store was read are judged here (`offered_before`), because
+    a producer may file and offer between that read and this call, and
+    such a row is not in `still_waiting` for that reason alone. A row in a
+    look's hands, or looked into, is not this sweep's to drop.
+    """
+    busy = RESIDENT_INFLIGHT | RESIDENT_LOOKED_INTO
+    gone = [s for s in RESIDENT_PENDING
+            if s.get("finding_ts")
+            and int(s["finding_ts"]) in offered_before
+            and int(s["finding_ts"]) not in still_waiting
+            and int(s["finding_ts"]) not in busy]
+    for row in gone:
+        RESIDENT_PENDING.remove(row)
+    _resident_drop("resolved", len(gone))
+    if gone:
+        log.info("the Resident dropped %d queued finding(s) settled while "
+                 "they waited", len(gone))
+    return len(gone)
 
 
 def _resident_gate(settings: dict) -> str:
@@ -13974,6 +14020,7 @@ async def _resident_pass(now: float) -> dict:
         # what makes the batch cap honest: a row that did not fit is at the
         # front of the next one. `run_checks` hands its own rows over the
         # moment it files them, so a pass does not wait on this minute.
+        offered_before = _pending_finding_ts()
         waiting = await asyncio.to_thread(findings_store.awaiting_triage)
         # …and the rows silence surfaced, so a look can still give them the
         # verdict they never had: the pending list is in memory, and a
@@ -13983,6 +14030,9 @@ async def _resident_pass(now: float) -> dict:
         # nothing looked is offered until a look answers, however long ago
         # it was filed.
         shown_unjudged = await asyncio.to_thread(findings_store.unjudged_open)
+        _resident_prune_settled(
+            offered_before,
+            {int(r.get("ts") or 0) for r in waiting + shown_unjudged})
         _offer_findings(waiting + shown_unjudged, now)
     _resident_absorb(now)
     out = {"looked": False, "surfaced": len(surfaced),
@@ -14056,13 +14106,26 @@ async def _resident_pass(now: float) -> dict:
         return {**out, "held": "the day's looks are spent"}
     TRIAGE_STATE["capped_said"] = False
 
-    allowed, why = LEDGER.allows(
-        _resident_tier(resident.JOB_FIRST_LOOK, thinking), thinking, now=now)
-    if not allowed:
+    # The look's tier: the one the dial or a typed model put it on while
+    # that allowance lasts, then its planned (cheap) tier, which no counter
+    # stops (`resident.look_tier`, #661). Only when even that may not run
+    # is the look held.
+    wanted = _resident_tier(resident.JOB_FIRST_LOOK, thinking)
+    tier, why = resident.look_tier(
+        LEDGER, wanted, thinking, now=now,
+        investigate_tier=_resident_tier(resident.JOB_INVESTIGATE, thinking))
+    if not tier:
         RESIDENT_STATE["last_error"] = why
         _resident_held(now)
         return {**out, "held": why}
-    return await _resident_look(now, settings, thinking, len(surfaced))
+    stepped_down = why if tier != wanted else ""
+    if stepped_down != RESIDENT_STATE.get("looks_stepped_down", ""):
+        if stepped_down:
+            log.info("the Resident's looks go on at the %s tier: %s", tier,
+                     stepped_down)
+        RESIDENT_STATE["looks_stepped_down"] = stepped_down
+    return await _resident_look(now, settings, thinking, len(surfaced),
+                                tier="" if tier == wanted else tier)
 
 
 def _resident_held(now: float) -> None:
@@ -14072,8 +14135,12 @@ def _resident_held(now: float) -> None:
 
 
 async def _resident_look(now: float, settings: dict, thinking: str,
-                         surfaced: int) -> dict:
-    """One first look: build the batch, spend one cheap run, act on it."""
+                         surfaced: int, tier: str = "") -> dict:
+    """One first look: build the batch, spend one cheap run, act on it.
+
+    `tier` is a tier to run on in place of the planned one, when the
+    allowance of the tier the dial or a typed model chose is spent
+    (`resident.look_tier`); "" runs the look as planned."""
     # Deduped, EXCEPT for the rows a rule filed. `signals.dedupe` folds by
     # `(kind, subject)`, and two different checks about one sensor are two
     # rows the store already deduped by text — folding them here would
@@ -14167,10 +14234,18 @@ async def _resident_look(now: float, settings: dict, thinking: str,
         # whether a signal deserves another thought, which is answerable
         # from a sentence — and a cheap tier that could reach for history
         # would stop being the cheap tier.
+        # A fallback tier is handed down as the CLI's alias with the job's
+        # own effort, which is what the table plans for that tier.
+        model, extra = eff_model(), {}
+        if tier:
+            model = tier
+            extra["effort"] = model_plan.resolve(
+                resident.JOB_FIRST_LOOK, model_plan.DEFAULT_THINKING, "")[1]
         result = await _claude(
-            engine.run_claude, prompt, resident.FIRST_LOOK_SYSTEM, eff_model(),
+            engine.run_claude, prompt, resident.FIRST_LOOK_SYSTEM, model,
             resident.TIMEOUT_S, resident.MAX_TURNS, "resident",
             job=resident.JOB_FIRST_LOOK, schema=resident.FIRST_LOOK_SCHEMA,
+            **extra,
             # A batch holding a hot signal — a leak, smoke, a safety device
             # — takes the seat a press would, ahead of every card refresh.
             priority=(run_queue.SAFETY if any(s.get("hot") for s in batch)
@@ -14542,7 +14617,7 @@ async def _resident_investigations(queued: list[tuple[dict, str, int]],
             log.warning("an investigation failed: %s", exc)
             RESIDENT_STATE["last_error"] = str(exc)[:200]
     if len(held) > RESIDENT_PARKED_MAX:
-        RESIDENT_STATE["dropped"] += len(held) - RESIDENT_PARKED_MAX
+        _resident_drop("parked", len(held) - RESIDENT_PARKED_MAX)
         held = held[-RESIDENT_PARKED_MAX:]
     RESIDENT_PARKED.extend(held)
     RESIDENT_STATE["investigations_waiting"] = len(RESIDENT_PARKED)

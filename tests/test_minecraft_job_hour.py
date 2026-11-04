@@ -146,7 +146,7 @@ class TestAnHourAndAStopIsAStop(JobCase):
         self.wait_until(lambda: self.jobs()[0].get("steps"))
         self.chat(DAD, "juniper stop")
         job = self.jobs()[0]
-        self.assertTrue(self.c.runs.get(job_id) is None)
+        self.assertIsNone(self.c.runs.get(job_id))
         self.assertEqual(job["status"], rules.JOB_PARTIAL)
         self.assertEqual(job["edits"], ["e-1"])         # nothing was put back
         self.assertFalse(self.addon.of("undo_action"))
@@ -390,7 +390,7 @@ class TestTheBridgeLeavesAStop(unittest.TestCase):
             try:
                 await task
             except asyncio.CancelledError:
-                pass
+                pass  # the cancel this test made: what it checks is the marker left behind
         asyncio.new_event_loop().run_until_complete(main())
         return sorted(os.listdir(bridge.tasks_dir))
 
