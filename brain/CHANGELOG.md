@@ -2,7 +2,7 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
-## Unreleased
+## 4.3.2
 
 ### Fixed
 
