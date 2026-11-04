@@ -143,11 +143,19 @@ def _load_bridge(panel_state: Path, run):
     rcon_mod.Rcon = Rcon
     saved = sys.modules.get("rcon_client")
     sys.modules["rcon_client"] = rcon_mod
+    # The panel's test loader leaves MC_CONSOLE_LOG set for the process, so
+    # it is named here rather than left to fall back on MC_PANEL_STATE.
+    saved_env = {k: os.environ.get(k) for k in ("MC_PANEL_STATE", "MC_CONSOLE_LOG")}
     os.environ["MC_PANEL_STATE"] = str(panel_state)
+    os.environ["MC_CONSOLE_LOG"] = str(panel_state / "console.log")
     try:
         mod = _load("ha_bridge_world_scripts", BRIDGE_PY)
     finally:
-        os.environ.pop("MC_PANEL_STATE", None)
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
         if saved is None:
             sys.modules.pop("rcon_client", None)
         else:
