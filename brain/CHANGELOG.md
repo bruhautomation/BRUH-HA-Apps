@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.2.12
+
+### Fixed
+
+- The screenshot tool waits for a card's history and statistics to arrive before it takes the picture, so charts in a room it unfolds show their lines; a question that never answers holds a picture for at most 12 seconds (#681).
+- The screenshot tool presses with touch on a phone-width view, so a hosted card that opens on a hold or a tap opens for the picture too (#681).
+
 ## 4.2.11
 
 ### Removed
