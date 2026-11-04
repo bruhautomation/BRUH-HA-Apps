@@ -20,7 +20,7 @@ sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
 
 from test_devloop import NAMES, DevloopCase, diagnostics, upstream  # noqa: E402
 
-from devloop import blocks  # noqa: E402
+import devloop.blocks as blocks  # noqa: E402
 
 HOUR = 3600
 DAY = 86400

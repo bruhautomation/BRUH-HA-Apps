@@ -23,7 +23,8 @@ from test_corpus import validate  # noqa: E402
 from test_devloop import NAMES, TOKEN, DevloopCase, diagnostics, upstream  # noqa: E402
 
 import devloop  # noqa: E402
-from devloop import blocks, corpus  # noqa: E402
+import devloop.blocks as blocks  # noqa: E402
+import devloop.corpus as corpus  # noqa: E402
 
 
 def capture(labels, run_id="0f3a9b2c-1111-4222-8333-944455556666"):

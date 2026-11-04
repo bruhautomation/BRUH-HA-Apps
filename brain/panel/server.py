@@ -9397,11 +9397,15 @@ async def h_house_outcome(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(text="send a JSON object")
     try:
         out = await asyncio.to_thread(house_ui.outcome, body)
-    except ValueError as exc:
-        raise web.HTTPBadRequest(text=str(exc))
+    except ValueError:
+        raise web.HTTPBadRequest(
+            text="send {name: house.css|house.js, v: the version the page "
+                 "loaded, outcome: confirm|revert, why}")
     if out.get("reverted"):
-        log.warning("the page took back %s: %s (%s)", body.get("name"),
-                    log_safe(out.get("why")), out.get("restored"))
+        # `outcome` refused any other name, so this is one of two constants.
+        name = "house.js" if body.get("name") == "house.js" else "house.css"
+        log.warning("the page took back %s: %s (%s)", name,
+                    log_safe(out.get("why")), log_safe(out.get("restored")))
     return web.json_response(out)
 
 

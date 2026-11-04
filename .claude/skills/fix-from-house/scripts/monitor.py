@@ -327,7 +327,7 @@ def scan(text: str, branch: str | None = None) -> list[dict]:
             try:
                 last_comment[int(inp.get("issue_number"))] = inp.get("body", "")
             except (TypeError, ValueError):
-                pass
+                pass  # a comment on no numbered issue is not evidence for one
         outcome = _closing_outcome(name, inp)
         if outcome in ("declined", "duplicate"):
             try:

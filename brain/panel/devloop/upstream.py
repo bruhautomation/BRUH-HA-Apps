@@ -1737,7 +1737,7 @@ def _held_check(token: str, repo: str, entry: dict, now: float, running: str,
                 or running_at_least(running, fixed_in) is not True:
             return False
         # The first pass that saw the house running the fix: the install.
-        rec = held[fp] = {"fixed_in": fixed_in, "installed_at": now, "at": now,
+        held[fp] = {"fixed_in": fixed_in, "installed_at": now, "at": now,
                           "product": product_of(entry), "stream": stream,
                           "issue": int(entry.get("issue") or 0)}
         return False

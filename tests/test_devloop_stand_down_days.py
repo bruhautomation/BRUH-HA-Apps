@@ -22,7 +22,7 @@ from test_devloop import NAMES, DevloopCase, diagnostics, upstream  # noqa: E402
 
 import atomic_write  # noqa: E402
 import devloop  # noqa: E402
-from devloop import blocks  # noqa: E402
+import devloop.blocks as blocks  # noqa: E402
 
 DAY = 86400
 GAP = {"where": "Gap: The brief ignores the boiler", "what": "The boiler is never in the brief",

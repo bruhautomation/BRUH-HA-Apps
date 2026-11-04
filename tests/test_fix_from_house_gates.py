@@ -52,7 +52,7 @@ class TestTheSample(unittest.TestCase):
         audited = [c["number"] for c in cs if c["outcome"] != "fixed"]
         first = A.sample(cs, "2026-W45")
         self.assertEqual(len(first), 2)                     # ceil(0.1 × 20)
-        self.assertTrue(set(first) <= set(audited))
+        self.assertEqual(set(first) - set(audited), set())
         self.assertEqual(first, A.sample(list(reversed(cs)), "2026-W45"))
         weeks = {tuple(A.sample(cs, f"2026-W{w}")) for w in range(40, 52)}
         self.assertGreater(len(weeks), 1, "the seed must change with the week")

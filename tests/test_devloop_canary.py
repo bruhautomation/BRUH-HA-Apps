@@ -29,7 +29,8 @@ sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
 from test_devloop import NAMES, DevloopCase, diagnostics, upstream  # noqa: E402
 
 import devloop  # noqa: E402
-from devloop import blocks, canary  # noqa: E402
+import devloop.blocks as blocks  # noqa: E402
+import devloop.canary as canary  # noqa: E402
 
 HOUR = 3600
 KEYS = {"v", "product", "release", "installed_at", "checked_at", "window_hours",
