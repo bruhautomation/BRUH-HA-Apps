@@ -584,6 +584,8 @@ class TestMCPProtocol(unittest.TestCase):
             "cooking_status", "cooking_control",
             # Recording how brAIn's personality has grown (⚙ › Personality)
             "note_personality_change",
+            # One device read whole, a Z-Wave node's parameters with it
+            "get_device_details",
         }
         self.assertEqual(tool_names, expected_tools)
 

@@ -734,22 +734,10 @@ def transcript(cwd: str, session_id: str, limit: int = REPLAY_EVENTS) -> list[di
 MAX_TOOL_TRAFFIC_CHARS = 2_000_000
 
 
-def tool_traffic(cwd: str, session_id: str) -> str | None:
-    """Everything a run SENT to its tools and got back, as one string.
-
-    What `parse_case`'s invented-evidence guard has to read. It used to
-    read the CLI's final reply instead, which is the one place the answer
-    under test is written — so on a CLI that echoes its JSON every cited
-    id was "read" and the guard was vacuous, and on one that answers with
-    validated `structured_output` and a line of prose no neighbour was
-    ever "read" and a real case was thrown away. Tool inputs and tool
-    results are what the run actually touched; the assistant's own text
-    is deliberately left out, final answer included.
-
-    None — never "" — for a transcript that cannot be found or read,
-    because "I could not look" and "it looked at nothing" are different
-    claims, and only the second may refuse a case.
-    """
+def _tool_blocks(cwd: str, session_id: str):
+    """`[(kind, name, text)]` for every tool call and result in one run's
+    transcript, in order — `kind` is "use" or "result", `name` the tool a
+    use called. None for a transcript that cannot be found or read."""
     directory = project_dir(cwd)
     if directory is None:
         return None
@@ -758,7 +746,7 @@ def tool_traffic(cwd: str, session_id: str) -> str | None:
     path = directory / f"{session_id}.jsonl"
     if not path.is_file():
         return None
-    parts: list[str] = []
+    blocks: list[tuple[str, str, str]] = []
     size = 0
     try:
         with path.open("r", encoding="utf-8", errors="replace") as fh:
@@ -775,18 +763,63 @@ def tool_traffic(cwd: str, session_id: str) -> str | None:
                     if not isinstance(block, dict):
                         continue
                     if block.get("type") == "tool_use":
-                        piece = json.dumps(block.get("input") or {})
+                        item = ("use", str(block.get("name") or ""),
+                                json.dumps(block.get("input") or {}))
                     elif block.get("type") == "tool_result":
-                        piece = _result_text(block.get("content"))
+                        item = ("result", "", _result_text(block.get("content")))
                     else:
                         continue
-                    parts.append(piece)
-                    size += len(piece)
+                    blocks.append(item)
+                    size += len(item[2])
                     if size > MAX_TOOL_TRAFFIC_CHARS:
-                        return "\n".join(parts)
+                        return blocks
     except OSError:
         return None
-    return "\n".join(parts)
+    return blocks
+
+
+def tool_traffic(cwd: str, session_id: str) -> str | None:
+    """Everything a run SENT to its tools and got back, as one string.
+
+    What `parse_case`'s invented-evidence guard has to read. It used to
+    read the CLI's final reply instead, which is the one place the answer
+    under test is written — so on a CLI that echoes its JSON every cited
+    id was "read" and the guard was vacuous, and on one that answers with
+    validated `structured_output` and a line of prose no neighbour was
+    ever "read" and a real case was thrown away. Tool inputs and tool
+    results are what the run actually touched; the assistant's own text
+    is deliberately left out, final answer included.
+
+    None — never "" — for a transcript that cannot be found or read,
+    because "I could not look" and "it looked at nothing" are different
+    claims, and only the second may refuse a case.
+    """
+    blocks = _tool_blocks(cwd, session_id)
+    if blocks is None:
+        return None
+    return "\n".join(text for _kind, _name, text in blocks)
+
+
+def tool_reads(cwd: str, session_id: str) -> dict | None:
+    """What a run's tools RETURNED, what it asked them, and the names of
+    the tools it called: `{"results": str, "asked": str, "tools": [name,
+    …]}`, or None for a transcript that cannot be found or read.
+
+    The upgrade advisor checks a quote against this (`upgrades.judge`),
+    and that is why the inputs are left out where `tool_traffic` keeps
+    them: an input is the run's own words, so a quote of the question it
+    asked a tool would otherwise pass as something it read. `asked` is
+    handed over beside them so a result that ECHOES its input (a search
+    naming its query) can be told apart from one that read something.
+    """
+    blocks = _tool_blocks(cwd, session_id)
+    if blocks is None:
+        return None
+    return {"results": "\n".join(text for kind, _n, text in blocks
+                                 if kind == "result"),
+            "asked": "\n".join(text for kind, _n, text in blocks
+                               if kind == "use"),
+            "tools": [name for kind, name, _t in blocks if kind == "use"]}
 
 
 def _result_text(content) -> str:

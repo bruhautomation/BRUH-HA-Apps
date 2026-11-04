@@ -6266,7 +6266,7 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
 .qcard:has(> details.qdetails[open]) > .card-body,
 .qcard:has(> details.qdetails[open]) .qfixtext { -webkit-line-clamp: unset; display: block; }
 .qplan .findsteps { margin: 0; padding-left: var(--sp-5); font-size: var(--fs-body); line-height: var(--lh-body); }
-.qplan .findrisk, .qcard .qundoline {
+.qplan .findrisk, .qcard > .findrisk, .qcard .qundoline {
   margin: 0; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2);
 }
 p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2); }

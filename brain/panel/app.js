@@ -7680,28 +7680,47 @@ function makeTidyCard(t) {
 
 const UPDATE_WORDS = { safe_tonight: "Safe tonight", wait: "Wait", unknown: "Can't tell" };
 
+// An update card. The reason is stored whole (#660) and clamped to three
+// lines on the face like every body; Details opens it in full. A verdict
+// brAIn CHECKED as safe leads with Apply, which installs it on the press
+// (`/api/upgrades/install`, the server's typed-op path with its floors and
+// ledger row) — nothing unattended ever installs one. Anything else leads
+// with Add to To Do, and Check again asks once more on the chat's model.
 function makeUpdateCard(u) {
   const advice = u.advice || {};
+  const installable = advice.verdict === "safe_tonight" && !!advice.checked;
+  const name = u.title || u.entity_id;
   const card = qCard({ id: u.key, chip: advice.verdict === "wait" ? "problem" : "tidy",
     meta: [UPDATE_WORDS[advice.verdict] || "Assessed", `${u.installed || "?"} → ${u.latest || "?"}`],
-    title: `Update ${u.title || u.entity_id}`, body: advice.reason || "", who: u.who });
+    title: `Update ${name}`, body: advice.reason || "", who: u.who });
+  if (installable) {
+    card.appendChild(el("p", "findrisk", "What could go wrong: a change the "
+      + "notes do not mention. Home Assistant backs up first where the update "
+      + "offers it; an update cannot be undone from here."));
+  }
   const more = qDetails();
   qDetailLine(more, "From the release notes", advice.note_quote || "");
-  qDetailLine(more, "From your configuration", advice.config_quote || "");
+  qDetailLine(more, advice.quote_from === "device" ? "From the device"
+    : "From your configuration", advice.config_quote || "");
   if (advice.edit) {
     qDetailLine(more, "The change brAIn would make first", " ");
     more.appendChild(el("pre", "qdpre", advice.edit));
   }
-  qDetailLine(more, "Note", "brAIn never installs an update itself.");
+  // True on every card — nothing unattended installs one — and said only
+  // where no Apply sits under it, so the line never reads against a press.
+  if (!installable) {
+    qDetailLine(more, "Note", "brAIn never installs an update itself; Apply "
+      + "is offered only on an update it checked as safe.");
+  }
   card.appendChild(more);
   const actions = el("div", "card-actions");
   const btns = [];
-  const list = qButton("Add to To Do", true);
-  list.addEventListener("click", async () => {
-    btns.forEach((b) => { b.disabled = true; });
+  const busy = (on) => btns.forEach((b) => { b.disabled = on; });
+  const addToList = async () => {
+    busy(true);
     try {
       takeTodo(await api("api/todo", { method: "POST", body: JSON.stringify({
-        text: `Update ${u.title || u.entity_id} to ${u.latest || "the new version"}`,
+        text: `Update ${name} to ${u.latest || "the new version"}`,
         detail: advice.reason || "" }) }));
       await api("api/today/hide", { method: "POST", body: JSON.stringify({
         key: u.key, how: "listed", title: u.title || "" }) });
@@ -7710,12 +7729,49 @@ function makeUpdateCard(u) {
       toast("Added to To Do");
     } catch (e) {
       toast(e.message || "that didn't work");
-      btns.forEach((b) => { b.disabled = false; });
+      busy(false);
     }
-  });
-  btns.push(list);
-  actions.appendChild(list);
-  todayHideButtons(u.key, `Update ${u.title || u.entity_id}`, btns, actions);
+  };
+  let menu;
+  if (installable) {
+    const apply = qButton("Apply", true);
+    apply.addEventListener("click", async () => {
+      busy(true);
+      try {
+        await api("api/upgrades/install", { method: "POST", body: JSON.stringify({
+          entity_id: u.entity_id, latest: u.latest || "" }) });
+        toast(`Installing ${name} — Home Assistant is updating it`);
+        await refreshToday();
+        renderFindings();
+      } catch (e) {
+        toast(e.message || "that didn't work");
+        busy(false);
+      }
+    });
+    btns.push(apply);
+    actions.appendChild(apply);
+    menu = [["", "Add to To Do", "Install it yourself later; it moves to your list.",
+      addToList]];
+  } else {
+    const list = qButton("Add to To Do", true);
+    list.addEventListener("click", addToList);
+    btns.push(list);
+    actions.appendChild(list);
+    menu = [["", "Check again", "brAIn reads the notes and the device once more.",
+      async () => {
+        try {
+          await api("api/upgrades/advise", { method: "POST",
+            body: JSON.stringify({ entity_id: u.entity_id }) });
+          toast("Checking again — the card changes when brAIn has an answer");
+        } catch (e) {
+          toast(e.message || "that didn't work");
+        }
+      }]];
+  }
+  todayHideButtons(u.key, `Update ${name}`, btns, actions);
+  const dots = cardMenuButton(menu);
+  btns.push(dots);
+  actions.appendChild(dots);
   card.appendChild(actions);
   return card;
 }
@@ -19034,6 +19090,9 @@ function renderMinecraft() {
     <label for="mcWorkers">Jobs at once</label>
     <select id="mcWorkers">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}"${n === (s.workers || 5) ? " selected" : ""}>${n}</option>`).join("")}</select>
     <p class="hint">Bigger requests — a build, a room made over — become jobs that run while you keep playing. More than this wait their turn, and so does one in the same place as a job already going.</p>
+    <label for="mcJobMinutes">Time for one job</label>
+    <select id="mcJobMinutes">${(d.job_minutes || [15, 30, 60, 90, 120]).map((n) => `<option value="${n}"${n === (s.job_minutes || 60) ? " selected" : ""}>${n} minutes</option>`).join("")}</select>
+    <p class="hint">A job stops when this runs out, keeping what it built — say “${esc(d.name.toLowerCase())} continue” in the game to pick it up. Saying stop, or cancelling it, ends it within seconds.</p>
     <h3 class="setsubhead">The family</h3>
     <p class="hint">Only people on this list play with ${esc(d.name)}; anybody else is left alone. Everyone on it can ask for anything in the game — build, change, undo — and nothing new starts for a child at bedtime. The house is only ever a grown-up's with “Can ask for anything” on.</p>
     <div id="mcPeople">${people.map(mcPersonRow).join("") || '<p class="hint">Nobody yet.</p>'}</div>
@@ -19114,6 +19173,7 @@ document.addEventListener("click", async (ev) => {
       every_line: $("#mcEveryLine").checked, spyglass: $("#mcSpyglass").checked,
       thoughts: $("#mcThoughts").checked,
       workers: parseInt($("#mcWorkers").value, 10) || 5,
+      job_minutes: parseInt($("#mcJobMinutes").value, 10) || 60,
       people: mcReadPeople().filter((p) => p.person || p.players.length),
       bedtime_entity: $("#mcBedtime").value.trim(), budgets,
       chat_model: $("#mcChatModel").value, chat_effort: $("#mcChatEffort").value,

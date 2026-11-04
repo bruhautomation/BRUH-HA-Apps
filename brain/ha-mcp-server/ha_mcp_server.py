@@ -1712,7 +1712,7 @@ def call_service(domain, service, data=None, return_response=False):
     extra = [script] if script else []
     # A request typed in Minecraft's chat may act only in the game, and
     # that is a scope rather than a rule, so YOLO does not lift it.
-    game = _minecraft_chat_refusal(domain, service)
+    game = _minecraft_chat_refusal(domain, service, data)
     if game:
         return game
     # YOLO mode (the panel's opt-in switch, a file brAIn writes) stands
@@ -3205,16 +3205,59 @@ MINECRAFT_CHAT_REFUSAL = (
     "waits anywhere for a yes. Tell them exactly: \"" + MINECRAFT_OUTSIDE_LINE.replace("{", "{{")
     + "\" Do not retry or look for another route.")
 MINECRAFT_CHAT_ACTIONS = ("time", "weather", "say", "ask", "undo", "build", "look", "edit",
-                          "atlas", "room", "label", "think")
+                          "atlas", "room", "label", "think", "skin")
 
 
-def _minecraft_chat_refusal(domain, service):
-    """The refusal for a service a game-chat run may not call, or None."""
+def _minecraft_chat_refusal(domain, service, data=None):
+    """The refusal for a service a game-chat run may not call, or None.
+    One console command is the game's: a skin (SkinsRestorer's `skin set` /
+    `skin clear` for one player, exactly the shape `rules.SKIN_COMMAND`
+    takes, #670) — a cosmetic a child may ask for, which `skin clear` undoes.
+    Any other console command stays a grown-up's with the toggle."""
     if _channel() != MINECRAFT_CHANNEL:
         return None
     if (str(domain).lower(), str(service).lower()) in MINECRAFT_CHAT_SERVICES:
         return None
+    if (str(domain).lower(), str(service).lower()) == ("bruh_minecraft", "rcon_command") \
+            and isinstance(data, dict) and set(data) == {"command"}:
+        why = _mc_skin_refusal(data["command"])
+        return {"error": why} if why else None
     return {"error": MINECRAFT_CHAT_REFUSAL.format(what=f"{domain}.{service}")}
+
+
+MC_SKIN_OWN = ("From the game, a skin can only be changed for the person asking ({who}), "
+               "not for {target}. A parent with 'Can ask for anything' on can change "
+               "anyone's. Tell them that plainly; do not retry another way.")
+
+
+def _game_player():
+    """The account a game run is for (the listener's BRAIN_GAME_PLAYER),
+    on the game's two channels; "" anywhere else or when it was not said."""
+    if _channel() not in (MINECRAFT_CHANNEL, "minecraft_trusted"):
+        return ""
+    raw = os.environ.get("BRAIN_GAME_PLAYER", "")
+    return raw if re.fullmatch(r"[A-Za-z0-9_.]{1,17}", raw) else ""
+
+
+def _mc_skin_refusal(command):
+    """Why the guarded game channel may not send this console command, or
+    None. The one command it may send is a skin (#670), and only exactly
+    `skin set <Java name|https://textures.minecraft.net/texture/<hex>> <player>`
+    or `skin clear <player>` (`rules.SKIN_COMMAND`, matched whole: no space,
+    quote, newline, slash or extra word rides it), for the account the run
+    is for, while that account is online."""
+    match = _mc_rules().SKIN_COMMAND.fullmatch(command) if isinstance(command, str) else None
+    if not match:
+        return MINECRAFT_CHAT_REFUSAL.format(what="bruh_minecraft.rcon_command")
+    target, speaker = match.group(1), _game_player()
+    if not speaker or target != speaker:
+        return MC_SKIN_OWN.format(who=speaker or "nobody named", target=target)
+    online, down = _mc_online()
+    if down:
+        return down
+    if target not in online:
+        return f"{target} is not online, so their skin cannot be changed now."
+    return None
 
 
 def minecraft_world(action, value=None, player=None, options=None, blocks=None, fills=None,
@@ -3246,6 +3289,8 @@ def minecraft_world(action, value=None, player=None, options=None, blocks=None, 
     if action in MC_COMPANION_ACTIONS:
         return _mc_companion_action(action, value, player, options, blocks, fills,
                                     shapes, job)
+    if action == "skin":
+        return _mc_skin(value, player)
     if action == "time":
         spoken = {"morning": "day", "sunrise": "day", "evening": "night",
                   "sunset": "night", "dusk": "night", "dawn": "day"}
@@ -3263,11 +3308,66 @@ def minecraft_world(action, value=None, player=None, options=None, blocks=None, 
     else:
         return {"error": "Use time (day/night/noon/midnight or ticks), weather "
                          "(clear/rain/thunder), say, rename, ask, build, look, edit, atlas, "
-                         "room, label or undo."}
+                         "room, label, skin or undo."}
     if result.get("error"):
         return result
     return {"done": True, "action": action, "value": value,
             "server_reply": _reply(result)}
+
+
+# What a Bedrock player sees of a skin, said with every skin put on one: no
+# size check is made, because telling a 64x32 skin from a 64x64 one needs
+# the picture, and brAIn downloads none (SkinsRestorer fetches it).
+MC_SKIN_BEDROCK_NOTE = (
+    "They play on Bedrock: they see their own new skin only after leaving and joining "
+    "again. If their face then shows black, it is an old 64x32 skin (Bedrock draws its "
+    "hat layer over the face): offer a newer one.")
+
+
+def _mc_skin(value, player):
+    """Put a skin on one player (SkinsRestorer's `skin set <name|link>
+    <player>`, or `skin clear <player>`) over BRUH Minecraft's rcon_command,
+    which answers with the plugin's console lines; remembered per account by
+    brAIn's companion. Refused to voice."""
+    refusal = _voice_admin_refusal("Changing a Minecraft skin")
+    if refusal:
+        return refusal
+    rules = _mc_rules()
+    skin = rules.skin_value(value)
+    if skin is None:
+        return {"error": ("value is a Java Edition player's name (their skin is used), a "
+                          "https://textures.minecraft.net/texture/… link, or clear — not a "
+                          "website or a file. Ask them for the Java name or the texture link.")}
+    online, down = _mc_online()
+    if down:
+        return {"error": down}
+    if not player:
+        return {"error": "Name the player whose skin it is (player)."}
+    target, why = _mc_resolve(player, online)
+    if not target or target.startswith("@"):
+        return {"error": why or "A skin is for one player: name them."}
+    command = rules.skin_command(skin, target)
+    if not command:
+        return {"error": f"{target} is not a name the server can take."}
+    if _channel() == MINECRAFT_CHANNEL and target != _game_player():
+        # A child (or anyone without "Can ask for anything") changes only
+        # their own; the trusted scope may change anyone's.
+        return {"error": MC_SKIN_OWN.format(who=_game_player() or "nobody named",
+                                            target=target)}
+    result = _addon_call("bruh_minecraft", "rcon_command", {"command": command})
+    if result.get("error"):
+        return {"error": f"The server refused the skin: {result['error']}"}
+    worked, line = rules.skin_answer(skin, target, result.get("reply"))
+    out = {"done": worked is not False, "player": target, "skin": skin,
+           "server_reply": _reply(result), "said": line}
+    if worked is None:
+        out["note"] = ("The server said nothing back: it may not have SkinsRestorer "
+                       "(minecraft_addons list), so do not say it worked.")
+    if worked is not False:
+        _job_call({"action": "skin", "player": target, "skin": skin})
+        if rules.is_bedrock(target):
+            out["bedrock"] = MC_SKIN_BEDROCK_NOTE
+    return out
 
 
 def _mc_companion_say(value, to):
@@ -5248,6 +5348,105 @@ def search_related(item_type, item_id):
         out["note"] = f"Lists over {MAX_RELATED} are cut; counts are whole."
     if not related:
         out["note"] = "Home Assistant relates nothing to this."
+    return out
+
+
+# One device read whole: what the registry says it is (maker, model,
+# firmware, the integrations that hold it) and, for a Z-Wave JS node, every
+# configuration parameter with its current value — the facts an update's
+# notes are about, which live on the device rather than in any YAML. The
+# upgrade advisor answered "Can't tell" (and guessed a parameter name)
+# about a switch's firmware because nothing it could reach carried them.
+# Three reads, the frontend's own commands, and nothing that writes.
+MAX_DEVICE_PARAMETERS = 250
+MAX_PARAMETER_TEXT = 300
+
+
+def _parameter_line(row):
+    """`parameter 3: LED indicator = Always off (value 2) — what it does`."""
+    meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    number = row.get("property")
+    key = row.get("property_key")
+    name = f"parameter {number}" + (f".{key}" if key not in (None, "") else "")
+    endpoint = row.get("endpoint")
+    if endpoint not in (None, 0):
+        name += f" (endpoint {endpoint})"
+    value = row.get("value")
+    states = meta.get("states") if isinstance(meta.get("states"), dict) else {}
+    shown = states.get(str(value))
+    if shown is None:
+        shown = f"{value} {meta['unit']}" if meta.get("unit") else str(value)
+    line = f"{name}: {meta.get('label') or 'unlabelled'} = {shown} (value {value})"
+    if meta.get("description"):
+        line += f" \u2014 {meta['description']}"
+    return line[:MAX_PARAMETER_TEXT]
+
+
+def get_device_details(entity_id=None, device_id=None):
+    """The device behind an entity (or by its id), and its Z-Wave
+    configuration parameters when it is a Z-Wave JS node. Read-only."""
+    entity_id = str(entity_id or "").strip()
+    device_id = str(device_id or "").strip()
+    if not entity_id and not device_id:
+        return {"error": "Give an entity_id (any entity of the device) or a device_id."}
+    try:
+        if not device_id:
+            entry = _ws_command({"type": "config/entity_registry/get",
+                                 "entity_id": entity_id})
+            if not isinstance(entry, dict) or "error" in entry:
+                return entry if isinstance(entry, dict) else {"error": str(entry)}
+            device_id = str(entry.get("device_id") or "")
+            if not device_id:
+                return {"entity_id": entity_id,
+                        "platform": entry.get("platform"),
+                        "note": "This entity belongs to no device."}
+        devices = _ws_command({"type": "config/device_registry/list"}, timeout=30)
+    except ImportError:
+        return {"error": "websockets package not available in this environment"}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+    if isinstance(devices, dict) and "error" in devices:
+        return devices
+    device = next((d for d in devices or [] if isinstance(d, dict)
+                   and d.get("id") == device_id), None)
+    if device is None:
+        return {"error": f"There is no device {device_id} in the registry."}
+    integrations = sorted({str(i[0]) for i in device.get("identifiers") or []
+                           if isinstance(i, (list, tuple)) and i})
+    info = {
+        "device_id": device_id,
+        "name": device.get("name_by_user") or device.get("name"),
+        "manufacturer": device.get("manufacturer"),
+        "model": device.get("model"),
+        "model_id": device.get("model_id"),
+        "sw_version": device.get("sw_version"),
+        "hw_version": device.get("hw_version"),
+        "area_id": device.get("area_id"),
+        "integrations": integrations,
+    }
+    out = {"device": {k: v for k, v in info.items() if v not in (None, "", [])}}
+    if entity_id:
+        out["entity_id"] = entity_id
+    if "zwave_js" not in integrations:
+        return out
+    try:
+        params = _ws_command({"type": "zwave_js/get_config_parameters",
+                              "device_id": device_id}, timeout=30)
+    except Exception as e:  # noqa: BLE001
+        out["configuration_parameters_error"] = str(e)
+        return out
+    if not isinstance(params, dict) or "error" in params:
+        out["configuration_parameters_error"] = str(
+            (params or {}).get("error") if isinstance(params, dict) else params)
+        return out
+    rows = [r for r in params.values() if isinstance(r, dict)]
+    rows.sort(key=lambda r: (int(r.get("property") or 0)
+                             if str(r.get("property") or "0").isdigit() else 0,
+                             str(r.get("property_key") or "")))
+    out["configuration_parameters"] = [_parameter_line(r) for r in
+                                       rows[:MAX_DEVICE_PARAMETERS]]
+    if len(rows) > MAX_DEVICE_PARAMETERS:
+        out["note"] = f"{len(rows)} parameters; the first {MAX_DEVICE_PARAMETERS} are listed."
     return out
 
 
@@ -7257,17 +7456,20 @@ TOOLS = [
             "in a small bubble over your allay (everybody in the game sees it) and in "
             "their journal book, never in chat; "
             "each game tool you call is already shown as a step, so think is for the "
-            "reasoning between them)."
+            "reasoning between them); skin (player; value: a Java Edition player's name — "
+            "their skin is used — or a https://textures.minecraft.net/texture/… link, or "
+            "clear: SkinsRestorer puts it on and its reply comes back; a Bedrock player sees "
+            "their own only after joining again)."
         ),
         "inputSchema": {"type": "object", "properties": {
             "action": {"type": "string",
                        "enum": ["time", "weather", "say", "rename", "ask", "undo", "build",
-                                "look", "edit", "atlas", "room", "label", "think"]},
+                                "look", "edit", "atlas", "room", "label", "think", "skin"]},
             "value": {"type": "string"},
             "player": {"type": "string", "description": (
                 "ask: the child to ask; say: who the companion says it to ('family' for "
                 "everyone on the list); build: whose feet the offsets are from; atlas, "
-                "room, look: around whom.")},
+                "room, look: around whom; skin: whose skin.")},
             "options": {"anyOf": [{"type": "array", "items": {
                 "anyOf": [{"type": "string"}, {"type": "object"}, {"type": "integer"}]}},
                 {"type": "object"}], "description": (
@@ -8849,6 +9051,29 @@ TOOLS = [
         }
     },
     {
+        "name": "get_device_details",
+        "description": (
+            "One device, read whole: its maker, model, firmware and the "
+            "integrations that hold it — and, for a Z-Wave device, every "
+            "configuration parameter with its current value and what it "
+            "does. Give any entity of the device, or its device_id. "
+            "Read-only."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "Any entity of the device (an update entity works)"
+                },
+                "device_id": {
+                    "type": "string",
+                    "description": "The device's id, if you have it instead"
+                }
+            }
+        }
+    },
+    {
         "name": "search_related",
         "description": (
             "Everything Home Assistant relates to one item — the entities, "
@@ -9722,6 +9947,7 @@ TOOL_IMPLEMENTATIONS = {
     "get_automation_trace": "get_automation_trace",
     "get_automation_config": "get_automation_config",
     "search_related": "search_related",
+    "get_device_details": "get_device_details",
     "get_ha_config": "get_config",
     "get_services": "get_services",
     "get_entity_counts": "get_entity_counts",
@@ -9840,7 +10066,7 @@ _TOOL_SPECS = {
 VOICE_REFUSED_TOOLS = frozenset({
     "get_registry", "get_entity_counts", "list_dashboards", "get_dashboard",
     "get_automations", "get_automation_trace", "get_automation_config",
-    "search_related", "get_activity",
+    "search_related", "get_activity", "get_device_details",
     "get_house_model", "room_physics", "simulate_automation", "get_findings",
     "get_health", "get_error_log", "fire_event", "get_supervisor_info",
     "reload_config", "offer_resolutions", "explain_decision",

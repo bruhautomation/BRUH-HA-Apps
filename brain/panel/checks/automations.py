@@ -1575,6 +1575,97 @@ def conflicting(snap: dict, now: float) -> list[dict]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# auto.second_responder — something else answers as brAIn in Minecraft (#675)
+# ---------------------------------------------------------------------------
+
+# brAIn's companion answers every family line in BRUH Minecraft's chat
+# itself. An automation or script a house wired before it (or beside it)
+# that also speaks as the companion, or hands the game's chat to a
+# conversation agent, is a second voice under the same name: one says "I
+# can't" while the other does it. Matched on what the config says, not on
+# what it might do: a call to the companion's own say service, a console
+# `tellraw`/`say` whose words carry the companion's name, or a rule
+# triggered by the game's chat event that calls `conversation.process`.
+GAME_CHAT_EVENTS = ("bruh_minecraft_chat",)
+_COMPANION_SAY = "bruh_minecraft.companion_say"
+_CONSOLE_SERVICES = ("bruh_minecraft.rcon_command", "bruh_minecraft.say")
+_CONVERSATION = ("conversation.process",)
+
+
+def _calls(config) -> list[tuple[str, dict]]:
+    """(service, its data) for every action step in a config."""
+    out = []
+    for node in walk(config):
+        if not isinstance(node, dict):
+            continue
+        service = node.get("action") or node.get("service")
+        if isinstance(service, str) and "." in service:
+            data = node.get("data") if isinstance(node.get("data"), dict) else {}
+            out.append((service.strip().lower(), data))
+    return out
+
+
+def _hears_game_chat(config: dict) -> bool:
+    for trig in _triggers(config):
+        events = listify(trig.get("event_type"))
+        if any(isinstance(e, str) and e.strip().lower() in GAME_CHAT_EVENTS for e in events):
+            return True
+    return False
+
+
+def _speaks_as(text: str, names: set[str]) -> bool:
+    words = set(re.findall(r"[a-z0-9_]+", text.lower()))
+    return bool(words & names)
+
+
+def _second_voice(config: dict, names: set[str]) -> str:
+    """How this config answers in the game as the companion, in words, or ""."""
+    calls = _calls(_enabled_only(config))
+    for service, data in calls:
+        if service == _COMPANION_SAY:
+            return "it speaks through brAIn's own say action in the game"
+        if service in _CONSOLE_SERVICES:
+            text = " ".join(str(v) for v in data.values() if isinstance(v, str))
+            said = text.strip().lower()
+            if (said.startswith(("tellraw", "say", "/tellraw", "/say"))
+                    or service.endswith(".say")) and _speaks_as(text, names):
+                return "it sends chat to the game under brAIn's name"
+    if _hears_game_chat(config) and any(s in _CONVERSATION for s, _ in calls):
+        return "it hands the game's chat to a voice assistant, which answers too"
+    return ""
+
+
+def second_responder(snap: dict, now: float) -> list[dict]:
+    house = House(snap)
+    name = " ".join(str(snap.get("assistant_name") or "").split()) or "brAIn"
+    names = {name.lower(), "brain"} | {w for w in re.findall(r"[a-z0-9_]+", name.lower())
+                                         if len(w) >= 3}
+    out = []
+    for kind, items in (("Automation", _automations(house)),
+                        ("Script", _scripts(house))):
+        for item in items:
+            how = _second_voice(item["config"], names)
+            if not how:
+                continue
+            if not house.should_report(item["entity_id"], "auto.second_responder"):
+                continue
+            out.append({
+                "text": f"Two things answer as {name} in the game: {_label(kind, item)}",
+                "detail": (f"{_sentence(how)}, while brAIn already answers every family "
+                           "line in the game itself. Players get two answers that can "
+                           f"disagree — one says it can't do something and the other does "
+                           "it — and only brAIn's answer follows the family list and who "
+                           "may control the house."),
+                "fix": (f"Turn {_label(kind, item)} off, or delete it: brAIn "
+                        "already hears the game's chat and answers it."),
+                "severity": "warning",
+                "fixable": True,
+                "entity_id": item["entity_id"],
+            })
+    return out
+
+
 CHECKS = [
     {"id": "auto.dead_ref", "area": "automations", "title": "Automations naming missing entities",
      "needs": ("states", "registry", "automations"), "run": dead_ref},
@@ -1607,6 +1698,9 @@ CHECKS = [
      "needs": ("actions",), "run": conflicting},
     {"id": "auto.overridden", "area": "automations", "title": "Automations a person keeps undoing",
      "needs": ("actions",), "run": overridden},
+    {"id": "auto.second_responder", "area": "automations",
+     "title": "Something else answering as brAIn in Minecraft",
+     "needs": ("automations",), "run": second_responder},
 ]
 
 __all__ = ["CHECKS", "DAY"]

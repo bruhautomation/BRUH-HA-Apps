@@ -6,7 +6,8 @@ game events arrive there and its services are called from there. This
 module is the panel's half and the ONE writer of its settings
 (`/config/.brain/minecraft/settings.json`): the on/off switch, the family
 list and roles, bedtime, the budgets (0 = unlimited, the default), every
-line or only named ones, how many jobs run at once, the spyglass on join,
+line or only named ones, how many jobs run at once and how long one may
+take, the spyglass on join,
 and the model and effort for replies and for builds — "Default" resolved here
 through `model_plan` (the jobs `minecraft_chat` and `minecraft_build`) and
 written beside the choice, so the listener needs no copy of the plan.
@@ -104,6 +105,12 @@ def save(fields: dict, shared_dir: str | None = None) -> dict[str, Any]:
         if isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= rules.WORKERS_MAX:
             raise rules.RulesError(f"Jobs at once is a number from 1 to {rules.WORKERS_MAX}.")
         merged["workers"] = n
+    if "job_minutes" in fields:
+        n = fields["job_minutes"]
+        if isinstance(n, bool) or n not in rules.JOB_MINUTES:
+            raise rules.RulesError("Time for one job is "
+                                   + ", ".join(str(m) for m in rules.JOB_MINUTES) + " minutes.")
+        merged["job_minutes"] = n
     if "people" in fields:
         merged["people"] = rules.clean_people(fields["people"])
     if "bedtime_entity" in fields:
@@ -163,6 +170,28 @@ def publish(shared_dir: str | None = None) -> bool:
     return True
 
 
+def publish_house(acts: bool, yolo: bool, shared_dir: str | None = None) -> bool:
+    """Write whether a house change acts at once ("Let brAIn act without
+    asking", YOLO mode on top) beside the settings, for the integration's
+    companion to build each run's capability paragraph from (#675). Called
+    wherever the switch is published, so the game hears the switch as the
+    chat does. True when written; a house without the faculty's files gets
+    no folder, as `publish`."""
+    base = shared_dir or SHARED_DIR
+    if not (os.path.exists(_path(rules.SETTINGS, base))
+            or os.path.exists(_path(rules.HANDOVER, base))):
+        return False
+    want = {"acts": acts is True, "yolo": yolo is True}
+    path = _path(rules.HOUSE, base)
+    if rules.read_json(path, {}) == want:
+        return False
+    try:
+        rules.write_json(path, want)
+    except OSError:
+        return False
+    return True
+
+
 def view(shared_dir: str | None = None) -> dict[str, Any]:
     """What ⚙ › Minecraft shows, from brAIn's own files."""
     base = shared_dir or SHARED_DIR
@@ -177,7 +206,7 @@ def view(shared_dir: str | None = None) -> dict[str, Any]:
     name = rules.persona_name(base)
     return {"settings": settings, "name": name, "wake_words": list(rules.wake_words(name)),
             "defaults": resolved_models(), "model_choices": list(MODEL_CHOICES),
-            "efforts": list(rules.EFFORTS),
+            "efforts": list(rules.EFFORTS), "job_minutes": list(rules.JOB_MINUTES),
             "today": {"turns": state.get("turns", 0), "actions": state.get("actions", 0)},
             "paused": bool(state.get("paused")), "paused_by": state.get("paused_by") or "",
             "talks": talks[:20],
@@ -212,4 +241,4 @@ def learned(shared_dir: str | None = None) -> list[dict[str, Any]] | None:
     return rules.learned_facts(memory, rules.persona_name(shared_dir or SHARED_DIR))
 
 
-__all__ = ["load", "save", "publish", "view", "learned", "jobs", "resolved_models", "rules"]
+__all__ = ["load", "save", "publish", "publish_house", "view", "learned", "jobs", "resolved_models", "rules"]

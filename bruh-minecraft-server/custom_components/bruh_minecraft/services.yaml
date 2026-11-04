@@ -1,6 +1,6 @@
 rcon_command:
   name: Run RCON command
-  description: Execute an arbitrary server command. Do not include the leading slash.
+  description: Execute an arbitrary server command. Do not include the leading slash. Returns the server's reply; when a plugin answers only on the server console (SkinsRestorer, Skript), the console lines it wrote right after the command.
   fields:
     command:
       name: Command
@@ -295,6 +295,59 @@ remove_addon:
       selector:
         text: {}
 
+list_scripts:
+  name: List scripts
+  description: The Skript scripts and data pack functions written into the active world through write_script, and whether the Skript plugin is installed. Returns response data.
+
+write_script:
+  name: Write a script
+  description: Write a Skript script or a data pack function into the running world and load it without a restart. A script that does not load is an error carrying the loader's messages. Only a script written through this service can be overwritten.
+  fields:
+    kind:
+      name: Kind
+      required: true
+      selector:
+        select:
+          options:
+            - skript
+            - datapack_function
+    name:
+      name: Name
+      description: 1 to 48 lowercase letters, digits, _ and -. A function is run in game by its name in the bruh_scripts namespace.
+      required: true
+      selector:
+        text: {}
+    content:
+      name: Content
+      description: The script's text, up to 64 KB.
+      required: true
+      selector:
+        text:
+          multiline: true
+    by:
+      name: Written by
+      required: false
+      selector:
+        text: {}
+
+remove_script:
+  name: Remove a script
+  description: Unload and delete a script written through write_script. Nothing else is removed.
+  fields:
+    kind:
+      name: Kind
+      required: true
+      selector:
+        select:
+          options:
+            - skript
+            - datapack_function
+    name:
+      name: Name
+      required: true
+      selector:
+        text: {}
+
 get_companion:
   name: Companion
   description: The companion's hands in the game — who it is (the name and colour brAIn last set), the named places, the choice-pad questions, the action log (each undoable action has an id), what it said, and whether the server checks the accounts behind the names in chat. Returns response data.
@@ -575,6 +628,36 @@ undo_action:
       selector:
         text: {}
 
+companion_bar:
+  name: Show a job's bar
+  description: A boss bar at the top of one player's screen for a long job — its title, the last step and how far along it is. Java and Bedrock players both see it. End takes it away.
+  fields:
+    player:
+      name: Player
+      required: true
+      selector:
+        text: {}
+    key:
+      name: Key
+      description: The job's id; one bar per key.
+      required: true
+      selector:
+        text: {}
+    text:
+      name: Text
+      selector:
+        text: {}
+    percent:
+      name: Percent
+      selector:
+        number:
+          min: 0
+          max: 100
+    end:
+      name: End
+      description: Take the bar away.
+      selector:
+        boolean: {}
 companion_progress:
   name: Show progress
   description: A line on named players' action bar, above the hotbar — how a long job is going. Never in chat; it fades after a few seconds.

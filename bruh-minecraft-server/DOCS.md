@@ -23,7 +23,7 @@ A bird's-eye view so you can skim to the sections that matter to you:
 - **Offline mode done right.** Set a world's `online-mode: false` (panel → Server Properties) and the add-on silently forces `enforce-secure-profile: false`, switches Geyser to `auth-type: offline`, uninstalls Floodgate, and sets `validate-bedrock-login: false` — the full chain of changes Microsoft / Mojang's and GeyserMC's defaults gate behind one flag.
 - **Per-world settings.** Each world has its own `server.properties` — one world can be creative, another survival; switching loads each world's own gamemode, difficulty, world-gen, whitelist, etc.
 - **World safety.** Incremental git-backed snapshots or tar.gz archive backups on a configurable schedule, with one-click restore from either format.
-- **Home Assistant integration** — sensors (players, TPS, MOTD, difficulty, gamemode, …), binary sensors (online, RCON), buttons (Backup / Restart / Stop / Save), and 21 services (`rcon_command`, `say`, `give`, `teleport`, `set_gamemode`, `set_weather`, `set_time`, `get_status`, `backup_now`, lifecycle, player management, and the add-on browser) that answer with the server's reply.
+- **Home Assistant integration** — sensors (players, TPS, MOTD, difficulty, gamemode, …), binary sensors (online, RCON), buttons (Backup / Restart / Stop / Save), and the services (`rcon_command`, `say`, `give`, `teleport`, `set_gamemode`, `set_weather`, `set_time`, `get_status`, `backup_now`, lifecycle, player management, the add-on browser, and scripts written into the running world) that answer with the server's reply.
 - **Add-on browser** — search Modrinth for plugins, data packs, server-side mods and resource packs this server can run and add them to a world in one press. They run on the server, so every player gets them — iPads and consoles through Geyser included — with nothing to install on a device.
 - **brAIn** — with brAIn installed you can just ask: "teleport Emma to Dad", "make it day", "who's on?", "add a sit-anywhere plugin".
 - **Self-healing.** Ghost-session auto-kicker clears stuck Bedrock handshakes; RCON client is thread-safe; bad plugin URLs log a warning instead of tanking startup; crash banner surfaces the last error lines on the dashboard.
@@ -561,12 +561,33 @@ three minutes, so a stopped add-on never reads as a world with people in it.
 | `bruh_minecraft.save_build` | `title` to add a job, or `id` to change one; `part`, `status`, `progress`, `bounds`, `notes`, `image`, `by` |
 | `bruh_minecraft.delete_build` | `id` |
 | `bruh_minecraft.rename_world` | `name` (as said; the folder takes a safe form of it) |
+| `bruh_minecraft.list_scripts` | — (response only: the scripts written through `write_script`, and whether Skript is installed) |
+| `bruh_minecraft.write_script` | `kind` (`skript` or `datapack_function`), `name`, `content`, optional `by` |
+| `bruh_minecraft.remove_script` | `kind`, `name` |
 | companion services | see **The companion contract** below |
 
 A player may be a name or `@a` (everyone), `@p`, `@r`. Every service that has
 something to say returns the server's reply as response data (`response_variable`
 in a script), and a refusal — or an add-on that did not answer — fails the call
 with the reason, so it shows in the automation trace.
+
+**Plugins that answer the console.** Many plugins (SkinsRestorer's `skin set`
+and `sr status`, Skript) send their message to the server console instead of
+back over RCON. When RCON's reply is empty, `rcon_command` (and the panel's
+console box) answers with the console lines the server wrote in the second
+after the command instead, so a plugin's success or error comes back as the
+reply.
+
+**Scripts in the running world.** `write_script` puts a Skript script into
+`plugins/Skript/scripts/<name>.sk` (only when the Skript plugin is installed)
+or a function into the world's `bruh_scripts` data pack (run it with
+`function bruh_scripts:<name>`), then reloads just that, with no restart. If
+it does not load, the call fails with Skript's or the data pack loader's
+errors; the file stays so the next write can fix it. A name is 1 to 48
+lowercase letters, digits, `_` and `-`, and a script is at most 64 KB. What
+was written is recorded per world in `.bruh-scripts.json`, and only those
+scripts can be overwritten or removed: a script of the same name that was put
+there some other way is left alone.
 
 All services are routed through a file-based IPC bridge at `/config/.bruh_minecraft/`. HA Core drops a JSON request; the add-on watches that folder, handles the request via RCON, and writes a response file back.
 
@@ -675,6 +696,7 @@ toggle is not used, and brAIn's ⚙ row says so.
 | `bruh_minecraft.look_blocks` | `player` (around them) or `x`, `y`, `z`; optional `size` ([x, y, z], at most 32 × 16 × 32), `dimension` (response only) | every block in the box that is not air, by block state, as runs `[x, y, z, length]` along x — walls, doors, beds, furniture — read from the saved world after a save |
 | `bruh_minecraft.undo_action` | optional `id` (the newest undoable one without), or `job` | puts back blocks that still hold what was placed (for an edit, their saved state) and removes the action's entities; with `job`, every edit recorded for it, newest first |
 | `bruh_minecraft.companion_progress` | `to` (a player, a list or `everyone`), `text`, optional `percent`, `colour` | a line on their action bar above the hotbar — a long job's progress; never in chat |
+| `bruh_minecraft.companion_bar` | `player`, `key` (a job's id), `text`, optional `percent`, `end` | a boss bar at the top of that player's screen for a long job — its title, last step and percent; Bedrock players see it through Geyser; `end` takes it away |
 | `bruh_minecraft.give_spyglass` | `player`, `name` | one spyglass with that name, unless they already have a spyglass by that name |
 | `bruh_minecraft.atlas` | `player`, or `x`, `z` (and `y`), optional `dimension`, `radius` (8–256, 64), `query` (response only) | the buildings near (each with its box, name and rooms) and the roads between them, `here` (the building and room the player or point is in), and `matches` for `query` among names, labels and signs |
 | `bruh_minecraft.room` | `player`, a `room` id, or `x`, `y`, `z` (response only) | one room in full: floor height and area, the free floor cells, doors, windows, light, furniture, the floor, wall and ceiling blocks, and its kind (bedroom, kitchen, storage, workshop, library or room) |

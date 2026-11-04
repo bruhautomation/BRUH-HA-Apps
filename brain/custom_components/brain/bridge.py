@@ -96,6 +96,9 @@ class BrainRunError(RuntimeError):
 # that predates the field and is read as completed, which is exactly what
 # every result it ever wrote claimed.
 TASK_COMPLETED = "completed"
+# Beside a task's file in tasks/: "nobody is waiting, stop it" (the listener
+# kills that task's CLI). Not `.json`, so the listener never takes it for a task.
+TASK_CANCEL_SUFFIX = ".cancel"
 
 
 class ClaudeBridge:
@@ -509,6 +512,8 @@ class ClaudeBridge:
         speaker: dict | None = None,
         session_id: str | None = None,
         thought: dict | None = None,
+        stop_on_cancel: bool = False,
+        player: str | None = None,
     ) -> dict:
         """Send a task and wait for the whole result: ``{"text", "data"}``.
 
@@ -531,6 +536,13 @@ class ClaudeBridge:
         keeps one per player. The result's `session_id` is the session the
         run ended in, for the next line to resume — and a session the CLI
         no longer holds is started fresh by the listener, never failed.
+
+        `stop_on_cancel` says nobody wants this run once its waiter is
+        cancelled: a cancel then leaves `tasks/<id>.cancel`, and the listener
+        stops the CLI within seconds rather than letting it run out its
+        window (the Minecraft faculty's stop and cancel; #672). Off, a
+        cancelled waiter leaves the run to finish, which a half-made house
+        change needs.
 
         Raises `BrainRunError` when the listener says the task failed —
         refused, timed out, signed out, produced nothing — and
@@ -594,6 +606,10 @@ class ClaudeBridge:
             key = str(thought.get("key") or "")
             if re.fullmatch(r"[A-Za-z0-9_.*]{1,17}", to) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,24}", key):
                 task["thought"] = {"player": to, "key": key}
+        # Whose line a game run is for (both game scopes): the account the
+        # MCP server holds a skin change to on the guarded one. Plain names only.
+        if isinstance(player, str) and re.fullmatch(r"[A-Za-z0-9_.]{1,17}", player):
+            task["player"] = player
         # A CLI session uuid or nothing: it becomes an argv entry there.
         if isinstance(session_id, str) and re.fullmatch(r"[A-Za-z0-9-]{1,64}", session_id):
             task["session_id"] = session_id
@@ -607,7 +623,15 @@ class ClaudeBridge:
 
         _LOGGER.debug("Task %s written (timeout=%ds)", task_id, timeout)
 
-        answer = await self._poll_for_result(result_file, timeout)
+        try:
+            answer = await self._poll_for_result(result_file, timeout)
+        except asyncio.CancelledError:
+            if stop_on_cancel:
+                cancel_file = os.path.join(self.tasks_dir, f"{task_id}{TASK_CANCEL_SUFFIX}")
+                # Shielded: the marker is written even if this is cancelled again.
+                await asyncio.shield(self._hass.async_add_executor_job(
+                    self._write_json, cancel_file, {"id": task_id, "ts": time.time()}))
+            raise
         status = answer.get("status")
         if status and status != TASK_COMPLETED:
             raise BrainRunError(answer["text"], answer.get("error") or status)
