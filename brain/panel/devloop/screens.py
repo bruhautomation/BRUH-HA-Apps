@@ -121,6 +121,9 @@ FOCUS_MARGIN = 8
 # Long enough to be a hold on every panel this photographs (Morph's is
 # 540 ms), and short enough not to be a second press.
 HOLD_S = 0.9
+# How long a picture waits for the questions a card has put to Home Assistant
+# (a chart's history) — bounded, so one that never answers costs this much.
+ANSWERS_MAX_S = 12
 
 
 class MissingElement(RuntimeError):
@@ -600,6 +603,7 @@ class CDP:
         self.next_id = 0
         self.pending: dict[int, asyncio.Future] = {}
         self.inflight: set[str] = set()
+        self.answers_left: dict[str, float] = {}
         self.last_net = time.monotonic()
         # The write guard, per tab: the reads it lets through, and what it
         # held back. A tab with no entry is not guarded.
@@ -934,6 +938,7 @@ async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
         await cdp.call("Emulation.setEmulatedMedia", {"features": [
             {"name": "prefers-color-scheme", "value": scheme},
             {"name": "prefers-reduced-motion", "value": "reduce"}]}, session)
+        cdp.answers_left[session] = ANSWERS_MAX_S
         cdp.last_net = time.monotonic()
         await cdp.call("Page.navigate", {"url": url}, session, timeout=NAV_TIMEOUT_S)
         await cdp.settle()
@@ -945,12 +950,14 @@ async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
                 raise RuntimeError("the screen could not be opened")
             cdp.last_net = time.monotonic()
             await cdp.settle()
+        await _answers(cdp, session)
         if focus:
             # Found and pressed BEFORE redaction, so what is redacted is the
             # page as it will be photographed — an opened card included.
-            await _focus_press(cdp, session, focus, label)
+            await _focus_press(cdp, session, focus, label, touch)
         else:
             await cdp.call("Runtime.evaluate", {"expression": "window.scrollTo(0, 0)"}, session)
+        await _answers(cdp, session)
         await _redact_page(cdp, session, confidential, aliases)
         if AFTER_REDACT is not None:
             await AFTER_REDACT(cdp, session)
@@ -1001,6 +1008,7 @@ async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
     finally:
         cdp.guards.pop(session, None)
         cdp.held.pop(session, None)
+        cdp.answers_left.pop(session, None)
         try:
             await cdp.call("Target.closeTarget", {"targetId": tid})
         except Exception:  # noqa: BLE001 — a tab that will not close dies with the browser
@@ -1018,6 +1026,36 @@ _REVEAL_JS = r"""
   catch (e) { return id; }
 })
 """
+
+
+# A page that puts questions to Home Assistant (the harness: every chart's
+# history, a sparkline's statistics) says when none is out with
+# `window.__harnessIdle(ms)`. Without it, a picture taken as a room unfolds
+# has charts with no lines, because their questions had only just been asked.
+_ANSWERS_JS = r"""
+(async (ms) => {
+  const idle = window.__harnessIdle;
+  if (typeof idle !== "function") return 0;
+  try { return await idle(ms); } catch (e) { return 0; }
+})
+"""
+
+
+async def _answers(cdp: CDP, session: str) -> None:
+    """Wait for the page's open questions, out of ONE budget per picture
+    (`ANSWERS_MAX_S` spread over every call), so a question that never
+    comes back costs the bound once and not at every step."""
+    left = cdp.answers_left.get(session, ANSWERS_MAX_S)
+    if left <= 0:
+        return
+    began = time.monotonic()
+    try:
+        await cdp.call("Runtime.evaluate", {
+            "expression": f"({_ANSWERS_JS})({int(left * 1000)})",
+            "awaitPromise": True, "returnByValue": True}, session, timeout=left + 8)
+    except Exception:  # noqa: BLE001 — a page that cannot say is photographed as it is
+        pass
+    cdp.answers_left[session] = left - (time.monotonic() - began)
 
 
 async def _reveal(cdp: CDP, session: str, focus: dict) -> None:
@@ -1040,23 +1078,37 @@ async def _find(cdp: CDP, session: str, focus: dict, label: str) -> dict:
     return rect
 
 
-async def _focus_press(cdp: CDP, session: str, focus: dict, label: str) -> None:
+async def _focus_press(cdp: CDP, session: str, focus: dict, label: str,
+                       touch: bool = False) -> None:
     """Scroll the element into view, and tap it or hold it open first when
-    asked. The press is a real pointer down and up at its middle, so the
+    asked. The press is a real pointer down and up at its middle (a finger
+    on a phone view, a mouse otherwise), so the
     page answers it exactly as it answers a finger — and the write guard
     and the socket refusal are already on the page, so whatever the press
     tries to change goes nowhere."""
     await _reveal(cdp, session, focus)
+    await _answers(cdp, session)
     rect = await _find(cdp, session, focus, label)
     press = focus.get("press") or ""
     if press not in FOCUS_PRESSES:
         return
     x, y = rect["x"] + rect["w"] / 2, rect["y"] + min(rect["h"] / 2, 40)
-    common = {"x": x, "y": y, "button": "left", "clickCount": 1}
-    await cdp.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y}, session)
-    await cdp.call("Input.dispatchMouseEvent", {"type": "mousePressed", **common}, session)
-    await asyncio.sleep(HOLD_S if press == "open" else 0.05)
-    await cdp.call("Input.dispatchMouseEvent", {"type": "mouseReleased", **common}, session)
+    hold = HOLD_S if press == "open" else 0.05
+    if touch:
+        # A phone's press is a finger. A card built on Home Assistant's
+        # action handler listens to touch alone once the device has touch
+        # (a mouse press never reaches it), and Morph's pointer handlers
+        # get the finger's pointer events as well.
+        point = [{"x": x, "y": y, "id": 1, "radiusX": 4, "radiusY": 4, "force": 1}]
+        await cdp.call("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": point}, session)
+        await asyncio.sleep(hold)
+        await cdp.call("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []}, session)
+    else:
+        common = {"x": x, "y": y, "button": "left", "clickCount": 1}
+        await cdp.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y}, session)
+        await cdp.call("Input.dispatchMouseEvent", {"type": "mousePressed", **common}, session)
+        await asyncio.sleep(hold)
+        await cdp.call("Input.dispatchMouseEvent", {"type": "mouseReleased", **common}, session)
     cdp.last_net = time.monotonic()
     await cdp.settle()
     await asyncio.sleep(0.6)          # an opening card animates into place
