@@ -27,8 +27,10 @@ Made-up examples: a loft smoke alarm, a house alarm with a hall keypad, a
 garden-shed remote.
 """
 
+import asyncio
 import json
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -41,6 +43,7 @@ import house_book  # noqa: E402
 import resident  # noqa: E402
 import triage  # noqa: E402
 from test_house_checks import NOW, house  # noqa: E402
+from test_resident_loop import LoopCase  # noqa: E402
 
 # Sentences that mention what the house already knows and report a
 # problem all the same — the two from the first review and the three from
@@ -265,3 +268,69 @@ class TestAFinishedDeviceSaidAnywhereClosesItsChecks(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheWordNeverOverAFloor(unittest.TestCase):
+    """A tripped detector is not a thing the house "already answers"."""
+
+    def test_a_never_ignore_floor_or_high_stakes_keeps_the_case(self):
+        for floor, stakes in (("act", "low"), ("investigate", "medium"),
+                              ("", "high")):
+            case = problem(claim="The kitchen leak sensor has tripped",
+                           detail="The owner said last week it is a damp spot.",
+                           stakes=stakes, already="answered")
+            self.assertEqual(resident.unfinished(case, floor), ("", ""),
+                             (floor, stakes))
+        self.assertEqual(resident.unfinished(problem(stakes="low",
+                                                     already="answered"))[0],
+                         "already_known")
+
+
+class TestTheLoopFilesASafetyCaseWhateverTheWordSays(LoopCase):
+    """The real `_resident_investigate`: a leak case carrying the word is
+    filed; an ordinary one is not, and the trail says what answered it."""
+
+    def setUp(self):
+        super().setUp()
+        srv = self.server
+        self._trail = srv.decision_trail.TRAIL_FILE
+        srv.decision_trail.TRAIL_FILE = str(Path(self.tmp.name)
+                                            / "decisions.jsonl")
+
+    def tearDown(self):
+        self.server.decision_trail.TRAIL_FILE = self._trail
+        super().tearDown()
+
+    def investigate(self, signal: dict, claim: str, detail: str) -> list[dict]:
+        self.investigations.append({
+            "ok": True, "error": "", "meta": {"session_id": "inv-w"},
+            "text": json.dumps({
+                "claim": claim, "detail": detail, "kind": "problem",
+                "confidence": 0.8, "stakes": "medium", "fix": "Leave it.",
+                "evidence": [], "actions": [], "escalate": False,
+                "already": "answered"})})
+        asyncio.run(self.server._resident_investigate(signal, time.time(),
+                                                      "normal"))
+        return [r for r in self.server.findings_store._load()
+                if r.get("source") == "resident"]
+
+    def test_a_leak_with_the_word_is_filed_without_it(self):
+        rows = self.investigate(
+            {"kind": "state", "subject": "binary_sensor.kitchen_leak",
+             "safety": True, "hot": True, "salience": 0.9,
+             "text": "Kitchen leak off → on", "evidence": []},
+            "The kitchen leak sensor has tripped",
+            "The owner said last week that spot is always damp.")
+        self.assertEqual(len(rows), 1)
+        self.assertNotIn("already", rows[0])
+
+    def test_an_ordinary_case_with_the_word_is_not_filed_and_the_trail_says_why(self):
+        rows = self.investigate(
+            {"kind": "check", "subject": "sensor.shed_remote_battery",
+             "salience": 0.4, "text": "Shed remote battery 4%",
+             "evidence": []},
+            "The shed remote battery is low",
+            "The owner said in March they no longer use the shed remote.")
+        self.assertEqual(rows, [])
+        trail = Path(self.server.decision_trail.TRAIL_FILE).read_text()
+        self.assertIn("no longer use the shed remote", trail)

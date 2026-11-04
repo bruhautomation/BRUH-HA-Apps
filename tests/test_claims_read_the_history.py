@@ -283,3 +283,149 @@ class TestTheInvestigationReadsTheHistory(LoopCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# What a second review found (#580, #625): the door the claim is about, and
+# a plug that is on while the machine draws nothing.
+# ---------------------------------------------------------------------------
+
+MOTION = "binary_sensor.hall_motion"
+PATIO = "binary_sensor.patio_door"
+FRONT = "binary_sensor.front_door"
+CLASSES = {MOTION: "motion", PATIO: "door", FRONT: "door", GATE: "gate"}
+
+
+class TestOnlyTheDoorTheClaimIsAboutIsRead(unittest.TestCase):
+    PATIO_CASE = case("The heating is running while the patio door has been "
+                      + "open for 40 minutes", (MOTION, "off"), (PATIO, "on"),
+                      entity="climate.lounge")
+
+    def test_a_motion_sensor_is_not_a_door(self):
+        minutes, ents = resident.stated_open(self.PATIO_CASE, CLASSES.get)
+        self.assertEqual((minutes, ents), (40.0, [PATIO]))
+        # A sensor nobody classed is kept: the history says what it is.
+        self.assertIn(GATE, resident.stated_open(
+            case("The side gate was left open 2 hours", (GATE, "on")),
+            lambda _e: "")[1])
+
+    def test_a_motion_sensor_ahead_of_the_door_refuses_nothing(self):
+        history = {MOTION: series((2, "off"), (0.5, "on"), (0.4, "off")),
+                   PATIO: series((3, "off"), (40 / 60, "on"))}
+        verdict, _c, why = resident.open_duration(self.PATIO_CASE, history,
+                                                  NOW, CLASSES.get)
+        self.assertEqual((verdict, why), ("ok", ""))
+        # Even with no class to read, the door that agrees is the door.
+        self.assertEqual(resident.open_duration(self.PATIO_CASE, history,
+                                                NOW)[0], "ok")
+
+    def test_a_second_door_that_never_opened_is_not_the_door(self):
+        c = case("The patio door has been open for 40 minutes",
+                 (FRONT, "off"), (PATIO, "on"), entity=PATIO)
+        history = {FRONT: series((3, "off")),
+                   PATIO: series((3, "off"), (40 / 60, "on"))}
+        self.assertEqual(resident.open_duration(c, history, NOW,
+                                                CLASSES.get)[0], "ok")
+        # …and one still open for its own time corrects the case.
+        history[PATIO] = series((3, "off"), (20 / 60, "on"))
+        verdict, fixed, _why = resident.open_duration(c, history, NOW,
+                                                      CLASSES.get)
+        self.assertEqual(verdict, "correct")
+        self.assertIn("20 minutes", fixed["claim"])
+
+    def test_every_door_closed_still_refuses(self):
+        c = case("The patio door has been open for 40 minutes",
+                 (FRONT, "off"), (PATIO, "off"), entity=PATIO)
+        history = {FRONT: series((3, "off")),
+                   PATIO: series((3, "off"), (1, "on"), (0.5, "off"))}
+        verdict, _c, why = resident.open_duration(c, history, NOW, CLASSES.get)
+        self.assertEqual(verdict, "refuse")
+        self.assertIn(PATIO, why)
+
+    def test_a_door_open_since_before_the_window_is_not_corrected(self):
+        # Open at the window's first row: when it opened is before what
+        # was read, so "open for 2 hours" is left as the case said it.
+        c = case("The patio door has been open for 2 hours", (PATIO, "on"),
+                 entity=PATIO)
+        history = {PATIO: series((5, "on"))}
+        self.assertEqual(resident.open_duration(c, history, NOW,
+                                                CLASSES.get)[0], "ok")
+        shut = {PATIO: series((5, "on"), (0.5, "off"))}
+        verdict, _c, why = resident.open_duration(c, shut, NOW, CLASSES.get)
+        self.assertEqual(verdict, "refuse")
+        self.assertIn("before", why)
+        self.assertIn("not open now", why)
+
+
+class TestAPlugOnWhileTheMachineDrawsNothing(unittest.TestCase):
+    def setUp(self):
+        self.drivers, self.aliases = maps()
+
+    def never(self, c, history):
+        return resident.never_due(c, self.drivers, history, self.aliases)
+
+    def test_zero_watts_is_never_answered_by_the_switch_being_on(self):
+        c = case("The loft dehumidifier drew 0 W all afternoon even though "
+                 + "its plug was on", (DRY_POWER, "0 W"), entity=DRY_POWER)
+        damp_and_on = {LANDING: series((20, "58"), (12, "71"), (3, "72")),
+                       DRY: series((24, "off"), (11.9, "on"))}
+        self.assertEqual(self.never(c, damp_and_on), "")
+        # The rule never due still answers it: 0 W is what it should draw.
+        dry = {LANDING: series((20, "58"), (12, "61"), (3, "63")),
+               DRY: series((24, "off"), (11.9, "on"))}
+        why = self.never(c, dry)
+        self.assertIn("never got there", why)
+        self.assertIn("so it was not due to run", why)
+
+    def test_the_trail_says_it_ran_rather_than_that_it_was_not_due(self):
+        history = {LANDING: series((20, "58"), (12, "71"), (3, "63")),
+                   DRY: series((24, "off"), (12.1, "on"), (6, "off"))}
+        why = self.never(DID_NOT_RUN, history)
+        self.assertIn("was on each time", why)
+        self.assertIn("so it ran when it was due", why)
+        self.assertNotIn("not due to run", why)
+
+
+class TestTheServerReadsTheDoorsClass(LoopCase):
+    """The real gate hands `stated_open` the registry's device classes.
+    Its own `LoopCase`, not a subclass of the class above, so the tests
+    above run once."""
+
+    def setUp(self):
+        super().setUp()
+        srv = self.server
+        self._trail = srv.decision_trail.TRAIL_FILE
+        srv.decision_trail.TRAIL_FILE = str(Path(self.tmp.name)
+                                            / "decisions.jsonl")
+        self._names = dict(srv._NAMES)
+        srv._NAMES.clear()
+        srv._NAMES.update({MOTION: {"name": "Hall motion", "class": "motion"},
+                           PATIO: {"name": "Patio door", "class": "door"}})
+        self.history: dict = {}
+        self.addCleanup(setattr, srv, "_recent_history", srv._recent_history)
+
+        async def fake(ids, hours, now=None):
+            return {e: self.history[e] for e in ids if e in self.history}
+        srv._recent_history = fake
+
+    def tearDown(self):
+        srv = self.server
+        srv.decision_trail.TRAIL_FILE = self._trail
+        srv._NAMES.clear()
+        srv._NAMES.update(self._names)
+        super().tearDown()
+
+    investigate = TestTheInvestigationReadsTheHistory.investigate
+    rel = TestTheInvestigationReadsTheHistory.rel
+
+    def test_a_motion_sensor_in_the_evidence_does_not_refuse_the_door(self):
+        self.history = {MOTION: self.rel((2, "off"), (0.5, "on"), (0.4, "off")),
+                        PATIO: self.rel((3, "off"), (40 / 60, "on"))}
+        rows = self.investigate(
+            "The heating is running while the patio door has been open for "
+            + "40 minutes",
+            [{"entity": MOTION, "value": "off", "when": "14:02"},
+             {"entity": PATIO, "value": "on", "when": "13:30"}],
+            "climate.lounge")
+        self.assertEqual(len(rows), 1)
+        self.assertIn("40 minutes", rows[0].get("claim") or "")

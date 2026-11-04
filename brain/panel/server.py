@@ -13686,10 +13686,11 @@ async def _resident_history_gates(case: dict, now: float) -> tuple[str, dict]:
                                    _live_reading)
         if never:
             return never, case
-    stated = resident.stated_open(case)
+    stated = resident.stated_open(case, _device_class)
     if stated:
         history = await _recent_history(stated[1], stated[0] / 60.0 + 3, now)
-        verdict, fixed, why = resident.open_duration(case, history, now)
+        verdict, fixed, why = resident.open_duration(case, history, now,
+                                                     _device_class)
         if verdict == "refuse":
             return why, case
         if verdict == "correct":
@@ -13697,6 +13698,12 @@ async def _resident_history_gates(case: dict, now: float) -> tuple[str, dict]:
                      "history: %s", why)
             return "", fixed
     return "", case
+
+
+def _device_class(eid: str) -> str:
+    """What kind of thing an entity is, by the registry's word (`_NAMES`),
+    or "" where nothing says."""
+    return str((_NAMES.get(str(eid or "")) or {}).get("class") or "")
 
 
 def _registry_answers(case: dict, subject: str = "") -> str:
@@ -15008,7 +15015,12 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     # by its text (#604), and one with no step at all leaves the reader not
     # knowing whether to act (#616): neither is filed. A row brAIn filed is
     # held with the reply's sentence, so the person can still put it back.
-    code, said = resident.unfinished(case)
+    # A reply that says the house already holds the answer (#697) says so
+    # in a word, and the word is not read over a never-ignore floor: a
+    # tripped detector or a protected lock is looked at whatever a run
+    # says about what the house knows (the same floor the gate above and
+    # the first look hold).
+    code, said = resident.unfinished(case, resident.never_ignore(signal)[0])
     if code:
         log.info("an investigation of %s was not a finding (%s)",
                  signal.get("subject"), code)
@@ -15018,8 +15030,20 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
             await _outcome(signal, "held" if held else "moved_on", run_id,
                            now, why, refines, row=held, said=said)
             return False
-        await _outcome(signal, "no_claim", run_id, now, why, refines)
+        if code == "already_known":
+            # Nothing to hold for a fresh signal: the trail says what
+            # answered it, the way the registry's and the history's
+            # answers are written, so the reason is not lost in a run.
+            await asyncio.to_thread(decision_trail.note_many, [{
+                "kind": "explained",
+                "subject": str(signal.get("subject") or ""),
+                "check": "resident", "reason": said,
+                "text": str(case.get("claim") or "")}], now)
+        await _outcome(signal, "no_claim", run_id, now, why, refines,
+                       said=said)
         return False
+    # The word, read: a case that is filed past it does not carry it.
+    case.pop("already", None)
     # The signal that started it, folded in — because "what made brAIn look"
     # is evidence about the claim and the run has no way to cite it: it was
     # handed the line rather than reading it off the house.
