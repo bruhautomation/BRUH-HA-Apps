@@ -140,6 +140,14 @@ STREAMS: dict[str, dict] = {
         "label": "Other BRUH add-ons: errors in GardenRX, Bambu Studio, Print, BRight, Minecraft, Cooking and Task Manager",
         "cost": "free", "clears": True, "rolling": False,
         "default_on": True, "default_hours": 1},
+    # brAIn using Morph the way a person does: opens every card and room
+    # in the dashboard through the read-only harness, looks at each one at
+    # a phone's width and a laptop's, and files what a person living here
+    # would trip on. Nothing it presses can reach the house.
+    "walkthrough": {
+        "label": "Walkthrough: brAIn opens every Morph card and room like a person and files what it finds (one Claude run)",
+        "cost": "claude", "clears": False, "rolling": False,
+        "default_on": False, "default_hours": 24},
     "look": {
         "label": "What do you want to fix?: your words, turned into an issue (one Claude run each)",
         "cost": "claude", "clears": False, "rolling": False,
@@ -160,7 +168,8 @@ CAP_LIMITS = {"max_issues_per_day": (0, 50), "max_runs_per_day": (0, 24)}
 # open.
 AUTOPILOT_HOURS = {"faults": 1, "scorecard": 24, "wrongs": 24, "outcomes": 24, "unmet": 24,
                    "snapshot": 168, "gaps": 24, "ideas": 168, "design": 24,
-                   "screens": 168, "morph": 1, "siblings": 1, "look": 0}
+                   "screens": 168, "morph": 1, "siblings": 1,
+                   "walkthrough": 24, "look": 0}
 AUTOPILOT_CAPS = {"max_issues_per_day": 20, "max_runs_per_day": 8}
 
 DEFAULTS = {

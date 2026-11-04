@@ -23,7 +23,7 @@ Usage:
   brain devloop run [stream]    Run now: every switched-on stream, or one
                                 (faults, scorecard, wrongs, outcomes, unmet,
                                 snapshot, gaps, ideas, design, screens, morph,
-                                siblings)
+                                siblings, walkthrough)
   brain devloop look "<words>"  Say what you want fixed, in your own words.
                                 One read-only Claude run works out the real
                                 problem and files the issue that would fix it

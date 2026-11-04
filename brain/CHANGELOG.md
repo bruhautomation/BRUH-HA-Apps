@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.2.6
+
+### Added
+
+- Walkthrough, a new development-loop stream (⚙ › Developer, off by default): the assistant opens every card and room of the Morph dashboard through the read-only screenshot harness, at a phone's width and a laptop's, closed and held open, and files what a person living here would trip on. Nothing it presses can reach the house, and its reports go through the same review, caps and redaction as every other stream.
+
 ## 4.2.5
 
 ### Added

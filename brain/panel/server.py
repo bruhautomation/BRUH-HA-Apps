@@ -19736,6 +19736,18 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
                 lambda: dl_streams.design_context(
                     load_insights(),
                     (findings_store.listing() or {}).get("findings") or []))
+        if stream == "walkthrough":
+            # The ids Vesper is sent through, read off the dashboard the
+            # house runs; a missing file is said, not guessed.
+            def _targets() -> str:
+                try:
+                    text = (Path(os.environ.get("BRAIN_MORPH_DASHBOARD",
+                                                "/config/morph/dashboard.yaml"))
+                            .read_text(encoding="utf-8", errors="replace"))
+                except OSError:
+                    text = ""
+                return dl_streams.morph_targets(text)
+            topic = await asyncio.to_thread(_targets)
         result = await _claude(
             engine.run_analyst,
             dl_streams.analyst_prompt(
