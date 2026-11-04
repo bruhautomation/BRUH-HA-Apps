@@ -15,7 +15,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
-from unittest import mock
+import unittest.mock as mock
 
 ROOT = Path(__file__).resolve().parent.parent
 INTEGRATION = ROOT / "brain" / "custom_components" / "brain" / "morph"

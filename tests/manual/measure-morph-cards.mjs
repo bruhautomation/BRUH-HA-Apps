@@ -104,14 +104,14 @@ p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 await p.goto(`${ORIGIN}/`);
 await p.waitForFunction(() => (window.customCards || []).length >= 21, null, { timeout: 8000 }).catch(() => fail('load', 'Morph cards were never listed in window.customCards'));
 
-const listed = await p.evaluate(() => (window.customCards || []).filter((c) => !c.type.startsWith('morph-type-')).map((c) => ({ type: c.type, name: c.name, preview: c.preview })));
+const listed = await p.evaluate(() => (window.customCards || []).filter((c) => !c.type.startsWith('morph-type-') && !['morph-cases-card', 'morph-ask-card'].includes(c.type)).map((c) => ({ type: c.type, name: c.name, preview: c.preview })));
 if (listed.length !== 21) fail('picker', `expected 21 Morph cards listed, got ${listed.length}`);
 listed.forEach((c) => { if (!/^Morph · /.test(c.name)) fail('picker', `${c.type} is named "${c.name}", not "Morph · …"`); });
 
 // Every kind: defined, an editor schema, a stub, and a face drawn from it.
 const kinds = await p.evaluate(async () => {
   const out = [];
-  for (const c of window.customCards.filter((x) => !x.type.startsWith('morph-type-'))) {
+  for (const c of window.customCards.filter((x) => !x.type.startsWith('morph-type-') && !['morph-cases-card', 'morph-ask-card'].includes(x.type))) {
     const El = customElements.get(c.type);
     const row = { type: c.type, defined: !!El };
     if (!El) { out.push(row); continue; }

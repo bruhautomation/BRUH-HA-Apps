@@ -479,7 +479,7 @@ def lovelace_where(target: dict) -> list[str]:
     key = str(target.get("dashboard") or "")
     at = target_at(target)
     return [
-        f"This is a Home Assistant dashboard, drawn by Home Assistant itself. brAIn keeps it as",
+        "This is a Home Assistant dashboard, drawn by Home Assistant itself. brAIn keeps it as",
         f"/config/morph/{lovelace.rel(key)}: Home Assistant's own dashboard YAML (views, sections,",
         "cards, badges), exactly what its Raw configuration editor shows. Edit that file: the moment",
         "you write it Morph saves it to Home Assistant and every open screen redraws it.",

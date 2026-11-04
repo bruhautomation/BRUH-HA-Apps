@@ -12,7 +12,6 @@ with configuration.yaml's, so they are added again right after it.
 from __future__ import annotations
 
 import logging
-import time
 from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
