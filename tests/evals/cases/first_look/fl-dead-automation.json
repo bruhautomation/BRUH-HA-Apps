@@ -1,0 +1,40 @@
+{
+ "id": "fl-dead-automation",
+ "job": "first_look",
+ "kind": "capability",
+ "origin": "tests/corpus/entries/first-look-rehearsal.json signal 1 (rehearsal.PLAN's auto.dead_ref)",
+ "input": {
+  "batch": [
+   {
+    "evidence": [
+     {
+      "entity": "automation.porch_at_dusk",
+      "value": "Missing: light.porch_old",
+      "when": 1800000000
+     }
+    ],
+    "hot": false,
+    "kind": "check",
+    "protected": false,
+    "repeats": 1,
+    "safety": false,
+    "salience": 0.5,
+    "seen_at": 1800000000,
+    "source": "check:auto.dead_ref",
+    "subject": "automation.porch_at_dusk",
+    "text": "Automations naming missing entities [serious]: Automation 'porch_at_dusk' refers to entities that do not exist"
+   }
+  ],
+  "inputs": {},
+  "now": 1800000000,
+  "labels": [
+   {
+    "signal": 1,
+    "floor": "watch",
+    "why": "an automation that cannot work"
+   }
+  ]
+ },
+ "expect": {},
+ "rule": "A broken automation is never ignored."
+}

@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: does-not-trigger-on-house-side-devloop-change
+expected_outcome: |
+  [should-not] A change to the HOUSE half of the loop (brAIn's own code): the cloud skill is not invoked; the change is made in brain/panel/devloop/ with tests, after reading docs/notes/devloop.md.

@@ -182,7 +182,7 @@ When a tool refuses, that is the household's own setting (something they protect
 The past ("how cold did it get last night", "when did the garage open"): get_history for the last few days, get_statistics for longer. The future ("weather tomorrow"): get_weather_forecast — a weather entity's state is only the weather now.
 {remember}Labels, the Minecraft server, the light show and the 3D printers have their own tools: print_label, minecraft_*, bright_show, bambu_design (make a part; to print it as well, say so in the description and it prints once built — say it is being made, never wait) and bambu_print. The garden's record is GardenRX: garden_log_harvest ("log 2 pounds of tomatoes"), garden_log_spray, garden_log_note, and garden_harvests for what was picked. The sous vide and the oven are BRUH Cooking: cooking_status ("is the water ready?", "how long is left?") and cooking_control (start, stop, continue — say the oven waits for Start on its panel). A camera answers only if the household has allowed brAIn to look at it; if it refuses, say so and do not try another camera."""
 
-# The one line that depends on the add-on's `learning` switch: with it off,
+# The one line that depends on the Learning loop switch: with it off,
 # nothing a voice turn hears is filed, and a prompt asking for it would be
 # asking the model for a call the household switched off.
 REMEMBER_LINE = (
@@ -191,8 +191,24 @@ REMEMBER_LINE = (
     'same turn so it sticks.\n')
 
 
+# ⚙ › Features › Learning loop (panel/features.py) is the authority, read at
+# call time so a flip needs no restart; BRAIN_ASSIST_LEARNING is the switch
+# as it stood at boot and answers only while the file cannot.
+FEATURES_FILE = os.environ.get("BRAIN_FEATURES_FILE",
+                               "/config/.brain/features.json")
+
+
 def learning_on() -> bool:
-    """The add-on's `learning` switch, as run.sh exports it."""
+    """The Learning loop switch: the switches' file once the add-on option
+    has been folded into it, run.sh's export otherwise."""
+    try:
+        with open(FEATURES_FILE, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        data = None
+    if isinstance(data, dict) and data.get("learning_from_option") is True \
+            and isinstance(data.get("learning_loop"), bool):
+        return data["learning_loop"]
     return os.environ.get("BRAIN_ASSIST_LEARNING", "true").lower() != "false"
 
 

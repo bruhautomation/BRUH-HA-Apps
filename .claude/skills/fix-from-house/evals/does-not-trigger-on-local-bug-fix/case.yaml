@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: does-not-trigger-on-local-bug-fix
+expected_outcome: |
+  [should-not] An ordinary code change in this repository: the fix-from-house skill is NOT invoked, no reports repository is attached, and no run lock is taken.

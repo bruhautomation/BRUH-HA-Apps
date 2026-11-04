@@ -21,9 +21,22 @@ the model cannot work out for itself. Those are read from BOTH this store
 and the hypothesis queue, since a rejection lands in one, the other, or
 both depending on which surface it was given on; see its docstring.
 
+Retention (plan 2.4, `docs/design/self-learning-plan-2026-11.md`): the
+store is bounded by age and reference count, and what leaves keeps its
+fingerprint. A fact's body stays while it is referenced — every re-add
+of the same claim is a reference (`hits`, `last_seen`) — and leaves once
+it has gone `RETAIN_DAYS` without one (longer for a fact referenced
+`KEEP_HITS` times or more). Over the `MAX_FACTS` cap the least referenced,
+longest unseen body goes first. Either way the body becomes a digest in
+`seen`, so the analyst still knows it said it — the invariant "nothing may
+be deleted from it" always protected. Questions are the same: an answered
+or dismissed question's body ages out into `asked` digests, so
+`is_known_question` still says it was asked; an open one never ages, and
+the newest dismissed ones the prompt's dead-ends block reads are kept.
+
 File shape:
   {"facts": [{"ts": 1752…, "text": "...", "source": "insights",
-              "category": "energy"}],
+              "category": "energy", "hits": 2, "last_seen": 1752…}],
    "questions": [{"ts": 1752…, "text": "...", "category": "energy",
                   "status": "open"|"answered"|"dismissed",
                   "answer": "...", "answered_at": 1752…,
@@ -53,8 +66,15 @@ MAX_FACTS = 200
 # the 201st discovery pushes the first one out and the analyst announces it
 # again — the one thing this store exists to prevent. Ten times the list,
 # sixteen hex characters each: a few hundred kilobytes at the very most.
-MAX_SEEN = 2000
+MAX_SEEN = 5000
 MAX_QUESTIONS = 200
+# Retention by age plus reference count. A body unseen for RETAIN_DAYS
+# leaves for its digest; one referenced KEEP_HITS times or more is kept
+# KEEP_HITS_FACTOR times as long. Questions use the same clock.
+RETAIN_DAYS = 180
+KEEP_HITS = 3
+KEEP_HITS_FACTOR = 4
+MAX_ASKED = 5000
 MAX_TEXT_CHARS = 500
 MAX_ANSWER_CHARS = 1000
 # prompt_block renders ONLY rejected lines of inquiry, hard-capped. Facts
@@ -85,15 +105,18 @@ def _load() -> dict:
         facts = data.get("facts")
         questions = data.get("questions")
         seen = data.get("seen")
+        asked = data.get("asked")
         return {
             "facts": [f for f in facts if isinstance(f, dict)] if isinstance(facts, list) else [],
             "questions": [q for q in questions if isinstance(q, dict)]
             if isinstance(questions, list) else [],
             "seen": [s for s in seen if isinstance(s, str)]
             if isinstance(seen, list) else [],
+            "asked": [s for s in asked if isinstance(s, str)]
+            if isinstance(asked, list) else [],
         }
     except (OSError, ValueError, AttributeError, TypeError):
-        return {"facts": [], "questions": [], "seen": []}
+        return {"facts": [], "questions": [], "seen": [], "asked": []}
 
 
 def _digest(key: str) -> str:
@@ -107,6 +130,84 @@ def _digest(key: str) -> str:
 
 def _write(data: dict) -> None:
     atomic_write.write_json(KNOWLEDGE_FILE, data)
+
+
+def _last_seen(row: dict) -> int:
+    return int(row.get("last_seen") or row.get("last_asked")
+               or row.get("answered_at") or row.get("ts") or 0)
+
+
+def _expired(row: dict, now: float) -> bool:
+    days = RETAIN_DAYS * (KEEP_HITS_FACTOR
+                          if int(row.get("hits") or 0) >= KEEP_HITS else 1)
+    return now - _last_seen(row) > days * 86400
+
+
+def _retain(data: dict, now: float | None = None) -> bool:
+    """Apply the retention policy in place; True when anything moved.
+
+    Bodies leave, fingerprints stay: a fact's digest joins `seen` and a
+    question's joins `asked`, so neither is ever announced or asked again.
+    """
+    now = time.time() if now is None else float(now)
+    moved = False
+    # Facts: aged out first, then the cap by reference count and age.
+    keep, out = [], []
+    for f in data["facts"]:
+        (out if _expired(f, now) else keep).append(f)
+    if len(keep) > MAX_FACTS:
+        # Least referenced first, then least recently referenced, then
+        # oldest by position (a `ts` is unique only among rows still held).
+        ranked = sorted(range(len(keep)), key=lambda i: (
+            int(keep[i].get("hits") or 0), int(keep[i].get("last_seen") or 0), i))
+        drop = set(ranked[:len(keep) - MAX_FACTS])
+        out += [f for i, f in enumerate(keep) if i in drop]
+        keep = [f for i, f in enumerate(keep) if i not in drop]
+    if out:
+        moved = True
+        data["facts"] = keep
+        seen = data["seen"] + [_digest(normalize(f.get("text", ""))) for f in out]
+        data["seen"] = list(dict.fromkeys(seen))[-MAX_SEEN:]
+    # Questions: an open one never ages; the newest dismissed ones stay for
+    # the prompt's dead ends; everything else ages out, then the cap.
+    questions = data["questions"]
+    dismissed = [i for i, q in enumerate(questions)
+                 if q.get("status") == "dismissed"][-PROMPT_DEAD_ENDS:]
+    pinned = set(dismissed)
+    keep_q, out_q = [], []
+    for i, q in enumerate(questions):
+        settled = q.get("status") in ("answered", "dismissed")
+        if settled and i not in pinned and _expired(q, now):
+            out_q.append(q)
+        else:
+            keep_q.append(q)
+    if len(keep_q) > MAX_QUESTIONS:
+        over = len(keep_q) - MAX_QUESTIONS
+        removable = [q for q in keep_q if q.get("status") != "open"][:over]
+        if len(removable) < over:
+            removable += [q for q in keep_q if q.get("status") == "open"][
+                :over - len(removable)]
+        gone = {id(q) for q in removable}
+        out_q += removable
+        keep_q = [q for q in keep_q if id(q) not in gone]
+    if out_q:
+        moved = True
+        data["questions"] = keep_q
+        asked = data["asked"] + [_digest(normalize(q.get("text", "")))
+                                 for q in out_q]
+        data["asked"] = list(dict.fromkeys(asked))[-MAX_ASKED:]
+    return moved
+
+
+def retain(now: float | None = None) -> bool:
+    """Apply the retention policy to the file now (the scheduler's or a
+    test's call; every write applies it too)."""
+    with _locked():
+        data = _load()
+        if _retain(data, now):
+            _write(data)
+            return True
+    return False
 
 
 def _locked():
@@ -166,6 +267,10 @@ def add_fact(text: str, source: str = "insights", category: str = "") -> tuple[d
         data = _load()
         for f in data["facts"]:
             if normalize(f.get("text", "")) == key:
+                # A reference: what retention keeps a body for.
+                f["hits"] = int(f.get("hits") or 0) + 1
+                f["last_seen"] = int(time.time())
+                _write(data)
                 return f, False
         # Aged out of the list is not forgotten: the digest outlives the
         # row. Nothing to return but the claim itself — the entry it was
@@ -180,15 +285,11 @@ def add_fact(text: str, source: str = "insights", category: str = "") -> tuple[d
             "category": str(category or "")[:64],
         }
         data["facts"].append(entry)
-        # The list is capped for the person reading it; what leaves it is
-        # remembered as a digest, which is what "nothing may be deleted
-        # from it" was always about (see MAX_SEEN).
-        overflow = data["facts"][:-MAX_FACTS]
-        data["facts"] = data["facts"][-MAX_FACTS:]
-        if overflow:
-            seen = data["seen"] + [_digest(normalize(f.get("text", "")))
-                                   for f in overflow]
-            data["seen"] = list(dict.fromkeys(seen))[-MAX_SEEN:]
+        # The list is capped for the person reading it, and bounded by age
+        # and references (`_retain`); what leaves it is remembered as a
+        # digest, which is what "nothing may be deleted from it" was always
+        # about (see MAX_SEEN).
+        _retain(data)
         _write(data)
     return entry, True
 
@@ -234,7 +335,10 @@ def is_known_question(text: str) -> bool:
     key = normalize(text)
     if not key:
         return True  # blank never surfaces
-    return any(normalize(q.get("text", "")) == key for q in _load()["questions"])
+    data = _load()
+    if _digest(key) in set(data["asked"]):
+        return True   # aged out of the list, still asked
+    return any(normalize(q.get("text", "")) == key for q in data["questions"])
 
 
 def record_question(text: str, category: str = "") -> dict | None:
@@ -268,7 +372,7 @@ def record_question(text: str, category: str = "") -> dict | None:
             "last_asked": now,
         }
         data["questions"].append(entry)
-        data["questions"] = data["questions"][-MAX_QUESTIONS:]
+        _retain(data)
         _write(data)
     return entry
 
@@ -304,7 +408,7 @@ def answer_question(text: str, answer: str) -> dict | None:
             "last_asked": now,
         }
         data["questions"].append(entry)
-        data["questions"] = data["questions"][-MAX_QUESTIONS:]
+        _retain(data)
         _write(data)
     return entry
 

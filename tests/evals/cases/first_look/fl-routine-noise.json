@@ -1,0 +1,66 @@
+{
+ "id": "fl-routine-noise",
+ "job": "first_look",
+ "kind": "capability",
+ "origin": "synthetic",
+ "input": {
+  "batch": [
+   {
+    "evidence": [
+     {
+      "entity": "light.kitchen",
+      "value": "on",
+      "when": 1800000000
+     }
+    ],
+    "hot": false,
+    "kind": "state",
+    "protected": false,
+    "repeats": 1,
+    "safety": false,
+    "salience": 0.1,
+    "seen_at": 1800000000,
+    "source": "eventbus",
+    "subject": "light.kitchen",
+    "text": "Kitchen light off → on"
+   },
+   {
+    "evidence": [
+     {
+      "entity": "media_player.living_room",
+      "value": "playing",
+      "when": 1800000000
+     }
+    ],
+    "hot": false,
+    "kind": "state",
+    "protected": false,
+    "repeats": 1,
+    "safety": false,
+    "salience": 0.1,
+    "seen_at": 1800000000,
+    "source": "eventbus",
+    "subject": "media_player.living_room",
+    "text": "Living room TV off → playing"
+   }
+  ],
+  "inputs": {
+   "now_line": "It is 19:10 on a weekday evening."
+  },
+  "now": 1800000000,
+  "labels": [
+   {
+    "signal": 1,
+    "ceiling": "watch",
+    "why": "a light switched on in the evening"
+   },
+   {
+    "signal": 2,
+    "ceiling": "watch",
+    "why": "the TV at 7pm"
+   }
+  ]
+ },
+ "expect": {},
+ "rule": "Ordinary evening activity is not escalated."
+}

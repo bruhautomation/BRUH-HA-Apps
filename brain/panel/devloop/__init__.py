@@ -152,6 +152,21 @@ STREAMS: dict[str, dict] = {
         "label": "What do you want to fix?: your words, turned into an issue (one Claude run each)",
         "cost": "claude", "clears": False, "rolling": False,
         "default_on": True, "default_hours": 0},
+    # The house's health after it installs a release, for the cloud's
+    # automatic revert (`devloop/canary.py`): one rolling issue per release,
+    # rewritten hourly through its window, its verdict posted at the end —
+    # or at once on a regression. Measured, never a model; no review hold.
+    "canary": {
+        "label": "Canary: how this house runs on each new release, so a bad fix is reverted",
+        "cost": "free", "clears": False, "rolling": True,
+        "default_on": True, "default_hours": 1},
+    # First looks that ended Wrong or missed, as candidate regression cases
+    # for the corpus (`devloop/corpus.py`). Off by default, and only while
+    # capture is on: it sends what a look was shown, redacted and aliased.
+    "corpus": {
+        "label": "Corpus: first looks that were wrong or missed here, as test cases (needs capture)",
+        "cost": "free", "clears": False, "rolling": False,
+        "default_on": False, "default_hours": 24},
 }
 # The schedule choices, in hours. 0 is "only when asked" — Run now, the
 # What do you want to fix? box and `brain devloop` still work.
@@ -169,7 +184,7 @@ CAP_LIMITS = {"max_issues_per_day": (0, 50), "max_runs_per_day": (0, 24)}
 AUTOPILOT_HOURS = {"faults": 1, "scorecard": 24, "wrongs": 24, "outcomes": 24, "unmet": 24,
                    "snapshot": 168, "gaps": 24, "ideas": 168, "design": 24,
                    "screens": 168, "morph": 1, "siblings": 1,
-                   "walkthrough": 24, "look": 0}
+                   "walkthrough": 24, "look": 0, "canary": 1, "corpus": 24}
 AUTOPILOT_CAPS = {"max_issues_per_day": 20, "max_runs_per_day": 8}
 
 DEFAULTS = {
@@ -184,7 +199,20 @@ DEFAULTS = {
     "review": True,
     "max_issues_per_day": 10,
     "max_runs_per_day": 4,
+    # How long a declined, not-brAIn or duplicate verdict silences a report
+    # (`upstream.STAND_DOWN_STREAMS`): it used to be for ever, and a wrong
+    # decline silenced the house for good (plan 0.5). The same numbers as
+    # `.claude/devloop.json`, which the house never reads: it is the cloud's.
+    "stand_down_days": 90,
+    # How long after an install the canary watches (`devloop/canary.py`).
+    "canary_window_hours": 24,
+    # The GitHub account the house's token files as, when the owner says.
+    # Informational on the house; the cloud half checks authors by it.
+    "house_login": "",
 }
+# The ranges the two numbers above may take.
+NUMBER_LIMITS = {"stand_down_days": (1, 3650), "canary_window_hours": (1, 336)}
+LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?$")
 
 
 def data_dir() -> Path:
@@ -221,7 +249,11 @@ def _apply_autopilot(settings: dict) -> dict:
 
 
 def _raw_settings() -> dict:
-    out = dict(DEFAULTS)
+    # The two nested dicts copied too: with no settings file the early
+    # return handed back DEFAULTS' own `streams`, and the first save then
+    # switched a stream on for every later reader in the process.
+    out = {**DEFAULTS, "streams": dict(DEFAULTS["streams"]),
+           "schedule": dict(DEFAULTS["schedule"])}
     try:
         data = json.loads(settings_file().read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -247,11 +279,14 @@ def _raw_settings() -> dict:
             if isinstance(data.get("schedule"), dict) else []:
         if name in STREAMS and hours in HOURS_CHOICES:
             out["schedule"][name] = hours
-    for key, (lo, hi) in CAP_LIMITS.items():
+    for key, (lo, hi) in {**CAP_LIMITS, **NUMBER_LIMITS}.items():
         value = data.get(key)
         if isinstance(value, int) and not isinstance(value, bool) \
                 and lo <= value <= hi:
             out[key] = value
+    login = data.get("house_login")
+    if isinstance(login, str) and LOGIN_RE.match(login):
+        out["house_login"] = login
     return out
 
 
@@ -283,11 +318,16 @@ def save_settings(changes: dict) -> dict:
                     raise ValueError(f"schedule.{name} must be one of "
                                      f"{', '.join(map(str, HOURS_CHOICES))} hours")
                 current["schedule"][name] = hours
-        elif key in CAP_LIMITS:
-            lo, hi = CAP_LIMITS[key]
+        elif key in CAP_LIMITS or key in NUMBER_LIMITS:
+            lo, hi = {**CAP_LIMITS, **NUMBER_LIMITS}[key]
             if not isinstance(value, int) or isinstance(value, bool) \
                     or not lo <= value <= hi:
                 raise ValueError(f"{key} must be a whole number from {lo} to {hi}")
+            current[key] = value
+        elif key == "house_login":
+            value = str(value or "").strip()
+            if value and not LOGIN_RE.match(value):
+                raise ValueError("house_login must be a GitHub account name")
             current[key] = value
         elif key == "repo":
             value = str(value or "").strip()

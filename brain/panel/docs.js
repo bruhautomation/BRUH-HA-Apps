@@ -349,6 +349,16 @@ you ask it to change its own page:
   its own: if it throws, the page keeps working and ⚙ › Instructions says
   what went wrong.
 
+**A change that breaks the page is undone by itself.** The first time the
+page loads a new version of either file it checks itself: house.js did not
+throw, and the header, the tabs and the main pane are drawn and visible. A
+version that passes is kept as the last good one. One that fails is put back
+to the last good one — or removed, when there has not been one — and the page
+reloads once; ⚙ › Instructions says which file was undone and why. Nobody has
+to press anything first, YOLO or not: brAIn changes its own page, Morph's
+code, what Morph has learned, its memory and its personality notes without
+waiting for you, and every such change can be undone.
+
 Each is at most 256 KB. A reload shows an edit. Nothing shipped is replaced:
 the add-on's own files and its server are not editable, and an update
 replaces them while leaving these two alone. \`brain undo\` puts back an edit
@@ -591,14 +601,21 @@ needs a restart.
 |---|---|---|
 | **Morph dashboard** | The **Home** tab: a dashboard laid out by what matters in the house right now, which brAIn designs and edits with you. The Morph dashboard below. | Stays in this house |
 | **Personality** | brAIn takes the name and personality you give it in ⚙ › Personality, everywhere: the sidebar, every screen, the chat, voice and notifications. With a name set, nothing says "brAIn" any more — it is "talk to" whatever you called it, and in Minecraft the companion goes by it too. Off, the personality you wrote is kept and nothing reads it. | Stays in this house |
-| **Learning loop** (self-improvement) | brAIn improves **itself**, here: it watches how its dashboard is used, suggests changes, keeps this household's lessons and may propose changes to its own dashboard code. Off, brAIn still does what you ask and never changes itself on its own. It works on the Morph dashboard, so it does nothing while that is off. | Stays in this house |
+| **Learning loop** (self-improvement) | Everything brAIn learns, in one switch: the memory it files from what you say in a conversation or to voice, the nightly lessons it draws from how its reports ended, the presence loop, the Morph dashboard's lessons and changes to its own dashboard code, and memory clean-up. Under the switch, a line says what learning wrote in the last 7 days, counted per learner. Off, brAIn still does what you ask, and learns and changes nothing on its own; what it already learned is kept. | Stays in this house |
 | **Development loop** | brAIn reports its own faults as issues in your private GitHub repository, where a cloud routine fixes brAIn's code and ships an update. The repository, the token, what it sends and its daily limits are in ⚙ › Developer. | **Leaves this house**, with names, rooms and entity ids replaced by aliases |
 
 The difference between the two loops, in one line each: **self-improvement**
-is brAIn changing itself on this house and nothing leaving it;
+is brAIn learning and changing itself on this house and nothing leaving it;
 **development** is brAIn reporting back to the repository its code comes
-from, so everybody's brAIn gets the fix. What brAIn learns about your **home**
-— facts, the memory document — is neither, and is under Memory › Knowledge.
+from, so everybody's brAIn gets the fix. What brAIn has learned about your
+**home** — facts, the memory document — is under Memory › Knowledge.
+
+The add-on option \`learning\` used to switch brAIn's memory learning on and
+off separately. It is now only where the Learning loop switch starts: on the
+first start of a version with one switch, a house that had \`learning: false\`
+finds the switch off, and from then on only the switch decides. Switching it
+takes effect at once; the memory consolidator and the study watcher, which
+start with the add-on, follow at the next restart.
 
 A house that upgraded from 3.x starts with the switches matching what it
 had: the Morph dashboard on if the Morph app was installed, Personality on if
@@ -2478,7 +2495,7 @@ whether anything durable was said — a preference, a nickname, a correction, a
 plan — and if so spends one cheap run to write it to the memory inbox like any other
 writer. Machine conversations (voice, study, the consolidator, every scheduled run)
 are skipped, because they claim their session ids before they start and the hook
-only extracts from the ones nobody claimed: yours. It is off with \`learning\`, and it
+only extracts from the ones nobody claimed: yours. It is off with the Learning loop, and it
 never writes \`memory.md\` — the consolidator is still the only thing that does.
 
 It also keeps a short list of **hypotheses** — things it thinks might be true and
@@ -4980,7 +4997,7 @@ the Ask tab itself), because it changes nothing about how the add-on runs.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| \`learning\` | bool | \`true\` | Master switch for everything brAIn learns: the consolidator, the end-of-conversation reflection pass, the terminal and chat memory hook, and study sessions. Turning it off leaves existing memory untouched. |
+| \`learning\` | bool | \`true\` | Where ⚙ › Features › **Learning loop** starts, read once on the first start of a version with one switch; after that the switch decides everything brAIn learns (the memory hook, voice's \`remember_fact\`, reflect, presence, Morph's learning, memory clean-up, the consolidator and study sessions) and this option does nothing. Turning learning off leaves existing memory untouched. |
 | \`memory_injection\` | bool | \`true\` | Splice learned memory into voice prompts. |
 | \`memory_max_kb\` | 1–64 | \`32\` | Size cap for the memory document. A pass that cannot fit under it files nothing, so this is the setting to raise when the log says the document is full. |
 | \`study_timeout_minutes\` | 2–120 | \`30\` | Wall-clock limit for a study session. |

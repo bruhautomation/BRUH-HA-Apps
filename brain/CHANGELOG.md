@@ -2,6 +2,38 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.3.0
+
+brAIn's learning loops, brought in line with Anthropic's guidance on self-improving agents, with no person in the loop. Plan: `docs/design/self-learning-plan-2026-11.md`.
+
+### Added
+
+- Memory is versioned: every change is checked, kept with its diff (the last 30, `brain memory history`), and `brain memory undo` restores the previous version as a new one. A nightly self-check rolls back one version if the newest fails, never over a person's own edit.
+- Facts from other add-ons, automations, web pages, files or tool output are filed "(unverified)" and never become core facts until a person's own words confirm them.
+- Under ⚙ › Features › Learning loop, a line says what learning wrote in the last 7 days, per learner.
+- Every finding's ending and scorecard row records the release it was given under, so "worse since x.y.z" is a query.
+- Every development-loop issue carries a structured, digest-checked block, so the cloud reads facts rather than prose; held, after, canary and corpus reports carry their own.
+- Canary health reports after each brAIn (and sibling) release: new faults, things that came back, scorecard drops and restarts, with one final verdict the cloud reverts by.
+- A "Did the fixes hold?" section in ⚙ › Developer: held for 7 days, came back, waiting for an update, canary verdicts.
+- Fixed screen reports are photographed again once the fix is installed, so the cloud can check the picture.
+- An optional `corpus` stream that files first looks marked Wrong or missed as frozen test cases.
+- A house.css or house.js change that breaks brAIn's page is undone automatically, and ⚙ › Instructions says why.
+
+### Changed
+
+- ⚙ › Features › Learning loop is the one switch for everything brAIn learns (the memory hook, voice's remember_fact, reflect, presence, Morph's learning, memory clean-up). The `learning` option is only its starting position.
+- A full memory evicts its lowest-value lines (unverified first, never a person's) instead of stalling, and the eviction can be undone.
+- Memory clean-up removes lines it judged wrong, duplicate or stale on its own, as an undoable version; a person's lines are never offered.
+- The knowledge ledger keeps old facts and questions only as fingerprints, by age and use, so old questions are never asked again.
+- A declined, not-brAIn or duplicate verdict silences a report for 90 days instead of for ever; a recurrence is filed again.
+- Morph's code reports are filed with each learning pass while the Development loop is on.
+- brAIn's own surfaces (house layer, Morph code copies, LEARNED.md, memory removals, personality notes) never wait for a press.
+
+### Fixed
+
+- The memory extractor no longer files the assistant's own words as the person's.
+- The first save of development-loop settings could change the built-in defaults.
+
 ## 4.2.11
 
 ### Removed

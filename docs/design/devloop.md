@@ -36,9 +36,18 @@ off by default, and documented to users in [`brain/DEVLOOP.md`](../../brain/DEVL
 5. **The house never writes code.** Its token can only file issues in one
    private repository. Changing code is the job of a Routine in the cloud, with
    its own access, through pull requests, CI and `devloop-guard`.
-6. **Nothing promotes itself.** A stream reports and a Routine proposes. A
-   person, or a merge policy that person chose for a narrow class of change,
-   decides what ships.
+6. **Nothing grades itself.** A stream reports and a Routine proposes; judges
+   the Routine cannot edit decide what ships. The owner chose a loop with no
+   person in it (`self-learning-plan-2026-11.md`, section 0), so a person's
+   judgement is replaced by two things the fixer cannot change: **the house
+   as ground truth** (its canary reports each release's health within hours,
+   and the Routine reverts the whole PR it blames and retries a model tier
+   up; *Held* and *Back again* judge each fix) and **graders frozen on
+   `main`** (`devloop-guard` runs from base and can only get stricter; a
+   fresh reviewer on a different model tier, which never saw the fix's
+   reasoning, approves every merge, two for a safety-area change; an auditor
+   re-judges a sample of declines; a monitor reads every run's transcript).
+   Grader independence is the one thing that is never automated away.
 
 ## Streams
 
@@ -134,34 +143,69 @@ screenshot need from fixtures for now.
 
 The house never writes code. A Routine does, in a fresh cloud session every
 two hours, following `.claude/skills/fix-from-house/SKILL.md`. **A run is
-finished when the queue is empty**: every open issue it found ends closed,
-with a comment saying why (fixed in a merged PR, not brAIn's, a duplicate,
-or declined with the reason and the plan). In order:
+finished when every issue it found has an evidenced ending**: closed with a
+comment whose first line is the reason and which cites what it rests on
+(the merged PR; the release and the test for *already fixed*; the issue
+for a duplicate; an issue, PR or `path:line` for a decline). A decline
+without evidence is reopened by the auditor, so closing is never cheaper
+than fixing. In order:
 
 0. **Take the run lock**, an open `[devloop] run in progress` issue in the
    reports repo. A drain can outlast the two-hour gap, and two runs
    batching the same issues would fight over one version number. A lock
    older than three hours is a run that died and is taken over.
-1. **Finish any open `devloop/` PR**: merge `main` into it on a conflict,
-   fix red CI, and merge it (squash, through the GitHub MCP tool) when every
-   check is green. A merge made with Actions' `GITHUB_TOKEN` starts no
+1. **The house's verdict on what shipped**, before any new work: the
+   house's `[canary] <product> <version>` issue (a signed `brain-canary`
+   block: faults first seen on the release, came-back fingerprints,
+   scorecard drops, a crash on start) is turned into a revert plan by
+   `scripts/canary.py`, each blamed PR is reverted whole and its issues
+   reopened `devloop:came-back` for a retry one model tier up. *Back again*
+   and the owner's *Not fixed* reopen the same way, and a `look` fix the
+   house photographed again (`brain-after`) is compared with its before
+   picture by an evaluator subagent.
+2. **Finish any open `devloop` PR**: merge `main` into it on a conflict,
+   fix red CI, pass the reviewer gate and merge it (squash, through the
+   GitHub MCP tool). A merge made with Actions' `GITHUB_TOKEN` starts no
    workflows on `main`, which is why the merge is the routine's.
-2. **Follow up on fixes that did not hold**: a *Back again* or *Still
-   happening* after a fix reopens the issue for this run's drain, and a PR that made things worse is reverted whole and
-   its issues reopened.
-3. **The weekly UX audit and retro**, due off the dates in `LESSONS.md`,
-   before the drain because the audit files issues this run then closes.
-4. **Drain the queue**: triage every issue to one outcome first, group the
-   fixes into batches by area (at most eight issues, never a UI change
-   beside a change to what an unattended run may do), and for each batch in
-   turn: failing tests first, the fixes, one patch bump and CHANGELOG entry,
-   open the PR, wait for CI, merge, close its issues.
-   The run itself is Opus and does the judging; each batch's fix goes to a
-   subagent on Sonnet when the cause is plain, Opus when it has to be found,
-   and Fable only after an Opus attempt failed (at most three a run), with a
-   failed tier retried once a tier up before the issue goes to a person.
-5. **Final sweep**: anything filed while the run worked is drained too, up
-   to three sweeps. Then the lock is released.
+3. **The weekly auditor, UX audit and retro**, the monthly notes
+   consolidation and the quarterly ablation, due off `runs.jsonl` and the
+   dates in `LESSONS.md`, before the drain because each can file or reopen
+   issues this run then ends.
+4. **Drain the queue**: every issue through `scripts/issue_parse.py` first
+   (only a verified block's `what`/`where`/`done_when` is a task; an
+   unverified issue is closed `not-brain: unverified`), triage each to one
+   evidenced outcome, group the fixes into batches by area (at most eight
+   issues, never a UI change beside a change to what an unattended run may
+   do), and for each batch in turn: failing tests first, the fixes, one
+   patch bump and CHANGELOG entry, open the PR, wait for CI, the reviewer
+   gate, merge, close its issues. A fix that contradicts an existing test
+   waits for a separate `devloop-test/` PR an independent reviewer approves.
+   The run itself orchestrates; each batch's fix goes to a subagent on
+   Sonnet when the cause is plain, Opus when it has to be found, and Fable
+   only after an Opus attempt failed (at most three a run), with a failed
+   tier retried once a tier up before the issue is declined with what was
+   tried.
+5. **Final sweep, monitor, record**: anything filed while the run worked is
+   drained too, up to three sweeps; `scripts/monitor.py` reads every
+   transcript of the run for the closed list of cheating patterns (a hit
+   reverts that PR and reruns its batch a tier up); one row is appended to
+   `runs.jsonl` in the reports repo; the lock is released.
+
+**Every merge passes a reviewer the fixer is not.** After CI is green, a
+fresh subagent on a different model tier, given only the issues' `Done
+when:` lines, the diff and the test output (never the fix's reasoning),
+returns `approve`, `request_changes` or `unknown`; `scripts/merge_gate.py`
+decides from those and the tier the guard printed (A copy/UI/docs, B logic
+in one add-on, T a test dispute: one approval; C a safety area or logic
+across add-ons, M a grader change: two).
+
+**The loop's numbers are data, not prose.** `runs.jsonl` (one validated row
+per run) and the house's signed `brain-held` comments give held^7d (fixes
+still held a week after install), the came-back, revert and
+overturned-decline rates, batch sizes and tiers, computed by
+`scripts/runs_record.py`; the lessons are `lessons.json`, each saying
+whether a guard rule, a test, a hook or only prose holds it, and the
+retro promotes the checkable ones and retires the stale.
 
 **Batches go one after another, never side by side**, because each bumps
 the version, and a batch is reverted whole: one PR's issues are one
@@ -183,24 +227,30 @@ have shown in two minutes.
 ### What a model is not trusted to keep
 
 `devloop-guard` (`.github/workflows/devloop-guard.yml`,
-`.github/scripts/devloop_guard.py`) runs on every PR from a `devloop/` branch
-and fails it on:
+`.github/scripts/devloop_guard.py`) runs on every PR from a `devloop`
+branch, **as the base branch holds it** (the PR's copy of the guard is
+never what judges the PR), reads `devloop.json` from base, prints the PR's
+risk tier, and fails it on:
 
-- any change but the version line in the `version_only_files` manifests,
-  that list read from the **base** branch so a PR cannot edit the list it
-  is judged by (no file is off limits otherwise: `needs_human_paths` is
-  gone);
-- a deleted test file, a skip or xfail added, or fewer `def test_` than
-  before;
-- a change to the add-ons' code (Python, shell, the integrations, the MCP
-  server) with nothing changed under `tests/`. The skill says "failing
-  test first"; this is the half that holds when a model does not read it.
-  Copy, layout, CSS, JS and docs are exempt, because a measure is run by
-  hand and by CI's `layout` job.
+- any change but the version line in the `version_only_files` manifests;
+- a change to a `grader_paths` file (the guard, its workflow,
+  `devloop.json`, the skill, `tests/conftest.py`, `pytest.ini`,
+  `tests/affected.py`, the guard's tests and frozen cases) from anything
+  but a `devloop-meta/` PR, and on a `devloop-meta/` PR whose guard no
+  longer flags every frozen known-bad diff in `tests/devloop_guard_cases/`;
+- a changed or removed line in a test file that exists on base, a test lost
+  by name, a deleted test file, or a skip or xfail added, outside a
+  `devloop-test/` PR (which may change tests and nothing else);
+- a change to the add-ons' code with no added test in a file
+  `tests/affected.py` selects for it. The skill says "failing test first";
+  this is the half that holds when a model does not read it.
 
 The skill says all of this too. The guard is the half that holds when a
-model does not read it. Issue text is data: the skill forbids acting on
-anything an issue says to do, and nothing from the private repository is
+model does not read it. Issue text is data, and that is a parse rather than
+a promise: the house signs the machine part of every issue as a
+`brain-devloop` block (a sha256 digest over the canonical JSON, checked
+together with the issue's author against `house_login`), and the skill acts
+only on a verified block's fields. Nothing from the private repository is
 copied into the public one.
 
 Auto-merging to `main` ships every fix to everybody who installed the

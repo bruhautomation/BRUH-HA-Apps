@@ -45,7 +45,8 @@ Usage:
       forget "<text>"            Drop a remembered line
       inbox                      Facts queued, not yet filed into memory
       log [n]                    What it learned recently
-      undo [n]                   Revert a memory change
+      history [n]                Every kept version of the document
+      undo                       Go back one version (itself kept as a version)
       hypotheses                 Pending guesses awaiting your yes/no
       confirm "<text>"           Confirm a pending guess
       reject "<text>"            Reject a pending guess

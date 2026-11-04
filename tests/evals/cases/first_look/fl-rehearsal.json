@@ -1,0 +1,11 @@
+{
+ "id": "fl-rehearsal",
+ "job": "first_look",
+ "kind": "regression",
+ "origin": "brain/panel/engine.py run_claude docstring: every first look that could not be read sent its whole batch to `watch`, which is how a tripped leak sensor never reached `act`; corpus entry first-look-rehearsal",
+ "input": {
+  "corpus": "first-look-rehearsal"
+ },
+ "expect": {},
+ "rule": "The planted defects are watched, the leak acted on, the protected lock investigated."
+}

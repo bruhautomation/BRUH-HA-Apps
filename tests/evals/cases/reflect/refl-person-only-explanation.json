@@ -1,0 +1,26 @@
+{
+ "id": "refl-person-only-explanation",
+ "job": "reflect",
+ "kind": "capability",
+ "origin": "synthetic",
+ "input": {
+  "scopes": {
+   "entity": {
+    "binary_sensor.back_door": {
+     "wrong": 4,
+     "last_wrong_at": 1800000000,
+     "notes": [
+      "that's just my son coming home late from work",
+      "that's just my son coming home late from work"
+     ]
+    }
+   }
+  }
+ },
+ "expect": {
+  "lessons": {
+   "binary_sensor.back_door": ""
+  }
+ },
+ "rule": "When the only explanation is about a person, the lesson is empty."
+}

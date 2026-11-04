@@ -3402,6 +3402,27 @@ def wake_worse(states, now: float | None = None) -> list[dict]:
     return touched
 
 
+# The release an ending was given under (`ADDON_VERSION`, read at call time
+# the way `facts_store.current_version` reads it), so "worse since 4.x.y" is
+# a query over the ledger rather than prose. Rows from before the field
+# existed, and rows moved in from another install's export, carry none and
+# are counted under UNKNOWN_RELEASE — never as the release running now.
+UNKNOWN_RELEASE = "unknown"
+MAX_RELEASE = 40
+
+
+def current_release() -> str:
+    """The brAIn version this process runs, or "" when it cannot say."""
+    return str(os.environ.get("ADDON_VERSION") or "").strip()[:MAX_RELEASE]
+
+
+def release_of(entry: dict) -> str:
+    """The release a ledger row was written under, or UNKNOWN_RELEASE."""
+    value = entry.get("release") if isinstance(entry, dict) else None
+    value = str(value).strip()[:MAX_RELEASE] if isinstance(value, str) else ""
+    return value or UNKNOWN_RELEASE
+
+
 @_mutates
 def settle_and_clear(ts: int, kind: str, note: str = "") -> dict | None:
     """Finish with a finding: remember the answer, drop the row.
@@ -3439,11 +3460,15 @@ def settle_and_clear(ts: int, kind: str, note: str = "") -> dict | None:
     _write(kept)
     _remember_settled(settled, kind, note=note)
     settled["note"] = str(note or "").strip()[:MAX_NOTE]
+    release = current_release()
+    if release:
+        settled["release"] = release
     return settled
 
 
 def _remember_settled(shaped: dict, kind: str, when: int = 0,
-                      note: str = "", key: str = "") -> None:
+                      note: str = "", key: str = "",
+                      release: str | None = None) -> None:
     """Write the answer into the ledger, replacing anything under that key.
 
     ``key`` is normally derived from the text, which is the only key any
@@ -3451,7 +3476,12 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
     was deleted weeks ago passes the key it stored then, because deriving
     it a second time from a copy of the text is a second answer to "which
     entry is this" — and the two would agree right up until they did not.
+
+    ``release`` is the version the ending was given under: the running one
+    by default, "" for an answer given long ago that is only being moved
+    (`migrate_settled`), which then carries none rather than a wrong one.
     """
+    release = current_release() if release is None else str(release or "")
     ledger = _load_settled()
     key = str(key or "").strip() or normalize(shaped["text"])
     prior = next((e for e in ledger if e.get("key") == key), None)
@@ -3495,6 +3525,8 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
         # which card is worth trusting in this house.
         "source": str(shaped.get("source") or "")[:64],
         "source_title": str(shaped.get("source_title") or "")[:120],
+        # Under which release this ending was given (`scorecard_by_release`).
+        **({"release": release[:MAX_RELEASE]} if release else {}),
         # What it was about, so a reworded report about the same entity
         # from the same producer is recognised as answered
         # (`_subjects_answered_wrong`).
@@ -3689,19 +3721,27 @@ def _write_settled(items: list[dict]) -> None:
     atomic_write.write_json(SETTLED_FILE, {"settled": items})
 
 
-def scorecard() -> list[dict]:
+def scorecard(release: str | None = None) -> list[dict]:
     """How right each producer has been, from the endings people gave.
 
-    ``[{source, title, confirmed, wrong, total}, ...]``, most-settled first.
-    "I did it" and "Got it" after a fix count as confirmed; "Wrong" counts
-    as wrong. Snoozes and open rows count as nothing — a decision not yet
-    made is not a label. Only settled entries that recorded a producer
-    take part, so a ledger from before that field existed simply scores
-    nothing rather than scoring everything as one anonymous producer.
+    ``[{source, title, confirmed, wrong, total, release}, ...]``,
+    most-settled first. "I did it" and "Got it" after a fix count as
+    confirmed; "Wrong" counts as wrong. Snoozes and open rows count as
+    nothing — a decision not yet made is not a label. Only settled entries
+    that recorded a producer take part, so a ledger from before that field
+    existed simply scores nothing rather than scoring everything as one
+    anonymous producer.
+
+    ``release`` keeps only the endings given under that release
+    (UNKNOWN_RELEASE for the ones that carry none); each row then says the
+    release it was counted over, and ``None`` (every release) says None.
     """
+    want = None if release is None else (str(release).strip() or UNKNOWN_RELEASE)
     by: dict[str, dict] = {}
     for e in _load_settled():
         src = str(e.get("source") or "")
+        if want is not None and release_of(e) != want:
+            continue
         if not src or e.get("kind") == "not_applicable":
             # "Doesn't apply" is no label: a question that did not fit the
             # house says nothing about whether its producer is right.
@@ -3711,7 +3751,8 @@ def scorecard() -> list[dict]:
             "title": _rule_titled(src, str(e.get("source_title") or ""))
             or src,
             "confirmed": 0, "wrong": 0, "last": "", "last_ts": 0,
-            "last_wrong_ts": 0, "example": "", "example_ts": -1})
+            "last_wrong_ts": 0, "example": "", "example_ts": -1,
+            "release": want})
         # One report the rule filed, newest first — what the mute question
         # names as an example of what stopping it stops.
         if str(e.get("text") or "").strip() and int(e.get("ts") or 0) >= \
@@ -3741,6 +3782,28 @@ def scorecard() -> list[dict]:
         r.pop("example_ts", None)
     rows.sort(key=lambda r: (-r["total"], r["source"]))
     return rows
+
+
+def scorecard_by_release() -> dict[str, dict[str, dict]]:
+    """``{release: {producer: {"right": n, "wrong": n, "total": n}}}``.
+
+    The canary's question — did a producer's right-share drop under the
+    new release? — as a query. "Right" is every ending that is not Wrong
+    (fixed, accepted); "Doesn't apply" is no label and counts nowhere, as
+    in `scorecard`. Endings that carry no release are UNKNOWN_RELEASE,
+    never the release running now.
+    """
+    out: dict[str, dict[str, dict]] = {}
+    for e in _load_settled():
+        src = str(e.get("source") or "")
+        kind = e.get("kind")
+        if not src or kind not in ("fixed", "accepted", "ignored"):
+            continue
+        row = out.setdefault(release_of(e), {}).setdefault(
+            src, {"right": 0, "wrong": 0, "total": 0})
+        row["wrong" if kind == "ignored" else "right"] += 1
+        row["total"] += 1
+    return out
 
 
 @_mutates
@@ -3849,6 +3912,10 @@ def merge_settled(entries: list[dict]) -> int:
             "kind": kind if kind in ("fixed", "ignored") else "ignored",
             "ts": int(entry.get("ts") or 0) or int(time.time()),
             "note": str(entry.get("note") or "").strip()[:MAX_NOTE],
+            # The release it was answered under there, when it said one;
+            # never this install's, which it was not answered under.
+            **({"release": release_of(entry)}
+               if release_of(entry) != UNKNOWN_RELEASE else {}),
             **({"wrong_at": _wrong_at(entry) or int(entry.get("ts") or 0)
                 or int(time.time())}
                if (kind if kind in ("fixed", "ignored") else "ignored")
@@ -3976,7 +4043,8 @@ def migrate_settled() -> int:
             continue
         kept.append(entry)
     for shaped, when in moved:
-        _remember_settled(shaped, "ignored", when=when)
+        # Answered before the ledger, under a release nobody wrote down.
+        _remember_settled(shaped, "ignored", when=when, release="")
     if moved:
         _write(kept)
     return len(moved)

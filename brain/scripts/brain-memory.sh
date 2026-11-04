@@ -20,7 +20,9 @@
 #   brain memory edit                   Open it in $EDITOR
 #   brain memory forget "<text>"        Queue a line for removal
 #   brain memory log [n]                What it learned recently
-#   brain memory undo [n]               Revert a memory change
+#   brain memory history [n]            The kept versions of the document
+#   brain memory undo                   Restore the previous version, as a new one
+#   brain memory undo <n>               Revert change #n from `log` (older list)
 #   brain memory hypotheses             Pending guesses awaiting your yes/no
 #   brain memory confirm "<text>"       Confirm a guess (becomes a fact)
 #   brain memory reject "<text>" [why]  Reject a guess (becomes a dead end)
@@ -77,7 +79,9 @@ Usage:
   brain memory edit                Open it in $EDITOR
   brain memory forget "<text>"     Queue a line for removal
   brain memory log [n]             What it learned recently (default 10)
-  brain memory undo [n]            Revert change #n from that list
+  brain memory history [n]         Every kept version, with where it came from
+  brain memory undo                Go back one version (kept as a new version)
+  brain memory undo <n>            Revert change #n from the log
 
   brain memory hypotheses          Guesses waiting on a yes/no from you
   brain memory confirm "<text>"    Yes — file it as a fact
@@ -116,10 +120,13 @@ MEMORYMD
 }
 
 append_inbox_fact() {
-    local fact="$1" source="$2" confidence="$3" ts file
+    local fact="$1" source="$2" confidence="$3" typed="${4:-}" ts file
     ts=$(date +%s)
     mkdir -p "$INBOX_DIR"
-    file="$INBOX_DIR/${ts}-${source}.jsonl"
+    # A line a person typed here is filed in a `-typed` file: the source
+    # word stays the face it was typed into, and the file name is what
+    # tells the memory check a person said it (memory_history.TYPED_SUFFIX).
+    file="$INBOX_DIR/${ts}-${source}${typed:+-typed}.jsonl"
     jq -cn --arg fact "$fact" --arg source "$source" --arg conf "$confidence" \
         --argjson ts "$ts" \
         '{"ts": $ts, "source": $source, "fact": $fact, "confidence": $conf}' >> "$file"
@@ -139,7 +146,7 @@ require_arg() {
 
 cmd_add() {
     require_arg "${1:-}" "'add' needs a fact, e.g. brain memory add \"We call the office lamp the beacon\""
-    append_inbox_fact "$1" "terminal" "high" > /dev/null
+    append_inbox_fact "$1" "terminal" "high" typed > /dev/null
     echo -e "${GREEN}Queued:${NC} $1"
     echo -e "${DIM}It lands in the document at the next consolidation (brain memory consolidate to do it now).${NC}"
 }
@@ -435,7 +442,73 @@ cmd_log_show() {
     printf '%s' "$entry" | jq -r '(.removed // [])[] | "  - \(.)"'
 }
 
+# The consolidator, which every change to the document goes through — undo
+# included, under its lock, so an undo never lands in the middle of a pass.
+find_consolidator() {
+    local candidate
+    for candidate in /opt/scripts/brain-memory-consolidate.sh \
+                     "$(dirname "$0")/brain-memory-consolidate.sh"; do
+        if [ -f "$candidate" ]; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+find_history_helper() {
+    local candidate
+    for candidate in "${BRAIN_PANEL_DIR:-/opt/panel}/memory_history.py" \
+                     "$(dirname "$0")/../panel/memory_history.py"; do
+        if [ -r "$candidate" ]; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+cmd_history() {
+    local helper limit="${1:-15}"
+    helper=$(find_history_helper) || {
+        echo -e "${RED}Error: memory_history.py is not installed in this image${NC}" >&2
+        exit 1
+    }
+    BRAIN_MEMORY_DIR="$MEMORY_DIR" python3 "$helper" history \
+        --memory "$MEMORY_FILE" --limit "$limit"
+    echo ""
+    echo -e "Go back one version: ${CYAN}brain memory undo${NC}"
+}
+
+# Every version is kept (plan 2.2), and an undo is a new version rather
+# than a rewind, so undoing an undo is one more `brain memory undo`.
+cmd_undo_version() {
+    local consolidator out rc=0
+    consolidator=$(find_consolidator) || {
+        echo -e "${RED}Error: the consolidator is not installed in this image${NC}" >&2
+        exit 1
+    }
+    out=$(BRAIN_MEMORY_DIR="$MEMORY_DIR" bash "$consolidator" --undo 2>&1) || rc=$?
+    if [ "$rc" -eq 0 ]; then
+        echo -e "${GREEN}Memory is back to the previous version.${NC}"
+        printf '%s\n' "$out" | sed 's/^\[brain-memory\] /  /'
+        echo -e "${DIM}That was kept as a new version — brain memory undo again puts it back.${NC}"
+        return 0
+    fi
+    if [ "$rc" -eq 75 ]; then
+        echo -e "${YELLOW}A consolidation pass is running — try again when it finishes.${NC}" >&2
+        exit 1
+    fi
+    return "$rc"
+}
+
 cmd_undo() {
+    if [ -z "${1:-}" ]; then
+        # No number: the versioned undo. A history with nothing to go back
+        # to falls through to the change log's newest entry, which is what
+        # `undo` meant before versions existed.
+        cmd_undo_version && return 0
+    fi
     local n="${1:-1}"
     if [ ! -s "$LOG_FILE" ]; then
         echo -e "${GREEN}Nothing to undo.${NC}"
@@ -454,6 +527,13 @@ cmd_undo() {
     fi
     cp "$MEMORY_FILE" "${MEMORY_FILE}.bak" 2>/dev/null || true
     cp "$MEMORY_DIR/$snapshot" "$MEMORY_FILE"
+    # Kept as a version too, so the history says what happened.
+    local helper
+    if helper=$(find_history_helper) && [ -f "${MEMORY_FILE}.bak" ]; then
+        BRAIN_MEMORY_DIR="$MEMORY_DIR" python3 "$helper" record \
+            --memory "$MEMORY_FILE" --prev "${MEMORY_FILE}.bak" \
+            --kind undo --unchecked > /dev/null 2>&1 || true
+    fi
     echo -e "${GREEN}Reverted the memory document to before that change.${NC}"
     echo -e "${DIM}The version you just replaced is at ${MEMORY_FILE}.bak${NC}"
 }
@@ -548,7 +628,8 @@ case "$action" in
             cmd_log "${1:-10}"
         fi
         ;;
-    undo)         cmd_undo "${1:-1}" ;;
+    undo)         cmd_undo "${1:-}" ;;
+    history)      cmd_history "${1:-15}" ;;
     consolidate)  cmd_consolidate ;;
     export)       cmd_export "${1:-}" ;;
     import)       cmd_import "${1:-}" "${2:-}" ;;

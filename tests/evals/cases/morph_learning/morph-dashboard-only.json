@@ -1,0 +1,91 @@
+{
+ "id": "morph-dashboard-only",
+ "job": "morph_learning",
+ "kind": "capability",
+ "origin": "docs/notes/morph.md, 'Two learning loops': it is about the dashboard only — the prompt asks for no Home Assistant changes",
+ "input": {
+  "digest": {
+   "days_with_use": 21,
+   "events": 340,
+   "by_kind": {
+    "open": 200,
+    "toggle": 140
+   },
+   "log": {
+    "state": "ok",
+    "sentence": ""
+   },
+   "sections": [
+    {
+     "floor": "Home",
+     "section": "kitchen",
+     "title": "Kitchen",
+     "position": 1,
+     "uses": 150,
+     "when": {
+      "evening": 90
+     }
+    },
+    {
+     "floor": "Home",
+     "section": "garden",
+     "title": "Garden",
+     "position": 2,
+     "uses": 160,
+     "when": {
+      "evening": 120
+     }
+    },
+    {
+     "floor": "Home",
+     "section": "security",
+     "title": "Security",
+     "position": 3,
+     "uses": 30,
+     "when": {}
+    }
+   ],
+   "cards": [
+    {
+     "id": "porch",
+     "section": "security",
+     "type": "light",
+     "entity": "light.porch",
+     "uses": 60,
+     "unavailable": false
+    }
+   ],
+   "never_used": [],
+   "dead": [],
+   "tells": [
+    {
+     "asked": "turn the porch light on at sunset every day",
+     "phase": "done",
+     "undone": false
+    },
+    {
+     "asked": "porch light on at sunset again please",
+     "phase": "done",
+     "undone": false
+    }
+   ],
+   "suggestions": []
+  },
+  "dash_text": "floors:\n- title: Home\n  sections:\n  - id: kitchen\n    title: Kitchen\n  - id: garden\n    title: Garden\n  - id: security\n    title: Security\n",
+  "lessons": []
+ },
+ "expect": {
+  "forbidden": [
+   {
+    "any": [
+     "automation",
+     "automate",
+     "schedule",
+     "helper",
+     "rename"
+    ]
+   }
+  ]
+ },
+ "rule": "The pass improves the dashboard and never the house."
+}

@@ -102,7 +102,11 @@ class TestThePress(unittest.TestCase):
         self._old = (memory_cleanup.STORE, facts_store.FACTS_FILE,
                      server.SHARED_MEMORY_FILE, server.MEMORY_INBOX_DIR,
                      server.engine.run_analyst, server.engine.get_auth,
-                     server._consolidate_now)
+                     server._consolidate_now, server.CONSOLIDATE_SCRIPT)
+        # No consolidator here, so a document line the review is sure of
+        # stays on the list (tests/test_memory_versions.py drives the real
+        # one); a fact it is sure of leaves the store at once (plan §0).
+        server.CONSOLIDATE_SCRIPT = str(root / "no-consolidator.sh")
         memory_cleanup.STORE = str(root / "cleanup.json")
         facts_store.FACTS_FILE = root / "facts.json"
         server.SHARED_MEMORY_FILE = doc
@@ -137,14 +141,18 @@ class TestThePress(unittest.TestCase):
         (memory_cleanup.STORE, self.facts.FACTS_FILE,
          self.server.SHARED_MEMORY_FILE, self.server.MEMORY_INBOX_DIR,
          self.server.engine.run_analyst, self.server.engine.get_auth,
-         self.server._consolidate_now) = self._old
+         self.server._consolidate_now, self.server.CONSOLIDATE_SCRIPT) = self._old
         self.tmp.cleanup()
 
     def test_the_runner_saves_only_what_passed_and_reads_the_house(self):
         asyncio.run(self.server._run_memory_cleanup())
         proposal = memory_cleanup.load()["proposal"]
-        self.assertEqual([r["id"] for r in proposal["rows"]],
-                         ["doc:3", "doc:7", f"fact:{self.fact_id}"])
+        # The fact called wrong was applied without a press; the duplicate
+        # line could not be (no consolidator) and waits with the useless one.
+        self.assertEqual([r["id"] for r in proposal["rows"]], ["doc:3", "doc:7"])
+        self.assertEqual([r["id"] for r in proposal["applied"]],
+                         [f"fact:{self.fact_id}"])
+        self.assertEqual(self.facts.export_rows(), [])
         self.assertEqual(proposal["dropped"], 1)
         [call] = self.prompts
         self.assertEqual(call["job"], memory_cleanup.JOB)
@@ -156,7 +164,7 @@ class TestThePress(unittest.TestCase):
 
         async def go(client):
             res = await client.post("/api/memory/cleanup/apply", json={
-                "ids": ["doc:3", f"fact:{self.fact_id}"]})
+                "ids": ["doc:3"]})
             body = await res.json()
             for _ in range(20):
                 if self.consolidations:
@@ -166,8 +174,8 @@ class TestThePress(unittest.TestCase):
 
         status, body = drive_app(self.server.make_app, go)
         self.assertEqual(status, 200, body)
-        self.assertEqual(body["result"], {"facts": 1, "lines": 1, "consolidating": True})
-        # The fact left the store at once.
+        self.assertEqual(body["result"], {"facts": 0, "lines": 1, "consolidating": True})
+        # The fact the review was sure of had already left the store.
         self.assertEqual(self.facts.export_rows(), [])
         # The document line became a FORGET request for the consolidator,
         # which was started; memory.md itself was not written here.

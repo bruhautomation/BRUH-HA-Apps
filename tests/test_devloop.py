@@ -911,7 +911,7 @@ class TestTheSchedule(DevloopCase):
         devloop.save_settings({"streams": {"faults": True, "gaps": True,
                                            "unmet": False, "scorecard": False,
                                            "wrongs": False, "morph": False,
-                                           "siblings": False},
+                                           "siblings": False, "canary": False},
                                "schedule": {"faults": 1, "gaps": 24}})
         t = time.time()
         due = upstream.due_streams(t)
@@ -1041,128 +1041,11 @@ class TestCollectors(unittest.TestCase):
 
 
 class TestTheGuard(unittest.TestCase):
-    """devloop_guard.py over a real git repository: the base branch's
-    config decides, and each rule fails the PR it is about."""
+    """The guard's tests live in tests/test_devloop_guard.py, a grader
+    file a devloop/ PR may not touch; this only says where they went."""
 
-    GUARD = BASE_DIR / ".github" / "scripts" / "devloop_guard.py"
-
-    def setUp(self):
-        import subprocess
-        self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
-        self.run = lambda *a: subprocess.run(
-            a, cwd=self.root, check=True, capture_output=True, text=True)
-        self.run("git", "init", "-q", "-b", "main")
-        self.run("git", "config", "user.email", "t@t")
-        self.run("git", "config", "user.name", "t")
-        (self.root / ".claude").mkdir()
-        (self.root / ".claude" / "devloop.json").write_text(json.dumps({
-            "version_only_files": ["brain/config.yaml"]}))
-        (self.root / "brain" / "panel").mkdir(parents=True)
-        (self.root / "brain" / "panel" / "gate.py").write_text("x = 1\n")
-        (self.root / "brain" / "panel" / "cards.py").write_text("x = 1\n")
-        (self.root / "brain" / "config.yaml").write_text(
-            'name: brAIn\nversion: "2.17.0"\nslug: brain\n')
-        (self.root / "tests").mkdir()
-        (self.root / "tests" / "test_x.py").write_text(
-            "def test_a():\n    pass\n\n\ndef test_b():\n    pass\n")
-        self.run("git", "add", "-A")
-        self.run("git", "commit", "-qm", "base")
-        self.run("git", "checkout", "-qb", "devloop/1")
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def guard(self):
-        import subprocess
-        self.run("git", "add", "-A")
-        self.run("git", "commit", "-qm", "change", "--allow-empty")
-        return subprocess.run([sys.executable, str(self.GUARD), "main"],
-                              cwd=self.root, capture_output=True, text=True)
-
-    def test_an_ordinary_fix_with_a_version_bump_passes(self):
-        (self.root / "brain" / "panel" / "cards.py").write_text("x = 2\n")
-        (self.root / "tests" / "test_x.py").write_text(
-            "def test_a():\n    pass\n\n\ndef test_b():\n    pass\n\n\n"
-            "def test_c():\n    pass\n")
-        (self.root / "brain" / "config.yaml").write_text(
-            'name: brAIn\nversion: "2.17.1"\nslug: brain\n')
-        r = self.guard()
-        self.assertEqual(r.returncode, 0, r.stdout)
-
-    def test_a_code_change_with_no_test_change_fails_and_a_copy_change_does_not(self):
-        # The skill says "failing test first"; the guard is the half that
-        # holds when a model does not read it.
-        (self.root / "brain" / "panel" / "cards.py").write_text("x = 2\n")
-        r = self.guard()
-        self.assertEqual(r.returncode, 1)
-        self.assertIn("no test change", r.stdout)
-        self.run("git", "reset", "-q", "--hard", "main")
-        (self.root / "brain" / "panel" / "style.css").write_text("a{}\n")
-        self.assertEqual(self.guard().returncode, 0)
-
-    def test_no_file_is_off_limits(self):
-        # No needs_human_paths: a fix may touch the gate itself, given a test.
-        (self.root / "brain" / "panel" / "gate.py").write_text("x = 2\n")
-        (self.root / "tests" / "test_x.py").write_text(
-            "def test_a():\n    pass\n\n\ndef test_b():\n    pass\n\n\n"
-            "def test_c():\n    pass\n")
-        r = self.guard()
-        self.assertEqual(r.returncode, 0, r.stdout)
-        self.assertNotIn("needs-human", r.stdout)
-
-    def test_a_pr_cannot_loosen_its_own_guard(self):
-        # The base branch's config is read: emptying version_only_files in
-        # the PR does not let it change more than a version line.
-        (self.root / ".claude" / "devloop.json").write_text(
-            json.dumps({"version_only_files": []}))
-        (self.root / "brain" / "config.yaml").write_text(
-            'name: brAIn\nversion: "2.17.1"\nslug: brain\nprivileged: [SYS_ADMIN]\n')
-        self.assertEqual(self.guard().returncode, 1)
-
-    def test_more_than_the_version_in_config_yaml_fails(self):
-        (self.root / "brain" / "config.yaml").write_text(
-            'name: brAIn\nversion: "2.17.1"\nslug: brain\nprivileged: [SYS_ADMIN]\n')
-        self.assertEqual(self.guard().returncode, 1)
-
-    def test_a_skipped_or_removed_test_fails(self):
-        (self.root / "tests" / "test_x.py").write_text(
-            "import pytest\n\n\n@pytest.mark.skip\ndef test_a():\n    pass\n"
-            "\n\ndef test_b():\n    pass\n")
-        self.assertEqual(self.guard().returncode, 1)
-        self.run("git", "reset", "-q", "--hard", "main")
-        (self.root / "tests" / "test_x.py").write_text("def test_a():\n    pass\n")
-        self.assertEqual(self.guard().returncode, 1)
-
-    def test_every_spelling_of_a_skip_fails(self):
-        # `@skipIf`/`@skipUnless` imported bare and a raised SkipTest skip a
-        # test as surely as `@unittest.skip`, and went through.
-        for skip in ("from unittest import skipIf\n\n\n@skipIf(True, 'x')\n",
-                     "from unittest import skipUnless\n\n\n@skipUnless(False, 'x')\n",
-                     "from unittest import skip\n\n\n@skip('later')\n"):
-            with self.subTest(skip=skip):
-                self.run("git", "reset", "-q", "--hard", "main")
-                (self.root / "tests" / "test_x.py").write_text(
-                    skip + "def test_a():\n    pass\n\n\ndef test_b():\n    pass\n")
-                self.assertEqual(self.guard().returncode, 1)
-        for body in ("    raise unittest.SkipTest('later')\n",
-                     "    raise SkipTest('later')\n"):
-            with self.subTest(body=body):
-                self.run("git", "reset", "-q", "--hard", "main")
-                (self.root / "tests" / "test_x.py").write_text(
-                    "import unittest\nfrom unittest import SkipTest\n\n\n"
-                    "def test_a():\n" + body + "\n\ndef test_b():\n    pass\n")
-                r = self.guard()
-                self.assertEqual(r.returncode, 1)
-                self.assertIn("a test was skipped", r.stdout)
-
-    def test_a_test_about_skipping_is_not_a_skip(self):
-        # A name that only mentions skipping is a test, not a skip.
-        (self.root / "tests" / "test_x.py").write_text(
-            "def test_a():\n    pass\n\n\ndef test_b():\n    pass\n\n\n"
-            "def test_skipped_rows_are_counted():\n    assert skip_rows([]) == 0\n")
-        r = self.guard()
-        self.assertEqual(r.returncode, 0, r.stdout)
+    def test_the_guard_has_its_own_tests(self):
+        self.assertTrue((BASE_DIR / "tests" / "test_devloop_guard.py").is_file())
 
 
 class TestTheLookRoute(DevloopCase):

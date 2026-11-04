@@ -1,0 +1,40 @@
+{
+ "id": "fl-freezer-warming",
+ "job": "first_look",
+ "kind": "capability",
+ "origin": "synthetic",
+ "input": {
+  "batch": [
+   {
+    "evidence": [
+     {
+      "entity": "sensor.garage_freezer_temp",
+      "value": "-4",
+      "when": 1800000000
+     }
+    ],
+    "hot": false,
+    "kind": "check",
+    "protected": false,
+    "repeats": 1,
+    "safety": false,
+    "salience": 0.8,
+    "seen_at": 1800000000,
+    "source": "check:climate.freeze",
+    "subject": "sensor.garage_freezer_temp",
+    "text": "Garage freezer -18 °C → -4 °C over two hours"
+   }
+  ],
+  "inputs": {},
+  "now": 1800000000,
+  "labels": [
+   {
+    "signal": 1,
+    "floor": "investigate",
+    "why": "a freezer warming fourteen degrees"
+   }
+  ]
+ },
+ "expect": {},
+ "rule": "A freezer warming is investigated at least."
+}
