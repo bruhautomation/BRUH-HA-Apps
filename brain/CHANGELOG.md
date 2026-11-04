@@ -2,6 +2,46 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.2.9
+
+### Added
+
+- Minecraft: the companion can put a skin on a player by Java name or skin link, take it off, and say what the server answered. It offers a child up to three skins on choice pads and remembers each person's current skin. A child can change only their own skin (#670).
+- A finding when something else also answers as the companion in the game, such as an old automation that forwards game chat or speaks in its name, naming what it is (#675).
+
+### Changed
+
+- Minecraft: what the companion says it can do comes from each person's settings at that moment (house control on or off for them, whether changes act at once or wait for approval, bedtime). The chat and a job's worker get the same description, so it never says it can't do something it then does (#675).
+
+### Fixed
+
+- Minecraft: a chat answer that mentions logging in is no longer recorded as the companion being down (#670).
+
+## 4.2.8
+
+### Added
+
+- Minecraft: each running job shows a boss bar to the player who asked, with its name, last step and how far it has got. Bedrock players on a phone or tablet see it too (needs BRUH Minecraft 1.19.6). "<name> status" lists running, waiting and recent jobs (#671).
+- Minecraft: a job that stops with some of its work standing is shown as partly done, says what stands, and can be picked up again with "<name> continue" without redoing the finished parts (#671, #666).
+
+### Changed
+
+- Minecraft: a job may run for up to an hour by default, set in ⚙ › Minecraft (15 minutes to 2 hours). A grown-up's "stop" or a cancel still ends it within seconds (#672).
+- Minecraft: a chat answer reads each job's real status and never says a build is finished unless the job says so (#671).
+
+### Fixed
+
+- A run refused by an automatic safety check, usually by mistake, is tried once more on another model; if that is refused too, it says so in plain words instead of showing the raw error (#680, #666).
+- Minecraft: a child never sees a raw error message; the details go to the log (#666).
+- Minecraft: a job that could not attempt something says plainly what it cannot do, instead of claiming it was stopped (#671).
+
+## 4.2.7
+
+### Fixed
+
+- brAIn keeps looking at the house after the day's allowance for its usual model is spent: looks step down to the light model instead of stopping until the next day, and investigations keep their share (#661).
+- The queue of things to look at no longer fills with repeats: signals about the same thing are folded together as they arrive, and an item that was fixed or dismissed while it waited is dropped (#665).
+
 ## 4.2.6
 
 ### Added

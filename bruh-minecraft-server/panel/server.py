@@ -40,6 +40,7 @@ POST /api/companion/edit    — {"blocks", "fills", "shapes", "player", "dimensi
 POST /api/companion/actions/<id>/undo — put back what one action changed (or "last")
 POST /api/companion/jobs/<job>/undo   — put back every edit recorded for a job
 POST /api/companion/progress — {"to", "text", "percent"}: a job's progress on the action bar
+POST /api/companion/bar — {"player", "key", "text", "percent", "end"}: a job's boss bar
 POST /api/companion/spyglass — {"player", "name"}: one named spyglass unless they have it
 POST /api/companion/thought — {"player", "text", "state", "key", "title", "percent", "name"}:
                               one step of the companion's thinking (BRUH Sight's bubble)
@@ -105,6 +106,7 @@ for _candidate in (_SCRIPTS_DIR, str(Path(__file__).resolve().parent.parent / "s
     if _candidate and _candidate not in sys.path:
         sys.path.insert(0, _candidate)
 from rcon_client import Rcon  # noqa: E402
+import console_reply  # noqa: E402
 
 # panel/addons.py sits beside this file. It is loaded by path under its own
 # name rather than by putting this directory on sys.path: every panel in the
@@ -143,6 +145,9 @@ spyglass = _load_beside("bruh_mc_spyglass", "spyglass.py")
 # players, what they look at, and blocks as they are now. Without it the
 # panel reads RCON and the saved world, as above.
 sight_mod = _load_beside("bruh_mc_sight", "sight.py")
+# Skript scripts and data pack functions written into the running world
+# (the `write_script` / `remove_script` services).
+worldscripts = _load_beside("bruh_mc_worldscripts", "worldscripts.py")
 
 # ---------------------------------------------------------------------------
 # Paths / constants
@@ -355,14 +360,21 @@ def _read_json(path: Path, default: dict | list) -> dict | list:
         return default
 
 
+def _rcon_sync(command: str) -> str:
+    with Rcon(RCON_HOST, _rcon_password(), port=RCON_PORT, timeout=5) as r:
+        return r.command(command)
+
+
 async def _rcon_command(command: str) -> str:
-    password = _rcon_password()
+    return await asyncio.to_thread(_rcon_sync, command)
 
-    def _exec() -> str:
-        with Rcon(RCON_HOST, password, port=RCON_PORT, timeout=5) as r:
-            return r.command(command)
 
-    return await asyncio.to_thread(_exec)
+async def _rcon_answer(command: str, **listen) -> str:
+    """A command typed by a person or a service: RCON's reply, or — when a
+    plugin answered the console instead of the sender — the console lines it
+    wrote (scripts/console_reply.py)."""
+    return await asyncio.to_thread(
+        console_reply.command, _rcon_sync, command, MC_CONSOLE_LOG, **listen)
 
 
 def _unescape_java_property(value: str) -> str:
@@ -1215,7 +1227,7 @@ async def api_command(request: web.Request) -> web.Response:
     if not command:
         return web.json_response({"error": "command required"}, status=400)
     try:
-        reply = await _rcon_command(command)
+        reply = await _rcon_answer(command)
     except Exception as exc:  # noqa: BLE001
         return web.json_response({"error": str(exc)}, status=500)
     return web.json_response({"reply": reply})
@@ -2682,6 +2694,67 @@ async def api_addons_remove(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "removed": row, "notes": notes})
 
 
+# ---------------------------------------------------------------------------
+# Routes: API — scripts written into the world (panel/worldscripts.py)
+# ---------------------------------------------------------------------------
+# How long a reload is listened to for its errors. Skript says when it is
+# done; the data pack loader says nothing on success, so a clean reload costs
+# the whole window.
+SCRIPT_LISTEN_S = 4.0
+SCRIPT_SETTLE_S = 0.8
+
+
+def _script_run(command: str, listen: bool) -> str:
+    if listen:
+        return console_reply.command(
+            _rcon_sync, command, MC_CONSOLE_LOG, always=True, wait=SCRIPT_LISTEN_S,
+            settle=SCRIPT_SETTLE_S,
+            until=worldscripts.SKRIPT_DONE if command.startswith("sk ") else None)
+    return _rcon_sync(command)
+
+
+def _script_refusal(exc: "worldscripts.ScriptError") -> web.Response:
+    body: dict = {"error": str(exc)}
+    if exc.errors:
+        body["errors"] = exc.errors
+    return web.json_response(body, status=exc.status)
+
+
+async def api_scripts_list(_: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(worldscripts.listing, MC_SERVER_DIR))
+
+
+async def api_scripts_write(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    ctx = _addon_context()
+    try:
+        answer = await asyncio.to_thread(
+            worldscripts.write, MC_SERVER_DIR, _level_name(), ctx.version,
+            body.get("kind"), body.get("name"), body.get("content"), _script_run,
+            str(body.get("by") or ""))
+    except worldscripts.ScriptError as exc:
+        return _script_refusal(exc)
+    log.info("Script written: %s %s", _for_log(answer["kind"]), _for_log(answer["name"]))
+    return web.json_response({"ok": True, **answer})
+
+
+async def api_scripts_remove(request: web.Request) -> web.Response:
+    ctx = _addon_context()
+    try:
+        answer = await asyncio.to_thread(
+            worldscripts.remove, MC_SERVER_DIR, _level_name(), ctx.version,
+            request.match_info["kind"], request.match_info["name"], _script_run)
+    except worldscripts.ScriptError as exc:
+        return _script_refusal(exc)
+    log.info("Script removed: %s %s", _for_log(answer["kind"]), _for_log(answer["removed"]))
+    return web.json_response({"ok": True, **answer})
+
+
 async def api_health(_: web.Request) -> web.Response:
     """Liveness for the Supervisor watchdog. Public, and says nothing.
 
@@ -3697,6 +3770,17 @@ async def api_companion_progress(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+async def api_companion_bar(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    try:
+        result = await asyncio.to_thread(_companion().bar, body.get("player"), body.get("key"),
+                                         body.get("text"), body.get("percent"),
+                                         body.get("end") is True)
+    except companion.CompanionError as exc:
+        return _companion_error(exc)
+    return web.json_response(result)
+
+
 THOUGHT_STATES = ("thinking", "working", "done", "failed", "clear")
 
 
@@ -3968,6 +4052,9 @@ def build_app() -> web.Application:
     app.router.add_get("/api/recommend", api_recommend_get)
     app.router.add_post("/api/recommend/apply", api_recommend_apply)
     app.router.add_post("/api/command", api_command)
+    app.router.add_get("/api/scripts", api_scripts_list)
+    app.router.add_post("/api/scripts", api_scripts_write)
+    app.router.add_delete("/api/scripts/{kind}/{name}", api_scripts_remove)
     app.router.add_post("/api/say", api_say)
     app.router.add_post("/api/player/{name}/{action}", api_player_action)
     app.router.add_post("/api/restart", api_restart)
@@ -4035,6 +4122,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/companion/actions/{id}/undo", api_companion_undo)
     app.router.add_post("/api/companion/jobs/{job}/undo", api_companion_job_undo)
     app.router.add_post("/api/companion/progress", api_companion_progress)
+    app.router.add_post("/api/companion/bar", api_companion_bar)
     app.router.add_post("/api/companion/spyglass", api_companion_spyglass)
     app.router.add_post("/api/companion/thought", api_companion_thought)
     app.router.add_post("/api/companion/journal", api_companion_journal)

@@ -67,6 +67,14 @@ SERVICE_ADDON_SEARCH = "search_addons"
 SERVICE_ADDON_INSTALL = "install_addon"
 SERVICE_ADDON_REMOVE = "remove_addon"
 ADDON_KINDS = ("plugin", "datapack", "mod", "resourcepack")
+# Skript scripts and data pack functions written into the running world
+# (panel/worldscripts.py, which checks names, sizes and ownership again).
+SERVICE_SCRIPTS = "list_scripts"
+SERVICE_SCRIPT_WRITE = "write_script"
+SERVICE_SCRIPT_REMOVE = "remove_script"
+SCRIPT_KINDS = ("skript", "datapack_function")
+SCRIPT_NAME_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,47}$"
+SCRIPT_MAX_BYTES = 64 * 1024
 # The companion's hands (panel/companion.py): mechanics a companion — brAIn's
 # Minecraft faculty, or anybody's automation — drives. The add-on decides
 # nothing with them; the speaker's name and colour come from the caller.
@@ -84,6 +92,7 @@ SERVICE_LOOK_BLOCKS = "look_blocks"
 # brAIn's desk: a job's progress on the action bar, and the spyglass a
 # player points with (the bruh_companion data pack; bruh_minecraft_point).
 SERVICE_COMPANION_PROGRESS = "companion_progress"
+SERVICE_COMPANION_BAR = "companion_bar"
 SERVICE_GIVE_SPYGLASS = "give_spyglass"
 # What the companion is thinking, where it is not in the way: a bubble only
 # the player it works for sees (BRUH Sight), and a book that opens the stream.
