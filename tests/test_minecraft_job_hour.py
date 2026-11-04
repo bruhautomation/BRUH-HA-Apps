@@ -146,7 +146,7 @@ class TestAnHourAndAStopIsAStop(JobCase):
         self.wait_until(lambda: self.jobs()[0].get("steps"))
         self.chat(DAD, "juniper stop")
         job = self.jobs()[0]
-        self.assertTrue(self.c.runs.get(job_id) is None)
+        self.assertIsNone(self.c.runs.get(job_id))
         self.assertEqual(job["status"], rules.JOB_PARTIAL)
         self.assertEqual(job["edits"], ["e-1"])         # nothing was put back
         self.assertFalse(self.addon.of("undo_action"))
