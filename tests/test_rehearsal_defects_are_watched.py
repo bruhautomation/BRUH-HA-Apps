@@ -38,7 +38,7 @@ BY_EVIDENCE = {"kind": "state", "subject": "sensor.hall_temperature",
 
 def look(verdict: str, batch: list) -> dict:
     reply = {"verdicts": [{"id": i + 1, "verdict": verdict,
-                           "why": "A test fixture, so nothing to fix."}
+                           "why": "A brAIn self-test fixture."}
                           for i in range(len(batch))]}
     return resident.parse_first_look(reply, len(batch), batch)
 
