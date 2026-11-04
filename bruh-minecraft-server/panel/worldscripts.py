@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Scripts written into the running world: Skript scripts and data pack functions.
 
 A click-triggered item (a wand) needs a script, and the world's folders live

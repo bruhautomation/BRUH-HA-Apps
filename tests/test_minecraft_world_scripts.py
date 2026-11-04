@@ -340,11 +340,11 @@ class TestDatapackFunctions(WorldBase):
         self.server.replies["minecraft:reload"] = ("", [
             "[12:00:00 ERROR]: Failed to load function otherpack:tick",
             "java.lang.IllegalArgumentException: Whilst parsing command on line 1: Unknown "
-            "or incomplete command, see below for error at position 0: <--[HERE]",
+            + "or incomplete command, see below for error at position 0: <--[HERE]",
             "[12:00:00 ERROR]: Failed to load function bruh_scripts:zap",
             "java.util.concurrent.CompletionException: java.lang.IllegalArgumentException: "
-            "Whilst parsing command on line 1: Unknown or incomplete command, see below for "
-            "error at position 0: <--[HERE]",
+            + "Whilst parsing command on line 1: Unknown or incomplete command, see below for "
+            + "error at position 0: <--[HERE]",
             "\tat java.base/java.util.concurrent.CompletableFuture.encodeThrowable",
         ])
         with self.assertRaises(worldscripts.ScriptError) as ctx:
