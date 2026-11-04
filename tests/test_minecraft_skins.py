@@ -282,8 +282,11 @@ class TestChoicePads(DeskCase):
         self.assertIn('"$task_tools" = "minecraft"', block)
         self.assertIn("tr -cd 'A-Za-z0-9_.'", block)
         self.assertIn('export BRAIN_GAME_PLAYER="$game_player"', block)
-        bridge = (HERE.parent / "brain" / "custom_components" / "brain" / "bridge.py").read_text()
-        self.assertIn('task["player"] = player', bridge)
+        import test_task_tool_scope as scope
+        task = scope.TestTheBridgeWritesIt._task
+        self.assertEqual(task(None, player=KAZ)["player"], KAZ)
+        for bad in (None, "", "Kaz op", "@a", "*", "a" * 18):
+            self.assertNotIn("player", task(None, player=bad), bad)
 
     def test_the_service_remembers_a_tools_skin_for_family_only(self):
         self.assertEqual(self.job_service(action="skin", player=DAD, skin="Notch"), {"ok": True})
