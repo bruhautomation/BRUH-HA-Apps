@@ -2,6 +2,21 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.2.9
+
+### Added
+
+- Minecraft: the companion can put a skin on a player by Java name or skin link, take it off, and say what the server answered. It offers a child up to three skins on choice pads and remembers each person's current skin. A child can change only their own skin (#670).
+- A finding when something else also answers as the companion in the game, such as an old automation that forwards game chat or speaks in its name, naming what it is (#675).
+
+### Changed
+
+- Minecraft: what the companion says it can do comes from each person's settings at that moment (house control on or off for them, whether changes act at once or wait for approval, bedtime). The chat and a job's worker get the same description, so it never says it can't do something it then does (#675).
+
+### Fixed
+
+- Minecraft: a chat answer that mentions logging in is no longer recorded as the companion being down (#670).
+
 ## 4.2.8
 
 ### Added
