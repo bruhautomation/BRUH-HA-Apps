@@ -59,6 +59,24 @@ window.__hass = {
   callWS() { return Promise.resolve([]); },
   connection: { subscribeMessage: () => Promise.resolve(() => {}) },
 };
+// Home Assistant's root element and its connection, answering morph/types
+// and morph/subscribe the way the integration does.
+window.__types = { types: [], modules: [] };
+window.__subs = [];
+const root = document.createElement('home-assistant');
+root.hass = { connection: {
+  sendMessagePromise: (m) => Promise.resolve(m.type === 'morph/types' ? JSON.parse(JSON.stringify(window.__types)) : {}),
+  subscribeMessage: (cb, m) => { if (m.type === 'morph/subscribe') window.__subs.push(cb); return Promise.resolve(() => {}); },
+} };
+document.body.appendChild(root);
+window.__typesMoved = () => window.__subs.forEach((cb) => cb({ parts: ['types'] }));
+// HA's card helpers: an element that shows the config it was made from.
+customElements.define('hui-stub-card', class extends HTMLElement {
+  setConfig(c) { this.cfg = c; this.textContent = 'STUB ' + JSON.stringify(c); }
+  set hass(h) { this._h = h; }
+  getCardSize() { return 3; }
+});
+window.loadCardHelpers = () => Promise.resolve({ createCardElement: (c) => { const e = document.createElement('hui-stub-card'); e.setConfig(c); return e; } });
 ['hass-more-info', 'haptic', 'iron-resize'].forEach((n) => document.addEventListener(n, (e) => window.__events.push({ n, d: e.detail })));
 </script>
 <script type="module" src="/morph_static/test/morph-ha.js"></script>
@@ -72,6 +90,10 @@ await context.route(`${ORIGIN}/**`, async (r) => {
   if (m) {
     try { return r.fulfill({ contentType: 'text/javascript', body: readFileSync(path.join(FRONTEND, path.basename(m[1])), 'utf8') }); } catch (e) { return r.fulfill({ status: 404 }); }
   }
+  if (url.pathname.startsWith('/morph_types/')) {
+    const v = url.searchParams.get('v');
+    return r.fulfill({ contentType: 'text/javascript', body: `export default class extends HTMLElement { setConfig(c) { this.c = c; this.textContent = 'ELEMENT v${v} ' + c.label; } set hass(h) {} }` });
+  }
   if (url.pathname.startsWith('/api/camera_proxy')) return r.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>' });
   return r.fulfill({ status: 404, body: '' });
 });
@@ -82,14 +104,14 @@ p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 await p.goto(`${ORIGIN}/`);
 await p.waitForFunction(() => (window.customCards || []).length >= 21, null, { timeout: 8000 }).catch(() => fail('load', 'Morph cards were never listed in window.customCards'));
 
-const listed = await p.evaluate(() => (window.customCards || []).map((c) => ({ type: c.type, name: c.name, preview: c.preview })));
+const listed = await p.evaluate(() => (window.customCards || []).filter((c) => !c.type.startsWith('morph-type-')).map((c) => ({ type: c.type, name: c.name, preview: c.preview })));
 if (listed.length !== 21) fail('picker', `expected 21 Morph cards listed, got ${listed.length}`);
 listed.forEach((c) => { if (!/^Morph · /.test(c.name)) fail('picker', `${c.type} is named "${c.name}", not "Morph · …"`); });
 
 // Every kind: defined, an editor schema, a stub, and a face drawn from it.
 const kinds = await p.evaluate(async () => {
   const out = [];
-  for (const c of window.customCards) {
+  for (const c of window.customCards.filter((x) => !x.type.startsWith('morph-type-'))) {
     const El = customElements.get(c.type);
     const row = { type: c.type, defined: !!El };
     if (!El) { out.push(row); continue; }
@@ -212,6 +234,46 @@ await fresh({ type: 'custom:morph-light-card' });
 await p.waitForTimeout(200);
 const said = await p.evaluate(() => document.getElementById('probe').shadowRoot.textContent);
 if (!/Choose an entity/.test(said)) fail('empty config', `says "${said.trim().slice(0, 80)}"`);
+
+// Card types: a template drawn by HA's helpers, then the type changes and
+// every copy redraws; an element type from its own code.
+const TPL = { slug: 'thermo-buttons', type: 'custom:morph-type-thermo-buttons', name: 'Thermostat with buttons', kind: 'template', rev: 1,
+  variables: [{ name: 'entity', label: 'Thermostat', required: true, selector: { entity: { filter: [{ domain: 'climate' }] } } }, { name: 'title', default: 'Climate' }],
+  card: { type: 'vertical-stack', title: '[[title]]', cards: [{ type: 'thermostat', entity: '[[entity]]' }] } };
+await p.evaluate((t) => { window.__types = { types: [t], modules: [] }; window.__typesMoved(); }, TPL);
+await p.waitForFunction(() => !!customElements.get('morph-type-thermo-buttons'), null, { timeout: 4000 }).catch(() => fail('types', 'morph-type-thermo-buttons never defined'));
+const tpl = await p.evaluate(async () => {
+  const El = customElements.get('morph-type-thermo-buttons');
+  const listed = (window.customCards || []).find((c) => c.type === 'morph-type-thermo-buttons');
+  const form = El.getConfigForm();
+  const stub = El.getStubConfig(window.__hass);
+  const mk = () => { const e = document.createElement('morph-type-thermo-buttons'); e.setConfig({ type: 'custom:morph-type-thermo-buttons', entity: 'climate.downstairs' }); e.hass = window.__hass; document.body.appendChild(e); return e; };
+  const a = mk(); const b = mk();
+  const none = document.createElement('morph-type-thermo-buttons'); none.setConfig({ type: 'custom:morph-type-thermo-buttons' }); document.body.appendChild(none);
+  await new Promise((r) => setTimeout(r, 300));
+  return { listed: listed && listed.name, form: form.schema.map((s) => s.name), stub, a: a.textContent, b: b.textContent, none: none.textContent };
+});
+if (tpl.listed !== 'Morph · Thermostat with buttons') fail('types', `picker name ${tpl.listed}`);
+if (tpl.form.join() !== 'entity,title') fail('types', `editor fields ${tpl.form}`);
+if (!/^climate\./.test(tpl.stub.entity || '') || tpl.stub.title !== 'Climate') fail('types', `stub ${JSON.stringify(tpl.stub)}`);
+if (!tpl.a.includes('"entity":"climate.downstairs"') || !tpl.a.includes('"title":"Climate"')) fail('types', `template not expanded: ${tpl.a}`);
+if (!/Choose Thermostat/.test(tpl.none)) fail('types', `a copy with nothing chosen says "${tpl.none}"`);
+const changed = { ...TPL, rev: 2, card: { type: 'vertical-stack', title: '[[title]] now', cards: [{ type: 'thermostat', entity: '[[entity]]' }, { type: 'button', name: 'Boost' }] } };
+await p.evaluate((t) => { window.__types = { types: [t], modules: [] }; window.__typesMoved(); }, changed);
+await p.waitForTimeout(400);
+const after = await p.evaluate(() => [...document.querySelectorAll('morph-type-thermo-buttons')].slice(0, 2).map((e) => e.textContent));
+if (!after.every((t) => t.includes('Climate now') && t.includes('Boost'))) fail('types', `copies did not follow the changed type: ${after.join(' | ').slice(0, 200)}`);
+const ELT = { slug: 'pets', type: 'custom:morph-type-pets', name: 'Pets', kind: 'element', rev: 5, module: '/morph_types/pets.js?v=5', variables: [{ name: 'label', default: 'Dogs' }] };
+await p.evaluate((t) => { window.__types = { types: [t], modules: [] }; window.__typesMoved(); }, ELT);
+await p.waitForTimeout(300);
+const pets = await p.evaluate(async () => { const e = document.createElement('morph-type-pets'); e.setConfig({ type: 'custom:morph-type-pets' }); document.body.appendChild(e); await new Promise((r) => setTimeout(r, 400)); return e.textContent; });
+if (pets !== 'ELEMENT v5 Dogs') fail('types', `element type drew "${pets}"`);
+await p.evaluate((t) => { window.__types = { types: [{ ...t, rev: 6, module: '/morph_types/pets.js?v=6' }], modules: [] }; window.__typesMoved(); }, ELT);
+await p.waitForTimeout(500);
+const pets2 = await p.evaluate(() => document.querySelector('morph-type-pets').textContent);
+if (pets2 !== 'ELEMENT v6 Dogs') fail('types', `element type did not follow its new code: "${pets2}"`);
+const gone = await p.evaluate(async () => { window.__types = { types: [], modules: [] }; window.__typesMoved(); await new Promise((r) => setTimeout(r, 300)); return document.querySelector('morph-type-pets').textContent; });
+if (!/no card type/.test(gone)) fail('types', `a copy of a deleted type says "${gone}"`);
 
 if (errors.length) fail('console', errors.slice(0, 5).join(' | '));
 if (process.env.SHOT) await p.screenshot({ path: process.env.SHOT, fullPage: true });

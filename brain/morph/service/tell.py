@@ -485,6 +485,28 @@ def lovelace_where(target: dict) -> list[str]:
         "you write it Morph saves it to Home Assistant and every open screen redraws it.",
         (f"What was held is at {json.dumps(at)} in it (a path through the YAML: views, then the view's"
          " index, and so on)." if at else "The request is about the whole dashboard."),
+    ] + type_lines(key, at)
+
+
+def type_lines(key: str, at: list) -> list[str]:
+    """When the held card is a copy of a card type, where the type is and
+    how many copies there are, so changing the type is a choice made with
+    the count in view."""
+    cfg, _, _ = lovelace.read(key)
+    node = lovelace.at_path(cfg, at) if cfg else None
+    t = node.get("type") if isinstance(node, dict) else None
+    if not isinstance(t, str) or not t.startswith(lovelace.TYPE_PREFIX):
+        return []
+    slug = t[len(lovelace.TYPE_PREFIX):]
+    used = (paths.read_json(paths.SHARED / "types-usage.json", {}) or {}).get("types", {}).get(slug) or []
+    return [
+        f"The held card is a copy of the card type “{slug}”: /config/morph/types/{slug}.yaml"
+        + (f" and types/{slug}.js" if (paths.TYPES_DIR / f"{slug}.js").exists() else "") + ".",
+        f"It is used in {len(used)} place{'' if len(used) == 1 else 's'}"
+        + (": " + "; ".join(u.get("where", "") for u in used[:6]) if used else "") + ".",
+        "Changing the type changes every copy; changing this copy's variables in the dashboard changes",
+        "only this one. The person's words (and the context sent with them) say which they meant; when",
+        "they do not, change only this copy and say that the type can be changed instead.",
     ]
 
 

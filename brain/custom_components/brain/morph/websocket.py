@@ -623,6 +623,10 @@ def _mtimes() -> dict:
         except OSError:
             pass  # brAIn not installed: nothing to watch in that file
     out["brain"] = stamp
+    # Card types and this house's card code: every page that draws a copy
+    # of a type redraws it the moment its file changes.
+    from .cardtypes import stamp as types_stamp
+    out["types"] = types_stamp()
     return out
 
 

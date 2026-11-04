@@ -27,7 +27,7 @@ def _stub(name, **attrs):
     return mod
 
 
-def load(shared: Path):
+def load(shared: Path, name: str = "lovelace"):
     """lovelace.py with just enough Home Assistant under it."""
     ident = lambda *a, **k: (lambda f: f) if not (len(a) == 1 and callable(a[0])) else a[0]  # noqa: E731
     ws = _stub("homeassistant.components.websocket_api", websocket_command=lambda schema: (lambda f: f),
@@ -42,20 +42,21 @@ def load(shared: Path):
         "homeassistant.helpers.event": _stub("homeassistant.helpers.event",
                                              async_track_time_interval=lambda *a, **k: (lambda: None)),
     }
-    saved = {k: sys.modules.get(k) for k in [*stubs, "mpkg", "mpkg.const", "mpkg.lovelace"]}
+    saved = {k: sys.modules.get(k) for k in [*stubs, "mpkg", "mpkg.const", f"mpkg.{name}"]}
     try:
         sys.modules.update(stubs)
         pkg = types.ModuleType("mpkg")
         pkg.__path__ = [str(INTEGRATION)]
         sys.modules["mpkg"] = pkg
         sys.modules.pop("mpkg.const", None)
-        sys.modules.pop("mpkg.lovelace", None)
+        sys.modules.pop(f"mpkg.{name}", None)
         const = importlib.import_module("mpkg.const")
         const.SHARED = shared
-        mod = importlib.import_module("mpkg.lovelace")
-        mod.LL_DIR = shared / "lovelace"
-        mod.APPLY_DIR = shared / "lovelace-apply"
-        mod.MORPHED = mod.LL_DIR / "morphed.json"
+        mod = importlib.import_module(f"mpkg.{name}")
+        if name == "lovelace":
+            mod.LL_DIR = shared / "lovelace"
+            mod.APPLY_DIR = shared / "lovelace-apply"
+            mod.MORPHED = mod.LL_DIR / "morphed.json"
         return mod
     finally:
         for k, v in saved.items():
@@ -144,6 +145,58 @@ class Core(unittest.TestCase):
             with MorphEnv() as env:
                 cfg = {"b": [1, "é"], "a": {"z": None}}
                 self.assertEqual(env.lovelace.config_hash(cfg), self.ll.config_hash(cfg))
+
+
+class Types(unittest.TestCase):
+    """cardtypes.py: the folder read for the browser, and only code served."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.ct = load(root, "cardtypes")
+        self.dir = root / "types"
+        self.dir.mkdir()
+        self.usage = root / "types-usage.json"
+        self.cards = root / "cards"
+
+    def read(self):
+        return {r["slug"]: r for r in self.ct.read_all(self.dir, self.usage, self.cards)["types"]}
+
+    def test_a_template_type_is_read_with_its_variables(self):
+        (self.dir / "thermo.yaml").write_text(
+            "name: Thermostat\nvariables:\n  - name: entity\n    required: true\n    selector: {entity: {}}\n"
+            "  - name: type\n  - name: Bad Name\ncard:\n  type: thermostat\n  entity: '[[entity]]'\n")
+        self.usage.write_text(json.dumps({"types": {"thermo": [{"dashboard": "default", "where": "Home"}]}}))
+        row = self.read()["thermo"]
+        self.assertEqual(row["kind"], "template")
+        self.assertEqual(row["type"], "custom:morph-type-thermo")
+        self.assertEqual([v["name"] for v in row["variables"]], ["entity"])
+        self.assertEqual(row["card"]["entity"], "[[entity]]")
+        self.assertEqual(len(row["used"]), 1)
+
+    def test_what_is_wrong_with_a_type_is_said(self):
+        (self.dir / "nocard.yaml").write_text("name: x\nkind: template\n")
+        (self.dir / "nojs.yaml").write_text("name: y\nkind: element\n")
+        (self.dir / "broken.yaml").write_text("name: [\n")
+        rows = self.read()
+        self.assertIn("needs `card:`", rows["nocard"]["error"])
+        self.assertIn("types/nojs.js", rows["nojs"]["error"])
+        self.assertIn("YAML", rows["broken"]["error"])
+
+    def test_an_element_type_points_at_its_code_by_version(self):
+        (self.dir / "pets.yaml").write_text("name: Pets\n")
+        (self.dir / "pets.js").write_text("export default class extends HTMLElement {}")
+        row = self.read()["pets"]
+        self.assertEqual(row["kind"], "element")
+        self.assertTrue(row["module"].startswith("/morph_types/pets.js?v="))
+
+    def test_only_a_types_code_is_served(self):
+        (self.dir / "pets.yaml").write_text("name: Pets\n")
+        (self.dir / "pets.js").write_text("x")
+        self.assertEqual(self.ct.module_path("pets.js", self.dir), self.dir / "pets.js")
+        for name in ("pets.yaml", "../pets.js", "Pets.js", "missing.js", ".js"):
+            self.assertIsNone(self.ct.module_path(name, self.dir), name)
 
 
 if __name__ == "__main__":

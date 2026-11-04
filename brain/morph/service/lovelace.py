@@ -290,3 +290,49 @@ def clean_at(at) -> list:
         else:
             return []
     return out[:12]
+
+
+# ------------------------------------------------------------ card types
+
+TYPE_PREFIX = "custom:morph-type-"
+
+
+def _walk(node, found: list) -> None:
+    if isinstance(node, dict):
+        t = node.get("type")
+        if isinstance(t, str) and t.startswith(TYPE_PREFIX):
+            found.append(t[len(TYPE_PREFIX):])
+        for v in node.values():
+            _walk(v, found)
+    elif isinstance(node, list):
+        for v in node:
+            _walk(v, found)
+
+
+def type_usage(cfg: dict, key: str) -> dict[str, list[str]]:
+    """Where each card type is used on one dashboard: slug -> places in
+    words, a copy inside a stack counted at its stack's place."""
+    out: dict[str, list[str]] = {}
+    for w, card in places(cfg):
+        found: list[str] = []
+        _walk(card, found)
+        for slug in found:
+            out.setdefault(slug, []).append(f"{title_of(cfg, key)} › {w}")
+    return out
+
+
+def write_usage() -> dict:
+    """types-usage.json: every type's copies across every dashboard brAIn
+    keeps, read by the integration (the picker's description, the layer's
+    "this one or every copy")."""
+    every: dict[str, list[dict]] = {}
+    for key in morphed():
+        cfg, problem, _ = read(key)
+        if problem or not cfg:
+            continue
+        for slug, wheres in type_usage(cfg, key).items():
+            every.setdefault(slug, []).extend({"dashboard": key, "where": w} for w in wheres)
+    data = {"types": every}
+    if paths.read_json(paths.SHARED / "types-usage.json", {}) != data:
+        paths.write_json(paths.SHARED / "types-usage.json", data)
+    return data

@@ -201,3 +201,36 @@ class TellOnADashboard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CardTypes(unittest.TestCase):
+    TYPED = {"title": "Home", "views": [{"title": "Home", "sections": [{"type": "grid", "cards": [
+        {"type": "heading", "heading": "Living"},
+        {"type": "custom:morph-type-thermo", "entity": "climate.a"},
+        {"type": "vertical-stack", "cards": [{"type": "custom:morph-type-thermo", "entity": "climate.b"}]}]}]}]}
+
+    def keep(self, env, key, cfg):
+        env.shared.joinpath("lovelace").mkdir(parents=True, exist_ok=True)
+        env.shared.joinpath("lovelace", "morphed.json").write_text(json.dumps({"keys": [key]}))
+        (env.morph_dir / "dashboards").mkdir(exist_ok=True)
+        (env.morph_dir / "dashboards" / f"{key}.yaml").write_text(yaml.safe_dump(cfg))
+
+    def test_every_copy_is_counted_where_it_is_even_inside_a_stack(self):
+        with MorphEnv() as env:
+            self.keep(env, "default", self.TYPED)
+            data = env.lovelace.write_usage()
+            self.assertEqual([u["where"] for u in data["types"]["thermo"]],
+                             ["Home › Home › Living", "Home › Home › Living"])
+            self.assertEqual(json.loads((env.shared / "types-usage.json").read_text()), data)
+
+    def test_a_tell_about_a_copy_names_the_type_and_its_copies(self):
+        with MorphEnv() as env:
+            self.keep(env, "default", self.TYPED)
+            env.lovelace.write_usage()
+            target = {"kind": "lovelace", "dashboard": "default", "at": json.dumps(["views", 0, "sections", 0, "cards", 1])}
+            prompt = env.tell.build_prompt(target, "add a boost button", env.tell.target_yaml(target))
+            self.assertIn("copy of the card type “thermo”: /config/morph/types/thermo.yaml", prompt)
+            self.assertIn("used in 2 places", prompt)
+            self.assertIn("change only this copy", prompt)
+            plain = {"kind": "lovelace", "dashboard": "default", "at": json.dumps(["views", 0, "sections", 0, "cards", 0])}
+            self.assertNotIn("card type “", env.tell.build_prompt(plain, "x", ""))

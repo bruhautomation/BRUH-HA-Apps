@@ -455,6 +455,7 @@ async def sync_dashboards() -> list[dict]:
     While a Tell runs, a change is still applied (the person watches it
     happen) but nothing is committed: the Tell's one commit takes it."""
     events = await asyncio.to_thread(lovelace.sync)
+    await asyncio.to_thread(lovelace.write_usage)
     commits = [SYNC_COMMITS[e["what"]] for e in events if e["what"] in SYNC_COMMITS]
     if commits and not tell._RUNNING and not LOCK.locked():
         async with LOCK:

@@ -26,7 +26,7 @@ from homeassistant.components import frontend
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_interval
 
-from . import lovelace, websocket
+from . import cardtypes, lovelace, websocket
 from .switches import read_features
 from .const import (
     CARDS_DIR,
@@ -151,6 +151,7 @@ async def async_setup(hass: HomeAssistant) -> Callable[[], None]:
     """Set Morph's half up once for the process; returns the teardown."""
     data = hass.data.setdefault(DOMAIN, {})
     await _register_static(hass)
+    await cardtypes.async_setup(hass)
     websocket.async_register(hass)
     features = await hass.async_add_executor_job(read_features)
     data["features"] = features
