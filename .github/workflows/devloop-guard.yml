@@ -30,6 +30,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # Only the routine opens devloop branches, and it opens them in this
+      # repository. A fork's PR is refused before anything of it is checked
+      # out: refused rather than skipped, because a skipped required check
+      # counts as passing, and the meta case below runs the PR's own guard.
+      - name: Refuse a devloop branch from a fork
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
+        run: |
+          if [ "$HEAD_REPO" != "$THIS_REPO" ]; then
+            echo "devloop-guard: [fork] devloop branches come from $THIS_REPO only, not $HEAD_REPO"
+            exit 1
+          fi
       # The base repository (so origin/<base> is the real base branch, even
       # for a PR from a fork), at the PR's head commit, with every branch.
       - name: Check out the PR head (as data, never run)
