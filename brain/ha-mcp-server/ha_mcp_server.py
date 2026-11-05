@@ -509,7 +509,7 @@ CONTRACT_REFUSED_TOOLS = frozenset({
     "garden_adjust_inventory", "garden_add_crop", "garden_log_note",
     "cooking_control",
     "report_bug", "timed_action", "note_personality_change",
-    "set_assistant_exposure",
+    "set_assistant_exposure", "edit_dashboard",
 })
 CONTRACT_PASSTHROUGH = frozenset({"render_template", "get_camera_snapshot"})
 
@@ -7025,6 +7025,135 @@ def _dashboard_named(url_path, config=None, registered=None):
     return out
 
 
+def _dash_path(path):
+    """A path into a dashboard config as a list of keys and indexes."""
+    if isinstance(path, list):
+        parts = path
+    else:
+        parts = [p for p in str(path or "").strip("/").split("/") if p != ""]
+    out = []
+    for p in parts:
+        if isinstance(p, int) or (isinstance(p, str) and p.lstrip("-").isdigit()):
+            out.append(int(p))
+        else:
+            out.append(str(p))
+    return out
+
+
+def _dash_parent(cfg, parts):
+    """(container, last key) for a path, or raise with where it stopped."""
+    node = cfg
+    for i, k in enumerate(parts[:-1]):
+        try:
+            node = node[k]
+        except (KeyError, IndexError, TypeError):
+            raise ValueError("nothing at " + "/".join(str(x) for x in parts[:i + 1])) from None
+    if not parts:
+        raise ValueError("an empty path is the whole dashboard: use brain.update_dashboard")
+    return node, parts[-1]
+
+
+def apply_dashboard_ops(cfg, ops):
+    """``(new config, what changed)``: every op applied in order to a copy,
+    or ValueError naming the op that could not be."""
+    import copy
+    new = copy.deepcopy(cfg)
+    said = []
+    if not isinstance(ops, list) or not ops:
+        raise ValueError("ops must be a non-empty list")
+    for n, op in enumerate(ops, 1):
+        if not isinstance(op, dict):
+            raise ValueError(f"op {n} is not an object")
+        kind = op.get("op")
+        parts = _dash_path(op.get("path"))
+        where = "/".join(str(x) for x in parts)
+        try:
+            parent, last = _dash_parent(new, parts)
+            if kind == "set":
+                if "value" not in op:
+                    raise ValueError("set needs a value")
+                if isinstance(parent, list):
+                    parent[last] = op["value"]
+                elif isinstance(parent, dict):
+                    parent[last] = op["value"]
+                else:
+                    raise ValueError("not a list or mapping")
+                said.append(f"set {where}")
+            elif kind == "add":
+                if not isinstance(parent, list):
+                    raise ValueError("add inserts into a list; use set for a key")
+                idx = len(parent) if str(last) == "-" else int(last)
+                if not 0 <= idx <= len(parent):
+                    raise ValueError(f"index {idx} is outside the list (0-{len(parent)})")
+                parent.insert(idx, op.get("value"))
+                said.append(f"added at {where}")
+            elif kind == "remove":
+                if isinstance(parent, list):
+                    parent.pop(int(last))
+                elif isinstance(parent, dict):
+                    del parent[last]
+                else:
+                    raise ValueError("not a list or mapping")
+                said.append(f"removed {where}")
+            elif kind == "move":
+                to = _dash_path(op.get("to"))
+                if isinstance(parent, list):
+                    item = parent.pop(int(last))
+                else:
+                    item = parent.pop(last)
+                tparent, tlast = _dash_parent(new, to)
+                if not isinstance(tparent, list):
+                    raise ValueError("move puts things into a list")
+                idx = len(tparent) if str(tlast) == "-" else int(tlast)
+                if not 0 <= idx <= len(tparent):
+                    raise ValueError(f"index {idx} is outside the list at the destination")
+                tparent.insert(idx, item)
+                said.append(f"moved {where} to " + "/".join(str(x) for x in to))
+            else:
+                raise ValueError("op must be set, add, remove or move")
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise ValueError(f"op {n} ({kind} {where}): {exc}") from None
+    if not isinstance(new, dict) or not isinstance(new.get("views"), list):
+        raise ValueError("the result has no views list")
+    return new, said
+
+
+def edit_dashboard(url_path=None, ops=None, dry_run=False, take_control=False):
+    """Change part of a dashboard by path (apply_dashboard_ops), and save
+    the whole result with brain.update_dashboard — so the one write path,
+    its backups and its rails stay the only ones."""
+    try:
+        cfg = _ws_command({"type": "lovelace/config",
+                           "url_path": _dashboard_wire_path(url_path)}, timeout=30)
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+    if isinstance(cfg, dict) and "error" in cfg:
+        if "config_not_found" in str(cfg.get("error", "")):
+            if not take_control:
+                return {**_dashboard_named(url_path), "error": (
+                    "This dashboard has no stored config (Home Assistant generates it). "
+                    "Pass take_control: true to start one from an empty view, or save a "
+                    "whole config with brain.update_dashboard (take_control: true).")}
+            cfg = {"views": [{"title": "Home", "type": "sections", "sections": []}]}
+        else:
+            return cfg
+    try:
+        new, said = apply_dashboard_ops(cfg, ops)
+    except ValueError as exc:
+        return {**_dashboard_named(url_path, cfg), "error": str(exc)}
+    if dry_run:
+        return {**_dashboard_named(url_path, cfg), "dry_run": True, "would": said,
+                "config": new if len(json.dumps(new)) <= MAX_DASHBOARD_BYTES else "too large to show"}
+    data = {"url_path": _dashboard_wire_path(url_path) or DEFAULT_DASHBOARD, "config": new}
+    if take_control:
+        data["take_control"] = True
+    saved = call_service("brain", "update_dashboard", data, return_response=True)
+    if isinstance(saved, dict) and saved.get("error"):
+        return saved
+    return {**_dashboard_named(url_path, new), "changed": said,
+            "saved": (saved or {}).get("response") if isinstance(saved, dict) else saved}
+
+
 def get_dashboard(url_path=None, view_index=None):
     """Fetch a dashboard's configuration (default dashboard when url_path
     is omitted, or url_path="default"). Pair with brain.update_dashboard to
@@ -8339,6 +8468,43 @@ TOOLS = [
         }
     },
     {
+        "name": "edit_dashboard",
+        "description": (
+            "Change part of ANY storage dashboard exactly, without sending the "
+            "whole config back: a list of ops, each on a path into the config as "
+            "get_dashboard returns it (\"views/0/sections/1/cards/2\", a list of "
+            "keys and indexes also works). op set puts value at the path (a new "
+            "key, or a replaced card, key or view); add inserts value into a list "
+            "at the path's index (\"-\" appends); remove deletes it; move takes "
+            "the path out and inserts it at `to`. All the ops apply in order or "
+            "none do, and the result is saved with brain.update_dashboard (which "
+            "backs the old config up, so brain.restore_dashboard undoes it). A "
+            "card's size is its grid_options ({columns: 1-12, rows: n|\"auto\"}); "
+            "a view's Morph switches are its morph: {rail, order, fold}. "
+            "dry_run answers what would change and saves nothing. For a "
+            "dashboard's own sidebar title, icon, visibility or admin-only, use "
+            "brain.update_dashboard_info; to see the result, screenshot_panel "
+            "with addon \"Home Assistant\"."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "url_path": {"type": "string",
+                             "description": "The dashboard (omit or \"default\" for the default one)"},
+                "ops": {"type": "array", "items": {"type": "object", "properties": {
+                    "op": {"type": "string", "enum": ["set", "add", "remove", "move"]},
+                    "path": {"description": "views/0/sections/1/cards/2, or a list of keys and indexes"},
+                    "value": {"description": "For set and add: the card, view, section or value"},
+                    "to": {"description": "For move: where it goes (a list index path)"},
+                }, "required": ["op", "path"]}},
+                "dry_run": {"type": "boolean"},
+                "take_control": {"type": "boolean",
+                                 "description": "Needed once to save onto a never-saved (auto-generated) dashboard"},
+            },
+            "required": ["ops"],
+        },
+    },
+    {
         "name": "assistant_exposure",
         "description": (
             "What each voice assistant (Assist, and Alexa and Google "
@@ -9383,6 +9549,12 @@ TOOLS = [
         "description": (
             "Take a picture of a screen of brAIn or another BRUH add-on "
             "(GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft), "
+            "of ANY Home Assistant dashboard tab exactly as Home Assistant draws it "
+            "(addon \"Home Assistant\", screen \"<url_path>/<view path>\" or the "
+            "tab's label; list them with no screen: every dashboard and every tab, "
+            "Morph's cards on them included; photographed signed in as brAIn's own "
+            "system user, so administrator-only dashboards are seen too, whole tab at "
+            "a time, never pressed), "
             "of Morph's dashboard (brAIn's Home tab: addon \"Morph\", screen "
             "\"dashboard\") or of an add-on's Lovelace card, drawn on this "
             "house's real data, and LOOK at it. Use it whenever the owner "
@@ -9404,11 +9576,15 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "addon": {"type": "string",
-                          "description": ("brAIn (default), Morph (the Home "
-                                          "dashboard and its cards) or a BRUH "
-                                          "add-on's name")},
+                          "description": ("brAIn (default), Home Assistant (any "
+                                          "dashboard tab, as HA draws it), Morph (the "
+                                          "classic Home dashboard and its cards) or a "
+                                          "BRUH add-on's name")},
                 "screen": {"type": "string",
-                           "description": "A screen's id or label; omit to list them"},
+                           "description": ("A screen's id or label; for Home Assistant "
+                                           "also \"<url_path>/<view path>\" (\"lovelace/0\" "
+                                           "is the default dashboard's first tab); omit "
+                                           "to list them")},
                 "width": {"type": "integer", "minimum": 320, "maximum": 1920,
                           "description": "Window width in px (390 phone, 1200 laptop)"},
                 "scheme": {"type": "string", "enum": ["light", "dark"]},
@@ -9919,6 +10095,7 @@ TOOL_IMPLEMENTATIONS = {
     "get_registry": "get_registry",
     "list_dashboards": "list_dashboards",
     "get_dashboard": "get_dashboard",
+    "edit_dashboard": "edit_dashboard",
     # What a device shows as — each one brain.* Power Tool through call_service
     "set_device_class": "set_device_class",
     # Which entities reach the voice assistants and each HomeKit Bridge
@@ -10073,6 +10250,7 @@ VOICE_REFUSED_TOOLS = frozenset({
     "notification_history",
     "bruh_addon_status", "report_bug", "screenshot_panel", "timed_action",
     "note_personality_change", "assistant_exposure", "set_assistant_exposure",
+    "edit_dashboard",
 })
 VOICE_REFUSED_PREFIXES = ("esphome_",)
 # Tools about ONE entity: allowed only when it is named and exposed.

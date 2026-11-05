@@ -808,8 +808,14 @@ what exists.
   \`reset_dashboard_config\` (R) reverts a dashboard to auto-generated —
   never use raw \`lovelace/config\` websocket commands for any of this. Also
   \`create_dashboard\` (R; url_path needs a hyphen), \`delete_dashboard\` (R,
-  backs config up first), and \`add_dashboard_resource\` (R) /
-  \`remove_dashboard_resource\` for custom-card modules.
+  backs config up first), \`update_dashboard_info\` (R; a dashboard's sidebar
+  title, icon, visibility and admin-only), and \`add_dashboard_resource\` (R) /
+  \`remove_dashboard_resource\` for custom-card modules. To change PART of a
+  dashboard (one card, a size, a key) use the \`edit_dashboard\` MCP tool:
+  ops on paths, saved through \`update_dashboard\` with its backup. A card's
+  size is its \`grid_options\` ({columns: 1-12, rows}). To SEE any dashboard
+  tab as Home Assistant draws it, \`screenshot_panel\` with addon
+  "Home Assistant" (no screen lists the tabs).
   Never edit .storage/lovelace files.
 - Repairs: \`create_repair_issue\` (R), \`remove_repair_issue\` — surface issues that
   need the user's attention in Settings > System > Repairs

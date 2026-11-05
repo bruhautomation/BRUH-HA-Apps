@@ -990,6 +990,8 @@ ANALYST_DENIED = [
     # Which assistants and HomeKit Bridges reach an entity: a lock exposed
     # to a voice assistant is a way into the house.
     f"{MCP}set_assistant_exposure",
+    # A dashboard edit saves a dashboard every screen in the house draws.
+    f"{MCP}edit_dashboard",
     # The platform's own reach past the run — a peer session, a phone, a
     # timer. `--tools ""` already takes the built-ins off an analyst run;
     # they are named here as well because this list is what a study

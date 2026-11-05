@@ -4054,6 +4054,41 @@ async def _create_dashboard(hass: HomeAssistant, call: ServiceCall) -> dict | No
     return {"url_path": item["url_path"], "id": item["id"]}
 
 
+async def _update_dashboard_info(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Change a storage dashboard's own settings — its sidebar title and
+    icon, whether it is in the sidebar, whether it is for administrators
+    only — the way Settings › Dashboards does. Its cards are
+    update_dashboard's; the default dashboard's settings are Home
+    Assistant's own and are not in this collection."""
+    url_path = call.data["url_path"]
+    collection = _dashboards_collection(hass)
+    item = next(
+        (i for i in collection.async_items() if i.get("url_path") == url_path),
+        None,
+    )
+    if item is None:
+        available = ", ".join(
+            sorted(str(i.get("url_path")) for i in collection.async_items())
+        )
+        raise ServiceValidationError(
+            f"Dashboard not found: {url_path}."
+            + (f" Existing: {available}" if available else "")
+        )
+    changes = {k: call.data[k] for k in ("title", "icon", "show_in_sidebar", "require_admin")
+               if k in call.data}
+    if not changes:
+        raise ServiceValidationError(
+            "Nothing to change: give title, icon, show_in_sidebar or require_admin")
+    before = {k: item.get(k) for k in changes}
+    if _dry_run(call):
+        return {"dry_run": True, "url_path": url_path, "before": before, "after": changes}
+    try:
+        await collection.async_update_item(item["id"], changes)
+    except vol.Invalid as err:
+        raise ServiceValidationError(f"Invalid dashboard settings: {err}") from err
+    return {"url_path": url_path, "before": before, "after": changes}
+
+
 async def _delete_dashboard(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     """Delete a storage dashboard, backing up its config first."""
     url_path = call.data["url_path"]
@@ -4639,6 +4674,14 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
         vol.Optional("icon"): cv.icon,
         vol.Optional("show_in_sidebar", default=True): cv.boolean,
         vol.Optional("require_admin", default=False): cv.boolean,
+    }, has_response=True),
+    PowerTool("update_dashboard_info", _update_dashboard_info, {
+        vol.Required("url_path"): cv.string,
+        vol.Optional("title"): cv.string,
+        vol.Optional("icon"): cv.icon,
+        vol.Optional("show_in_sidebar"): cv.boolean,
+        vol.Optional("require_admin"): cv.boolean,
+        vol.Optional("dry_run", default=False): cv.boolean,
     }, has_response=True),
     PowerTool("delete_dashboard", _delete_dashboard, {
         vol.Required("url_path"): cv.string,

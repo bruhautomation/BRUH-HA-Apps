@@ -687,6 +687,16 @@ def select(paths, index: Index | None = None, transitive: bool = False
                      "(not part of the pytest suite)")
             continue
 
+        # Morph in a real Home Assistant: its own CI job (morph-real-ha)
+        # runs it, never pytest; a test that reads one of its files by
+        # name is still chosen.
+        if rel.startswith("tests/realha/"):
+            found = {t for t, src in index.tests.items() if _reads(src, name)}
+            sel.tests |= found
+            say(rel, f"{len(found)} test files read it by name (the morph-real-ha "
+                     "CI job runs it against a real Home Assistant)")
+            continue
+
         # A helper beside the tests (this file is one).
         if re.fullmatch(r"tests/[^/]+\.py", rel):
             stem = Path(name).stem

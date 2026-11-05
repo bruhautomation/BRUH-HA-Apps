@@ -20306,6 +20306,24 @@ async def _screen_catalog() -> dict:
 
 SCREENSHOT_LOCK: asyncio.Lock | None = None
 SCREENSHOT_TIMEOUT_S = 120
+# What the chat may call Home Assistant's own dashboards by.
+HA_SCREEN_NAMES = {"home assistant", "homeassistant", "ha", "dashboard", "dashboards", "lovelace"}
+
+
+async def _ha_eyes(token: bool) -> dict | None:
+    """Home Assistant's dashboards and tabs, and with ``token`` a short-lived
+    sign-in for brAIn's own system user (the integration's ``morph/eyes``);
+    None when the integration cannot say (not installed yet, an older one)."""
+    try:
+        import aiohttp
+
+        import ha_data
+        async with aiohttp.ClientSession() as session:
+            out = await ha_data._ws_calls(session, [{"type": "morph/eyes", "token": bool(token)}])
+    except Exception:  # noqa: BLE001 — no eyes is "not offered", said by the caller
+        return None
+    row = out[0] if out else {}
+    return row.get("result") if row.get("ok") and isinstance(row.get("result"), dict) else None
 
 
 async def h_devloop_screenshot(request: web.Request) -> web.Response:
@@ -20331,6 +20349,20 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
     located = await _screen_catalog()
     targets = [screens.own_target(_own_panel_url())] + located["targets"]
     want_addon = str(body.get("addon") or "brAIn").strip().lower()
+    # Home Assistant's own dashboards, a tab each: listed whenever the
+    # screens are listed, and signed in for only when one is photographed.
+    if want_addon in HA_SCREEN_NAMES:
+        want_addon = devloop.screen_targets.HA_PRODUCT.lower()
+    photographing_ha = want_addon == devloop.screen_targets.HA_PRODUCT.lower() and bool(body.get("screen"))
+    if photographing_ha or not body.get("screen"):
+        eyes = await _ha_eyes(token=photographing_ha)
+        if eyes and not photographing_ha:
+            eyes = {**eyes, "access_token": "-"}  # listing only: nobody signs in
+        targets += devloop.screen_targets.ha_targets(eyes or {})
+        if photographing_ha and not eyes:
+            located["unreached"][devloop.screen_targets.HA_PRODUCT] = (
+                "brAIn's integration did not answer (it signs the picture in); "
+                "restart Home Assistant once after updating brAIn")
     target = next((t for t in targets if t["product"].lower() == want_addon), None)
     if target is None:
         why = next((w for n, w in located["unreached"].items()
@@ -20346,6 +20378,11 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
                                            body.get("press"))
     if why:
         return web.json_response({"error": why, "screens": listing}, status=400)
+    if focus and target.get("sockets"):
+        return web.json_response({"error": (
+            "a Home Assistant dashboard is photographed a whole tab at a time, and "
+            "nothing on it is pressed: ask for the tab (its screen name) without an element"),
+            "screens": listing}, status=400)
     want = want.lower()
     if not want:
         # Every screen there is, not only this one's: asked with nothing,
@@ -20356,6 +20393,7 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
                                       scr["slug"] for scr in t["screens"]]} for t in targets]})
     scr = next((x for x in target["screens"]
                 if want in (x["slug"].lower(), x["label"].lower())
+                or (x.get("dashboard") and want.strip("/") == f"{x['dashboard']}/{x['view']}".lower())
                 or x["slug"].lower().endswith("-" + want)
                 or x["label"].lower().endswith("› " + want)), None)
     if scr is None:

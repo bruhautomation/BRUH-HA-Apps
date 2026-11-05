@@ -53,6 +53,25 @@ class Sync(unittest.TestCase):
             self.assertEqual(env.lovelace.sync(), [])
             self.assertIsNone(self.applied(env, "default"))
 
+    def test_a_morph_view_becomes_a_sections_view_once_and_is_sent_to_home_assistant(self):
+        with MorphEnv() as env:
+            self.morph(env, "morph-home")
+            old = {"title": "Home", "views": [{"title": "Home", "type": "custom:morph-view",
+                                               "sections": CFG["views"][0]["sections"]}]}
+            self.ha(env, "morph-home", old)
+            self.assertEqual([e["what"] for e in env.lovelace.sync()], ["new"])
+            self.assertEqual([e["what"] for e in env.lovelace.sync()], ["sections", "apply"])
+            sent = self.applied(env, "morph-home")["config"]
+            self.assertEqual(sent["views"][0]["type"], "sections")
+            self.assertEqual(sent["views"][0]["morph"]["rail"], True)
+            self.assertEqual(self.file(env, "morph-home"), sent)
+            # HA saved it; and a house that puts Morph's view back keeps it.
+            self.ha(env, "morph-home", sent)
+            self.assertEqual(env.lovelace.sync(), [])
+            self.ha(env, "morph-home", old)
+            self.assertEqual([e["what"] for e in env.lovelace.sync()], ["outside"])
+            self.assertEqual(self.file(env, "morph-home")["views"][0]["type"], "custom:morph-view")
+
     def test_a_dashboard_not_morphed_is_not_touched(self):
         with MorphEnv() as env:
             self.morph(env)

@@ -7,7 +7,10 @@
 //   - not kept yet: "Let brAIn change this dashboard" (morph/dashboard_morph);
 //   - kept: Tell brAIn about a card (tap the card: its YAML path is found in
 //     the dashboard's own config, its picture taken), about the whole
-//     dashboard, the dashboard's history with Restore, and stop keeping it.
+//     dashboard, the dashboard's history with Restore, and stop keeping it;
+//   - on any storage dashboard's sections tab: Morph's switches for that
+//     tab (room rail, lift a room that needs you, fold a quiet room), which
+//     are the view's own `morph:` keys and drawn by morph-view-layer.js.
 //
 // A Tell is Morph's Tell (morph/request kind tell, target kind "lovelace"):
 // brAIn edits /config/morph/dashboards/<key>.yaml, Morph saves it to Home
@@ -196,6 +199,45 @@ export class BrainLayer extends HTMLElement {
   }
 
   lovelace() { try { return this.panel && this.panel.lovelace; } catch (e) { return null; } }
+
+  // The tab on screen: its index and config, from HA's own lovelace object.
+  tab() {
+    const ll = this.lovelace();
+    const cfg = ll && ll.config;
+    if (!cfg || !Array.isArray(cfg.views)) return null;
+    const i = viewIndex(cfg, location.pathname);
+    const v = cfg.views[i];
+    return v ? { i, view: v, config: cfg } : null;
+  }
+
+  // One of Morph's switches on this tab, saved the way HA's own view editor
+  // saves (lovelace/config/save): a dashboard brAIn keeps commits it as an
+  // edit in Home Assistant, and Undo puts it back.
+  async toggleView(key) {
+    const t = this.tab();
+    if (!t || !this.s.row) return;
+    const m = { rail: false, order: false, fold: false, ...(t.view.morph || {}) };
+    m[key] = !m[key];
+    const views = t.config.views.map((v, i) => (i === t.i ? { ...v, morph: m } : v));
+    const urlPath = this.s.row.url_path && this.s.row.url_path !== 'lovelace' ? this.s.row.url_path : null;
+    await this.hass.callWS({ type: 'lovelace/config/save', url_path: urlPath, config: { ...t.config, views } });
+    this.render();
+  }
+
+  viewSwitchesHtml() {
+    const t = this.tab();
+    if (!t) return '';
+    if ((t.view.type || 'masonry') !== 'sections') {
+      return `<h2>${esc(t.view.title || 'This tab')}</h2><p class="sm">Morph's room rail, lifting and folding work on Home Assistant's sections tabs. This tab is laid out as ${esc(t.view.type || 'masonry')}.</p><div class="row"><button type="button" class="b" data-a="menu">Back</button></div>`;
+    }
+    const m = t.view.morph || {};
+    const sw = (key, label, sub) => `<button type="button" class="menu" data-a="vsw" data-v="${key}" role="switch" aria-checked="${!!m[key]}"><b>${m[key] ? 'On' : 'Off'}</b> · ${label}<br><span class="sm">${sub}</span></button>`;
+    return `<h2>Morph on ${esc(t.view.title || 'this tab')}</h2>
+${sw('rail', 'Room rail', 'On a phone or tablet: pull the strip at the right edge left, then slide to go room to room.')}
+${sw('order', 'Lift a room that needs you', 'An open door, a leak or an unlocked lock moves its room to the top, with why.')}
+${sw('fold', 'Fold quiet rooms', 'A room with nothing on and nothing recent is one line until you tap it.')}
+<div class="row"><button type="button" class="b" data-a="menu">Back</button></div>`;
+  }
 
   open(mode) { this.s.open = true; this.s.mode = mode || 'menu'; this.s.err = ''; this.render(); }
 
@@ -407,6 +449,8 @@ export class BrainLayer extends HTMLElement {
       whole: () => this.tellAbout(null),
       convert: () => this.bringOver(),
       go: () => this.go(v),
+      tabsw: () => this.open('view'),
+      vsw: () => this.toggleView(v),
       history: () => this.history(),
       restore: () => this.restore(v),
       send: () => this.send(),
@@ -446,21 +490,24 @@ export class BrainLayer extends HTMLElement {
     const mode = this.s.mode;
     if (mode === 'menu') {
       if (row.mode !== 'storage') return `<h2>${esc(row.title)}</h2><p class="sm">This dashboard is kept in YAML files, which Home Assistant cannot save. brAIn can change dashboards made in Home Assistant's own editor.</p>`;
+      const tabsw = '<button type="button" class="menu" data-a="tabsw">Morph on this tab (rail, lift, fold)…</button>';
       if (!row.morphed) {
-        return `${this.convertOffer(true)}<h2>Let brAIn change ${esc(row.title)}?</h2><p class="sm">Then you can tell brAIn what to change on any card, tab or the whole dashboard, and it changes here, live. Every change is kept, so any one can be undone, including edits made in Home Assistant's own editor.</p><div class="row"><button type="button" class="b go" data-a="morph">Let brAIn change it</button><button type="button" class="b" data-a="close">Not now</button></div>`;
+        return `${this.convertOffer(true)}<h2>Let brAIn change ${esc(row.title)}?</h2><p class="sm">Then you can tell brAIn what to change on any card, tab or the whole dashboard, and it changes here, live. Every change is kept, so any one can be undone, including edits made in Home Assistant's own editor.</p><div class="row"><button type="button" class="b go" data-a="morph">Let brAIn change it</button><button type="button" class="b" data-a="close">Not now</button></div>${tabsw}`;
       }
       return `<h2>${esc(row.title)}</h2>
 <button type="button" class="menu" data-a="pick">Tell brAIn about a card…</button>
 <button type="button" class="menu" data-a="whole">Tell brAIn about this dashboard…</button>
 <button type="button" class="menu" data-a="history">History and undo</button>
+<button type="button" class="menu" data-a="tabsw">Morph on this tab (rail, lift, fold)…</button>
 <button type="button" class="menu" data-a="unmorph">Stop letting brAIn change this dashboard</button>${this.convertOffer()}`;
     }
+    if (mode === 'view') return this.viewSwitchesHtml();
     if (mode === 'convert') {
       const c = this.s.conv || {};
       if (c.phase === 'working') return '<h2>Bringing over your Morph dashboard…</h2>';
       if (c.phase === 'failed') return `<h2>Not brought over</h2><p class="sm">${esc(c.error)}</p><div class="row"><button type="button" class="b" data-a="menu">Back</button></div>`;
       const notes = c.report && c.report.length ? `<p class="sm">What did not come along exactly:</p><ul class="shows">${c.report.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
-      return `<h2>Your Morph dashboard is here now</h2><p class="sm">It is a Home Assistant dashboard of its own in the sidebar, laid out by Morph's view, with every card brought over. Morph's old panel is left as it was.</p>${notes}<div class="row"><button type="button" class="b go" data-a="go" data-v="${esc(c.url)}">Open it</button><button type="button" class="b" data-a="close">Later</button></div>`;
+      return `<h2>Your Morph dashboard is here now</h2><p class="sm">It is a Home Assistant dashboard of its own in the sidebar, laid out by Home Assistant's sections view with the room rail on, every card brought over and every card editable and resizable in Home Assistant's own editor. Morph's old panel is left as it was.</p>${notes}<div class="row"><button type="button" class="b go" data-a="go" data-v="${esc(c.url)}">Open it</button><button type="button" class="b" data-a="close">Later</button></div>`;
     }
     if (mode === 'history') {
       const h = this.s.hist;

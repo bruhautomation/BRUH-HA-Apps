@@ -165,8 +165,9 @@ BRUH-HA-Apps/
 │                                #   websocket API (morph/*, brain/shell), static views, frontend/;
 │                                #   lovelace.py (HA dashboards: mirror, apply, Morph this dashboard),
 │                                #   cardtypes.py (types/ for the browser), themes.py (themes/ into HA),
+│                                #   eyes.py (morph/eyes: brAIn's screenshots sign in to HA's frontend),
 │                                #   frontend/morph-ha.js (on every HA page: morph-cards, morph-types,
-│                                #   brain-layer, morph-features)
+│                                #   brain-layer, morph-features, morph-view-layer)
 │       └── brain/
 │           ├── __init__.py      # Integration setup + service registration
 │           ├── manifest.json    # HA integration metadata
@@ -226,7 +227,9 @@ BRUH-HA-Apps/
 │   │                            #   the schema, the one scorer's corpus shape, and replay.py
 │   ├── evals/                   # Eval harness for the house's LLM jobs: cases, deterministic
 │   │                            #   graders, run.py (pinned models, pass^3); the Evals workflow
-│   └── devloop_guard_cases/     # Frozen known-bad diffs a new devloop-guard must still flag
+│   ├── devloop_guard_cases/     # Frozen known-bad diffs a new devloop-guard must still flag
+│   └── realha/                  # Morph in a REAL Home Assistant: ha_rig.py (start, onboard),
+│                                #   check-morph.mjs (Playwright checks); CI's morph-real-ha
 ├── .github/scripts/devloop_guard.py  # What a devloop PR may not do; always run from base
 ├── .claude/skills/fix-from-house/    # The cloud half of the devloop: SKILL.md, lessons.json,
 │                                #   scripts/ (verdicts computed in code), evals/

@@ -72,7 +72,7 @@ GATED_MCP = frozenset({
     "garden_adjust_inventory", "garden_add_crop", "garden_log_note",
     "cooking_control",
     "report_bug", "timed_action", "note_personality_change",
-    "set_assistant_exposure",
+    "set_assistant_exposure", "edit_dashboard",
 })
 # A gated tool's actions that only read: asking which add-ons exist,
 # searching Modrinth or asking how a designed part is doing changes nothing, and a gate in front of a search is a

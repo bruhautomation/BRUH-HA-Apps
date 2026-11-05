@@ -1562,6 +1562,45 @@ create_dashboard:
       selector:
         boolean: {}
       default: false
+update_dashboard_info:
+  name: Update dashboard settings
+  description: Change a storage dashboard's own settings - its sidebar title and icon, whether it
+    shows in the sidebar, whether only admins can see it - as Settings > Dashboards does. Its cards
+    are changed with update_dashboard. Returns the settings before and after as response data. Set
+    dry_run to preview.
+  fields:
+    url_path:
+      name: Dashboard
+      description: The dashboard's URL path.
+      selector:
+        text: {}
+      required: true
+      example: lovelace-lights
+    title:
+      name: Title
+      description: Sidebar title.
+      selector:
+        text: {}
+    icon:
+      name: Icon
+      description: Sidebar icon.
+      selector:
+        icon: {}
+    show_in_sidebar:
+      name: Show in sidebar
+      description: Show the dashboard in the sidebar.
+      selector:
+        boolean: {}
+    require_admin:
+      name: Admin only
+      description: Only admins can see this dashboard.
+      selector:
+        boolean: {}
+    dry_run:
+      name: Dry run
+      description: When on, only report what would change — nothing is modified.
+      selector: *id001
+      default: false
 delete_dashboard:
   name: Delete dashboard
   description: Delete a storage-mode dashboard. Its configuration is backed up first (same backup

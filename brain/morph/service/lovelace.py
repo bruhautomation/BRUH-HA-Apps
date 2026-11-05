@@ -26,6 +26,7 @@ import time
 
 import yaml
 
+import convert
 import paths
 
 KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -110,8 +111,8 @@ def sync(now: float | None = None) -> list[dict]:
     """One pass over every Morphed dashboard. Returns what happened, one row
     per dashboard that moved: ``{key, title, what}`` where ``what`` is
     ``new`` (first kept), ``outside`` (HA's editor), ``both`` (HA's editor,
-    over an edit here), ``apply`` (sent to HA) or ``held`` (the file does not
-    read)."""
+    over an edit here), ``apply`` (sent to HA), ``held`` (the file does not
+    read) or ``sections`` (Morph's views became HA's sections views, once)."""
     now = time.time() if now is None else now
     state = _state()
     events: list[dict] = []
@@ -137,6 +138,18 @@ def sync(now: float | None = None) -> list[dict]:
             st["held"] = problem
             continue
         st.pop("held", None)
+        # Once per dashboard (5.1): a view 5.0's conversion wrote as Morph's
+        # own view becomes Home Assistant's sections view, so HA's editor,
+        # sizes and sections work on it; its switches stay as `morph:`. A
+        # house that sets `custom:morph-view` again afterwards keeps it.
+        if not st.get("sections_view"):
+            st["sections_view"] = 1
+            new, n = convert.migrate(cfg)
+            if n:
+                paths.write_text(file_of(key), dump(new, key))
+                paths.hand_to_brain(file_of(key))
+                cfg = new
+                events.append({"key": key, "title": title, "what": "sections"})
         fh = config_hash(cfg)
         if fh == ha_h:
             st.update(hash=fh, applying="")

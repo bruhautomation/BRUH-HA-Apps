@@ -3520,6 +3520,20 @@ Assistant's own more-info). Two more: **Morph · brAIn's cases** (what brAIn
 wants you to know or decide, with a reply line — every case, or one
 area's) and **Morph · Ask**.
 
+**Sizes are Home Assistant's.** In a sections view each Morph card starts
+at a size that suits it (a light one row, a reading two, a thermostat two
+rows the full width, a camera or forecast three). Resize it with Home
+Assistant's handles or the editor's **Layout** tab, and the card fills
+whatever you give it: a taller light is a bigger slider, a camera fills its
+card, and a small card drops its smaller lines instead of being cut off.
+Holding a card open makes room for it, and the cards below move down until
+you close it.
+
+**Everything is in the visual editor:** entity, name, icon, room, colour,
+**Interactions** (Home Assistant's tap, hold and double-tap actions; left
+empty, Morph's own tap and hold), and **Card shown when it is opened** (any
+card, for example a history graph, shown under the card while it is open).
+
 ### Card types: built once, used everywhere
 
 When brAIn builds a card for you, it can build it as a **card type**: it
@@ -3536,26 +3550,43 @@ makes a card type from it instead and says so.
 
 ### Morph's view, the room rail and themes
 
-- **Morph's view** is a view type, beside Masonry and Sections: pick it in
-  a view's settings (or ask brAIn). It lays out the view's sections the
-  Morph way: a room that needs you (an unlocked lock, an open door, a leak)
-  rises to the top with why, a room with nothing on folds to one line until
-  you tap it, and on a phone or tablet the **room rail** runs down the
-  right edge. Each is a switch: `morph: {order: false, fold: false, rail:
-  false}` in the view's YAML, or ask brAIn.
+- **Morph on a tab.** Any Home Assistant **sections** tab can have Morph's
+  extras: the brAIn button › **Morph on this tab** switches on the **room
+  rail** (on a phone or tablet, pull the strip at the right edge and slide
+  room to room), **lift a room that needs you** (an unlocked lock, an open
+  door or a leak moves its room to the top, with why) and **fold quiet
+  rooms** (a room with nothing on is one line until you tap it). Each is
+  off until you turn it on; Home Assistant still lays out, edits and sizes
+  the tab, and in edit mode nothing moves. In YAML they are `morph: {rail:
+  true, order: false, fold: false}` on the view. (5.0's own Morph view
+  type was changed to this once, in 5.1, with its switches kept.)
 - **Themes.** Morph's looks are Home Assistant themes, **Morph** (light and
-  dark) and **Morph Medium**, in your profile's theme list with no setup.
+  dark, following your own setting), **Morph Light**, **Morph Dark** and
+  **Morph Medium**, in your profile's theme list with no setup.
   They live in `/config/morph/themes/`, so brAIn can change them ("make the
   cards rounder") and every screen repaints; any other theme dresses Morph's
   cards too.
+
+### brAIn sees and changes any dashboard
+
+brAIn can look at any dashboard tab exactly as Home Assistant draws it
+before it answers about how one looks, and again after it changes one. It
+does this as its own system user, **brAIn (screenshots)**, which appears
+under Settings › People › Users as a system user: nobody can log in as it,
+and nothing on a page can change anything while brAIn photographs it.
+brAIn can also change one card, size or setting of any dashboard without
+rewriting the rest (each save is backed up and can be undone), and a
+dashboard's sidebar title, icon, visibility and admin-only setting.
 
 ### Bringing your Morph dashboard over
 
 While you still have a Morph dashboard of the old kind, the brAIn button
 offers **Bring over your Morph dashboard…**. It makes a new Home Assistant
-dashboard, **Home**, in the sidebar: each floor a tab laid out by Morph's
-view, each room a section, every card its Morph card, your hosted Lovelace
-cards as they were, and brAIn's cases in the room they are about. It tells
+dashboard, **Home**, in the sidebar: each floor a Home Assistant sections
+tab with the room rail on, each room a section (a switch from its title row
+on its heading), every card its Morph card at the width you had set, your
+hosted Lovelace cards as they were, and brAIn's cases in the room they are
+about. It tells
 you anything that could not come along (Coming up and the story line are
 the old panel's own). Morph's old panel is left exactly as it was.
 
