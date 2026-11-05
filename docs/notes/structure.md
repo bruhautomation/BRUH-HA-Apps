@@ -173,7 +173,7 @@ BRUH-HA-Apps/
 │           ├── manifest.json    # HA integration metadata
 │           ├── config_flow.py   # UI config flow
 │           ├── conversation.py  # ConversationEntity for Assist
-│           ├── power_tools.py   # BRUH Power Tools: 90 registry admin services (from Spook, MIT)
+│           ├── power_tools.py   # BRUH Power Tools: 91 registry admin services (from Spook, MIT)
 │           ├── sensor.py        # Anthropic usage-limit sensors
 │           ├── bridge.py        # File-based IPC with the add-on
 │           ├── repairs.py       # "Restart required" repair flow

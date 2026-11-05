@@ -66,8 +66,8 @@ subscription — or your own API key.
 
 Most AI integrations can turn on a light. brAIn administers the installation.
 
-It reaches Home Assistant three ways at once — a **native MCP server** (114 tools) for
-reading and controlling, **90 registry-management services** for the parts of Home
+It reaches Home Assistant three ways at once — a **native MCP server** (115 tools) for
+reading and controlling, **91 registry-management services** for the parts of Home
 Assistant that normally only exist behind the Settings UI, and a **real shell** in
 `/config` for everything that is still a YAML file.
 

@@ -93,12 +93,18 @@ class TestRule1NothingFloats(unittest.TestCase):
     # every release. It floats its button, its sheet, the pick bar and the
     # ring around the card under the pointer, and nothing else.
     LAYER = "brain-layer.js"
+    # Morph's switches on HA's own sections view: the room rail's strip at
+    # the screen's edge is the one thing it floats (HA's view is HA's, and
+    # a node put inside it is lost at HA's next redraw).
+    VIEW_LAYER = "morph-view-layer.js"
 
     def test_no_overlay_construct(self):
         found = []
         for name, text in sources().items():
             if name == self.LAYER:
                 continue
+            if name == self.VIEW_LAYER:
+                text = text.replace(".morph.mrl{background:transparent;min-height:0;position:fixed;", ".morph.mrl{", 1)
             for n, line in code_lines(text):
                 # An invisible measuring probe off the page (snap.js's
                 # default styles) is fixed so it never moves the layout;
@@ -109,6 +115,12 @@ class TestRule1NothingFloats(unittest.TestCase):
                         found.append(f"{name}:{n}: {what}")
         self.assertEqual(found, [], "rule 1: nothing floats over anything")
 
+
+    def test_the_view_layer_floats_only_the_rail(self):
+        text = (FRONTEND / self.VIEW_LAYER).read_text(encoding="utf-8")
+        self.assertEqual(re.findall(r"\.([\w-]+)\{[^}]*position:\s*fixed", text), ["mrl"])
+        for rx, what in self.FORBIDDEN[1:]:
+            self.assertIsNone(rx.search(text), what)
 
     def test_the_layer_floats_only_its_four_things(self):
         text = (FRONTEND / self.LAYER).read_text(encoding="utf-8")
