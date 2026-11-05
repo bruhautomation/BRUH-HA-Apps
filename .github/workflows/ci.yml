@@ -167,7 +167,7 @@ jobs:
             print=true
           fi
           morph=false
-          if grep -qE '^(brain/morph/|brain/custom_components/brain/morph/|tests/manual/(morph-fixture|measure-morph|measure-morph-cards|measure-brain-layer|measure-morph-features|measure-shell)\.mjs)' <<<"$changed"; then
+          if grep -qE '^(brain/morph/|brain/custom_components/brain/morph/|brain/panel/devloop/screens\.py|tests/realha/|tests/manual/(morph-fixture|measure-morph|measure-morph-cards|measure-brain-layer|measure-morph-features|measure-shell)\.mjs)' <<<"$changed"; then
             morph=true
           fi
           gardenrx=false
@@ -360,6 +360,97 @@ jobs:
           echo "python -m pytest tests -q -n 4 --dist loadfile $PYTEST_ARGS"
           # shellcheck disable=SC2086
           python -m pytest tests -q -n 4 --dist loadfile $PYTEST_ARGS
+
+  morph-real-ha:
+    # Morph's Home Assistant half in REAL Home Assistant
+    # (docs/design/morph-on-lovelace.md §5): every other check of it runs on
+    # stand-ins for HA's page, and the risk this half carries is HA moving
+    # the page under it. tests/realha starts Home Assistant core with its
+    # own frontend and the demo house, onboards an owner, serves Morph's
+    # frontend the way the integration does, and drives it with Playwright:
+    # the converted dashboard draws, every card fills the size HA gives it,
+    # opening grows the cell, HA's own editor edits a Morph card, the view
+    # switches lift a room, and brAIn's screenshots sign in and change
+    # nothing. On the oldest release the layer supports and the newest.
+    # Gated per step on Morph's changes, so the job always reports.
+    name: Morph in real Home Assistant (${{ matrix.ha }})
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ha: "2025.1.4"
+            python: "3.13"
+            extra: "home-assistant-frontend==20250109.2"
+          - ha: "2026.11.0"
+            python: "3.14"
+            extra: ""
+    env:
+      RUNS: ${{ needs.changes.outputs.morph || 'true' }}
+    steps:
+      - name: Say why there is nothing to do
+        if: env.RUNS != 'true'
+        run: echo "Skipped, because this pull request changes nothing Morph's Home Assistant half is made of."
+
+      - uses: actions/checkout@v7
+        if: env.RUNS == 'true'
+
+      - uses: actions/setup-python@v7
+        if: env.RUNS == 'true'
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install Home Assistant ${{ matrix.ha }}
+        if: env.RUNS == 'true'
+        run: |
+          # Home Assistant refuses to start outside a virtual environment
+          # ("must be run in a Python virtual environment or a container").
+          python -m venv "$RUNNER_TEMP/ha-venv"
+          HA_PY="$RUNNER_TEMP/ha-venv/bin/python"
+          echo "HA_PY=$HA_PY" >> "$GITHUB_ENV"
+          "$HA_PY" -m pip install --upgrade pip
+          # --pre: older releases pin a pre-release of one dependency.
+          "$HA_PY" -m pip install --pre "homeassistant==${{ matrix.ha }}" ${{ matrix.extra }}
+          # The packages the rig's integrations need (the demo house's
+          # conversation, the camera's stream…), which Home Assistant would
+          # otherwise try to install at start; read off this release's own
+          # manifests.
+          "$HA_PY" tests/realha/ha_rig.py requirements > realha-reqs.txt
+          "$HA_PY" -m pip install --pre -r realha-reqs.txt
+
+      - name: Install Playwright (the runner's Chrome)
+        if: env.RUNS == 'true'
+        run: |
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install playwright@1.62.1 --no-fund --no-audit
+          echo "CHROMIUM_PATH=$(command -v google-chrome || command -v chromium)" >> "$GITHUB_ENV"
+
+      - name: Start Home Assistant
+        if: env.RUNS == 'true'
+        run: '"$HA_PY" tests/realha/ha_rig.py up "$RUNNER_TEMP/ha" > /dev/null'
+
+      - name: Check Morph in it
+        if: env.RUNS == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/pictures"
+          node tests/realha/check-morph.mjs "$RUNNER_TEMP/ha" "$RUNNER_TEMP/pictures"
+
+      - name: Home Assistant's log when it failed
+        if: failure() && env.RUNS == 'true'
+        run: tail -n 120 "$RUNNER_TEMP/ha/rig.log" || true
+
+      - name: Keep the pictures
+        if: always() && env.RUNS == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: morph-real-ha-${{ matrix.ha }}
+          path: ${{ runner.temp }}/pictures
+          if-no-files-found: ignore
+
+      - name: Stop Home Assistant
+        if: always() && env.RUNS == 'true'
+        run: '"$HA_PY" tests/realha/ha_rig.py down "$RUNNER_TEMP/ha" || true'
 
   ruff:
     name: Python lint

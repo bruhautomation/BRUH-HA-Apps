@@ -65,6 +65,10 @@ def browser() -> str:
     return ""
 
 
+# Well under pytest-timeout's 60s, which ends the whole worker when it fires.
+WARM_UP_S = 15
+
+
 def warm_up(binary: str) -> None:
     """Start the browser once before the timed launch, and ignore how it goes.
 
@@ -75,22 +79,45 @@ def warm_up(binary: str) -> None:
     cache is what the budget was measured against, so that is what the
     timed launch below gets; a browser that will not start at all still
     fails the test there.
+
+    **It never waits longer than WARM_UP_S, and it ends the browser itself.**
+    It ran `--dump-dom about:blank` and waited up to 90s for Chromium to
+    exit, and current Chromium does not exit after `--dump-dom` in headless
+    mode (it was measured sitting there past 40s). The suite's per-test
+    timeout is 60s in `thread` mode, which ends the whole xdist worker, so
+    every test that warmed up a browser took its worker down ("node down:
+    Not properly terminated") and the run hung waiting for it — CI's Python
+    tests were cancelled at their 15-minute limit on main and on every
+    branch. The start is what warms the disk cache; the browser is then
+    ended with its whole process group, so no helper process outlives it.
     """
     if not binary:
         return
+    import signal
+
     profile = tempfile.mkdtemp()
+    proc = None
     try:
-        subprocess.run(
+        proc = subprocess.Popen(
             [binary, "--headless=new", "--no-sandbox", "--disable-gpu",
              "--disable-dev-shm-usage", f"--user-data-dir={profile}",
              "--dump-dom", "about:blank"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90,
-            check=False)
-    except (OSError, subprocess.TimeoutExpired):
-        # Only a warm-up: whether it worked is answered by the timed launch,
-        # which fails the test if the browser cannot start at all.
-        pass
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        proc.wait(timeout=WARM_UP_S)
+    except subprocess.TimeoutExpired:
+        pass  # warmed: the start is what warms the cache, not the exit
+    except OSError:
+        pass  # only a warm-up: the timed launch says whether the browser starts
     finally:
+        if proc is not None and proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                pass  # it ended between the poll and the kill
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass  # reaped by the system once its group is gone
         shutil.rmtree(profile, ignore_errors=True)
 
 

@@ -179,9 +179,9 @@ class Themes(unittest.TestCase):
         shipped = ROOT / "brain" / "morph" / "defaults" / "themes"
         themes, problems = self.th.read_themes(shipped)
         self.assertEqual(problems, [])
-        self.assertEqual(sorted(themes), ["Morph", "Morph Medium"])
+        self.assertEqual(sorted(themes), ["Morph", "Morph Dark", "Morph Light", "Morph Medium"])
         self.assertEqual(sorted(themes["Morph"]["modes"]), ["dark", "light"])
-        for t in (themes["Morph"]["modes"]["light"], themes["Morph"]["modes"]["dark"], themes["Morph Medium"]):
+        for t in (themes["Morph"]["modes"]["light"], themes["Morph"]["modes"]["dark"], themes["Morph Medium"], themes["Morph Light"], themes["Morph Dark"]):
             for var in ("primary-background-color", "card-background-color", "primary-text-color", "morph-rose"):
                 self.assertIn(var, t)
 

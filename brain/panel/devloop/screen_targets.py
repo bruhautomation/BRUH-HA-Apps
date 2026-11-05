@@ -31,8 +31,16 @@ outright. A panel that misdraws because a write was refused is a truer
 picture of "what this screen looks like" than a panel that printed a label.
 
 **The cards and Morph are drawn in a brAIn page** (`/devloop/harness/…`,
-loopback only), because they live inside Home Assistant's frontend, which a
-browser here cannot sign into. The page hands them a `hass` whose states
+loopback only) for the development loop, because what it files leaves the
+house and a page of the house's own dashboards should not.
+
+**Home Assistant's own dashboards are photographed in Home Assistant**
+(`ha_targets`), for the chat's screenshot tool only: the integration hands
+a short-lived token for brAIn's own system user (`morph/eyes`,
+custom_components/brain/morph/eyes.py), the page is signed in by putting it
+in the frontend's token store before any of HA's script runs, and the
+socket guard drops every message that would change anything
+(`screens._HA_SOCKET_GUARD_JS`). The page hands them a `hass` whose states
 and reads are the house's own, through a read-only proxy, and whose
 `callService` refuses: what is photographed is the card on this house's
 data, and pressing nothing in it can reach the house.
@@ -311,6 +319,97 @@ def harness_targets(panel_base: str, products: dict[str, str]) -> list[dict]:
     return out
 
 
+# Home Assistant as this container reaches it (the Supervisor's network).
+HA_HOST = os.environ.get("BRAIN_HA_HOST", "homeassistant")
+HA_PRODUCT = "Home Assistant"
+# How long a dashboard is given to draw once its page has loaded: the
+# frontend is a single page that builds the view after its socket answers.
+HA_READY_JS = r"""
+(async () => {
+  const deep = (root, name) => {
+    const q = [root];
+    for (let n = 0; q.length && n < 6000; n++) {
+      const x = q.shift(); if (!x) continue;
+      if (x.localName === name) return x;
+      if (x.shadowRoot) q.push(x.shadowRoot);
+      for (const c of (x.children || [])) q.push(c);
+    }
+    return null;
+  };
+  for (let i = 0; i < 150; i++) {
+    const root = document.querySelector("home-assistant");
+    const view = root && deep(root, "hui-view");
+    if (view && (view.shadowRoot || view.children.length)) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  await new Promise((r) => setTimeout(r, 2000));
+})()
+"""
+
+
+def ha_base(eyes: dict) -> str:
+    """Home Assistant's address from inside this container."""
+    try:
+        port = int((eyes or {}).get("port") or 8123)
+    except (TypeError, ValueError):
+        port = 8123
+    if not 0 < port < 65536:
+        port = 8123
+    host = HA_HOST if re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,62}|[0-9.]{7,15}", HA_HOST) else "homeassistant"
+    return f"{'https' if (eyes or {}).get('ssl') else 'http'}://{host}:{port}"
+
+
+def ha_init(base: str, token: str, expires_in: int = 1800) -> str:
+    """The script that signs a page in: Home Assistant's frontend reads its
+    tokens from localStorage "hassTokens", for its own origin only."""
+    data = {"hassUrl": base, "clientId": base + "/", "access_token": str(token or ""),
+            "token_type": "Bearer", "expires_in": int(expires_in or 1800), "refresh_token": ""}
+    return ("(() => { try { if (location.origin !== %s) return; const d = %s; "
+            "d.expires = Date.now() + Math.max(60, d.expires_in - 120) * 1000; "
+            "localStorage.setItem('hassTokens', JSON.stringify(d)); } catch (e) {} })();"
+            % (json.dumps(base), json.dumps(data)))
+
+
+def _ha_slug(key: str, path: str, used: set) -> str:
+    base = "ha-" + file_key(key)[:28].strip("-") + "-" + file_key(path)[:20].strip("-")
+    base = re.sub(r"-{2,}", "-", base).strip("-")[:54] or "ha"
+    cand, n = base, 2
+    while cand in used:
+        cand, n = f"{base}-{n}", n + 1
+    used.add(cand)
+    return cand
+
+
+def ha_targets(eyes: dict) -> list[dict]:
+    """Every Home Assistant dashboard's tabs as one capture target, signed
+    in with ``eyes``'s token; [] without one."""
+    if not isinstance(eyes, dict) or not eyes.get("access_token"):
+        return []
+    base = ha_base(eyes)
+    used: set = set()
+    screens = []
+    for d in eyes.get("dashboards") or []:
+        if not isinstance(d, dict):
+            continue
+        url_path = str(d.get("url_path") or "lovelace")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", url_path):
+            continue
+        for v in d.get("views") or []:
+            path = str((v or {}).get("path") or (v or {}).get("index") or 0)
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", path):
+                path = str(int((v or {}).get("index") or 0))
+            screens.append({
+                "slug": _ha_slug(d.get("key") or url_path, path, used),
+                "label": f"{HA_PRODUCT} › {d.get('title') or url_path} › {(v or {}).get('title') or path}",
+                "url": f"{base}/{url_path}/{path}", "script": HA_READY_JS,
+                "dashboard": url_path, "view": path})
+    if not screens:
+        return []
+    return [{"key": "home-assistant", "product": HA_PRODUCT, "url": base + "/", "guard": True,
+             "reads": [], "sockets": True, "init": ha_init(base, eyes["access_token"], eyes.get("expires_in") or 1800),
+             "screens": screens}]
+
+
 def card_file(name: str) -> str:
     """The path a harness card file is read from, or "" when there is none
     on this box (the add-on is not installed, or never copied it)."""
@@ -377,7 +476,7 @@ def allowed_ws(msg) -> str:
     return f"brAIn's preview only reads ({kind or 'unknown'} is refused)"
 
 
-__all__ = ["CARD_FILES", "key_for", "HARNESS", "PANELS", "READ_COMMANDS", "allowed_ws",
-           "card_file", "harness_targets", "locate", "module_file", "morph_card",
+__all__ = ["CARD_FILES", "key_for", "HARNESS", "HA_PRODUCT", "PANELS", "READ_COMMANDS", "allowed_ws",
+           "card_file", "ha_base", "ha_init", "ha_targets", "harness_targets", "locate", "module_file", "morph_card",
            "morph_module", "panel_url",
            "product_for", "screen_script", "target"]

@@ -2,6 +2,27 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.0
+
+### Added
+
+- **Morph's cards resize like any Home Assistant card, and fill whatever size you give them.** Each card has a sensible size in a sections view (a light is one row, a reading two, a thermostat two rows the full width, a camera or forecast three), and Home Assistant's own resize handles and Layout tab change it. A light made taller becomes a bigger slider, a camera fills its card, a reading's line takes the height, and a card made small drops its smaller lines instead of being cut off.
+- **Holding a card open makes room, the way Morph always did.** At a set size, the opened card's space grows while it is open and the cards below move down; closing it puts everything back.
+- **Everything about a Morph card is in Home Assistant's visual editor:** icon, tap, hold and double-tap actions (Home Assistant's own), and the card shown when it is opened, beside entity, name, room and colour. Nothing has to be typed as YAML.
+- **brAIn can see any Home Assistant dashboard.** brAIn's screenshot tool now photographs any dashboard tab exactly as Home Assistant draws it, including admin-only dashboards. It signs in as brAIn's own system user, **brAIn (screenshots)**, which nobody can log in as, and nothing on the page can change anything while the picture is taken. brAIn is told to look before it answers about how a dashboard looks, and again after it changes one.
+- **brAIn can change any part of any dashboard exactly.** A new tool changes one card, size, key or tab by its place in the dashboard, without rewriting the rest, and saves with the usual backup and undo. **brain.update_dashboard_info** changes a dashboard's sidebar title, icon, visibility and admin-only setting.
+- **Morph's extras on Home Assistant's own tabs.** On any sections tab, the brAIn button's **Morph on this tab** switches on the room rail, lifting a room that needs you to the top (with why), and folding quiet rooms. Each is off unless you turn it on, and the room rail is on for a converted Morph dashboard. Edit mode never moves anything.
+- **Morph Light** and **Morph Dark** themes, beside **Morph** (which follows each person's light or dark setting).
+
+### Changed
+
+- **A converted Morph dashboard is Home Assistant's own sections view.** Home Assistant now lays out its sections and cards, so adding, moving, deleting and resizing sections and cards, badges and columns all work in Home Assistant's editor. A dashboard brought over with 5.0 is changed once, keeping its switches, and the change is in its history, so Restore can undo it.
+- **Bringing over a Morph dashboard keeps more:** each card's width, its icon, the card shown when it is opened, the switch in a room's title row (now on the room's heading), a light or dark look, and card kinds from this house's own Morph code.
+
+### Fixed
+
+- **Cards from this house's own Morph code were brought over as plain entity cards.** They are now their own cards on Home Assistant's dashboards too.
+
 ## 5.0.0
 
 ### Added

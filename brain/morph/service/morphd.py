@@ -97,11 +97,27 @@ def install_docs() -> None:
         learning.write_lessons([], commit=False)
     # Morph's looks as Home Assistant themes, put here once: the folder is
     # this house's from then on (the integration's themes.py loads it).
+    # Each file once: one a later release adds (morph-fixed.yaml, the light
+    # and dark looks alone) arrives in a house that already has the folder,
+    # and a file the house changed or deleted on purpose is never put back
+    # (`.shipped` remembers what was ever put here).
     themes = paths.MORPH_DIR / "themes"
-    if not themes.exists() and (paths.DEFAULTS / "themes").is_dir():
+    if (paths.DEFAULTS / "themes").is_dir():
         themes.mkdir(parents=True, exist_ok=True)
-        for src in (paths.DEFAULTS / "themes").glob("*.yaml"):
-            shutil.copyfile(src, themes / src.name)
+        shipped_at = themes / ".shipped"
+        try:
+            shipped = set(shipped_at.read_text(encoding="utf-8").split())
+        except OSError:
+            # A folder from before the record: what is in it was shipped.
+            shipped = {f.name for f in themes.glob("*.yaml")}
+        for src in sorted((paths.DEFAULTS / "themes").glob("*.yaml")):
+            if src.name not in shipped and not (themes / src.name).exists():
+                shutil.copyfile(src, themes / src.name)
+            shipped.add(src.name)
+        try:
+            shipped_at.write_text("\n".join(sorted(shipped)) + "\n", encoding="utf-8")
+        except OSError:
+            pass  # unrecorded: the next start asks again, and a file still there is never copied over
     paths.DASHBOARDS_DIR.mkdir(parents=True, exist_ok=True)
     paths.TYPES_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -211,7 +227,7 @@ async def handle(kind: str, p: dict) -> dict:
         dash, problems, _ = await asyncio.to_thread(store.read)
         if not (dash.get("floors") or []):
             return {"ok": False, "error": "There is no Morph dashboard to bring over."}
-        config, report = convert.to_lovelace(dash)
+        config, report = convert.to_lovelace(dash, house=tuple(morphcode.card_types()))
         return {"ok": True, "config": config, "report": report, "url_path": convert.URL_PATH,
                 "title": dash.get("title") or "Home"}
     if kind in ("restore", "history") and p.get("dashboard"):
@@ -466,7 +482,8 @@ async def watch_loop() -> None:
 # What a sync pass commits, by what moved (lovelace.sync's `what`).
 SYNC_COMMITS = {"new": ("Started keeping {title}", "morph"),
                 "outside": ("Edited in Home Assistant: {title}", "outside"),
-                "both": ("Edited in Home Assistant: {title}", "outside")}
+                "both": ("Edited in Home Assistant: {title}", "outside"),
+                "sections": ("Morph's views are Home Assistant's sections views now: {title}", "morph")}
 
 
 async def sync_dashboards() -> list[dict]:

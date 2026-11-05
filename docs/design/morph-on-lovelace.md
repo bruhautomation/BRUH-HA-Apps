@@ -43,6 +43,38 @@ Not yet, or done differently:
   element types (§3 step 2) is not done.
 - The layer floats a button and a sheet rather than joining HA's toolbar.
 
+## What changed in 5.1.0 (the owner, 2026-11-05)
+
+The owner, after using 5.0: *"So many of the cards I have seem broken, can't
+edit them manually with a GUI, aren't rendering correctly. Certainly aren't
+resizing."* And: *"I'm not certain I need dynamic rearranging, but I do want
+dynamic resizing… elements of Morph don't work great (e.g., the horizontal
+sizing determination) and the Home Assistant engine maybe better or at
+least good enough… Be sure Morph can see (literally screenshot) any of the
+dashboards and can have full read/write control over everything there."*
+
+- **HA's sections view replaces Morph's view** for every tab (§2.5's table
+  is superseded where it says `custom:morph-view`): a custom view never gets
+  HA's section editing, badges or columns. Morph's room rail, lifting and
+  folding are the view's `morph:` switches on HA's own view
+  (`morph-view-layer.js`), off unless set, the rail on for a converted
+  dashboard. 5.0's Morph views were migrated once.
+- **HA sizes the cards; Morph's cards fill the size** (`SIZES`, `:host([grid])`),
+  and an opened card grows its own grid cell. Every key a Morph card reads
+  is in HA's visual editor (actions, icon, the opened card).
+- **brAIn sees and edits every dashboard**: `screenshot_panel` with addon
+  "Home Assistant" (signed in through `morph/eyes`, guarded so the page can
+  change nothing), `edit_dashboard` (ops on paths) and
+  `brain.update_dashboard_info`.
+- **The CI job against a real Home Assistant exists** (§5): `tests/realha`,
+  on 2025.1.4 and 2026.11.0. It found the one release-specific break
+  (a section's index) before a house did.
+
+Still not done from the plan: the id sidecar, the classic panel's
+retirement, converting `cards/*.js` into named types (a house's own card
+kinds now come along as Morph cards instead), and the layer joining HA's
+toolbar.
+
 ## 0. Decisions taken (with the owner, 2026-11-04)
 
 | Question | Decision |

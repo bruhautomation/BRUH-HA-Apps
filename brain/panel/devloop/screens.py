@@ -416,6 +416,29 @@ _NO_SOCKETS_JS = r"""
 })();
 """
 
+# Home Assistant's own frontend lives on its WebSocket, so a page of it
+# cannot be photographed with the socket refused. Its writes all go over
+# that socket too, so instead of refusing the socket, every message the page
+# SENDS is read first and one that changes anything is dropped before it
+# leaves: a service call, a script, an event, a save, a create, an update,
+# a delete, a reload. The page waits for an answer that never comes, which
+# is a truer picture than a light that switched. Counted for the report.
+_HA_SOCKET_GUARD_JS = r"""
+(() => {
+  const WRITE = /^(call_service|execute_script|fire_event|conversation\/process|assist_pipeline\/run|validate_config)$|\/(create|update|delete|remove|save|set|reload|enable|disable|install|uninstall|restart|start|stop|apply|run|press|clear|move|rename|reorder|import|upload|ignore|dismiss|subscribe_trigger|turn_on|turn_off|toggle)([_/]|$)/;
+  const send = WebSocket.prototype.send;
+  const held = (window.__brainHeldSockets = window.__brainHeldSockets || []);
+  Object.defineProperty(WebSocket.prototype, "send", { configurable: false, writable: false, value: function (data) {
+    try {
+      const msg = typeof data === "string" ? JSON.parse(data) : null;
+      const kind = msg && typeof msg.type === "string" ? msg.type : "";
+      if (kind && WRITE.test(kind)) { held.push("message " + kind); return; }
+    } catch (e) { /* not JSON: HA sends none, but it is passed on */ }
+    return send.call(this, data);
+  } });
+})();
+"""
+
 # The layout faults a script can see, measured in the main frame.
 _AUDIT_JS = r"""
 ((coarse, width) => {
@@ -871,13 +894,16 @@ async def capture(out_dir: Path, *, confidential: list[str], aliases,
                 for width, height, touch, scheme in (views or VIEWS):
                     for tgt in work:
                         guard = list(tgt.get("reads") or []) if tgt.get("guard") else None
+                        init = str(tgt.get("init") or "")
+                        sockets = bool(tgt.get("sockets"))
                         for scr in tgt.get("screens") or []:
                             label = scr["label"]
                             try:
                                 shot = await _one(
                                     cdp, scr["url"], scr["slug"], label, scr.get("script") or "",
                                     width, height, touch, scheme, out_dir, confidential,
-                                    aliases, guard=guard, focus=scr.get("focus"))
+                                    aliases, guard=guard, focus=scr.get("focus"),
+                                    init=init, sockets=sockets)
                             except MissingElement as exc:
                                 errors.append({"product": tgt.get("product", "brAIn"),
                                                "missing": True, "text": str(exc)[:200]})
@@ -906,11 +932,16 @@ async def capture(out_dir: Path, *, confidential: list[str], aliases,
 async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
                width: int, height: int, touch: bool, scheme: str,
                out_dir: Path, confidential: list[str], aliases, *,
-               guard: list | None = None, focus: dict | None = None) -> dict:
+               guard: list | None = None, focus: dict | None = None,
+               init: str = "", sockets: bool = False) -> dict:
     """One screen in its own tab, so nothing a previous screen left open
     (a dialog, a scroll position) is in this picture. With ``guard`` (the
     reads it lets through) every other write is failed in the browser and
-    every WebSocket is blocked, before the page is loaded."""
+    every WebSocket is blocked, before the page is loaded — or, with
+    ``sockets`` (Home Assistant's own frontend, which lives on its socket),
+    the socket opens and every message that would change anything is
+    dropped instead. ``init`` runs in the page before any of its own
+    script (Home Assistant's sign-in, `screen_targets.ha_targets`)."""
     target = await cdp.call("Target.createTarget", {"url": "about:blank"})
     tid = target["targetId"]
     session = (await cdp.call("Target.attachToTarget",
@@ -918,15 +949,21 @@ async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
     try:
         await cdp.call("Page.enable", {}, session)
         await cdp.call("Network.enable", {}, session)
+        if init:
+            await cdp.call("Page.addScriptToEvaluateOnNewDocument", {"source": init}, session)
         if guard is not None:
             cdp.guards[session] = guard
-            # A WebSocket is not a request the Fetch domain sees, and
-            # Chromium's blocked-URL list does not reach its handshake
-            # either (the test proved it), so the constructor is replaced
-            # in every frame before any of the page's own script runs.
-            await cdp.call("Page.addScriptToEvaluateOnNewDocument",
-                           {"source": _NO_SOCKETS_JS}, session)
-            await cdp.call("Network.setBlockedURLs", {"urls": ["ws://*", "wss://*"]}, session)
+            if sockets:
+                await cdp.call("Page.addScriptToEvaluateOnNewDocument",
+                               {"source": _HA_SOCKET_GUARD_JS}, session)
+            else:
+                # A WebSocket is not a request the Fetch domain sees, and
+                # Chromium's blocked-URL list does not reach its handshake
+                # either (the test proved it), so the constructor is replaced
+                # in every frame before any of the page's own script runs.
+                await cdp.call("Page.addScriptToEvaluateOnNewDocument",
+                               {"source": _NO_SOCKETS_JS}, session)
+                await cdp.call("Network.setBlockedURLs", {"urls": ["ws://*", "wss://*"]}, session)
             await cdp.call("Fetch.enable", {"patterns": [
                 {"urlPattern": "*", "requestStage": "Request"}]}, session)
         await cdp.call("Emulation.setDeviceMetricsOverride", {
@@ -1000,7 +1037,8 @@ async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
                 "expression": "(window.__brainHeldSockets || []).slice(0, 6)",
                 "returnByValue": True}, session)
             for url_ in (res.get("result") or {}).get("value") or []:
-                cdp.held.setdefault(session, []).append(f"WebSocket {_path_of(url_)}")
+                cdp.held.setdefault(session, []).append(
+                    url_ if str(url_).startswith("message ") else f"WebSocket {_path_of(url_)}")
         held = sorted(set(cdp.held.pop(session, [])))[:MAX_PROBLEMS_PER_KIND]
         return {"name": name, "screen": label, "width": width, "scheme": scheme,
                 "sha": hashlib.sha256(data).hexdigest(), "bytes": len(data),

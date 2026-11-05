@@ -192,6 +192,9 @@
     "create_dashboard": {
       "service": "mdi:view-dashboard-variant"
     },
+    "update_dashboard_info": {
+      "service": "mdi:view-dashboard-edit"
+    },
     "delete_dashboard": {
       "service": "mdi:view-dashboard-variant-outline"
     },

@@ -199,7 +199,8 @@ Morph's own panel modules are in `/config/custom_components/brain/morph/frontend
 | `morph-cards.js` | Morph's card kinds as Home Assistant custom cards (`custom:morph-<kind>-card`), with HA's visual editor and card picker |
 | `morph-types.js` | Card types (`types/*.yaml`) as Home Assistant custom cards (`custom:morph-type-<slug>`), redrawn everywhere when a type changes |
 | `brain-layer.js` | The brAIn button on a Home Assistant dashboard: Tell brAIn about a card or the dashboard, History, and letting brAIn keep a dashboard |
-| `morph-features.js` | Morph on a Home Assistant dashboard: the `custom:morph-view` view type (rooms that need you lifted, quiet rooms folded, the room rail), the cases card and the Ask card |
+| `morph-features.js` | Morph on a Home Assistant dashboard: the older `custom:morph-view` view type, the cases card and the Ask card |
+| `morph-view-layer.js` | Morph's switches on Home Assistant's own sections view (`morph: {rail, order, fold}` on a view): the room rail, lifting a room that needs you, folding a quiet one |
 | `morph-panel.js` | The page: the verdict, Now, the rooms, brAIn's cases, To Do, Ask, Edit, Tell, Settings |
 | `cards.js` | The built-in card types (`TYPES`) |
 | `engine.js` | The layout engine: springs, masonry, opening in place |
@@ -460,9 +461,16 @@ change is kept.
    `button`, `vacuum`, `climate`, `sensor`, `readings`, `meter`, `media`,
    `camera`, `list`, `person`, `weather`, `alarm`, `scenes`, `entity`,
    `note`. They take `entity` (or `entities` for `readings`, `list`,
-   `scenes`), `name`, `room` (names starting with it are shortened),
-   `color` (amber sand sky violet teal lime rose peach indigo), and a
-   thermostat takes `actions` (up to four scripts, scenes or buttons).
+   `scenes`), `name`, `icon` (an `mdi:` icon in place of Morph's moving
+   one), `room` (names starting with it are shortened), `color` (amber
+   sand sky violet teal lime rose peach indigo), `tap_action`,
+   `hold_action` and `double_tap_action` (Home Assistant's own actions:
+   left out, tap does the main thing and hold opens the card in place),
+   `detail` (any Lovelace card config, shown under the card while it is
+   open), and a thermostat takes `actions` (up to four scripts, scenes or
+   buttons). Every one of these is in the card's visual editor.
+   A house's own kind (a copy of `cards.js` that adds one) is
+   `custom:morph-<its kind>-card` too.
    `custom:morph-cases-card` (brAIn's cases; `area:` or `entities:` for one
    room's) and `custom:morph-ask-card` are Morph's too.
 3. **A card type** (below), when the card will be wanted again or in more
@@ -473,6 +481,32 @@ A **HACS card** is changed through its own config and, for looks, a
 Never edit a HACS card's JavaScript: HACS overwrites it on update. When the
 change needs its code, make a card type that wraps it (`kind: template`) or
 copies it (`kind: element`), and say so.
+
+## Size and layout
+
+A dashboard tab is Home Assistant's **sections** view: sections of a
+12-column grid whose rows are 56px (with 8px gaps), laid out by Home
+Assistant. A card's size is its `grid_options`:
+`{columns: 1-12, rows: <number> | "auto"}` (half a section is 6, the
+whole of it 12; `"auto"` is as tall as the card's own content). Every
+Morph card has a size of its own (a strip one row and six columns, a
+reading two rows, a thermostat two rows the whole width, a camera or
+forecast three) and FILLS whatever it is given: change `grid_options`
+to make one bigger or smaller, never a style. A section is
+`{type: grid, cards: [...]}` with an optional `column_span` (how many of
+the view's columns it takes); the view's `max_columns` caps the columns.
+
+Morph's switches are on the view, under `morph:` (all off unless set):
+`rail` (the room rail down the right edge of a touch screen), `order`
+(a room that needs somebody — an unlocked lock, an open door, a leak — is
+lifted to the top with why) and `fold` (a room with nothing on and
+nothing recent is one line until tapped). A section's name is its first
+`heading` card. In edit mode nothing moves.
+
+To SEE a dashboard as Home Assistant draws it, use `screenshot_panel`
+with addon `Home Assistant` and screen `<url_path>/<view path>` (no
+screen lists every tab): look before you answer about how one looks, and
+again after you change it.
 
 ## Card types (`types/`)
 
@@ -533,14 +567,14 @@ Morph card reads Home Assistant's variables (`primary-background-color`,
 palette as `morph-amber`, `morph-sand`, `morph-sky`, `morph-violet`,
 `morph-teal`, `morph-lime`, `morph-rose`, `morph-peach`, `morph-indigo`.
 
-## Morph's view
+## Morph's older view
 
-`type: custom:morph-view` on a view lays out Home Assistant's own sections
-the Morph way: a room that needs somebody (an unlocked lock, an open door,
-a leak) is lifted to the top with why, a room with nothing on folds to one
-line, and on a touch screen the room rail runs down the right edge. Each is
-a switch on the view: `morph: {order: false, fold: false, rail: false}`.
-A section's name is its first `heading` card.
+`type: custom:morph-view` was Morph's own view type, and a 5.0 conversion
+wrote it. Morph changed every such tab to Home Assistant's `sections` once
+(5.1), keeping its `morph:` switches, because Home Assistant's own sections
+view edits, sizes and arranges cards and Morph's view did not. Do not
+write `custom:morph-view` for a new tab: use `type: sections` with the
+`morph:` switches above.
 
 # Answering a Tell (reference)
 
