@@ -93,6 +93,14 @@ def address(hass: HomeAssistant) -> dict:
     return {"port": int(getattr(api, "port", None) or 8123), "ssl": bool(getattr(api, "use_ssl", False))}
 
 
+def register(hass: HomeAssistant) -> None:
+    """``morph/eyes``, once per Home Assistant run."""
+    data = hass.data.setdefault("brain_morph_eyes", {})
+    if not data.get("ws"):
+        websocket_api.async_register_command(hass, ws_eyes)
+        data["ws"] = True
+
+
 @websocket_api.websocket_command({vol.Required("type"): "morph/eyes",
                                   vol.Optional("token", default=True): bool})
 @websocket_api.require_admin

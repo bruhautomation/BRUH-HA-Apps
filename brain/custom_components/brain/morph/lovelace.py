@@ -257,8 +257,7 @@ def start(hass: HomeAssistant) -> Callable[[], None]:
     unsub_event = hass.bus.async_listen(EVENT, _updated)
     unsub_tick = async_track_time_interval(hass, _tick, timedelta(seconds=APPLY_S))
     if not data.get("ll_ws"):
-        from . import eyes  # noqa: PLC0415 — eyes reads this module's dashboards
-        for handler in (ws_dashboards, ws_dashboard_morph, eyes.ws_eyes):
+        for handler in (ws_dashboards, ws_dashboard_morph):
             websocket_api.async_register_command(hass, handler)
         data["ll_ws"] = True
 

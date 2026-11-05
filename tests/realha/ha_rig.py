@@ -126,7 +126,7 @@ async def wait_up(url: str, deadline: float) -> None:
                     if r.status in (200, 401, 404):
                         return
             except aiohttp.ClientError:
-                pass
+                pass  # not listening yet: asked again in a second
             await asyncio.sleep(1)
     raise SystemExit("Home Assistant did not answer in time")
 
@@ -141,7 +141,7 @@ async def wait_running(url: str, token: str, deadline: float) -> None:
                     if r.status == 200 and (await r.json()).get("state") == "RUNNING":
                         return
             except aiohttp.ClientError:
-                pass
+                pass  # still starting: asked again in two seconds
             await asyncio.sleep(2)
     raise SystemExit("Home Assistant did not finish starting in time")
 
@@ -231,9 +231,10 @@ def up(cfg: Path) -> dict:
         raise SystemExit(f"port {port} is taken: another Home Assistant is running")
     configure(cfg, port)
     url = CLIENT.format(port=port)
-    log = open(cfg / "rig.log", "w")  # noqa: SIM115 — handed to the child
-    proc = subprocess.Popen([sys.executable, "-m", "homeassistant", "-c", str(cfg)],
-                            stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    # The child keeps its own copy of the descriptor after this one closes.
+    with open(cfg / "rig.log", "w") as log:
+        proc = subprocess.Popen([sys.executable, "-m", "homeassistant", "-c", str(cfg)],
+                                stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     asyncio.run(wait_up(url, time.time() + 600))
     token = asyncio.run(onboard(url))
     asyncio.run(wait_running(url, token, time.time() + 900))
@@ -261,7 +262,7 @@ def down(cfg: Path) -> None:
         try:
             os.killpg(pid, signal.SIGKILL)
         except OSError:
-            pass
+            pass  # it exited between the last check and the kill
     while time.time() < deadline + 10 and not port_free(PORT):
         time.sleep(0.5)
 

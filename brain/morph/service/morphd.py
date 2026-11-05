@@ -117,7 +117,7 @@ def install_docs() -> None:
         try:
             shipped_at.write_text("\n".join(sorted(shipped)) + "\n", encoding="utf-8")
         except OSError:
-            pass
+            pass  # unrecorded: the next start asks again, and a file still there is never copied over
     paths.DASHBOARDS_DIR.mkdir(parents=True, exist_ok=True)
     paths.TYPES_DIR.mkdir(parents=True, exist_ok=True)
 
