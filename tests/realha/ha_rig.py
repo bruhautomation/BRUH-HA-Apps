@@ -123,9 +123,13 @@ def configure(cfg: Path, port: int) -> None:
     shutil.copytree(FRONTEND, www)
 
 
-async def wait_up(url: str, deadline: float) -> None:
+async def wait_up(url: str, deadline: float, proc=None, log: Path | None = None) -> None:
     async with aiohttp.ClientSession() as s:
         while time.time() < deadline:
+            if proc is not None and proc.poll() is not None:
+                # It stopped: say why at once rather than wait out the deadline.
+                tail = log.read_text(errors="replace")[-2000:] if log and log.exists() else ""
+                raise SystemExit(f"Home Assistant exited ({proc.returncode}) while starting:\n{tail}")
             try:
                 async with s.get(url + "api/onboarding") as r:
                     if r.status in (200, 401, 404):
@@ -240,7 +244,7 @@ def up(cfg: Path) -> dict:
     with open(cfg / "rig.log", "w") as log:
         proc = subprocess.Popen([sys.executable, "-m", "homeassistant", "-c", str(cfg)],
                                 stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-    asyncio.run(wait_up(url, time.time() + 600))
+    asyncio.run(wait_up(url, time.time() + 600, proc, cfg / "rig.log"))
     token = asyncio.run(onboard(url))
     asyncio.run(wait_running(url, token, time.time() + 900))
     fixtures(cfg)
@@ -281,7 +285,11 @@ def requirements() -> list[str]:
     comps = Path(importlib.util.find_spec("homeassistant").origin).parent / "components"
     seen: set[str] = set()
     out: list[str] = []
-    todo = list(INTEGRATIONS) + ["stream", "camera", "lovelace", "onboarding", "auth", "http", "websocket_api"]
+    # Beside the configured ones: what they import without declaring it
+    # (conversation imports tts, which needs mutagen) and what onboarding
+    # sets up on its own (met, google_translate, radio_browser).
+    todo = list(INTEGRATIONS) + ["stream", "camera", "lovelace", "onboarding", "auth", "http", "websocket_api",
+                                 "tts", "assist_pipeline", "intent", "met", "google_translate", "radio_browser"]
     while todo:
         name = todo.pop()
         if name in seen:

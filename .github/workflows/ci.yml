@@ -405,15 +405,20 @@ jobs:
       - name: Install Home Assistant ${{ matrix.ha }}
         if: env.RUNS == 'true'
         run: |
-          python -m pip install --upgrade pip
+          # Home Assistant refuses to start outside a virtual environment
+          # ("must be run in a Python virtual environment or a container").
+          python -m venv "$RUNNER_TEMP/ha-venv"
+          HA_PY="$RUNNER_TEMP/ha-venv/bin/python"
+          echo "HA_PY=$HA_PY" >> "$GITHUB_ENV"
+          "$HA_PY" -m pip install --upgrade pip
           # --pre: older releases pin a pre-release of one dependency.
-          python -m pip install --pre "homeassistant==${{ matrix.ha }}" ${{ matrix.extra }}
+          "$HA_PY" -m pip install --pre "homeassistant==${{ matrix.ha }}" ${{ matrix.extra }}
           # The packages the rig's integrations need (the demo house's
           # conversation, the camera's stream…), which Home Assistant would
           # otherwise try to install at start; read off this release's own
           # manifests.
-          python tests/realha/ha_rig.py requirements > realha-reqs.txt
-          python -m pip install --pre -r realha-reqs.txt
+          "$HA_PY" tests/realha/ha_rig.py requirements > realha-reqs.txt
+          "$HA_PY" -m pip install --pre -r realha-reqs.txt
 
       - name: Install Playwright (the runner's Chrome)
         if: env.RUNS == 'true'
@@ -423,7 +428,7 @@ jobs:
 
       - name: Start Home Assistant
         if: env.RUNS == 'true'
-        run: python tests/realha/ha_rig.py up "$RUNNER_TEMP/ha" > /dev/null
+        run: '"$HA_PY" tests/realha/ha_rig.py up "$RUNNER_TEMP/ha" > /dev/null'
 
       - name: Check Morph in it
         if: env.RUNS == 'true'
@@ -445,7 +450,7 @@ jobs:
 
       - name: Stop Home Assistant
         if: always() && env.RUNS == 'true'
-        run: python tests/realha/ha_rig.py down "$RUNNER_TEMP/ha" || true
+        run: '"$HA_PY" tests/realha/ha_rig.py down "$RUNNER_TEMP/ha" || true'
 
   ruff:
     name: Python lint
