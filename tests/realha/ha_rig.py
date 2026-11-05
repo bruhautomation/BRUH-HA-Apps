@@ -8,6 +8,7 @@ integration for a house's worth of entities, Morph's frontend served from
 (exactly what the integration's `add_extra_js_url` does), an owner onboarded
 by script, and a storage dashboard holding every Morph card kind.
 
+    python tests/realha/ha_rig.py requirements  # the packages to install first
     python tests/realha/ha_rig.py up   <dir>   # configure, start, onboard; prints JSON
     python tests/realha/ha_rig.py down <dir>
 
@@ -34,9 +35,13 @@ ROOT = Path(__file__).resolve().parents[2]
 FRONTEND = ROOT / "brain" / "custom_components" / "brain" / "morph" / "frontend"
 CLIENT = "http://127.0.0.1:{port}/"
 
-CONFIGURATION = """\
-default_config:
-demo:
+# What the checks need and no more: `default_config` brings in a dozen
+# integrations (bluetooth, cloud, mobile_app…) whose packages Home Assistant
+# installs at start, which a CI runner could not, and one that failed took
+# `default_config` and the demo house with it. `requirements` prints what
+# these need, from the installed release's own manifests.
+INTEGRATIONS = ("config", "frontend", "history", "logbook", "person", "sun", "demo")
+CONFIGURATION = "".join(f"{i}:\n" for i in INTEGRATIONS if i != "frontend") + """\
 rig_eyes:
 frontend:
   extra_module_url:
@@ -267,7 +272,34 @@ def down(cfg: Path) -> None:
         time.sleep(0.5)
 
 
+def requirements() -> list[str]:
+    """Every package the configured integrations need, with their
+    dependencies', read off this release's manifests (stream for the demo
+    camera, conversation's hassil for the demo, and so on)."""
+    import importlib.util  # noqa: PLC0415
+
+    comps = Path(importlib.util.find_spec("homeassistant").origin).parent / "components"
+    seen: set[str] = set()
+    out: list[str] = []
+    todo = list(INTEGRATIONS) + ["stream", "camera", "lovelace", "onboarding", "auth", "http", "websocket_api"]
+    while todo:
+        name = todo.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        try:
+            man = json.loads((comps / name / "manifest.json").read_text())
+        except (OSError, ValueError):
+            continue
+        out += [r for r in man.get("requirements") or [] if r not in out]
+        todo += list(man.get("dependencies") or []) + list(man.get("after_dependencies") or [])
+    return out
+
+
 if __name__ == "__main__":
+    if sys.argv[1] == "requirements":
+        print("\n".join(requirements()))
+        sys.exit(0)
     cmd, where = sys.argv[1], Path(sys.argv[2])
     if cmd == "up":
         print(json.dumps(up(where)))

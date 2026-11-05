@@ -408,16 +408,12 @@ jobs:
           python -m pip install --upgrade pip
           # --pre: older releases pin a pre-release of one dependency.
           python -m pip install --pre "homeassistant==${{ matrix.ha }}" ${{ matrix.extra }}
-          # The demo house's camera loads `stream`, whose requirements
-          # (numpy, av, PyTurboJPEG) Home Assistant installs only at run
-          # time; a page whose camera import failed never drew. Installed
-          # here from that release's own manifest.
-          python - > stream-reqs.txt <<'PY'
-          import importlib.util, json, os
-          ha = os.path.dirname(importlib.util.find_spec("homeassistant").origin)
-          print("\n".join(json.load(open(os.path.join(ha, "components", "stream", "manifest.json")))["requirements"]))
-          PY
-          python -m pip install -r stream-reqs.txt
+          # The packages the rig's integrations need (the demo house's
+          # conversation, the camera's stream…), which Home Assistant would
+          # otherwise try to install at start; read off this release's own
+          # manifests.
+          python tests/realha/ha_rig.py requirements > realha-reqs.txt
+          python -m pip install --pre -r realha-reqs.txt
 
       - name: Install Playwright (the runner's Chrome)
         if: env.RUNS == 'true'
