@@ -7,13 +7,13 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 ### Fixed
 
 - Morph's climate card puts its routine buttons on a row of their own that wraps, so they no longer sit on the temperature ruler or overlap the room chips (#685).
-- A routine tile's second line wraps instead of being cut off, and its icon no longer covers the first word (#687).
+- A routine tile's second line now wraps instead of being cut off, and its icon can no longer shrink under the first word. This is hardening: the fault could not be reproduced here (#687).
 - On a laptop, a section with nothing beside it uses the whole width, so House Overview no longer stops short of the Security section below it (#716).
 - A camera with no picture says which camera it is and whether it is offline or waiting for its first picture (#717).
 - Scene buttons are at least 40px tall everywhere, with room between rows, and every such button is held to that size (#718).
 - A floor's and a room's summary lines wrap instead of ending mid-word (#731).
 - A person without a photo, or whose photo does not load, shows their initial, never the broken picture's text (#732).
-- A lock's button always shows its whole label (#733).
+- A lock's button label can no longer be squeezed by a long name. This is hardening: the fault could not be reproduced here (#733).
 - A card that grows makes the cards beside it as tall as itself, so one row stays one height.
 
 ## 5.1.3
