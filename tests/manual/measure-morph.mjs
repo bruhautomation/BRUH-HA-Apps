@@ -1595,6 +1595,121 @@ for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
   if (errors.length) fail(where, `page errors: ${errors.slice(0, 2).join(' | ')}`);
 }
 
+// ------------------------------------------------------------------
+// The layout batch of 2026-11-07: eight things a house reported, each one a
+// CLASS (every card kind that draws the same way), measured on the batch
+// floor of the fixture at 390 with touch and at 1200.
+for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
+  const touch = name === 'phone';
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, ...(touch ? { hasTouch: true, isMobile: true } : {}) });
+  await route(ctx, { narrow: touch, batch: true });
+  // A person's photo and a camera's picture that do not load.
+  await ctx.route(`${ORIGIN}/local/**`, (r) => r.fulfill({ status: 404, body: '' }));
+  await ctx.route(`${ORIGIN}/api/camera_proxy/camera.porch_cam*`, (r) => r.fulfill({ status: 404, body: '' }));
+  const p = await ctx.newPage();
+  const errors = [];
+  p.on('pageerror', (e) => errors.push(String(e)));
+  await p.goto(ORIGIN + '/');
+  await p.waitForFunction(() => window.__panel && window.__panel.data);
+  await settle(p, 1500);
+  await p.evaluate(() => { window.__panel.data.state.settings = { ...(window.__panel.data.state.settings || {}), fold_rooms: false }; window.__panel._forceApply = true; window.__panel.engine.invalidate(); window.__panel.schedule(); });
+  await settle(p, 2200);
+  const at = `layout batch ${name}`;
+  const grab = async (id, file) => {
+    await p.evaluate((id) => { const el = window.__panel.shadowRoot.querySelector(`[data-tile="${id}"]`); if (el) el.scrollIntoView({ block: 'center' }); }, id);
+    await settle(p, 500);
+    await shot(p, `${file}-${name}`);
+  };
+  const facts = await p.evaluate(() => {
+    const root = window.__panel.shadowRoot;
+    const R = (e) => { const r = e.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height }; };
+    const hit = (e) => { const r = e.getBoundingClientRect(); const x = r.left + r.width / 2, y = r.top + r.height / 2; const top = root.elementFromPoint(x, y); return !!top && (top === e || e.contains(top) || top.contains(e)); };
+    const tile = (id) => root.querySelector(`[data-tile="${id}"]`);
+    const sect = (id) => root.querySelector(`[data-sec="${id}"]`);
+    const overlap = (a, b) => Math.min(a.r, b.r) - Math.max(a.l, b.l) > 1 && Math.min(a.b, b.b) - Math.max(a.t, b.t) > 1;
+    const clipped = (e) => e.scrollWidth > e.clientWidth + 1 || e.scrollHeight > e.clientHeight + 1;
+    const out = { vw: window.innerWidth, coarse: matchMedia('(pointer:coarse)').matches };
+    // 1. The climate card's controls: none overlaps another or is caught by the tile's edge.
+    const cl = tile('cb_clim'); cl.scrollIntoView({ block: 'center' });
+    const ctl = [...cl.querySelectorAll('button')].filter((b) => b.getBoundingClientRect().width > 0);
+    out.climate = { n: ctl.length, overlaps: [], caught: [], short: [] };
+    ctl.forEach((a, i) => { ctl.slice(i + 1).forEach((b) => { if (overlap(R(a), R(b))) out.climate.overlaps.push(`${a.getAttribute('aria-label') || a.textContent.trim()} x ${b.getAttribute('aria-label') || b.textContent.trim()}`); }); if (!hit(a)) out.climate.caught.push(a.getAttribute('aria-label') || a.textContent.trim()); });
+    // A routine's chip sits clear of the ruler, the humidity line and the tile's own edge.
+    const box = cl.querySelector('.box'); const ruler = cl.querySelector('.ruler');
+    out.climate.crowd = [];
+    [...cl.querySelectorAll('.cl-acts .wd')].forEach((c) => {
+      const cr = R(c);
+      if (ruler && overlap(cr, R(ruler))) out.climate.crowd.push(`${c.textContent.trim()} sits on the ruler`);
+      [...cl.querySelectorAll('.box > .row.small span')].forEach((hs) => { if (overlap(cr, R(hs))) out.climate.crowd.push(`${c.textContent.trim()} sits on "${hs.textContent.trim()}"`); });
+      if (box && cr.b > R(box).b - 3) out.climate.crowd.push(`${c.textContent.trim()} touches the tile's bottom edge`);
+    });
+    // 2 + 8. Strips: the subtitle is whole and starts beside the icon, never under it; an action word is whole and inside its strip.
+    out.strips = [];
+    ['cb_bed', 'cb_media', 'cb_movie', 'cb_l1', 'cb_l2', 'cb_l3'].forEach((id) => {
+      const t = tile(id); t.scrollIntoView({ block: 'center' });
+      const st = t.querySelector('.strip'); const nv = t.querySelector('.nv'); const ic = t.querySelector('.sline > svg'); const act = t.querySelector('.actword');
+      const sub = nv.querySelector('span');
+      out.strips.push({ id, sub: sub.textContent, subClipped: clipped(sub), underIcon: ic ? R(sub).l < R(ic).r - 1 : false, act: act ? act.textContent : '', actClipped: act ? clipped(act) || R(act).r > R(st).r + 0.5 || R(act).l < R(nv).r - 1 : false, tile: R(t) });
+    });
+    out.stripOverlaps = [];
+    const sr = ['cb_l1', 'cb_l2', 'cb_l3', 'cb_bed', 'cb_media', 'cb_movie'].map((id) => [id, R(tile(id))]);
+    sr.forEach((a, i) => sr.slice(i + 1).forEach((b) => { if (overlap(a[1], b[1])) out.stripOverlaps.push(`${a[0]} x ${b[0]}`); }));
+    // 3. Two sections of one width share a width and a left edge; a group's label never lands on another's.
+    const o = R(sect('s_b_over')), s = R(sect('s_b_sec'));
+    out.sections = { over: o, sec: s };
+    out.labels = [];
+    ['s_b_over', 's_b_sec'].forEach((sid) => { const labs = [...sect(sid).querySelectorAll('.glab')]; labs.forEach((a, i) => labs.slice(i + 1).forEach((b) => { if (overlap(R(a), R(b))) out.labels.push(`${a.textContent.trim()} x ${b.textContent.trim()}`); })); });
+    // 4. Cameras: the name, and a state when there is no picture.
+    out.cams = ['cb_c1', 'cb_c2', 'cb_c3'].map((id) => { const t = tile(id); t.scrollIntoView({ block: 'center' }); const pic = t.querySelector('.campic'); const img = pic.querySelector('img.cam'); return { id, name: (t.querySelector('.camhead b') || {}).textContent, pic: pic.innerText.trim(), img: !!img, imgOk: !!img && img.complete && img.naturalWidth > 0 }; });
+    // 5. Scene chips, every kind that draws them.
+    out.chips = [...root.querySelectorAll('.scenes .wd, .secscenes .wd, .scenesline .wd, .cl-acts .wd')].filter((b) => b.getBoundingClientRect().width > 0).map((b) => ({ t: b.textContent.trim(), r: R(b), cls: b.parentElement.className }));
+    out.chipGaps = [];
+    out.chips.forEach((a, i) => out.chips.slice(i + 1).forEach((b) => { const sameRow = Math.abs(a.r.t - b.r.t) < 6; if (sameRow && Math.min(a.r.r, b.r.r) - Math.max(a.r.l, b.r.l) > -6 && Math.min(a.r.b, b.r.b) - Math.max(a.r.t, b.r.t) > 1) out.chipGaps.push(`${a.t} / ${b.t}`); }));
+    // A line of facts under a floor's or a room's title wraps; it never ends in an ellipsis.
+    out.runOn = [...root.querySelectorAll('.facts, .secmeta')].filter((e) => e.getBoundingClientRect().width > 0 && (clipped(e) || getComputedStyle(e).textOverflow === 'ellipsis')).map((e) => e.textContent.trim().slice(0, 40));
+    // 6. The equipment list: no row cut off mid-word, and a count when it is not all shown.
+    const eq = tile('cb_equip'); eq.scrollIntoView({ block: 'center' });
+    out.equip = { rows: [...eq.querySelectorAll('.lrow')].length, cut: [...eq.querySelectorAll('.lrow *')].filter((e) => getComputedStyle(e).textOverflow === 'ellipsis' && clipped(e)).map((e) => e.textContent.trim()), more: (eq.textContent.match(/\+\d+ more/) || [])[0] || '' };
+    // 7. People: an initial in a circle, never a picture's alt text.
+    out.people = ['cb_p1', 'cb_p2'].map((id) => { const t = tile(id); t.scrollIntoView({ block: 'center' }); const imgs = [...t.querySelectorAll('img')]; return { id, imgs: imgs.filter((i) => !(i.complete && i.naturalWidth > 0) && getComputedStyle(i).visibility !== 'hidden').length, initial: (t.querySelector('.avatar') || {}).textContent, avatar: t.querySelector('.avatar') ? getComputedStyle(t.querySelector('.avatar')).display : '', text: t.innerText.replace(/\s+/g, ' ').trim() }; });
+    return out;
+  });
+  await grab('cb_clim', 'b2-climate'); await grab('cb_bed', 'b2-strips'); await grab('cb_l2', 'b2-locks'); await grab('cb_p1', 'b2-people'); await grab('cb_c1', 'b2-cams'); await grab('cb_equip', 'b2-equip'); await grab('cb_scenes', 'b2-scenes');
+  const cl = facts.climate;
+  if (cl.n < 5) fail(at, `1: the climate card draws only ${cl.n} controls`);
+  if (cl.overlaps.length) fail(at, `1: climate controls overlap each other: ${cl.overlaps.join(', ')}`);
+  if (cl.crowd.length) fail(at, `1: a climate routine chip is crowded: ${cl.crowd.join('; ')}`);
+  if (cl.caught.length) fail(at, `1: a climate control's middle is caught by something else (the tile's edge): ${cl.caught.join(', ')}`);
+  for (const t of facts.strips) {
+    if (t.subClipped) fail(at, `2: ${t.id}'s subtitle "${t.sub}" is cut off`);
+    if (t.underIcon) fail(at, `2: ${t.id}'s subtitle starts under its icon`);
+    if (t.actClipped) fail(at, `8: ${t.id}'s "${t.act}" button is cut off or crowds its tile's name`);
+  }
+  if (facts.stripOverlaps.length) fail(at, `8: tiles overlap: ${facts.stripOverlaps.join(', ')}`);
+  if (Math.abs(facts.sections.over.w - facts.sections.sec.w) > 2 || Math.abs(facts.sections.over.l - facts.sections.sec.l) > 2) fail(at, `3: House Overview is ${facts.sections.over.w.toFixed(0)}px wide at ${facts.sections.over.l.toFixed(0)} and Security ${facts.sections.sec.w.toFixed(0)}px at ${facts.sections.sec.l.toFixed(0)}`);
+  if (facts.labels.length) fail(at, `3: group labels overlap: ${facts.labels.join(', ')}`);
+  for (const c of facts.cams) {
+    if (!c.name) fail(at, `4: ${c.id} does not show its camera's name`);
+    if (!c.imgOk && !/offline|unavailable|loading|no picture/i.test(c.pic)) fail(at, `4: ${c.id} (${c.name}) has no picture and says nothing (inside the picture: "${c.pic}")`);
+  }
+  const floor = 40; // the panel's own touch floor for a .wd (docs/notes/morph.md)
+  for (const c of facts.chips) {
+    if (c.r.h < floor - 0.5) fail(at, `5: scene chip "${c.t}" in .${c.cls.split(' ')[0]} is ${c.r.w.toFixed(0)}x${c.r.h.toFixed(0)}px, under ${floor}`);
+    if (c.r.w < floor - 0.5) fail(at, `5: scene chip "${c.t}" in .${c.cls.split(' ')[0]} is only ${c.r.w.toFixed(0)}px wide, under ${floor}`);
+    if (c.r.r > facts.vw + 1 || c.r.l < -1) fail(at, `5: scene chip "${c.t}" runs off the screen (${c.r.l.toFixed(0)}..${c.r.r.toFixed(0)} of ${facts.vw})`);
+  }
+  if (facts.chipGaps.length) fail(at, `5: scene chips touch their neighbours: ${facts.chipGaps.slice(0, 4).join(', ')}`);
+  if (facts.runOn.length) fail(at, `6: a line of facts is cut off with an ellipsis: ${facts.runOn.join(' | ')}`);
+  if (facts.equip.cut.length) fail(at, `6: equipment rows are cut off: ${facts.equip.cut.join(' | ')}`);
+  if (facts.equip.rows < 7 && !facts.equip.more) fail(at, `6: equipment shows ${facts.equip.rows} of 7 and does not say how many more`);
+  for (const q of facts.people) {
+    if (q.imgs) fail(at, `7: ${q.id} shows a picture that did not load (${q.imgs}); its text: "${q.text.slice(0, 80)}"`);
+    if (!q.initial || q.initial.trim().length !== 1) fail(at, `7: ${q.id} has no initial-letter circle (${q.initial})`);
+  }
+  if (errors.length) fail(at, `page errors: ${errors.slice(0, 2).join(' | ')}`);
+  await ctx.close();
+}
+
 await browser.close();
 if (problems.length) {
   console.error(`measure-morph: ${problems.length} problem(s)`);

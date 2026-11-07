@@ -186,6 +186,43 @@ export function dashboard() {
   };
 }
 
+
+// The layout batch of 2026-11-07 (measure-morph's "layout batch" block). It is
+// added only when a page asks for it (`batch: true`), so no earlier check sees
+// a different house: tiles whose words are long, a thermostat with routines,
+// a person whose photo is missing, cameras with no picture, a lock that is
+// open, and a list of equipment with long names.
+export function addBatch(fx) {
+  const iso = (h) => new Date(Date.now() - h * 3600000).toISOString();
+  const put = (id, state, attributes) => { fx.states[id] = { entity_id: id, state, attributes, last_changed: iso(1), last_updated: iso(1) }; };
+  put('script.bedtime', 'off', { friendly_name: 'Bedtime', last_triggered: iso(20) });
+  put('script.all_media_off', 'off', { friendly_name: 'All Media Off', last_triggered: iso(2) });
+  put('script.movie_night', 'off', { friendly_name: 'Movie night with the projector', last_triggered: iso(30) });
+  put('script.fan_boost', 'off', { friendly_name: 'Boost the fans' });
+  put('person.dana', 'home', { friendly_name: 'Dana', entity_picture: '/local/missing-dana.jpg' });
+  put('person.eli', 'not_home', { friendly_name: 'Eli' });
+  put('camera.garage_cam', 'idle', { friendly_name: 'Garage' });
+  put('camera.porch_cam', 'idle', { friendly_name: 'Porch', access_token: 'tok' });
+  put('camera.gone_cam', 'unavailable', { friendly_name: 'Back patio' });
+  put('lock.side_door', 'locked', { friendly_name: 'Side Door' });
+  put('lock.patio_door', 'unlocked', { friendly_name: 'Patio Door' });
+  put('lock.garage_entry', 'unlocked', { friendly_name: 'Garage Entry' });
+  ['Dishwasher door left open in the utility room', 'Washing machine lid is up', 'Dryer lint trap needs emptying', 'Deep freezer in the garage is warm', 'Water softener salt is low', 'Sump pump in the basement is running', 'Furnace filter is due for a change'].forEach((n, i) => put(`binary_sensor.equip_${i}`, i % 2 ? 'on' : 'off', { friendly_name: n, device_class: 'problem' }));
+  fx.dash.floors.push({ id: 'f_batch', title: 'Batch', sections: [
+    { id: 's_b_over', title: 'House Overview', color: 'sky', width: 4, groups: [
+      { label: 'Routines', cards: [C('script.bedtime', { id: 'cb_bed', type: 'button' }), C('script.all_media_off', { id: 'cb_media', type: 'button' }), C('script.movie_night', { id: 'cb_movie', type: 'button' })] },
+      { label: 'Comfort', cards: [C('weather.home', { id: 'cb_wx', type: 'weather' }), C('climate.upstairs', { id: 'cb_clim2', type: 'climate' }), C('climate.downstairs', { id: 'cb_clim', type: 'climate', options: { actions: ['script.drop_humidity', 'script.movie_night', 'script.fan_boost', 'scene.evening'] } })] },
+      { label: 'Scenes', cards: [{ id: 'cb_scenes', type: 'scenes', entities: ['scene.kitchen_bright', 'scene.kitchen_dim', 'scene.kitchen_off', 'scene.living_room_movie', 'scene.living_room_dim', 'scene.morning', 'scene.evening'] }] },
+    ] },
+    { id: 's_b_sec', title: 'Security', color: 'rose', width: 4, groups: [
+      { label: 'Doors', cards: [C('lock.side_door', { id: 'cb_l1', type: 'lock' }), C('lock.patio_door', { id: 'cb_l2', type: 'lock' }), C('lock.garage_entry', { id: 'cb_l3', type: 'lock' })] },
+      { label: 'People', cards: [C('person.dana', { id: 'cb_p1', type: 'person' }), C('person.eli', { id: 'cb_p2', type: 'person' })] },
+      { label: 'Cameras', cards: [C('camera.garage_cam', { id: 'cb_c1', type: 'camera' }), C('camera.porch_cam', { id: 'cb_c2', type: 'camera' }), C('camera.gone_cam', { id: 'cb_c3', type: 'camera' })] },
+      { label: 'Equipment', cards: [{ id: 'cb_equip', type: 'list', name: 'Equipment', entities: [0, 1, 2, 3, 4, 5, 6].map((i) => `binary_sensor.equip_${i}`) }] },
+    ] },
+  ] });
+}
+
 export function state() {
   return {
     version: VERSION,
@@ -256,7 +293,7 @@ customElements.define('morph-next', class extends HTMLElement {
   }
 });
 </script>
-<script>window.__calls = []; window.__ws = []; window.__fixture = ${JSON.stringify({ states: house(), dash: dashboard(), state: themed(state(), o.theme), brain: brainFeed(o.brain), dark: o.dark !== false })};</script>
+<script>window.__calls = []; window.__ws = []; window.__fixture = ${JSON.stringify((() => { const fx = { states: house(), dash: dashboard(), state: themed(state(), o.theme), brain: brainFeed(o.brain), dark: o.dark !== false }; if (o.batch) addBatch(fx); return fx; })())};</script>
 <script type="module">
 const F = window.__fixture;
 let states = F.states;
