@@ -7350,12 +7350,13 @@ html.in-shell.bar-hidden .topbar > .shelledit { opacity: 0; visibility: hidden; 
 }
 
 /* ---------------------------------------- what an insight card is (#539)
-   One line under the pane's heading that opens on a press — a phone has
-   no hover — saying how a card differs from the dashboard. */
+   One line above the pane's heading (#695) that opens on a press — a phone
+   has no hover — saying how a card differs from the dashboard. A 40px
+   target at every width, 44px on touch. */
 .aboutcards { margin: 0 0 var(--sp-3); }
 .aboutline {
   appearance: none; border: 0; background: none; padding: 0; margin: 0;
-  display: inline-flex; align-items: center; gap: 6px; min-height: 32px;
+  display: inline-flex; align-items: center; gap: 6px; min-height: 40px;
   font: inherit; font-size: var(--fs-body); color: var(--ink-2); cursor: pointer;
   text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: .25em;
   text-decoration-color: color-mix(in srgb, var(--ink-2) 45%, transparent);

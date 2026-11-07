@@ -2,6 +2,17 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.2
+
+### Changed
+
+- Insights explains how its cards differ from the Home tab once, above the title, names the Home tab by its own label, and says where decisions and learnings go (#695).
+
+### Fixed
+
+- On a phone in the Home Assistant app, brAIn's panel fits the space it is given, so a drag no longer scrolls Home Assistant's page and leaves the header stuck out of place (#689).
+- Morph's room rail and its floor names stay put while brAIn's tab row hides and shows during a scroll (#690).
+
 ## 5.1.1
 
 ### Added

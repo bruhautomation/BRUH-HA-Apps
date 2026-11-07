@@ -6007,16 +6007,22 @@ $("#needsStrip")?.addEventListener("click", () => switchView("findings"));
 // What an insight card is, beside the dashboard. The owner asked for "a
 // tooltip clarifying the insights dashboard, what makes those cards
 // different than the Morph UI"; a phone has no hover, so it is a line that
-// opens on a press, and the dashboard is named by its tab's own name.
+// opens on a press, above the pane's title (#695), and the dashboard is
+// named by its tab's own label — in the line and in what it opens to.
 function renderAboutCards() {
+  const btn = $("#aboutCardsBtn");
   const body = $("#aboutCards");
-  if (!body) return;
+  if (!btn || !body) return;
   const on = !$("#homeTab").hidden;
-  const dash = on ? `The ${tabWords("home").label} tab` : "The Morph dashboard (switched on in ⚙ › Features)";
-  body.textContent = "An insight card is a report: one question about the house that brAIn "
-    + "answers with Claude on its own schedule — a verdict, the numbers behind it and a chart — "
-    + `and keeps up to date. ${dash} is where you run the house from: live controls, laid out `
-    + "by what matters right now. Read a card; use the dashboard.";
+  const home = tabWords("home").label;
+  btn.textContent = on ? `How insight cards differ from the ${home} dashboard`
+                       : "How insight cards differ from the dashboard";
+  const dash = on ? `The ${home} tab` : "The Morph dashboard (switched on in ⚙ › Features)";
+  body.textContent = `${dash} is live and in control: what is happening now, and the `
+    + "controls to change it. An insight card is a report worked out from days of history, "
+    + "one question per card, and it never controls anything. Decisions brAIn needs from "
+    + `you go to Needs you; what it learns goes to ${tabWords("memory").label}.`;
+  speakAll(btn);
   speakAll(body);
 }
 $("#aboutCardsBtn")?.addEventListener("click", () => {
