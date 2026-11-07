@@ -2,6 +2,15 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.7
+
+### Fixed
+
+- Morph's story checks what it says about doors, locks, the garage and windows against how they are now each time it is shown. A sentence saying something is unlocked or open is dropped only when everything it could mean says otherwise, and a reassurance such as "all doors are locked" is dropped when anything it covers is unlocked or open. Sentences about a lock's battery or connection are left alone (#719, #734).
+- An outdoor reading on Morph that disagrees with the weather by more than a degree, and has not changed for half an hour, is dimmed and says since when it has not changed (#688).
+- A Morph tile for the BRUH Minecraft server says whether it is online, who is playing and its TPS, or Offline, on a list, sensor or entity card, instead of just "Server" (#686).
+- A Morph button that has never been pressed can be pressed, instead of reading "Unknown".
+
 ## 5.1.6
 
 ### Changed
