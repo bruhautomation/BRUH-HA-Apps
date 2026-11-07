@@ -109,7 +109,41 @@ def blind_lead(obj: dict, verdict: str = "") -> str:
         return "a data gap"
     if _NON_EVENT.search(claim):
         return "nothing happened"
+    summary = str(obj.get("summary") or "")
+    parts = [p for p in _SENTENCE_END.split(summary.strip()) if p]
+    if parts and not _NEWS.search(summary):
+        # A bland title over a summary that only says nothing happened, or
+        # only guesses: no conclusion and no usual-against-now.
+        if all(is_guess(p) for p in parts):
+            return "an unproven guess"
+        if _NON_EVENT.search(parts[0]):
+            return "nothing happened"
     return ""
+
+
+# A sentence that guesses: it may, might or could be, perhaps, probably. With
+# a figure beside it, it is a reading with its evidence, not a guess.
+_GUESS = re.compile(
+    r"\b(?:may|might|could)\s+(?:be|have|indicate|mean|suggest|point|"
+    r"explain|come)\b|\b(?:possibly|perhaps|probably|presumably|maybe|"
+    r"conceivably)\b|\bit(?:'s| is) (?:possible|likely)\b|\bsuspect\b"
+    r"|\bseems? (?:to be|like)\b", re.I)
+
+
+def is_guess(sentence: str) -> bool:
+    """Whether a sentence is a guess the data does not back."""
+    text = str(sentence or "")
+    return bool(_GUESS.search(text)) and not re.search(r"\d", text)
+
+
+def trim_guess(out: dict, changed: list[str]) -> None:
+    """A summary does not end on a guess: the last sentence goes when it is
+    one and another sentence is left to carry the card."""
+    parts = [p for p in _SENTENCE_END.split(str(out.get("summary") or "")
+                                            .strip()) if p]
+    if len(parts) > 1 and is_guess(parts[-1]):
+        out["summary"] = " ".join(parts[:-1])
+        changed.append("an unproven guess at the end")
 
 
 def trim_gaps(out: dict, changed: list[str]) -> None:
@@ -413,5 +447,5 @@ def title_figures_agree(out: dict, changed: list[str]) -> None:
         changed.append("a title figure the card does not stand behind")
 
 
-__all__ = ["BLIND_WHY", "GAP_LINE_MAX", "blind_lead", "finding_twin",
+__all__ = ["BLIND_WHY", "is_guess", "trim_guess", "GAP_LINE_MAX", "blind_lead", "finding_twin",
            "is_gap", "title_figures", "title_figures_agree", "trim_gaps"]

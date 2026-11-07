@@ -296,9 +296,11 @@ def log_flood(snap: dict, now: float) -> list[dict]:
         # homeowner's (`house_words.log_meaning`).
         detail = (f"{who} logged the same error {int(top['count'])} times "
                   f"in the last {hours} hours: "
-                  f"{house_words.log_meaning(top.get('message') or '')}.")
-        if device:
-            detail += f" It is about {device}."
+                  f"{house_words.log_meaning(top.get('message') or '')}. "
+                  "Usually it logs this a handful of times at most in that "
+                  "time.")
+        detail += (f" It affects {device}." if device else
+                   f" Until it stops, {who} may not update.")
         if len(groups) > 1:
             detail += (f" {len(groups) - 1} other error"
                        + ("s" if len(groups) > 2 else "")

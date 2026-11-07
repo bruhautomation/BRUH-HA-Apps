@@ -2826,6 +2826,11 @@ def refine(ts: int, case: dict, run_id: str = "",
         if fix:
             entry["fix"] = textclip.shorten(fix, MAX_FIX)
             entry["fix_by"] = "resident"
+        elif detail and entry.get("fix"):
+            # The look found the cause and says it in the detail: the
+            # check's generic "usual cause" sentence does not stand beside
+            # it (`house_words.without_usual_cause`).
+            entry["fix"] = house_words.without_usual_cause(entry["fix"])
         # And the To Do sentence, in the words of the run that looked.
         todo = clean_todo_text(case.get("todo_text"))
         if todo:
@@ -2856,6 +2861,15 @@ def refine(ts: int, case: dict, run_id: str = "",
             "elevated_at": int(
                 (entry.get("triage") or {}).get("elevated_at") or 0),
             "wrote_fix": bool(fix)})
+        # What the look concluded decides where the row stands: noise, a
+        # side effect of another fault, or a step that says nothing is
+        # needed holds it.
+        stopped = look_concluded(entry, prior, detail)
+        if stopped and not entry["triage"].get("elevated_by_person"):
+            entry["status"] = "held"
+            entry["triage"] = _clean_triage({
+                **entry["triage"], "verdict": "held",
+                "reason": stopped, "wrote_fix": False})
         # The run that looked may have named every device a cause reaches,
         # or found this row to be one of them — then it is the shared row
         # that carries it, and there is nothing of this one left to show.
@@ -2863,6 +2877,37 @@ def refine(ts: int, case: dict, run_id: str = "",
         _write(items)
         return None if int(ts) in gone else _shape(entry)
     return None
+
+
+# A row these producers filed is never held on a sentence: a tripped
+# detector is not "log noise", whatever a look says.
+CONCLUDE_EXEMPT = frozenset({"safety", "security", "correction"})
+
+
+def look_concluded(entry: dict, *sentences) -> str:
+    """The sentence that makes ``entry`` not an open problem, or "".
+
+    A look that says the row can wait, is log noise, is a side effect of
+    (or the same cause as) another open fault, repeats a pending question
+    or is moot — and a step that says nothing is needed — has concluded the
+    row, so it is held with that reason rather than shown open at its
+    original severity beside a step that contradicts it. Never over a
+    person's "raise it again", a safety or security row, a critical one or
+    a high-stakes case."""
+    if not isinstance(entry, dict):
+        return ""
+    look = entry.get("triage") or {}
+    if (look.get("elevated_by_person")
+            or str(entry.get("source") or "") in CONCLUDE_EXEMPT
+            or entry.get("severity") == "critical"
+            or entry.get("stakes") == "high"):
+        return ""
+    for said in (*sentences, entry.get("fix")):
+        said = str(said or "").strip()
+        if said and (triage.says_can_wait(said) or triage.says_duplicate(said)
+                     or triage.says_nothing_to_do(said)):
+            return textclip.shorten(said, triage.MAX_REASON)
+    return ""
 
 
 @_mutates
@@ -3054,6 +3099,12 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
         not_news = len(verdicts[ts]) > 2 and verdicts[ts][2] is True
         if verdict not in triage.VERDICTS:
             continue
+        if verdict == "elevated" and not late:
+            concluded = look_concluded(entry, reason)
+            if concluded:
+                # The look itself says it can wait or is the same cause as
+                # another open fault: held, with its reason.
+                verdict, reason = "held", concluded
         if late and verdict == "held" and (
                 look_may_set_aside(entry)
                 or (not_news and nobody_has_touched(entry))):

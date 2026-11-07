@@ -335,7 +335,8 @@ _LOG_MEANINGS = (
                 r"|invalid (?:response|data|value)|[{}]", re.I),
      "it got an answer it could not make sense of"),
 )
-_LOG_MEANING_ELSE = "something it was doing failed"
+_LOG_MEANING_ELSE = ("it reported an error without saying what went wrong, "
+                     "so only that it keeps happening is known")
 
 
 def log_meaning(message: str) -> str:
@@ -907,3 +908,92 @@ _OWN_SETUP_RE = re.compile(
 def about_own_setup(*texts) -> bool:
     """Whether a row's words are about brAIn's own setup."""
     return any(_OWN_SETUP_RE.search(str(t or "")) for t in texts)
+
+
+# ---------------------------------------------------------------------------
+# A device-health finding names one state
+# ---------------------------------------------------------------------------
+#
+# A device-health title said "is struggling" over a detail that read the
+# signal as fine and a fix that moved the router. The title, the detail
+# and the step have to name the same measured state: offline for N hours,
+# a weak signal, a low battery. `states_named` reads which states a piece
+# of prose says are so, and `states_denied` which it says are fine;
+# `states_disagree` is the check a finding fails when one of them says a
+# state is fine and another says to fix it.
+
+_STATE_WORDS = {
+    "offline": re.compile(
+        r"\boffline\b|\bunavailable\b|\bnot (?:answering|responding|"
+        r"reporting|checking in)\b|\bstopped (?:reporting|answering|"
+        r"checking in)\b|\bgone quiet\b|\bdead\b|\bunreachable\b", re.I),
+    "signal": re.compile(
+        r"\bsignal\b|\blink quality\b|\breception\b|\bweak link\b|\bits link\b"
+        r"|\bwi-?fi strength\b|\bmove (?:it|the \w+) closer\b", re.I),
+    "battery": re.compile(
+        r"\bbatter(?:y|ies)\b|\bcharge level\b", re.I),
+}
+_STATE_FINE = re.compile(
+    r"\b(?:looks?|looked|reads?|read|is|was|are|were|seems?|seemed|"
+    r"stays?|stayed)\s+(?:\w+\s+)?(?:fine|good|strong|normal|healthy|ok|okay|"
+    r"full|steady|stable|high enough)\b|\b(?:fine|healthy|normal|strong)\b"
+    r"(?:\s+\w+){0,2}\s+(?:signal|link|battery)", re.I)
+_STATE_NOT_FINE = re.compile(
+    r"\b(?:not|isn['’]t|aren['’]t|wasn['’]t|never|no longer|barely|"
+    r"hardly)\s+(?:\w+\s+)?(?:fine|good|strong|normal|healthy|ok|okay)\b",
+    re.I)
+_STATE_SENT = re.compile(r"(?<=[.!?])\s+")
+
+
+def _state_sentences(text) -> list[str]:
+    return [s for s in _STATE_SENT.split(str(text or "")) if s.strip()]
+
+
+def states_denied(text) -> set[str]:
+    """The states ``text`` says are fine ("the signal looked fine")."""
+    out = set()
+    for sentence in _state_sentences(text):
+        if _STATE_FINE.search(sentence) and not _STATE_NOT_FINE.search(
+                sentence):
+            out |= {k for k, rx in _STATE_WORDS.items() if rx.search(sentence)}
+    return out
+
+
+def states_named(text) -> set[str]:
+    """The states ``text`` names as the trouble: in a sentence that does
+    not say the state is fine."""
+    out = set()
+    for sentence in _state_sentences(text):
+        if _STATE_FINE.search(sentence) and not _STATE_NOT_FINE.search(
+                sentence):
+            continue
+        out |= {k for k, rx in _STATE_WORDS.items() if rx.search(sentence)}
+    return out
+
+
+def states_disagree(title, detail, fix) -> set[str]:
+    """The states a finding's words contradict one another about: fine in
+    one place, the thing to fix (or the title's trouble) in another."""
+    denied = states_denied(detail) | states_denied(title)
+    named = states_named(title) | states_named(fix)
+    return denied & named
+
+
+# The check's generic "usual cause" sentence ("a socket or a wall switch
+# turned off is the usual cause"). It is what a rule says when nothing was
+# looked at; once a look has found the cause, the detail states it and the
+# step is that look's, so the generic sentence goes.
+_USUAL_CAUSE = re.compile(
+    r"\b(?:is|are) (?:the |a )?(?:usual|common|typical|likeliest|most "
+    r"(?:common|likely)) (?:cause|culprit|reason)s?\b|\bmost often\b"
+    r"|\busual cause\b|\btypically caused\b|\boften caused by\b"
+    r"|\bcommonly (?:caused|means)\b", re.I)
+
+
+def without_usual_cause(text: str) -> str:
+    """``text`` less every sentence that is a generic usual cause."""
+    if not isinstance(text, str) or not text:
+        return text
+    parts = _LOG_SENTENCES.split(text)
+    kept = [p for p in parts if not _USUAL_CAUSE.search(p)]
+    return " ".join(kept).strip() if len(kept) != len(parts) else text
