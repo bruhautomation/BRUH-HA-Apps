@@ -293,7 +293,8 @@ customElements.define('morph-next', class extends HTMLElement {
   }
 });
 </script>
-<script>window.__calls = []; window.__ws = []; window.__fixture = ${JSON.stringify((() => { const fx = { states: house(), dash: dashboard(), state: themed(state(), o.theme), brain: brainFeed(o.brain), dark: o.dark !== false }; if (o.batch) addBatch(fx); return fx; })())};</script>
+<script>window.__calls = []; window.__ws = []; window.__fixture = ${JSON.stringify({ states: house(), dash: dashboard(), state: themed(state(), o.theme), brain: brainFeed(o.brain), dark: o.dark !== false })};</script>
+${o.batch ? `<script>window.__fixture = ${JSON.stringify((() => { const fx = { states: house(), dash: dashboard(), state: themed(state(), o.theme), brain: brainFeed(o.brain), dark: o.dark !== false }; addBatch(fx); return fx; })())};</script>` : ''}
 <script type="module">
 const F = window.__fixture;
 let states = F.states;
