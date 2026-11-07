@@ -14372,19 +14372,6 @@ async def _resident_look(now: float, settings: dict, thinking: str,
     filed = [s for s in RESIDENT_PENDING if s.get("finding_ts")]
     live = signals.dedupe([s for s in RESIDENT_PENDING
                            if not s.get("finding_ts")])
-    # A live change about a sensor the owner called broken — or one citing
-    # its reading — is not handed to the look at all (`resident.
-    # without_faulty`); a filed row about one never reached the store
-    # (`triage.gate`). Said on the trail, so "why did brAIn not look" has
-    # the owner's own words as its answer.
-    faulty = await asyncio.to_thread(corrections.known_faulty)
-    live, broken = resident.without_faulty(live, faulty)
-    if broken:
-        await asyncio.to_thread(decision_trail.note_many, [{
-            "kind": "explained", "subject": str(s.get("subject") or ""),
-            "check": "resident",
-            "reason": "it rests on a sensor you called broken or "
-                      "finished with"} for s in broken], now)
     # A watched subject re-enters the look on NEW EVIDENCE and never on the
     # clock — `curiosity.RETRY_EVENTS`' rule, because a timer buys the
     # identical answer over the identical data on somebody else's money.

@@ -368,12 +368,8 @@ def _names_room(name: str, area: str) -> bool:
 DEVICE_QUIET = frozenset({"dev.battery_low", "dev.frozen", "dev.unavailable"})
 # The checks that say a device reads wrong or has gone quiet: the ones a
 # person's "I don't use it any more" or "that sensor is broken" settles for
-# good (`House.answered_off`). The checks that JUDGE a reading are on it
-# too: a sensor somebody called broken is not reasoned about at all, and a
-# band check filing "far outside its usual range" about it is the same
-# reading raised again under another check's name.
-DEVICE_FINISHED = DEVICE_QUIET | {"dev.implausible", "base.unusual",
-                                  "forecast.decline"}
+# good (`House.answered_off`).
+DEVICE_FINISHED = DEVICE_QUIET | {"dev.implausible"}
 # How many times a row may be marked Wrong before the check stops filing
 # it for that entity.
 WRONG_LIMIT = 2

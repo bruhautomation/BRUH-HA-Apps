@@ -229,53 +229,10 @@ def gate(rows: list[dict], muted: set[str] | None = None,
     rows = [row for row in rows
             if not (isinstance(row, dict) and muted
                     and str(row.get("source") or "") in muted)]
-    rows = _without_faulty(rows)
     if held is None:
         held = _held_rules() if any(
             isinstance(r, dict) and not is_note(r) for r in rows) else {}
     return [_record_held(row, held) for row in rows]
-
-
-def rests_on_faulty(row, faulty: dict) -> str:
-    """The entity a row is about or cites as evidence that the owner called
-    broken or finished with (`corrections.known_faulty`), or "".
-
-    Read off the row's own entity and its evidence rows, never `items` — a
-    list row ("devices in no area") naming one broken device among ten is
-    still about the other nine.
-    """
-    if not isinstance(row, dict) or not faulty:
-        return ""
-    named = [str(row.get("entity_id") or "")]
-    for ev in row.get("evidence") or ():
-        if isinstance(ev, dict):
-            named.append(str(ev.get("entity") or ev.get("entity_id") or ""))
-    return next((eid for eid in named if eid and eid in faulty), "")
-
-
-def _without_faulty(rows: list) -> list:
-    """**A sensor the owner called broken is not evidence, from any
-    producer.** The Resident's investigation gate refused a case resting on
-    one (`resident.faulty_case`) and the device checks stood down
-    (`House.answered_off`), but an insight card, the overnight check or a
-    band check could still file a row about it, or cite its readings as the
-    fault. Dropped here, the one door, unless the row is one no record may
-    hold back (`rule_record.never_held`: critical, safety, protected) — the
-    same floor the Resident keeps for its own gate. An unreadable store
-    drops nothing."""
-    if not rows:
-        return rows
-    try:
-        import corrections  # noqa: PLC0415 — it imports the stores
-        faulty = corrections.known_faulty()
-    except Exception:  # noqa: BLE001 — could not tell holds nothing back
-        return rows
-    if not faulty:
-        return rows
-    import rule_record  # noqa: PLC0415 — a leaf, as in `_record_held`
-    return [row for row in rows
-            if not (rests_on_faulty(row, faulty)
-                    and not is_note(row) and not rule_record.never_held(row))]
 
 
 # When the last first look ran (epoch seconds, 0 for never), registered by
