@@ -389,6 +389,27 @@ ANSWERED_ONCE = frozenset({"auto.never_fired", "auto.forgotten_off",
 # (`chores.condition_holds`), set by `checks.chores` when it is imported.
 CONDITION_HOLDS = None
 
+# How far past the explained reading a rule keeps holding, as a share of the
+# distance between the usual and that reading: a reading a little further
+# out is the same thing the person explained, one far beyond it is not.
+EXPLAINED_MARGIN = 0.1
+
+
+def explained_range(value, anchor, floor: float = 0.0) -> list[float] | None:
+    """``[low, high]`` a Wrong on a reading's row explains: from ``anchor``
+    (the usual, or the edge of what the sensor can read) to the reading
+    ``value``, widened by `EXPLAINED_MARGIN` of that distance and at least
+    ``floor`` — the smallest move the check would report. Carried on the
+    row (`explained`), kept on the rule by the press (`server.
+    _record_exception`) and read by `House._applies_now`."""
+    value, anchor = num(value), num(anchor)
+    if value is None or anchor is None:
+        return None
+    low, high = sorted((value, anchor))
+    pad = max(float(floor or 0.0), EXPLAINED_MARGIN * (high - low))
+    return [round(low - pad, 3), round(high + pad, 3)]
+
+
 class House:
     """Lookups over a snapshot that several checks want."""
 
@@ -586,6 +607,22 @@ class House:
                     return {**rule, "scope": "device", "via": other}
         return None
 
+    def _explains_now(self, entity_id: str, rule: dict) -> bool:
+        """Whether this entity's reading is still inside the range the rule
+        explained (`explained_range`), or the rule carries none. A rule
+        reached through ANOTHER entity of the device (`via`) explained that
+        entity's reading, not this one's, and a reading that cannot be read
+        is not news."""
+        explained = (rule or {}).get("explained")
+        if (not isinstance(explained, (list, tuple)) or len(explained) != 2
+                or (rule or {}).get("via")):
+            return True
+        value = num((self.states.get(entity_id) or {}).get("state"))
+        low, high = (num(v) for v in explained)
+        if value is None or low is None or high is None:
+            return True
+        return low <= value <= high
+
     def _applies_now(self, entity_id: str, rule: dict) -> bool:
         """Whether a rule whose reason names a machine state stands down now.
 
@@ -598,14 +635,17 @@ class House:
         device reports stands down as it always did.
         """
         text = str((rule or {}).get("text") or "")
-        if not text:
-            return True
         # `chores` registers the reader (`CONDITION_HOLDS`): it imports this
         # module, so asking for it here would be an import cycle. The package
         # imports every check, so it is always set once `checks` is loaded.
         reader = CONDITION_HOLDS
-        holds = reader(self, entity_id, text) if reader else None
-        return True if holds is None else holds
+        holds = reader(self, entity_id, text) if (reader and text) else None
+        if holds is not None:
+            return holds
+        # A reason that names no state — "that's normal for this sensor" —
+        # on a reading check's row explained the reading the person was
+        # shown, and holds while the reading stays there.
+        return self._explains_now(entity_id, rule)
 
     def withheld_by(self, entity_id: str, check_id: str) -> dict | None:
         """The correction that stands this check down for this entity, or None.

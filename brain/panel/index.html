@@ -457,17 +457,19 @@
       <span class="needstext"><b id="needsStripCount"></b><span id="needsStripSub"></span></span>
       <span class="needsgo">Review</span>
     </button>
-    <div class="insighthead">
-      <h1 class="panetitle">Insights</h1>
-      <input id="reportSearch" class="reportsearch" type="search" autocomplete="off"
-             spellcheck="false" placeholder="Search insights" aria-label="Search insights" hidden>
-    </div>
-    <!-- What an insight card is, against the dashboard: a line that opens
-       on a press (a phone has no hover), filled by `renderAboutCards`. -->
+    <!-- What an insight card is, against the Home tab: ONE line, above the
+         pane's title (#695: a second one under it read as the page saying
+         it twice), that opens on a press (a phone has no hover). The Home
+         tab is named by its own label; `renderAboutCards` fills both. -->
     <div class="aboutcards">
       <button id="aboutCardsBtn" class="aboutline" type="button" aria-expanded="false"
               aria-controls="aboutCards">How insight cards differ from the dashboard</button>
       <p id="aboutCards" class="aboutbody" hidden></p>
+    </div>
+    <div class="insighthead">
+      <h1 class="panetitle">Insights</h1>
+      <input id="reportSearch" class="reportsearch" type="search" autocomplete="off"
+             spellcheck="false" placeholder="Search insights" aria-label="Search insights" hidden>
     </div>
     <div id="grid" class="grid"></div>
 

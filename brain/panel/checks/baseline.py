@@ -26,8 +26,8 @@ import re
 import numfmt
 
 from . import chores, devices
-from ._util import (House, domain_of, join_names, num, parse_ts, state_words,
-                    when)
+from ._util import (House, domain_of, explained_range, join_names, num,
+                    parse_ts, state_words, when)
 
 # Six spreads. On ordinary data a MAD is about 0.67 of a standard
 # deviation, so this is roughly four sigma — rare enough that a house
@@ -727,7 +727,16 @@ def unusual(snap: dict, now: float) -> list[dict]:
             value = float(st.get("state"))
         except (TypeError, ValueError):
             continue
-        found = baselines.deviation(value, baseline, bucket)
+        # A machine's reading is judged against the band of the state the
+        # machine is in NOW, where the nightly pass could learn one
+        # (`baselines.by_state`): an idle printer's bed against the idle
+        # hours, a print against the print hours. Without one, the band of
+        # every hour, and the stand-down below while it says working.
+        state, since, status = chores.machine_status(house, eid)
+        own = (baseline.get("by_state") or {}).get(state) if state else None
+        found = baselines.deviation(value, own, bucket) if own else None
+        judged_in = state if found else ""
+        found = found or baselines.deviation(value, baseline, bucket)
         if not found:
             continue
         bar = (UNUSUAL_SPREADS if found["source"] == "hour"
@@ -745,8 +754,7 @@ def unusual(snap: dict, now: float) -> list[dict]:
         # vocabulary `base.heater_idle` and `chore.job_done` read), so while
         # it says working the band stands down; idle, finished and "could
         # not tell" are compared exactly as before.
-        state, since, status = chores.machine_status(house, eid)
-        if state == "working":
+        if state == "working" and not judged_in:
             house.gave_up("base.unusual", [{"entity_id": eid}],
                           f"{house.name(status)} says the machine is running "
                           "— a reading that moves with the job is the "
@@ -778,11 +786,14 @@ def unusual(snap: dict, now: float) -> list[dict]:
                 continue
         # A band that is mostly last month's weather: the reading sits
         # where the last week has been sitting against this same hour.
-        shift = recent_level(baseline, found, measured_in)
+        shift = "" if judged_in else recent_level(baseline, found,
+                                                  measured_in)
         if shift:
             house.gave_up("base.unusual", [{"entity_id": eid}], shift,
                           kind="drift")
             continue
+        if judged_in:
+            found = {**found, "phase": judged_in, "status": status}
         hits.append((abs(found["sigmas"]), eid, found, baseline))
 
     # When the seasons change, or the weather dries the house, a lot of
@@ -824,7 +835,13 @@ def unusual(snap: dict, now: float) -> list[dict]:
         # an hour-of-the-week bucket, and every hourly reading in the
         # month on the whole-history fallback — where "from 650 weeks of
         # readings" is what the one sentence used to say.
-        if found["source"] == "overall":
+        if found.get("phase"):
+            doing = ("running" if found["phase"] == "working"
+                     else "not running")
+            against = (f"while {house.name(found['status'])} says the "
+                       f"machine is {doing} (from {found['n']} hourly "
+                       "readings in that state)")
+        elif found["source"] == "overall":
             against = (f"across all its readings (from {found['n']} hourly "
                        "readings over its whole history — this house has "
                        "not been measured at this hour of the week yet)")
@@ -842,6 +859,10 @@ def unusual(snap: dict, now: float) -> list[dict]:
             "severity": "info",
             "fixable": False,
             "entity_id": eid,
+            # What a reason typed on this row explains: the usual to this
+            # reading, so the rule it writes holds until the reading leaves.
+            "explained": explained_range(found["value"], found["median"],
+                                         min_move(unit)),
         })
     return out
 

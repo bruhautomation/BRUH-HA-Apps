@@ -463,8 +463,6 @@ _GONE_RE = re.compile(
     r"(?:is|are|it'?s)\s+(?:completely |totally |just )?"
     r"(?:broken|faulty|defective|dead for good|junk|a dud)|"
     r"(?:sensor|device|remote|unit)\s+(?:is\s+)?(?:broken|faulty))", re.I)
-
-
 def gone_for_good(note: str) -> bool:
     """Whether a reason says the device is retired, unused or broken."""
     text = str(note or "")
@@ -802,9 +800,13 @@ def apply_plan(the_plan: dict, finding: dict, base_ids, note: str, *,
                 predicate=str(row.get("predicate") or ""),
                 expires=expires, run_id=str(row.get("run_id") or ""),
                 about=str(row.get("about") or about),
-                finding_key=finding_key)
+                finding_key=finding_key, explained=row.get("explained"))
             if got:
                 ids.append(got["id"])
+    # The reading the press explained bounds the wider rule too: "that's
+    # normal for this sensor" said about one reading is not every reading.
+    explained = next((r.get("explained") for r in rows
+                      if r.get("explained")), None)
     if the_plan.get("scope") == "entity" and the_plan.get("entity_id"):
         got, _ = facts_store.add(
             note.strip()[:MAX_REASON] or the_plan.get("reason")
@@ -813,7 +815,7 @@ def apply_plan(the_plan: dict, finding: dict, base_ids, note: str, *,
             predicate=facts_store.EXCEPTION_PREFIX + "*",
             expires=expires, confidence=0.95,
             about=about or str(finding.get("text") or ""),
-            finding_key=finding_key)
+            finding_key=finding_key, explained=explained)
         if got:
             ids.append(got["id"])
     return {"ids": ids, "written": bool(ids), "why": ""}
@@ -1120,6 +1122,9 @@ def scope_map(now: float | None = None, *, protected=None) -> dict:
         rule = {"text": str(row.get("text") or "")[:MAX_REASON],
                 "until": _resume_of(str(row.get("expires") or "")),
                 "id": str(row.get("id") or "")}
+        explained = row.get("explained")
+        if isinstance(explained, list) and len(explained) == 2:
+            rule["explained"] = explained
         subjects = row.get("subjects")
         if not isinstance(subjects, list) or not subjects:
             subjects = [row.get("subject") or ""]

@@ -29,7 +29,7 @@ export const CSS = `
 .srail{display:none}
 @media (any-pointer:coarse){
 .scroll>.wrap{padding-right:4px}
-.srail{display:block;position:sticky;top:0;z-index:6;flex:0 0 28px;width:28px;height:var(--morph-h,100vh);touch-action:pan-y;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.srail{display:block;position:sticky;top:var(--morph-rail-top,0px);z-index:6;flex:0 0 28px;width:28px;height:var(--morph-rail-h,var(--morph-h,100vh));transition:var(--morph-rail-ease,none);touch-action:pan-y;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
 .srpanel{position:absolute;top:0;right:0;bottom:0;width:28px;border-radius:14px 0 0 14px;transition:background .2s ease}
 .srail.engaged .srpanel{background:var(--chip)}
 .srail.open .srpanel{background:color-mix(in oklab,var(--text) 7%,var(--surface));box-shadow:-1px 0 0 var(--line)}
