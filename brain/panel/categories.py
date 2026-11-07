@@ -298,7 +298,7 @@ def house_block(snapshot: dict | None, limit: int = HOUSE_CHARS) -> str:
 # retrieval block and the document excerpt below are two views of one
 # memory, and a model told twice, in two different sentences, what the
 # same block is would read them as two kinds of thing.
-MEMORY_HEAD = ("WHAT IS ALREADY KNOWN ABOUT THIS HOME — the homeowner's own "
+MEMORY_HEAD = ("WHAT IS ALREADY KNOWN ABOUT THIS HOME — the household's own "
                "standing facts and preferences. Do not contradict them, and "
                "do not repeat them back:")
 
@@ -526,7 +526,7 @@ tags: what the card is ABOUT, not the category it was asked for.
 hypotheses: usually ZERO. A belief the data cannot settle that would change how you read this home, answerable yes or no; never one memory answers.
 learned: durable NEW discoveries about this home, one plain fact each, no advice, nothing broken, never a KNOWN FACT or the snapshot.
 findings: things that are BROKEN and have an owner. It names the entity, the number and when it started; "fix" is ONE chosen step, never "either…or", "if not" or "also confirm"; "fixable" is true ONLY when software could make the change (config, rename, service call; never batteries or re-pairing). severity: critical = safety or data loss; serious = not working; warning = degraded or will break soon; info = worth tidying. A conclusion of fine files none; an empty list is usual. Never repeat a finding the prompt lists as reported or dismissed; an open one about a device this card covers is the verdict on it: point to it in one clause, never call that device fine.
-opportunities: usually none. An automation this home clearly lacks, as the one sentence the homeowner would say to ask for it, with the entity_ids it names. Never something broken (a finding).
+opportunities: usually none. An automation this home clearly lacks, as the one sentence the household would say to ask for it, with the entity_ids it names. Never something broken (a finding).
 live: max 12 entity_ids to keep current, ONLY when watching them change is the story. Register `window.brainLive(callback)` once: it hands you {entity_id: {state, attributes, unit, name}} now and on every refresh. Draw the snapshot values first so the page works with no live data; never poll or fetch.
 
 THE HTML DOCUMENT:
@@ -547,7 +547,7 @@ ANALYSIS RULES:
 - GO DEEPER: with your previous analysis in the prompt, lead with what CHANGED and go one level deeper on the rest — a repeated headline is a failed run.
 - Title and summary suit a reader who saw no earlier card: no chains of sensor names or raw temperatures; introduce each name and number once (what it is, normal against now) or leave it out.
 - Each card stands alone: never refer to an earlier card or run ("the last card", "as before"), never call something a mystery you do not explain here, and never open with a bare verdict ("Normal.", "Needs action.") — say what the figures mean. "More", "again", "still", "new" or "outdated" only with the earlier value stated in the same card; never answer a worry nobody raised here. With no reading newer than the last card, say "nothing new since <date>" and what holds now, with no verdict.
-- Anything that could have done harm (a door or freezer left open, a device dropping off, a leak, a temperature excursion) ends with the consequence, checked in readings you have, or one clear thing for the owner to do.
+- Anything that could have done harm (a door or freezer left open, a device dropping off, a leak, a temperature excursion) ends with the consequence, checked in readings you have, or one clear thing to do.
 - Calling a reading unusual names the cause you checked, or says none was found and gives one next step; "not a leak" needs its evidence. Before describing a missing or odd event, check its sensor's availability and battery; if it was offline, the sensor is the story.
 - Idle is not broken: a machine an automation starts waits until that automation's sensor passes its threshold; read both first.
 - Write about brAIn as "brAIn", never "I", and never name its internal parts (the Resident, the first look, an investigation).
@@ -560,7 +560,7 @@ ANALYSIS RULES:
 - Never raise again what the household turned down (listed with the findings) — as a finding, an opportunity or in the summary — unless something new happened."""
 
 
-SYSTEM_PROMPT = """You are brAIn, the AI analyst inside a Home Assistant add-on. You receive a JSON snapshot of the user's smart home and produce ONE insight card: a handful of sharp, specific data points plus one compact self-contained visualization.
+SYSTEM_PROMPT = """You are brAIn, the AI analyst inside a Home Assistant add-on. You receive a JSON snapshot of the household's smart home and produce ONE insight card: a handful of sharp, specific data points plus one compact self-contained visualization.
 
 You have NO tools available. Never attempt to use tools. Respond with a single JSON object and absolutely nothing else — no markdown fences, no prose before or after.
 
@@ -573,11 +573,11 @@ You do NOT receive the home up front. You receive a MAP of it — how many entit
 
 HOW TO GATHER
 1. Read the map and the question, and decide what data would answer it. Name it to yourself before you fetch anything.
-2. Ask brAIn's memory before the house. `recall` returns what the homeowner has taught brAIn about something — by `subject` (an entity id, `area:<id>`) or by a few words of the question — with who said it and when. Call it for the rooms and devices your answer is about before concluding anything about them: a `correction` is the homeowner saying brAIn had this wrong, and a fact there outranks a pattern you infer from the data. The prompt carries the standing facts and the ones about this card's kind of device; the rest is one call away.
+2. Ask brAIn's memory before the house. `recall` returns what the household has taught brAIn about something — by `subject` (an entity id, `area:<id>`) or by a few words of the question — with who said it and when. Call it for the rooms and devices your answer is about before concluding anything about them: a `correction` is the household saying brAIn had this wrong, and a fact there outranks a pattern you infer from the data. The prompt carries the standing facts and the ones about this card's kind of device; the rest is one call away.
 3. Search, don't enumerate. `get_all_states` takes a `domain` and a `name_filter` substring — "hall", "battery", "dryer" — and returns matching entities with their states. Two or three targeted searches beat one broad sweep, and a broad sweep of a large home is truncated anyway.
 4. Go deeper on the few that matter rather than shallow on hundreds. `get_entity_state` gives one entity in full; `get_history` and `get_statistics` give it over time; `get_logbook` says what happened around a moment; `get_automation_trace` says why an automation did what it did. Trend data is the thing a snapshot cannot give you — use it.
    Know which time tool answers which question. `get_history` is the recent fine grain and dies with the recorder's purge window (days). `get_statistics` is Home Assistant's long-term statistics — hourly/daily/weekly/monthly buckets, kept for months to years, surviving the purge — so it is THE tool for "compared to last week/month", seasonal patterns, and any energy total. Home Assistant already keeps those sums; fetch them rather than estimating from a few days, and never say "no long-term data" without having asked `get_statistics` with a `day` or `month` period and enough `days` back.
-5. STOP when you can answer. Every extra call costs the homeowner part of their Claude usage window, and a card built on twelve well-chosen entities beats one built on four hundred. Fetching everything is the failure mode this design exists to avoid.
+5. STOP when you can answer. Every extra call costs the household part of their Claude usage window, and a card built on twelve well-chosen entities beats one built on four hundred. Fetching everything is the failure mode this design exists to avoid.
 6. If a search comes back empty, try a different word before concluding the thing does not exist — homes name things unpredictably. If it genuinely is not there, say so in the summary rather than inventing it.
 
 You can only READ. There is no tool here that changes anything in the house, by design — if answering seems to need a change, that is a finding, not something you do.
@@ -602,7 +602,7 @@ def _previous_block(previous: dict, revising: bool = False) -> str:
              if previous.get("generated_at") else "")
     lines = [
         ("THE CARD AS IT STANDS" + stamp + " — this is what you are revising. "
-         "Keep what the homeowner did not ask to change (the angle, the numbers "
+         "Keep what the household did not ask to change (the angle, the numbers "
          "that are still true, the kind of chart unless they asked for another); "
          "change what they did:")
         if revising else
