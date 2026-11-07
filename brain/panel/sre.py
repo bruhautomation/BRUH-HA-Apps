@@ -1764,86 +1764,14 @@ def _names_pattern(names: set[str]):
     return re.compile(r"(?<![\w.])(" + alts + r")(?![\w])", re.I)
 
 
-def _hours_said(hours) -> str:
-    """A span for a title: "3 hours", "1 hour", "2 days"."""
-    try:
-        h = float(hours)
-    except (TypeError, ValueError):
-        return ""
-    if h < 1.5:
-        return "an hour"
-    if h < 36:
-        return f"{round(h)} hours"
-    return f"{round(h / 24)} days"
-
-
-def _device_state_title(rec: dict) -> str:
-    """A device-health title built from the state that was measured —
-    offline for N hours, a weak signal, dropped commands, dead — and never
-    from a stock verb ("struggling") that the detail then contradicts."""
-    if rec["kind"] == "zigbee":
-        name = rec.get("name") or "A Zigbee device"
-        lqi, span = rec.get("lqi"), _hours_said(rec.get("last_seen_hours"))
-        if not rec.get("available"):
-            return (f"{name} has been offline for {span}" if span
-                    else f"{name} is offline")
-        if isinstance(lqi, (int, float)) and lqi < WEAK_LQI:
-            return f"{name} has a weak signal to the Zigbee network"
-        seen = rec.get("last_seen_hours")
-        if isinstance(seen, (int, float)) and seen > UNSEEN_HOURS and span:
-            return f"{name} has not been heard from for {span}"
-        return f"{name} is on the Zigbee network"
-    name = rec.get("name") or "A Z-Wave device"
-    stats = rec.get("stats") or {}
-    dropped = int(sum(_num(stats.get(k)) for k in
-                      ("commandsDroppedTX", "commandsDroppedRX")))
-    timeouts = int(_num(stats.get("timeoutResponse")))
-    if rec.get("status") == "dead":
-        return f"{name} is marked dead by Z-Wave"
-    if dropped:
-        return f"Z-Wave dropped {dropped} commands to {name}"
-    if timeouts:
-        return f"{name} did not answer Z-Wave {timeouts} times"
-    return f"{name} is on the Z-Wave network"
-
-
-_STOCK_VERB = re.compile(
-    r"\bstruggl\w*|\bhaving (?:trouble|problems|issues)\b|\bacting up\b"
-    r"|\bmisbehav\w*|\bflaky\b|\bunhealthy\b|\b(?:has|have) (?:issues|"
-    r"problems)\b", re.I)
-
-
-def _one_state(rec: dict | None, dig: dict, title: str, detail: str,
-               fix: str) -> tuple[str, str]:
-    """``(title, fix)`` naming the one state the detail measured.
-
-    A Zigbee or Z-Wave cause titled with a stock verb ("struggling") gets
-    the title its record's measured state builds; a step that fixes a state
-    the detail or the title says is fine ("the signal looked fine" over
-    "move the router closer") loses that sentence, and the record's own
-    reading stands in when nothing is left."""
-    if rec is not None and rec["kind"] in ("zigbee", "zwave") \
-            and _STOCK_VERB.search(title):
-        title = textclip.clip(_device_state_title(rec), MAX_TITLE)
-    if house_words.states_disagree(title, detail, fix):
-        denied = house_words.states_denied(detail) | house_words.states_denied(
-            title)
-        kept = [sent for sent in _SENTENCES.split(fix)
-                if not (house_words.states_named(sent) & denied)
-                or house_words.states_named(sent) - denied]
-        fix = " ".join(kept).strip() or (
-            _evidence_fix([rec], dig) if rec is not None else "")
-    return title, fix
-
-
 def _plain_title(rec: dict, dig: dict) -> str:
     """A title naming only what this record is about, for a cause whose own
     title named something else."""
     names = dig.get("names") or {}
     if rec["kind"] == "zigbee":
-        return _device_state_title(rec)
+        return f"{rec.get('name') or 'A Zigbee device'} is struggling on the Zigbee network"
     if rec["kind"] == "zwave":
-        return _device_state_title(rec)
+        return f"The Z-Wave device {rec.get('name') or ''} is having trouble".replace("  ", " ")
     if rec["kind"] == "automation":
         return f"{rec.get('automation') or 'An automation'} switches off a Zigbee router"
     ents = rec.get("entities") or []
@@ -2196,8 +2124,6 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
             detail = f"{detail} {said}".strip()
         if logs:
             detail = _with_source(logs, dig, detail)
-        title, fix = _one_state(by_id[real[0]] if len(real) == 1 else None,
-                                dig, title, detail, fix)
         causes.append({
             "title": title,
             "detail": textclip.shorten(detail, MAX_DETAIL),

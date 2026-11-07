@@ -2826,11 +2826,6 @@ def refine(ts: int, case: dict, run_id: str = "",
         if fix:
             entry["fix"] = textclip.shorten(fix, MAX_FIX)
             entry["fix_by"] = "resident"
-        elif detail and entry.get("fix"):
-            # The look found the cause and says it in the detail: the
-            # check's generic "usual cause" sentence does not stand beside
-            # it (`house_words.without_usual_cause`).
-            entry["fix"] = house_words.without_usual_cause(entry["fix"])
         # And the To Do sentence, in the words of the run that looked.
         todo = clean_todo_text(case.get("todo_text"))
         if todo:

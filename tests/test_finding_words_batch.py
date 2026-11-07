@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Eight things a house found wrong with how findings and cards are worded.
+"""Findings and cards worded in one vocabulary.
 
 1. developer words in a check's rows: held by `test_finding_words_sweep`;
 2. one vocabulary: the shared prompts name the assistant and the owner one
@@ -7,12 +7,7 @@
 3. a log error's detail says what it means, what it affects and usual
    against now, and never "something it was doing failed";
 4. a card's first sentence is its conclusion; an absence of events or a
-   closing guess is held back by code;
-5. a device-health title is built from the measured state, and a finding
-   whose words disagree about the state is caught;
-6. a generic usual cause is not said once a look found the cause (the
-   fix a look wrote stands);
-7. a generic usual cause is dropped once a look found the cause.
+   closing guess is held back by code.
 """
 
 import sys
@@ -25,11 +20,9 @@ sys.path.insert(0, str(BASE / "tests"))
 
 import card_claims  # noqa: E402
 import categories  # noqa: E402
-import findings_store  # noqa: E402
 import house_words  # noqa: E402
 import prompt_kit  # noqa: E402
 import sre  # noqa: E402
-from test_cases import StoresCase  # noqa: E402
 
 
 class TestOneVocabulary(unittest.TestCase):
@@ -136,102 +129,6 @@ class TestACardLeadsWithItsConclusion(unittest.TestCase):
         self.assertEqual(card_claims.blind_lead(card, "all fine"), "")
 
 
-class TestADeviceTitleNamesTheMeasuredState(unittest.TestCase):
-    def rec(self, **over):
-        return {"id": "zha:1", "kind": "zigbee", "name": "Hall plug",
-                "available": True, "lqi": 120, "last_seen_hours": 0.2,
-                **over}
-
-    def test_titles_come_from_the_state(self):
-        title = sre._plain_title
-        self.assertEqual(title(self.rec(available=False,
-                                        last_seen_hours=5), {}),
-                         "Hall plug has been offline for 5 hours")
-        self.assertEqual(title(self.rec(lqi=20), {}),
-                         "Hall plug has a weak signal to the Zigbee network")
-        for t in (title(self.rec(available=False), {}), title(self.rec(), {})):
-            self.assertNotIn("struggling", t)
-        zw = {"id": "zw:1", "kind": "zwave", "name": "Pump", "status": "alive",
-              "stats": {"commandsDroppedTX": 4}}
-        self.assertEqual(title(zw, {}), "Z-Wave dropped 4 commands to Pump")
-
-    def test_a_stock_verb_from_the_model_is_replaced(self):
-        t, f = sre._one_state(self.rec(lqi=20), {}, "Hall plug is struggling",
-                              "Its link reads 20.", "Move the router.")
-        self.assertIn("weak signal", t)
-        self.assertEqual(f, "Move the router.")
-
-    def test_a_fix_for_a_state_the_detail_calls_fine_is_dropped(self):
-        self.assertEqual(
-            house_words.states_disagree(
-                "Hall plug is offline", "The signal looked fine.",
-                "Move the plug closer to improve its signal."), {"signal"})
-        t, f = sre._one_state(
-            self.rec(available=False, last_seen_hours=9), {},
-            "Hall plug has been offline for 9 hours",
-            "The signal looked fine, but it has not answered.",
-            "Move the plug closer to improve its signal. Plug it back in.")
-        self.assertNotIn("signal", f)
-        self.assertIn("Plug it back in", f)
-
-    def test_agreement_is_read_per_clause(self):
-        # "fine" in one clause must not hide a trouble in the next.
-        self.assertEqual(house_words.states_named(
-            "The battery looks fine but the signal is weak."), {"signal"})
-        self.assertEqual(house_words.states_denied(
-            "The battery looks fine but the signal is weak."), {"battery"})
-        self.assertEqual(house_words.states_named(
-            "Its signal was good until 02:00, then it went offline."),
-            {"offline"})
-        t, f = sre._one_state(
-            self.rec(lqi=20), {}, "Hall plug has a weak signal",
-            "The battery looks fine but the signal is weak.",
-            "Move the plug closer to improve its signal.")
-        self.assertEqual(f, "Move the plug closer to improve its signal.")
-        t, f = sre._one_state(
-            self.rec(available=False, last_seen_hours=3), {},
-            "Hall plug has been offline for 3 hours",
-            "Its signal was good until 02:00, then it went offline.",
-            "Plug it back in; it is offline.")
-        self.assertEqual(f, "Plug it back in; it is offline.")
-
-    def test_a_second_example_battery(self):
-        self.assertEqual(
-            house_words.states_disagree(
-                "Door sensor battery is low", "Its battery reads full.",
-                "Replace the battery."), {"battery"})
-        self.assertFalse(house_words.states_disagree(
-            "Door sensor is offline", "Its battery is low.",
-            "Replace the battery."))
-
-
-class TestAFoundCauseDropsTheGenericOne(StoresCase):
-    def _row(self, **over):
-        [row] = findings_store.add_many([{
-            "text": "Garage opener logged errors", "detail": "It logged 9.",
-            "fix": "Restart the opener.", "severity": "warning",
-            "source": "check:integ.log_flood", "status": "triaging", **over}])
-        return row
-
-    def test_a_look_that_found_the_cause_drops_the_generic_one(self):
-        row = self._row(
-            text="Garage plug offline",
-            fix="Check it still has power (a wall switch turned off is the "
-                "usual cause). Press its button.")
-        findings_store.record_triage({row["ts"]: ("elevated", "")})
-        findings_store.refine(row["ts"], {
-            "claim": "Garage plug offline", "kind": "problem",
-            "detail": "The garage breaker tripped at 02:10."})
-        fix = findings_store.get(row["ts"])["fix"]
-        self.assertNotIn("usual cause", fix)
-        self.assertIn("Press its button", fix)
-
-    def test_a_row_nobody_looked_at_keeps_the_generic_sentence(self):
-        row = self._row(fix="A wall switch turned off is the usual cause.")
-        self.assertIn("usual cause", findings_store.get(row["ts"])["fix"])
-        self.assertEqual(
-            house_words.without_usual_cause("Plug it in. Most often it is "
-                                            "the cable."), "Plug it in.")
 
 
 if __name__ == "__main__":

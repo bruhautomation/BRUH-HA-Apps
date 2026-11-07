@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""What a check says carries no developer string, and one state per finding.
+"""What a check says carries no developer string.
 
 A real house's findings showed file paths with line numbers, hex error
 codes, tool and protocol names, and device-health titles ("struggling")
@@ -11,9 +11,6 @@ fails the one that is not:
 
 * a path, a line number, a hex code, one of brAIn's tool names or a
   protocol term in `text`, `detail` or `fix`;
-* a finding whose title, detail and fix do not name the same device state
-  (`house_words.states_named`): "the signal looked fine" over a fix that
-  moves the router, or an offline title over a battery fix.
 """
 
 import io
@@ -59,9 +56,3 @@ class TestEveryCheckIsFreeOfDeveloperWords(unittest.TestCase):
                       for cid, row, _s in cap.rows
                       if cid not in MAC_ALLOWED and developer_words(row)})
         self.assertEqual(bad, [], "\n".join(bad))
-        incoherent = sorted({
-            f"{cid}: {row.get('text')!r} / {row.get('fix')!r}"
-            for cid, row, _s in cap.rows
-            if house_words.states_disagree(
-                row.get("text"), row.get("detail"), row.get("fix"))})
-        self.assertEqual(incoherent, [], "\n".join(incoherent))

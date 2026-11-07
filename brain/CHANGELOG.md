@@ -11,9 +11,7 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ### Fixed
 
-- A device's title says what was measured (offline for some hours, weak signal, low battery) instead of a stock word such as "struggling", and a step that contradicts the detail is dropped (#737).
 - A finding from an integration's log errors says what the error means, what it affects and how the count compares with usual, instead of "something it was doing failed" (#725).
-- When brAIn has looked and found the cause, the check's generic "usual cause" sentence no longer stands beside it (#583).
 - Check findings no longer show file paths, and a sweep over every check holds them to plain words (#699).
 
 ## 5.1.4
