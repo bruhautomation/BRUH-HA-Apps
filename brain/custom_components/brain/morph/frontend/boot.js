@@ -62,7 +62,7 @@ function loadPanel() {
       } catch (err) {
         window.__morphFallback = String((err && err.message) || err);
         console.error('Morph: a changed file did not load, so Morph is running its own copy.', err);
-        await import(shippedDir + 'morph-panel.js');
+        await import(here + 'shipped/morph-panel.js');
       }
     })();
   }
@@ -81,7 +81,7 @@ function loadShipped() {
       reg.get = (n) => (n === 'morph-panel' ? undefined : get(n));
       reg.define = (n, C, o) => (n === 'morph-panel' ? define('morph-panel-shipped', C, o) : get(n) ? undefined : define(n, C, o));
       try {
-        await import(shippedDir + 'morph-panel.js');
+        await import(here + 'shipped/morph-panel.js');
       } finally {
         delete reg.get;
         delete reg.define;
