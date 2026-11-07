@@ -1856,55 +1856,6 @@ def _measured_title(title: str, recs: list[dict], dig: dict) -> str:
     return textclip.clip(_plain_title(mesh[0], dig), MAX_TITLE)
 
 
-# A state the detail says, in the present tense and flatly, is fine — and
-# what a step about that state would say. A clause with a contrary turn
-# ("but", "until", "dropping", "now at"), a past time ("yesterday", "last
-# week", "for two years") or a negation ("no good", "not fine") is not
-# flat, and keeps every step (#737).
-_STATE_WORDS = {
-    "battery": (r"batter(?:y|ies)",
-                r"\b(?:batter(?:y|ies)|recharge|charge it|charging)\b"),
-    "signal": (r"signal|link(?: quality)?|lqi|rssi|reception|connection",
-               r"\b(?:signal|link|repeater|router closer|move (?:it|the \w+) "
-               + r"closer|closer to|lqi|rssi|reception|extender)\b"),
-}
-_FINE_NOW = (r"\b(?:its |the )?(?:{state})\s+(?:is|reads|looks|looked|seems"
-             r"|appears|was reading)\s+(?:fine|good|healthy|strong|ok|okay"
-             r"|normal|full)\b")
-_CONTRARY = re.compile(
-    r"\b(?:but|yet|though|although|however|until|except|while|whereas"
-    r"|drop\w*|fall\w*|fell|falling|now at|low|weak|yesterday|last \w+"
-    r"|ago|earlier|before|for (?:now|\w+ (?:years?|months?|weeks?|days?)))\b",
-    re.I)
-
-
-def _fine_states(detail: str) -> set[str]:
-    """The states ``detail`` flatly says are fine now."""
-    out: set[str] = set()
-    for sent in _SENTENCES.split(detail or ""):
-        for state, (words, _step) in _STATE_WORDS.items():
-            m = re.search(_FINE_NOW.format(state=words), sent, re.I)
-            if m and not _CONTRARY.search(sent[m.end():]) \
-                    and not _CONTRARY.search(sent[:m.start()]):
-                out.add(state)
-    return out
-
-
-def _steps_agree(detail: str, fix: str) -> str:
-    """``fix`` less each sentence aimed at a state the detail flatly says
-    is fine — never every sentence: a step left empty is worse than one
-    a person can weigh against the detail above it."""
-    fine = _fine_states(detail)
-    if not fine or not fix:
-        return fix
-    pats = [re.compile(_STATE_WORDS[s][1], re.I) for s in fine]
-    sents = _SENTENCES.split(fix)
-    kept = [s for s in sents if not any(p.search(s) for p in pats)]
-    if not kept or len(kept) == len(sents):
-        return fix
-    return " ".join(kept).strip()
-
-
 def _and(names: list[str]) -> str:
     names = [n for n in names if n]
     return (", ".join(names[:-1]) + " and " + names[-1]
@@ -2194,7 +2145,6 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
         title, detail, fix = _name_the_callers(
             [by_id[r] for r in real], dig, title, detail, fix)
         title = _measured_title(title, [by_id[r] for r in real], dig)
-        fix = _steps_agree(detail, fix)
         title, detail, fix = (plain_slugs(title, dig), plain_slugs(detail, dig),
                               plain_slugs(fix, dig))
         only_logs = bool(logs) and len(logs) == len(real)

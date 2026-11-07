@@ -12,7 +12,7 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 ### Fixed
 
 - A finding from an integration's log errors no longer says "something it was doing failed": it says who logged what, how many times and when, and what the error means when brAIn recognises it (#725).
-- Zigbee and Z-Wave device titles say what was measured (offline for some hours, not heard from, a weak link, dropped commands) instead of "struggling", and a step is dropped only when the detail says plainly that the state it targets is fine now (#737).
+- Zigbee and Z-Wave device titles say what was measured (offline for some hours, not heard from, a weak link, dropped commands) instead of "struggling" (#737).
 - When brAIn's look finds the cause of a problem, the check's generic "usual cause" aside is removed from the step, never the step itself (#583).
 
 ## 5.1.5

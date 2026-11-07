@@ -139,22 +139,29 @@ class TestADeviceTitleIsWhatWasMeasured(unittest.TestCase):
             "Hall sensor dropped off overnight")
 
 
-class TestAStepAgreesWithTheDetail(unittest.TestCase):
-    def test_a_flat_present_fine_drops_only_that_step(self):
-        cases = [
-            ("Its signal is fine. It has been offline for 6 hours.",
-             "Move it closer to a router. Check its battery.",
-             "Check its battery."),
-            ("The battery reads full. Link quality is 25.",
-             "Replace its battery. Add a router between it and the hub.",
-             "Add a router between it and the hub."),
-            ("The signal looked fine.",
-             "Move it closer to the coordinator. Re-pair it from its "
-             + "device page.", "Re-pair it from its device page."),
-        ]
-        for detail, fix, want in cases:
-            with self.subTest(detail):
-                self.assertEqual(sre._steps_agree(detail, fix), want)
+class TestEveryStepIsKept(unittest.TestCase):
+    """No step text is removed on a guess about what the detail says
+    (#737's review): the cause's fix reaches the row as it was written."""
+
+    def setUp(self):
+        from test_sre import NOW, collected
+        self.dig = sre.digest(collected(), NOW)
+        self.router = "zha:aa:aa:aa:aa:aa:aa:aa:01"
+
+    def _fix(self, detail, fix):
+        out = sre.parse_causes({"causes": [{
+            "title": "Router down", "records": [self.router],
+            "detail": detail, "fix": fix}]}, self.dig)
+        return out["causes"][0]["fix"]
+
+    def test_the_reviewers_compound_steps_keep_every_part(self):
+        for fix in (
+                "Shut off the water at the main and replace the sensor "
+                + "battery. Call the plumber.",
+                "Unlock the door by hand and move the lock closer to the "
+                + "router. Re-pair it."):
+            with self.subTest(fix):
+                self.assertEqual(self._fix("The battery is fine.", fix), fix)
 
     def test_the_reviewers_sentences_keep_every_step(self):
         fix = "Replace its battery. Move it closer to a router."
@@ -165,13 +172,13 @@ class TestAStepAgreesWithTheDetail(unittest.TestCase):
                 "Its link quality was strong last week but has fallen to 30.",
                 "The battery is no good.",
                 "The battery is not fine.",
-                "Its signal is fine, but it dropped off twice today."):
+                "Its signal is fine, but it dropped off twice today.",
+                "Its signal is fine."):
             with self.subTest(detail):
-                self.assertEqual(sre._steps_agree(detail, fix), fix)
+                self.assertEqual(self._fix(detail, fix), fix)
 
-    def test_a_step_is_never_left_empty(self):
-        fix = "Replace its battery."
-        self.assertEqual(sre._steps_agree("The battery is fine.", fix), fix)
+    def test_no_step_dropping_helper_is_left(self):
+        self.assertFalse(hasattr(sre, "_steps_agree"))
 
 
 # ---------------------------------------------------------------------------
