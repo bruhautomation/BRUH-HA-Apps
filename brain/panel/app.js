@@ -4729,7 +4729,10 @@ function paintDevloop(data) {
         : "";
       const opts = hours.map((h) => `<option value="${h}"${sched[st.name] === h
         ? " selected" : ""}>${esc(DEV_HOURS[h] || h + " hours")}`
-        + `${recommended[st.name] === h ? " (recommended)" : ""}</option>`).join("");
+        // The recommended choice is marked in the open list; the chosen
+        // one shows plain, so a closed drop-down on a phone is not cut off.
+        + `${recommended[st.name] === h && sched[st.name] !== h ? " (recommended)" : ""}`
+        + "</option>").join("");
       // A card: the stream's name and what it is for split at its colon,
       // the switch beside them, and how often and Run along the foot with
       // when it last ran — so a column of seven reads as seven of one thing.
