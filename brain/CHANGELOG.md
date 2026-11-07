@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.6
+
+### Fixed
+
+- Morph's story checks what it says about doors, locks, the garage and windows against how they are now, each time it is shown, so it no longer says a lock is unlocked or the garage is open after it was locked or closed (#719, #734).
+- A reading on a Morph chip or tile that has not been refreshed for half an hour is dimmed and says how old it is, so an old outdoor temperature no longer looks like a live one beside the current one (#688).
+- A Morph tile for the BRUH Minecraft server says whether the server is online, who is playing and its TPS, or Offline, instead of just "Server" (#686).
+
 ## 5.1.5
 
 ### Changed
