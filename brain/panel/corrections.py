@@ -462,20 +462,31 @@ _GONE_RE = re.compile(
     r"away|binned|scrapped|"
     r"(?:is|are|it'?s)\s+(?:completely |totally |just )?"
     r"(?:broken|faulty|defective|dead for good|junk|a dud)|"
-    r"(?:sensor|device|remote|unit)\s+(?:is\s+)?(?:broken|faulty)|"
-    # "Ignore this sensor" is the same answer said as an instruction — but
-    # "ignore it while the printer prints" is a condition, which
-    # `report_while` reads, never a sensor finished with.
-    r"ignore\s+(?:this|that|the|its|these|those)\s+(?:\w+\s+)?"
-    r"(?:sensors?|probes?|readings?|thermometers?|values?)\b"
-    r"(?![^.;!?]*\b(?:when|whenever|while|if|during|unless|except)\b))",
-    re.I)
+    r"(?:sensor|device|remote|unit)\s+(?:is\s+)?(?:broken|faulty))", re.I)
+# "Please ignore this sensor" is the same answer said as an instruction, and
+# ONLY in that bare shape: a whole sentence that is the instruction about the
+# sensor itself and nothing else. "Don't ignore…", "…until tomorrow", "…for a
+# week", "…when the window is open", "ignore this READING" and "ignore this
+# sensor, it's the cat" each say something else, and `known_faulty` re-reads
+# stored rule text, so a looser match would turn old rules into "broken"
+# with nobody pressing anything.
+_IGNORE_SENSOR_RE = re.compile(
+    r"(?:please\s+)?(?:just\s+)?ignore\s+(?:this|that|the)\s+"
+    r"(?:\w+\s+)?(?:sensor|probe|thermometer)"
+    r"(?:\s+(?:for good|forever|permanently|completely|entirely))?"
+    r"(?:,?\s+please)?\s*[.!]*", re.I)
+
+
+def _ignore_sensor(text: str) -> bool:
+    return any(_IGNORE_SENSOR_RE.fullmatch(part.strip())
+               for part in re.split(r"(?<=[.;!?])\s+", text))
 
 
 def gone_for_good(note: str) -> bool:
     """Whether a reason says the device is retired, unused or broken."""
     text = str(note or "")
-    return bool(_GONE_RE.search(text)) and not temporary(text)
+    return (bool(_GONE_RE.search(text)) or _ignore_sensor(text)) \
+        and not temporary(text)
 
 
 def known_faulty(now: float | None = None) -> dict[str, str]:
