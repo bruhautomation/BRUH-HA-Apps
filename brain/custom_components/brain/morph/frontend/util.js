@@ -297,80 +297,197 @@ export function isDashChange(q) {
 export const ASK_CONTEXT = 'This question comes from the Ask bar on Morph, the house’s dashboard. Morph’s own page is changed with Morph’s Tell, not from here: if the person asks for a change to Morph’s page, say so (hold the thing in Edit, or press “Change the dashboard instead”) and do not claim to have changed it. A Lovelace dashboard is different: when you can act, change it with get_dashboard and call_service brain.update_dashboard (backed up first).';
 
 // ---------------------------------------------------------------- claims
-// A sentence that says a door is open or a lock is unlocked was written
-// before the state it describes changed. Each sentence about a door, lock,
-// garage, gate or window is checked against the entities as they are NOW
-// every time the story is drawn. "Locked"/"unlocked" is judged by locks
-// only, "open"/"closed" by covers and door, window and garage contacts
-// only. A sentence goes only when every entity it could be about says
-// otherwise; where the match is ambiguous, or the house has nothing it could
-// be about, it stays (a true warning is never hidden).
-const CLAIM_GENERIC = new Set(['lock', 'door', 'sensor', 'contact', 'opening', 'cover', 'window', 'the', 'a', 'garage']);
-const CLAIM_NOUNS = [['door', /\bdoors?\b/i], ['garage', /\bgarage\b/i], ['window', /\bwindows?\b/i], ['gate', /\bgates?\b/i]];
-const LOCK_WORDS = /\b(unlocked?|locked|lock|deadbolts?)\b/i;
-const OPEN_WORDS = /\b(open|opened|opens|ajar|closed?|shut|unlatched)\b/i;
-const LOCK_UNSAFE = /\b(unlocked?|unlatched)\b|\b(?:not|isn['’]t|aren['’]t)\s+locked\b|\block\b/i;
-const OPEN_UNSAFE = /\b(open|opened|opens|ajar|unlatched|close|shut)\b|\b(?:not|isn['’]t|aren['’]t)\s+(?:closed|shut)\b/i;
+// A sentence brAIn wrote about a door, lock or garage (the situation line, a
+// case's claim) was written before the state it describes moved: it said a
+// lock was unlocked beside a lock that read locked, and told the owner to
+// close a garage that was closed (#719, #734). Each sentence is checked
+// against the entities as they are NOW, every time the story is drawn.
+//
+// Only what a sentence ASSERTS about now is checked: "is unlocked", "is
+// still open", "left open", "close the garage", "all doors are locked". A
+// noun is not a claim ("the front door lock battery is low" says nothing
+// about whether it is locked), a battery, offline or health sentence is never
+// one, a request or a question is not one, and a sentence that tells the
+// past ("was unlocked at 3 pm, now locked") is judged only by where it ends.
+// "Locked"/"unlocked" is judged by locks only and "open"/"closed" by door,
+// window and garage contacts and covers only: they are two facts.
+//
+// The two directions are not alike. A warning ("is unlocked", "close the
+// garage") goes only when EVERYTHING it could be about says otherwise; an
+// ambiguous one, or one about nothing the house can see, stays, because a
+// true warning is never hidden. A reassurance ("is locked", "everything is
+// shut") goes when ANYTHING it covers is unlocked or open, because that is
+// the direction that protects the house. A sentence of two claims loses only
+// the clause that no longer holds.
+const CLAIM_GENERIC = new Set(['lock', 'locks', 'door', 'doors', 'sensor', 'contact', 'opening', 'cover', 'window', 'windows', 'the', 'a', 'an', 'garage', 'gate', 'deadbolt', 'smart', 'entry']);
+const CLAIM_NOUNS = [['garage', /\bgarages?\b/i], ['window', /\bwindows?\b/i], ['gate', /\bgates?\b/i], ['door', /\bdoors?\b/i]];
+// What makes a clause no claim about now at all.
+const NOT_STATE = /\b(?:batter(?:y|ies)|offline|unavailable|unreachable|not\s+responding|signal|firmware|update|health|disconnected|connection|jammed|stuck)\b/i;
+const NOT_ASSERTED = /\?|\b(?:if|whether|check|make\s+sure|ensure|confirm|verify|remember)\b/i;
+const PAST = /\b(?:was|were|had)\b(?!\s+(?:left|still)\b)|\b(?:earlier|ago|yesterday|last\s+(?:night|evening|week))\b|\bat\s+\d{1,2}(?::\d\d)?\s*(?:am|pm|a\.m\.|p\.m\.)|\bat\s+\d{1,2}:\d\d\b/i;
+// A state asserted now: a present verb, then the state.
+const ASSERT = /\b(?:is|are|isn['’]t|aren['’]t|remains?|stays?|still|now|left|been|sits?|stands?)\b\s+(?:(?:still|now|currently|wide|all|both|fully)\s+)*(not\s+)?(unlocked|locked|open|ajar|closed|shut|secured?)\b|['’]s\s+(?:(?:still|now|wide)\s+)*(not\s+)?(unlocked|locked|open|ajar|closed|shut|secured?)\b/gi;
+const IMPERATIVE = /\b(close|shut|lock)\s+(?:the|your|that|this|up)\b/gi;
+const UNIVERSAL = /\b(?:all|every|everything|each|both|the\s+house|the\s+home|whole\s+house)\b/i;
+const NONE_OF = /\b(?:no|nothing|none|neither)\b/i;
+const VERB = /\b(?:is|are|was|were|isn['’]t|aren['’]t|has|have|had|remains?|stays?|left|close|shut|lock|unlock|opened|detects?|detected|found|needs?|should|must|will|can|running|playing|done)\b|['’]s\b/i;
+const CONTINUES = /^(?:it|they|this|that|which|who|so|then|should|must|needs?|is|are|was|were|has|have|had|now|still|please)\b/i;
+const DETERMINER = /^(?:the|a|an|your|my|our|every|all|nothing|no|each|both|it)\b/i;
+const SPLIT = /(\s*[,;]\s*(?:and|but|while|whereas|yet)?\s*|\s+(?:and|but|while|whereas|yet)\s+)/i;
 
 function claimEntities(states) {
   const out = [];
   Object.values(states || {}).forEach((st) => {
-    if (!st || !st.entity_id || ['unavailable', 'unknown'].includes(st.state)) return;
+    if (!st || !st.entity_id) return;
     const d = domainOf(st.entity_id); const a = st.attributes || {}; const dc = a.device_class || '';
     const name = String(a.friendly_name || st.entity_id.split('.')[1].replace(/_/g, ' '));
     const tokens = name.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w && !CLAIM_GENERIC.has(w));
     if (d === 'lock') {
-      out.push({ kind: 'lock', classes: ['door'], bad: ['unlocked', 'unlocking', 'open', 'opening', 'jammed'].includes(st.state), tokens });
+      out.push({ kind: 'lock', classes: ['door'], tokens, safe: st.state === 'locked', bad: ['unlocked', 'unlocking', 'open', 'opening', 'jammed'].includes(st.state) });
     } else if (d === 'cover' || (d === 'binary_sensor' && ['door', 'garage_door', 'window', 'opening'].includes(dc))) {
-      const text = `${dc} ${name}`; const classes = [];
-      if (/garage/i.test(text)) classes.push('garage', 'door');
-      else if (/window/i.test(text)) classes.push('window');
-      else if (/gate/i.test(text)) classes.push('gate');
-      else if (/door|opening/i.test(text)) classes.push('door');
+      const text = `${dc} ${name}`; let classes = [];
+      if (/garage/i.test(text)) classes = ['garage', 'door'];
+      else if (/window/i.test(text)) classes = ['window'];
+      else if (/gate/i.test(text)) classes = ['gate'];
+      else if (/door|opening/i.test(text)) classes = ['door'];
       if (!classes.length) return;
-      out.push({ kind: 'open', classes, bad: d === 'cover' ? ['open', 'opening'].includes(st.state) : st.state === 'on', tokens });
+      const cover = d === 'cover';
+      out.push({ kind: 'open', classes, tokens, safe: cover ? st.state === 'closed' : st.state === 'off', bad: cover ? ['open', 'opening', 'closing'].includes(st.state) : st.state === 'on' });
     }
   });
   return out;
 }
 
-// Does the state now contradict this one sentence, for one kind of claim?
-function contradicted(s, kind, ents, nouns, w) {
-  const unsafe = (kind === 'lock' ? LOCK_UNSAFE : OPEN_UNSAFE).test(s);
-  const pool = ents.filter((e) => e.kind === kind);
+// The claims one clause makes about now: [{kind, unsafe, all, at}].
+function claimsOf(g) {
+  if (NOT_STATE.test(g) || NOT_ASSERTED.test(g)) return [];
+  const out = [];
+  const add = (word, neg, at) => {
+    const w = word.toLowerCase();
+    if (/^secured?$/.test(w)) { if (!neg) out.push({ kind: 'lock', unsafe: false, at }, { kind: 'open', unsafe: false, at }); return; }
+    const kind = /lock/.test(w) ? 'lock' : 'open';
+    let unsafe = ['unlocked', 'open', 'ajar'].includes(w);
+    if (neg) unsafe = !unsafe;
+    out.push({ kind, unsafe, at });
+  };
+  let m;
+  ASSERT.lastIndex = 0;
+  while ((m = ASSERT.exec(g))) {
+    const verb = m[0].toLowerCase();
+    const neg = !!(m[1] || m[3]) || /n['’]t\b/.test(verb);
+    add(m[2] || m[4], neg, m.index);
+  }
+  IMPERATIVE.lastIndex = 0;
+  while ((m = IMPERATIVE.exec(g))) out.push({ kind: m[1].toLowerCase() === 'lock' ? 'lock' : 'open', unsafe: true, at: m.index });
+  const all = UNIVERSAL.test(g);
+  const none = NONE_OF.test(g);
+  out.forEach((c) => {
+    // "Nothing is open", "no door is unlocked": a reassurance about all.
+    if (none && c.unsafe) { c.unsafe = false; c.all = true; } else c.all = all && !c.unsafe;
+  });
+  out.sort((x, y) => x.at - y.at);
+  // A clause that tells the past is judged by where it ends.
+  return PAST.test(g) ? out.slice(-1) : out;
+}
+
+// What a claim could be about, among the house's entities.
+function covered(c, g, ents) {
+  const nouns = CLAIM_NOUNS.filter(([, re]) => re.test(g)).map(([n]) => n);
+  let pool = ents.filter((e) => e.kind === c.kind);
+  if (c.kind === 'open' && nouns.length) {
+    const want = nouns.includes('garage') ? ['garage', ...nouns.filter((n) => n !== 'door')] : nouns;
+    pool = pool.filter((e) => e.classes.some((k) => want.includes(k)));
+  }
+  if (c.all) return pool;
+  const w = new Set(g.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
   const named = pool.filter((e) => e.tokens.length && e.tokens.every((t) => w.has(t)));
-  const could = named.length ? named : pool.filter((e) => e.tokens.some((t) => w.has(t)) || e.classes.some((c) => nouns.includes(c)));
-  if (!could.length) return false;
-  return could.every((e) => (unsafe ? !e.bad : e.bad));
+  if (named.length) return named;
+  const some = pool.filter((e) => e.tokens.some((t) => w.has(t)));
+  if (some.length) return some;
+  const about = c.kind === 'lock' ? /\b(?:doors?|locks?|deadbolts?)\b/i.test(g) : nouns.length > 0;
+  return about ? pool : [];
+}
+
+function holds(c, g, ents) {
+  const of = covered(c, g, ents);
+  if (!of.length) return true;
+  return c.unsafe ? !of.every((e) => e.safe) : !of.some((e) => e.bad);
+}
+
+// One sentence as clauses: split at "and", "but", commas and semicolons,
+// then a clause that continues the one before ("it should be closed", "now
+// locked") goes with it, and a fragment with no verb ("The front" of "the
+// front and back doors") goes with the clause after it.
+function clausesOf(body) {
+  const bits = body.split(SPLIT);
+  let parts = [{ sep: '', text: bits[0] }];
+  for (let i = 1; i < bits.length; i += 2) parts.push({ sep: bits[i], text: bits[i + 1] || '' });
+  const back = [];
+  parts.forEach((p) => {
+    const prev = back[back.length - 1];
+    if (prev && CONTINUES.test(p.text.trim())) prev.text += p.sep + p.text;
+    else back.push({ ...p });
+  });
+  const out = [];
+  for (let i = 0; i < back.length; i++) {
+    const p = back[i]; const next = back[i + 1];
+    if (next && !VERB.test(p.text) && (p.text.trim().split(/\s+/).length <= 3 || !DETERMINER.test(next.text.trim()))) {
+      next.text = p.text + next.sep + next.text; next.sep = p.sep; continue;
+    }
+    out.push(p);
+  }
+  return out;
 }
 
 export function checkDoorClaims(text, hass) {
   const ents = claimEntities(hass && hass.states);
   const sentences = String(text || '').trim().split(/(?<=[.!?])\s+/).filter(Boolean);
-  const kept = sentences.filter((s) => {
-    const nouns = CLAIM_NOUNS.filter(([, re]) => re.test(s)).map(([c]) => c);
-    const w = new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
-    const kinds = [];
-    if (LOCK_WORDS.test(s)) kinds.push('lock');
-    if (OPEN_WORDS.test(s) && nouns.length) kinds.push('open');
-    if (!kinds.length) return true;
-    return !kinds.every((k) => contradicted(s, k, ents, nouns, w));
+  const kept = [];
+  sentences.forEach((s) => {
+    const m = s.match(/^([\s\S]*?)([.!?]*)$/); const body = m[1]; const end = m[2];
+    const parts = clausesOf(body);
+    const keep = parts.filter((p) => claimsOf(p.text).every((c) => holds(c, p.text, ents)));
+    if (keep.length === parts.length) { kept.push(s); return; }
+    if (!keep.length) return;
+    let out = keep.map((p, i) => (i ? p.sep : '') + p.text).join('').trim();
+    out = out.charAt(0).toUpperCase() + out.slice(1);
+    kept.push(out + (end || '.'));
   });
   return kept.join(' ');
 }
 
+// The locks that are unlocked now, as clauses, for a line that would
+// otherwise say everything is locked.
+export function unlockedLocks(hass) {
+  return Object.values((hass && hass.states) || {}).filter((st) => st && domainOf(st.entity_id) === 'lock' && ['unlocked', 'unlocking', 'open', 'jammed'].includes(st.state))
+    .map((st) => `${friendly(hass, st.entity_id)} is ${st.state === 'jammed' ? 'jammed' : st.state === 'open' ? 'open' : 'unlocked'}`);
+}
+
 // ---------------------------------------------------------------- old readings
-// A chip or tile showing a reading nobody has refreshed for STALE_MIN
-// minutes looks the same as a live one; it says how old it is and is dimmed.
-// Only a state's own last report can say so: a steady reading's last_updated
-// is as old as a dead sensor's.
+// #688: the weather card said 57° while the outdoor chip beside it said
+// 62.6°, drawn like a live reading. Home Assistant's frontend states carry
+// `last_changed` and `last_updated` only, and a
+// steady reading's `last_updated` is as old as a dead sensor's, so age alone
+// says nothing. The panel marks an outdoor reading only when two things it
+// has disagree: the reading is more than a degree off the weather entity's
+// temperature AND its value has not changed for STALE_MIN minutes. It then
+// says what was measured — the value has not changed since a time — and is
+// dimmed; it does not claim the sensor is dead.
 export const STALE_MIN = 30;
-export function staleAge(st, now) {
-  const t = st ? Date.parse(st.last_reported || '') : 0;
-  if (!t) return '';
-  const m = Math.round(((now || Date.now()) - t) / 60000);
-  if (m < STALE_MIN) return '';
-  return m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+const OUTDOOR = /\b(?:outside|outdoors?|exterior|external|garden|yard|porch|patio|deck|balcony|driveway|weather)\b/i;
+export function outdoorStale(hass, eid, now) {
+  const S = (hass && hass.states) || {}; const st = S[eid];
+  if (!st || domainOf(eid) !== 'sensor') return '';
+  const a = st.attributes || {};
+  if (a.device_class !== 'temperature' && !/°/.test(a.unit_of_measurement || '')) return '';
+  if (!OUTDOOR.test(`${a.friendly_name || ''} ${eid.split('.')[1].replace(/_/g, ' ')}`)) return '';
+  const v = parseFloat(st.state);
+  const w = Object.values(S).find((x) => x && domainOf(x.entity_id) === 'weather' && x.attributes && isFinite(parseFloat(x.attributes.temperature)));
+  if (!isFinite(v) || !w) return '';
+  if (Math.abs(v - parseFloat(w.attributes.temperature)) <= 1) return '';
+  const t = Date.parse(st.last_changed || st.last_updated || '');
+  if (!t || ((now || Date.now()) - t) / 60000 < STALE_MIN) return '';
+  return `unchanged since ${clock(t)}`;
 }
 
 // ---------------------------------------------------------------- Minecraft

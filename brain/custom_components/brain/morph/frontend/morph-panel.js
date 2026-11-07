@@ -40,7 +40,7 @@ import * as sal from './salience.js';
 import { morph } from './morph-dom.js';
 import { caseFace, todoFace, caseColor, placeCase } from './cases.js';
 import { Rail } from './rail.js';
-import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, cardPage, guardDefine, loadCard, cardUrl, cardFailure, isDashChange, ASK_CONTEXT, own, checkDoorClaims } from './util.js';
+import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, cardPage, guardDefine, loadCard, cardUrl, cardFailure, isDashChange, ASK_CONTEXT, own, checkDoorClaims, unlockedLocks } from './util.js';
 
 const HOLD_MS = 540;
 // The card types whose entities are `entity`/`entities`; a hosted Lovelace
@@ -829,6 +829,10 @@ class MorphPanel extends HTMLElement {
     return out;
   }
 
+  // Locks that are unlocked right now, as clauses: the away line may not say
+  // "Everything is locked." over one (#719).
+  unlockedClauses() { return unlockedLocks(this.hass); }
+
   verdictHtml(dash) {
     const fh = this.feedState();
     const offline = fh.state === 'offline' || fh.state === 'expired' ? '<span class="vq"> · brAIn offline</span>' : '';
@@ -840,7 +844,7 @@ class MorphPanel extends HTMLElement {
     const parts = this.verdict(this.hass.states);
     const open = this.cases().filter((c) => c.kind !== 'chore').length;
     const tail = open ? ` <button type="button" class="vjump plain" data-act="jump" data-v="k:${esc((this.cases()[0] || {}).id || '')}">…and ${open} thing${open === 1 ? '' : 's'} need${open === 1 ? 's' : ''} you.</button>` : '';
-    const opens = parts.length ? [] : this.openClauses();
+    const opens = parts.length ? [] : this.form_ === 'away' ? [...this.openClauses(), ...this.unlockedClauses()] : this.openClauses();
     const openHtml = opens.length ? `<span style="color:var(--amber)">${esc(opens.slice(0, 2).join('. '))}${opens.length > 2 ? ` and ${opens.length - 2} more` : ''}.</span>` : '';
     if (this.form_ === 'away') {
       const sec = parts.length ? ' ' + sentence(parts) : ' ' + (openHtml || '<span style="color:var(--indigo)">Everything is locked.</span>');

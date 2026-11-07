@@ -15,7 +15,7 @@
 // (who or what changed it). Every fetch is cached for a minute and asked at
 // most once at a time; the panel re-renders when an answer lands.
 
-import { esc, mix, clock, dur, fmt, staleAge } from './util.js';
+import { esc, mix, clock, dur, fmt, outdoorStale } from './util.js';
 
 const CACHE = new Map();
 const MAX_CACHE = 400;
@@ -356,7 +356,7 @@ export function readings(hass, card, H, colorFor, head) {
     const nm = st.attributes.friendly_name || eid;
     // A line's colour is its place in a fixed palette, so two rooms never
     // share one; the reading's own warmth colours its value instead.
-    series.push({ id: eid, old: staleAge(st), name: nm, short: nm.replace(/\s*(temperature|humidity|temp|moisture)$/i, ''), color: SERIES[series.length % SERIES.length], valColor: colorFor(parseFloat(st.state)), pts, now: parseFloat(st.state) });
+    series.push({ id: eid, old: outdoorStale(hass, eid), name: nm, short: nm.replace(/\s*(temperature|humidity|temp|moisture)$/i, ''), color: SERIES[series.length % SERIES.length], valColor: colorFor(parseFloat(st.state)), pts, now: parseFloat(st.state) });
   });
   if (pending && !series.length) return header('') + '<p class="sm">Reading the day…</p>';
   // Extremes (an attic, the outside) leave the plot for the line below it.
@@ -369,7 +369,7 @@ export function readings(hass, card, H, colorFor, head) {
     const st = hass.states[eid]; if (!st || series.some((x) => x.id === eid)) return;
     const rows = stats(hass, eid, t0, now, '5minute');
     const nm = st.attributes.friendly_name || eid;
-    extreme.push({ id: eid, old: staleAge(st), short: nm.replace(/\s*(temperature|humidity|temp)$/i, ''), color: 'var(--muted)', now: parseFloat(st.state), pts: Array.isArray(rows) ? rows.map((p) => [p.t, p.mean]) : [] });
+    extreme.push({ id: eid, old: outdoorStale(hass, eid), short: nm.replace(/\s*(temperature|humidity|temp)$/i, ''), color: 'var(--muted)', now: parseFloat(st.state), pts: Array.isArray(rows) ? rows.map((p) => [p.t, p.mean]) : [] });
   });
 
   // What the house was aiming for: a band the card names, or the

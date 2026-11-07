@@ -1556,6 +1556,39 @@ for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
     if (!/Spare Window is open/.test(said.away) || /Everything is locked/.test(said.away)) fail(where, `#676: the away story does not name the open window ("${said.away}")`);
     if (/Every door is locked/.test(said.sit)) fail(where, `#676: a sentence claiming every door is locked was shown over an open one ("${said.sit}")`);
   }
+
+  // #719 #734: brAIn's sentence is checked against the doors as they are now.
+  {
+    const said = await p.evaluate(async () => {
+      const P = window.__panel; const H = P.hass; const states = {};
+      const words = (html) => { const t = document.createElement('template'); t.innerHTML = html; return t.content.textContent; };
+      Object.entries(H.states).forEach(([e, s]) => { if (!/^(lock|cover|binary_sensor)\./.test(e)) states[e] = s; });
+      const put = (eid, state, attrs) => { states[eid] = { entity_id: eid, state, attributes: attrs, last_changed: new Date(Date.now() - 6 * 3600000).toISOString(), last_updated: new Date().toISOString() }; };
+      put('lock.claims_front', 'locked', { friendly_name: 'Front Door Lock' });
+      put('cover.claims_garage', 'closed', { device_class: 'garage', friendly_name: 'Garage Door' });
+      // Nothing salient, so the story is brAIn's sentence (or the away line).
+      const verdict = P.verdict; P.verdict = () => [];
+      P.hass = { ...H, states }; P.form_ = '';
+      const say = (sentence) => { P.brain().situation = { sentence, at: Date.now() / 1000 }; return words(P.verdictHtml(P.dash)); };
+      const out = {};
+      out.unlocked = say('The front door is still unlocked.');
+      out.garage = say('Close the garage before bed.');
+      out.battery = say('The front door lock battery is low.');
+      out.past = say('The front door was unlocked at 3 pm, now locked.');
+      put('lock.claims_back', 'unlocked', { friendly_name: 'Back Door Lock' });
+      P.hass = { ...H, states };
+      out.all = say('All doors are locked.');
+      P.form_ = 'away'; out.away = words(P.verdictHtml(P.dash)); P.form_ = '';
+      P.verdict = verdict; P.hass = H; P.schedule();
+      return out;
+    });
+    if (/unlocked/.test(said.unlocked)) fail(where, `#719: the story says a locked lock is unlocked ("${said.unlocked}")`);
+    if (/Close the garage/.test(said.garage)) fail(where, `#734: the story says to close a closed garage ("${said.garage}")`);
+    if (!/battery is low/.test(said.battery)) fail(where, `#719: a battery sentence about a locked lock was hidden ("${said.battery}")`);
+    if (!/now locked/.test(said.past)) fail(where, `#719: a past unlock that ends locked was hidden ("${said.past}")`);
+    if (/All doors are locked/.test(said.all)) fail(where, `#719: "All doors are locked" over an unlocked lock ("${said.all}")`);
+    if (/Everything is locked/.test(said.away) || !/Back Door Lock is unlocked/.test(said.away)) fail(where, `#719: the away line does not name the unlocked lock ("${said.away}")`);
+  }
   await ctx.close();
 
   // #664: with the greeting, story and Ask off and no clock, no empty region
