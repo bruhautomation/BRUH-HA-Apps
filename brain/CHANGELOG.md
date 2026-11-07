@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.3
+
+### Fixed
+
+- A sensor you call broken, or tell brAIn to ignore, is no longer reasoned about: the band and impossible-reading checks stop filing it, the Resident lets go of its readings, and no other finding cites it as evidence of a fault. Safety findings still come through (#692, #701).
+- A machine that runs in bursts, such as a 3D printer or a dishwasher, gets one usual range for running and one for idle, judged by its own status. A hot nozzle mid-print is no longer "far outside its usual range", while a hot bed on an idle printer still is (#696, #715).
+- "That's normal for this sensor" on a reading's row covers that reading and ones like it. A reading well beyond what you explained is reported again (#601).
+
 ## 5.1.2
 
 ### Changed
