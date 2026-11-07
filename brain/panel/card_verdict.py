@@ -530,7 +530,6 @@ def review(obj: dict, previous: dict | None = None,
     card_claims.title_figures_agree(out, got["changed"])
     _finish(out, got["changed"])
     card_claims.trim_gaps(out, got["changed"])
-    card_claims.trim_guess(out, got["changed"])
     _strip_verdict_sentence(out, got["changed"])
     _not_another_cards_lead(out, got["changed"], others, names_in)
     changed = got["changed"]

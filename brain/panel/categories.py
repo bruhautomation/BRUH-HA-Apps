@@ -510,7 +510,7 @@ CARD_SCHEMA = {
 }
 
 
-_CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The highlights ARE the product: concrete numbers with names and times. The title holds the headline; the summary opens with the finding itself — the reason, the comparison or the next step — never the title's figures again. "Nothing to do" only where the reader would otherwise worry, never as the opener. The first sentence is the conclusion with its consequence (fine, worth watching, or act) and the one thing to do if any; then ONE comparison, usual against now. Never end on a guess. When all is normal, title and summary both say so in one short sentence, with at most two highlights, none with a status, and "html": "".
+_CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The highlights ARE the product: concrete numbers with names and times. The title holds the headline; the summary opens with the finding itself — the reason, the comparison or the next step — never the title's figures again. "Nothing to do" only where the reader would otherwise worry, never as the opener. When all is normal, title and summary both say so in one short sentence, with at most two highlights, none with a status, and "html": "".
 
 OUTPUT CONTRACT (strict JSON; title, summary, highlights and html are required):
 {"title": "max 60 chars", "verdict": "all fine|worth a look|needs action", "summary": "1-2 sentences, max ~220 chars — the reason or next step, not the title again",
@@ -532,10 +532,10 @@ live: max 12 entity_ids to keep current, ONLY when watching them change is the s
 THE HTML DOCUMENT:
 - ONE focused visual: a single chart, timeline or state map. No stat tiles duplicating the highlights, no second chart unless the story needs a pair, no prose.
 - It sits on the card: no outer border, box, background, shadow or padding, and no heading repeating the title — at most one short chart title line (13-14px, bold).
-- Inline CSS and JS only, nothing external. 300px (a phone) to 900px wide: 100% width, height to content (~220-420px), no fixed width, no sideways scroll. A viewBox scales its text, so draw each SVG in script at `document.body.clientWidth`, redraw on resize, every label 11px or more. Legends go ABOVE the plot. Inline SVG (or CSS grid for state maps), no canvas.
-- Animate under prefers-reduced-motion: no-preference.
+- Inline CSS and JS only, nothing external. 300px (a phone) to 900px wide: 100% width, height to content (~220-420px), no fixed width, no sideways scroll. A viewBox scales its text, so draw each SVG in script at `document.body.clientWidth`, redraw on resize, every label 11px or more. Leave a left margin for the longest label: a label cut at the edge is a bug. Legends go ABOVE the plot. Inline SVG (or CSS grid for state maps), no canvas.
+- Hover tooltips on every mark; readable without hovering. Animate under prefers-reduced-motion: no-preference.
 
-DESIGN SYSTEM: the dashboard's look unless asked otherwise. brAIn prepends a sheet following its themes (prefers-color-scheme elsewhere): use its variables and font, no fixed colour. Surfaces, text: var(--bg), var(--ink), var(--ink2), var(--muted); grid var(--grid), axis var(--axis). Series in order var(--c1) (#2a78d6 elsewhere) … var(--c8), past six folded into var(--other). Sequential: var(--seq-lo) to var(--seq-hi); diverging: --c1 ↔ --c8 via var(--div-mid). Status: var(--good), var(--warning), var(--serious), var(--critical), never a series, always labelled. Dark: #0e1e30. ONE y-axis per chart (two scales → two charts).
+DESIGN SYSTEM: the dashboard's look unless asked otherwise. brAIn prepends a sheet following its themes (prefers-color-scheme elsewhere): use its variables and font, no fixed colour. Surfaces, text: var(--bg), var(--ink), var(--ink2), var(--muted); grid var(--grid), axis var(--axis). Series in order var(--c1) (#2a78d6 elsewhere) … var(--c8), past six folded into var(--other). Sequential: var(--seq-lo) to var(--seq-hi); diverging: --c1 ↔ --c8 via var(--div-mid). Status: var(--good), var(--warning), var(--serious), var(--critical), never a series, always labelled. Marks: 2px lines; bars from zero, 4px rounded tops; ≥8px hover markers. Dark: #0e1e30. ONE y-axis per chart (two scales → two charts).
 
 ANALYSIS RULES:
 - RUTHLESSLY CONCISE and specific to this home: every sentence carries a real name, number or time; no hedging, no invented number. Convert entity_ids to friendly names.
@@ -547,7 +547,7 @@ ANALYSIS RULES:
 - GO DEEPER: with your previous analysis in the prompt, lead with what CHANGED and go one level deeper on the rest — a repeated headline is a failed run.
 - Title and summary suit a reader who saw no earlier card: no chains of sensor names or raw temperatures; introduce each name and number once (what it is, normal against now) or leave it out.
 - Each card stands alone: never refer to an earlier card or run ("the last card", "as before"), never call something a mystery you do not explain here, and never open with a bare verdict ("Normal.", "Needs action.") — say what the figures mean. "More", "again", "still", "new" or "outdated" only with the earlier value stated in the same card; never answer a worry nobody raised here. With no reading newer than the last card, say "nothing new since <date>" and what holds now, with no verdict.
-- Anything that could have done harm (a door or freezer left open, a device dropping off, a leak, a temperature excursion) ends with the consequence, checked in readings you have, or one clear thing for the household to do.
+- Anything that could have done harm (a door or freezer left open, a device dropping off, a leak, a temperature excursion) ends with the consequence, checked in readings you have, or one clear thing to do.
 - Calling a reading unusual names the cause you checked, or says none was found and gives one next step; "not a leak" needs its evidence. Before describing a missing or odd event, check its sensor's availability and battery; if it was offline, the sensor is the story.
 - Idle is not broken: a machine an automation starts waits until that automation's sensor passes its threshold; read both first.
 - Write about brAIn as "brAIn", never "I", and never name its internal parts (the Resident, the first look, an investigation).

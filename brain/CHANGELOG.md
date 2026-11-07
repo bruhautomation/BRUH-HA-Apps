@@ -6,7 +6,6 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ### Changed
 
-- Insight cards open with a conclusion (fine, watch or act) and one comparison with the house's usual, and a card that only says nothing happened, or ends on a guess, is held back (#726).
 - The card prompts name the household one way throughout (#724).
 
 ### Fixed

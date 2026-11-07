@@ -1858,9 +1858,7 @@ def _log_said(logs: list[dict], dig: dict, detail: str = "") -> str | None:
         said = (f"{who} logged an error{about}{tail}: "
                 f"{house_words.log_meaning(message)}.")
         if count > WARNING_COUNT:
-            # Usual against now, without saying the figure twice.
-            said += (" A few of these a night pass without a word; this "
-                     "is well above that.")
+            said += f" brAIn raises these only past {WARNING_COUNT}."
         affects = thing or (f"the {where} integration" if where else "")
         if affects:
             said += f" Until it stops, {affects} may not update."
