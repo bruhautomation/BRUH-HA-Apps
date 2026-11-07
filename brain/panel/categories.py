@@ -510,10 +510,10 @@ CARD_SCHEMA = {
 }
 
 
-_CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The highlights ARE the product: concrete numbers with names and times. The title holds the headline; the summary opens with the finding itself — the reason, the comparison or the next step — never the title's figures again. "Nothing to do" only where the reader would otherwise worry, never as the opener. When all is normal, title and summary both say so in one short sentence, with at most two highlights, none with a status, and "html": "".
+_CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The highlights ARE the product: concrete numbers with names and times. The title holds the conclusion; the summary opens with the finding itself — the reason, the comparison or the next step — never the title's figures again. "Nothing to do" only where the reader would otherwise worry, never as the opener. When all is normal, title and summary both say so in one short sentence, with at most two highlights, none with a status, and "html": "".
 
 OUTPUT CONTRACT (strict JSON; title, summary, highlights and html are required):
-{"title": "max 60 chars", "verdict": "all fine|worth a look|needs action", "summary": "1-2 sentences, max ~220 chars — the reason or next step, not the title again",
+{"title": "max 60 chars", "verdict": "all fine|worth a look|needs action", "summary": "1-2 sentences, max ~220 chars, one usual-vs-now comparison",
  "highlights": [{"label": "Metric", "value": "42 kWh", "delta": "+12% vs avg (optional)", "status": "good|warning|serious|critical (optional)"}],
  "hypotheses": ["optional, usually none"], "learned": ["optional, max 3"],
  "findings": [{"text": "ONE sentence, under 120 chars", "detail": "the evidence", "fix": "the specific change", "severity": "info|warning|serious|critical", "fixable": true, "entity_id": "sensor.example (optional)"}],
@@ -523,7 +523,7 @@ OUTPUT CONTRACT (strict JSON; title, summary, highlights and html are required):
 verdict: one judgement, shown as a chip; the summary never repeats it.
 highlights: 3-6 checkable data points, each with its unit, the entity/room/person it belongs to, and a time when relevant. "delta" compares against the period; "status" only when something deserves attention.
 tags: what the card is ABOUT, not the category it was asked for.
-hypotheses: usually ZERO. A belief the data cannot settle that would change how you read this home, answerable yes or no; never one memory answers.
+hypotheses: usually ZERO, and never the ending. A belief the data cannot settle that would change how you read this home, answerable yes or no; never one memory answers.
 learned: durable NEW discoveries about this home, one plain fact each, no advice, nothing broken, never a KNOWN FACT or the snapshot.
 findings: things that are BROKEN and have an owner. It names the entity, the number and when it started; "fix" is ONE chosen step, never "either…or", "if not" or "also confirm"; "fixable" is true ONLY when software could make the change (config, rename, service call; never batteries or re-pairing). severity: critical = safety or data loss; serious = not working; warning = degraded or will break soon; info = worth tidying. A conclusion of fine files none; an empty list is usual. Never repeat a finding the prompt lists as reported or dismissed; an open one about a device this card covers is the verdict on it: point to it in one clause, never call that device fine.
 opportunities: usually none. An automation this home clearly lacks, as the one sentence the household would say to ask for it, with the entity_ids it names. Never something broken (a finding).

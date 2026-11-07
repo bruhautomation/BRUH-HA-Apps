@@ -2,6 +2,19 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.6
+
+### Changed
+
+- An insight card's title holds its conclusion, its summary gives one comparison with the house's usual, and a card whose only news is that nothing happened is held back (#726).
+- The first look no longer asks every row to say why it can wait: a row that can wait is marked to watch, and one worth looking into says what makes it matter now (#735, #700).
+
+### Fixed
+
+- A finding from an integration's log errors no longer says "something it was doing failed": it says who logged what, how many times and when, and what the error means when brAIn recognises it (#725).
+- Zigbee and Z-Wave device titles say what was measured (offline for some hours, not heard from, a weak link, dropped commands) instead of "struggling" (#737).
+- When brAIn's look finds the cause of a problem, the check's generic "usual cause" aside is removed from the step, never the step itself (#583).
+
 ## 5.1.5
 
 ### Changed
