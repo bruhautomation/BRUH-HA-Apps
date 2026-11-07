@@ -26917,12 +26917,11 @@ YOLO_MODE_ON = (
 
 
 def development_mode() -> bool:
-    """Development mode is the devloop switched on with "Ask before sending"
-    off (or the old autopilot stored, which reads that way): brAIn files what
-    it finds about itself without a press. Opt-in; False on any error."""
+    """Development mode: brAIn files what it finds about itself without a
+    press (`devloop.development_mode`: autopilot stored, or written down by
+    its migration, never a new install). Opt-in; False on any error."""
     try:
-        s = devloop.load_settings()
-        return s.get("enabled") is True and s.get("review") is False
+        return devloop.development_mode()
     except Exception:  # noqa: BLE001 — unreadable is off, the safe reading
         return False
 

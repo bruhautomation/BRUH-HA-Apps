@@ -425,16 +425,17 @@ the only thing there is. If a task needs one of these, stop and say so.
 "
     fi
 
-    # Development mode is opt-in (⚙ › Features › Development loop with
-    # ⚙ › Developer's "Ask before sending each new report" off, or the old
-    # `autopilot` still stored — `server.development_mode`). Said near the top of the file
+    # Development mode is opt-in: the devloop's `enabled` with the old
+    # `autopilot` stored, or written down by its migration and "Ask before
+    # sending" still off (`devloop.development_mode`). Said near the top of the file
     # because it changes what a session here is allowed to spend its time on.
     local dev_mode_state="off"
     if python3 - "${BRAIN_DEVLOOP_DIR:-/data/devloop}/settings.json" 2>/dev/null <<'PYEOF'
 import json, sys
 s = json.load(open(sys.argv[1]))
 sys.exit(0 if s.get("enabled") is True
-         and (s.get("autopilot") is True or s.get("review") is False) else 1)
+         and (s.get("autopilot") is True
+              or (s.get("autopilot_migrated") is True and s.get("review") is False)) else 1)
 PYEOF
     then
         dev_mode_state="on"
@@ -482,8 +483,8 @@ terminal or chat lives here; when they ask for something they want it done.
 ${personality_section}
 ## Development mode (opt-in): currently ${dev_mode_state}
 
-Development mode is off unless the owner turned the development loop on and
-"Ask before sending each new report" off. When it is on, brAIn works on
+Development mode is off unless the owner turned it on (it was the
+development loop's "Report everything without asking"). When it is on, brAIn works on
 itself: it looks over its own code and how it behaves in this house for
 things to improve, and files what it finds as issues in the owner's private
 repository (nothing waits for a press), where the cloud half fixes and ships them. In a session here that

@@ -197,6 +197,11 @@ _AUTOPILOT_DECIDES = ("streams", "schedule", "review")
 DEFAULTS = {
     "enabled": False,
     "autopilot": False,
+    # Set once, when `save_settings` writes a stored autopilot's reading down
+    # as the owner's own settings. Development mode stays what it was for
+    # that install (`development_mode`); an install that never had
+    # autopilot never gets it from how "Ask before sending" is read.
+    "autopilot_migrated": False,
     "streams": {k: v["default_on"] for k, v in STREAMS.items()},
     "schedule": {k: v["default_hours"] for k, v in STREAMS.items()},
     "repo": "",
@@ -273,6 +278,8 @@ def _raw_settings() -> dict:
         out["review"] = data["review"]
     if isinstance(data.get("autopilot"), bool):
         out["autopilot"] = data["autopilot"]
+    if isinstance(data.get("autopilot_migrated"), bool):
+        out["autopilot_migrated"] = data["autopilot_migrated"]
     repo = data.get("repo")
     if isinstance(repo, str) and REPO_RE.match(repo):
         out["repo"] = repo
@@ -307,7 +314,8 @@ def save_settings(changes: dict) -> dict:
         # The old "Report everything without asking" is stored: what the
         # owner saw is its reading, so that becomes what is stored, and the
         # change lands on it rather than being read over (#710).
-        current = {**_apply_autopilot(current), "autopilot": False}
+        current = {**_apply_autopilot(current), "autopilot": False,
+                   "autopilot_migrated": True}
     for key, value in changes.items():
         if key in ("enabled", "review", "autopilot"):
             if not isinstance(value, bool):
@@ -352,6 +360,20 @@ def save_settings(changes: dict) -> dict:
             raise ValueError(f"unknown setting: {key}")
     atomic_write.write_json(settings_file(), current)
     return _apply_autopilot(current)
+
+
+def development_mode(settings: dict | None = None) -> bool:
+    """Development mode (sessions file what they notice with `report_bug`
+    unasked) is true exactly where it was before autopilot stopped being a
+    switch: the loop on with autopilot stored, or with autopilot's reading
+    written down as the owner's own (`autopilot_migrated`) and "Ask before
+    sending" still off — turning it on is what turning autopilot off was.
+    An install that never had autopilot is never in it."""
+    s = _raw_settings() if settings is None else settings
+    if s.get("enabled") is not True:
+        return False
+    return s.get("autopilot") is True or (
+        s.get("autopilot_migrated") is True and s.get("review") is False)
 
 
 def enabled() -> bool:

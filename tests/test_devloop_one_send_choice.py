@@ -75,6 +75,53 @@ class TestAStoredAutopilotNoLongerLocksAnything(Case):
         self.assertTrue(out["review"])
 
 
+def shell_rule(path: Path) -> bool:
+    """ha-context-gen.sh's own heredoc, lifted out and run on a file."""
+    import subprocess
+    src = (BASE / "brain" / "scripts" / "ha-context-gen.sh").read_text(encoding="utf-8")
+    block = src[src.index('settings.json" 2>/dev/null <<\'PYEOF\'\n'):]
+    block = block[block.index("\n") + 1:block.index("\nPYEOF")]
+    return subprocess.run([sys.executable, "-c", block, str(path)]).returncode == 0
+
+
+class TestDevelopmentModeIsWhereItWas(Case):
+    """Development mode (sessions filing report_bug unasked) is true exactly
+    where it was before autopilot stopped being a switch, and nowhere new."""
+
+    def both(self) -> list[bool]:
+        return [devloop.development_mode(), shell_rule(devloop.settings_file())]
+
+    def test_never_autopilot_with_review_off_is_not(self):
+        self.store({"enabled": True, "review": False})
+        self.assertEqual(self.both(), [False, False])
+        devloop.save_settings({"schedule": {"faults": 3}, "streams": {"gaps": True}})
+        self.assertEqual(self.both(), [False, False])
+
+    def test_an_autopilot_install_still_is_before_and_after_its_first_change(self):
+        self.store({"enabled": True, "autopilot": True, "review": True})
+        self.assertEqual(self.both(), [True, True])
+        devloop.save_settings({"schedule": {"faults": 6}})
+        raw = devloop._raw_settings()
+        self.assertFalse(raw["autopilot"])
+        self.assertTrue(raw["autopilot_migrated"])
+        self.assertEqual(self.both(), [True, True])
+        devloop.save_settings({"streams": {"ideas": False}})
+        self.assertEqual(self.both(), [True, True])
+
+    def test_asking_before_sending_ends_it_as_turning_autopilot_off_did(self):
+        self.store({"enabled": True, "autopilot": True})
+        devloop.save_settings({"review": True})
+        self.assertEqual(self.both(), [False, False])
+
+    def test_the_loop_off_is_never_development_mode(self):
+        self.store({"enabled": False, "autopilot": True})
+        self.assertEqual(self.both(), [False, False])
+
+    def test_the_migration_mark_is_not_settable_from_the_wire(self):
+        with self.assertRaises(ValueError):
+            devloop.save_settings({"autopilot_migrated": True})
+
+
 class TestRecommendedSchedules(unittest.TestCase):
     def test_every_stream_has_one_from_the_choices(self):
         self.assertEqual(set(devloop.RECOMMENDED_HOURS), set(devloop.STREAMS))
