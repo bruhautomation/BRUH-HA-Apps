@@ -1396,6 +1396,29 @@ def faulty_case(case: dict, entities, faulty: dict) -> str:
     return ""
 
 
+def without_faulty(signals: list, faulty: dict) -> tuple[list, list]:
+    """``(kept, let_go)``: the live signals a first look may be handed, and
+    the ones about — or citing as evidence — a sensor the owner called
+    broken (`corrections.known_faulty`). `faulty_case` refuses a case
+    resting on one after the investigation has been paid for; this keeps
+    the first look from being asked to reason about its readings at all. A
+    signal a never-ignore floor holds (safety, protected, hot) is kept."""
+    if not faulty:
+        return list(signals or []), []
+    kept, let_go = [], []
+    for signal in signals or []:
+        if not isinstance(signal, dict) or never_ignore(signal)[0]:
+            kept.append(signal)
+            continue
+        named = [str(signal.get("subject") or "")] + [
+            str((ev.get("entity") or ev.get("entity_id") or "")
+                if isinstance(ev, dict) else ev)
+            for ev in signal.get("evidence") or ()]
+        (let_go if any(e in faulty for e in named if e)
+         else kept).append(signal)
+    return kept, let_go
+
+
 def ungrounded_did_not_run(case: dict, drivers: dict) -> str:
     """Why a "did not run" case is not grounded, or "" when it is (or when
     it is not that kind of claim).
@@ -2108,6 +2131,7 @@ __all__ = [
     "note_withheld", "parse_case", "parse_dismissal", "parse_first_look",
     "rejudge_due", "tier_for", "watch", "watch_note", "watched",
     "DOOR_CLASSES", "READING_DOMAINS", "drivers_of", "faulty_case",
+    "without_faulty",
     "open_duration", "stated_open", "ungrounded_did_not_run",
     "device_aliases", "not_due", "look_tier",
     "next_batch_limit", "shrunk_batch_limit", "grown_batch_limit",

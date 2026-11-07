@@ -693,6 +693,96 @@ async def fetch_hourly(session, ids: list[str], now: float,
     return out if answered else None
 
 
+# How many machines' status histories one nightly pass asks for. A house
+# has a printer, a dishwasher, a washer; past this it is a house full of
+# statuses, and the sensors beyond it keep the one band they always had.
+STATUS_FETCH_MAX = 12
+
+
+async def fetch_status_history(session, ids: list[str], now: float,
+                               days: int = HISTORY_DAYS) -> dict | None:
+    """``{status entity: [history rows]}`` over the window, or None when
+    Core would not answer — then no sensor gets a band per state, and the
+    check reads each one as it did before. The same `/history/period`
+    request the checks pass already makes for a machine's last job, over the
+    baseline's month, minimal and without attributes: a status is a handful
+    of changes a day."""
+    import ha_data  # noqa: PLC0415 — see the checks snapshot's own note
+
+    if not ids:
+        return {}
+    end = dt.datetime.fromtimestamp(now, tz=dt.timezone.utc)
+    start = end - dt.timedelta(days=days)
+    try:
+        raw = await ha_data._rest_get(
+            session, ha_data.history_path(start), timeout=60,
+            params=ha_data.history_params(ids, end, minimal=True,
+                                          no_attributes=True))
+    except Exception as exc:  # noqa: BLE001 — a fetch, not the pass
+        log.info("baseline status history failed: %s", exc)
+        return None
+    if not isinstance(raw, list):
+        return None
+    got = ha_data.series_by_entity(raw)
+    return {eid: got.get(eid) or [] for eid in ids}
+
+
+def _phases(status: str, rows: list, machines) -> list[tuple[float, str]]:
+    """A status's history as ``[(since, "working"|"idle"|"")]``, oldest
+    first, in the words `chores.phase_of` reads."""
+    out = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        stamp = row.get("last_changed") or row.get("last_updated")
+        try:
+            ts = dt.datetime.fromisoformat(
+                str(stamp).replace("Z", "+00:00")).timestamp()
+        except (TypeError, ValueError):
+            continue
+        out.append((ts, machines.phase_of(status, row.get("state"))))
+    out.sort(key=lambda p: p[0])
+    return out
+
+
+def split_by_phase(series: list, phases: list) -> dict[str, list]:
+    """``{"working": rows, "idle": rows}``: each hourly row under what the
+    machine was doing at the middle of that hour. An hour before the first
+    change the history holds, or in a "could not tell", is in neither."""
+    out: dict[str, list] = {"working": [], "idle": []}
+    if not phases:
+        return out
+    stamps = [p[0] for p in phases]
+    import bisect  # noqa: PLC0415 — one caller
+
+    for row in series or []:
+        start = row.get("start") if isinstance(row, dict) else None
+        if not isinstance(start, (int, float)) or isinstance(start, bool):
+            continue
+        at = bisect.bisect_right(stamps, float(start) + 1800) - 1
+        if at < 0:
+            continue
+        phase = phases[at][1]
+        if phase in out:
+            out[phase].append(row)
+    return out
+
+
+def by_state(series: list, phases: list, tz: dt.tzinfo) -> dict:
+    """A band per machine state, for each state with enough hours to have
+    one (`build_buckets`' own floor). Empty when the machine was only ever
+    seen in one state: there is then nothing to tell apart."""
+    split = split_by_phase(series, phases)
+    if not (split["working"] and split["idle"]):
+        return {}
+    out = {}
+    for phase, rows in split.items():
+        built = build_buckets(rows, tz)
+        if built and not built.get("flat"):
+            out[phase] = built
+    return out
+
+
 # One nightly pass. Every store built by `build_baselines` accrues at
 # this rate, which is why they each hand this number to `house.eta`
 # rather than the panel guessing on their behalf.
@@ -844,7 +934,7 @@ def _without_impossible(series: list, attrs: dict, eid: str,
 async def build(session, states: dict, now: float | None = None,
                 path: str | None = None,
                 entities: list | None = None, ranges=None,
-                house=None) -> dict:
+                house=None, machines=None) -> dict:
     """Measure the house and write the store. Returns the payload.
 
     A fetch the recorder refused writes nothing: see `refused`. A house
@@ -856,6 +946,14 @@ async def build(session, states: dict, now: float | None = None,
     (`checks._util.House`), both handed in by the caller: with them the
     range check knows which readings are a printer's or a computer's, so a
     print bed at 65 °C is learned rather than dropped as impossible.
+
+    ``machines`` is the checks' `chores` module, handed in for the same
+    reason: with it and a ``house`` that carries the live states, a sensor
+    on a device with a job status (a printer's, a dishwasher's `running`)
+    also gets a band per state (`by_state`), learned from the hours the
+    status said working and the hours it said idle, so the check can judge
+    a reading against what the machine is doing rather than against when
+    it usually does it.
     """
     now = time.time() if now is None else now
     tz, tz_name = house_timezone()
@@ -889,6 +987,17 @@ async def build(session, states: dict, now: float | None = None,
     # also handed in, for the same reason: a printer's bed at 65 °C is
     # learned rather than dropped as impossible.
     _house = house
+    statuses: dict[str, str] = {}
+    if machines is not None and _house is not None:
+        for eid in sorted(rows):
+            status = machines.status_entity(_house, eid)
+            if status and (status in statuses.values()
+                           or len(set(statuses.values())) < STATUS_FETCH_MAX):
+                statuses[eid] = status
+    histories = (await fetch_status_history(
+        session, sorted(set(statuses.values())), now) if statuses else {})
+    phases = {status: _phases(status, hist, machines)
+              for status, hist in (histories or {}).items()}
     for eid, series in rows.items():
         attrs = ((states.get(eid) or {}).get("attributes") or {})
         series, impossible = _without_impossible(series, attrs, eid, _devices,
@@ -916,6 +1025,12 @@ async def build(session, states: dict, now: float | None = None,
             shifted = recent_shift(series, built, tz, now)
             if shifted:
                 built["recent"] = shifted
+        status = statuses.get(eid)
+        if status and phases.get(status):
+            bands = by_state(series, phases[status], tz)
+            if bands:
+                built["by_state"] = bands
+                built["status"] = status
         payload["entities"][eid] = built
     save(payload, path)
     log.info("baselines: %d of %d entities measured over %d days (%s)",

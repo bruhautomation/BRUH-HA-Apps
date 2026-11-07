@@ -14372,6 +14372,19 @@ async def _resident_look(now: float, settings: dict, thinking: str,
     filed = [s for s in RESIDENT_PENDING if s.get("finding_ts")]
     live = signals.dedupe([s for s in RESIDENT_PENDING
                            if not s.get("finding_ts")])
+    # A live change about a sensor the owner called broken — or one citing
+    # its reading — is not handed to the look at all (`resident.
+    # without_faulty`); a filed row about one never reached the store
+    # (`triage.gate`). Said on the trail, so "why did brAIn not look" has
+    # the owner's own words as its answer.
+    faulty = await asyncio.to_thread(corrections.known_faulty)
+    live, broken = resident.without_faulty(live, faulty)
+    if broken:
+        await asyncio.to_thread(decision_trail.note_many, [{
+            "kind": "explained", "subject": str(s.get("subject") or ""),
+            "check": "resident",
+            "reason": "it rests on a sensor you called broken or "
+                      "finished with"} for s in broken], now)
     # A watched subject re-enters the look on NEW EVIDENCE and never on the
     # clock — `curiosity.RETRY_EVENTS`' rule, because a timer buys the
     # identical answer over the identical data on somebody else's money.
@@ -16963,8 +16976,9 @@ async def build_baselines(reason: str = "schedule") -> dict:
                 payload = _done("baselines", await baselines.build(
                     session, by_id, started,
                     entities=ents if isinstance(ents, list) else None,
-                    ranges=checks.devices,
+                    ranges=checks.devices, machines=checks.chores,
                     house=House({
+                        "states": by_id,
                         "entities": ents if isinstance(ents, list) else [],
                         "devices": devices if isinstance(devices, list)
                         else []})))
@@ -22116,7 +22130,12 @@ def _record_exception(finding: dict, note: str) -> list[str]:
                 predicate=facts_store.EXCEPTION_PREFIX + rule,
                 run_id=str(finding.get("run_id") or ""), confidence=0.95,
                 about=report,
-                finding_key=findings_store.normalize(finding.get("text") or ""))
+                finding_key=findings_store.normalize(finding.get("text") or ""),
+                # A reading check's row says what range the person was shown
+                # (`checks._util.explained_range`): the rule holds while the
+                # reading stays in it, and the reading leaving it is news.
+                explained=findings_store.clean_explained(
+                    finding.get("explained")) if rule != "resident" else None)
         except Exception as exc:  # noqa: BLE001
             log.debug("could not record the exception for %s: %s",
                       log_safe(chunk[0]), exc)

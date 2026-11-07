@@ -67,6 +67,7 @@ import datetime as dt
 import functools
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -1556,6 +1557,10 @@ def _shape(entry: dict) -> dict:
     items = clean_items(entry.get("items"))
     if items:
         out["items"] = items
+    explained = clean_explained(entry.get("explained"))
+    if explained:
+        # What a Wrong on this row explains (`server._record_exception`).
+        out["explained"] = explained
     # What ends a "for now" snooze early (`wake_returned`): the entities it
     # is about, which reporting again means the reason it slept is over.
     # Absent on every other row, and only while the snooze is set.
@@ -1874,6 +1879,21 @@ def item_labels(items) -> tuple[list[str], str]:
     return labels, noun
 
 
+def clean_explained(value) -> list[float] | None:
+    """A reading check's ``[low, high]``: the range a Wrong typed on its row
+    explains (`checks._util.explained_range`), or None when it is not one."""
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    try:
+        low, high = (float(v) for v in value)
+    except (TypeError, ValueError):
+        return None
+    if any(isinstance(v, bool) for v in value) or not (
+            math.isfinite(low) and math.isfinite(high)) or low > high:
+        return None
+    return [low, high]
+
+
 def coerce(obj: dict) -> dict | None:
     """One wire-shaped finding — from a model reply or an inbox line — turned
     into a stored entry, or None if there is nothing there.
@@ -1940,6 +1960,9 @@ def coerce(obj: dict) -> dict | None:
     items = clean_items(obj.get("items"))
     if items:
         entry["items"] = items
+    explained = clean_explained(obj.get("explained"))
+    if explained:
+        entry["explained"] = explained
     ask = _clean_minecraft_approval(obj.get("minecraft_approval"))
     if ask:
         entry["minecraft_approval"] = ask
@@ -4361,6 +4384,10 @@ def refresh_details(objs: list[dict]) -> int:
                 _send_to_look(cur)
             elif moved:
                 _verdict_outdated(cur)
+            changed += 1
+        # The range a Wrong would explain is the one on the card NOW.
+        if entry.get("explained") and cur.get("explained") != entry["explained"]:
+            cur["explained"] = entry["explained"]
             changed += 1
         new_items = clean_items(entry.get("items"))
         if new_items and clean_items(cur.get("items")) != new_items:

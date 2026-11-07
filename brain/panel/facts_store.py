@@ -700,7 +700,8 @@ def add(text: str, *, subject: str = "", source: str = "panel",
         near_dedupe: bool = False, said: str = "",
         brain_fact: bool | None = None,
         keyed: bool = False, unverified: bool = False,
-        person_said: bool = False) -> tuple[dict | None, bool]:
+        person_said: bool = False,
+        explained=None) -> tuple[dict | None, bool]:
     """Record one fact. Returns ``(fact, created)``.
 
     A re-add is not a second fact: the id is the subject plus the
@@ -720,6 +721,10 @@ def add(text: str, *, subject: str = "", source: str = "panel",
     Wrong was pressed on, so a prompt reading the rule can say what it was
     about, and that report's settled-ledger key, so the press that puts the
     report back in play can also take the rule away.
+
+    ``explained`` rides only on an exception too: the ``[low, high]`` of a
+    reading the Wrong explained (`checks._util.explained_range`), so the
+    rule holds only while the reading stays in it (`House._applies_now`).
 
     ``said`` is the queued line this fact came from, when cleaning changed
     its text (`said_key`); ``brain_fact`` is the caller's judgement of
@@ -796,6 +801,8 @@ def add(text: str, *, subject: str = "", source: str = "panel",
                 row["about"] = str(about)[:MAX_TEXT]
             if finding_key:
                 row["finding_key"] = str(finding_key)[:MAX_TEXT]
+            if explained and predicate:
+                row["explained"] = list(explained)
             if version:
                 row["version"] = version[:32]
             if brain_fact:
@@ -847,6 +854,8 @@ def add(text: str, *, subject: str = "", source: str = "panel",
             entry["about"] = str(about)[:MAX_TEXT]
         if finding_key:
             entry["finding_key"] = str(finding_key)[:MAX_TEXT]
+        if explained and predicate:
+            entry["explained"] = list(explained)
         if folds:
             _absorb(entry, folds)
             gone = {id(r) for r in folds}
