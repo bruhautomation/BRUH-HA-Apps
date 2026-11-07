@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.5
+
+### Changed
+
+- The card prompts name the household one way throughout (#724).
+
+### Fixed
+
+- Check findings no longer show file paths, and a sweep over every check holds them to plain words (#699).
+
 ## 5.1.4
 
 ### Fixed

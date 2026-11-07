@@ -256,7 +256,7 @@ def recorder_size(snap: dict, now: float) -> list[dict]:
     tight = free is not None and free < db_gb
     if db_gb < DB_LARGE_GB and not tight:
         return []
-    detail = f"{db_gb:.1f} GB at {rec.get('db_path')}. {keep_text}."
+    detail = f"The database is {db_gb:.1f} GB. {keep_text}."
     if tight:
         detail += (f" There is {free:.1f} GB free — less than the database "
                    "itself, so a backup of it cannot be written.")
