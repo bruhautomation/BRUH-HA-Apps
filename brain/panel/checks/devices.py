@@ -16,8 +16,9 @@ from ._registry_facts import (FEATURE_PLATFORMS,
                               entry_not_loaded as _entry_not_loaded,
                               is_node_status)
 from ._util import (SOFTWARE_DOMAINS, House, after_restart, age_days,
-                    counted_names, domain_of, evidence_for, join_names, num,
-                    parse_ts, spell_integration, when)
+                    counted_names, domain_of, evidence_for,
+                    explained_range, join_names, num, parse_ts,
+                    spell_integration, when)
 
 UNAVAILABLE_DAYS = 1.0
 BATTERY_LOW_PCT = 15
@@ -1309,6 +1310,13 @@ def implausible(snap: dict, now: float) -> list[dict]:
         value = num(st.get("state"))
         if value is None:
             continue
+        # What a Wrong typed on this row explains: the reading the row
+        # shows, out to an anchor. Impossible NOW, the anchor is the edge
+        # of what its kind can read; sane now after an impossible night, it
+        # is the reading NOW — a range from the old extreme back to the
+        # bound would exclude the very reading the rule is read against.
+        shown = value
+        anchor = bounds[1] if value > bounds[1] else bounds[0]
         if out_of_range(st, eid, house.world, house):
             detail = (f"{numfmt.quantity(value, key[1])} as of "
                       f"{when(st.get('last_updated'))}; "
@@ -1322,6 +1330,7 @@ def implausible(snap: dict, now: float) -> list[dict]:
                 continue
             if lowest >= bounds[0]:
                 lowest = num(seen.get("highest")) or lowest
+            shown, anchor = lowest, value
             detail = (f"It read {numfmt.quantity(lowest, key[1])} as "
                       f"recently as {when(seen.get('last'))} and reads "
                       f"{numfmt.quantity(value, key[1])} now; "
@@ -1335,6 +1344,9 @@ def implausible(snap: dict, now: float) -> list[dict]:
             "severity": "warning",
             "fixable": False,
             "entity_id": eid,
+            # So "that's normal for this sensor" holds until it reads
+            # further out than anything the row showed.
+            "explained": explained_range(shown, anchor, 1.0),
         })
     return out
 

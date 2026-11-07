@@ -428,6 +428,40 @@ def _status_word(st) -> str:
     return ""
 
 
+# A status published as on/off rather than as a word: Home Assistant's own
+# `running` class ("Dishwasher running", a printer's "Printing" flag). On is
+# the machine working and off is it at rest, the same two answers a job
+# word gives; unavailable is "could not tell".
+RUNNING_CLASSES = frozenset({"running"})
+
+
+def _running_flag(eid: str, st) -> bool:
+    return (domain_of(eid) == "binary_sensor" and isinstance(st, dict)
+            and str((st.get("attributes") or {}).get("device_class") or "")
+            in RUNNING_CLASSES)
+
+
+def _flag_word(st) -> str:
+    """A `running` binary sensor's state as a job word."""
+    state = job_state((st or {}).get("state"))
+    return {"on": "running", "off": "idle"}.get(state, state)
+
+
+def phase_of(eid: str, state) -> str:
+    """``"working"``, ``"idle"`` or "" for one state a status entity held —
+    the words `machine_status` reads, for a status's HISTORY, so the nightly
+    pass can split a sensor's hours by what its machine was doing."""
+    if domain_of(eid) == "binary_sensor":
+        word = {"on": "running", "off": "idle"}.get(job_state(state), "")
+    else:
+        word = job_state(state)
+    if word in JOB_UNKNOWN:
+        return ""
+    if word in JOB_FINISHED or word in JOB_IDLE:
+        return "idle"
+    return "working"
+
+
 def machine_status(house: House, eid: str) -> tuple[str, float | None, str]:
     """``(state, since, status_entity)`` for the machine `eid` belongs to.
 
@@ -439,9 +473,12 @@ def machine_status(house: House, eid: str) -> tuple[str, float | None, str]:
     """
     statuses = []
     for other in sorted(house.siblings(eid)):
+        st = house.states.get(other)
+        if _running_flag(other, st):
+            statuses.append((other, _flag_word(st), st))
+            continue
         if domain_of(other) != "sensor":
             continue
-        st = house.states.get(other)
         word = _status_word(st)
         if word or (isinstance(st, dict)
                     and job_state(st.get("state")) in JOB_UNKNOWN
@@ -471,9 +508,11 @@ def status_entity(house: House, eid: str) -> str:
     function will later read.
     """
     for other in sorted(house.siblings(eid)):
+        st = house.states.get(other)
+        if _running_flag(other, st):
+            return other
         if domain_of(other) != "sensor":
             continue
-        st = house.states.get(other)
         if _status_word(st) or says_a_job(st):
             return other
     return ""
