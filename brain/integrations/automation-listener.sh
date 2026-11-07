@@ -387,26 +387,42 @@ task_tool_flags() {
         *) echo "no scope is called '${mode:0:40}'" >&2; return 1 ;;
     esac
 
-    local panel_dir lists allow deny
+    local panel_dir lists allow deny rc
     panel_dir="${BRAIN_PANEL_DIR:-/opt/panel}"
-    # `-P`: the listener runs in /config (the image's WORKDIR), and without
-    # it `python3 -` puts the working directory on sys.path ahead of the
-    # standard library, so a file in the house's config named like a module
-    # the engine imports decided whether every narrow task ran at all.
-    if ! lists=$(BRAIN_PANEL_DIR="$panel_dir" BRAIN_TASK_CAMERAS="$cameras" python3 -P - <<'PYTOOLS'
+    # `-I`, not only `-P`: the listener runs in /config (the image's
+    # WORKDIR), and `python3 -` puts the working directory on sys.path ahead
+    # of the standard library — and `-P` alone still honours PYTHONPATH and
+    # PYTHONSTARTUP, and still runs every `.pth` in the claude user's
+    # site-packages (HOME is /data/home, where a session's `pip install
+    # --user` lands). A file the house's config or a session left behind
+    # decided whether a narrow task ran at all; isolated, nothing but the
+    # panel's own modules and the standard library is read.
+    #
+    # Only the asked scope's pair is computed, and it is printed LAST behind
+    # a marker: a list another scope needs (the game's) can no longer refuse
+    # a `house` task, and a line an import printed on stdout can no longer
+    # shift which line is read as the allow list.
+    lists=$(BRAIN_PANEL_DIR="$panel_dir" BRAIN_TASK_CAMERAS="$cameras" \
+        BRAIN_TASK_SCOPE="$mode" python3 -I - <<'PYTOOLS'
 import os
 import sys
 sys.path.insert(0, os.environ.get("BRAIN_PANEL_DIR", "/opt/panel"))
+mode = os.environ.get("BRAIN_TASK_SCOPE", "")
+
+
+def refuse(why):
+    print(why, file=sys.stderr)
+    raise SystemExit(1)
+
+
 try:
     import engine
-except Exception as exc:
-    print(f"the panel's engine could not be imported ({type(exc).__name__}: "
-          f"{' '.join(str(exc).split())[:120]})", file=sys.stderr)
-    raise SystemExit(1)
+except BaseException as exc:  # noqa: BLE001 — SystemExit from an import too
+    refuse(f"the panel's engine could not be imported ({type(exc).__name__}: "
+           f"{' '.join(str(exc).split())[:120]})")
 allow, deny = list(engine.ANALYST_TOOLS), list(engine.ANALYST_DENIED)
 if not allow or not deny:
-    print("the engine's analyst tool lists are empty", file=sys.stderr)
-    raise SystemExit(1)
+    refuse("the engine's analyst tool lists are empty")
 if os.environ.get("BRAIN_TASK_CAMERAS") == "true":
     camera = engine.CAMERA_TOOL
     deny = [t for t in deny if t != camera]
@@ -416,52 +432,50 @@ if os.environ.get("BRAIN_TASK_CAMERAS") == "true":
 # settings, so it cannot reach a file in /config by construction. A task
 # runs IN /config with settings.local.json pre-approving Read, so the same
 # pair would hand a read-only task secrets.yaml. What the analyst never had
-# is denied here by name, for both narrow scopes.
+# is denied here by name, for every narrow scope.
 for tool in ("Read", "Glob", "Grep", "LS", "NotebookRead"):
     if tool not in deny:
         deny.append(tool)
-seen, house_allow = set(), []
-for tool in allow + deny:
-    if tool.startswith("mcp__") and tool not in seen:
-        seen.add(tool)
-        house_allow.append(tool)
-house_deny = [t for t in deny if not t.startswith("mcp__")]
-if not house_allow or not house_deny:
-    print("the house scope's tool lists came out empty", file=sys.stderr)
-    raise SystemExit(1)
-# The game's scope: its own short list, and everything else named denied.
-game_allow = list(getattr(engine, "MINECRAFT_CHAT_TOOLS", []) or [])
-if not game_allow or any(not t.startswith("mcp__") for t in game_allow):
-    print("the engine's game tool list is empty or not all MCP tools", file=sys.stderr)
-    raise SystemExit(1)
-game_deny = [t for t in deny if t not in game_allow]
-game_deny += [t for t in allow if t not in game_allow and t not in game_deny]
-print(",".join(allow))
-print(",".join(deny))
-print(",".join(house_allow))
-print(",".join(house_deny))
-print(",".join(game_allow))
-print(",".join(game_deny))
+if mode == "read_only":
+    pair = (allow, deny)
+elif mode in ("house", "minecraft_trusted"):
+    # minecraft_trusted read on its own (process_task normally resolves it
+    # first): the narrow answer, `house`, never the full grant.
+    seen, house_allow = set(), []
+    for tool in allow + deny:
+        if tool.startswith("mcp__") and tool not in seen:
+            seen.add(tool)
+            house_allow.append(tool)
+    pair = (house_allow, [t for t in deny if not t.startswith("mcp__")])
+elif mode == "minecraft":
+    # The game's scope: its own short list, and everything else named denied.
+    game_allow = list(getattr(engine, "MINECRAFT_CHAT_TOOLS", []) or [])
+    if not game_allow or any(not t.startswith("mcp__") for t in game_allow):
+        refuse("the engine's game tool list is empty or not all MCP tools")
+    game_deny = [t for t in deny if t not in game_allow]
+    game_deny += [t for t in allow if t not in game_allow and t not in game_deny]
+    pair = (game_allow, game_deny)
+else:
+    refuse(f"no scope is called '{mode[:40]}'")
+if not pair[0] or not pair[1]:
+    refuse(f"the '{mode}' scope's tool lists came out empty")
+sys.stdout.flush()
+print("@@brain-scope@@")
+print(",".join(pair[0]))
+print(",".join(pair[1]))
 PYTOOLS
-    ); then
+    )
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        # Status 1 is the step's own refusal (or a traceback), and its last
+        # stderr line is the reason. Anything else is a step that died
+        # without a word (killed for memory, a signal), which still says
+        # how it ended rather than leaving "could not be honoured" alone.
+        [ "$rc" -eq 1 ] || echo "the scope step ended with status ${rc}" >&2
         return 1
     fi
-
-    if [ "$mode" = "read_only" ]; then
-        allow=$(printf '%s' "$lists" | sed -n '1p')
-        deny=$(printf '%s' "$lists" | sed -n '2p')
-    elif [ "$mode" = "minecraft" ]; then
-        allow=$(printf '%s' "$lists" | sed -n '5p')
-        deny=$(printf '%s' "$lists" | sed -n '6p')
-    elif [ "$mode" = "minecraft_trusted" ]; then
-        # Read on its own (process_task normally resolves it first): the
-        # narrow answer, `house`, never the full grant.
-        allow=$(printf '%s' "$lists" | sed -n '3p')
-        deny=$(printf '%s' "$lists" | sed -n '4p')
-    else
-        allow=$(printf '%s' "$lists" | sed -n '3p')
-        deny=$(printf '%s' "$lists" | sed -n '4p')
-    fi
+    allow=$(printf '%s\n' "$lists" | awk 'f { print; exit } $0 == "@@brain-scope@@" { f = 1 }')
+    deny=$(printf '%s\n' "$lists" | awk 'f == 2 { print; exit } f { f++ } $0 == "@@brain-scope@@" { f = 1 }')
     if [ -z "$allow" ] || [ -z "$deny" ]; then
         echo "the '${mode}' scope's tool lists came out empty" >&2
         return 1
@@ -820,6 +834,9 @@ process_task() {
     task_effort=$(jq -r '.effort // empty' "$work_file" 2>/dev/null)
     case "$task_effort" in low|medium|high|xhigh|max) ;; *) task_effort="" ;; esac
     task_tools=$(jq -r '.tools // empty' "$work_file" 2>/dev/null)
+    # One word, read the way the service writes it: "House" or " house"
+    # from a hand-written task file is the scope it names, not a refusal.
+    task_tools=$(printf '%s' "$task_tools" | tr 'A-Z' 'a-z' | tr -d '[:space:]')
     # A JSON Schema the answer must fit (`brain.ask`). Compact so it rides
     # one argv entry; empty when the task carries none, and then no flag
     # is passed — a flag the CLI may not know is only ever asked for.
