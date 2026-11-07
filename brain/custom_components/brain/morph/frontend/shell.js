@@ -76,7 +76,58 @@ class BrainShell extends HTMLElement {
     // Morph's scroll, passed to brAIn's page: the one header hides while
     // the dashboard scrolls down and comes back as it scrolls up.
     this._onScroll = (ev) => { if (this.view === 'home') this.post({ scroll: Math.max(0, Number(ev.detail && ev.detail.y) || 0) }); };
-    this._onResize = () => { if (this.info) this.sync(); };
+    this._onResize = () => { this.fit(); if (this.info) this.sync(); };
+    // Home Assistant's own page never scrolls under this panel (#689): a
+    // scroll of the window or of anything holding the panel goes straight
+    // back. Passive, and only on what is above the panel, never inside it.
+    this._held = [];
+    this._onOuterScroll = (ev) => {
+      const t = ev.currentTarget;
+      if (t === window) { const se = document.scrollingElement; if (se && se.scrollTop) se.scrollTop = 0; return; }
+      if (t.scrollTop) t.scrollTop = 0;
+    };
+  }
+
+  // The panel is as tall as the space Home Assistant gives it: the screen
+  // below the panel's own top, never the whole screen (#689). Sized to
+  // 100dvh, anything above it — the app's safe-area strip, a toolbar — made
+  // Home Assistant's scroller overflow by that much, and a drag on brAIn's
+  // header scrolled Home Assistant's page with nothing inside to scroll it
+  // back.
+  fit() {
+    if (!this.isConnected) return;
+    let top = this.getBoundingClientRect().top;
+    for (const n of this.ancestors()) if (n.scrollTop) top += n.scrollTop;
+    const se = document.scrollingElement;
+    if (se && se.scrollTop) top += se.scrollTop;
+    const px = `${Math.max(0, Math.round(top))}px`;
+    if (this.style.getPropertyValue('--brain-shell-top') !== px) this.style.setProperty('--brain-shell-top', px);
+  }
+
+  // Every element holding this panel, through shadow roots to the page.
+  ancestors() {
+    const out = [];
+    let n = this;
+    while (n) {
+      let up = n.parentNode;
+      if (up && up.nodeType === 11) up = up.host;
+      n = up && up.nodeType === 1 ? up : null;
+      if (n) out.push(n);
+    }
+    return out;
+  }
+
+  holdOuter() {
+    this.releaseOuter();
+    this._held = [window, ...this.ancestors()];
+    for (const t of this._held) t.addEventListener('scroll', this._onOuterScroll, { passive: true });
+    this._onOuterScroll({ currentTarget: window });
+    for (const t of this._held) if (t !== window && t.scrollTop) t.scrollTop = 0;
+  }
+
+  releaseOuter() {
+    for (const t of this._held) t.removeEventListener('scroll', this._onOuterScroll);
+    this._held = [];
   }
 
   // The theme the one header is drawn in: Morph's, as it renders; the one
@@ -97,6 +148,9 @@ class BrainShell extends HTMLElement {
     this.addEventListener('morph-scroll', this._onScroll);
     window.addEventListener('resize', this._onResize);
     if (!this._drawn) this.draw();
+    this.holdOuter();
+    this.fit();
+    requestAnimationFrame(() => this.fit());
     if (this._v.hass && !this.info) this.start();
   }
 
@@ -106,6 +160,7 @@ class BrainShell extends HTMLElement {
     this.removeEventListener('morph-chrome', this._onChrome);
     this.removeEventListener('morph-scroll', this._onScroll);
     window.removeEventListener('resize', this._onResize);
+    this.releaseOuter();
     clearInterval(this._validate);
     this._validate = null;
   }
@@ -113,14 +168,14 @@ class BrainShell extends HTMLElement {
   draw() {
     this._drawn = true;
     this.shadowRoot.innerHTML = `<style>
-:host{display:block;position:relative;height:100vh;height:100dvh;overflow:hidden;overscroll-behavior:none;background:var(--brain-ground,var(--primary-background-color,#0A0C0E))}
+:host{display:block;position:relative;height:calc(100vh - var(--brain-shell-top,0px));height:calc(100dvh - var(--brain-shell-top,0px));overflow:hidden;overscroll-behavior:none;background:var(--brain-ground,var(--primary-background-color,#0A0C0E))}
 .inset{position:absolute;top:0;left:0;width:0;height:env(safe-area-inset-top,0px);visibility:hidden;pointer-events:none}
 iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:block;background:transparent;z-index:1}
 iframe[hidden]{display:none}
-.home{position:absolute;left:0;right:0;top:var(--brain-top,0px);bottom:var(--brain-bottom,0px);z-index:2;overflow:hidden;overscroll-behavior:none;--morph-h:calc(100vh - var(--brain-top,0px) - var(--brain-bottom,0px));--morph-h:calc(100dvh - var(--brain-top,0px) - var(--brain-bottom,0px))}
+.home{position:absolute;left:0;right:0;top:var(--brain-top,0px);bottom:var(--brain-bottom,0px);z-index:2;overflow:hidden;overscroll-behavior:none;--morph-h:calc(100vh - var(--brain-shell-top,0px) - var(--brain-top,0px) - var(--brain-bottom,0px));--morph-h:calc(100dvh - var(--brain-shell-top,0px) - var(--brain-top,0px) - var(--brain-bottom,0px));--morph-rail-h:calc(100dvh - var(--brain-shell-top,0px) - var(--brain-shown-top,0px) - var(--brain-bottom,0px));--morph-rail-top:calc(var(--brain-shown-top,0px) - var(--brain-top,0px));--morph-rail-ease:none}
 .home[hidden]{display:none}
-.home.slide{transition:top .22s ease}
-@media (prefers-reduced-motion:reduce){.home.slide{transition:none}}
+.home.slide{transition:top .22s ease;--morph-rail-ease:top .22s ease}
+@media (prefers-reduced-motion:reduce){.home.slide{transition:none;--morph-rail-ease:none}}
 :host(.raised) iframe{z-index:3}
 .say{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;font:16px/1.5 system-ui,sans-serif;color:var(--primary-text-color,#e6e6e6)}
 .say[hidden]{display:none}
@@ -238,6 +293,11 @@ iframe[hidden]{display:none}
     if (this.morph) this.morph.shell = framed;
     this.homeEl.hidden = !home;
     this.style.setProperty('--brain-top', `${framed ? this.bars.top : 0}px`);
+    // Where Home starts with the tab row shown. Morph's room rail keeps that
+    // place and height while the tab row is hidden (#690): Home grows
+    // upward, and a rail that grew with it resized every notch and moved
+    // every floor name under the finger.
+    this.style.setProperty('--brain-shown-top', `${framed ? this.shownTop() : 0}px`);
     this.style.setProperty('--brain-bottom', `${framed ? this.bars.bottom : 0}px`);
     this.classList.toggle('raised', !!(home && framed && this.raised));
     if (home || framed) this.say('');
@@ -249,6 +309,11 @@ iframe[hidden]{display:none}
     const edit = !!(morph && this.morph && (c.admin || c.edit));
     this.post({ state: { narrow: !!this._v.narrow, morph, view: home ? 'home' : 'panel', theme, inset: this.inset(),
                          clock: this.clock(), home: { edit, editing: !!c.edit, yaml: !!c.yaml } } });
+  }
+
+  shownTop() {
+    if (!this.bars.hidden) this._shownTop = this.bars.top;
+    return Math.max(this.bars.top, this._shownTop || 0);
   }
 
   // The person's 12- or 24-hour preference in Home Assistant, for the clock
