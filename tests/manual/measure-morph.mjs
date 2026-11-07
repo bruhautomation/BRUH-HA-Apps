@@ -1665,6 +1665,9 @@ for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
     out.chips = [...root.querySelectorAll('.scenes .wd, .secscenes .wd, .scenesline .wd, .cl-acts .wd')].filter((b) => b.getBoundingClientRect().width > 0).map((b) => ({ t: b.textContent.trim(), r: R(b), cls: b.parentElement.className }));
     out.chipGaps = [];
     out.chips.forEach((a, i) => out.chips.slice(i + 1).forEach((b) => { const sameRow = Math.abs(a.r.t - b.r.t) < 6; if (sameRow && Math.min(a.r.r, b.r.r) - Math.max(a.r.l, b.r.l) > -6 && Math.min(a.r.b, b.r.b) - Math.max(a.r.t, b.r.t) > 1) out.chipGaps.push(`${a.t} / ${b.t}`); }));
+    // A section with nothing beside it in its band reaches the floor's width, or the width of the section below it.
+    const uo = R(sect('s_u_over')), us = R(sect('s_u_sec'));
+    out.unequal = { over: uo, sec: us, board: R(root.querySelector('[data-board]')) };
     // A line of facts under a floor's or a room's title wraps; it never ends in an ellipsis.
     out.runOn = [...root.querySelectorAll('.facts, .secmeta')].filter((e) => e.getBoundingClientRect().width > 0 && (clipped(e) || getComputedStyle(e).textOverflow === 'ellipsis')).map((e) => e.textContent.trim().slice(0, 40));
     // 6. The equipment list: no row cut off mid-word, and a count when it is not all shown.
@@ -1687,6 +1690,12 @@ for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
   }
   if (facts.stripOverlaps.length) fail(at, `8: tiles overlap: ${facts.stripOverlaps.join(', ')}`);
   if (Math.abs(facts.sections.over.w - facts.sections.sec.w) > 2 || Math.abs(facts.sections.over.l - facts.sections.sec.l) > 2) fail(at, `3: House Overview is ${facts.sections.over.w.toFixed(0)}px wide at ${facts.sections.over.l.toFixed(0)} and Security ${facts.sections.sec.w.toFixed(0)}px at ${facts.sections.sec.l.toFixed(0)}`);
+  {
+    const u = facts.unequal;
+    const sameBand = Math.abs(u.over.t - u.sec.t) < 2;
+    if (!sameBand && Math.abs(u.over.w - u.board.w) > 2 && Math.abs(u.over.w - u.sec.w) > 2) fail(at, `3: a section alone in its band is ${u.over.w.toFixed(0)}px wide of a ${u.board.w.toFixed(0)}px floor, and the one below it is ${u.sec.w.toFixed(0)}px`);
+    if (process.env.MORPH_NUMBERS) console.log(name, 'unequal', JSON.stringify({ over: [u.over.l, u.over.t, u.over.w], sec: [u.sec.l, u.sec.t, u.sec.w], board: u.board.w }));
+  }
   if (facts.labels.length) fail(at, `3: group labels overlap: ${facts.labels.join(', ')}`);
   for (const c of facts.cams) {
     if (!c.name) fail(at, `4: ${c.id} does not show its camera's name`);

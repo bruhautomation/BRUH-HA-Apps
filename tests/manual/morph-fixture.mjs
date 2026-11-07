@@ -208,6 +208,11 @@ export function addBatch(fx) {
   put('lock.patio_door', 'unlocked', { friendly_name: 'Patio Door' });
   put('lock.garage_entry', 'unlocked', { friendly_name: 'Garage Entry' });
   ['Dishwasher door left open in the utility room', 'Washing machine lid is up', 'Dryer lint trap needs emptying', 'Deep freezer in the garage is warm', 'Water softener salt is low', 'Sump pump in the basement is running', 'Furnace filter is due for a change'].forEach((n, i) => put(`binary_sensor.equip_${i}`, i % 2 ? 'on' : 'off', { friendly_name: n, device_class: 'problem' }));
+  // Unequal preferred widths on one floor: a 3-wide room above a 4-wide one.
+  fx.dash.floors.push({ id: 'f_batch2', title: 'Unequal', sections: [
+    { id: 's_u_over', title: 'Overview', color: 'sky', width: 3, groups: [{ label: 'Lights', cards: [C('light.bar', { id: 'cu_1', type: 'light' }), C('light.kitchen_countertop', { id: 'cu_2', type: 'light' })] }, { label: 'Comfort', cards: [C('climate.downstairs', { id: 'cu_3', type: 'climate' })] }] },
+    { id: 's_u_sec', title: 'Safety', color: 'rose', width: 5, groups: [{ label: 'Doors', cards: [C('lock.side_door', { id: 'cu_l1', type: 'lock' }), C('lock.patio_door', { id: 'cu_l2', type: 'lock' }), C('lock.garage_entry', { id: 'cu_l3', type: 'lock' }), C('lock.front_door', { id: 'cu_l4', type: 'lock' })] }] },
+  ] });
   fx.dash.floors.push({ id: 'f_batch', title: 'Batch', sections: [
     { id: 's_b_over', title: 'House Overview', color: 'sky', width: 4, groups: [
       { label: 'Routines', cards: [C('script.bedtime', { id: 'cb_bed', type: 'button' }), C('script.all_media_off', { id: 'cb_media', type: 'button' }), C('script.movie_night', { id: 'cb_movie', type: 'button' })] },

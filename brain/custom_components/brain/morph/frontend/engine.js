@@ -248,7 +248,9 @@ export class Engine {
         for (let g = 0; g < N; g++) {
           if (p.w >= N) break;
           const f0 = flow(secOf[p.id], p.w), f1 = flow(secOf[p.id], p.w + 1); const nh = f1.h; const hh = Math.max(p.h, nh);
-          if (nh > p.h - 8 && f1.blank - f0.blank > u * p.h * 0.4) break;
+          // Blank space only stops a widening when a neighbour could use the column; a section with nothing beside it in its band takes the whole floor, so no dead column is left.
+          const solo = pl.every((q) => q === p || q.f !== p.f || p.y + p.h + G <= q.y + 0.5 || q.y + q.h + G <= p.y + 0.5);
+          if (!solo && nh > p.h - 8 && f1.blank - f0.blank > u * p.h * 0.4) break;
           const free = (c) => pl.every((q) => q === p || q.f !== p.f || c + p.w + 1 <= q.c || q.c + q.w <= c || p.y + hh + G <= q.y + 0.5 || q.y + q.h + G <= p.y + 0.5);
           if (p.c + p.w < N && free(p.c)) { p.w++; p.h = nh; } else if (p.c > 0 && free(p.c - 1)) { p.c--; p.w++; p.h = nh; } else break;
         }
