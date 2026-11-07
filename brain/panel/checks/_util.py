@@ -311,10 +311,13 @@ def _names_room(name: str, area: str) -> bool:
 # replace, a reading stuck on one value, a device not answering. An answer to
 # one of them about one entity of a device is an answer about the device.
 DEVICE_QUIET = frozenset({"dev.battery_low", "dev.frozen", "dev.unavailable"})
-# The checks that say a device reads wrong or has gone quiet: the ones a
-# person's "I don't use it any more" or "that sensor is broken" settles for
-# good (`House.answered_off`).
-DEVICE_FINISHED = DEVICE_QUIET | {"dev.implausible"}
+# The checks that say a device reads wrong or has gone quiet, or that judge
+# what it reads: the ones a person's "I don't use it any more" or "that
+# sensor is broken" settles for good (`House.answered_off`). A broken
+# sensor's readings are evidence of nothing, so the band and the drift are
+# as quiet on it as the impossible-readings check (#692, #701).
+DEVICE_FINISHED = DEVICE_QUIET | {"dev.implausible", "base.unusual",
+                                  "forecast.decline"}
 # How many times a row may be marked Wrong before the check stops filing
 # it for that entity.
 WRONG_LIMIT = 2

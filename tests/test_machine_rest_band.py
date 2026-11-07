@@ -187,5 +187,26 @@ class TestTheNightlyPassAndTheCheck(_Built):
         self.assertTrue(said and "at rest" in said[0]["reason"], self.trail)
 
 
+class TestAReasonNamingTheRunningStateHoldsOnlyThen(unittest.TestCase):
+    """"Normal while it is running" on the cavity's row is read against the
+    oven's running state: quiet while it runs, heard at rest (#601)."""
+
+    def rule_house(self, running: str) -> House:
+        return House({
+            "states": states(180.0, running, changed=NOW - 3 * 3600),
+            "entities": ENTITIES, "devices": [OVEN], "_trail": [],
+            "corrections": {"entity": {CAVITY: {"base.unusual": {
+                "text": "Normal while the oven is running"}}},
+                "area": {}, "check": {}, "never": {"checks": []}}})
+
+    def test_quiet_while_it_runs(self):
+        self.assertFalse(self.rule_house("on").should_report(
+            CAVITY, "base.unusual"))
+
+    def test_heard_at_rest(self):
+        self.assertTrue(self.rule_house("off").should_report(
+            CAVITY, "base.unusual"))
+
+
 if __name__ == "__main__":
     unittest.main()

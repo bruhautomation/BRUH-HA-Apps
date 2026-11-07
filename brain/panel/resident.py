@@ -442,12 +442,32 @@ def _examples_block(examples) -> list[str]:
     return out if len(out) > 2 else []
 
 
+# How many sensors the owner called broken one prompt lists.
+FAULTY_ROWS_MAX = 20
+
+
+def faulty_block(faulty) -> list[str]:
+    """The prompt lines naming the sensors the owner called broken
+    (`corrections.known_faulty`), or none. Told BEFORE the run reasons, so
+    a broken pressure sensor's readings are not the evidence a leak is
+    concluded from; `faulty_case` still refuses a case that cites one."""
+    rows = sorted((faulty or {}).items())[:FAULTY_ROWS_MAX]
+    if not rows:
+        return []
+    out = ["SENSORS THE OWNER CALLED BROKEN — their readings are not evidence "
+           "of anything; never cite one, and never conclude a fault from "
+           "one:"]
+    out += [f"- {eid} (the owner said: {str(why)[:160]})" for eid, why in rows]
+    out.append("")
+    return out
+
+
 def first_look_prompt(batch_rows, memory_excerpt: str = "",
                       open_cases_rows=None, *, now_line: str = "",
                       watch_notes=None, examples=None,
                       inputs: dict | None = None,
                       situation_line: str = "", used_by=None,
-                      rule_records=None) -> str:
+                      rule_records=None, faulty=None) -> str:
     """The prompt for one batch.
 
     ``batch_rows`` is what `signals.prompt_rows` returned — or the raw
@@ -535,6 +555,7 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
                      "protected signal worth less:")
         parts += [f"- {row}" for row in records]
         parts.append("")
+    parts += faulty_block(faulty)
     parts.append("SIGNALS:")
     for i, row in enumerate(_rows(batch_rows), 1):
         parts.append(f"{i}. {row}")
@@ -982,7 +1003,8 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
                        prior_case: dict | None = None,
                        now_line: str = "", examples=None,
                        situation_line: str = "", used_by=None,
-                       camera_line: str = "", controlled_by=None) -> str:
+                       camera_line: str = "", controlled_by=None,
+                       faulty=None) -> str:
     """The prompt for one investigation.
 
     One signal, not a batch: the whole point of the tier is that this run
@@ -1076,6 +1098,7 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
         parts.append("")
     if house_block.strip():
         parts.append("WHAT BRAIN HAS MEASURED:\n" + house_block.strip() + "\n")
+    parts += faulty_block(faulty)
     cases = _rows(open_cases_rows)
     if cases:
         parts.append("ALREADY IN FRONT OF THE HOMEOWNER — do not claim any "
@@ -1350,9 +1373,13 @@ def faulty_case(case: dict, entities, faulty: dict) -> str:
     """
     if not isinstance(case, dict) or not faulty:
         return ""
+    words = " ".join(str(case.get(k) or "") for k in ("claim", "text",
+                                                       "detail"))
     named = [str(case.get("entity_id") or ""), *[str(e) for e in entities or ()],
              *[str(r.get("entity") or "") for r in case.get("evidence") or ()
-               if isinstance(r, dict)]]
+               if isinstance(r, dict)],
+             # Cited in the case's own words is cited all the same.
+             *[m.group(0) for m in _ENTITY_IN_WORDS_RE.finditer(words)]]
     for eid in named:
         if eid in faulty:
             return textclip.clip(
