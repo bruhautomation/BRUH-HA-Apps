@@ -64,6 +64,7 @@ from textclip import clip
 from . import STREAMS, data_dir, enabled, load_settings, read_token, stream_on
 from . import blocks, github
 from .aliases import Aliases
+from .plaintext import plain
 from .siblings import PRODUCTS, spec_by_name
 
 log = logging.getLogger("brain.devloop")
@@ -346,22 +347,6 @@ def _digest(text: str) -> str:
     would file every release's scorecard into the first one and never
     rewrite a body whose only change is a number."""
     return hashlib.sha256(str(text).encode("utf-8", "replace")).hexdigest()[:16]
-
-
-# A terminal's colour codes and every other control character a log line
-# can carry. An add-on log excerpt arrived with raw ESC sequences (shown as
-# ^[[33m) in a report whose block the cloud could not parse; nothing a
-# person reads needs them, so no string reaches a report with one in it.
-_ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"
-                      r"|\x1b[@-_]|\^\[\[[0-9;]*m")
-_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
-
-
-def plain(text: str) -> str:
-    """``text`` without ANSI escape sequences or control characters; line
-    breaks and tabs kept, a lone carriage return read as a line break."""
-    text = _ANSI_RE.sub("", str(text or "")).replace("\r\n", "\n").replace("\r", "\n")
-    return _CONTROL_RE.sub("", text)
 
 
 def scrub(text: str) -> str:
