@@ -361,7 +361,7 @@ iframe[hidden]{display:none}
       return;
     }
     if (d.home === 'edit' || d.home === 'yaml-toggle') {
-      const panel = this.morph && this.morph.shadowRoot && this.morph.shadowRoot.querySelector('morph-panel, morph-panel-shipped');
+      const panel = this.morph && this.morph.shadowRoot && this.morph.shadowRoot.querySelector('morph-panel');
       if (panel && typeof panel.chromeAct === 'function') panel.chromeAct(d.home);
       return;
     }

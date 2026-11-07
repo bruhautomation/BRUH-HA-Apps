@@ -4671,9 +4671,11 @@ function paintDevloop(data) {
   $("#setDevloop").checked = s.enabled === true;
   $("#devloopBody").hidden = s.enabled !== true;
   $("#devloopOffNote").hidden = s.enabled === true;
-  // One choice about sending, and every stream's switch and schedule stay
-  // the owner's to change whatever it is (#710, #711).
   $("#setDevReview").checked = s.review !== false;
+  // Autopilot decides the switches below it, so they are shown and greyed
+  // rather than hidden: what it turned on is still something to read.
+  $("#setDevAutopilot").checked = s.autopilot === true;
+  $("#setDevReview").disabled = s.autopilot === true;
   if (document.activeElement !== $("#devRepo")) $("#devRepo").value = s.repo || "";
   $("#devToken").placeholder = data.token_set ? "saved — paste a new one to replace it"
                                               : "github_pat_…";
@@ -4710,7 +4712,6 @@ function paintDevloop(data) {
   const on = s.streams || {};
   const sched = s.schedule || {};
   const hours = data.hours || [0, 1, 3, 6, 12, 24, 168];
-  const recommended = data.recommended || {};
   const last = (data.status || {}).last_run || {};
   const useful = (data.status || {}).usefulness || {};
   const slowed = (data.status || {}).slowed || {};
@@ -4728,11 +4729,7 @@ function paintDevloop(data) {
           + ` aria-label="Put this stream back on its own schedule">Undo</button></div>`
         : "";
       const opts = hours.map((h) => `<option value="${h}"${sched[st.name] === h
-        ? " selected" : ""}>${esc(DEV_HOURS[h] || h + " hours")}`
-        // The recommended choice is marked in the open list; the chosen
-        // one shows plain, so a closed drop-down on a phone is not cut off.
-        + `${recommended[st.name] === h && sched[st.name] !== h ? " (recommended)" : ""}`
-        + "</option>").join("");
+        ? " selected" : ""}>${esc(DEV_HOURS[h] || h + " hours")}</option>`).join("");
       // A card: the stream's name and what it is for split at its colon,
       // the switch beside them, and how often and Run along the foot with
       // when it last ran — so a column of seven reads as seven of one thing.
@@ -4741,7 +4738,7 @@ function paintDevloop(data) {
       const about = colon > 0 ? st.label.slice(colon + 2) : "";
       return `<div class="setrow top devstream"><label class="check bigcheck">`
         + `<input class="tog" type="checkbox" data-dev-stream="${esc(st.name)}"`
-        + `${on[st.name] ? " checked" : ""}><span><b>${esc(name)}</b>`
+        + `${on[st.name] ? " checked" : ""}${s.autopilot ? " disabled" : ""}><span><b>${esc(name)}</b>`
         + (about ? `<span class="subtext">${esc(about)}</span>` : "")
         + `</span></label>`
         + `<div class="devstreamfoot"><span class="devstreamwhen">${esc(when)}</span>`
@@ -4871,6 +4868,9 @@ async function devloopCall(path, opts, okMessage) {
 $("#setDevloop").addEventListener("change", () =>
   devloopCall("api/devloop", { method: "PUT",
     body: JSON.stringify({ enabled: $("#setDevloop").checked }) }));
+$("#setDevAutopilot").addEventListener("change", () =>
+  devloopCall("api/devloop", { method: "PUT",
+    body: JSON.stringify({ autopilot: $("#setDevAutopilot").checked }) }));
 $("#setDevReview").addEventListener("change", () =>
   devloopCall("api/devloop", { method: "PUT",
     body: JSON.stringify({ review: $("#setDevReview").checked }) }));

@@ -330,9 +330,8 @@ section is one press away and nothing inside one is folded away.
   bug report. Nothing here is fetched until you open it.
 * **Developer** — the rehearsal, asking the next "why" question now, corpus
   capture, and the development loop's repository, token, streams and limits
-  (switched on in Features). Each stream is its own switch with its own
-  schedule (the recommended one is marked), and **Ask before sending each new
-  report** is the one choice about sending: off, reports go as they are found.
+  (switched on in Features). **Report everything without asking** (it was
+  **Development mode**) turns every stream on with nothing waiting for Send.
 * **Guide** — this guide, in eight groups. Help is no longer a tab.
 
 The page remembers which section you were on. There are no **?** bubbles:

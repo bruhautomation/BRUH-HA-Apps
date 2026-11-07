@@ -176,32 +176,20 @@ HOURS_CHOICES = (0, 1, 3, 6, 12, 24, 168)
 # is a fresh allowance, and a backlog filed all at once is the flood.
 CAP_LIMITS = {"max_issues_per_day": (0, 50), "max_runs_per_day": (0, 24)}
 
-# How often each stream is recommended to run: shown beside the choice in
-# ⚙ › Developer, which the owner can change (#711). It was autopilot's
-# schedule, and autopilot ("Report everything without asking") is no longer a
-# switch: it overlapped "Ask before sending" and locked every stream and
-# schedule while it was on (#710). An install that still has it stored reads
-# as it always did — every stream on, these schedules, nothing waiting —
-# until the owner changes any of those, which writes that reading down as
-# their own settings (`save_settings`) so the change sticks.
+# "Autopilot": the owner has handed brAIn's development to the loop. Every
+# stream on, on these schedules, nothing waiting for a press, and caps no
+# lower than these. Somebody who chose that should not tune eight switches
+# to get it, nor find their reports sitting in a review queue they never
+# open.
 AUTOPILOT_HOURS = {"faults": 1, "scorecard": 24, "wrongs": 24, "outcomes": 24, "unmet": 24,
                    "snapshot": 168, "gaps": 24, "ideas": 168, "design": 24,
                    "screens": 168, "morph": 1, "siblings": 1,
                    "walkthrough": 24, "look": 0, "canary": 1, "corpus": 24}
 AUTOPILOT_CAPS = {"max_issues_per_day": 20, "max_runs_per_day": 8}
-RECOMMENDED_HOURS = {k: AUTOPILOT_HOURS.get(k, v["default_hours"]) for k, v in STREAMS.items()}
-# The settings autopilot decided. Changing any of them while it is stored
-# writes its reading down first and switches it off.
-_AUTOPILOT_DECIDES = ("streams", "schedule", "review")
 
 DEFAULTS = {
     "enabled": False,
     "autopilot": False,
-    # Set once, when `save_settings` writes a stored autopilot's reading down
-    # as the owner's own settings. Development mode stays what it was for
-    # that install (`development_mode`); an install that never had
-    # autopilot never gets it from how "Ask before sending" is read.
-    "autopilot_migrated": False,
     "streams": {k: v["default_on"] for k, v in STREAMS.items()},
     "schedule": {k: v["default_hours"] for k, v in STREAMS.items()},
     "repo": "",
@@ -278,8 +266,6 @@ def _raw_settings() -> dict:
         out["review"] = data["review"]
     if isinstance(data.get("autopilot"), bool):
         out["autopilot"] = data["autopilot"]
-    if isinstance(data.get("autopilot_migrated"), bool):
-        out["autopilot_migrated"] = data["autopilot_migrated"]
     repo = data.get("repo")
     if isinstance(repo, str) and REPO_RE.match(repo):
         out["repo"] = repo
@@ -308,15 +294,7 @@ def save_settings(changes: dict) -> dict:
     """Merge ``changes`` into the stored settings. Raises ValueError naming
     the field for anything that is not what it should be."""
     current = _raw_settings()
-    changes = changes or {}
-    if current.get("autopilot") and "autopilot" not in changes \
-            and any(k in changes for k in _AUTOPILOT_DECIDES):
-        # The old "Report everything without asking" is stored: what the
-        # owner saw is its reading, so that becomes what is stored, and the
-        # change lands on it rather than being read over (#710).
-        current = {**_apply_autopilot(current), "autopilot": False,
-                   "autopilot_migrated": True}
-    for key, value in changes.items():
+    for key, value in (changes or {}).items():
         if key in ("enabled", "review", "autopilot"):
             if not isinstance(value, bool):
                 raise ValueError(f"{key} must be true or false")
@@ -358,27 +336,8 @@ def save_settings(changes: dict) -> dict:
             current[key] = value
         else:
             raise ValueError(f"unknown setting: {key}")
-    if current.get("autopilot_migrated") and current.get("review") is True:
-        # Asking before sending is what turning autopilot off was, and that
-        # was for good: the mark goes, so turning it off again later is an
-        # ordinary review switch and never development mode again.
-        current["autopilot_migrated"] = False
     atomic_write.write_json(settings_file(), current)
     return _apply_autopilot(current)
-
-
-def development_mode(settings: dict | None = None) -> bool:
-    """Development mode (sessions file what they notice with `report_bug`
-    unasked) is true exactly where it was before autopilot stopped being a
-    switch: the loop on with autopilot stored, or with autopilot's reading
-    written down as the owner's own (`autopilot_migrated`) and "Ask before
-    sending" still off — turning it on is what turning autopilot off was.
-    An install that never had autopilot is never in it."""
-    s = _raw_settings() if settings is None else settings
-    if s.get("enabled") is not True:
-        return False
-    return s.get("autopilot") is True or (
-        s.get("autopilot_migrated") is True and s.get("review") is False)
 
 
 def enabled() -> bool:

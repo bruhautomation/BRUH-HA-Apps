@@ -13,11 +13,7 @@
 // (/config/morph/frontend/, served in their place), and a copy can break:
 // when the panel does not load, this loads Morph's own instead, from
 // shipped/, and leaves the reason where the panel reads it, so the page says
-// what happened rather than going blank. A copy can also load and then
-// throw as it draws (#706: a Tell took a feature out and left a reference
-// to an import it removed, and Morph was blank): until the panel says it is
-// ready, an error thrown from this house's code swaps in Morph's own the
-// same way. This file is never replaced.
+// what happened rather than going blank. This file is never replaced.
 //
 // static.py writes STAMP and MODULES in as it serves this file. STAMP names
 // exactly the code being served, so the modules under s/<STAMP>/ never
@@ -26,13 +22,8 @@
 // as a plain file (a test), both are empty and the modules load from here.
 const STAMP = '';
 const MODULES = [];
-// The modules this house has its own copy of in use (static.py writes them
-// in). With none, what is served is Morph's own and there is nothing to
-// fall back to; served as a plain file (a test), every module is watched.
-const COPIES = [];
 const here = new URL('.', import.meta.url).href;
 const dir = STAMP ? `${here}s/${STAMP}/` : here;
-const shippedDir = `${here}shipped/`;
 window.__morphStamp = STAMP;
 
 for (const name of MODULES) {
@@ -45,20 +36,12 @@ for (const name of MODULES) {
 }
 
 let loading = null;
-// The element the panel is: `morph-panel`, or `morph-panel-shipped` once a
-// house copy that loaded has been swapped for Morph's own (a name, once
-// defined, cannot be defined again).
-let panelTag = 'morph-panel';
-// Whether the panel running came from this house's code, and so may yet
-// fall back to Morph's own.
-let fromHouse = false;
 function loadPanel() {
   if (!loading) {
     loading = (async () => {
       try {
         await import(dir + 'morph-panel.js');
         if (!customElements.get('morph-panel')) throw new Error('morph-panel.js loaded but did not define the panel');
-        fromHouse = !STAMP || COPIES.length > 0;
       } catch (err) {
         window.__morphFallback = String((err && err.message) || err);
         console.error('Morph: a changed file did not load, so Morph is running its own copy.', err);
@@ -67,45 +50,6 @@ function loadPanel() {
     })();
   }
   return loading;
-}
-
-// Morph's own panel, after this house's copy has already defined
-// `morph-panel`: the module's own `define` is steered to another name.
-let shippedLoading = null;
-function loadShipped() {
-  if (!shippedLoading) {
-    shippedLoading = (async () => {
-      const reg = window.customElements;
-      const get = reg.get.bind(reg);
-      const define = reg.define.bind(reg);
-      reg.get = (n) => (n === 'morph-panel' ? undefined : get(n));
-      reg.define = (n, C, o) => (n === 'morph-panel' ? define('morph-panel-shipped', C, o) : get(n) ? undefined : define(n, C, o));
-      try {
-        await import(here + 'shipped/morph-panel.js');
-      } finally {
-        delete reg.get;
-        delete reg.define;
-      }
-      if (!customElements.get('morph-panel-shipped')) throw new Error("Morph's own panel did not load");
-      panelTag = 'morph-panel-shipped';
-    })();
-  }
-  return shippedLoading;
-}
-
-// Whether an error came from one of this house's copies in use: its file,
-// or a frame of its stack, served from `dir` under a name in COPIES. An
-// error from a module that is Morph's own (served from `dir` too, beside
-// the copies) is not the copy failing. Served as a plain file (a test, no
-// stamp and no list), every module under `dir` but shipped/ counts.
-function fromHouseCode(file, stack) {
-  const urls = [file || '', ...String(stack || '').match(/https?:\/\/[^\s)]+/g) || []];
-  return urls.some((u) => {
-    if (!u.startsWith(dir) || u.startsWith(shippedDir)) return false;
-    if (!COPIES.length) return !STAMP;
-    const name = u.slice(dir.length).replace(/[?#].*$/, '').replace(/(:\d+)+$/, '');
-    return COPIES.includes(name);
-  });
 }
 
 // What the outline is drawn in: the theme the panel last rendered in, else
@@ -156,78 +100,16 @@ class MorphBoot extends HTMLElement {
 
   mount() {
     if (this.inner) return;
-    const el = document.createElement(panelTag);
+    const el = document.createElement('morph-panel');
     this.inner = el;
-    // Ready is said before the dashboard's body is drawn, so the watch
-    // lasts until the board has drawn a room (or its time runs out): a copy
-    // that throws right after saying it is ready is still a blank page.
-    el.addEventListener('morph-ready', () => { this.ready(); this.untilDrawn(el); }, { once: true });
+    el.addEventListener('morph-ready', () => this.ready(), { once: true });
     // A copy of the panel written before this shell existed never says it
     // is ready; the outline does not stay over it for good.
     setTimeout(() => this.ready(), READY_AFTER_MS);
-    if (fromHouse && panelTag === 'morph-panel') this.watch();
     // In the page first, then its properties: the order Home Assistant uses,
     // and the one in which the panel loads its dashboard once, not twice.
-    try {
-      this.shadowRoot.appendChild(el);
-      for (const k of PROPS) if (this._v[k] !== undefined) el[k] = this._v[k];
-    } catch (err) {
-      if (!this._watching) throw err;
-      this.broke(err);
-    }
-  }
-
-  // Until the panel's first full render has drawn the board, an error
-  // thrown from a copy in use (as it draws, in a timer or a promise) is the
-  // copy failing.
-  watch() {
-    this._watching = true;
-    this._onErr = (ev) => { if (fromHouseCode(ev.filename, ev.error && ev.error.stack)) this.broke(ev.error || ev.message); };
-    this._onRej = (ev) => { const r = ev.reason; if (fromHouseCode('', r && r.stack)) this.broke(r); };
-    window.addEventListener('error', this._onErr);
-    window.addEventListener('unhandledrejection', this._onRej);
-    this._watchT = setTimeout(() => this.unwatch(), READY_AFTER_MS + 4000);
-  }
-
-  untilDrawn(el) {
-    const drawn = () => !!(el.shadowRoot && el.shadowRoot.querySelector('[data-board] section[data-sec]'));
-    const look = () => {
-      if (!this._watching || this.inner !== el) return;
-      // A frame after the room appears, so a throw in the same render that
-      // drew it is still seen.
-      if (drawn()) { setTimeout(() => { if (this.inner === el) this.unwatch(); }, 250); return; }
-      setTimeout(look, 100);
-    };
-    look();
-  }
-
-  unwatch() {
-    if (!this._watching) return;
-    this._watching = false;
-    window.removeEventListener('error', this._onErr);
-    window.removeEventListener('unhandledrejection', this._onRej);
-    clearTimeout(this._watchT);
-  }
-
-  // The house's copy threw before it drew anything: Morph's own takes its
-  // place, and the reason goes where the panel says it.
-  async broke(err) {
-    if (this._broke) return;
-    this._broke = true;
-    this.unwatch();
-    const why = String((err && err.message) || err);
-    window.__morphFallback = why;
-    console.error('Morph: a changed file failed as it drew, so Morph is running its own copy.', err);
-    try {
-      await loadShipped();
-    } catch (e) {
-      this.failed(e);
-      return;
-    }
-    const old = this.inner;
-    this.inner = null;
-    try { if (old) old.remove(); } catch (e) { /* a broken copy can throw going too */ }
-    this.mount();
+    this.shadowRoot.appendChild(el);
+    for (const k of PROPS) if (this._v[k] !== undefined) el[k] = this._v[k];
   }
 
   ready() {

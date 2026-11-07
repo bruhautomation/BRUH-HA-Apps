@@ -1687,16 +1687,17 @@
             repository, what it sends and its limits are set here once it is on.</p>
           <div id="devloopBody" hidden>
             <div class="setgroup">
-              <!-- ONE choice about sending (#711): "Report everything
-                   without asking" overlapped it and locked the streams and
-                   their schedules while it was on (#710). What is sent and
-                   how often is each stream's own, under What it sends. -->
+              <div class="setrow top">
+                <label class="check bigcheck"><input id="setDevAutopilot" class="tog" type="checkbox">
+                  <span><b>Report everything without asking</b>
+                  <span class="subtext">Off by default. Every stream on and nothing waiting for
+                    Send: brAIn looks over its own code and how it behaves here, files what it
+                    finds, and the cloud fixes brAIn's code and ships it.</span></span></label>
+              </div>
               <div class="setrow top">
                 <label class="check bigcheck"><input id="setDevReview" class="tog" type="checkbox">
                   <span><b>Ask before sending each new report</b>
-                  <span class="subtext">View shows exactly what would be sent. Off, each
-                    report is sent as it is found, and the cloud fixes brAIn's code and
-                    ships it.</span></span></label>
+                  <span class="subtext">View shows exactly what would be sent.</span></span></label>
               </div>
             </div>
 
@@ -1726,8 +1727,6 @@
             <div id="devEfficacy" class="diag"></div>
 
             <h5 class="setsubhead">What it sends</h5>
-            <p class="hint tight">Switch each on or off and choose how often it runs; the
-              recommended choice is marked.</p>
             <div id="devStreams" class="devstreams"></div>
 
             <h5 class="setsubhead">Daily limits</h5>
