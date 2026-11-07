@@ -40,7 +40,7 @@ import * as sal from './salience.js';
 import { morph } from './morph-dom.js';
 import { caseFace, todoFace, caseColor, placeCase } from './cases.js';
 import { Rail } from './rail.js';
-import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, cardPage, guardDefine, loadCard, cardUrl, cardFailure, isDashChange, ASK_CONTEXT, own } from './util.js';
+import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, cardPage, guardDefine, loadCard, cardUrl, cardFailure, isDashChange, ASK_CONTEXT, own, checkDoorClaims } from './util.js';
 
 const HOLD_MS = 540;
 // The card types whose entities are `entity`/`entities`; a hosted Lovelace
@@ -773,7 +773,7 @@ class MorphPanel extends HTMLElement {
     const H = this.hass;
     if (x.isCase || String(x.id).startsWith('k:')) {
       const c = this.caseById(String(x.id).slice(2));
-      return c ? (c.claim || c.text || '') : '';
+      return c ? checkDoorClaims(c.claim || c.text || '', H) : '';
     }
     const st = states[x.eid];
     if (!st) return '';
@@ -848,9 +848,12 @@ class MorphPanel extends HTMLElement {
     }
     if (parts.length) return `<p class="story">${sentence(parts)}${tail}${offline}</p>`;
     const sit = this.brain().situation;
+    // A model's sentence was written before the doors moved: each claim about
+    // one is checked against its state now, and one that no longer holds goes.
+    const sentence_ = sit && sit.sentence ? checkDoorClaims(sit.sentence, this.hass) : '';
     // A model's sentence that claims everything is shut is not shown over an open door.
-    const claimsAllShut = sit && /\b(every|all|everything)\b[^.]*\b(locked|closed|shut|secure)/i.test(sit.sentence || '');
-    if (sit && sit.sentence && !(claimsAllShut && opens.length) && (!sit.at || Date.now() / 1000 - sit.at < 3600) && this.form_ !== 'night') return `<p class="story"><span class="hi">${esc(sit.sentence)}</span>${tail}${offline}</p>`;
+    const claimsAllShut = sit && /\b(every|all|everything)\b[^.]*\b(locked|closed|shut|secure)/i.test(sentence_);
+    if (sit && sentence_ && !(claimsAllShut && opens.length) && (!sit.at || Date.now() / 1000 - sit.at < 3600) && this.form_ !== 'night') return `<p class="story"><span class="hi">${esc(sentence_)}</span>${tail}${offline}</p>`;
     return `<p class="story">${openHtml || '<span style="color:var(--indigo)">Everything is at rest.</span>'}${tail}${offline}</p>`;
   }
 

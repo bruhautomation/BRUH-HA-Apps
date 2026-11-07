@@ -295,3 +295,92 @@ export function isDashChange(q) {
 // a sentence that said "you cannot change the dashboard" was read as
 // "brAIn can't change config" about Lovelace too.
 export const ASK_CONTEXT = 'This question comes from the Ask bar on Morph, the house’s dashboard. Morph’s own page is changed with Morph’s Tell, not from here: if the person asks for a change to Morph’s page, say so (hold the thing in Edit, or press “Change the dashboard instead”) and do not claim to have changed it. A Lovelace dashboard is different: when you can act, change it with get_dashboard and call_service brain.update_dashboard (backed up first).';
+
+// ---------------------------------------------------------------- claims
+// A sentence that says a door is open or a lock is unlocked was written
+// before the state it describes changed. Each sentence about a door, lock,
+// garage, gate or window is checked against the entities as they are NOW
+// every time the story is drawn: an "open"/"unlocked"/"close it" sentence
+// stands only while something it is about is open or unlocked, and a
+// "locked"/"closed" sentence only while nothing it is about is not. A
+// sentence about nothing the house has is left alone.
+const CLAIM_GENERIC = new Set(['lock', 'door', 'sensor', 'contact', 'opening', 'cover', 'window', 'the', 'a', 'garage']);
+const CLAIM_NOUNS = [['lock', /\b(locks?|locked|unlocked?|deadbolts?)\b/i], ['door', /\bdoors?\b/i], ['garage', /\bgarage\b/i], ['window', /\bwindows?\b/i], ['gate', /\bgates?\b/i]];
+const CLAIM_UNSAFE = /\b(unlocked?|open|opened|opens|ajar|unsecured|unlatched|jammed)\b|\b(?:not|isn['’]t|aren['’]t)\s+(?:locked|closed|shut|secured?)\b|\b(close|shut|lock)\b/i;
+const CLAIM_SAFE = /\b(locked|closed|shut|secured?)\b/i;
+
+function claimEntities(states) {
+  const out = [];
+  Object.values(states || {}).forEach((st) => {
+    if (!st || !st.entity_id) return;
+    const d = domainOf(st.entity_id); const a = st.attributes || {}; const dc = a.device_class || '';
+    const name = String(a.friendly_name || st.entity_id.split('.')[1].replace(/_/g, ' '));
+    let classes = null; let bad = false;
+    if (d === 'lock') { classes = ['lock', 'door']; bad = ['unlocked', 'unlocking', 'open', 'opening', 'jammed'].includes(st.state); }
+    else if (d === 'cover' || (d === 'binary_sensor' && ['door', 'garage_door', 'window', 'opening'].includes(dc))) {
+      const text = `${dc} ${name}`;
+      classes = [];
+      if (/garage/i.test(text)) classes.push('garage', 'door');
+      else if (/window/i.test(text)) classes.push('window');
+      else if (/gate/i.test(text)) classes.push('gate');
+      else if (/door|opening/i.test(text) || dc === 'door') classes.push('door');
+      if (!classes.length) return;
+      bad = d === 'cover' ? ['open', 'opening'].includes(st.state) : st.state === 'on';
+    }
+    if (!classes || ['unavailable', 'unknown'].includes(st.state)) return;
+    const tokens = name.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w && !CLAIM_GENERIC.has(w));
+    out.push({ classes, bad, tokens });
+  });
+  return out;
+}
+
+export function checkDoorClaims(text, hass) {
+  const ents = claimEntities(hass && hass.states);
+  const sentences = String(text || '').match(/[^.!?]+[.!?]*\s*/g) || [];
+  const words = (s) => new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+  const kept = sentences.filter((s) => {
+    const classes = CLAIM_NOUNS.filter(([, re]) => re.test(s)).map(([c]) => c);
+    if (!classes.length) return true;
+    const unsafe = CLAIM_UNSAFE.test(s);
+    if (!unsafe && !CLAIM_SAFE.test(s)) return true;
+    const w = words(s);
+    const named = ents.filter((e) => e.tokens.length && e.tokens.every((t) => w.has(t)));
+    const relevant = ents.filter((e) => named.includes(e) || (e.classes.some((c) => classes.includes(c)) && (!e.tokens.length || !named.length)));
+    if (!relevant.length) return true;
+    const anyBad = relevant.some((e) => e.bad);
+    return unsafe ? anyBad : !anyBad;
+  });
+  return kept.map((s) => s.trim()).join(' ');
+}
+
+// ---------------------------------------------------------------- old readings
+// A chip or tile showing a reading nobody has refreshed for STALE_MIN
+// minutes looks the same as a live one; it says how old it is and is dimmed.
+export const STALE_MIN = 30;
+export function staleAge(st, now) {
+  if (!st) return '';
+  const t = Date.parse(st.last_reported || st.last_updated || st.last_changed || '');
+  if (!t) return '';
+  const m = Math.round(((now || Date.now()) - t) / 60000);
+  if (m < STALE_MIN) return '';
+  return m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+}
+
+// ---------------------------------------------------------------- Minecraft
+// What a tile for the BRUH Minecraft server says: whether it answers, and
+// who is playing. Any of the integration's entities stands for the server;
+// the others are found by their names beside it.
+export function minecraftStatus(hass, eid) {
+  const m = /^[a-z_]+\.(.*?bruh_minecraft)_/.exec(String(eid || ''));
+  if (!m) return null;
+  const S = hass.states; const base = m[1];
+  const on = S[`binary_sensor.${base}_online`];
+  const up = on && on.state === 'on';
+  if (!on || !up) return 'Offline';
+  const pl = S[`sensor.${base}_players_online`];
+  const n = pl ? parseInt(pl.state, 10) : NaN;
+  const names = pl && Array.isArray(pl.attributes.players) ? pl.attributes.players.map((p) => (p && p.name) || p).filter(Boolean) : [];
+  const tps = S[`sensor.${base}_tps_1m`]; const t = tps ? parseFloat(tps.state) : NaN;
+  const who = !pl || isNaN(n) ? 'Online' : n <= 0 ? 'Online · nobody playing' : `${n} playing${names.length ? ': ' + names.join(', ') : ''}`;
+  return who + (isFinite(t) ? ` · ${Math.round(t)} TPS` : '');
+}

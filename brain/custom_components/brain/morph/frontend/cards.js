@@ -18,7 +18,7 @@
 // dispatches it. `svc` is a service call described in the markup, so a new
 // control is markup, not a new handler.
 
-import { esc, mix, clamp, lightColor, lightTone, fmt, since, clock, icon, friendly, shortName, UNAVAILABLE, domainOf } from './util.js';
+import { esc, mix, clamp, lightColor, lightTone, fmt, since, clock, icon, friendly, shortName, UNAVAILABLE, domainOf, staleAge, minecraftStatus } from './util.js';
 import * as history from './history.js';
 
 const STRIP = { span: 1, grow: 2, dir: 'side', want: 3, hk: 's' };
@@ -385,7 +385,8 @@ const sensor = {
     const st = ctx.st; const unit = (st && st.attributes.unit_of_measurement) || '';
     const dc = st && st.attributes.device_class;
     const val = !st ? 'Missing' : UNAVAILABLE.includes(st.state) ? '—' : isNaN(parseFloat(st.state)) ? st.state : fmt(st.state, '');
-    return `<div class="box" style="box-shadow:inset 0 0 0 1px var(--line)"><div class="row">${icon(dc === 'humidity' ? 'humid' : dc === 'temperature' ? 'thermo' : dc === 'power' || dc === 'energy' ? 'bolt' : 'dot', { color: ctx.accent, size: 16 })}<b style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(ctx.name)}</b><span class="flex1"></span>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div><div class="rowb"><span class="mid">${esc(val)}</span><span class="sm">${esc(isNaN(parseFloat(st && st.state)) ? '' : unit)}</span></div>${st ? sparkline(ctx.hass, ctx.card.entity, ctx.accent) : ''}</div>`;
+    const old = staleAge(st);
+    return `<div class="box" style="box-shadow:inset 0 0 0 1px var(--line)${old ? ';opacity:.6' : ''}"><div class="row">${icon(dc === 'humidity' ? 'humid' : dc === 'temperature' ? 'thermo' : dc === 'power' || dc === 'energy' ? 'bolt' : 'dot', { color: ctx.accent, size: 16 })}<b style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(ctx.name)}</b><span class="flex1"></span>${old ? `<span class="hint">${esc(old)}</span>` : ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div><div class="rowb"><span class="mid">${esc(val)}</span><span class="sm">${esc(isNaN(parseFloat(st && st.state)) ? '' : unit)}</span></div>${st ? sparkline(ctx.hass, ctx.card.entity, ctx.accent) : ''}</div>`;
   },
   more: (ctx) => histBlock(ctx),
   tap: () => null,
@@ -631,7 +632,7 @@ const entity = {
   accent: () => 'var(--teal)',
   face: (ctx) => {
     const st = ctx.st; const unit = (st && st.attributes.unit_of_measurement) || '';
-    return stripFace({ kind: 'none', icon: 'dot', accent: ctx.accent, active: st && st.state === 'on', name: ctx.name, val: !st ? 'Missing' : isNaN(parseFloat(st.state)) ? st.state : fmt(st.state, unit), valColor: 'var(--muted)', hint: ctx.hint });
+    return stripFace({ kind: 'none', icon: 'dot', accent: ctx.accent, active: st && st.state === 'on', name: ctx.name, val: !st ? 'Missing' : minecraftStatus(ctx.hass, ctx.card.entity) || (isNaN(parseFloat(st.state)) ? st.state : fmt(st.state, unit)), valColor: 'var(--muted)', hint: ctx.hint });
   },
   more: (ctx) => histBlock(ctx),
   tap: () => null,

@@ -15,7 +15,7 @@
 // (who or what changed it). Every fetch is cached for a minute and asked at
 // most once at a time; the panel re-renders when an answer lands.
 
-import { esc, mix, clock, dur, fmt } from './util.js';
+import { esc, mix, clock, dur, fmt, staleAge } from './util.js';
 
 const CACHE = new Map();
 const MAX_CACHE = 400;
@@ -302,7 +302,7 @@ function labelsHtml(o, at) {
   for (let i = 1; i < lab.length; i++) lab[i].y = Math.max(lab[i].y, lab[i - 1].y + LABEL_GAP);
   const over = lab.length ? lab[lab.length - 1].y - (CH - 9) : 0;
   if (over > 0) { lab[lab.length - 1].y -= over; for (let i = lab.length - 2; i >= 0; i--) lab[i].y = Math.min(lab[i].y, lab[i + 1].y - LABEL_GAP); }
-  return lab.map((x) => `<button type="button" class="ovlab" data-act="r-focus" data-v="${esc(x.l.id)}" aria-pressed="${focus === x.l.id}" style="top:${(x.y - 9).toFixed(1)}px;opacity:${focus && focus !== x.l.id ? 0.45 : 1}"><span class="sw" style="background:${x.l.color}"></span><span class="nm">${esc(x.l.short)}</span><b style="color:${x.l.valColor || 'inherit'}">${x.v == null ? '—' : esc(Number(x.v).toFixed(digits) + unit)}</b></button>`).join('');
+  return lab.map((x) => `<button type="button" class="ovlab" data-act="r-focus" data-v="${esc(x.l.id)}" aria-pressed="${focus === x.l.id}" style="top:${(x.y - 9).toFixed(1)}px;opacity:${focus && focus !== x.l.id ? 0.45 : x.l.old && at == null ? 0.55 : 1}"><span class="sw" style="background:${x.l.color}"></span><span class="nm">${esc(x.l.short)}</span><b style="color:${x.l.valColor || 'inherit'}">${x.v == null ? '—' : esc(Number(x.v).toFixed(digits) + unit)}</b></button>`).join('');
 }
 
 // What the overlay says under a finger: the labels' values, a dot on every
@@ -356,7 +356,7 @@ export function readings(hass, card, H, colorFor, head) {
     const nm = st.attributes.friendly_name || eid;
     // A line's colour is its place in a fixed palette, so two rooms never
     // share one; the reading's own warmth colours its value instead.
-    series.push({ id: eid, name: nm, short: nm.replace(/\s*(temperature|humidity|temp|moisture)$/i, ''), color: SERIES[series.length % SERIES.length], valColor: colorFor(parseFloat(st.state)), pts, now: parseFloat(st.state) });
+    series.push({ id: eid, old: staleAge(st), name: nm, short: nm.replace(/\s*(temperature|humidity|temp|moisture)$/i, ''), color: SERIES[series.length % SERIES.length], valColor: colorFor(parseFloat(st.state)), pts, now: parseFloat(st.state) });
   });
   if (pending && !series.length) return header('') + '<p class="sm">Reading the day…</p>';
   // Extremes (an attic, the outside) leave the plot for the line below it.
@@ -369,7 +369,7 @@ export function readings(hass, card, H, colorFor, head) {
     const st = hass.states[eid]; if (!st || series.some((x) => x.id === eid)) return;
     const rows = stats(hass, eid, t0, now, '5minute');
     const nm = st.attributes.friendly_name || eid;
-    extreme.push({ id: eid, short: nm.replace(/\s*(temperature|humidity|temp)$/i, ''), color: 'var(--muted)', now: parseFloat(st.state), pts: Array.isArray(rows) ? rows.map((p) => [p.t, p.mean]) : [] });
+    extreme.push({ id: eid, old: staleAge(st), short: nm.replace(/\s*(temperature|humidity|temp)$/i, ''), color: 'var(--muted)', now: parseFloat(st.state), pts: Array.isArray(rows) ? rows.map((p) => [p.t, p.mean]) : [] });
   });
 
   // What the house was aiming for: a band the card names, or the
@@ -449,7 +449,7 @@ export function readings(hass, card, H, colorFor, head) {
   }
   ticks.push('<span style="left:100%;transform:translateX(-100%)">Now</span>');
   const axis = `<div class="ovrow" aria-hidden="true" style="margin-top:4px"><div class="ovaxis">${ticks.join('')}</div><span class="ovside"></span></div>`;
-  const env = extreme.length ? `<div class="ovenv">${extreme.map((x) => `<div class="ovenvi"><span class="nm">${esc(x.short)}</span><b style="color:${x.color}">${isFinite(x.now) ? esc(Number(x.now).toFixed(digits) + unit) : '—'}</b><svg width="56" height="14" viewBox="0 0 56 14" aria-hidden="true"><polyline points="${sparkPts(x.pts, 56, 14)}" stroke-width="1.25" style="fill:none;stroke:${x.color};opacity:.6"></polyline></svg></div>`).join('')}</div>` : '';
+  const env = extreme.length ? `<div class="ovenv">${extreme.map((x) => `<div class="ovenvi${x.old ? ' stale' : ''}"><span class="nm">${esc(x.short)}</span><b style="color:${x.color}">${isFinite(x.now) ? esc(Number(x.now).toFixed(digits) + unit) : '—'}</b>${x.old ? `<span class="age">${esc(x.old)}</span>` : ''}<svg width="56" height="14" viewBox="0 0 56 14" aria-hidden="true"><polyline points="${sparkPts(x.pts, 56, 14)}" stroke-width="1.25" style="fill:none;stroke:${x.color};opacity:.6"></polyline></svg></div>`).join('')}</div>` : '';
   return `${header(sub)}<div class="ovrow" data-ctl="1" style="margin-top:10px"><div class="chart ovplot" data-chart="${key}" data-ov="1" role="img" aria-label="${esc(hd.name || 'Readings')}, last 24 hours, one line per room. Slide along it to read any moment."><svg width="100%" height="${CH}" viewBox="0 0 600 ${CH}" preserveAspectRatio="none" aria-hidden="true">${band}${polys}</svg><span class="scrub" hidden></span><div class="ovdots" data-ovdots="${key}"></div></div><div class="ovside ovlabels" data-ovlabels="${key}">${labelsHtml(o, null)}</div></div>${runsRow}${axis}${env}`;
 }
 
