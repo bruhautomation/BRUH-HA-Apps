@@ -173,6 +173,8 @@ export class Engine {
           rowsOf(g, w).forEach((row) => row.forEach((p) => setW(p.it.id, widthOf(os && p.it.id === openId ? os.cs : p.cs, w))));
         });
       });
+      // A face stretched to its row's height last time is measured as it is on its own.
+      Object.keys(FE).forEach((id) => { if (FE[id].style.getPropertyValue('--fh')) FE[id].style.removeProperty('--fh'); });
       M.sections.forEach((s) => {
         headH[s.id] = HE[s.id] ? hgt(HE[s.id]) : 62;
         s.groups.forEach((g) => g.items.forEach((it) => {
@@ -192,8 +194,10 @@ export class Engine {
         if (g.label) { labs[g.key] = { x: PAD + GP + 6, y: y + 2, w: px(w) - 2 * PAD - 2 * GP - 12, h: 20 }; y += GLH; }
         const pos = []; let ry = 0;
         rowsOf(g, w).forEach((row) => {
-          let rh = 0, used = 0;
+          let rh = 0, used = 0; const from = pos.length;
           row.forEach((p) => { used += p.cs; const h = fH[p.it.id] || 56; pos.push({ id: p.it.id, c: p.c, y: ry, cs: p.cs, base: span(p.it, w), h: h }); rh = Math.max(rh, h); });
+          // One row is one height: a card that grew (a thermostat's routines) stretches its neighbour instead of leaving it short.
+          pos.slice(from).forEach((q) => { q.h = rh; });
           blank += (w - used) * cw * rh; ry += rh + TG;
         });
         const os = s === openSec ? openSpan(g, w) : null;
@@ -244,7 +248,9 @@ export class Engine {
         for (let g = 0; g < N; g++) {
           if (p.w >= N) break;
           const f0 = flow(secOf[p.id], p.w), f1 = flow(secOf[p.id], p.w + 1); const nh = f1.h; const hh = Math.max(p.h, nh);
-          if (nh > p.h - 8 && f1.blank - f0.blank > u * p.h * 0.4) break;
+          // Blank space only stops a widening when a neighbour could use the column; a section with nothing beside it in its band takes the whole floor, so no dead column is left.
+          const solo = pl.every((q) => q === p || q.f !== p.f || p.y + p.h + G <= q.y + 0.5 || q.y + q.h + G <= p.y + 0.5);
+          if (!solo && nh > p.h - 8 && f1.blank - f0.blank > u * p.h * 0.4) break;
           const free = (c) => pl.every((q) => q === p || q.f !== p.f || c + p.w + 1 <= q.c || q.c + q.w <= c || p.y + hh + G <= q.y + 0.5 || q.y + q.h + G <= p.y + 0.5);
           if (p.c + p.w < N && free(p.c)) { p.w++; p.h = nh; } else if (p.c > 0 && free(p.c - 1)) { p.c--; p.w++; p.h = nh; } else break;
         }
@@ -340,6 +346,8 @@ export class Engine {
       Object.keys(f.tiles).forEach((id) => {
         const t = f.tiles[id]; const te = TE[id]; if (!te) return;
         te.style.zIndex = id === openId ? '2' : '1';
+        // The row's height reaches the face, so a short neighbour's outline runs to the bottom of its tile rather than leaving a hole under it.
+        if (FE[id] && id !== openId && fH[id] != null && t.h > fH[id] + 1) FE[id].style.setProperty('--fh', t.h + 'px');
         const to = this.it['t:' + id]; let td = 0;
         if (to && !quiet) { if (t.w > to.t.w + 1 || t.h > to.t.h + 1) td = 170; else if (t.y < to.t.y - 1 || (t.x < to.t.x - 1 && Math.abs(t.y - to.t.y) < 1)) td = 170; }
         this.spring('t:' + id, te, t, snap, td);
