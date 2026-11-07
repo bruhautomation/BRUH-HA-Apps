@@ -498,7 +498,32 @@ def _problem_row(case: dict, lead: dict, prefill: str = "") -> list[dict]:
     return out[:MAX_VISIBLE]
 
 
+# brAIn's own reports (the Resident, "brAIn, watching the house") have no
+# mute, so Ignore is the one no — and five of eight were ignored with no
+# word, which taught nothing. Their Ignore box offers these as one-tap
+# reasons: each is sent exactly as a typed reason would be (the same route,
+# the same note), so it is kept as the correction under the entities the
+# report was about, and the next look at them reads it in its memory. Kept
+# to three, in words the reason readers file as a correction rather than a
+# snooze (`corrections.puts_off`) — "The sensor is broken" is the one
+# `corrections.gone_for_good` reads as a broken sensor (#577, #739).
+# (`findings_store.RESIDENT_SOURCE`, spelled here: this module is a leaf.)
+RESIDENT_SOURCE = "resident"
+RESIDENT_REASONS = ("Already known", "The sensor is broken",
+                    "Not an issue here")
+
+
 def answers(case: dict) -> list[dict]:
+    """`_answers`, with the reason chips on a Resident report's Ignore."""
+    out = _answers(case)
+    if str(case.get("source") or "") == RESIDENT_SOURCE:
+        for answer in out:
+            if answer.get("verb") == "wrong":
+                answer["reasons"] = list(RESIDENT_REASONS)
+    return out
+
+
+def _answers(case: dict) -> list[dict]:
     """The visible presses for this case, in order, primary first.
 
     One primary, then the **Snooze · Ignore** pair wherever a card can be

@@ -6147,6 +6147,24 @@ function openNoteForm(card, actions, onSend, opts) {
   // hint: it is one tap to send and still edits, where a placeholder is
   // the thing somebody has to retype.
   if (opts.prefill) ta.value = opts.prefill;
+  // One-tap reasons (`answers.RESIDENT_REASONS`): a chip IS a typed
+  // reason — it fills the box and sends it the way Enter would, so it
+  // reaches the server as the same note on the same route.
+  let send = null;
+  if (opts.reasons && opts.reasons.length) {
+    const chips = el("div", "kfchips findnotechips");
+    opts.reasons.forEach((reason) => {
+      const chip = el("button", "fchip", reason);
+      chip.type = "button";
+      chip.addEventListener("click", () => {
+        if (send.disabled) return;
+        ta.value = reason;
+        send.click();
+      });
+      chips.appendChild(chip);
+    });
+    form.appendChild(chips);
+  }
   form.appendChild(ta);
   // An optional box beside the note, for the one ending that has a second
   // thing to say: "Wrong — and stop raising these". `opts.check` is its
@@ -6161,7 +6179,7 @@ function openNoteForm(card, actions, onSend, opts) {
     form.appendChild(line);
   }
   const row = el("div", "findnoteactions");
-  const send = el("button", "btn small primary", opts.send);
+  send = el("button", "btn small primary", opts.send);
   const cancel = el("button", "btn small ghost", "Cancel");
   row.appendChild(send);
   row.appendChild(cancel);
@@ -7072,6 +7090,7 @@ function askThenRun(row, answer, btns) {
       prefill: answer.prefill || "",
       check: ignore && answer.verb === "wrong" && row.mutable
         ? "Ignore all like this" : "",
+      reasons: answer.reasons || [],
     });
 }
 
