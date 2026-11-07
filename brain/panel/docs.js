@@ -1342,7 +1342,12 @@ row of presses. The words on that row are the same everywhere:
 - **Ignore** — brAIn has this wrong, or it's normal here. It stops raising it
   for good, and the box that opens asks **Why? (helps brAIn learn)** — optional,
   but it is the half brAIn learns from. Tick **Ignore all like this** and the
-  rule that raised it stops raising anything at all.
+  rule that raised it stops raising anything at all. On brAIn's own reports
+  (**brAIn, watching the house**) the box also offers three one-tap reasons —
+  **Already known**, **The sensor is broken**, **Not an issue here** — sent
+  exactly as if you had typed them, so brAIn's next look at that device reads
+  your answer first. A sensor you call broken is never used as evidence again,
+  and no check reports its readings.
 
 A **question** brAIn wants confirmed offers **Yes**, **No** and **Snooze**; a
 **suggestion** offers **Apply**, **Snooze** and **Ignore**, with a week's trial
