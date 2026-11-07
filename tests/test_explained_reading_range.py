@@ -91,6 +91,30 @@ class TestTheRuleHoldsInsideTheRange(unittest.TestCase):
                                                                HOUSE_NOW)]
             self.assertEqual(HALL in ids, filed, value)
 
+    def test_a_night_it_read_impossibly_is_explained_up_to_now(self):
+        """Sane now, impossible a night ago: the row's range runs from the
+        recorded extreme to the reading NOW, so a Wrong on it silences it
+        while it reads as it does — as the same Wrong did before ranges."""
+        def snap_at(value):
+            snap = house()
+            snap["states"][HALL]["state"] = value
+            snap["baselines"] = {"entities": {HALL: {"impossible": {
+                "count": 3, "lowest": -150.0, "highest": -150.0,
+                "last": int(HOUSE_NOW - 3600)}}}}
+            return snap
+
+        row = [r for r in devices.implausible(snap_at("21.4"), HOUSE_NOW)
+               if r["entity_id"] == HALL][0]
+        low, high = row["explained"]
+        self.assertLessEqual(low, -150.0)
+        self.assertGreaterEqual(high, 21.4)
+        for value, filed in (("21.4", False), ("23", False)):
+            snap = rule(snap_at(value), HALL, "dev.implausible",
+                        row["explained"])
+            ids = [r["entity_id"] for r in devices.implausible(snap,
+                                                               HOUSE_NOW)]
+            self.assertEqual(HALL in ids, filed, value)
+
     def test_a_rule_with_no_range_holds_as_it_always_did(self):
         snap = dishwasher("finished", water=58.0)
         snap["corrections"]["entity"] = {WATER: {"base.unusual": {
