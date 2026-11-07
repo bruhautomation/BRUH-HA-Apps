@@ -942,6 +942,15 @@ RESIDENT_STATE: dict = {
     # old), `resolved` (a filed row settled while it waited), `cap` (the
     # cap took it). `dropped` is the sum, kept for the screens that read it.
     "dropped_why": {},
+    # A look that ran out of time (`resident.TIMEOUT_S`) answers nothing:
+    # its whole batch goes back on the pending list, and this is how many
+    # it handed back unreviewed — 0 once a look comes back. `timeouts` is
+    # how many looks in a row ran out, and `batch_limit` the smaller batch
+    # the next look takes after one ran out on a nearly full batch (0 is
+    # `resident.MAX_BATCH`); each look that comes back grows it again.
+    "left_unreviewed": 0,
+    "timeouts": 0,
+    "batch_limit": 0,
 }
 # A row from a rule three Wrongs deep waits for its look (`triage.
 # waiting_too_long`); this is how the store knows whether one has run.
@@ -14389,8 +14398,9 @@ async def _resident_look(now: float, settings: dict, thinking: str,
     # goes first in that reserve, oldest first. Ranked by salience alone,
     # whose recency weight favours the newest row, a row that lost one
     # lottery lost every later one to whatever was filed after it.
-    picked = signals.batch(ready, resident.MAX_BATCH,
-                           filed_reserve=resident.MAX_BATCH // 2,
+    limit = resident.next_batch_limit(RESIDENT_STATE.get("batch_limit"))
+    picked = signals.batch(ready, limit,
+                           filed_reserve=limit // 2,
                            overdue_before=now - triage.SHOW_AFTER_S)
     batch = picked["batch"]
     taken = {id(row) for row in batch}
@@ -14475,12 +14485,32 @@ async def _resident_look(now: float, settings: dict, thinking: str,
                   tier=charge or _ran_tier(result, resident.JOB_FIRST_LOOK))
 
     if not result.get("ok"):
+        if journal.classify(result) == "timeout":
+            _resident_timed_out(len(batch), RESIDENT_STATE.get("batch_limit"))
         return await _resident_run_failed(batch, run_id, now, surfaced)
+    RESIDENT_STATE["left_unreviewed"] = 0
+    RESIDENT_STATE["timeouts"] = 0
+    RESIDENT_STATE["batch_limit"] = resident.grown_batch_limit(
+        RESIDENT_STATE.get("batch_limit"))
     await asyncio.to_thread(_capture_look, settings, run_id, batch,
                             look_inputs, result, cost, now)
     verdicts = resident.parse_first_look(_answer(result), len(batch), batch)
     return await _resident_apply(batch, verdicts, run_id, now, settings,
                                  thinking, surfaced, len(watched_off))
+
+
+def _resident_timed_out(size: int, limit) -> None:
+    """A look stopped at its time limit (#721): nothing in its batch was
+    reviewed, and all of it is already going back on the pending list
+    (`_resident_run_failed`), so the next look resumes from those rows. Say
+    how many, and take a smaller batch next time when this one was nearly
+    full — the same batch again is the same timeout again."""
+    RESIDENT_STATE["left_unreviewed"] = int(size)
+    RESIDENT_STATE["timeouts"] = int(RESIDENT_STATE.get("timeouts") or 0) + 1
+    RESIDENT_STATE["batch_limit"] = resident.shrunk_batch_limit(size, limit)
+    log.warning("a first look ran out of time with %d row(s) unreviewed; they "
+                "stay queued and the next look takes at most %d", size,
+                resident.next_batch_limit(RESIDENT_STATE["batch_limit"]))
 
 
 async def _resident_run_failed(batch: list[dict], run_id: str, now: float,

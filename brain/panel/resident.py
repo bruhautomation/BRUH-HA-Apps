@@ -127,6 +127,41 @@ MAX_WHY = 240
 # than a paragraph and the point of the cheap tier is that a look is
 # cheap; small enough that a reply is still a list somebody can read.
 MAX_BATCH = 30
+# The smallest batch a look that keeps running out of time is cut to, and
+# how full a batch must have been for its timeout to be read as its size
+# (#721). A small batch that times out is the CLI or the account, and
+# cutting it further would only make the queue drain slower.
+MIN_BATCH = 5
+NEARLY_FULL = 0.8
+
+
+def next_batch_limit(limit) -> int:
+    """The batch the next look takes: `limit` when one is set, else the
+    full `MAX_BATCH`."""
+    try:
+        limit = int(limit or 0)
+    except (TypeError, ValueError):
+        limit = 0
+    return max(MIN_BATCH, min(MAX_BATCH, limit)) if limit > 0 else MAX_BATCH
+
+
+def shrunk_batch_limit(size: int, limit) -> int:
+    """After a look of `size` rows ran out of time under `limit`: half the
+    batch when it was nearly full, else the limit as it was."""
+    current = next_batch_limit(limit)
+    if size >= current * NEARLY_FULL:
+        return max(MIN_BATCH, int(size) // 2)
+    return int(limit or 0)
+
+
+def grown_batch_limit(limit) -> int:
+    """After a look came back: half as much again, until the full batch
+    (0) is back."""
+    current = next_batch_limit(limit)
+    if current >= MAX_BATCH:
+        return 0
+    grown = current + max(1, current // 2)
+    return 0 if grown >= MAX_BATCH else grown
 
 # A look is one turn over a batch that is already in the prompt: no tools,
 # no history fetches, nothing to wait for.
@@ -2061,7 +2096,8 @@ __all__ = [
     "HOT_FLOOR",
     "INVESTIGATE_MAX_TURNS", "INVESTIGATE_SYSTEM", "INVESTIGATE_TIMEOUT_S",
     "JOBS", "JOB_APPLY", "JOB_FIRST_LOOK", "JOB_INVESTIGATE", "JOB_PLAN",
-    "LEDGER_FILE", "MAX_BATCH", "MAX_EXAMPLES", "MAX_EXAMPLE_CHARS",
+    "LEDGER_FILE", "MAX_BATCH", "MIN_BATCH", "NEARLY_FULL",
+    "MAX_EXAMPLES", "MAX_EXAMPLE_CHARS",
     "MAX_TURNS", "MAX_WHY", "NEVER_IGNORE",
     "NEVER_IGNORE_FLOOR", "OPUS_PER_DAY", "SEVERITY_BY_STAKES", "SKIPPED",
     "SONNET_PER_DAY", "TIMEOUT_S", "UNREADABLE", "VERDICTS", "WATCH_FILE",
@@ -2074,4 +2110,5 @@ __all__ = [
     "DOOR_CLASSES", "READING_DOMAINS", "drivers_of", "faulty_case",
     "open_duration", "stated_open", "ungrounded_did_not_run",
     "device_aliases", "not_due", "look_tier",
+    "next_batch_limit", "shrunk_batch_limit", "grown_batch_limit",
 ]
