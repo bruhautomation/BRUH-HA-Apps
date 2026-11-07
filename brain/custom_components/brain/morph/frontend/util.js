@@ -300,66 +300,73 @@ export const ASK_CONTEXT = 'This question comes from the Ask bar on Morph, the h
 // A sentence that says a door is open or a lock is unlocked was written
 // before the state it describes changed. Each sentence about a door, lock,
 // garage, gate or window is checked against the entities as they are NOW
-// every time the story is drawn: an "open"/"unlocked"/"close it" sentence
-// stands only while something it is about is open or unlocked, and a
-// "locked"/"closed" sentence only while nothing it is about is not. A
-// sentence about nothing the house has is left alone.
+// every time the story is drawn. "Locked"/"unlocked" is judged by locks
+// only, "open"/"closed" by covers and door, window and garage contacts
+// only. A sentence goes only when every entity it could be about says
+// otherwise; where the match is ambiguous, or the house has nothing it could
+// be about, it stays (a true warning is never hidden).
 const CLAIM_GENERIC = new Set(['lock', 'door', 'sensor', 'contact', 'opening', 'cover', 'window', 'the', 'a', 'garage']);
-const CLAIM_NOUNS = [['lock', /\b(locks?|locked|unlocked?|deadbolts?)\b/i], ['door', /\bdoors?\b/i], ['garage', /\bgarage\b/i], ['window', /\bwindows?\b/i], ['gate', /\bgates?\b/i]];
-const CLAIM_UNSAFE = /\b(unlocked?|open|opened|opens|ajar|unsecured|unlatched|jammed)\b|\b(?:not|isn['’]t|aren['’]t)\s+(?:locked|closed|shut|secured?)\b|\b(close|shut|lock)\b/i;
-const CLAIM_SAFE = /\b(locked|closed|shut|secured?)\b/i;
+const CLAIM_NOUNS = [['door', /\bdoors?\b/i], ['garage', /\bgarage\b/i], ['window', /\bwindows?\b/i], ['gate', /\bgates?\b/i]];
+const LOCK_WORDS = /\b(unlocked?|locked|lock|deadbolts?)\b/i;
+const OPEN_WORDS = /\b(open|opened|opens|ajar|closed?|shut|unlatched)\b/i;
+const LOCK_UNSAFE = /\b(unlocked?|unlatched)\b|\b(?:not|isn['’]t|aren['’]t)\s+locked\b|\block\b/i;
+const OPEN_UNSAFE = /\b(open|opened|opens|ajar|unlatched|close|shut)\b|\b(?:not|isn['’]t|aren['’]t)\s+(?:closed|shut)\b/i;
 
 function claimEntities(states) {
   const out = [];
   Object.values(states || {}).forEach((st) => {
-    if (!st || !st.entity_id) return;
+    if (!st || !st.entity_id || ['unavailable', 'unknown'].includes(st.state)) return;
     const d = domainOf(st.entity_id); const a = st.attributes || {}; const dc = a.device_class || '';
     const name = String(a.friendly_name || st.entity_id.split('.')[1].replace(/_/g, ' '));
-    let classes = null; let bad = false;
-    if (d === 'lock') { classes = ['lock', 'door']; bad = ['unlocked', 'unlocking', 'open', 'opening', 'jammed'].includes(st.state); }
-    else if (d === 'cover' || (d === 'binary_sensor' && ['door', 'garage_door', 'window', 'opening'].includes(dc))) {
-      const text = `${dc} ${name}`;
-      classes = [];
+    const tokens = name.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w && !CLAIM_GENERIC.has(w));
+    if (d === 'lock') {
+      out.push({ kind: 'lock', classes: ['door'], bad: ['unlocked', 'unlocking', 'open', 'opening', 'jammed'].includes(st.state), tokens });
+    } else if (d === 'cover' || (d === 'binary_sensor' && ['door', 'garage_door', 'window', 'opening'].includes(dc))) {
+      const text = `${dc} ${name}`; const classes = [];
       if (/garage/i.test(text)) classes.push('garage', 'door');
       else if (/window/i.test(text)) classes.push('window');
       else if (/gate/i.test(text)) classes.push('gate');
-      else if (/door|opening/i.test(text) || dc === 'door') classes.push('door');
+      else if (/door|opening/i.test(text)) classes.push('door');
       if (!classes.length) return;
-      bad = d === 'cover' ? ['open', 'opening'].includes(st.state) : st.state === 'on';
+      out.push({ kind: 'open', classes, bad: d === 'cover' ? ['open', 'opening'].includes(st.state) : st.state === 'on', tokens });
     }
-    if (!classes || ['unavailable', 'unknown'].includes(st.state)) return;
-    const tokens = name.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w && !CLAIM_GENERIC.has(w));
-    out.push({ classes, bad, tokens });
   });
   return out;
 }
 
+// Does the state now contradict this one sentence, for one kind of claim?
+function contradicted(s, kind, ents, nouns, w) {
+  const unsafe = (kind === 'lock' ? LOCK_UNSAFE : OPEN_UNSAFE).test(s);
+  const pool = ents.filter((e) => e.kind === kind);
+  const named = pool.filter((e) => e.tokens.length && e.tokens.every((t) => w.has(t)));
+  const could = named.length ? named : pool.filter((e) => e.tokens.some((t) => w.has(t)) || e.classes.some((c) => nouns.includes(c)));
+  if (!could.length) return false;
+  return could.every((e) => (unsafe ? !e.bad : e.bad));
+}
+
 export function checkDoorClaims(text, hass) {
   const ents = claimEntities(hass && hass.states);
-  const sentences = String(text || '').match(/[^.!?]+[.!?]*\s*/g) || [];
-  const words = (s) => new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+  const sentences = String(text || '').trim().split(/(?<=[.!?])\s+/).filter(Boolean);
   const kept = sentences.filter((s) => {
-    const classes = CLAIM_NOUNS.filter(([, re]) => re.test(s)).map(([c]) => c);
-    if (!classes.length) return true;
-    const unsafe = CLAIM_UNSAFE.test(s);
-    if (!unsafe && !CLAIM_SAFE.test(s)) return true;
-    const w = words(s);
-    const named = ents.filter((e) => e.tokens.length && e.tokens.every((t) => w.has(t)));
-    const relevant = ents.filter((e) => named.includes(e) || (e.classes.some((c) => classes.includes(c)) && (!e.tokens.length || !named.length)));
-    if (!relevant.length) return true;
-    const anyBad = relevant.some((e) => e.bad);
-    return unsafe ? anyBad : !anyBad;
+    const nouns = CLAIM_NOUNS.filter(([, re]) => re.test(s)).map(([c]) => c);
+    const w = new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+    const kinds = [];
+    if (LOCK_WORDS.test(s)) kinds.push('lock');
+    if (OPEN_WORDS.test(s) && nouns.length) kinds.push('open');
+    if (!kinds.length) return true;
+    return !kinds.every((k) => contradicted(s, k, ents, nouns, w));
   });
-  return kept.map((s) => s.trim()).join(' ');
+  return kept.join(' ');
 }
 
 // ---------------------------------------------------------------- old readings
 // A chip or tile showing a reading nobody has refreshed for STALE_MIN
 // minutes looks the same as a live one; it says how old it is and is dimmed.
+// Only a state's own last report can say so: a steady reading's last_updated
+// is as old as a dead sensor's.
 export const STALE_MIN = 30;
 export function staleAge(st, now) {
-  if (!st) return '';
-  const t = Date.parse(st.last_reported || st.last_updated || st.last_changed || '');
+  const t = st ? Date.parse(st.last_reported || '') : 0;
   if (!t) return '';
   const m = Math.round(((now || Date.now()) - t) / 60000);
   if (m < STALE_MIN) return '';
@@ -368,19 +375,29 @@ export function staleAge(st, now) {
 
 // ---------------------------------------------------------------- Minecraft
 // What a tile for the BRUH Minecraft server says: whether it answers, and
-// who is playing. Any of the integration's entities stands for the server;
-// the others are found by their names beside it.
+// who is playing. Only the Online sensor and the Players online sensor stand
+// for the server; every other entity of it (version, last backup, buttons)
+// keeps its own value. The siblings are found through the entity registry's
+// device, else by the integration's own prefix.
 export function minecraftStatus(hass, eid) {
-  const m = /^[a-z_]+\.(.*?bruh_minecraft)_/.exec(String(eid || ''));
-  if (!m) return null;
-  const S = hass.states; const base = m[1];
-  const on = S[`binary_sensor.${base}_online`];
-  const up = on && on.state === 'on';
-  if (!on || !up) return 'Offline';
-  const pl = S[`sensor.${base}_players_online`];
+  const reg = (hass && hass.entities) || {}; const own = reg[eid];
+  const role = /^binary_sensor\..*_online$/.test(eid || '') ? 'online' : /^sensor\..*_players_online$/.test(eid || '') ? 'players' : '';
+  if (!role) return null;
+  const S = hass.states; let sib;
+  if (own) {
+    if (own.platform !== 'bruh_minecraft') return null;
+    const same = Object.keys(reg).filter((e) => reg[e].device_id && reg[e].device_id === own.device_id);
+    sib = (dom, suffix) => same.find((e) => e.startsWith(dom + '.') && e.endsWith(suffix));
+  } else {
+    if (!/^(binary_sensor|sensor)\.bruh_minecraft_server_/.test(eid)) return null;
+    sib = (dom, suffix) => `${dom}.bruh_minecraft_server${suffix}`;
+  }
+  const on = S[sib('binary_sensor', '_online')];
+  if (!on || on.state !== 'on') return 'Offline';
+  const pl = S[sib('sensor', '_players_online')];
   const n = pl ? parseInt(pl.state, 10) : NaN;
   const names = pl && Array.isArray(pl.attributes.players) ? pl.attributes.players.map((p) => (p && p.name) || p).filter(Boolean) : [];
-  const tps = S[`sensor.${base}_tps_1m`]; const t = tps ? parseFloat(tps.state) : NaN;
+  const tps = S[sib('sensor', '_tps_1m')]; const t = tps ? parseFloat(tps.state) : NaN;
   const who = !pl || isNaN(n) ? 'Online' : n <= 0 ? 'Online · nobody playing' : `${n} playing${names.length ? ': ' + names.join(', ') : ''}`;
   return who + (isFinite(t) ? ` · ${Math.round(t)} TPS` : '');
 }

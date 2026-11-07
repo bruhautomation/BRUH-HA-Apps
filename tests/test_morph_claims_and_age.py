@@ -88,6 +88,38 @@ class TestDoorClaimsAreCheckedAgainstNow(unittest.TestCase):
                          "st('lock.front', 'unlocked', { friendly_name: 'Front Door Lock' })")
         self.assertEqual(got, "")
 
+    def test_open_is_judged_by_contacts_only_not_by_locks(self):
+        # lock "Front Door" locked, contact "Front Entry" open: the door IS open.
+        got = self.check("The front door is open.",
+                         "st('lock.front', 'locked', { friendly_name: 'Front Door' }),"
+                         "st('binary_sensor.entry', 'on', { friendly_name: 'Front Entry', device_class: 'door' })")
+        self.assertEqual(got, "The front door is open.")
+        got = self.check("The main door is open.",
+                         "st('lock.main', 'locked', { friendly_name: 'Main Door' }),"
+                         "st('binary_sensor.entrance', 'on', { friendly_name: 'Main Entrance Door', device_class: 'door' })")
+        self.assertEqual(got, "The main door is open.")
+
+    def test_unlocked_is_judged_by_locks_only_not_by_contacts(self):
+        got = self.check("The front door is still unlocked.",
+                         "st('lock.front', 'locked', { friendly_name: 'Front Door Lock' }),"
+                         "st('binary_sensor.front', 'on', { friendly_name: 'Front Door', device_class: 'door' })")
+        self.assertEqual(got, "")
+
+    def test_a_decimal_does_not_split_a_sentence(self):
+        got = self.check("It is 62.6° out and the garage is open.",
+                         "st('cover.garage', 'open', { friendly_name: 'Garage Door', device_class: 'garage' })")
+        self.assertEqual(got, "It is 62.6° out and the garage is open.")
+        got = self.check("It is 62.6° out. The garage is open.",
+                         "st('cover.garage', 'closed', { friendly_name: 'Garage Door', device_class: 'garage' })")
+        self.assertEqual(got, "It is 62.6° out.")
+
+    def test_an_ambiguous_match_is_kept(self):
+        # Two garage doors, one open: "the garage is open" may be about it.
+        got = self.check("The garage is open.",
+                         "st('cover.g1', 'closed', { friendly_name: 'Left Garage Door', device_class: 'garage' }),"
+                         "st('cover.g2', 'open', { friendly_name: 'Right Garage Door', device_class: 'garage' })")
+        self.assertEqual(got, "The garage is open.")
+
     def test_what_it_cannot_judge_is_kept(self):
         self.assertEqual(self.check("Close the garage before bed.", "st('sensor.x', '3')"), "Close the garage before bed.")
         self.assertEqual(self.check("The dishwasher is open to inspection.", "st('lock.a', 'locked')"),
@@ -116,6 +148,14 @@ class TestAnOldReadingSaysSo(unittest.TestCase):
         self.assertEqual(self.age(55), "55 min ago")
         self.assertEqual(self.age(180), "3 h ago")
 
+    def test_without_a_last_report_nothing_is_dimmed(self):
+        got = run_node("""
+            const now = Date.parse('2026-11-07T12:00:00Z');
+            const old = new Date(now - 300 * 60000).toISOString();
+            console.log(JSON.stringify(U.staleAge({ state: '60', last_updated: old, last_changed: old }, now)));
+        """)
+        self.assertEqual(got, "")
+
     def test_the_last_report_counts_over_the_last_change(self):
         got = run_node("""
             const now = Date.parse('2026-11-07T12:00:00Z');
@@ -130,44 +170,61 @@ class TestAnOldReadingSaysSo(unittest.TestCase):
 
 
 class TestTheMinecraftTile(unittest.TestCase):
+    """The real ids: the device is "BRUH Minecraft Server" and entities have names."""
 
-    def status(self, list_, eid="binary_sensor.bruh_minecraft_online"):
-        return run_node(HOUSE + f"console.log(JSON.stringify(U.minecraftStatus(hass([{list_}]), {json.dumps(eid)})));")
+    P = "bruh_minecraft_server"
 
-    ONLINE = "st('binary_sensor.bruh_minecraft_online', 'on')"
+    def status(self, list_, eid, entities="{}"):
+        return run_node(HOUSE + f"const h = hass([{list_}]); h.entities = {entities};"
+                        f"console.log(JSON.stringify(U.minecraftStatus(h, {json.dumps(eid)})));")
+
+    ONLINE = "st('binary_sensor.bruh_minecraft_server_online', 'on')"
+    EID = "binary_sensor.bruh_minecraft_server_online"
 
     def test_online_and_empty(self):
-        got = self.status(self.ONLINE + ", st('sensor.bruh_minecraft_players_online', '0', { players: [] })")
+        got = self.status(self.ONLINE + ", st('sensor.bruh_minecraft_server_players_online', '0', { players: [] })", self.EID)
         self.assertEqual(got, "Online · nobody playing")
 
-    def test_players_by_name(self):
-        got = self.status(self.ONLINE + ", st('sensor.bruh_minecraft_players_online', '2', { players: ['Ana', 'Ben'] })")
+    def test_players_by_name_from_the_players_sensor_too(self):
+        got = self.status(self.ONLINE + ", st('sensor.bruh_minecraft_server_players_online', '2', { players: ['Ana', 'Ben'] })",
+                          "sensor.bruh_minecraft_server_players_online")
         self.assertEqual(got, "2 playing: Ana, Ben")
 
     def test_one_player_and_a_tps(self):
-        got = self.status(self.ONLINE + ", st('sensor.bruh_minecraft_players_online', '1', { players: ['Cy'] }), "
-                          "st('sensor.bruh_minecraft_tps_1m', '19.98')")
+        got = self.status(self.ONLINE + ", st('sensor.bruh_minecraft_server_players_online', '1', { players: ['Cy'] }), "
+                          "st('sensor.bruh_minecraft_server_tps_1m', '19.98')", self.EID)
         self.assertEqual(got, "1 playing: Cy · 20 TPS")
 
     def test_offline_when_it_does_not_answer(self):
-        self.assertEqual(self.status("st('binary_sensor.bruh_minecraft_online', 'off'), "
-                                     "st('sensor.bruh_minecraft_players_online', '0')"), "Offline")
-        self.assertEqual(self.status("st('binary_sensor.bruh_minecraft_online', 'unavailable')"), "Offline")
+        self.assertEqual(self.status("st('binary_sensor.bruh_minecraft_server_online', 'off'), "
+                                     "st('sensor.bruh_minecraft_server_players_online', '0')", self.EID), "Offline")
+        self.assertEqual(self.status("st('binary_sensor.bruh_minecraft_server_online', 'unavailable')", self.EID), "Offline")
 
-    def test_any_entity_of_the_server_reads_the_same(self):
-        got = self.status(self.ONLINE + ", st('sensor.bruh_minecraft_version', '1.21'), "
-                          "st('sensor.bruh_minecraft_players_online', '0', { players: [] })",
-                          eid="sensor.bruh_minecraft_version")
-        self.assertEqual(got, "Online · nobody playing")
+    def test_a_renamed_device_is_found_through_the_registry(self):
+        ents = json.dumps({
+            "binary_sensor.mc_online": {"platform": "bruh_minecraft", "device_id": "d1"},
+            "sensor.mc_players_online": {"platform": "bruh_minecraft", "device_id": "d1"},
+            "sensor.mc_tps_1m": {"platform": "bruh_minecraft", "device_id": "d1"},
+            "binary_sensor.other_online": {"platform": "bruh_minecraft", "device_id": "d2"},
+        })
+        got = self.status("st('binary_sensor.mc_online', 'on'), st('binary_sensor.other_online', 'off'), "
+                          "st('sensor.mc_players_online', '2', { players: ['Di', 'Ed'] }), st('sensor.mc_tps_1m', '20')",
+                          "binary_sensor.mc_online", ents)
+        self.assertEqual(got, "2 playing: Di, Ed · 20 TPS")
+
+    def test_other_entities_of_the_server_keep_their_own_value(self):
+        both = self.ONLINE + ", st('sensor.bruh_minecraft_server_version', '1.21'), st('sensor.bruh_minecraft_server_last_backup', 'x')"
+        for eid in ("sensor.bruh_minecraft_server_version", "sensor.bruh_minecraft_server_last_backup",
+                    "button.bruh_minecraft_server_save_world"):
+            self.assertIsNone(self.status(both, eid), eid)
 
     def test_another_entity_is_not_a_server(self):
-        self.assertIsNone(self.status("st('sensor.kitchen_temp', '20')", eid="sensor.kitchen_temp"))
+        self.assertIsNone(self.status("st('sensor.kitchen_online', '20')", "sensor.kitchen_online"))
+        self.assertIsNone(self.status("st('binary_sensor.router_online', 'on')", "binary_sensor.router_online",
+                                      json.dumps({"binary_sensor.router_online": {"platform": "ping"}})))
 
-    def test_the_entity_card_uses_it_and_new_tiles_start_as_entity_cards(self):
+    def test_the_entity_card_uses_it_and_buttons_stay_buttons(self):
         self.assertIn("minecraftStatus(", (FRONTEND / "cards.js").read_text(encoding="utf-8"))
         with MorphEnv() as env:
-            for eid in ("binary_sensor.bruh_minecraft_online", "sensor.bruh_minecraft_players_online",
-                        "button.bruh_minecraft_save"):
-                self.assertEqual(env.store.guess_type(eid), "entity", eid)
-            self.assertEqual(env.store.guess_type("binary_sensor.front_door"), "list")
-            self.assertEqual(env.store.guess_type("sensor.kitchen_temp"), "sensor")
+            self.assertEqual(env.store.guess_type("button.bruh_minecraft_server_save_world"), "button")
+            self.assertEqual(env.store.guess_type("sensor.bruh_minecraft_server_version"), "sensor")

@@ -115,9 +115,7 @@ def _entities(value) -> list[str]:
 
 
 def guess_type(entity: str) -> str:
-    domain, _, object_id = entity.partition(".")
-    if object_id.startswith("bruh_minecraft_"):
-        return "entity"  # the server's own tile reads its status, players and TPS (cards.js)
+    domain = entity.split(".", 1)[0]
     return {
         "light": "light", "fan": "fan", "cover": "cover", "lock": "lock",
         "switch": "switch", "input_boolean": "switch", "siren": "switch",
