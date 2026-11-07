@@ -294,9 +294,12 @@ def log_flood(snap: dict, now: float) -> list[dict]:
         # What the error means, never the line: a status code, JSON or a
         # URL pasted in is the integration developer's text, not the
         # homeowner's (`house_words.log_meaning`).
+        # An error none of the meanings reads is said as what is known —
+        # who, how often, over what window — and nothing more (#725).
+        meaning = house_words.known_log_meaning(top.get("message") or "")
         detail = (f"{who} logged the same error {int(top['count'])} times "
-                  f"in the last {hours} hours: "
-                  f"{house_words.log_meaning(top.get('message') or '')}.")
+                  f"in the last {hours} hours"
+                  + (f": {meaning}." if meaning else "."))
         if device:
             detail += f" It is about {device}."
         if len(groups) > 1:
