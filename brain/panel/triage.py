@@ -333,27 +333,6 @@ NOTHING_RE = re.compile(
     re.I)
 
 
-# A look's sentence that says the row can wait or is not its own fault: log
-# noise, a side effect of another open problem, the same cause as one, or a
-# matter that no longer matters. A row is held on it (item 8 of the words
-# batch): shown open at full severity, with a step beside it, it contradicts
-# its own look.
-CAN_WAIT_RE = re.compile(
-    r"\b(?:can (?:safely )?wait|(?:just |only |harmless )?(?:log |logging )"
-    r"noise|noise in the log|(?:probably|likely|just|only) (?:a |an )?"
-    r"(?:side[- ]effect|knock-?on)|side[- ]effect of|knock-?on (?:effect )?of"
-    r"|same (?:root |underlying )?cause as|(?:caused|explained) by (?:the |an? )?"
-    r"(?:other|another) (?:open )?(?:problem|fault|finding|issue)"
-    r"|(?:is|are|was) (?:now )?moot|no longer (?:matters|relevant|applies)"
-    r"|resolved (?:itself|on its own)|cleared (?:up )?on its own)\b", re.I)
-
-
-def says_can_wait(reason) -> bool:
-    """Whether a look's reason concludes the row is noise, a side effect of
-    another open fault, or moot."""
-    return bool(CAN_WAIT_RE.search(str(reason or "")))
-
-
 def says_nothing_to_do(text) -> bool:
     """Whether a look's reason (or a claim's step) says nothing is needed."""
     return bool(NOTHING_RE.search(str(text or "")))
@@ -388,7 +367,7 @@ def hot_look_allowed(runs_today: int, timer_left: int) -> bool:
             and runs + max(0, int(timer_left)) < MAX_PER_DAY)
 
 __all__ = [
-    "HOT_LOOKS_PER_DAY", "LEGACY_STOCK", "hot_look_allowed", "timer_looks_left", "DUPLICATE_RE", "says_duplicate", "CAN_WAIT_RE", "says_can_wait", "MAX_PER_DAY", "MAX_REASON", "RUN_FAILED",
+    "HOT_LOOKS_PER_DAY", "LEGACY_STOCK", "hot_look_allowed", "timer_looks_left", "DUPLICATE_RE", "says_duplicate", "MAX_PER_DAY", "MAX_REASON", "RUN_FAILED",
     "SHOW_AFTER_S", "STALE_S",
     "NOTE_EXCLUDED", "NOTE_SOURCES",
     "UNJUDGED", "VERDICTS", "WAITING", "gate", "is_note", "waiting_too_long",

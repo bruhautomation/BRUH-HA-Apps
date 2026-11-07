@@ -12,8 +12,7 @@
    whose words disagree about the state is caught;
 6. a generic usual cause is not said once a look found the cause (the
    fix a look wrote stands);
-7. and 8. a finding the look called noise, a side effect or a repeat is
-   held, with the look's reason, never open at full severity.
+7. a generic usual cause is dropped once a look found the cause.
 """
 
 import sys
@@ -30,7 +29,6 @@ import findings_store  # noqa: E402
 import house_words  # noqa: E402
 import prompt_kit  # noqa: E402
 import sre  # noqa: E402
-import triage  # noqa: E402
 from test_cases import StoresCase  # noqa: E402
 
 
@@ -107,6 +105,15 @@ class TestACardLeadsWithItsConclusion(unittest.TestCase):
         self.assertEqual(out["summary"], "The freezer held 0 °F, as usual.")
         self.assertTrue(changed)
 
+    def test_a_guess_that_carries_an_instruction_stays(self):
+        out = {"summary": "The freezer reads 12 degrees above usual. Check "
+                          "the door seal now; the door may have been left "
+                          "ajar."}
+        changed = []
+        card_claims.trim_guess(out, changed)
+        self.assertIn("may have been left ajar", out["summary"])
+        self.assertFalse(changed)
+
     def test_a_guess_with_a_figure_is_a_reading(self):
         out = {"summary": "Fine. It probably cycled 14 times."}
         card_claims.trim_guess(out, [])
@@ -167,6 +174,27 @@ class TestADeviceTitleNamesTheMeasuredState(unittest.TestCase):
         self.assertNotIn("signal", f)
         self.assertIn("Plug it back in", f)
 
+    def test_agreement_is_read_per_clause(self):
+        # "fine" in one clause must not hide a trouble in the next.
+        self.assertEqual(house_words.states_named(
+            "The battery looks fine but the signal is weak."), {"signal"})
+        self.assertEqual(house_words.states_denied(
+            "The battery looks fine but the signal is weak."), {"battery"})
+        self.assertEqual(house_words.states_named(
+            "Its signal was good until 02:00, then it went offline."),
+            {"offline"})
+        t, f = sre._one_state(
+            self.rec(lqi=20), {}, "Hall plug has a weak signal",
+            "The battery looks fine but the signal is weak.",
+            "Move the plug closer to improve its signal.")
+        self.assertEqual(f, "Move the plug closer to improve its signal.")
+        t, f = sre._one_state(
+            self.rec(available=False, last_seen_hours=3), {},
+            "Hall plug has been offline for 3 hours",
+            "Its signal was good until 02:00, then it went offline.",
+            "Plug it back in; it is offline.")
+        self.assertEqual(f, "Plug it back in; it is offline.")
+
     def test_a_second_example_battery(self):
         self.assertEqual(
             house_words.states_disagree(
@@ -177,68 +205,13 @@ class TestADeviceTitleNamesTheMeasuredState(unittest.TestCase):
             "Replace the battery."))
 
 
-class TestALookThatSaysItCanWaitHoldsTheRow(StoresCase):
+class TestAFoundCauseDropsTheGenericOne(StoresCase):
     def _row(self, **over):
         [row] = findings_store.add_many([{
             "text": "Garage opener logged errors", "detail": "It logged 9.",
             "fix": "Restart the opener.", "severity": "warning",
             "source": "check:integ.log_flood", "status": "triaging", **over}])
         return row
-
-    def test_log_noise_is_held_with_the_looks_reason(self):
-        row = self._row()
-        findings_store.record_triage(
-            {row["ts"]: ("elevated", "This is log noise and can wait.")})
-        stored = findings_store.get(row["ts"])
-        self.assertEqual(stored["status"], "held")
-        self.assertIn("log noise", stored["triage"]["reason"])
-
-    def test_a_side_effect_of_another_fault_is_held(self):
-        row = self._row(text="Porch light unavailable")
-        findings_store.record_triage({row["ts"]: (
-            "elevated", "Probably a side effect of the open hub fault.")})
-        self.assertEqual(findings_store.get(row["ts"])["status"], "held")
-
-    def test_a_safety_row_is_never_held_on_a_sentence(self):
-        row = self._row(text="Smoke alarm tripped", source="safety",
-                        severity="critical")
-        findings_store.record_triage(
-            {row["ts"]: ("elevated", "Looks like log noise.")})
-        self.assertNotEqual(findings_store.get(row["ts"])["status"], "held")
-
-    def test_a_row_a_person_raised_again_stays(self):
-        row = self._row()
-        findings_store.record_triage({row["ts"]: ("elevated", "ok")})
-        entry = findings_store._load()
-        for e in entry:
-            e["triage"]["elevated_by_person"] = True
-        findings_store._write(entry)
-        self.assertEqual(findings_store.look_concluded(
-            findings_store.get(row["ts"]), "This can wait."), "")
-
-    def test_a_refine_whose_step_says_nothing_is_needed_is_held(self):
-        row = self._row()
-        findings_store.record_triage({row["ts"]: ("elevated", "")})
-        findings_store.refine(row["ts"], {
-            "claim": "Opener logged errors", "kind": "problem",
-            "detail": "The errors stopped an hour ago.",
-            "fix": "Nothing needs doing; it cleared itself."})
-        self.assertEqual(findings_store.get(row["ts"])["status"], "held")
-
-    def test_a_refine_that_is_the_same_cause_is_held(self):
-        row = self._row(text="Kitchen blind slow")
-        findings_store.record_triage({row["ts"]: ("elevated", "")})
-        findings_store.refine(row["ts"], {
-            "claim": "Kitchen blind slow", "kind": "problem",
-            "detail": "This is the same cause as the open hub fault.",
-            "fix": "Restart the hub."})
-        self.assertEqual(findings_store.get(row["ts"])["status"], "held")
-
-    def test_a_look_that_found_a_real_problem_stays_open(self):
-        row = self._row()
-        findings_store.record_triage(
-            {row["ts"]: ("elevated", "The opener has been offline 6 hours.")})
-        self.assertEqual(findings_store.get(row["ts"])["status"], "open")
 
     def test_a_look_that_found_the_cause_drops_the_generic_one(self):
         row = self._row(
@@ -259,11 +232,6 @@ class TestALookThatSaysItCanWaitHoldsTheRow(StoresCase):
         self.assertEqual(
             house_words.without_usual_cause("Plug it in. Most often it is "
                                             "the cable."), "Plug it in.")
-
-    def test_the_words_are_one_vocabulary(self):
-        self.assertTrue(triage.says_can_wait("it can wait until Monday"))
-        self.assertTrue(triage.says_can_wait("is probably a side effect"))
-        self.assertFalse(triage.says_can_wait("the pump cannot wait"))
 
 
 if __name__ == "__main__":

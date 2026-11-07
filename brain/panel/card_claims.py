@@ -133,6 +133,12 @@ _GUESS = re.compile(
     r"|\bseems? (?:to be|like)\b", re.I)
 
 
+_INSTRUCTION = re.compile(
+    r"\b(?:check|replace|restart|reset|call|close|open|move|plug|unplug|"
+    r"turn|switch|clean|inspect|test|try|ask|make sure|please|should|"
+    r"need to|needs to)\b", re.I)
+
+
 def is_guess(sentence: str) -> bool:
     """Whether a sentence is a guess the data does not back."""
     text = str(sentence or "")
@@ -144,7 +150,10 @@ def trim_guess(out: dict, changed: list[str]) -> None:
     one and another sentence is left to carry the card."""
     parts = [p for p in _SENTENCE_END.split(str(out.get("summary") or "")
                                             .strip()) if p]
-    if len(parts) > 1 and is_guess(parts[-1]):
+    # A guess beside an instruction ("Check the door seal now; the door may
+    # have been left ajar") is the reason for the step, and stays.
+    if len(parts) > 1 and is_guess(parts[-1]) and not _INSTRUCTION.search(
+            parts[-1]):
         out["summary"] = " ".join(parts[:-1])
         changed.append("an unproven guess at the end")
 

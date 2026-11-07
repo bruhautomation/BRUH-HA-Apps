@@ -945,30 +945,36 @@ _STATE_NOT_FINE = re.compile(
 _STATE_SENT = re.compile(r"(?<=[.!?])\s+")
 
 
+_STATE_CLAUSE = re.compile(
+    r"(?<=[.!?])\s+|\s*[;,]\s*|\s+(?:but|and|then|yet|while|although|"
+    r"though|until|before|after)\s+", re.I)
+
+
 def _state_sentences(text) -> list[str]:
-    return [s for s in _STATE_SENT.split(str(text or "")) if s.strip()]
+    """The clauses of ``text``: a state is fine or the trouble in its own
+    clause, never by what sits beside it in the sentence."""
+    return [s for s in _STATE_CLAUSE.split(str(text or "")) if s.strip()]
+
+
+def _clause_states(text, fine: bool) -> set[str]:
+    out = set()
+    for clause in _state_sentences(text):
+        is_fine = bool(_STATE_FINE.search(clause)
+                       and not _STATE_NOT_FINE.search(clause))
+        if is_fine == fine:
+            out |= {k for k, rx in _STATE_WORDS.items() if rx.search(clause)}
+    return out
 
 
 def states_denied(text) -> set[str]:
     """The states ``text`` says are fine ("the signal looked fine")."""
-    out = set()
-    for sentence in _state_sentences(text):
-        if _STATE_FINE.search(sentence) and not _STATE_NOT_FINE.search(
-                sentence):
-            out |= {k for k, rx in _STATE_WORDS.items() if rx.search(sentence)}
-    return out
+    return _clause_states(text, True)
 
 
 def states_named(text) -> set[str]:
-    """The states ``text`` names as the trouble: in a sentence that does
+    """The states ``text`` names as the trouble: in a clause that does
     not say the state is fine."""
-    out = set()
-    for sentence in _state_sentences(text):
-        if _STATE_FINE.search(sentence) and not _STATE_NOT_FINE.search(
-                sentence):
-            continue
-        out |= {k for k, rx in _STATE_WORDS.items() if rx.search(sentence)}
-    return out
+    return _clause_states(text, False)
 
 
 def states_disagree(title, detail, fix) -> set[str]:

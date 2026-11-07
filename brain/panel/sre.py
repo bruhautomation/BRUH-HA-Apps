@@ -1829,7 +1829,8 @@ def _one_state(rec: dict | None, dig: dict, title: str, detail: str,
         denied = house_words.states_denied(detail) | house_words.states_denied(
             title)
         kept = [sent for sent in _SENTENCES.split(fix)
-                if not (house_words.states_named(sent) & denied)]
+                if not (house_words.states_named(sent) & denied)
+                or house_words.states_named(sent) - denied]
         fix = " ".join(kept).strip() or (
             _evidence_fix([rec], dig) if rec is not None else "")
     return title, fix
