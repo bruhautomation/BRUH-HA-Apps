@@ -279,7 +279,10 @@ def history_cutoffs(series: dict[str, list], live: dict[str, dict],
             continue
         if no_reading and last_state in NO_READING:
             continue
-        out[eid] = {"history_ends": last, "live_changed": changed}
+        # The two values ride along: a cut whose value did not move is a
+        # clock a restart reset, which `checks._util.history_cut` reads.
+        out[eid] = {"history_ends": last, "live_changed": changed,
+                    "history_state": last_state, "live_state": st.get("state")}
     return out
 
 

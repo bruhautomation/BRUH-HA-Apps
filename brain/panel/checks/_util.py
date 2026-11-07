@@ -143,6 +143,46 @@ def num(value: Any) -> float | None:
 HISTORY_MIN_CUT = 2
 
 
+def recorder_excludes(recorder_filter: dict | None, entity_id: str) -> bool:
+    """Whether the recorder's own `include`/`exclude` keeps this entity
+    out of history on purpose (`snapshot.load_recorder_filter`).
+
+    Home Assistant's order, as its docs give it: an entity named in
+    `include` is recorded and one named in `exclude` is not; then an
+    `exclude` glob or domain keeps it out; then an `include` glob or domain
+    lets it in; and with an `include` configured, anything it did not name
+    is not recorded. No filter (or one that could not be read) excludes
+    nothing — the question is then not answered, never guessed.
+    """
+    import fnmatch
+
+    flt = recorder_filter if isinstance(recorder_filter, dict) else {}
+    inc = flt.get("include") if isinstance(flt.get("include"), dict) else {}
+    exc = flt.get("exclude") if isinstance(flt.get("exclude"), dict) else {}
+    if not inc and not exc:
+        return False
+    eid = str(entity_id or "")
+    domain = eid.split(".", 1)[0]
+
+    def names(block: dict, key: str) -> list[str]:
+        value = block.get(key)
+        if isinstance(value, str):
+            value = [value]
+        return [str(v) for v in value or [] if isinstance(v, str)]
+
+    if eid in names(inc, "entities"):
+        return False
+    if eid in names(exc, "entities"):
+        return True
+    if (domain in names(exc, "domains")
+            or any(fnmatch.fnmatchcase(eid, g) for g in names(exc, "entity_globs"))):
+        return True
+    if (domain in names(inc, "domains")
+            or any(fnmatch.fnmatchcase(eid, g) for g in names(inc, "entity_globs"))):
+        return False
+    return bool(inc)
+
+
 def history_cut(snap: dict) -> dict:
     """The entities the history probe found cut short, when there are
     enough of them to say the recorder is missing rows — else `{}`.
@@ -151,10 +191,25 @@ def history_cut(snap: dict) -> dict:
     every check that reads a window off the recorder (which stands down
     for it), so the two can never disagree about whether history is
     trustworthy this pass.
+
+    Two kinds of row are not the recorder missing anything (#702, #707):
+    an entity the recorder's own `exclude` keeps out of history on purpose
+    (a network counter, typically), and one whose live value is the value
+    its history ends on — a restart re-stamps `last_changed` without a
+    change, so no row was due. The VALUE is compared, never the stamp.
     """
     probe = snap.get("history_health") or {}
     cut = probe.get("cut") or {}
     if not isinstance(cut, dict) or not cut:
+        return {}
+    flt = snap.get("recorder_filter")
+    cut = {eid: row for eid, row in cut.items()
+           if not recorder_excludes(flt, eid)
+           and not (isinstance(row, dict) and "live_state" in row
+                    and row.get("live_state") is not None
+                    and str(row.get("live_state"))
+                    == str(row.get("history_state")))}
+    if not cut:
         return {}
     probed = int(probe.get("probed") or 0)
     if len(cut) >= HISTORY_MIN_CUT or len(cut) >= probed:
