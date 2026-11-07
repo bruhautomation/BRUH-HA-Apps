@@ -116,7 +116,10 @@ def blind_lead(obj: dict, verdict: str = "") -> str:
         # only guesses: no conclusion and no usual-against-now.
         if all(is_guess(p) for p in parts):
             return "an unproven guess"
-        if _NON_EVENT.search(parts[0]):
+        # "No run since Sat" is a dated absence, which `card_verdict` words
+        # as "nothing new since" and keeps.
+        if _NON_EVENT.search(parts[0]) and not re.search(
+                r"\bsince\b", summary, re.I):
             return "nothing happened"
     return ""
 
