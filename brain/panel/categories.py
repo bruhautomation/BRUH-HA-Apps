@@ -510,7 +510,7 @@ CARD_SCHEMA = {
 }
 
 
-_CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The highlights ARE the product: concrete numbers with names and times. The title holds the headline; the summary opens with the finding itself — the reason, the comparison or the next step — never the title's figures again. "Nothing to do" only where the reader would otherwise worry, never as the opener. The first sentence is the conclusion with its consequence (fine, worth watching, or act) and the one thing to do if any; then ONE comparison, usual against now. Never end on a guess the data cannot settle. When all is normal, title and summary both say so in one short sentence, with at most two highlights, none with a status, and "html": "".
+_CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The highlights ARE the product: concrete numbers with names and times. The title holds the headline; the summary opens with the finding itself — the reason, the comparison or the next step — never the title's figures again. "Nothing to do" only where the reader would otherwise worry, never as the opener. The first sentence is the conclusion with its consequence (fine, worth watching, or act) and the one thing to do if any; then ONE comparison, usual against now. Never end on a guess. When all is normal, title and summary both say so in one short sentence, with at most two highlights, none with a status, and "html": "".
 
 OUTPUT CONTRACT (strict JSON; title, summary, highlights and html are required):
 {"title": "max 60 chars", "verdict": "all fine|worth a look|needs action", "summary": "1-2 sentences, max ~220 chars — the reason or next step, not the title again",
