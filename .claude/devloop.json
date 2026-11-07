@@ -1,6 +1,6 @@
 {
   "_what": "The development loop's cloud half, read by the fix-from-house skill and by devloop-guard (always from the BASE branch, so a PR cannot loosen what it is judged by). reports_repo is the private repository brAIn files issues into (owner/name); the routine does nothing until it is set. house_login is the GitHub login the house files those issues as (configurable: set it to whichever account holds the house's token). version_only_files are the manifests a devloop PR may change only the version line of. grader_paths are the files that judge a fix: a devloop/ or devloop-test/ PR that touches one fails, and only a devloop-meta/ PR may change them, after the base guard has proved the PR's guard still flags every frozen case in tests/devloop_guard_cases/. tiers maps changed paths to a risk tier (A copy/UI/docs/test additions, B logic in one add-on, C safety areas or logic across add-ons, T a test dispute, M a grader change); the skill reads the tier to decide how many reviewers a merge needs. canary_window_hours is how long after a release the house's health is watched before a fix counts as held; stand_down_days is how long a declined report silences its fingerprint. See docs/design/devloop.md and docs/design/self-learning-plan-2026-11.md.",
-  "reports_repo": "",
+  "reports_repo": "bruhautomation/brain-house-reports",
   "house_login": "bruhautomation",
   "max_open_prs": 1,
   "canary_window_hours": 24,
