@@ -23,6 +23,7 @@ import reports
 from textclip import clip
 
 from . import STREAMS
+from .plaintext import plain
 from .siblings import PRODUCTS
 
 # The owner's own words are the requirement, so they keep a generous limit
@@ -82,7 +83,10 @@ def log_excerpt(log_text: str, lines: int = LOG_LINES) -> str:
     name an error, a traceback or a failure, redacted the way a problem
     report is (`reports.redact`). Aliasing happens with the rest of the
     issue, in `upstream.compose`."""
-    kept = [ln.rstrip() for ln in str(log_text or "").splitlines()
+    # Colour codes and control characters off first (`plaintext.plain`):
+    # an excerpt is quoted in the body AND in the block, and a raw escape
+    # sequence in either is noise at best.
+    kept = [ln.rstrip() for ln in plain(log_text).splitlines()
             if _TROUBLE_RE.search(ln)]
     if not kept:
         return ""

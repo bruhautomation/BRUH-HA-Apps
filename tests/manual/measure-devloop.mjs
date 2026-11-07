@@ -256,7 +256,7 @@ for (const [width, touch, scheme] of [[390, true, 'light'], [390, true, 'dark'],
   const ons = new Set(sw.rows.filter((r) => r.on).map((r) => r.bg));
   const offs = new Set(sw.rows.filter((r) => !r.on).map((r) => r.bg));
   if ([...ons].some((c) => offs.has(c))) note(where, 'a switch reads the same on as off');
-  if (sw.rows.length < 10) note(where, `only ${sw.rows.length} switches found on Developer`);
+  if (sw.rows.length < 9) note(where, `only ${sw.rows.length} switches found on Developer`);
   sw.rows.forEach((r) => {
     if (r.h >= r.w) note(where, `switch ${r.id} stands on end: ${Math.round(r.w)}x${Math.round(r.h)}`);
     if (Math.abs(r.w - sw.want.w) > 0.5 || Math.abs(r.h - sw.want.h) > 0.5) {

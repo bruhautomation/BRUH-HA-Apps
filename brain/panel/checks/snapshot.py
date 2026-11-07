@@ -28,11 +28,15 @@ and so cannot clear anything):
                     for every numeric measurement sensor
     battery_stats  {entity_id: [{start, mean}]} — 60 daily rows for every
                     battery sensor
-    history_health {probed, cut: {eid: {history_ends, live_changed}},
-                    hours} — a few recently-changed entities asked for over
+    history_health {probed, cut: {eid: {history_ends, live_changed,
+                    history_state, live_state}}, hours} — a few
+                    recently-changed entities asked for over
                     `HISTORY_PROBE_HOURS`, and the ones whose history stops
                     before their own live last change. Unavailable when
                     Core would not answer, which is not a whole recorder
+    recorder_filter {include, exclude} — the recorder's own blocks from
+                    configuration.yaml (one `!include` followed); {} when
+                    none or unreadable. Read with the probe, never marked
     dashboards     [{url_path, title, config}] — the storage-mode ones.
                     Empty on a house with only the Overview, and that IS
                     available; unavailable only when Core would not list
@@ -211,6 +215,53 @@ def load_configs(config_dir: str = CONFIG_DIR) -> dict:
     scenes = load_yaml_file(os.path.join(config_dir, "scenes.yaml"))
     out["scenes"] = scenes if isinstance(scenes, list) else None
     return out
+
+
+def load_recorder_filter(config_dir: str = CONFIG_DIR) -> dict:
+    """The recorder's `include`/`exclude` blocks from `configuration.yaml`,
+    as `{"include": {...}, "exclude": {...}}` — `{}` when there are none or
+    the file cannot be read (`checks._util.recorder_excludes` then
+    excludes nothing).
+
+    `recorder: !include recorder.yaml` is the common way to keep a long
+    exclude list, and `load_yaml_file` reads every tag as None, so that one
+    include is followed here, one level, inside the config folder.
+    """
+    try:
+        import yaml
+    except ImportError:
+        return {}
+    path = os.path.join(config_dir, "configuration.yaml")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return {}
+
+    class _Loader(yaml.SafeLoader):
+        pass
+
+    def _tag(loader, suffix, node):
+        if suffix == "include" and isinstance(node, yaml.ScalarNode):
+            return {"__include__": loader.construct_scalar(node)}
+        return None
+
+    _Loader.add_multi_constructor("!", _tag)
+    try:
+        cfg = yaml.load(text, Loader=_Loader)  # noqa: S506 — SafeLoader subclass
+    except yaml.YAMLError:
+        return {}
+    block = cfg.get("recorder") if isinstance(cfg, dict) else None
+    if isinstance(block, dict) and set(block) == {"__include__"}:
+        name = str(block["__include__"] or "")
+        root = os.path.realpath(config_dir)
+        target = os.path.realpath(os.path.join(config_dir, name))
+        block = (load_yaml_file(target)
+                 if target.startswith(root + os.sep) else None)
+    if not isinstance(block, dict):
+        return {}
+    return {key: block[key] for key in ("include", "exclude")
+            if isinstance(block.get(key), dict)}
 
 
 def load_recorder(config_dir: str = CONFIG_DIR) -> dict | None:
@@ -584,8 +635,11 @@ async def collect(now: float | None = None) -> dict:
         # stops before its own live last change is the recorder missing
         # rows (`ha_data.history_cutoffs`).
         try:
+            # What the recorder leaves out on purpose is neither probed nor,
+            # in `history_cut`, counted: no rows is its answer for those.
+            snap["recorder_filter"] = load_recorder_filter()
             probe = await _history_probe(session, snap.get("states") or {},
-                                         now)
+                                         now, snap["recorder_filter"])
             snap["history_health"] = probe or {}
             _mark("history_health", probe is not None,
                   "" if probe is not None else
@@ -1363,12 +1417,17 @@ async def _core_log(session, now: float) -> dict | None:
     return integrations.summarise_log(text[-8_000_000:], now, house_tz())
 
 
-async def _history_probe(session, states: dict, now: float) -> dict | None:
+async def _history_probe(session, states: dict, now: float,
+                         recorder_filter: dict | None = None) -> dict | None:
     """`{probed, cut: {eid: {history_ends, live_changed}}, hours}`, or None
-    when Core would not answer — "I could not look" is not "it is whole"."""
+    when Core would not answer — "I could not look" is not "it is whole".
+    An entity the recorder excludes is not probed."""
     import ha_data
 
-    ids = probe_candidates(states, now)
+    from ._util import recorder_excludes
+    ids = probe_candidates(
+        {eid: st for eid, st in states.items()
+         if not recorder_excludes(recorder_filter, eid)}, now)
     if not ids:
         return {"probed": 0, "cut": {}, "hours": HISTORY_PROBE_HOURS}
     end = dt.datetime.fromtimestamp(now, tz=dt.timezone.utc)

@@ -128,6 +128,12 @@ class ClaudeBridge:
         return os.path.join(self._base, TASK_RESULTS_DIR)
 
     @property
+    def task_image_dir(self) -> str:
+        """Where a task's pictures wait for the listener (its
+        `TASK_IMAGE_DIR`, /config/.brain/task_images)."""
+        return os.path.join(self._base, "task_images")
+
+    @property
     def sessions_dir(self) -> str:
         return os.path.join(self._base, SESSIONS_DIR)
 
@@ -514,8 +520,15 @@ class ClaudeBridge:
         thought: dict | None = None,
         stop_on_cancel: bool = False,
         player: str | None = None,
+        images: list[str] | None = None,
+        image_cameras: list[str] | None = None,
     ) -> dict:
         """Send a task and wait for the whole result: ``{"text", "data"}``.
+
+        `images` are pictures already written into the task image folder
+        (`task_image_dir`); the listener hands them to the run as pictures
+        and deletes them. `image_cameras` names the cameras any of them are
+        frames of, which the listener asks the camera policy about first.
 
         `schema` is a JSON Schema the listener hands the CLI as
         `--json-schema`; the object the CLI validated comes back as
@@ -616,6 +629,18 @@ class ClaudeBridge:
 
         task_file = os.path.join(self.tasks_dir, f"{task_id}.json")
         result_file = os.path.join(self.task_results_dir, f"{task_id}.json")
+        # Pictures: full paths, each a plain file directly inside the task
+        # image folder (the listener checks again, and reads nothing else).
+        if images:
+            root = os.path.realpath(self.task_image_dir)
+            kept = [p for p in images if isinstance(p, str)
+                    and os.path.dirname(os.path.realpath(p)) == root]
+            if kept:
+                task["images"] = kept[:4]
+                cams = [c for c in (image_cameras or [])
+                        if isinstance(c, str) and re.fullmatch(r"camera\.[a-z0-9_]+", c)]
+                if cams:
+                    task["image_cameras"] = sorted(set(cams))[:4]
 
         await self._hass.async_add_executor_job(
             self._write_json, task_file, task

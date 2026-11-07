@@ -2,6 +2,20 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.1
+
+### Added
+
+- An automation can hand brAIn a camera picture: brAIn's AI Task entity now takes attachments, so `ai_task.generate_data` with a camera attachment returns structured data about the image. Each camera frame still answers to the camera list and daily count in ⚙ (#740).
+
+### Fixed
+
+- A narrow-scope task (`brain.run_task` with `tools: house`, `read_only` or the game's) no longer refuses because of a stray Python file, start-up hook or package left on the machine, a broken list for a different scope, or a line an import printed; a refusal that remains says why in the journal (#621).
+- With the model option set to Sonnet, the Resident's first looks no longer use up its daily Sonnet allowance by the early hours and leave it silent for the rest of the day (#630).
+- A Resident look that runs out of time keeps what it had not reviewed for the next pass, health says how many were left after repeated timeouts, and the next pass takes a smaller batch when the queue is nearly full (#721).
+- "History is incomplete" is no longer reported for entities the recorder excludes on purpose, or for entities Home Assistant re-stamped on a restart without their value changing, so history-based checks are not held back by it (#707, #702).
+- A development-loop report whose log lines carry colour codes or other control characters is now always readable by the cloud half.
+
 ## 5.1.0
 
 ### Added
