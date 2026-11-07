@@ -104,7 +104,9 @@ def boot_source(*, frontend: Path = FRONTEND_DIR, code_dir: Path = CODE_DIR, cod
         return None
     kw = {"frontend": frontend, "code_dir": code_dir, "code_state": code_state}
     text = text.replace("const STAMP = '';", f"const STAMP = {json.dumps(stamp(**kw))};", 1)
-    return text.replace("const MODULES = [];", f"const MODULES = {json.dumps(modules(**kw))};", 1)
+    text = text.replace("const MODULES = [];", f"const MODULES = {json.dumps(modules(**kw))};", 1)
+    copies = sorted(n for n in in_use(code_state) if n not in FIXED and (code_dir / n).is_file())
+    return text.replace("const COPIES = [];", f"const COPIES = {json.dumps(copies)};", 1)
 
 
 def stamped(name: str, want: str, **kw) -> tuple[bytes, bool] | None:
