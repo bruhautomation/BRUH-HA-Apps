@@ -334,6 +334,8 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .ovenv{display:flex;flex-wrap:wrap;gap:6px 24px;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
 .ovenvi{display:flex;align-items:center;gap:8px}
 .ovenvi .nm{font-size:12px;color:var(--muted)}
+.ovenvi.stale{opacity:.55}
+.ovenvi .age{font-size:12px;color:var(--quiet)}
 .ovenvi b{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
 @media (max-width:520px){.ovside{width:104px}}
 .legend .wd{min-height:30px;font-size:12px}

@@ -40,7 +40,7 @@ import * as sal from './salience.js';
 import { morph } from './morph-dom.js';
 import { caseFace, todoFace, caseColor, placeCase } from './cases.js';
 import { Rail } from './rail.js';
-import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, cardPage, guardDefine, loadCard, cardUrl, cardFailure, isDashChange, ASK_CONTEXT, own } from './util.js';
+import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, cardPage, guardDefine, loadCard, cardUrl, cardFailure, isDashChange, ASK_CONTEXT, own, checkDoorClaims, unlockedLocks } from './util.js';
 
 const HOLD_MS = 540;
 // The card types whose entities are `entity`/`entities`; a hosted Lovelace
@@ -773,7 +773,7 @@ class MorphPanel extends HTMLElement {
     const H = this.hass;
     if (x.isCase || String(x.id).startsWith('k:')) {
       const c = this.caseById(String(x.id).slice(2));
-      return c ? (c.claim || c.text || '') : '';
+      return c ? checkDoorClaims(c.claim || c.text || '', H) : '';
     }
     const st = states[x.eid];
     if (!st) return '';
@@ -829,6 +829,10 @@ class MorphPanel extends HTMLElement {
     return out;
   }
 
+  // Locks that are unlocked right now, as clauses: the away line may not say
+  // "Everything is locked." over one (#719).
+  unlockedClauses() { return unlockedLocks(this.hass); }
+
   verdictHtml(dash) {
     const fh = this.feedState();
     const offline = fh.state === 'offline' || fh.state === 'expired' ? '<span class="vq"> · brAIn offline</span>' : '';
@@ -840,7 +844,7 @@ class MorphPanel extends HTMLElement {
     const parts = this.verdict(this.hass.states);
     const open = this.cases().filter((c) => c.kind !== 'chore').length;
     const tail = open ? ` <button type="button" class="vjump plain" data-act="jump" data-v="k:${esc((this.cases()[0] || {}).id || '')}">…and ${open} thing${open === 1 ? '' : 's'} need${open === 1 ? 's' : ''} you.</button>` : '';
-    const opens = parts.length ? [] : this.openClauses();
+    const opens = parts.length ? [] : this.form_ === 'away' ? [...this.openClauses(), ...this.unlockedClauses()] : this.openClauses();
     const openHtml = opens.length ? `<span style="color:var(--amber)">${esc(opens.slice(0, 2).join('. '))}${opens.length > 2 ? ` and ${opens.length - 2} more` : ''}.</span>` : '';
     if (this.form_ === 'away') {
       const sec = parts.length ? ' ' + sentence(parts) : ' ' + (openHtml || '<span style="color:var(--indigo)">Everything is locked.</span>');
@@ -848,9 +852,12 @@ class MorphPanel extends HTMLElement {
     }
     if (parts.length) return `<p class="story">${sentence(parts)}${tail}${offline}</p>`;
     const sit = this.brain().situation;
+    // A model's sentence was written before the doors moved: each claim about
+    // one is checked against its state now, and one that no longer holds goes.
+    const sentence_ = sit && sit.sentence ? checkDoorClaims(sit.sentence, this.hass) : '';
     // A model's sentence that claims everything is shut is not shown over an open door.
-    const claimsAllShut = sit && /\b(every|all|everything)\b[^.]*\b(locked|closed|shut|secure)/i.test(sit.sentence || '');
-    if (sit && sit.sentence && !(claimsAllShut && opens.length) && (!sit.at || Date.now() / 1000 - sit.at < 3600) && this.form_ !== 'night') return `<p class="story"><span class="hi">${esc(sit.sentence)}</span>${tail}${offline}</p>`;
+    const claimsAllShut = sit && /\b(every|all|everything)\b[^.]*\b(locked|closed|shut|secure)/i.test(sentence_);
+    if (sit && sentence_ && !(claimsAllShut && opens.length) && (!sit.at || Date.now() / 1000 - sit.at < 3600) && this.form_ !== 'night') return `<p class="story"><span class="hi">${esc(sentence_)}</span>${tail}${offline}</p>`;
     return `<p class="story">${openHtml || '<span style="color:var(--indigo)">Everything is at rest.</span>'}${tail}${offline}</p>`;
   }
 
