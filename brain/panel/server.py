@@ -20577,6 +20577,9 @@ def _devloop_payload() -> dict:
         "settings": settings,
         "streams": devloop.catalog(),
         "hours": list(devloop.HOURS_CHOICES),
+        # How often each stream is recommended to run: marked in its
+        # drop-down, never forced (#711).
+        "recommended": dict(devloop.RECOMMENDED_HOURS),
         "caps": {k: list(v) for k, v in devloop.CAP_LIMITS.items()},
         "looks": {"running": DEVLOOP_LOOKS["running"],
                   "last": _devloop_last_look(queue)},
@@ -20656,7 +20659,7 @@ async def h_devloop_put(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "expected an object"}, status=400)
     changes = {k: body[k] for k in (
-        "enabled", "autopilot", "repo", "review", "streams", "schedule",
+        "enabled", "repo", "review", "streams", "schedule",
         *devloop.CAP_LIMITS, *devloop.NUMBER_LIMITS, "house_login") if k in body}
     try:
         await asyncio.to_thread(devloop.save_settings, changes)
@@ -26914,11 +26917,12 @@ YOLO_MODE_ON = (
 
 
 def development_mode() -> bool:
-    """Development mode is the devloop switched on with autopilot: brAIn files
-    what it finds about itself without a press. Opt-in; False on any error."""
+    """Development mode is the devloop switched on with "Ask before sending"
+    off (or the old autopilot stored, which reads that way): brAIn files what
+    it finds about itself without a press. Opt-in; False on any error."""
     try:
         s = devloop.load_settings()
-        return s.get("enabled") is True and s.get("autopilot") is True
+        return s.get("enabled") is True and s.get("review") is False
     except Exception:  # noqa: BLE001 — unreadable is off, the safe reading
         return False
 

@@ -176,16 +176,23 @@ HOURS_CHOICES = (0, 1, 3, 6, 12, 24, 168)
 # is a fresh allowance, and a backlog filed all at once is the flood.
 CAP_LIMITS = {"max_issues_per_day": (0, 50), "max_runs_per_day": (0, 24)}
 
-# "Autopilot": the owner has handed brAIn's development to the loop. Every
-# stream on, on these schedules, nothing waiting for a press, and caps no
-# lower than these. Somebody who chose that should not tune eight switches
-# to get it, nor find their reports sitting in a review queue they never
-# open.
+# How often each stream is recommended to run: shown beside the choice in
+# ⚙ › Developer, which the owner can change (#711). It was autopilot's
+# schedule, and autopilot ("Report everything without asking") is no longer a
+# switch: it overlapped "Ask before sending" and locked every stream and
+# schedule while it was on (#710). An install that still has it stored reads
+# as it always did — every stream on, these schedules, nothing waiting —
+# until the owner changes any of those, which writes that reading down as
+# their own settings (`save_settings`) so the change sticks.
 AUTOPILOT_HOURS = {"faults": 1, "scorecard": 24, "wrongs": 24, "outcomes": 24, "unmet": 24,
                    "snapshot": 168, "gaps": 24, "ideas": 168, "design": 24,
                    "screens": 168, "morph": 1, "siblings": 1,
                    "walkthrough": 24, "look": 0, "canary": 1, "corpus": 24}
 AUTOPILOT_CAPS = {"max_issues_per_day": 20, "max_runs_per_day": 8}
+RECOMMENDED_HOURS = {k: AUTOPILOT_HOURS.get(k, v["default_hours"]) for k, v in STREAMS.items()}
+# The settings autopilot decided. Changing any of them while it is stored
+# writes its reading down first and switches it off.
+_AUTOPILOT_DECIDES = ("streams", "schedule", "review")
 
 DEFAULTS = {
     "enabled": False,
@@ -294,7 +301,14 @@ def save_settings(changes: dict) -> dict:
     """Merge ``changes`` into the stored settings. Raises ValueError naming
     the field for anything that is not what it should be."""
     current = _raw_settings()
-    for key, value in (changes or {}).items():
+    changes = changes or {}
+    if current.get("autopilot") and "autopilot" not in changes \
+            and any(k in changes for k in _AUTOPILOT_DECIDES):
+        # The old "Report everything without asking" is stored: what the
+        # owner saw is its reading, so that becomes what is stored, and the
+        # change lands on it rather than being read over (#710).
+        current = {**_apply_autopilot(current), "autopilot": False}
+    for key, value in changes.items():
         if key in ("enabled", "review", "autopilot"):
             if not isinstance(value, bool):
                 raise ValueError(f"{key} must be true or false")
