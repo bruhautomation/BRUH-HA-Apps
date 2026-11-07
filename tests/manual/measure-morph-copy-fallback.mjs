@@ -10,7 +10,9 @@
 // `boot()`, a different place the same mistake can be), served as an
 // in-use copy the way static.py serves one, and this fails unless Morph's
 // own panel draws the dashboard and the page says a change did not load,
-// with the reason. A working copy (third) must stay in use.
+// with the reason. A throw placed right after the panel says it is ready
+// (third) is the same failure. A working copy (fourth) must stay in use, and
+// so must one beside an error from a module that is not a copy (fifth).
 //
 // Exits non-zero with every failure listed.
 import { chromium } from 'playwright';
@@ -24,7 +26,13 @@ const own = readFileSync(new URL('../../brain/custom_components/brain/morph/fron
 const cases = [
   ['render', '  render() {\n', '    removedHelperNotImported(this);\n', true],
   ['boot', '  boot() {\n', '    alsoRemovedNotImported();\n', true],
+  // After the panel has said it is ready, but before the dashboard's body
+  // is drawn: the reviewer's case, blank before the watch outlasted ready.
+  ['after ready', '    this.readyOnce();\n', '    removedAfterReadyNotImported();\n', true],
   ['a working copy', '  render() {\n', '    window.__houseCopyRan = true;\n', false],
+  // A working copy while an error is reported from a served module that is
+  // NOT a copy in use: that is not the copy failing, so it stays.
+  ['an unrelated error', '  render() {\n', "    window.__houseCopyRan = true; if (!window.__unrelated) { window.__unrelated = 1; setTimeout(() => window.dispatchEvent(new ErrorEvent('error', { filename: new URL('engine.js', import.meta.url).href, message: 'unrelated' })), 0); }\n", false],
 ];
 
 (async () => {

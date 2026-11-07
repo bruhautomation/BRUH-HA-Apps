@@ -93,11 +93,19 @@ function loadShipped() {
   return shippedLoading;
 }
 
-// Whether an error came from this house's code: its file, or a frame of its
-// stack, served from `dir` and not from shipped/.
+// Whether an error came from one of this house's copies in use: its file,
+// or a frame of its stack, served from `dir` under a name in COPIES. An
+// error from a module that is Morph's own (served from `dir` too, beside
+// the copies) is not the copy failing. Served as a plain file (a test, no
+// stamp and no list), every module under `dir` but shipped/ counts.
 function fromHouseCode(file, stack) {
   const urls = [file || '', ...String(stack || '').match(/https?:\/\/[^\s)]+/g) || []];
-  return urls.some((u) => u.startsWith(dir) && !u.startsWith(shippedDir));
+  return urls.some((u) => {
+    if (!u.startsWith(dir) || u.startsWith(shippedDir)) return false;
+    if (!COPIES.length) return !STAMP;
+    const name = u.slice(dir.length).replace(/[?#].*$/, '').replace(/(:\d+)+$/, '');
+    return COPIES.includes(name);
+  });
 }
 
 // What the outline is drawn in: the theme the panel last rendered in, else
@@ -150,7 +158,10 @@ class MorphBoot extends HTMLElement {
     if (this.inner) return;
     const el = document.createElement(panelTag);
     this.inner = el;
-    el.addEventListener('morph-ready', () => { this.unwatch(); this.ready(); }, { once: true });
+    // Ready is said before the dashboard's body is drawn, so the watch
+    // lasts until the board has drawn a room (or its time runs out): a copy
+    // that throws right after saying it is ready is still a blank page.
+    el.addEventListener('morph-ready', () => { this.ready(); this.untilDrawn(el); }, { once: true });
     // A copy of the panel written before this shell existed never says it
     // is ready; the outline does not stay over it for good.
     setTimeout(() => this.ready(), READY_AFTER_MS);
@@ -166,8 +177,9 @@ class MorphBoot extends HTMLElement {
     }
   }
 
-  // Until the panel is ready, an error thrown from this house's code (as
-  // it draws, in a timer or a promise) is the copy failing.
+  // Until the panel's first full render has drawn the board, an error
+  // thrown from a copy in use (as it draws, in a timer or a promise) is the
+  // copy failing.
   watch() {
     this._watching = true;
     this._onErr = (ev) => { if (fromHouseCode(ev.filename, ev.error && ev.error.stack)) this.broke(ev.error || ev.message); };
@@ -175,6 +187,18 @@ class MorphBoot extends HTMLElement {
     window.addEventListener('error', this._onErr);
     window.addEventListener('unhandledrejection', this._onRej);
     this._watchT = setTimeout(() => this.unwatch(), READY_AFTER_MS + 4000);
+  }
+
+  untilDrawn(el) {
+    const drawn = () => !!(el.shadowRoot && el.shadowRoot.querySelector('[data-board] section[data-sec]'));
+    const look = () => {
+      if (!this._watching || this.inner !== el) return;
+      // A frame after the room appears, so a throw in the same render that
+      // drew it is still seen.
+      if (drawn()) { setTimeout(() => { if (this.inner === el) this.unwatch(); }, 250); return; }
+      setTimeout(look, 100);
+    };
+    look();
   }
 
   unwatch() {
