@@ -2,6 +2,19 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.2
+
+### Changed
+
+- Development loop settings: "Report everything without asking" is gone, and "Ask before sending each new report" is the one choice about sending. Stream switches and schedules are never greyed out, and each schedule marks the recommended one. An install that had the old switch on keeps what it was doing until the owner changes something (#710, #711).
+- Insights explains how its cards differ from the Home tab once, above the title, names the Home tab by its own label, and says where decisions and learnings go (#695).
+
+### Fixed
+
+- On a phone in the Home Assistant app, brAIn's panel fits the space it is given, so a drag no longer scrolls Home Assistant's page and leaves the header stuck out of place (#689).
+- Morph's room rail and its floor names stay put while brAIn's tab row hides and shows during a scroll (#690).
+- A house copy of Morph's panel that loads but throws while drawing no longer leaves Morph blank: Morph's own panel takes its place and says which change did not load (#706).
+
 ## 5.1.1
 
 ### Added
