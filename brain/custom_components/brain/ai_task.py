@@ -17,6 +17,16 @@ with the same rules every unattended brAIn run answers to:
   that does not fit is an error with the reason, never data shaped
   nearly right.
 
+* **Pictures arrive as pictures.** With the attachments feature an
+  automation can hand `ai_task.generate_data` a camera
+  (`media-source://camera/camera.porch`) or an image file. Home Assistant
+  resolves it to a file; this copies each image into the task image folder
+  and the listener gives the run the pictures themselves (its narrow scope
+  denies Read). A camera's frame is a camera look: the listener asks the
+  camera policy (the opt-in list and the daily count) before the run sees
+  it, and a refusal is the task's answer. Anything that is not an image is
+  said and not read.
+
 The platform is feature-detected (`Platform.AI_TASK` in `__init__`), so an
 older core never imports this module at all. One entity per house: it
 rides with the account-wide sensors, and claims a flag the unload clears.
@@ -26,6 +36,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
+import shutil
+import uuid
 
 from homeassistant.components.ai_task import (
     AITaskEntity,
@@ -47,6 +61,16 @@ _LOGGER = logging.getLogger(__name__)
 # is minutes at most; the listener's own window is longer.
 TASK_TIMEOUT_S = 240
 MAX_INSTRUCTIONS = 8000
+# What the listener takes (`task_images_message`): four pictures, each a
+# JPEG, PNG, GIF or WebP under 5 MB.
+MAX_IMAGES = 4
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+IMAGE_TYPES = {"image/jpeg": ".jpg", "image/png": ".png",
+               "image/gif": ".gif", "image/webp": ".webp"}
+_CAMERA_SOURCE_RE = re.compile(r"^media-source://camera/(camera\.[a-z0-9_]+)")
+# Attachments, where this core has them: an older core declares only data.
+_FEATURES = AITaskEntityFeature.GENERATE_DATA | getattr(
+    AITaskEntityFeature, "SUPPORT_ATTACHMENTS", 0)
 
 
 async def async_setup_entry(
@@ -88,12 +112,57 @@ def json_schema_for(structure) -> dict | None:
     return schema if isinstance(schema, dict) else None
 
 
-def prompt_for(task) -> str:
+def stage_images(attachments, image_dir: str) -> tuple[list[str], list[str], int]:
+    """`(paths, cameras, skipped)`: each image attachment copied into
+    `image_dir` under a fresh name, the cameras any are frames of, and how
+    many attachments were not images brAIn can be handed. Blocking: run in
+    the executor."""
+    paths: list[str] = []
+    cameras: list[str] = []
+    skipped = 0
+    for att in attachments or []:
+        mime = str(getattr(att, "mime_type", "") or "").lower()
+        src = getattr(att, "path", None)
+        ext = IMAGE_TYPES.get(mime)
+        if len(paths) >= MAX_IMAGES or not ext or src is None:
+            skipped += 1
+            continue
+        try:
+            if os.path.getsize(src) > MAX_IMAGE_BYTES:
+                skipped += 1
+                continue
+            os.makedirs(image_dir, exist_ok=True)
+            dest = os.path.join(image_dir, f"ai-task-{uuid.uuid4().hex}{ext}")
+            shutil.copyfile(src, dest)
+        except OSError as exc:
+            _LOGGER.debug("an AI Task attachment could not be staged: %s", exc)
+            skipped += 1
+            continue
+        paths.append(dest)
+        m = _CAMERA_SOURCE_RE.match(str(getattr(att, "media_content_id", "") or ""))
+        if m and m.group(1) not in cameras:
+            cameras.append(m.group(1))
+    return paths, cameras, skipped
+
+
+def discard(paths: list[str]) -> None:
+    """Staged pictures nobody will read (the task never went out)."""
+    for path in paths or []:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def prompt_for(task, images: int = 0, skipped: int = 0) -> str:
     """The instruction as brAIn is asked it."""
     lines = [str(getattr(task, "instructions", "") or "")[:MAX_INSTRUCTIONS]]
-    if getattr(task, "attachments", None):
-        lines.append("\n(Attachments were sent with this task; brAIn cannot "
-                     "read them here — answer from the house instead.)")
+    if images:
+        lines.append(f"\n({images} picture(s) were sent with this task and are "
+                     "attached above; answer about what they show.)")
+    if skipped:
+        lines.append(f"\n({skipped} attachment(s) were not pictures brAIn can "
+                     "read and were left out.)")
     if getattr(task, "structure", None) is not None:
         lines.append("\nAnswer with JSON only, in exactly the shape asked for.")
     return "\n".join(lines)
@@ -122,7 +191,7 @@ class BrainAITaskEntity(AITaskEntity):
     _attr_has_entity_name = True
     _attr_name = "AI Task"
     _attr_icon = "mdi:creation-outline"
-    _attr_supported_features = AITaskEntityFeature.GENERATE_DATA
+    _attr_supported_features = _FEATURES
     _attr_device_info = DeviceInfo(
         identifiers={(DOMAIN, "system_health")},
         name="brAIn System",
@@ -142,16 +211,25 @@ class BrainAITaskEntity(AITaskEntity):
         structure = getattr(task, "structure", None)
         schema = json_schema_for(structure)
         bridge = _get_bridge(self.hass)
+        images, cameras, skipped = await self.hass.async_add_executor_job(
+            stage_images, getattr(task, "attachments", None) or [],
+            bridge.task_image_dir)
         try:
             answer = await bridge.async_send_task_full(
-                prompt=prompt_for(task), timeout=TASK_TIMEOUT_S,
-                tools="read_only", schema=schema, memory=True)
+                prompt=prompt_for(task, len(images), skipped),
+                timeout=TASK_TIMEOUT_S, tools="read_only", schema=schema,
+                memory=True, images=images, image_cameras=cameras)
         except BrainRunError as exc:
             raise HomeAssistantError(str(exc)) from exc
         except TimeoutError as exc:
             raise HomeAssistantError(
                 "brAIn did not answer in time — is the automation listener "
                 "turned on in the add-on?") from exc
+        finally:
+            # The listener deletes what it reads; a task refused before its
+            # run, or one nobody waited for, leaves its pictures here.
+            if images:
+                await self.hass.async_add_executor_job(discard, images)
 
         text = str((answer or {}).get("text") or "")
         conversation_id = getattr(chat_log, "conversation_id", None)

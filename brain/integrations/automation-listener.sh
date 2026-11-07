@@ -672,6 +672,51 @@ extract_claude_data() {
 # at most four, and deletes what it read. Anything else is skipped, and a
 # task left with none runs as text, exactly as before.
 #
+# Why the camera policy will not let a task look at these cameras' frames,
+# or nothing when every one is allowed (and counted). One line per camera
+# id in; asked of the panel like the MCP server's `_camera_refusal`, and a
+# panel that does not answer refuses — a cap nobody can count is no cap.
+task_camera_refusal() {
+    local panel_url="${BRAIN_PANEL_URL:-http://127.0.0.1:8099}" cam reply allowed
+    while IFS= read -r cam; do
+        [ -n "$cam" ] || continue
+        reply=$(curl -sS --noproxy '*' --max-time 10 -X POST \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -cn --arg e "$cam" '{entity_id: $e, channel: "task"}')" \
+            "${panel_url}/api/camera/permit" 2>/dev/null)
+        allowed=$(printf '%s' "$reply" | jq -r 'if type == "object" then (.allowed | tostring) else "" end' 2>/dev/null)
+        if [ "$allowed" != "true" ]; then
+            if [ "$allowed" = "false" ]; then
+                printf '%s' "$reply" | jq -r '.reason // "brAIn is not allowed to look at that camera on its own."' | tr -d '\000-\037' | cut -c1-300
+            else
+                echo "brAIn could not ask whether it may look at ${cam}, so it did not look."
+            fi
+            return 0
+        fi
+    done <<< "$1"
+    return 0
+}
+
+# The pictures a task named, deleted unread (a task refused before its run).
+task_images_discard() {
+    python3 -I - "$1" "$TASK_IMAGE_DIR" <<'PYDISCARD' 2>/dev/null || true
+import json, os, sys
+try:
+    wanted = json.loads(sys.argv[1])
+except ValueError:
+    raise SystemExit(0)
+root = os.path.realpath(sys.argv[2])
+for item in wanted if isinstance(wanted, list) else []:
+    if isinstance(item, str):
+        path = os.path.realpath(item)
+        if os.path.dirname(path) == root and os.path.isfile(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+PYDISCARD
+}
+
 # Prints the stream-json user message on stdout, or nothing.
 # Args: the task's `images` as JSON, the file holding the prompt.
 task_images_message() {
@@ -849,6 +894,10 @@ process_task() {
     task_cameras=$(jq -r 'if .cameras == true then "true" else "" end' "$work_file" 2>/dev/null)
     local task_images task_input_file=""
     task_images=$(jq -c 'if (.images | type) == "array" and (.images | length) > 0 then .images else empty end' "$work_file" 2>/dev/null)
+    # Which cameras those pictures are frames of (an AI Task attachment):
+    # plain camera ids only, each asked of the camera policy below.
+    local task_image_cameras
+    task_image_cameras=$(jq -r 'if (.image_cameras | type) == "array" then (.image_cameras[] | select(type == "string" and test("^camera\\.[a-z0-9_]+$"))) else empty end' "$work_file" 2>/dev/null | head -n 4)
     # A conversation (Morph's Ask): brAIn's chat, by task. The session id is
     # a CLI session uuid or nothing — it becomes an argv entry, so anything
     # that is not plainly one is dropped and the run starts fresh.
@@ -1074,6 +1123,23 @@ process_task() {
             prompt="${memory_block}
 
 ${prompt}"
+        fi
+    fi
+
+    # A picture that is a camera's frame (an AI Task attachment: an
+    # automation handed brAIn a camera) is a camera look like any other, so
+    # it answers to the one list and the one daily count, asked of the
+    # panel exactly as the MCP server asks it (`/api/camera/permit`). A
+    # refusal is the task's answer, with the panel's sentence.
+    if [ -n "$task_images" ] && [ -n "$task_image_cameras" ]; then
+        local cam_why
+        cam_why=$(task_camera_refusal "$task_image_cameras")
+        if [ -n "$cam_why" ]; then
+            task_images_discard "$task_images"
+            bashio::log.info "Task [$task_id] camera frame refused: ${cam_why}"
+            write_task_result "$task_id" "brAIn did not look at the camera: ${cam_why}" "" refused
+            journal_task error 0 "" "${task_model:-}" "camera frame refused: ${cam_why}" "$task_scheduled"
+            return
         fi
     fi
 
