@@ -208,5 +208,55 @@ class TestAReasonNamingTheRunningStateHoldsOnlyThen(unittest.TestCase):
             CAVITY, "base.unusual"))
 
 
+class TestPowerDetectedIsNotRunning(unittest.TestCase):
+    """A `power` binary sensor says power is detected — a UPS's mains is on
+    almost all the time — so it is not a running state, and the device's
+    other readings are still judged."""
+
+    UPS = {"id": "dev_ups", "name": "Rack UPS", "manufacturer": "APC",
+           "model": "BX"}
+    TEMP = "sensor.rack_ups_internal_temperature"
+    MAINS = "binary_sensor.rack_ups_mains_power"
+
+    def snap(self) -> dict:
+        bucket = str(baselines.hour_of_week(NOW, dt.timezone.utc))
+        return {
+            "now": NOW, "devices": [self.UPS], "areas": [], "_trail": [],
+            "states": {
+                self.TEMP: {"state": "45", "last_changed": iso(NOW - 60),
+                            "last_updated": iso(NOW - 60),
+                            "attributes": {"device_class": "temperature",
+                                           "state_class": "measurement",
+                                           "unit_of_measurement": "°C",
+                                           "friendly_name": "Rack UPS "
+                                                            "Internal temperature"}},
+                self.MAINS: {"state": "on", "last_changed": iso(NOW - 9 * DAY),
+                             "last_updated": iso(NOW - 9 * DAY),
+                             "attributes": {"device_class": "power",
+                                            "friendly_name": "Rack UPS Mains"}}},
+            "entities": [{"entity_id": e, "platform": "apcupsd",
+                          "device_id": self.UPS["id"]}
+                         for e in (self.TEMP, self.MAINS)],
+            "corrections": {"entity": {}, "area": {}, "check": {},
+                            "never": {"checks": sorted(
+                                corrections.NEVER_CHECKS)}},
+            "baselines": {"built_at": int(NOW - 3600), "tz": "UTC", "days": 28,
+                          "entities": {self.TEMP: {
+                              "unit": "°C", "samples": 672,
+                              "overall": {"median": 30.0, "spread": 0.5,
+                                          "n": 672},
+                              "buckets": {bucket: {"median": 30.0,
+                                                   "spread": 0.5, "n": 4}}}}}}
+
+    def test_a_power_sensor_is_not_the_devices_status(self):
+        house = House(self.snap())
+        self.assertEqual(chores.status_entity(house, self.TEMP), "")
+        self.assertEqual(chores.machine_status(house, self.TEMP)[0], "")
+
+    def test_its_readings_are_still_judged(self):
+        rows = [r["entity_id"] for r in band.unusual(self.snap(), NOW)]
+        self.assertEqual(rows, [self.TEMP])
+
+
 if __name__ == "__main__":
     unittest.main()

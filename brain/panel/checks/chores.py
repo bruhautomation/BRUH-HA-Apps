@@ -430,10 +430,12 @@ def _status_word(st) -> str:
 
 # An appliance that says whether it is running with an on/off entity
 # rather than in words: a `binary_sensor` whose class is `running` (an
-# oven's, a dryer's "Running") or `power` (a machine's power state). On is
-# the machine working and off is it at rest — the same two answers a job
-# status gives, read by every caller of `machine_status` alike.
-RUNNING_CLASSES = frozenset({"running", "power"})
+# oven's, a dryer's "Running"). On is the machine working and off is it at
+# rest — the same two answers a job status gives, read by every caller of
+# `machine_status` alike. Not `power`: that class is "power detected", and a
+# UPS's mains sensor is on nearly always, so its device's readings would be
+# "working" for good and never judged.
+RUNNING_CLASSES = frozenset({"running"})
 
 
 def runs_flag(eid: str, st) -> bool:
