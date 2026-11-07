@@ -96,28 +96,34 @@ class TestTheFirstLookIsNotHandedItsReadings(unittest.TestCase):
         self.assertEqual(let_go, [about, citing])
 
 
-class TestIgnoreThisSensorIsTheSameAnswer(unittest.TestCase):
-    """Only the plain instruction about the sensor itself — unnegated, with
-    no time limit, no condition and no explanation after it — reads as the
-    sensor finished with. `known_faulty` re-reads stored rule text, so a
-    loose match here turns old rules into "broken" with nobody pressing
-    anything."""
+class TestOnlyBrokenWordingFinishesASensor(unittest.TestCase):
+    """The owner's own words, "this sensor is broken, please ignore it",
+    finish the sensor through the broken wording. "Ignore" on its own never
+    does: negated, timed, conditional or explained in a second sentence it
+    says something else, and `known_faulty` re-reads stored rule text, so a
+    loose match would turn old rules into "broken" with no new press."""
 
-    def test_said_as_ignore(self):
-        for said in ("please ignore this sensor", "Please ignore this sensor.",
-                     "ignore that probe, it's broken",
-                     "Ignore this thermometer for good"):
+    def test_the_owners_words(self):
+        for said in ("This sensor is broken, please ignore it",
+                     "ignore that probe, it's broken"):
             self.assertTrue(corrections.gone_for_good(said), said)
 
-    def test_negated_timed_or_about_one_reading_is_not(self):
-        for said in ("don't ignore this sensor, it matters",
+    def test_ignore_alone_is_not_broken(self):
+        for said in ("please ignore this sensor",
+                     "don't ignore this sensor, it matters",
                      "never ignore this sensor",
                      "do not ignore the smoke sensor",
                      "ignore this sensor until tomorrow",
                      "ignore the sensor for a week",
                      "ignore this reading, it spikes on the hour",
                      "ignore the reading just this once",
-                     "ignore this sensor, it's the cat"):
+                     "ignore this sensor, it's the cat",
+                     "Ignore this sensor. It is only wrong when the oven is on.",
+                     "Ignore this sensor. Only while the printer runs.",
+                     "Ignore this sensor. I'm replacing the battery on Friday.",
+                     "Ignore this sensor. For a week.",
+                     "ignore this sensor! it spikes when the sun hits it",
+                     "Ignore this sensor. It reads high when the sun hits it."):
             self.assertFalse(corrections.gone_for_good(said), said)
 
     def test_everyday_sentences_are_not(self):
@@ -126,14 +132,12 @@ class TestIgnoreThisSensorIsTheSameAnswer(unittest.TestCase):
                      "I ignore this sensor in summer",
                      "it's normal, ignore",
                      "ignore the sensor when the window is open",
-                     "ignore this sensor while the printer is printing",
                      "ignore the readings when the oven is on",
-                     "ignore this sensor today",
-                     "ignore this sensor for now",
                      "please don't ignore that probe",
                      "the sensor ignores the draught",
                      "that's normal for this sensor"):
             self.assertFalse(corrections.gone_for_good(said), said)
+
 
 if __name__ == "__main__":
     unittest.main()
