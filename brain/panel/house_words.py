@@ -335,8 +335,7 @@ _LOG_MEANINGS = (
                 r"|invalid (?:response|data|value)|[{}]", re.I),
      "it got an answer it could not make sense of"),
 )
-_LOG_MEANING_ELSE = ("it reported an error without saying what went wrong, "
-                     "so only that it keeps happening is known")
+_LOG_MEANING_ELSE = "something it was doing failed"
 
 
 def log_meaning(message: str) -> str:

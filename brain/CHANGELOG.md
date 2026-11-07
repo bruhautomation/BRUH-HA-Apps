@@ -10,7 +10,6 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ### Fixed
 
-- A finding from an integration's log errors says what the error means and what it is about, instead of "something it was doing failed" (#725).
 - Check findings no longer show file paths, and a sweep over every check holds them to plain words (#699).
 
 ## 5.1.4

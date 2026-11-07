@@ -296,14 +296,9 @@ def log_flood(snap: dict, now: float) -> list[dict]:
         # homeowner's (`house_words.log_meaning`).
         detail = (f"{who} logged the same error {int(top['count'])} times "
                   f"in the last {hours} hours: "
-                  f"{house_words.log_meaning(top.get('message') or '')}. "
-                  "That is past the point at which brAIn files it.")
+                  f"{house_words.log_meaning(top.get('message') or '')}.")
         if device:
             detail += f" It is about {device}."
-        elif domain and not who.lower().startswith(("the ", "a ", "an ")):
-            # Only for an integration the house has by name, never a
-            # library or a fallback phrase.
-            detail += f" Until it stops, {who} may not update."
         if len(groups) > 1:
             detail += (f" {len(groups) - 1} other error"
                        + ("s" if len(groups) > 2 else "")

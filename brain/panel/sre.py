@@ -1855,14 +1855,8 @@ def _log_said(logs: list[dict], dig: dict, detail: str = "") -> str | None:
         who = f"The {where} integration" if where else "Home Assistant"
         thing = _thing_of(rec, dig)
         about = f" about {thing}" if thing else ""
-        said = (f"{who} logged an error{about}{tail}: "
+        return (f"{who} logged an error{about}{tail}: "
                 f"{house_words.log_meaning(message)}.")
-        if count > WARNING_COUNT:
-            said += f" brAIn raises these only past {WARNING_COUNT}."
-        affects = thing or (f"the {where} integration" if where else "")
-        if affects:
-            said += f" Until it stops, {affects} may not update."
-        return said
     return None
 
 
