@@ -173,6 +173,8 @@ export class Engine {
           rowsOf(g, w).forEach((row) => row.forEach((p) => setW(p.it.id, widthOf(os && p.it.id === openId ? os.cs : p.cs, w))));
         });
       });
+      // A face stretched to its row's height last time is measured as it is on its own.
+      Object.keys(FE).forEach((id) => { if (FE[id].style.getPropertyValue('--fh')) FE[id].style.removeProperty('--fh'); });
       M.sections.forEach((s) => {
         headH[s.id] = HE[s.id] ? hgt(HE[s.id]) : 62;
         s.groups.forEach((g) => g.items.forEach((it) => {
@@ -192,8 +194,10 @@ export class Engine {
         if (g.label) { labs[g.key] = { x: PAD + GP + 6, y: y + 2, w: px(w) - 2 * PAD - 2 * GP - 12, h: 20 }; y += GLH; }
         const pos = []; let ry = 0;
         rowsOf(g, w).forEach((row) => {
-          let rh = 0, used = 0;
+          let rh = 0, used = 0; const from = pos.length;
           row.forEach((p) => { used += p.cs; const h = fH[p.it.id] || 56; pos.push({ id: p.it.id, c: p.c, y: ry, cs: p.cs, base: span(p.it, w), h: h }); rh = Math.max(rh, h); });
+          // One row is one height: a card that grew (a thermostat's routines) stretches its neighbour instead of leaving it short.
+          pos.slice(from).forEach((q) => { q.h = rh; });
           blank += (w - used) * cw * rh; ry += rh + TG;
         });
         const os = s === openSec ? openSpan(g, w) : null;
@@ -340,6 +344,8 @@ export class Engine {
       Object.keys(f.tiles).forEach((id) => {
         const t = f.tiles[id]; const te = TE[id]; if (!te) return;
         te.style.zIndex = id === openId ? '2' : '1';
+        // The row's height reaches the face, so a short neighbour's outline runs to the bottom of its tile rather than leaving a hole under it.
+        if (FE[id] && id !== openId && fH[id] != null && t.h > fH[id] + 1) FE[id].style.setProperty('--fh', t.h + 'px');
         const to = this.it['t:' + id]; let td = 0;
         if (to && !quiet) { if (t.w > to.t.w + 1 || t.h > to.t.h + 1) td = 170; else if (t.y < to.t.y - 1 || (t.x < to.t.x - 1 && Math.abs(t.y - to.t.y) < 1)) td = 170; }
         this.spring('t:' + id, te, t, snap, td);

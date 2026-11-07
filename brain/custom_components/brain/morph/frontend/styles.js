@@ -256,6 +256,7 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .mtile.holding{transform:scale(.985)}
 .tc{position:absolute;left:0;top:0}
 .face{position:relative}
+.face>.box,.face>.strip,.face>.camtile{min-height:var(--fh,0px)}
 .holdbar{position:absolute;left:14px;right:14px;bottom:5px;height:2px;border-radius:1px;transform-origin:left center;pointer-events:none;animation:holdbar .54s linear forwards;z-index:3}
 @keyframes holdbar{from{transform:scaleX(0);opacity:.4}to{transform:scaleX(1);opacity:1}}
 .strip{position:relative;height:56px;border-radius:18px;overflow:hidden;transition:box-shadow .5s ease,background-color .5s ease}
