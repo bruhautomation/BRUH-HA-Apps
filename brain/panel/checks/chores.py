@@ -428,6 +428,49 @@ def _status_word(st) -> str:
     return ""
 
 
+# An appliance that says whether it is running with an on/off entity
+# rather than in words: a `binary_sensor` whose class is `running` (an
+# oven's, a dryer's "Running") or `power` (a machine's power state). On is
+# the machine working and off is it at rest — the same two answers a job
+# status gives, read by every caller of `machine_status` alike.
+RUNNING_CLASSES = frozenset({"running", "power"})
+
+
+def runs_flag(eid: str, st) -> bool:
+    """Whether this entity is a machine's on/off running state."""
+    if domain_of(eid) != "binary_sensor" or not isinstance(st, dict):
+        return False
+    return str((st.get("attributes") or {}).get("device_class")
+               or "") in RUNNING_CLASSES
+
+
+def is_status(eid: str, st) -> bool:
+    """Whether this entity says what its machine is doing: a job status
+    (`_status_word` / `says_a_job`) or an on/off running state."""
+    if runs_flag(eid, st):
+        return True
+    return domain_of(eid) == "sensor" and bool(_status_word(st)
+                                               or says_a_job(st))
+
+
+def phase_of(eid: str, st, word=None) -> str:
+    """``"working"``, ``"idle"`` or ``""`` (could not tell) for one status
+    entity — its live state, or ``word``, a state it held earlier (a
+    history row carries the word and not the attributes, which come from
+    the live state). One reading for the live check and the nightly
+    baseline pass, so the two cannot disagree about when a machine ran."""
+    raw = st.get("state") if word is None and isinstance(st, dict) else word
+    if runs_flag(eid, st):
+        flag = str(raw or "").strip().lower()
+        return {"on": "working", "off": "idle"}.get(flag, "")
+    said = job_state(raw)
+    if said in JOB_UNKNOWN:
+        return ""
+    if said in JOB_FINISHED or said in JOB_IDLE:
+        return "idle"
+    return "working"
+
+
 def machine_status(house: House, eid: str) -> tuple[str, float | None, str]:
     """``(state, since, status_entity)`` for the machine `eid` belongs to.
 
@@ -435,13 +478,19 @@ def machine_status(house: House, eid: str) -> tuple[str, float | None, str]:
     ``"idle"`` when every status there says finished or idle (``since`` the
     latest of their changes), and ``""`` when nothing on the device speaks
     the job vocabulary or a status cannot be read — "could not tell", which
-    no caller may read as idle.
+    no caller may read as idle. A running state (`runs_flag`) is a status
+    too: on is working, off is idle.
     """
     statuses = []
     for other in sorted(house.siblings(eid)):
+        st = house.states.get(other)
+        if runs_flag(other, st):
+            phase = phase_of(other, st)
+            statuses.append((other, {"working": "running", "idle": "idle"}
+                             .get(phase, ""), st))
+            continue
         if domain_of(other) != "sensor":
             continue
-        st = house.states.get(other)
         word = _status_word(st)
         if word or (isinstance(st, dict)
                     and job_state(st.get("state")) in JOB_UNKNOWN
@@ -471,10 +520,7 @@ def status_entity(house: House, eid: str) -> str:
     function will later read.
     """
     for other in sorted(house.siblings(eid)):
-        if domain_of(other) != "sensor":
-            continue
-        st = house.states.get(other)
-        if _status_word(st) or says_a_job(st):
+        if is_status(other, house.states.get(other)):
             return other
     return ""
 

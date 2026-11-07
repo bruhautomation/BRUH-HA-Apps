@@ -841,10 +841,147 @@ def _without_impossible(series: list, attrs: dict, eid: str,
                   "last": int(max(stamps)) if stamps else None}
 
 
+# --- a machine's reading, by whether the machine was running ------------
+# A nozzle, an oven's cavity, a dryer's drum: a reading on a device that
+# says whether it is running is two quantities — what it reads while the
+# machine works and what it reads at rest — and one hour-of-the-week band
+# over both learns when somebody usually prints or bakes. A printer that
+# prints most evenings has an evening band near 200 °C, so the same nozzle
+# at room temperature on an evening off was "far below its usual", and a
+# print on a morning was "far above". So where the device has a status
+# (`checks.chores.status_entity`, a job status or an on/off running state)
+# and the recorder still holds that status's history, the band is built
+# from the hours the machine was at rest only, and the hours it worked are
+# counted and set aside: `base.unusual` judges a reading at rest against
+# the rest band, and a reading while it works is the job (the check stands
+# down, as it always did). An hour within `REST_SETTLE_S` of the machine
+# stopping is neither: a heater is still cooling.
+REST_SETTLE_S = 45 * 60
+# How many status entities one nightly pass asks the recorder about.
+STATUS_FETCH_MAX = 12
+
+
+def phase_timeline(rows: list, phase) -> list[tuple[float, str]]:
+    """A status's history as ``[(ts, "working" | "idle" | "")]``, oldest
+    first. ``phase(word)`` reads one state word (`chores.phase_of` bound to
+    the entity)."""
+    out = []
+    for row in rows or ():
+        if not isinstance(row, dict):
+            continue
+        ts = row.get("last_changed") or row.get("last_updated")
+        when = _stamp(ts)
+        if when is None:
+            continue
+        out.append((when, phase(row.get("state"))))
+    out.sort(key=lambda r: r[0])
+    return out
+
+
+def _stamp(value) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        when = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=dt.timezone.utc)
+    return when.timestamp()
+
+
+def split_by_phase(series: list, timeline: list,
+                   settle: float = REST_SETTLE_S) -> tuple[list, int]:
+    """``(rest_rows, working_hours)``: the hourly rows taken while the
+    machine was at rest — idle from ``settle`` before the hour began to its
+    end — and how many hours it worked in. An hour the history does not
+    cover (before its first row, or a word that says nothing) is neither."""
+    rest, working = [], 0
+    if not timeline:
+        return rest, working
+
+    def at(ts: float):
+        said = [p for when, p in timeline if when <= ts]
+        return said[-1] if said else None
+
+    for row in series or ():
+        start = row.get("start") if isinstance(row, dict) else None
+        if not isinstance(start, (int, float)) or isinstance(start, bool):
+            continue
+        start = float(start)
+        lo, hi = start - settle, start + 3600.0
+        if at(start) == "working" or any(
+                p == "working" for when, p in timeline if start < when < hi):
+            working += 1
+            continue
+        if at(lo) == "idle" and all(p == "idle" for when, p in timeline
+                                    if lo < when < hi):
+            rest.append(row)
+    return rest, working
+
+
+async def fetch_status_history(session, ids: list[str], now: float,
+                               days: int = HISTORY_DAYS) -> dict | None:
+    """`{status_entity: [row, ...]}` over the window, or None when the
+    recorder did not answer. Minimal rows: a state and when it changed."""
+    import ha_data  # noqa: PLC0415 — see the checks snapshot's own note
+
+    if not ids:
+        return {}
+    start = dt.datetime.fromtimestamp(now - days * 86400, tz=dt.timezone.utc)
+    end = dt.datetime.fromtimestamp(now, tz=dt.timezone.utc)
+    try:
+        raw = await ha_data._rest_get(  # noqa: SLF001
+            session, ha_data.history_path(start),
+            params=ha_data.history_params(ids, end, minimal=True,
+                                          no_attributes=True))
+    except Exception as exc:  # noqa: BLE001 — the band is built as before
+        log.info("baseline status history failed: %s", exc)
+        return None
+    return ha_data.series_by_entity(raw)
+
+
+async def _rest_bands(session, rows: dict, states: dict, now: float,
+                      house, machine) -> dict:
+    """``{entity_id: (rest_rows, working_hours, status)}`` for every
+    measured entity whose device says whether it is running and whose
+    status the recorder still remembers. Empty without the checks' view of
+    the house (`house`, `machine` = `checks.chores`) or a history."""
+    if house is None or machine is None:
+        return {}
+    status_of = {}
+    for eid in rows:
+        try:
+            status = machine.status_entity(house, eid)
+        except Exception:  # noqa: BLE001 — one odd device, not the pass
+            status = ""
+        if status:
+            status_of[eid] = status
+    wanted = sorted(set(status_of.values()))[:STATUS_FETCH_MAX]
+    if not wanted:
+        return {}
+    history = await fetch_status_history(session, wanted, now)
+    if not history:
+        return {}
+    out = {}
+    for eid, status in status_of.items():
+        if status not in history:
+            continue
+        live = states.get(status) or {}
+        timeline = phase_timeline(
+            history[status],
+            lambda word, s=status, st=live: machine.phase_of(s, st, word))
+        rest, working = split_by_phase(rows[eid], timeline)
+        out[eid] = (rest, working, status)
+    return out
+
+
 async def build(session, states: dict, now: float | None = None,
                 path: str | None = None,
                 entities: list | None = None, ranges=None,
-                house=None) -> dict:
+                house=None, machine=None) -> dict:
     """Measure the house and write the store. Returns the payload.
 
     A fetch the recorder refused writes nothing: see `refused`. A house
@@ -856,6 +993,9 @@ async def build(session, states: dict, now: float | None = None,
     (`checks._util.House`), both handed in by the caller: with them the
     range check knows which readings are a printer's or a computer's, so a
     print bed at 65 °C is learned rather than dropped as impossible.
+    `machine` is `checks.chores`, handed in the same way: with it a reading
+    on a device that says whether it is running gets a band built from its
+    hours at rest (`split_by_phase`).
     """
     now = time.time() if now is None else now
     tz, tz_name = house_timezone()
@@ -889,13 +1029,21 @@ async def build(session, states: dict, now: float | None = None,
     # also handed in, for the same reason: a printer's bed at 65 °C is
     # learned rather than dropped as impossible.
     _house = house
+    by_phase = await _rest_bands(session, rows, states, now, house, machine)
     for eid, series in rows.items():
         attrs = ((states.get(eid) or {}).get("attributes") or {})
         series, impossible = _without_impossible(series, attrs, eid, _devices,
                                                  _house)
+        phase = by_phase.get(eid)
+        if phase:
+            rest = {id(r) for r in phase[0]}
+            series = [r for r in series if id(r) in rest]
         built = build_buckets(series, tz)
         if not built:
             continue
+        if phase:
+            built["by_state"] = {"status": phase[2], "rest_hours": len(series),
+                                 "working_hours": phase[1]}
         if impossible:
             built["impossible"] = impossible
         unit = attrs.get("unit_of_measurement")

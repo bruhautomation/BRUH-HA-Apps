@@ -752,6 +752,16 @@ def unusual(snap: dict, now: float) -> list[dict]:
                           "— a reading that moves with the job is the "
                           "machine working", kind="explained")
             continue
+        # A band built from the machine's hours at rest only
+        # (`baselines.split_by_phase`) says what it reads at rest, and
+        # nothing about a moment nobody can say it was at rest: "could not
+        # tell" is not compared against it.
+        if (baseline.get("by_state") or {}).get("status") and state != "idle":
+            house.gave_up("base.unusual", [{"entity_id": eid}],
+                          "its usual range is what it reads while the machine "
+                          "is at rest, and whether the machine is running "
+                          "could not be read", kind="explained")
+            continue
         # And the same machine just after it stopped: a hot part takes time
         # to cool, so a temperature above its band within the cooling time
         # of "finished" or "idle" is the job's tail, not a fault
@@ -832,6 +842,8 @@ def unusual(snap: dict, now: float) -> list[dict]:
             weeks = found["n"]
             against = (f"for this hour of the week (from {weeks} "
                        f"{'week' if weeks == 1 else 'weeks'} of readings)")
+        if (baseline.get("by_state") or {}).get("status"):
+            against = "while the machine is at rest, " + against
         out.append({
             "text": f"{house.name(eid)} is reading far outside its usual range",
             "detail": (

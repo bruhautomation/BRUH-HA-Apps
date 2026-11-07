@@ -16917,10 +16917,14 @@ async def build_baselines(reason: str = "schedule") -> dict:
                     session, by_id, started,
                     entities=ents if isinstance(ents, list) else None,
                     ranges=checks.devices,
+                    # `states` so a reading's device can be asked whether
+                    # it was running (`machine`, `baselines.split_by_phase`).
                     house=House({
+                        "states": by_id,
                         "entities": ents if isinstance(ents, list) else [],
                         "devices": devices if isinstance(devices, list)
-                        else []})))
+                        else []}),
+                    machine=checks.chores))
             except Exception as exc:  # noqa: BLE001 — one builder, not the pass
                 _failed("baselines", exc)
             # The same pass, because it is the same claim about the same
