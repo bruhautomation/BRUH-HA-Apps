@@ -70,6 +70,8 @@ both read it, and a module both of those import may import neither.
 """
 from __future__ import annotations
 
+import re
+
 # ---------------------------------------------------------------------------
 # Vocabulary
 # ---------------------------------------------------------------------------
@@ -147,6 +149,9 @@ REQUEST_LABELS = {"todo": "Add to To Do", "fixed": "Done", "wrong": "Ignore",
 # here because this module is a leaf; `findings_store.MORPH_SOURCE` is the
 # same word and the test holds the two equal.
 MORPH_SOURCE = "morph"
+# The Resident's own reports (`findings_store.RESIDENT_SOURCE`, the same
+# word, held equal by `tests/test_resident_ignore_chips.py`).
+RESIDENT_SOURCE = "resident"
 # What a suggestion asks when it says nothing of its own.
 MORPH_ASK = "Should Morph make this change to the dashboard?"
 # A Morph question's words are Morph's, and Morph is not "I": the ask it
@@ -787,6 +792,58 @@ def is_security(case: dict) -> bool:
     return src in SECURITY_SOURCES or src.startswith(SECURITY_PREFIX)
 
 
+# The short reasons a Resident report's Ignore offers as chips. A chip only
+# writes its words into the reason box — it is a typed reason one tap
+# away, saved by the same press through the same route, and read by the
+# same readers: "Sensor is broken" is `corrections.gone_for_good`'s own
+# reading of a typed reason, so it reaches `known_faulty` and the next
+# investigation refuses a conclusion drawn from that sensor.
+REASON_CHIPS = ("Already know", "Sensor is broken", "Not an issue here")
+# The chip that is about a DEVICE, offered only where the report names one.
+BROKEN_CHIP = "Sensor is broken"
+# Words that make a report one a chip must not wave off: the classes the
+# Resident's own floors never ignore (`resident.NEVER_IGNORE`, kept a
+# subset of this by a test — this module imports no other), plus a lock
+# and an alarm. Matched against the producer, the entity's domain and the
+# report's own words: over-matching costs three chips on one card, which
+# still has Ignore and its box; under-matching is "Sensor is broken" one
+# tap away on a leak.
+CHIP_NEVER_WORDS = frozenset({
+    "leak", "leaking", "water", "flood", "smoke", "co", "carbon", "monoxide",
+    "gas", "fire", "freeze", "freezing", "frost", "security", "intrusion",
+    "safety", "protected", "lock", "locks", "unlocked", "alarm", "siren",
+    "burglar", "tamper"})
+CHIP_NEVER_DOMAINS = frozenset({"lock", "alarm_control_panel", "siren"})
+_CHIP_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def reason_chips(case: dict, urgent: bool = False) -> list[str]:
+    """The reason chips Ignore offers on this card, or [].
+
+    Only on the Resident's own reports — a check's Ignore already has its
+    rule's mute beside it, and the Resident's had nothing — and never on a
+    report about safety or security, an urgent or critical one, or a
+    protected entity: the never-ignore floors stand, and a chip must not
+    make waving one of those off easier than typing it.
+    """
+    if not isinstance(case, dict):
+        return []
+    if str(case.get("source") or "") != RESIDENT_SOURCE:
+        return []
+    if (urgent or case.get("urgent") or case.get("protected")
+            or case.get("safety") or is_security(case)
+            or str(case.get("severity") or "") == "critical"):
+        return []
+    entity = str(case.get("entity_id") or "")
+    if entity.split(".", 1)[0] in CHIP_NEVER_DOMAINS:
+        return []
+    words = " ".join(str(case.get(k) or "") for k in (
+        "claim", "text", "detail", "entity_id", "source_title")).lower()
+    if set(_CHIP_WORD_RE.findall(words)) & CHIP_NEVER_WORDS:
+        return []
+    return [c for c in REASON_CHIPS if c != BROKEN_CHIP or entity]
+
+
 # The groups Needs you is read in, top first. What is broken or at risk
 # comes first and is read worst-first; the decisions that cost a tap (a
 # guess, a house-book gap, "stop raising these?"), the chores and ideas, and
@@ -957,8 +1014,8 @@ def request_view(row: dict, name: str = DEFAULT_NAME) -> dict:
 
 __all__ = ["AUTOMATION_PREFIX", "CHECK_SITUATIONS", "CHIPS", "CHIP_WORDS",
            "CHORE_SITUATIONS", "GROUPS", "GROUP_WORDS", "HANDS", "LEGACY_PLAN_MARK",
-           "GO_AHEAD", "MAX_MORE", "MAX_VISIBLE", "MORPH_ASK", "MORPH_SOURCE", "PREFILL", "REQUEST_ACTIONS", "SEVERITY_RANK",
+           "GO_AHEAD", "MAX_MORE", "MAX_VISIBLE", "MORPH_ASK", "MORPH_SOURCE", "PREFILL", "REASON_CHIPS", "REQUEST_ACTIONS", "RESIDENT_SOURCE", "SEVERITY_RANK",
            "SITUATIONS", "WHO", "WHO_LINES", "WHO_OF_VERB", "REQUEST_LABELS",
            "answers", "request_view", "who_acts", "who_line", "as_morph_question", "chip", "is_security", "feed_key", "group", "more",
-           "morph_question", "plan_is_legacy", "plan_refused", "request_answers",
+           "morph_question", "plan_is_legacy", "plan_refused", "reason_chips", "request_answers",
            "situation"]
