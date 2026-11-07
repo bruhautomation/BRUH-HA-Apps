@@ -3559,8 +3559,19 @@ brAIn knows about the house in front of the instruction. A requested
 against Home Assistant's own schema before it is returned, so a reply of the
 wrong shape is an error with the reason rather than data that nearly fits.
 It needs the automation listener (\`enable_automation_integration\`), which is
-what answers it. Attachments are not read. On an older Home Assistant the
-entity simply does not appear.
+what answers it. On an older Home Assistant the entity simply does not appear.
+
+Pictures can be attached (Home Assistant 2025.8 and later): an image file or a
+camera (\`media-source://camera/camera.front_porch\`) is handed to brAIn as a
+picture, so an automation can ask what a camera shows and get a \`structure\`
+back. A camera's frame counts as one of brAIn's own camera looks: the camera
+has to be allowed in brAIn's ⚙ → Cameras, and it counts toward the day's
+looks there, so a task past that count is refused with the reason. A switch
+that has brAIn check a camera every ten minutes while it is on is an ordinary
+automation: an \`input_boolean\` helper, a \`time_pattern\` trigger with
+\`minutes: "/10"\`, a \`state\` condition on the helper, and an
+\`ai_task.generate_data\` action with the camera as its attachment (brAIn can
+write it for you if you ask).
 
 ## brAIn's measurements, for other assistants
 

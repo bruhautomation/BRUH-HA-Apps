@@ -173,6 +173,8 @@ LOOPS = {
 # watching, not a pause (#631); and a queue this full is one about to drop.
 RESIDENT_HELD_DEGRADED_S = 3600
 RESIDENT_QUEUE_FULL = 0.8
+# Looks in a row that ran out of time before health says so (#721).
+RESIDENT_TIMEOUTS_DEGRADED = 2
 
 
 def _problem(state: str, what: str, fix: str, key: str) -> dict:
@@ -240,6 +242,19 @@ def _resident_problems(diag: dict, now: float) -> list[dict]:
             f"Its looks are held: {why}. Nothing new is being looked at until "
             "that resets; what it has already filed is still on Today.",
             "resident:held"))
+    # A look that ran out of time hands its whole batch back unreviewed; it
+    # stays queued and the next look takes a smaller batch. One is a slow
+    # minute and says nothing here; two in a row is a loop not keeping up.
+    left = _num(res.get("left_unreviewed"))
+    if left and (_num(res.get("timeouts")) or 0) >= RESIDENT_TIMEOUTS_DEGRADED:
+        found.append(_problem(
+            "degraded",
+            f"brAIn's last {int(_num(res.get('timeouts')) or 0)} looks ran out "
+            f"of time, leaving {int(left)} new finding(s) unreviewed",
+            "They stay queued, and each look now takes a smaller batch until "
+            "one comes back. If it keeps happening, the add-on log says what "
+            "the look was waiting on.",
+            "resident:timed_out"))
     queued, cap = _num(res.get("queue_len")), _num(res.get("queue_max"))
     if queued is not None and cap and queued / cap > RESIDENT_QUEUE_FULL:
         found.append(_problem(

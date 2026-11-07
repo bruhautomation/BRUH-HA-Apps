@@ -78,6 +78,16 @@ def make_block(kind: str, obj: dict) -> str:
     # escape for itself: any JSON parser reads back the same string, and
     # the digest still checks without knowing this was done.
     text = canonical(sealed).replace("`", "\\u0060")
+    # Held to what a reader does with it: the text parses back to the very
+    # object that was sealed, or it is written all-ASCII, which any JSON
+    # reader takes (the digest is over the object, not this spelling).
+    try:
+        whole = json.loads(text) == sealed
+    except ValueError:
+        whole = False
+    if not whole:
+        text = json.dumps(sealed, sort_keys=True, separators=(",", ":"),
+                          ensure_ascii=True).replace("`", "\\u0060")
     return f"```json brain-{name}\n{text}\n```"
 
 
