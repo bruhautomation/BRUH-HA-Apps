@@ -18,7 +18,7 @@
 // dispatches it. `svc` is a service call described in the markup, so a new
 // control is markup, not a new handler.
 
-import { esc, mix, clamp, lightColor, lightTone, fmt, since, clock, icon, friendly, shortName, UNAVAILABLE, domainOf } from './util.js';
+import { esc, mix, clamp, lightColor, lightTone, fmt, since, clock, icon, friendly, shortName, UNAVAILABLE, domainOf, outdoorStale, minecraftStatus } from './util.js';
 import * as history from './history.js';
 
 const STRIP = { span: 1, grow: 2, dir: 'side', want: 3, hk: 's' };
@@ -34,6 +34,11 @@ const pct = (st) => {
   return st && st.state === 'on' ? 100 : 0;
 };
 const off = (st) => !st || UNAVAILABLE.includes(st.state);
+// A button, a scene or an input button that was never pressed has the state
+// `unknown` (its state is when it was last pressed), and it is still a
+// button: only `unavailable` or missing makes it one that cannot be pressed.
+const PRESSABLE = ['button', 'input_button', 'scene'];
+const dead = (ctx) => (PRESSABLE.includes(domainOf(ctx.card.entity)) ? !ctx.st || ctx.st.state === 'unavailable' : off(ctx.st));
 const fanLevel = (p) => ['Low', 'Low', 'Medium', 'Medium', 'High', 'High'][Math.min(5, Math.floor(p / 20))];
 
 // One wording for a state everywhere: "Armed home", "Unavailable", "Missing".
@@ -262,7 +267,7 @@ const button = {
     const st = ctx.st; const script = domainOf(ctx.card.entity) === 'script';
     const last = st && (script ? st.attributes.last_triggered : st.state);
     const w = whenWord(last);
-    const val = off(st) ? stateWord(st) : script && st.state === 'on' ? 'Running' : w ? (script ? 'Ran ' : 'Pressed ') + w : script ? 'Tap to run' : 'Tap to press';
+    const val = (script ? off(st) : !st || st.state === 'unavailable') ? stateWord(st) : script && st.state === 'on' ? 'Running' : w ? (script ? 'Ran ' : 'Pressed ') + w : script ? 'Tap to run' : 'Tap to press';
     return stripFace({ kind: 'none', icon: 'play', accent: ctx.accent, active: st && st.state === 'on', name: ctx.name, val, hint: ctx.hint });
   },
   more: (ctx) => histBlock(ctx),
@@ -384,8 +389,10 @@ const sensor = {
   face: (ctx) => {
     const st = ctx.st; const unit = (st && st.attributes.unit_of_measurement) || '';
     const dc = st && st.attributes.device_class;
-    const val = !st ? 'Missing' : UNAVAILABLE.includes(st.state) ? '—' : isNaN(parseFloat(st.state)) ? st.state : fmt(st.state, '');
-    return `<div class="box" style="box-shadow:inset 0 0 0 1px var(--line)"><div class="row">${icon(dc === 'humidity' ? 'humid' : dc === 'temperature' ? 'thermo' : dc === 'power' || dc === 'energy' ? 'bolt' : 'dot', { color: ctx.accent, size: 16 })}<b style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(ctx.name)}</b><span class="flex1"></span>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div><div class="rowb"><span class="mid">${esc(val)}</span><span class="sm">${esc(isNaN(parseFloat(st && st.state)) ? '' : unit)}</span></div>${st ? sparkline(ctx.hass, ctx.card.entity, ctx.accent) : ''}</div>`;
+    const mc = st ? minecraftStatus(ctx.hass, ctx.card.entity) : null;
+    const val = !st ? 'Missing' : mc || (UNAVAILABLE.includes(st.state) ? '—' : isNaN(parseFloat(st.state)) ? st.state : fmt(st.state, ''));
+    const old = outdoorStale(ctx.hass, ctx.card.entity);
+    return `<div class="box" style="box-shadow:inset 0 0 0 1px var(--line)${old ? ';opacity:.6' : ''}"><div class="row">${icon(dc === 'humidity' ? 'humid' : dc === 'temperature' ? 'thermo' : dc === 'power' || dc === 'energy' ? 'bolt' : 'dot', { color: ctx.accent, size: 16 })}<b style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(ctx.name)}</b><span class="flex1"></span>${old ? `<span class="hint">${esc(old)}</span>` : ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div><div class="rowb"><span class="mid"${mc ? ' style="font-size:18px;font-weight:500;letter-spacing:0"' : ''}>${esc(val)}</span><span class="sm">${esc(mc || isNaN(parseFloat(st && st.state)) ? '' : unit)}</span></div>${st ? sparkline(ctx.hass, ctx.card.entity, ctx.accent) : ''}</div>`;
   },
   more: (ctx) => histBlock(ctx),
   tap: () => null,
@@ -504,23 +511,32 @@ export const listWord = (st) => {
   const on = st.state === 'on';
   return [on ? w[0] : w[1], on];
 };
+// One row of a list. The BRUH Minecraft server's Online sensor reads the
+// server's status (who is playing, or Offline), and a server that answers is
+// not something open that wants attention.
+const listRow = (ctx, e) => {
+  const st = ctx.hass.states[e]; const mc = st ? minecraftStatus(ctx.hass, e) : null;
+  const [w, on] = mc ? [mc, false] : listWord(st);
+  return { e, w, on, mc: !!mc, act: isActivity(st), name: shortName(friendly(ctx.hass, e), ctx.sec.title), st };
+};
 const list = {
   item: { span: 2, grow: 3, dir: 'down', want: 3 },
   accent: (ctx) => {
-    const sts = (ctx.card.entities || []).map((e) => ctx.hass.states[e]);
-    if (sts.some((st) => listWord(st)[1] && !isActivity(st))) return 'var(--rose)';
-    if (sts.some((st) => listWord(st)[1])) return 'var(--amber)';
+    const rows = (ctx.card.entities || []).map((e) => listRow(ctx, e));
+    if (rows.some((r) => r.on && !r.act)) return 'var(--rose)';
+    if (rows.some((r) => r.on)) return 'var(--amber)';
     return 'var(--indigo)';
   },
   face: (ctx) => {
-    const rows = (ctx.card.entities || []).map((e) => { const st = ctx.hass.states[e]; const [w, on] = listWord(st); return { e, w, on, act: isActivity(st), name: shortName(friendly(ctx.hass, e), ctx.sec.title), st }; });
+    const rows = (ctx.card.entities || []).map((e) => listRow(ctx, e));
     rows.sort((a, b) => (b.on - a.on) || (a.act - b.act));
     const openRows = rows.filter((r) => r.on);
     const attention = openRows.filter((r) => !r.act);
     const tone = attention.length ? 'var(--rose)' : openRows.length ? 'var(--amber)' : 'var(--quiet)';
     // "All closed" in the kind's own word when every row is one kind.
     const kinds = new Set(rows.map((r) => (r.st && r.st.attributes.device_class) || ''));
-    const summary = openRows.length
+    const mc = rows.length === 1 && rows[0].mc;
+    const summary = mc ? rows[0].w : openRows.length
       ? `${openRows.length === 1 ? openRows[0].name : openRows.length + ' of ' + rows.length} ${openRows.length === 1 ? openRows[0].w.toLowerCase() : attention.length ? 'need you' : 'active'}`
       : kinds.size === 1 && rows[0] ? `All ${listWord({ ...rows[0].st, state: 'off' })[0].toLowerCase()}` : 'All quiet';
     const shown = ctx.open ? rows : rows.slice(0, 6);
@@ -631,7 +647,7 @@ const entity = {
   accent: () => 'var(--teal)',
   face: (ctx) => {
     const st = ctx.st; const unit = (st && st.attributes.unit_of_measurement) || '';
-    return stripFace({ kind: 'none', icon: 'dot', accent: ctx.accent, active: st && st.state === 'on', name: ctx.name, val: !st ? 'Missing' : isNaN(parseFloat(st.state)) ? st.state : fmt(st.state, unit), valColor: 'var(--muted)', hint: ctx.hint });
+    return stripFace({ kind: 'none', icon: 'dot', accent: ctx.accent, active: st && st.state === 'on', name: ctx.name, val: !st ? 'Missing' : minecraftStatus(ctx.hass, ctx.card.entity) || (isNaN(parseFloat(st.state)) ? st.state : fmt(st.state, unit)), valColor: 'var(--muted)', hint: ctx.hint });
   },
   more: (ctx) => histBlock(ctx),
   tap: () => null,
@@ -662,8 +678,8 @@ export const TYPES = { light, light_group: lightGroup, fan, cover, lock, switch:
 // history rather than calling a service that will refuse.
 Object.values(TYPES).forEach((T) => {
   const tap = T.tap; const slide = T.slide;
-  if (tap) T.tap = (ctx) => (ctx.card && ctx.card.entity && off(ctx.st) ? null : tap(ctx));
-  if (slide) T.slide = (ctx) => (ctx.card && ctx.card.entity && off(ctx.st) ? null : slide(ctx));
+  if (tap) T.tap = (ctx) => (ctx.card && ctx.card.entity && dead(ctx) ? null : tap(ctx));
+  if (slide) T.slide = (ctx) => (ctx.card && ctx.card.entity && dead(ctx) ? null : slide(ctx));
 });
 
 // A tile's role for a screen reader: a slider when it has a level, a switch
