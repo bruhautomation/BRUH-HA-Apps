@@ -358,6 +358,11 @@ def save_settings(changes: dict) -> dict:
             current[key] = value
         else:
             raise ValueError(f"unknown setting: {key}")
+    if current.get("autopilot_migrated") and current.get("review") is True:
+        # Asking before sending is what turning autopilot off was, and that
+        # was for good: the mark goes, so turning it off again later is an
+        # ordinary review switch and never development mode again.
+        current["autopilot_migrated"] = False
     atomic_write.write_json(settings_file(), current)
     return _apply_autopilot(current)
 

@@ -113,6 +113,16 @@ class TestDevelopmentModeIsWhereItWas(Case):
         devloop.save_settings({"review": True})
         self.assertEqual(self.both(), [False, False])
 
+    def test_asking_on_then_off_again_never_brings_it_back(self):
+        self.store({"enabled": True, "autopilot": True})
+        devloop.save_settings({"schedule": {"faults": 6}})
+        self.assertEqual(self.both(), [True, True])
+        devloop.save_settings({"review": True})
+        self.assertEqual(self.both(), [False, False])
+        devloop.save_settings({"review": False})
+        self.assertFalse(devloop._raw_settings()["autopilot_migrated"])
+        self.assertEqual(self.both(), [False, False])
+
     def test_the_loop_off_is_never_development_mode(self):
         self.store({"enabled": False, "autopilot": True})
         self.assertEqual(self.both(), [False, False])
