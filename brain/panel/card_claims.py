@@ -109,7 +109,35 @@ def blind_lead(obj: dict, verdict: str = "") -> str:
         return "a data gap"
     if _NON_EVENT.search(claim):
         return "nothing happened"
+    if _ALL_FINE.search(claim) and _only_absence(obj):
+        return "nothing happened"
     return ""
+
+
+# A headline that only says all is well ("All quiet", "Nothing unusual").
+# Never "nothing new since <date>": that is the line the contract asks for
+# when no reading is newer than the last card, and it is kept.
+# News when the card under it compares something; "nothing happened" when
+# every sentence below it is an absence or a gap and no tile compares (#726).
+_ALL_FINE = re.compile(
+    r"^\s*(?:all (?:quiet|fine|normal|clear|good|calm)"
+    r"|nothing (?:unusual|of note|to report)"
+    r"|everything (?:is |was |looks )?(?:fine|normal|quiet|ok|okay)"
+    r"|(?:a )?quiet (?:day|night|week|morning|evening))\b", re.I)
+
+
+def _only_absence(obj: dict) -> bool:
+    """Whether the card's body says only that nothing happened or what
+    brAIn could not see: no sentence that compares or reports an event,
+    and no tile with a comparison."""
+    if any(isinstance(h, dict) and str(h.get("delta") or "").strip()
+           for h in obj.get("highlights") or []):
+        return False
+    parts = [p for p in _SENTENCE_END.split(str(obj.get("summary") or "")
+                                            .strip()) if p.strip()]
+    return bool(parts) and all(
+        (_NON_EVENT.search(p) or _GAP.search(p)) and not _NEWS.search(p)
+        for p in parts)
 
 
 def trim_gaps(out: dict, changed: list[str]) -> None:

@@ -335,16 +335,27 @@ _LOG_MEANINGS = (
                 r"|invalid (?:response|data|value)|[{}]", re.I),
      "it got an answer it could not make sense of"),
 )
-_LOG_MEANING_ELSE = "something it was doing failed"
+_LOG_MEANING_ELSE = "it logged an error"
 
 
 def log_meaning(message: str) -> str:
     """What a logged error means, in plain words, never quoting it."""
+    return known_log_meaning(message) or _LOG_MEANING_ELSE
+
+
+def known_log_meaning(message: str) -> str:
+    """What a logged error means when its line says so, or "".
+
+    A finding prints only this: an error none of `_LOG_MEANINGS` reads is
+    one whose meaning brAIn does not know, and "something it was doing
+    failed" under it was a sentence that said nothing while sounding like
+    a reading (#725). The sentence then ends at what IS known — who
+    logged it, how often, when."""
     text = str(message or "")
     for pattern, meaning in _LOG_MEANINGS:
         if pattern.search(text):
             return meaning
-    return _LOG_MEANING_ELSE
+    return ""
 
 
 # What marks a sentence as pasting a log rather than saying something: a

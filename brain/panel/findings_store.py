@@ -2826,6 +2826,12 @@ def refine(ts: int, case: dict, run_id: str = "",
         if fix:
             entry["fix"] = textclip.shorten(fix, MAX_FIX)
             entry["fix_by"] = "resident"
+        elif detail and _look_found_cause(case) and entry.get("fix"):
+            # The run that looked said what happened and kept the rule's
+            # step: the step stays, and only the rule's guess at what
+            # usually causes it goes — it sat beside the cause that was
+            # found (#583).
+            entry["fix"] = without_usual_cause(str(entry["fix"]))
         # And the To Do sentence, in the words of the run that looked.
         todo = clean_todo_text(case.get("todo_text"))
         if todo:
@@ -2863,6 +2869,37 @@ def refine(ts: int, case: dict, run_id: str = "",
         _write(items)
         return None if int(ts) in gone else _shape(entry)
     return None
+
+
+# A check's guess at the cause, as an aside: "(a socket or a wall switch
+# turned off is the usual cause)", or ": a database error … is the usual
+# cause." after the step. Only the aside is matched — never a sentence, and
+# never "most often" (a step may say "exclude the entities that write most
+# often") nor "a loose fitting is the most common cause" as its own clause
+# after a semicolon, which reads as part of the step (#583).
+_USUAL_CAUSE_PAREN = re.compile(
+    r"\s*\((?=[^()]*\b(?:is|are) the usual cause\b)[^()]*\)")
+_USUAL_CAUSE_COLON = re.compile(
+    r":\s+(?=[^.:;()]*\b(?:is|are) the usual cause\b)[^.:;()]*(?=\.)")
+
+
+def without_usual_cause(fix: str) -> str:
+    """``fix`` less its usual-cause aside, never less a step: when what is
+    left is not a step (nothing, or only punctuation) the fix is kept."""
+    text = str(fix or "")
+    out = _USUAL_CAUSE_COLON.sub("", _USUAL_CAUSE_PAREN.sub("", text))
+    out = re.sub(r"\s+([.,;])", r"\1", out).strip()
+    return out if re.search(r"\w{3,}", out) else text
+
+
+def _look_found_cause(case: dict) -> bool:
+    """Whether a look's reply states what happened: a problem, with a
+    detail and with evidence it read — the shape a cause has, and the one
+    a look that found nothing ("nothing in the history explains it")
+    lacks, because it has no reading to cite."""
+    return (case.get("kind", "problem") == "problem"
+            and bool(str(case.get("detail") or "").strip())
+            and bool(case.get("evidence")))
 
 
 @_mutates

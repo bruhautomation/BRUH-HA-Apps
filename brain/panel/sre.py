@@ -1769,9 +1769,9 @@ def _plain_title(rec: dict, dig: dict) -> str:
     title named something else."""
     names = dig.get("names") or {}
     if rec["kind"] == "zigbee":
-        return f"{rec.get('name') or 'A Zigbee device'} is struggling on the Zigbee network"
+        return _zigbee_title(rec)
     if rec["kind"] == "zwave":
-        return f"The Z-Wave device {rec.get('name') or ''} is having trouble".replace("  ", " ")
+        return _zwave_title(rec)
     if rec["kind"] == "automation":
         return f"{rec.get('automation') or 'An automation'} switches off a Zigbee router"
     ents = rec.get("entities") or []
@@ -1787,6 +1787,122 @@ def _plain_title(rec: dict, dig: dict) -> str:
         return f"Errors in the log about {thing}"
     return (f"Errors in the log from the {where} integration" if where
             else f"Errors in the log from {rec.get('logger') or 'Home Assistant'}")
+
+
+def _hours_said(hours) -> str:
+    try:
+        h = float(hours)
+    except (TypeError, ValueError):
+        return ""
+    if h >= 48:
+        return f"{round(h / 24)} days"
+    return "an hour" if round(h) <= 1 else f"{round(h)} hours"
+
+
+def _zigbee_title(rec: dict) -> str:
+    """A Zigbee record's title, from what its record measured (#737):
+    offline, not heard from for N hours, or a weak link — never a stock
+    verb ("struggling") that the detail beside it may contradict."""
+    name = rec.get("name") or "A Zigbee device"
+    seen = rec.get("last_seen_hours")
+    lqi = rec.get("lqi")
+    since = _hours_said(seen) if isinstance(seen, (int, float)) \
+        and seen > UNSEEN_HOURS else ""
+    if rec.get("available") is False:
+        return (f"{name} has been offline on the Zigbee network for {since}"
+                if since else f"{name} is offline on the Zigbee network")
+    if since:
+        return f"{name} has not been heard on the Zigbee network for {since}"
+    if isinstance(lqi, (int, float)) and lqi < WEAK_LQI:
+        return f"{name} has a weak Zigbee link (link quality {round(lqi)})"
+    return f"{name} on the Zigbee network"
+
+
+def _zwave_title(rec: dict) -> str:
+    """A Z-Wave record's title from its node status and counters."""
+    name = rec.get("name") or ""
+    who = f"The Z-Wave device {name}".strip()
+    stats = rec.get("stats") or {}
+    if rec.get("status") == "dead":
+        return f"{who} is marked dead by Z-Wave"
+    dropped = int(sum(_num(stats.get(k)) for k in
+                      ("commandsDroppedTX", "commandsDroppedRX")))
+    if dropped > 0:
+        return (f"{who} has dropped {dropped} Z-Wave command"
+                + ("" if dropped == 1 else "s"))
+    timeouts = int(_num(stats.get("timeoutResponse")))
+    if timeouts > 0:
+        return (f"{who} did not answer in time {timeouts} time"
+                + ("" if timeouts == 1 else "s"))
+    return f"{who} on the Z-Wave network"
+
+
+# A stock verb a model's title puts on a device instead of what was
+# measured. Replaced by the record's own title, only for a cause about
+# one Zigbee or Z-Wave device (#737).
+_STOCK_DEVICE_VERB = re.compile(
+    r"\b(?:is |are )?(?:struggling|having (?:some )?(?:trouble|issues|problems)"
+    r"|acting up|misbehaving|unhappy|flaky)\b", re.I)
+
+
+def _measured_title(title: str, recs: list[dict], dig: dict) -> str:
+    """``title``, or the measured one when it carries a stock verb and the
+    cause is about one mesh device."""
+    if not _STOCK_DEVICE_VERB.search(title or ""):
+        return title
+    mesh = [r for r in recs if r.get("kind") in ("zigbee", "zwave")]
+    if len(mesh) != 1 or len(recs) != len(mesh):
+        return title
+    return textclip.clip(_plain_title(mesh[0], dig), MAX_TITLE)
+
+
+# A state the detail says, in the present tense and flatly, is fine — and
+# what a step about that state would say. A clause with a contrary turn
+# ("but", "until", "dropping", "now at"), a past time ("yesterday", "last
+# week", "for two years") or a negation ("no good", "not fine") is not
+# flat, and keeps every step (#737).
+_STATE_WORDS = {
+    "battery": (r"batter(?:y|ies)",
+                r"\b(?:batter(?:y|ies)|recharge|charge it|charging)\b"),
+    "signal": (r"signal|link(?: quality)?|lqi|rssi|reception|connection",
+               r"\b(?:signal|link|repeater|router closer|move (?:it|the \w+) "
+               + r"closer|closer to|lqi|rssi|reception|extender)\b"),
+}
+_FINE_NOW = (r"\b(?:its |the )?(?:{state})\s+(?:is|reads|looks|looked|seems"
+             r"|appears|was reading)\s+(?:fine|good|healthy|strong|ok|okay"
+             r"|normal|full)\b")
+_CONTRARY = re.compile(
+    r"\b(?:but|yet|though|although|however|until|except|while|whereas"
+    r"|drop\w*|fall\w*|fell|falling|now at|low|weak|yesterday|last \w+"
+    r"|ago|earlier|before|for (?:now|\w+ (?:years?|months?|weeks?|days?)))\b",
+    re.I)
+
+
+def _fine_states(detail: str) -> set[str]:
+    """The states ``detail`` flatly says are fine now."""
+    out: set[str] = set()
+    for sent in _SENTENCES.split(detail or ""):
+        for state, (words, _step) in _STATE_WORDS.items():
+            m = re.search(_FINE_NOW.format(state=words), sent, re.I)
+            if m and not _CONTRARY.search(sent[m.end():]) \
+                    and not _CONTRARY.search(sent[:m.start()]):
+                out.add(state)
+    return out
+
+
+def _steps_agree(detail: str, fix: str) -> str:
+    """``fix`` less each sentence aimed at a state the detail flatly says
+    is fine — never every sentence: a step left empty is worse than one
+    a person can weigh against the detail above it."""
+    fine = _fine_states(detail)
+    if not fine or not fix:
+        return fix
+    pats = [re.compile(_STATE_WORDS[s][1], re.I) for s in fine]
+    sents = _SENTENCES.split(fix)
+    kept = [s for s in sents if not any(p.search(s) for p in pats)]
+    if not kept or len(kept) == len(sents):
+        return fix
+    return " ".join(kept).strip()
 
 
 def _and(names: list[str]) -> str:
@@ -1855,8 +1971,9 @@ def _log_said(logs: list[dict], dig: dict, detail: str = "") -> str | None:
         who = f"The {where} integration" if where else "Home Assistant"
         thing = _thing_of(rec, dig)
         about = f" about {thing}" if thing else ""
-        return (f"{who} logged an error{about}{tail}: "
-                f"{house_words.log_meaning(message)}.")
+        meaning = house_words.known_log_meaning(message)
+        return (f"{who} logged an error{about}{tail}"
+                + (f": {meaning}." if meaning else "."))
     return None
 
 
@@ -2076,6 +2193,8 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
             unrelated += 1
         title, detail, fix = _name_the_callers(
             [by_id[r] for r in real], dig, title, detail, fix)
+        title = _measured_title(title, [by_id[r] for r in real], dig)
+        fix = _steps_agree(detail, fix)
         title, detail, fix = (plain_slugs(title, dig), plain_slugs(detail, dig),
                               plain_slugs(fix, dig))
         only_logs = bool(logs) and len(logs) == len(real)
