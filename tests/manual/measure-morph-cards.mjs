@@ -275,6 +275,28 @@ if (pets2 !== 'ELEMENT v6 Dogs') fail('types', `element type did not follow its 
 const gone = await p.evaluate(async () => { window.__types = { types: [], modules: [] }; window.__typesMoved(); await new Promise((r) => setTimeout(r, 300)); return document.querySelector('morph-type-pets').textContent; });
 if (!/no card type/.test(gone)) fail('types', `a copy of a deleted type says "${gone}"`);
 
+// A thermostat with routine buttons in HA's grid: at the size it asks for
+// (getGridOptions) and when stretched, every button lies inside the card's box.
+for (const extra of [0, 1]) {
+  const res = await p.evaluate(async (extra) => {
+    const e = document.createElement('morph-climate-card');
+    e.setConfig({ type: 'custom:morph-climate-card', entity: 'climate.downstairs', actions: ['script.drop_humidity', 'scene.evening'] });
+    const rows = e.getGridOptions().rows + extra; const H = rows * 64 - 8;
+    const cell = document.createElement('div'); cell.className = 'fit-rows'; cell.style.cssText = `height:${H}px;width:360px;margin:8px`;
+    document.body.appendChild(cell);
+    e.layout = 'grid'; e.hass = window.__hass; cell.appendChild(e);
+    await new Promise((r) => setTimeout(r, 800)); e._measure(); await new Promise((r) => setTimeout(r, 300));
+    const bb = e.shadowRoot.querySelector('.box').getBoundingClientRect();
+    const chips = [...e.shadowRoot.querySelectorAll('.cl-acts .wd')].map((b) => { const r = b.getBoundingClientRect(); return { t: b.textContent, h: Math.round(r.height), inside: r.top >= bb.top - 0.5 && r.bottom <= bb.bottom + 0.5 }; });
+    cell.remove(); return { rows, H, chips };
+  }, extra);
+  if (res.chips.length !== 2) fail('climate actions', `${res.rows} rows: ${res.chips.length} routine buttons drawn, not 2`);
+  res.chips.forEach((c) => {
+    if (!c.inside) fail('climate actions', `${res.rows} rows (${res.H}px): the "${c.t}" button lies outside the card's box`);
+    if (c.h < 40) fail('climate actions', `${res.rows} rows: the "${c.t}" button is ${c.h}px tall, under 40`);
+  });
+}
+
 if (errors.length) fail('console', errors.slice(0, 5).join(' | '));
 if (process.env.SHOT) await p.screenshot({ path: process.env.SHOT, fullPage: true });
 await browser.close();

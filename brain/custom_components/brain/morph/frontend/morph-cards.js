@@ -146,7 +146,8 @@ ha-card{overflow:hidden;height:100%}
 :host([grid]) .mc.open .more{flex:1 1 auto;min-height:0;overflow:auto}
 :host([opened]) ha-card>div,:host([opened]) .morph.mc,:host([opened]) .mc .mtile,:host([opened]) .mc .tc{height:auto}
 :host([opened]) .mc.open .more{overflow:visible}
-.mc[data-h="s"] .box>.row.small:last-child:not(.cl-acts){display:none}
+.mc[data-h="s"] .box>.row.small:last-child{display:none}
+.mc[data-h="s"] .box>.row.small:has(+.cl-acts){display:none}
 :host([grid]) .mc .chart svg{max-height:none}
 .mc[data-h="s"] .box>svg:last-child,.mc[data-h="s"] .box>.cols:last-child{min-height:8px}
 .mc[data-h="xs"] .box{flex-direction:row;align-items:center;gap:10px;padding:0 14px}
@@ -390,7 +391,13 @@ export class MorphCard extends HTMLElement {
 
   // Sections view: the kind's size (SIZES), which the person changes with
   // HA's own handles; the face fills whatever it is given.
-  getGridOptions() { return sizeOf(this.kind, TYPES[this.kind] || TYPES.entity); }
+  getGridOptions() {
+    const o = sizeOf(this.kind, TYPES[this.kind] || TYPES.entity);
+    // A thermostat with routine buttons needs room for a 40px row of them: three rows, not two.
+    const acts = this._card && this._card.options && this._card.options.actions;
+    if (this.kind === 'climate' && Array.isArray(acts) && acts.length) { o.rows = Math.max(3, o.rows); o.min_rows = Math.max(3, o.min_rows); }
+    return o;
+  }
 
   static getConfigForm() { return configForm(this.kind); }
 

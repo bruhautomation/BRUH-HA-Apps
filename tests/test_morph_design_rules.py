@@ -183,6 +183,22 @@ class TestTheDesignsNumbers(unittest.TestCase):
             for px in re.findall(r"min-height:(\d+)px", body):
                 self.assertGreaterEqual(int(px), 40, selector)
 
+    def test_no_wd_rule_of_any_kind_sets_a_height_under_the_floor(self):
+        """The class behind the scene buttons that came back (2026-11-07): a
+        thermostat's routine chips had their own `.cl-acts .wd{min-height:0}`,
+        a second per-element override of the shared 40px `.wd` floor beside the
+        one already fixed. Any `.wd` rule, whatever its parent, keeps the floor;
+        the two older ones named here are known and left alone."""
+        styles = (FRONTEND / "styles.js").read_text(encoding="utf-8")
+        known = {".legend .wd", ".bnote .wd"}
+        for selector, body in re.findall(r"([^{}]*\.wd)\{([^}]*)\}", styles):
+            selector = selector.strip().split(",")[-1].strip()
+            if selector in known:
+                continue
+            for px in re.findall(r"min-height:(\d+)px", body) + re.findall(r"(?<![-\w])height:(\d+)px", body):
+                self.assertGreaterEqual(int(px), 40, selector)
+            self.assertNotRegex(body, r"min-height:0(?!\.)(?!\d)", selector)
+
 
 if __name__ == "__main__":
     unittest.main()

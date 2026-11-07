@@ -310,13 +310,14 @@ function climateActions(ctx) {
   }).filter(Boolean);
   return btns.join('');
 }
-// The ruler's foot. With actions, the buttons take the place of the ruler's
-// two end labels, so the card keeps its height and a thermostat beside it
-// in the same row stays the same size.
+// The ruler's foot. With actions, the card says its humidity and the routines
+// follow as chips on a row of their own: a chip is a 40px target that wraps,
+// not a word squeezed onto the humidity line and pulled over its neighbours
+// by negative margins (which caught taps on the ruler and the tile's edge).
 function climateFoot(ctx, lo, hi, unit, a) {
   const hum = a.current_humidity != null ? esc(a.current_humidity) + '% humidity' : '';
   const acts = climateActions(ctx);
-  if (acts) return `<div class="row small cl-acts" style="justify-content:space-between"><span>${hum}</span><span class="row" style="gap:0 14px">${acts}</span></div>`;
+  if (acts) return `<div class="row small" style="justify-content:space-between"><span>${hum}</span></div><div class="cl-acts">${acts}</div>`;
   return `<div class="row small" style="justify-content:space-between"><span>${lo}${esc(unit)}</span><span>${hum}</span><span>${hi}${esc(unit)}</span></div>`;
 }
 
@@ -478,7 +479,7 @@ const camera = {
     // one streams, and only then says Live.
     const stream = ctx.open && a.access_token ? `/api/camera_proxy_stream/${encodeURIComponent(ctx.card.entity)}?token=${encodeURIComponent(a.access_token)}` : '';
     const pic = stream || src;
-    return `<div class="camtile" style="box-shadow:inset 0 0 0 1px ${st && st.state === 'recording' ? mix(ctx.accent, 30) : 'var(--line)'}"><div class="camhead"><b>${esc(ctx.name)}</b><span class="flex1"></span><span class="small">${esc(sub)}</span></div><div class="campic">${pic ? `<img class="cam" src="${esc(pic)}" alt="${esc(ctx.name)}" loading="lazy" onerror="this.style.visibility='hidden'">` : ''}${live ? `<span class="live"><i${stream ? '' : ' class="still"'}></i>${stream ? 'LIVE' : 'Still'}</span>` : ''}${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div></div>`;
+    return `<div class="camtile" style="box-shadow:inset 0 0 0 1px ${st && st.state === 'recording' ? mix(ctx.accent, 30) : 'var(--line)'}"><div class="camhead"><b>${esc(ctx.name)}</b><span class="flex1"></span><span class="small">${esc(sub)}</span></div><div class="campic"><span class="camnone">${esc(!st || UNAVAILABLE.includes(st.state) ? 'Offline' : pic ? 'No picture yet' : 'No picture')}</span>${pic ? `<img class="cam" src="${esc(pic)}" alt="${esc(ctx.name)}" loading="lazy" onerror="this.style.visibility='hidden'">` : ''}${live ? `<span class="live"><i${stream ? '' : ' class="still"'}></i>${stream ? 'LIVE' : 'Still'}</span>` : ''}${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div></div>`;
   },
   more: (ctx) => histBlock(ctx, 'Events'),
   tap: () => null,
@@ -543,7 +544,8 @@ const person = {
     const st = ctx.st; const a = (st && st.attributes) || {};
     const home = st && st.state === 'home';
     const where = !st ? 'Missing' : home ? 'Home' : st.state === 'not_home' ? 'Away' : st.state;
-    const av = a.entity_picture ? `<img class="avatar" src="${esc(a.entity_picture)}" alt="">` : `<span class="avatar" style="background:${mix(ctx.accent, 25)};color:${ctx.accent}">${esc((ctx.name || '?')[0])}</span>`;
+    // The initial is always drawn; a photo lies over it and is hidden if it does not load, so a missing picture never shows a broken-image mark or its alt text.
+    const av = `<span class="avatar" style="background:${mix(ctx.accent, 25)};color:${ctx.accent}">${esc((ctx.name || '?')[0])}${a.entity_picture ? `<img src="${esc(a.entity_picture)}" alt="" onerror="this.style.visibility='hidden'">` : ''}</span>`;
     return `<div class="strip" style="box-shadow:inset 0 0 0 1px ${home ? mix(ctx.accent, 30) : 'var(--line)'};background:${home ? mix(ctx.accent, 8) : 'transparent'}"><div class="sline">${av}<span class="nv"><b>${esc(ctx.name)}</b><span style="color:${ctx.accent}">${esc(where)} ${st ? '· ' + esc(since(st.last_changed).replace('since ', '')) : ''}</span></span>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div></div>`;
   },
   more: (ctx) => histBlock(ctx, 'Today'),
