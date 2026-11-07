@@ -220,12 +220,26 @@ class TestAChartIsPhotographedWithItsLines(unittest.TestCase):
         self.assertGreaterEqual(drawn_lines(tile), 2, tile["text"])
 
     def test_a_question_that_never_comes_back_does_not_hold_the_picture(self):
+        # The question would answer after 40s, far past the capture's bound
+        # (screens.ANSWERS_MAX_S); a picture that waited for it would be
+        # taken at 40s or later. Once the picture HAS been taken the question
+        # gives up, because the harness server's cleanup waits for every
+        # handler still running: a question that sat out its whole 40s made
+        # this test 76s, past the suite's 60s per-test timeout, which in
+        # thread mode ends the xdist worker and hung CI at its limit.
+        never_s = 40
+        seen: list[list] = []
+
         async def never(msg):
-            await asyncio.sleep(40)
+            until = time.monotonic() + never_s
+            while time.monotonic() < until and not (seen and seen[0]):
+                await asyncio.sleep(0.2)
             return {"ok": True, "result": {}}
 
         page = Page(self.dash(False), house(), never, [{"id": "c_temps", "press": ""}],
-                    settings={"fold_rooms": False}).run()
+                    settings={"fold_rooms": False})
+        seen.append(page.seen)
+        page.run()
         self.assertEqual(len(page.result["shots"]), 1)
         # The picture was taken at the bound, not when the question gave up.
         self.assertLess(page.looked_after, 30, page.looked_after)
