@@ -92,7 +92,7 @@ section.sec.nowband .secbg{background:transparent!important}
 .sechead.nohead{min-height:0;padding:0}
 .sectitle{flex:1;min-width:0;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;position:relative}
 .roomname{background:none;border:0;padding:0;margin:0;font:inherit;color:inherit;cursor:pointer;text-align:left}
-.secscenes{display:inline-flex;gap:0 14px;flex-wrap:wrap}
+.secscenes{display:inline-flex;gap:4px 8px;flex-wrap:wrap}
 .secscenes .wd{font-size:15px;color:var(--muted)}
 .needs{font-size:13px;color:var(--rose);white-space:nowrap}
 .trace{background:none;border:0;padding:0;margin:0;font:inherit;font-size:13px;cursor:pointer;min-height:28px;white-space:nowrap}
@@ -143,7 +143,7 @@ section.sec[data-state="asleep"] .mtile{opacity:1}
 .todorow .tick{width:18px;height:18px;border-radius:6px;box-shadow:inset 0 0 0 1.5px var(--line2);flex-shrink:0}
 .todorow .lx span:first-child{font-size:14px}
 .todoacts{display:inline-flex;gap:0 14px}
-.actword{font-size:13px;font-weight:700;color:var(--ac);padding:0 2px;white-space:nowrap}
+.actword{flex:none;font-size:13px;font-weight:700;color:var(--ac);padding:0 2px;white-space:nowrap}
 .actword.armed{color:var(--ink);background:var(--ac);border-radius:8px;padding:4px 10px}
 .keeprow .wd{font-size:14px}
 .mprog{will-change:width}
@@ -169,7 +169,10 @@ h1.hello{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-weight:400;
 .nm:hover,.nm[aria-expanded="true"]{text-decoration-style:solid;text-decoration-color:currentColor}
 .wd{background:none;border:0;margin:0;font:inherit;cursor:pointer;color:var(--quiet);min-height:40px;padding:0 1px;transition:color .25s ease}
 .wd:hover{color:var(--text)}
-.cl-acts .wd{font-size:12px;min-height:0;padding:12px 2px;margin:-12px 0;color:var(--muted)}
+.cl-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.cl-acts .wd{font-size:13px;min-height:40px;min-width:40px;padding:0 14px;border-radius:999px;box-shadow:inset 0 0 0 1px var(--line2);color:var(--muted);text-align:center}
+/* A scene or routine chip is a target, not a word: the shared .wd floor in height AND width, room between neighbours, wrapping rather than clipping. */
+.scenes .wd,.scenesline .wd,.secscenes .wd{min-width:40px;padding:0 6px;text-align:center}
 .wd[aria-pressed="true"]{color:var(--text);text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:8px}
 .wd.go{font-weight:700;color:var(--teal)}
 .wd.bad{color:var(--rose)}
@@ -178,7 +181,7 @@ h1.hello{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-weight:400;
 .sq:hover{background:var(--line2)}
 .go{background:none;border:0;padding:0;margin:0;font:inherit;cursor:pointer;font-weight:700;min-height:40px}
 .go:hover{text-decoration:underline;text-underline-offset:6px;text-decoration-thickness:1.5px}
-.scenesline{display:flex;flex-wrap:wrap;align-items:center;gap:0 22px}
+.scenesline{display:flex;flex-wrap:wrap;align-items:center;gap:4px 14px}
 .scenesline .wd{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-size:19px;letter-spacing:-.01em}
 .askrow{display:flex;align-items:center;gap:12px;max-width:620px}
 .askin{background:transparent;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:8px 0;width:100%;font-size:17px;color:var(--text);outline:none;transition:border-color .3s ease}
@@ -237,14 +240,14 @@ h1.hello{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-weight:400;
 .flh h2{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-size:clamp(24px,2.6vw,30px);font-weight:300;letter-spacing:-.03em;line-height:1;white-space:nowrap}
 .flrow{display:flex;align-items:flex-end;gap:16px}
 .flr{flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent);align-self:center;margin-top:10px;min-width:20px}
-.facts{font-size:14px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;font-variant-numeric:tabular-nums}
+.facts{font-size:14px;color:var(--muted);min-width:0;font-variant-numeric:tabular-nums}
 .facts .sep{color:var(--quiet)}
 @media (max-width:700px){.flrow{flex-direction:column;align-items:flex-start!important;gap:6px!important}.flh{padding-bottom:14px!important}.flr{display:none}.flrow .facts{white-space:normal;max-width:100%}}
 section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .secbg{position:absolute;inset:0;border-radius:30px;transition:box-shadow .3s ease}
 .sechead{position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:16px 12px 6px 22px;min-height:62px}
 .sechead h2{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-size:22px;font-weight:400;letter-spacing:-.02em;line-height:1.2;white-space:nowrap}
-.secmeta{font-size:13px;color:var(--quiet);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.secmeta{font-size:13px;color:var(--quiet);min-width:0}
 .gbg{position:absolute;left:0;top:0;border-radius:22px}
 .glab{position:absolute;left:0;top:0;display:flex;align-items:center;gap:10px;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;white-space:nowrap;overflow:hidden}
 .glab i{font-style:normal;font-weight:600;letter-spacing:.02em;text-transform:none;color:var(--quiet);opacity:.8}
@@ -253,6 +256,7 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .mtile.holding{transform:scale(.985)}
 .tc{position:absolute;left:0;top:0}
 .face{position:relative}
+.face>.box,.face>.strip,.face>.camtile{min-height:var(--fh,0px)}
 .holdbar{position:absolute;left:14px;right:14px;bottom:5px;height:2px;border-radius:1px;transform-origin:left center;pointer-events:none;animation:holdbar .54s linear forwards;z-index:3}
 @keyframes holdbar{from{transform:scaleX(0);opacity:.4}to{transform:scaleX(1);opacity:1}}
 .strip{position:relative;height:56px;border-radius:18px;overflow:hidden;transition:box-shadow .5s ease,background-color .5s ease}
@@ -265,10 +269,10 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .lane{flex:1;position:relative;transition:background-color .5s ease}
 .lane>span{position:absolute;left:0;top:0;bottom:0;transition:width .7s cubic-bezier(.2,.8,.2,1)}
 .sline{position:relative;height:100%;display:flex;align-items:center;gap:10px;padding:0 14px}
-.sline svg{flex-shrink:0;overflow:visible;transition:color .4s ease}
+.sline svg{flex:none;overflow:visible;transition:color .4s ease}
 .nv{display:flex;flex-direction:column;min-width:0;flex:0 1 auto;line-height:1.25}
 .nv b{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.nv span{font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color .4s ease}
+.nv span{font-size:12px;font-variant-numeric:tabular-nums;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow-wrap:anywhere;transition:color .4s ease}
 @media (max-width:520px){.sline{gap:8px;padding:0 11px}.nv b{font-size:13px}}
 .track{position:relative;width:30px;height:18px;border-radius:6px;flex-shrink:0;transition:background-color .35s ease}
 .knob{position:absolute;top:3px;width:12px;height:12px;border-radius:4px;transition:left .35s cubic-bezier(.25,1,.3,1),background-color .35s ease}
@@ -282,7 +286,7 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .sm{font-size:13px;color:var(--muted)}
 .ruler{position:relative;height:16px;margin-top:6px}
 .ruler>div{position:absolute}
-.scenes{display:flex;flex-wrap:wrap;align-items:center;gap:0 20px;padding:0 4px 0 14px;min-height:44px}
+.scenes{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;padding:0 4px 0 14px;min-height:44px}
 .scenes .wd{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-size:17px;letter-spacing:-.01em}
 .more{display:flex;flex-direction:column;gap:14px;padding:4px 14px 14px}
 .more .label{margin-bottom:-6px}
@@ -351,8 +355,10 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .campic .live{position:absolute;top:8px;left:8px;display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;letter-spacing:.1em;color:#fff;background:rgba(0,0,0,.5);padding:2px 8px;border-radius:6px}
 .campic .live i{width:5px;height:5px;border-radius:1px;background:#FF6B5B}
 .campic .live i.still{background:#9aa}
+.campic .camnone{position:absolute;inset:0;display:grid;place-items:center;font-size:13px;color:var(--quiet)}
 .campic .hint{position:absolute;bottom:8px;right:10px}
-.avatar{width:32px;height:32px;border-radius:50%;object-fit:cover;flex-shrink:0;display:grid;place-items:center;font-weight:700;font-size:13px}
+.avatar{position:relative;overflow:hidden;width:32px;height:32px;border-radius:50%;flex-shrink:0;display:grid;place-items:center;font-weight:700;font-size:13px}
+.avatar img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .ll{padding:4px}
 .note{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-radius:16px}
 .note p{font-size:14px;line-height:1.45}
