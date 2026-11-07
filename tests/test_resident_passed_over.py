@@ -22,8 +22,8 @@ from __future__ import annotations
 import sys
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
@@ -168,7 +168,7 @@ class TestTheLoop(LoopCase):
         return self.tick(now)
 
     def graded(self, its):
-        return mock.patch.object(self.server.outcomes, "load_graded",
+        return unittest.mock.patch.object(self.server.outcomes, "load_graded",
                                  return_value=its)
 
     def test_the_freezer_switch_is_not_passed_over_a_twenty_first_time(self):
