@@ -623,6 +623,12 @@ class ClaudeBridge:
         # MCP server holds a skin change to on the guarded one. Plain names only.
         if isinstance(player, str) and re.fullmatch(r"[A-Za-z0-9_.]{1,17}", player):
             task["player"] = player
+        # A CLI session uuid or nothing: it becomes an argv entry there.
+        if isinstance(session_id, str) and re.fullmatch(r"[A-Za-z0-9-]{1,64}", session_id):
+            task["session_id"] = session_id
+
+        task_file = os.path.join(self.tasks_dir, f"{task_id}.json")
+        result_file = os.path.join(self.task_results_dir, f"{task_id}.json")
         # Pictures: full paths, each a plain file directly inside the task
         # image folder (the listener checks again, and reads nothing else).
         if images:
@@ -635,12 +641,6 @@ class ClaudeBridge:
                         if isinstance(c, str) and re.fullmatch(r"camera\.[a-z0-9_]+", c)]
                 if cams:
                     task["image_cameras"] = sorted(set(cams))[:4]
-        # A CLI session uuid or nothing: it becomes an argv entry there.
-        if isinstance(session_id, str) and re.fullmatch(r"[A-Za-z0-9-]{1,64}", session_id):
-            task["session_id"] = session_id
-
-        task_file = os.path.join(self.tasks_dir, f"{task_id}.json")
-        result_file = os.path.join(self.task_results_dir, f"{task_id}.json")
 
         await self._hass.async_add_executor_job(
             self._write_json, task_file, task

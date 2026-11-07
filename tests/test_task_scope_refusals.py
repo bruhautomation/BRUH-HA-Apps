@@ -17,7 +17,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 import time
 import unittest
@@ -86,12 +85,12 @@ class TestTheEnvironmentCannotRefuseAValidScope(_Tmp):
         self.assertEqual(flags, clean[1])
 
     def test_a_pth_file_in_the_users_site_packages_changes_nothing(self):
-        ver = f"python{sys.version_info.major}.{sys.version_info.minor}"
-        out = subprocess.run(["python3", "-c", "import sys; print("
-                              "f'python{sys.version_info.major}."
-                              "{sys.version_info.minor}')"],
+        # The site directory of the python3 the listener runs, which need
+        # not be the interpreter running this test.
+        probe = "import sys; print('python%d.%d' % sys.version_info[:2])"
+        out = subprocess.run(["python3", "-c", probe],
                              capture_output=True, text=True, check=True)
-        ver = out.stdout.strip() or ver
+        ver = out.stdout.strip()
         site = self.tmp / "home" / ".local" / "lib" / ver / "site-packages"
         site.mkdir(parents=True)
         (site / "noisy.pth").write_text(

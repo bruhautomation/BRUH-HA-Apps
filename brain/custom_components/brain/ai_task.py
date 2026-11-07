@@ -151,7 +151,7 @@ def discard(paths: list[str]) -> None:
         try:
             os.remove(path)
         except OSError:
-            pass
+            pass  # already read and deleted by the listener, which is the usual end
 
 
 def prompt_for(task, images: int = 0, skipped: int = 0) -> str:
