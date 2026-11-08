@@ -385,7 +385,20 @@ Rules:
   When the prompt says what an entity is used by, or what brAIn knows
   about it, judge its failure by what stops with it — never write "no
   known load" or "nothing depends on it" about an entity the prompt says
-  something depends on.
+  something depends on. A weak signal, a low battery or a dropout on a
+  device an automation reads (a door sensor an auto-lock waits on) is
+  about whether that automation keeps working, so it is never "only a
+  signal-strength note".
+- An automation doing what it was written to do is not a reason the thing
+  it looks after is fine. Judge the reading it keeps, not the switch: a
+  freezer warmer than about -15 °C (5 °F) or a fridge warmer than about
+  5 °C (41 °F) is a problem whatever switched what, and "as designed" or
+  "switched off by its automation" answers whether the automation ran,
+  never whether the food is safe.
+- A subject listed under PASSED OVER BEFORE has been set aside by you and
+  overruled by the household: never "ignore" it again on the same
+  reasoning — raise it, and say what is different if you still think it
+  is nothing.
 - "already" says, in one word, that a row is not news: "answered" (the
   house or memory already answers it), "marked_wrong" (the household has
   marked this report, or one just like it, wrong before), "duplicate" (it
@@ -485,7 +498,8 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
                       watch_notes=None, examples=None,
                       inputs: dict | None = None,
                       situation_line: str = "", used_by=None,
-                      rule_records=None) -> str:
+                      rule_records=None, controlled_by=None,
+                      passed_over=None) -> str:
     """The prompt for one batch.
 
     ``batch_rows`` is what `signals.prompt_rows` returned — or the raw
@@ -516,6 +530,8 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
             "situation_line": str(situation_line or ""),
             "used_by": _rows(used_by),
             "rule_records": _rows(rule_records),
+            "controlled_by": _rows(controlled_by),
+            "passed_over": _rows(passed_over),
         })
     parts = ["Decide what each of these signals is worth.\n"]
     # The clock, in the house's own time. A door at 03:00 and a door at
@@ -540,6 +556,24 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
         parts.append("WHAT USES THESE DEVICES — automations and scripts "
                      "that name them, so whatever stops when one fails:")
         parts += [f"- {row}" for row in used]
+        parts.append("")
+    controls = _rows(controlled_by)
+    if controls:
+        # What switches a device and what that automation reads now: a
+        # compressor "switched off as designed" while the probe its
+        # thermostat reads says 47 °F is the reading to judge, and the
+        # look could not see it — only an investigation was handed this.
+        parts.append("WHAT SWITCHES THESE DEVICES — the automation, what it "
+                     "watches, and what that reads now:")
+        parts += [f"- {row}" for row in controls]
+        parts.append("")
+    passed = _rows(passed_over)
+    if passed:
+        # `outcomes.overruled`: the code's counts, never a model's. The
+        # floor is applied after the reply whatever this block says.
+        parts.append("PASSED OVER BEFORE, AND THE HOUSEHOLD SAID IT MATTERED "
+                     "— raise these; do not set them aside again:")
+        parts += [f"- {row}" for row in passed]
         parts.append("")
     notes = _rows(watch_notes)
     if notes:
@@ -614,7 +648,8 @@ def strip_signal_refs(text: str) -> str:
     return re.sub(r"\s{2,}", " ", out).strip() or s
 
 
-def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
+def parse_first_look(obj, count: int, rows=None,
+                     floors=None) -> dict[int, dict]:
     """`{1-based index: {verdict, why, forced}}` out of a reply.
 
     Every index from 1 to ``count`` is in the answer, always. The retired
@@ -628,6 +663,11 @@ def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
     is optional because a caller may have only a count, and absent it the
     guard simply does not run — which is honest rather than safe, so the
     server passes it and a test pins that a leak cannot be ignored.
+
+    ``floors`` is `{index: (floor, why)}` the caller worked out from the
+    record rather than the signal (`outcomes.overruled_floors`: a subject
+    the household keeps saying mattered after a look passed it over). It
+    is ranked against `never_ignore`'s, never instead of it.
 
     `forced` says the verdict is the guard's rather than the model's: a
     third field instead of a tuple's third slot, because that is the one
@@ -701,6 +741,9 @@ def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
         }
         signal = batch[idx - 1] if idx <= len(batch) else None
         floor, why = never_ignore(signal) if signal is not None else ("", "")
+        extra, extra_why = (floors or {}).get(idx) or ("", "")
+        if _RANK.get(extra, -1) > _RANK.get(floor, -1):
+            floor, why = extra, extra_why
         if floor and _RANK[answer["verdict"]] < _RANK[floor]:
             # A floor outranks `already` too: "the same leak as the other
             # card" is not a reason a tripped detector may be set aside on.

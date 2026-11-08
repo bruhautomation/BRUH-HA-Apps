@@ -1145,6 +1145,72 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
   await context.close();
 }
 
+// Ignore's reason chips on a Resident report (`answers.reason_chips`): the
+// household ignored five of eight of the Resident's reports with a bare
+// Ignore. The box offers "Already know", "Sensor is broken" and "Not an
+// issue here" as words on buttons (never a tooltip-only name), 16px and
+// 44px on a finger; a chip writes its words into the box, and Ignore posts
+// them as the note — the path a typed reason takes. A card whose Ignore
+// carries no chips (a check's, a security report's) draws none.
+for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touch: false }]) {
+  const where = `${width}px (reason chips)`;
+  const CHIPS = ['Already know', 'Sensor is broken', 'Not an issue here'];
+  const res = kase({
+    id: 'f:1501', severity: 'warning', situation: 'generic', chip: 'problem', group: 'problems',
+    claim: "The hall motion sensor's signal is weak and it misses people",
+    source: 'resident', source_title: 'brAIn', origin: { store: 'findings', key: 1501 },
+    answers: [A('todo', 'Add to To Do', '/api/case/f:1501/do', { primary: true }),
+              A('not_now', 'Snooze', '/api/case/f:1501/not_now'),
+              A('wrong', 'Ignore', '/api/case/f:1501/wrong', { note: true, chips: CHIPS })] });
+  const { page, context } = await open(width, touch, {
+    cases: [res, FEED[1]], loose: [], proposals: [], intents: [], extras: {}, open: 2 });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => { todayState.showAll = true; renderFindings(); });
+  await openEverything(page);
+  await page.click('[data-case-id="f:1501"] .card-actions button:text-is("Ignore")');
+  const got = await page.evaluate(() => {
+    const f = document.querySelector('[data-case-id="f:1501"] .findnote');
+    return f ? [...f.querySelectorAll('.findnotechip')].map((b) => ({
+      t: b.textContent.trim(), title: b.title || '',
+      h: Math.round(b.getBoundingClientRect().height),
+      fs: parseFloat(getComputedStyle(b).fontSize),
+      shown: !!b.offsetParent })) : null;
+  });
+  if (!got) note(where, 'Ignore opens no reason box');
+  else {
+    if (got.map((c) => c.t).join('|') !== CHIPS.join('|')) {
+      note(where, `the chips read ${got.map((c) => c.t).join(' | ')}`);
+    }
+    for (const c of got) {
+      if (!c.shown) note(where, `"${c.t}" is not shown`);
+      if (touch && c.h < MIN_TARGET) note(where, `"${c.t}" is ${c.h}px tall`);
+      if (touch && c.fs < 16) note(where, `"${c.t}" is ${c.fs}px text`);
+    }
+  }
+  await page.click('[data-case-id="f:1501"] .findnotechip:text-is("Sensor is broken")');
+  const box = await page.evaluate(() => document.querySelector(
+    '[data-case-id="f:1501"] .findnotebox').value);
+  if (box !== 'Sensor is broken') note(where, `the chip wrote "${box}" into the box`);
+  await page.click('[data-case-id="f:1501"] .findnoteactions button:text-is("Ignore")');
+  await page.waitForTimeout(200);
+  const sent = (await posts(page)).find((pp) => pp.url.endsWith('api/case/f:1501/wrong'));
+  if (!sent || (sent.body || {}).note !== 'Sensor is broken') {
+    note(where, `Ignore sent ${JSON.stringify(sent)}`);
+  }
+  // A card whose Ignore carries no chips draws none.
+  const plain = FEED[1].id;
+  const ign = page.locator(`[data-case-id="${plain}"] .card-actions button:text-is("Ignore")`);
+  if (await ign.count()) {
+    await ign.first().click();
+    const n = await page.evaluate((id) => document.querySelectorAll(
+      `[data-case-id="${id}"] .findnotechip`).length, plain);
+    if (n) note(where, `${plain} draws ${n} chip(s) its Ignore never offered`);
+  }
+  const wide = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  if (wide > 1) note(where, `page scrolls sideways (${wide}px)`);
+  await context.close();
+}
+
 await browser.close();
 if (failures.length) {
   console.error(`measure-today: ${failures.length} failure(s)`);

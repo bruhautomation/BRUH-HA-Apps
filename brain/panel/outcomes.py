@@ -988,6 +988,67 @@ def scope_subjects(batch: list[dict]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Passed over, and overruled — the look's own floor
+# ---------------------------------------------------------------------------
+
+# What a subject the household keeps overruling is floored at. The nightly
+# reflect writes the same pattern as a `judgement:<scope>:louder` fact, but
+# that fact needs a model run, the `learning` option and a retrieval that
+# has room for it, and a house had a freezer passed over twenty times with
+# every one of them marked as mattering. The arithmetic is the code's, so
+# the floor is too: applied after the reply, like `resident.never_ignore`.
+OVERRULED_FLOOR = "investigate"
+
+
+def overruled(graded_items: list[dict]) -> dict[str, str]:
+    """`{entity: counts}` for every subject whose passed-over record is
+    lopsided the louder way (`_louder`) and whose LAST answer was not "not
+    a problem" — a raised report marked Wrong after the misses is the
+    household saying the louder look has done its job. Never a person or
+    their phone, `candidates`' rule. Pure; an unreadable log is {}."""
+    out: dict[str, str] = {}
+    for name, t in (tallies(graded_items or []).get("entity") or {}).items():
+        if _is_person_scope(name):
+            continue
+        counts = _louder(t)
+        if counts and t["last_wrong_at"] <= t["last_confirmed_at"]:
+            out[name] = counts
+    return out
+
+
+def _overruled_name(signal: dict, record: dict[str, str]) -> str:
+    for name in (_entity_of(signal), str(signal.get("subject") or "")):
+        if name and name in (record or {}):
+            return name
+    return ""
+
+
+def overruled_floors(batch: list[dict],
+                     record: dict[str, str]) -> dict[int, tuple[str, str]]:
+    """`{1-based index: (floor, why)}` for the signals in this batch whose
+    subject is in `overruled`'s record — what `resident.parse_first_look`
+    takes as ``floors``."""
+    out: dict[int, tuple[str, str]] = {}
+    for i, signal in enumerate(batch or [], 1):
+        name = _overruled_name(signal, record) if isinstance(signal, dict) else ""
+        if name:
+            out[i] = (OVERRULED_FLOOR, "passing it over has been overruled "
+                                       f"before ({record[name]})")
+    return out
+
+
+def overruled_lines(batch: list[dict], record: dict[str, str]) -> list[str]:
+    """The same record as prompt lines, one per subject in this batch."""
+    lines: list[str] = []
+    for signal in batch or []:
+        name = _overruled_name(signal, record) if isinstance(signal, dict) else ""
+        line = f"{name}: {record[name]}" if name else ""
+        if line and line not in lines:
+            lines.append(line)
+    return lines
+
+
+# ---------------------------------------------------------------------------
 # Judgements — what the nightly reflect run is allowed to write
 # ---------------------------------------------------------------------------
 
@@ -1032,6 +1093,16 @@ def _is_person_scope(name: str) -> bool:
         "person:")
 
 
+def _louder(t: dict) -> str:
+    """The code's counts when a scope's passed-over record is lopsided the
+    LOUD way (`LOUD_MIN`, `LOUD_SHARE`), else "". One test for the nightly
+    candidate and the look's floor, so the two cannot disagree."""
+    passed = t["missed"] + t["passed_ok"] + t["stood"]
+    if t["missed"] >= LOUD_MIN and passed and t["missed"] / passed >= LOUD_SHARE:
+        return f"{t['missed']} of {passed} it passed over turned out to matter"
+    return ""
+
+
 def candidates(scopes: dict[str, dict[str, dict]]) -> list[dict]:
     """The scopes whose record is lopsided enough to be worth a sentence.
 
@@ -1064,11 +1135,8 @@ def candidates(scopes: dict[str, dict[str, dict]]) -> list[dict]:
                 row = {"direction": "quieter",
                        "counts": f"{t['wrong']} of {labelled} it raised were "
                                  "marked not a problem"}
-            elif (t["missed"] >= LOUD_MIN and passed
-                  and t["missed"] / passed >= LOUD_SHARE):
-                row = {"direction": "louder",
-                       "counts": f"{t['missed']} of {passed} it passed over "
-                                 "turned out to matter"}
+            elif _louder(t):
+                row = {"direction": "louder", "counts": _louder(t)}
             if row is None:
                 continue
             out.append({"scope": scope, "subject": name, **row,

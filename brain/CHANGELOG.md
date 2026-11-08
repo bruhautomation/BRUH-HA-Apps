@@ -2,6 +2,17 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.8
+
+### Added
+
+- A Resident report's Ignore offers quick reasons ("Already know", "Sensor is broken", "Not an issue here"). The one you pick is saved exactly as a typed reason, and the next look at that device reads it first. Safety, leak, smoke, lock and security reports offer no such shortcut (#739, #577).
+
+### Fixed
+
+- A subject the household has said brAIn passed over wrongly, several times, is no longer passed over: the first look is shown that record and the row is looked into (#741, #704, #705).
+- The first look sees which automation switches a device and what that device's sensor reads now, and a weak signal or low battery on a device an automation depends on is never "only a signal note" (#704, #705).
+
 ## 5.1.7
 
 ### Fixed

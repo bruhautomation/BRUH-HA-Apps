@@ -4432,6 +4432,30 @@ body.term-classic #termMode .ico-out { display: block; }
 }
 .findnotebox:focus { border-color: var(--accent); }
 .findnoteactions { display: flex; gap: 9px; align-items: center; margin-top: 10px; }
+/* Ignore's reason chips: each writes its words into the box below. Visible
+   words, never an icon with a tooltip; 16px and a 44px target on a finger,
+   in a scoped block after the file's first `pointer: coarse` block, which
+   has to stay the text floor. */
+.findnotechips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+.findnotechip {
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-control);
+  cursor: pointer;
+}
+.findnotechip:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--hairline)); }
+.findnotechip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+}
+@media (pointer: coarse) {
+  .findnotechip { min-height: 44px; font-size: 16px; }
+}
 
 /* -------------------------------------------------------------- card tags
    Read-only chips until ✎ — a tag you can lose to a mis-tap on a phone is
