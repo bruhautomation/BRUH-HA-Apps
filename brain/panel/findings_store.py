@@ -1731,7 +1731,8 @@ def listing() -> dict:
     them separately meant parsing (and fully shaping) the same file twice
     per request — on a Pi, for a screen that polls.
     """
-    shaped = [s for s in (_shape(e) for e in _load()) if s["text"]]
+    shaped = [s for s in (_shape(e) for e in _load())
+              if s["text"] and holds_now(s)]
     for row in shaped:
         row["fix"] = shown_fix(row)
         if row.get("triage"):
@@ -2388,7 +2389,7 @@ OFFLINE_RE = re.compile(
     r"answering)|(?:keeps?|kept) (?:dropping|disconnecting|going offline)|"
     r"dropp(?:ing|ed|s) (?:off|out)|drops off|disconnect(?:ed|s|ing)?|"
     r"(?:lost|losing|loses) (?:its |the )?(?:connection|controller)|"
-    r"gone (?:quiet|silent)|went (?:quiet|silent))\b", re.I)
+    r"gone (?:quiet|silent)|went (?:quiet|silent)|unplugged)\b", re.I)
 
 
 def is_drop_report(entry: dict) -> bool:
@@ -2545,6 +2546,63 @@ def quotes_other_counts(sentence, detail) -> bool:
     return False
 
 
+# A reminder's figure that cannot be real (#722). "19,766 miles overdue" on a
+# service reminder that repeats every 1,000 miles is a reminder set up
+# wrong — a last-done date never entered, an interval in the wrong unit —
+# and a card stating it as overdue sends somebody to book a service on a
+# setting. A figure past `REMINDER_MISREAD_X` times the interval it is
+# measured against, in the same unit, is asked about as the setting.
+REMINDER_MISREAD_X = 10
+_UNIT = (r"(miles?|mi|km|kilomet(?:er|re)s?|days?|weeks?|months?|hours?|"
+         r"hrs?)")
+_NUMBER = r"(\d[\d,]*(?:\.\d+)?)"
+_OVERDUE_RE = re.compile(_NUMBER + r"\s*" + _UNIT
+                         + r"\s+(?:overdue|past due|late)\b", re.I)
+_INTERVAL_RE = re.compile(
+    r"\b(?:every|each|interval(?:\s+(?:is|of))?:?|repeats? every)\s+"
+    + _NUMBER + r"[\s-]*" + _UNIT, re.I)
+_UNIT_KEY = {"mile": "mi", "miles": "mi", "mi": "mi", "km": "km",
+             "kilometer": "km", "kilometers": "km", "kilometre": "km",
+             "kilometres": "km", "day": "d", "days": "d", "week": "w",
+             "weeks": "w", "month": "mo", "months": "mo", "hour": "h",
+             "hours": "h", "hr": "h", "hrs": "h"}
+REMINDER_FIX = ("If the reminder's interval or its last-done date is wrong, "
+                "correct it where the reminder is set up, and brAIn will "
+                "read the new figure.")
+
+
+def _figure(text: str) -> float:
+    return float(text.replace(",", ""))
+
+
+def misread_reminder(row: dict) -> dict | None:
+    """The fields that turn a row stating an impossible overdue figure into
+    a question about the reminder's setting, or None."""
+    words = " ".join([str(row.get(k) or "") for k in
+                      ("text", "claim", "detail", "fix")]
+                     + [str(e.get("value") or "") for e in
+                        row.get("evidence") or [] if isinstance(e, dict)])
+    late = _OVERDUE_RE.search(words)
+    if not late:
+        return None
+    unit = _UNIT_KEY.get(late.group(2).lower(), "")
+    for m in _INTERVAL_RE.finditer(words):
+        if _UNIT_KEY.get(m.group(2).lower(), "") != unit or not unit:
+            continue
+        figure, interval = _figure(late.group(1)), _figure(m.group(1))
+        if interval <= 0 or figure <= REMINDER_MISREAD_X * interval:
+            continue
+        said = (f"A reminder reads {late.group(1)} {late.group(2)} past its "
+                f"date on a {m.group(1)}-{m.group(2).rstrip('s')} interval. "
+                "Is the reminder's setting right?")
+        return {"text": said, "claim": said,
+                "detail": (f"That is more than {REMINDER_MISREAD_X} times "
+                           "the interval, which a reminder set up wrong "
+                           "reads and a real one does not."),
+                "fix": REMINDER_FIX, "kind": "question", "severity": "info"}
+    return None
+
+
 def _asks_about_own_setup(row: dict) -> bool:
     """Whether ``row`` is an open question to the household about brAIn's
     own setup: `self_care`'s, or any question whose words are about it."""
@@ -2617,6 +2675,15 @@ def add_many(objs: list[dict]) -> list[dict]:
         if entry is not None and care:
             # brAIn's own upkeep: its question, not the owner's chore.
             entry.update(care)
+        if entry is not None and not care and _model_written(
+                entry.get("source")):
+            # A figure no real reminder reads is a question about its
+            # setting (#722); a code-chosen key keeps its text.
+            asked = misread_reminder(entry)
+            if asked:
+                if entry.get("source") in SUBJECT_FOLD_EXCLUDED:
+                    asked.pop("text")
+                entry.update(asked)
         if entry is None:
             continue
         if (own_question and not care and _model_written(entry.get("source"))
@@ -4776,6 +4843,59 @@ def _all_back(entry: dict, states: dict, now: float) -> bool:
         if now - since < RETURN_SETTLE_S:
             return False
     return True
+
+
+# The latest state of each entity, as the panel last heard it: seeded by
+# every checks pass (`seed_states`) and kept current by the event bus
+# (`note_state`). Read just before a row is shown (`holds_now`), so a row
+# saying a plug is unplugged is not shown after the plug came back (#722) —
+# the store's own sweep (`clear_returned`) still waits `RETURN_SETTLE_S`
+# before it ends the row, and a device that drops again is shown again.
+LIVE_STATES: dict[str, dict] = {}
+
+
+def note_state(entity_id: str, state) -> None:
+    """One entity's new state (``{state, last_changed}``), or its removal."""
+    eid = str(entity_id or "")
+    if not eid:
+        return
+    if not isinstance(state, dict):
+        LIVE_STATES.pop(eid, None)
+        return
+    LIVE_STATES[eid] = {"state": str(state.get("state") or ""),
+                        "last_changed": state.get("last_changed")}
+
+
+def seed_states(states) -> None:
+    """Every state a checks pass read (``{entity_id: state}``)."""
+    if isinstance(states, dict):
+        for eid, st in states.items():
+            note_state(eid, st)
+
+
+def holds_now(entry: dict, states: dict | None = None) -> bool:
+    """Whether a row's claim that something is down still holds as the
+    house is now. False only for a row from a producer that does not
+    re-check its own rows (`_sweepable`: never a house check, never the
+    harm family) that reports something offline, unavailable or unplugged,
+    when EVERY entity it names reports a real state that changed after the
+    row was filed. An entity not heard from proves nothing."""
+    states = LIVE_STATES if states is None else states
+    if not states or not isinstance(entry, dict) or not _sweepable(entry, None):
+        return True
+    if not (_reported_missing(entry) or is_drop_report(entry)):
+        return True
+    named = _named_entities(entry)
+    if not named:
+        return True
+    filed = float(entry.get("ts") or 0)
+    for eid in named:
+        live = states.get(eid)
+        if (not isinstance(live, dict) or live.get("state") in (None, "")
+                or _no_reading(live.get("state"))
+                or _changed_at(live.get("last_changed")) <= filed):
+            return True
+    return False
 
 
 @_mutates

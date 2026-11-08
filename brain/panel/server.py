@@ -5482,6 +5482,8 @@ def _on_bus_event(event_type: str, data: dict) -> None:
     if event_type == "state_changed" and isinstance(data, dict):
         _note_live_reading(str(data.get("entity_id") or ""),
                            data.get("new_state"))
+        findings_store.note_state(str(data.get("entity_id") or ""),
+                                  data.get("new_state"))
     # A person coming home, or a button on one of the presence loop's
     # touches. Its own try: a greeting must never cost the bus a reading.
     if event_type in ("state_changed", "mobile_app_notification_action"):
@@ -16663,6 +16665,9 @@ async def run_checks(reason: str = "schedule") -> dict:
             if (snapshot.get("available") or {}).get("states"):
                 cleared = cleared + findings_store.clear_returned(
                     snapshot.get("states") or {}, started)
+                # What a row is read against just before it is shown
+                # (`findings_store.holds_now`, #722); the bus keeps it current.
+                findings_store.seed_states(snapshot.get("states") or {})
             # And the other store, which nothing renders. Rows from a check
             # being trialled go here instead — a separate file rather than
             # a status, because `add_many` dedupes across every status and
