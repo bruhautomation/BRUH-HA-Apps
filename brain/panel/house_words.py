@@ -849,6 +849,17 @@ def _tool_re():
         + r")(?!\w|\.\w)`?")
 
 
+def without_files(text: str) -> str:
+    """``text`` with every file path, file name and line number in it said
+    as "a configuration file" — and nothing else of `technical`'s touched,
+    for a sentence whose other words are a person's to read."""
+    if not isinstance(text, str) or not text:
+        return text
+    out = _FILE_RE.sub("a configuration file", text)
+    out = re.sub(r"\s+([,.;:!?])", r"\1", re.sub(r"[ \t]{2,}", " ", out))
+    return out.strip()
+
+
 def technical(text: str, files: bool = True) -> tuple[str, list[str]]:
     """``(text, found)``: ``text`` with the strings only a developer reads
     taken out of the sentence, and those strings. Text with none comes back

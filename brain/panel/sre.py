@@ -2340,6 +2340,101 @@ def _judge_log(rec: dict, dig: dict) -> tuple[str, str] | None:
     return None
 
 
+# A configuration that did not load (#723): "Invalid config", a template
+# that would not parse. One such line became a serious "cannot load because
+# of a typo at <file>, line <n>" while the sensor it named existed and
+# reported, and the error was never logged again. So before one is filed
+# the house is asked two things: is what the line names unavailable or
+# missing NOW, and did the error come back after it last (re)loaded — more
+# than one occurrence, and nothing of it reporting since the last one. A
+# thing that reports now holds the cause (`transient`); a cause that cannot
+# be confirmed is filed as information with no file and no line
+# (`_downgraded`); only both confirmed files as the run wrote it.
+_LOAD_FAILED_RE = re.compile(
+    r"\binvalid config\b|\b(?:failed|unable|could not|cannot|can't)\s+"
+    r"(?:to\s+)?(?:load|set ?up|parse)\b|\berror (?:loading|while parsing|"
+    r"parsing)\b|\btemplate ?syntax ?error\b|\bsyntax error\b|\btypo\b",
+    re.I)
+_NOT_ENTITY_SUFFIX = frozenset({"yaml", "yml", "py", "json", "txt", "conf",
+                                "log", "md", "toml", "db", "sh"})
+
+
+def _config_record(rec: dict) -> bool:
+    """A line about the owner's own configuration: Core's config loader or
+    helpers, a template, an automation or a script — never an integration
+    whose setup failed, which `sys.entry_failed` answers."""
+    logger = str(rec.get("logger") or "")
+    domain = str(rec.get("owner") or rec.get("integration") or "")
+    return (logger.startswith(("homeassistant.config",
+                               "homeassistant.helpers"))
+            or domain in RULE_DOMAINS
+            or bool(re.search(r"\binvalid config\b",
+                              str(rec.get("message") or ""), re.I)))
+
+
+def _load_failure(recs: list[dict], cause: dict) -> bool:
+    if not recs or any(r.get("kind") != "log" or not _config_record(r)
+                       for r in recs):
+        return False
+    words = " ".join([str(r.get("message") or "") for r in recs]
+                     + [str(cause.get(k) or "") for k in ("title", "detail")])
+    return bool(_LOAD_FAILED_RE.search(words))
+
+
+def _load_named(recs: list[dict]) -> list[str]:
+    """The entities load-failure lines name: those the house has, and ids
+    written out in the line that it does not (a sensor that never loaded
+    is not in the registry) — never a file name."""
+    out: list[str] = []
+    for rec in recs:
+        for eid in list(rec.get("entities") or []) + [
+                m.group(1) for m in _ID_IN_TEXT.finditer(
+                    str(rec.get("message") or ""))]:
+            if (eid.rsplit(".", 1)[-1] not in _NOT_ENTITY_SUFFIX
+                    and eid not in out):
+                out.append(eid)
+    return out
+
+
+def _judge_load_error(recs: list[dict], dig: dict) -> tuple[str, str]:
+    """``("transient", why)``, ``("downgrade", why)`` or ``("", "")`` for a
+    load-failure cause (above)."""
+    named = _load_named(recs)
+    health = dig.get("health") or {}
+    known = set((dig.get("names") or {}).keys())
+    names = dig.get("names") or {}
+    reporting = [e for e in named
+                 if e in health and health[e].get("state") not in _DOWN]
+    if named and len(reporting) == len(named):
+        who = _and([names.get(e) or _spoken(e) for e in reporting][:3])
+        return ("transient", f"{who} reports a state now, so it loaded; the "
+                "error was not about anything that is failing")
+    failing = [e for e in named if e not in reporting
+               and (e not in known or (health.get(e) or {}).get("state", "")
+                    in _DOWN)]
+    if not failing:
+        return ("downgrade", "the line names nothing brAIn can see failing")
+    count = max(int(r.get("count") or 1) for r in recs)
+    last = min(float(r.get("last_hours_ago") or 0) for r in recs)
+    since = [float(health[e].get("since_h")) for e in failing
+             if e in health and isinstance(health[e].get("since_h"),
+                                           (int, float))]
+    if count < 2 or any(s < last for s in since):
+        return ("downgrade", "the error has not come back since it was "
+                "last loaded")
+    return ("", "")
+
+
+def _downgraded(cause: dict) -> dict:
+    """A load failure brAIn could not confirm: information, and no file
+    path or line number in what a person reads."""
+    out = dict(cause)
+    out["severity"] = "info"
+    for key in ("title", "detail", "fix"):
+        out[key] = house_words.without_files(str(out.get(key) or ""))
+    return out
+
+
 def hold_transient(causes: list[dict], dig: dict,
                    now: float) -> tuple[list[dict], list[dict]]:
     """`(kept, held)`. A cause made only of log records every one of which
@@ -2352,6 +2447,14 @@ def hold_transient(causes: list[dict], dig: dict,
         recs = [by_id[r] for r in cause.get("records") or [] if r in by_id]
         if not recs or any(r["kind"] != "log" for r in recs):
             kept.append(cause)
+            continue
+        if _load_failure(recs, cause):
+            kind, reason = _judge_load_error(recs, dig)
+            if kind == "transient":
+                held.append({"cause": _downgraded(cause), "kind": kind,
+                             "reason": textclip.clip(reason, 300)})
+            else:
+                kept.append(_downgraded(cause) if kind else cause)
             continue
         verdicts = [_judge_log(r, dig) for r in recs]
         if any(v is None for v in verdicts):
