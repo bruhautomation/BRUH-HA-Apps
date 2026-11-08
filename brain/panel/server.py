@@ -227,6 +227,7 @@ import model_plan
 import music_assistant
 import mute_offer
 import self_care
+import stats_upkeep
 import house_words
 import plain_words
 import notify_learn
@@ -7364,7 +7365,15 @@ def _changes_rows(now: float | None = None) -> list[dict]:
         intents=intents.listing(),
         accepted=list(proposals.settled_keys().values()),
         names=dict(_NAMES), mtime=_file_mtime, protected=None,
-        honeytokens=tokens, now=now, mc_jobs=minecraft_companion.jobs())
+        honeytokens=tokens, now=now, mc_jobs=minecraft_companion.jobs(),
+        stat_changes=_stat_changes())
+
+
+def _stat_changes() -> dict:
+    try:
+        return stats_upkeep.load()
+    except Exception:  # noqa: BLE001 — a list without these is still a list
+        return {}
 
 
 async def h_changes(request: web.Request) -> web.Response:
@@ -11455,7 +11464,8 @@ async def h_card_info(request: web.Request) -> web.Response:
 # diagnostics, because "it did not run" and "it ran and found nothing" are
 # different silences.
 
-MAINT_JOBS = ("tidy", "upgrades", "sre", "book", "access", "memory_cleanup")
+MAINT_JOBS = ("tidy", "upgrades", "sre", "book", "access", "memory_cleanup",
+              "statistics")
 MAINT_STATE: dict = {
     name: {"running": False, "started_at": 0.0, "finished_at": 0.0,
            "last_error": "", "last_note": "", "held": "", "subject": ""}
@@ -12404,7 +12414,312 @@ async def _maint_tick(now: float) -> list[str]:
             state["held"] = ""
             started.append("book")
         await asyncio.to_thread(house_book.save, state)
+
+    # Home Assistant's long-term statistics (#576): daily, on the first
+    # tick after brAIn starts and when Core's version moves. No Claude run,
+    # so no credential or budget gate; held while automatic work is paused.
+    stats = await asyncio.to_thread(stats_upkeep.load)
+    if (stats_upkeep.due(stats, now,
+                         core_version=automation_writer.CORE_VERSION.get(
+                             "version", ""),
+                         booted=not STATS_STATE["booted"],
+                         core_loaded_at=await asyncio.to_thread(_core_loaded_at))
+            and now - STATS_STATE["tried"] >= STATS_RETRY_S):
+        if not settings.get("auto_enabled", True):
+            MAINT_STATE["statistics"]["held"] = "automatic runs are paused"
+        elif _maint_start("statistics", lambda: _run_statistics("schedule")):
+            MAINT_STATE["statistics"]["held"] = ""
+            STATS_STATE.update(booted=True, tried=now)
+            started.append("statistics")
     return started
+
+
+# -- statistics: Home Assistant's long-term statistics (#576) -----------------
+# `stats_upkeep` decides; these make the recorder calls. Two seams the
+# suite replaces (`_stats_ws`, `_stats_states`), because everything else
+# here is the decision and the record, and both are driven.
+
+# Whether the first pass since brAIn started has run, and when a pass was
+# last started: a pass that failed (Core restarting) is tried again an hour
+# later rather than every poll.
+STATS_STATE: dict = {"booted": False, "tried": 0.0}
+STATS_RETRY_S = stats_upkeep.RETRY_S
+
+
+def _core_loaded_at() -> float:
+    """When brAIn's integration last set up inside Core — `integration_loaded.json`'s
+    `at`, written at every Core start — so a Core restart with no version
+    change is a pass now rather than one up to a day later. 0 when unread."""
+    try:
+        data = json.loads(INTEGRATION_LOADED_FILE.read_text(encoding="utf-8"))
+        return float((data or {}).get("at") or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return 0.0
+
+
+def _stats_live_cards() -> set | None:
+    """The ids (`ts`) of the statistics questions still on Today, or None
+    when the findings store could not be read ("could not tell")."""
+    try:
+        return {str(r.get("ts")) for r in findings_store.list_all()
+                if r.get("source") == stats_upkeep.SOURCE
+                and r.get("status") in findings_store.LIVE_STATUSES}
+    except Exception:  # noqa: BLE001 — unreadable is not "no cards"
+        return None
+
+
+async def _stats_ws(commands: list[dict]) -> list[dict]:
+    import aiohttp  # noqa: PLC0415 — deferred, as every route that needs it
+    import ha_data  # noqa: PLC0415
+
+    async with aiohttp.ClientSession() as session:
+        return await ha_data._ws_calls(session, commands)
+
+
+async def _stats_states() -> list | None:
+    import aiohttp  # noqa: PLC0415
+    import ha_data  # noqa: PLC0415
+
+    async with aiohttp.ClientSession() as session:
+        states = await ha_data._rest_get(session, "/states", timeout=60)
+    return states if isinstance(states, list) else None
+
+
+async def _stats_read() -> tuple[list[dict], list | None, list, str]:
+    """`(issues, registry or None, states, Core's state)` — the recorder's
+    issues and the live house they are judged against, read in one pass.
+    Core's state is `get_config`'s `state`: nothing is cleared before it
+    says RUNNING, when a missing sensor may only not have loaded yet."""
+    answers = await _stats_ws([{"type": "recorder/validate_statistics"},
+                               {"type": "config/entity_registry/list"},
+                               {"type": "get_config"}])
+    first = answers[0] if answers else {}
+    if not first.get("ok"):
+        raise RuntimeError("Home Assistant would not validate its statistics: "
+                           + str(first.get("error") or "no answer"))
+    second = answers[1] if len(answers) > 1 else {}
+    registry = second.get("result") if second.get("ok") and isinstance(
+        second.get("result"), list) else None
+    third = answers[2] if len(answers) > 2 else {}
+    config = third.get("result") if third.get("ok") else None
+    core_state = str((config or {}).get("state") or "") if isinstance(
+        config, dict) else ""
+    states = await _stats_states()
+    if states is None:
+        raise RuntimeError("Home Assistant's states could not be read")
+    return (stats_upkeep.issues_from(first.get("result")), registry, states,
+            core_state)
+
+
+def _stats_guards() -> tuple[list[str], list[str]]:
+    """The protected list and the tripwires. A tripwire list that cannot be
+    read protects everything: "could not tell" is not "nothing"."""
+    patterns = automation_writer.protected_patterns()
+    try:
+        tokens = list(security.honeytoken_ids())
+    except Exception:  # noqa: BLE001
+        return patterns + ["*"], []
+    return patterns, tokens
+
+
+async def _stats_apply(actions_: list[dict], now: float,
+                       channel: str) -> list[dict]:
+    """Make each recorder call, then refresh Repairs and validate again:
+    every entry says whether it worked and whether its issue is gone."""
+    done = []
+    for action in actions_:
+        answer = (await _stats_ws([action["command"]]) or [{}])[0]
+        done.append(stats_upkeep.entry(
+            action, ok=bool(answer.get("ok")), error=answer.get("error") or "",
+            at=now, channel=channel))
+        log.info("statistics: %s %s — %s", action["action"],
+                 action["statistic_id"],
+                 "done" if answer.get("ok") else answer.get("error"))
+    if done:
+        await _stats_ws([{"type": "recorder/update_statistics_issues"}])
+        after = (await _stats_ws([{"type": "recorder/validate_statistics"}])
+                 or [{}])[0]
+        if after.get("ok"):
+            done = stats_upkeep.verify(
+                done, stats_upkeep.issues_from(after.get("result")))
+    return done
+
+
+async def _run_statistics(reason: str = "schedule",
+                          now: float | None = None,
+                          core_loaded_at: float | None = None) -> dict:
+    """One pass: validate, fix what is safe, ask about the rest, verify."""
+    now = time.time() if now is None else float(now)
+    loaded_at = (await asyncio.to_thread(_core_loaded_at)
+                 if core_loaded_at is None else float(core_loaded_at))
+    store = await asyncio.to_thread(stats_upkeep.load)
+    issues, registry, states, core_state = await _stats_read()
+    patterns, tokens = _stats_guards()
+    planned = stats_upkeep.plan(issues, states, registry, patterns=patterns,
+                                tokens=tokens, kept=store.get("kept") or [],
+                                core_state=core_state,
+                                missing=store.get("missing") or {}, now=now)
+    done = await _stats_apply(planned["fix"] + planned["clear"], now,
+                              stats_upkeep.CHANNEL)
+
+    # A question for what only a deletion would fix. Each card carries its
+    # own list (the card's id beside every statistic it named), so its Yes
+    # clears exactly those; a statistic on an open card is not asked about
+    # again, one said No to waits `DECLINED_S`, and one whose card vanished
+    # unanswered is asked again.
+    live_cards = await asyncio.to_thread(_stats_live_cards)
+    store["asked"] = stats_upkeep.open_questions(store, live_cards)
+    new = stats_upkeep.to_ask(store, planned["ask"], now)
+    filed = None
+    if new and stats_upkeep.SOURCE not in settings_store.muted():
+        row = stats_upkeep.ask_row(new, dict(_NAMES))
+        filed = await asyncio.to_thread(
+            lambda: findings_store.add_case(row, when=now))
+        if filed and filed.get("ts") is not None:
+            stats_upkeep.note_asked(store, new, filed["ts"], now)
+        else:
+            # The store refused the card: that question was answered before
+            # (its settled key). The answer stands as a No for its term,
+            # rather than the same refused card being tried every day.
+            stats_upkeep.note_declined(store, new, now)
+            log.info("statistics: the question about %s was answered before; "
+                     "not asked again", ", ".join(a["statistic_id"] for a in new))
+
+    store["missing"] = planned["missing"]
+    store["changes"] = list(store.get("changes") or []) + done
+    store.update(last_run=int(now), reason=reason,
+                 core_version=automation_writer.CORE_VERSION.get("version", ""),
+                 core_state=core_state, core_loaded_at=int(loaded_at),
+                 left=[{k: i.get(k) for k in ("statistic_id", "type", "why")}
+                       for i in planned["leave"]][:50],
+                 issues=len(issues))
+    await asyncio.to_thread(stats_upkeep.save, store, None, now)
+    fixed = sum(1 for d in done if d.get("ok"))
+    asked = len(store["asked"])
+    MAINT_STATE["statistics"]["last_note"] = (
+        f"{len(issues)} statistics issue(s): {fixed} fixed, "
+        f"{asked} waiting on a question, {len(planned['leave'])} left "
+        "alone.")
+    return {"issues": len(issues), "done": done, "asked": asked,
+            "filed": bool(filed), "left": len(planned["leave"])}
+
+
+async def _end_statistics(finding: dict, spec: dict, note: str,
+                          now: float | None = None) -> tuple[dict, str]:
+    """Yes clears exactly the statistics THIS card named — read off the
+    store by the card's id, never every statistic ever asked about — after
+    validating again, so only those still flagged, still live and not
+    protected go. No is remembered: never cleared, and not asked about again
+    for `DECLINED_S`. Doesn't apply records nothing. No memory line either
+    way: an answer about old statistics is not a fact about the house."""
+    card = str(finding.get("ts"))
+    if spec.get("label") == "accepted":
+        outcome = "accepted"
+    elif spec.get("kind") == "not_applicable":
+        outcome = "dropped"
+    else:
+        outcome = "declined"
+    try:
+        # Read Core before touching the store: a Yes that cannot be carried
+        # out leaves its entries on a card that is about to go, and the next
+        # pass asks again rather than the Yes vanishing into a log line.
+        fresh = await _stats_read() if outcome == "accepted" else None
+        now = time.time() if now is None else float(now)
+        store = await asyncio.to_thread(stats_upkeep.load)
+        mine = stats_upkeep.answer(store, card, outcome=outcome, now=now)
+        if fresh is not None and mine:
+            issues, registry, states, core_state = fresh
+            patterns, tokens = _stats_guards()
+            planned = stats_upkeep.plan(issues, states, registry,
+                                        patterns=patterns, tokens=tokens,
+                                        kept=store.get("kept") or [],
+                                        core_state=core_state)
+            named = {a.get("statistic_id") for a in mine}
+            clears = [{**a, "action": "clear", "gone": "",
+                       "command": {"type": "recorder/clear_statistics",
+                                   "statistic_ids": [a["statistic_id"]]}}
+                      for a in planned["ask"] if a["statistic_id"] in named]
+            done = await _stats_apply(clears, now, "answer")
+            store["changes"] = list(store.get("changes") or []) + done
+            log.info("statistics: a Yes cleared %d of the %d statistics its "
+                     "card named", sum(1 for d in done if d.get("ok")),
+                     len(mine))
+        await asyncio.to_thread(stats_upkeep.save, store, None, now)
+    except Exception as exc:  # noqa: BLE001 — the answer still ends the card
+        log.warning("could not act on the statistics answer: %s", exc)
+
+    def settle() -> dict:
+        findings_store.settle_and_clear(finding["ts"], spec["kind"], note=note)
+        return _findings_payload()
+
+    return await asyncio.to_thread(settle), ""
+
+
+def _stats_answer_undo(entry: dict) -> None:
+    """Undo of an answer to a statistics question: the card is back, so a
+    No is forgotten and its statistics are the card's open question again.
+    A Yes undone puts no history back; its card simply has nothing left to
+    clear."""
+    finding = (entry or {}).get("finding") or {}
+    if finding.get("source") != stats_upkeep.SOURCE:
+        return
+    try:
+        store = stats_upkeep.load()
+        if stats_upkeep.forget_answer(store, finding.get("ts")):
+            stats_upkeep.save(store)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not undo a statistics answer: %s", exc)
+
+
+_STAT_CHANGE_ID = re.compile(r"^\d{1,16}-[a-z_]+\.[a-z0-9_]+$")
+
+
+async def h_statistics(_request: web.Request) -> web.Response:
+    """The last statistics pass, what it left alone and why."""
+    store = await asyncio.to_thread(stats_upkeep.load)
+    return web.json_response({
+        "status": _maint_status("statistics"),
+        "last_run": int(store.get("last_run") or 0),
+        "issues": int(store.get("issues") or 0),
+        "left": store.get("left") or [],
+        "asked": store.get("asked") or [],
+        "declined": sorted(store.get("declined") or {}),
+        "changes": (store.get("changes") or [])[-20:]})
+
+
+async def h_statistics_run(_request: web.Request) -> web.Response:
+    if not _maint_start("statistics", lambda: _run_statistics("pressed")):
+        raise web.HTTPConflict(text="a statistics pass is already running")
+    return web.json_response({"started": True})
+
+
+async def h_statistics_undo(request: web.Request) -> web.Response:
+    """Put one unit fix back, and never make it again."""
+    cid = request.match_info["id"]
+    if not _STAT_CHANGE_ID.match(cid):
+        raise web.HTTPNotFound(text="no such change")
+    rows = await asyncio.to_thread(_changes_rows)
+    _offered(rows, f"stat:{cid}")
+    store = await asyncio.to_thread(stats_upkeep.load)
+    change = stats_upkeep.undoable(store).get(cid)
+    if change is None:
+        raise web.HTTPConflict(text="that change cannot be put back")
+    answer = (await _stats_ws([change["undo"]]) or [{}])[0]
+    if not answer.get("ok"):
+        raise web.HTTPBadGateway(
+            text="Home Assistant did not take the old unit back, so nothing "
+                 "changed: " + str(answer.get("error") or "no answer")[:200])
+    await asyncio.to_thread(_stats_undone, cid)
+    await _stats_ws([{"type": "recorder/update_statistics_issues"}])
+    return web.json_response({**changes.page(await asyncio.to_thread(_changes_rows)),
+                              "text": "Put the statistics' unit back. brAIn "
+                                      "will leave it as it is now."})
+
+
+def _stats_undone(cid: str) -> None:
+    store = stats_upkeep.load()
+    stats_upkeep.mark_undone(store, cid, time.time())
+    stats_upkeep.save(store)
 
 
 async def _maint_loop() -> None:
@@ -12472,6 +12787,9 @@ def _maint_routes(app: web.Application) -> None:
     app.router.add_post("/api/question/{ts}/answer", h_question_answer)
     app.router.add_get("/api/access", h_access)
     app.router.add_post("/api/access/run", h_access_run)
+    app.router.add_get("/api/statistics", h_statistics)
+    app.router.add_post("/api/statistics/run", h_statistics_run)
+    app.router.add_post("/api/statistics/undo/{id}", h_statistics_undo)
 
 
 # -- a card on a dashboard, put there by brAIn --------------------------------
@@ -21751,6 +22069,10 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
         # "Shall brAIn take that line out?": Yes is brAIn doing its own
         # upkeep; neither answer is a fact about the house.
         return await _end_self_care(finding, spec, note)
+    if finding.get("source") == stats_upkeep.SOURCE:
+        # "Shall brAIn clear these statistics?": Yes clears exactly those
+        # still flagged; neither answer is a fact about the house.
+        return await _end_statistics(finding, spec, note)
     if finding.get("source") == devloop.verify.SOURCE:
         # "Is this fixed?": the answer goes back on the report; nothing
         # about it is a fact about the house.
@@ -23555,6 +23877,7 @@ def _undo_finding(entry: dict) -> tuple[bool, dict]:
     # A Yes to a notification suggestion took a clause with it.
     _notify_learn_undo(entry)
     _mute_offer_undo(entry)
+    _stats_answer_undo(entry)
     _devloop_verify_undo(entry)
     return restored, _findings_payload()
 

@@ -3887,6 +3887,34 @@ house-checks pass: the finding clears, or it does not — and the morning brief
 tells you which, with the time: *"started the Mosquitto broker add-on at 03:10;
 it is working now."*
 
+**Home Assistant's long-term statistics** are kept healthy without being
+switched on, because the fixes brAIn makes on its own cannot lose anything.
+Once a day, a quarter of an hour after brAIn starts, and after Home Assistant
+restarts or is updated, brAIn asks the recorder to check its statistics — the issues the
+Repairs page and the developer tools' Statistics tab show with a **Fix issue**
+button — and:
+
+| What Home Assistant flags | What brAIn does |
+| --- | --- |
+| A sensor's unit changed, the sensor reports the new unit now, and the two cannot be converted | Sets the statistics' unit to it, without touching any history |
+| A unit that could be converted (Wh to kWh) | Nothing: relabelling would change what every old value means |
+| Statistics for a sensor you disabled, or one the entity registry does not know that has been missing on two passes at least six hours apart | Deletes those statistics |
+| A sensor that no longer has a state class, or reports a different kind of average | Asks you in Today: **Clear the old long-term statistics of …?** Only **Yes** deletes them, and only the ones that card names |
+| A sensor the recorder leaves out because you excluded it | Nothing, and it never asks |
+
+A **No** is remembered: those statistics are never deleted and you are not
+asked about them again for three months (the toast's Undo takes the No
+back). A **Yes** clears only what its own card named, and only what Home
+Assistant still flags at that moment.
+Nothing is deleted until Home Assistant says it has fully started, and a
+sensor that comes back is never deleted; its clock starts over if it goes
+again. Nothing on your protected entities is touched. Each
+change is in **History › Changes brAIn made**; a unit brAIn set has an
+**Undo**, and once you undo one brAIn leaves that statistic alone. After the
+fixes brAIn checks again and the change says if Home Assistant still flags
+it. Pausing automatic runs pauses this too, and \`GET /api/statistics\` shows
+the last pass and what it left alone and why.
+
 **Emergency playbooks** are the other half, and brAIn never runs one. It
 **writes** one and offers it on Needs you; Home Assistant runs it if you
 accept it. Three, and each only when your house has the sensor for it:
