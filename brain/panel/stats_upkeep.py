@@ -134,19 +134,37 @@ def _protected(eid: str, patterns, tokens) -> bool:
     return automation_writer.is_protected(eid, list(patterns or []))
 
 
+# How long a sensor the registry does not know (a YAML or template sensor
+# with no unique_id) must stay missing, seen on two passes at least this far
+# apart, before its statistics are cleared: long past any restart.
+MISSING_FOR_S = 6 * 3600
+# Core's own word for "every integration has loaded" (`get_config`'s
+# `state`). Before it, a missing sensor is one that has not loaded yet.
+CORE_RUNNING = "RUNNING"
+
+
 def plan(issues: list[dict], states, registry, *, patterns=(), tokens=(),
-         kept=()) -> dict:
+         kept=(), core_state: str = "", missing: dict | None = None,
+         now: float = 0.0) -> dict:
     """What this pass may do about each issue.
 
     `{"fix": [...], "clear": [...], "ask": [...], "leave": [...]}`. A fix
     and a clear carry the exact recorder command, and a fix its undo; a
     leave carries why. `registry` is `config/entity_registry/list`'s
     answer, or None when it could not be read.
+
+    Nothing is cleared unless `core_state` is Core's `RUNNING`. `missing` is
+    `{statistic_id: first seen missing}` from the passes before; the answer
+    carries this pass's (`out["missing"]`): a sensor that came back drops
+    out of it, so its clock starts over if it goes again.
     """
     live = _states_by_id(states)
     reg = _registry_by_id(registry)
     kept_keys = {(str(k[0]), str(k[1])) for k in kept or () if len(k) == 2}
-    out: dict = {"fix": [], "clear": [], "ask": [], "leave": []}
+    out: dict = {"fix": [], "clear": [], "ask": [], "leave": [],
+                 "missing": {}}
+    seen_missing = dict(missing or {})
+    running = str(core_state or "") == CORE_RUNNING
 
     def leave(issue: dict, why: str) -> None:
         out["leave"].append({**issue, "why": why})
@@ -171,7 +189,14 @@ def plan(issues: list[dict], states, registry, *, patterns=(), tokens=(),
             unit = data.get("state_unit")
             now_unit = ((state or {}).get("attributes") or {}).get(
                 "unit_of_measurement")
-            if not unit:
+            classes = (data.get("state_unit_class"),
+                       data.get("metadata_unit_class"))
+            if classes[0] and classes[0] == classes[1]:
+                # Wh → kWh: the old values would need converting, and a
+                # relabel would make each one mean a thousand times less.
+                leave(issue, "the old values would need converting, which "
+                             "brAIn does not do on its own")
+            elif not unit:
                 leave(issue, "the sensor reports no unit to set")
             elif state is None or now_unit != unit:
                 leave(issue, "the sensor's live unit does not match yet")
@@ -193,10 +218,20 @@ def plan(issues: list[dict], states, registry, *, patterns=(), tokens=(),
                 leave(issue, "the sensor reports again")
             elif reg is None:
                 leave(issue, "the entity registry could not be read")
+            elif not running:
+                if sid in seen_missing:
+                    out["missing"][sid] = seen_missing[sid]
+                leave(issue, "Home Assistant is still starting")
             elif sid not in reg:
-                out["clear"].append({**issue, "action": "clear",
-                                     "gone": "removed",
-                                     "command": _clear(sid)})
+                first = seen_missing.get(sid)
+                out["missing"][sid] = first if first is not None else now
+                if first is None or now - float(first) < MISSING_FOR_S:
+                    leave(issue, "not in the entity registry; brAIn looks "
+                                 "again before clearing it")
+                else:
+                    out["clear"].append({**issue, "action": "clear",
+                                         "gone": "removed",
+                                         "command": _clear(sid)})
             elif reg[sid].get("disabled_by"):
                 out["clear"].append({**issue, "action": "clear",
                                      "gone": "disabled",

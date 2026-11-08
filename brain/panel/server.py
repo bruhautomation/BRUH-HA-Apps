@@ -2168,7 +2168,11 @@ async def _send_brief(now: float) -> str:
         log.info("morning brief: nothing worth saying, not sent")
         return ""
     body = await _brief_body(now, reasons, state) if reasons else ""
-    if not body and not turns:
+    if reasons and not body:
+        # The paragraph could not be written. A season sentence sent alone
+        # would read as the whole morning and drop the reasons without a
+        # word, so nothing goes: the reasons stay on Today, and the
+        # sentence stays owed for the next brief inside its window.
         return ""
     body = brief.with_turns(body, [text for _key, text in turns])
     BRIEF_STATE["last_text"] = body
@@ -2277,8 +2281,7 @@ async def _seasons_note(now: float, days: list[dict]) -> None:
     today = _house_date(now)
     store = await asyncio.to_thread(seasons.load, path)
     seasons.note_forecast(store, days, today)
-    ids = sorted(e for e in _NAMES if e.startswith("climate."))[
-        :seasons.MAX_CLIMATE]
+    ids = seasons.climate_ids(_NAMES)
     if ids:
         start = max(now - 26 * 3600, float(store.get("climate_read_at") or 0))
         begin = dt.datetime.fromtimestamp(start, dt.timezone.utc)
@@ -12551,11 +12554,14 @@ async def _stats_states() -> list | None:
     return states if isinstance(states, list) else None
 
 
-async def _stats_read() -> tuple[list[dict], list | None, list]:
-    """`(issues, registry or None, states)` — the recorder's issues and the
-    live house they are judged against, read in one pass."""
+async def _stats_read() -> tuple[list[dict], list | None, list, str]:
+    """`(issues, registry or None, states, Core's state)` — the recorder's
+    issues and the live house they are judged against, read in one pass.
+    Core's state is `get_config`'s `state`: nothing is cleared before it
+    says RUNNING, when a missing sensor may only not have loaded yet."""
     answers = await _stats_ws([{"type": "recorder/validate_statistics"},
-                               {"type": "config/entity_registry/list"}])
+                               {"type": "config/entity_registry/list"},
+                               {"type": "get_config"}])
     first = answers[0] if answers else {}
     if not first.get("ok"):
         raise RuntimeError("Home Assistant would not validate its statistics: "
@@ -12563,10 +12569,15 @@ async def _stats_read() -> tuple[list[dict], list | None, list]:
     second = answers[1] if len(answers) > 1 else {}
     registry = second.get("result") if second.get("ok") and isinstance(
         second.get("result"), list) else None
+    third = answers[2] if len(answers) > 2 else {}
+    config = third.get("result") if third.get("ok") else None
+    core_state = str((config or {}).get("state") or "") if isinstance(
+        config, dict) else ""
     states = await _stats_states()
     if states is None:
         raise RuntimeError("Home Assistant's states could not be read")
-    return stats_upkeep.issues_from(first.get("result")), registry, states
+    return (stats_upkeep.issues_from(first.get("result")), registry, states,
+            core_state)
 
 
 def _stats_guards() -> tuple[list[str], list[str]]:
@@ -12608,10 +12619,12 @@ async def _run_statistics(reason: str = "schedule",
     """One pass: validate, fix what is safe, ask about the rest, verify."""
     now = time.time() if now is None else float(now)
     store = await asyncio.to_thread(stats_upkeep.load)
-    issues, registry, states = await _stats_read()
+    issues, registry, states, core_state = await _stats_read()
     patterns, tokens = _stats_guards()
     planned = stats_upkeep.plan(issues, states, registry, patterns=patterns,
-                                tokens=tokens, kept=store.get("kept") or [])
+                                tokens=tokens, kept=store.get("kept") or [],
+                                core_state=core_state,
+                                missing=store.get("missing") or {}, now=now)
     done = await _stats_apply(planned["fix"] + planned["clear"], now,
                               stats_upkeep.CHANNEL)
 
@@ -12632,6 +12645,7 @@ async def _run_statistics(reason: str = "schedule",
                    "at": int(now)} for a in new]
 
     store["asked"] = asked
+    store["missing"] = planned["missing"]
     store["changes"] = list(store.get("changes") or []) + done
     store.update(last_run=int(now), reason=reason,
                  core_version=automation_writer.CORE_VERSION.get("version", ""),
@@ -12657,11 +12671,12 @@ async def _end_statistics(finding: dict, spec: dict,
         try:
             store = await asyncio.to_thread(stats_upkeep.load)
             named = {a.get("statistic_id") for a in store.get("asked") or []}
-            issues, registry, states = await _stats_read()
+            issues, registry, states, core_state = await _stats_read()
             patterns, tokens = _stats_guards()
             planned = stats_upkeep.plan(issues, states, registry,
                                         patterns=patterns, tokens=tokens,
-                                        kept=store.get("kept") or [])
+                                        kept=store.get("kept") or [],
+                                        core_state=core_state)
             clears = [{**a, "action": "clear", "gone": "",
                        "command": {"type": "recorder/clear_statistics",
                                    "statistic_ids": [a["statistic_id"]]}}

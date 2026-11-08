@@ -1701,8 +1701,10 @@ it is not handed your house and it may not invent a number.
 never again: the solstices and equinoxes (worked out for your own date and
 hemisphere), the first frost of the autumn (from the forecast brAIn already
 reads), the first morning the heating ran (from your thermostats' history), and
-the last cooling run of the year — said in hindsight, once three weeks have
-passed without one. A first is only a first when brAIn has been watching for
+the last cooling run of the year — said in hindsight, from September on (March
+on in the southern hemisphere), once three weeks have passed without one and
+most of those days were cooler than the coolest day the cooling ran on; without
+the daily highs to tell, it is not said. A first is only a first when brAIn has been watching for
 most of the month before it, so the day it is installed is never "the first
 frost". These sentences are worked out in code and sent as they are: on a
 morning with nothing else to say the brief is just that sentence, and no
@@ -2187,13 +2189,15 @@ button — and:
 
 | What Home Assistant flags | What brAIn does |
 | --- | --- |
-| A sensor's unit changed, and the sensor reports the new unit now | Sets the statistics' unit to it, without touching any history |
-| Statistics for a sensor that no longer exists, or that you disabled | Deletes those statistics, after checking the entity registry says so |
+| A sensor's unit changed, the sensor reports the new unit now, and the two cannot be converted | Sets the statistics' unit to it, without touching any history |
+| A unit that could be converted (Wh to kWh) | Nothing: relabelling would change what every old value means |
+| Statistics for a sensor you disabled, or one the entity registry does not know that has been missing on two passes at least six hours apart | Deletes those statistics |
 | A sensor that no longer has a state class, or reports a different kind of average | Asks you one question in Today: *Clear the old long-term statistics of …?* Only **Yes** deletes them |
 | A sensor the recorder leaves out because you excluded it | Nothing, and it never asks |
 
-A sensor that has not reported yet after a restart is left for the next day,
-never treated as gone. Nothing on your protected entities is touched. Each
+Nothing is deleted until Home Assistant says it has fully started, and a
+sensor that comes back is never deleted; its clock starts over if it goes
+again. Nothing on your protected entities is touched. Each
 change is in **History › Changes brAIn made**; a unit brAIn set has an
 **Undo**, and once you undo one brAIn leaves that statistic alone. After the
 fixes brAIn checks again and the change says if Home Assistant still flags

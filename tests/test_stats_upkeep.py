@@ -52,8 +52,11 @@ def state(eid, unit=None, state_class="measurement"):
 def units(eid, state_unit="kWh", metadata_unit="Wh"):
     return {eid: [{"type": "units_changed", "data": {
         "statistic_id": eid, "state_unit": state_unit,
-        "state_unit_class": "energy", "metadata_unit": metadata_unit,
-        "metadata_unit_class": "energy", "supported_unit": metadata_unit}}]}
+        # No shared unit class: nothing converts one into the other, which
+        # is the only kind of unit change fixed unattended (the review of
+        # #576; a Wh → kWh relabel is `test_stats_upkeep_review`'s).
+        "state_unit_class": None, "metadata_unit": metadata_unit,
+        "metadata_unit_class": None, "supported_unit": metadata_unit}}]}
 
 
 def issue(eid, kind):
@@ -61,6 +64,11 @@ def issue(eid, kind):
 
 
 def plan(result, states, registry=(), **kw):
+    # Core fully started, and a removed sensor already seen missing hours
+    # ago, unless a test says otherwise.
+    kw.setdefault("core_state", "RUNNING")
+    kw.setdefault("now", NOW)
+    kw.setdefault("missing", {"sensor.old_meter": NOW - 7 * 3600})
     return stats_upkeep.plan(stats_upkeep.issues_from(result), states,
                              list(registry) if registry is not None else None,
                              **kw)
@@ -74,7 +82,7 @@ class TestWhatAPassMayDoAlone(unittest.TestCase):
         fix = out["fix"][0]
         self.assertEqual(fix["command"], {
             "type": "recorder/update_statistics_metadata",
-            "statistic_id": "sensor.boiler_energy", "unit_class": "energy",
+            "statistic_id": "sensor.boiler_energy", "unit_class": None,
             "unit_of_measurement": "kWh"})
         # The undo is the same call with what the statistics had.
         self.assertEqual(fix["undo"]["unit_of_measurement"], "Wh")
@@ -265,6 +273,9 @@ class TestThePassAgainstCore(unittest.TestCase):
                     out.append({"ok": True, "result": self.issues, "error": ""})
                 elif kind == "config/entity_registry/list":
                     out.append({"ok": True, "result": [], "error": ""})
+                elif kind == "get_config":
+                    out.append({"ok": True, "result": {"state": "RUNNING"},
+                                "error": ""})
                 else:
                     if kind == "recorder/update_statistics_metadata":
                         self.issues.pop(cmd["statistic_id"], None)
@@ -296,6 +307,9 @@ class TestThePassAgainstCore(unittest.TestCase):
 
     def test_one_pass_fixes_clears_asks_and_verifies(self):
         os.environ.pop("BRAIN_PROTECTED_ENTITIES", None)
+        # The removed meter was seen missing on a pass seven hours ago.
+        stats_upkeep.save({"missing": {"sensor.old_meter": NOW - 7 * 3600}},
+                          None, NOW)
         asyncio.run(self.server._run_statistics("schedule", now=NOW))
         kinds = [c["type"] for c in self.sent]
         self.assertEqual(kinds[:2], ["recorder/validate_statistics",

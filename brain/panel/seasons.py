@@ -48,6 +48,13 @@ LOOKED_MIN = 21
 # one, and brAIn looked on most of them.
 COOL_DAYS = 21
 COOL_LOOKED_MIN = 15
+# ...and only over days that were measured cool. A cool day is one whose
+# high (the forecast read's own `high` for that day) stayed below the
+# coolest high on which this house still ran its cooling: the house's own
+# line, not a number typed here. It needs that many cooling days with a
+# high to draw the line, and that share of the gap's days below it.
+COOL_HIGHS_MIN = 2
+COOL_SHARE = 0.8
 # How long a moment stays worth a sentence after its day.
 SAY_WITHIN = {"frost": 1, "heating": 2, "cooling_end": 2, "turn": 1}
 # Days of record kept.
@@ -74,6 +81,12 @@ def hemisphere(latitude) -> str:
 
 def _d(text: str) -> dt.date:
     return dt.date.fromisoformat(str(text)[:10])
+
+
+def late_season(day: dt.date, hemi: str) -> bool:
+    """When "the last cooling run of the year" can be true: September on in
+    the north, March on in the south. A lull before it is a lull."""
+    return (day.month >= 9) if hemi != SOUTH else (3 <= day.month <= 6)
 
 
 def autumn_side(day: dt.date, hemi: str) -> bool:
@@ -185,12 +198,30 @@ def note_forecast(store: dict, days: list[dict], today: str) -> None:
     frosts = store.setdefault("seen", {}).setdefault("frost", {})
     limit = (_d(today) + dt.timedelta(days=1)).isoformat()
     for day in days or []:
+        if str(day.get("date") or "") == today and day.get("high") is not None:
+            note_high(store, today, _c(float(day["high"]),
+                                       day.get("unit") or "°C"))
+    for day in days or []:
         date, low = str(day.get("date") or ""), day.get("low")
         if not date or low is None or date > limit or date < today:
             continue
         unit = day.get("unit") or "°C"
         if _c(float(low), unit) <= FROST_C:
             frosts.setdefault(date, _fmt(float(low), unit))
+
+
+def note_high(store: dict, date: str, high_c: float) -> None:
+    """A day's high, in °C; the warmest reading of it wins."""
+    highs = store.setdefault("seen", {}).setdefault("high", {})
+    value = round(float(high_c), 1)
+    if date not in highs or value > highs[date]:
+        highs[date] = value
+
+
+def climate_ids(entity_ids) -> list[str]:
+    """The climate entities whose history one pass reads, capped."""
+    return sorted({str(e) for e in entity_ids or ()
+                   if str(e).startswith("climate.")})[:MAX_CLIMATE]
 
 
 def climate_days(raw, tz) -> dict[str, set]:
@@ -281,16 +312,33 @@ def detect(store: dict, today: str, hemi: str = NORTH) -> list[dict]:
             _add(store, {"key": f"heating:{day.year}", "kind": "heating",
                          "date": date})
     cools = [d for d in seen.get("cooling") or [] if d <= today]
-    if cools and autumn_side(now, hemi):
+    if cools and late_season(now, hemi):
         last = _d(cools[-1])
         gap = (now - last).days
         if gap >= COOL_DAYS and _count_in(
                 looked.get("climate") or [], last + dt.timedelta(days=1),
-                now + dt.timedelta(days=1)) >= COOL_LOOKED_MIN:
+                now + dt.timedelta(days=1)) >= COOL_LOOKED_MIN \
+                and _cool_since(seen.get("high") or {}, cools, last, now):
             _add(store, {"key": f"cooling_end:{now.year}",
                          "kind": "cooling_end", "date": today,
                          "last": cools[-1], "days": gap})
     return [e for e in store.get("events") or [] if e.get("key") not in before]
+
+
+def _cool_since(highs: dict, cools: list[str], last: dt.date,
+                now: dt.date) -> bool:
+    """Whether the days since the last cooling run were measured cool: most
+    of them below the coolest high the cooling still ran on. No highs to
+    measure by is no."""
+    ran_at = [highs[d] for d in cools if d in highs]
+    if len(ran_at) < COOL_HIGHS_MIN:
+        return False
+    line = min(ran_at)
+    since = [v for d, v in highs.items()
+             if last.isoformat() < d <= now.isoformat()]
+    if len(since) < COOL_LOOKED_MIN:
+        return False
+    return sum(1 for v in since if v < line) >= COOL_SHARE * len(since)
 
 
 def _when(day: dt.date, today: dt.date) -> str:
@@ -381,15 +429,17 @@ def save(store: dict, path: Path | str, today: str) -> None:
     for kind in ("heating", "cooling"):
         if kind in seen:
             seen[kind] = [d for d in seen[kind] if d >= cutoff]
-    if "frost" in seen:
-        seen["frost"] = {d: v for d, v in seen["frost"].items() if d >= cutoff}
+    for kind in ("frost", "high"):
+        if kind in seen:
+            seen[kind] = {d: v for d, v in seen[kind].items() if d >= cutoff}
     store["events"] = [e for e in store.get("events") or []
                        if str(e.get("date") or "") >= cutoff]
     atomic_write.write_json(Path(path), store)
 
 
 __all__ = [
-    "climate_days", "dates_between", "detect", "due_lines", "hemisphere",
-    "load", "mark_said", "note_climate", "note_forecast", "path_for", "save",
+    "climate_days", "climate_ids", "dates_between", "detect", "due_lines", "hemisphere",
+    "load", "mark_said", "note_climate", "note_forecast", "note_high",
+    "path_for", "save",
     "sentence", "turning_instant", "turning_points",
 ]

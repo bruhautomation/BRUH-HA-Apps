@@ -150,6 +150,13 @@ class TestHeatingAndCooling(unittest.TestCase):
         looked = days_before("2026-09-25", 40) + ["2026-09-25"]
         seasons.note_climate(store, {"cooling": {"2026-08-20", "2026-09-04"}},
                              looked)
+        # The days the cooling ran topped out at 31 and 29 °C; every day
+        # since has topped out at 20 (the review of #643: cool days are
+        # measured, not assumed).
+        for day, high in (("2026-08-20", 31.0), ("2026-09-04", 29.0)):
+            seasons.note_high(store, day, high)
+        for day in days_before("2026-09-25", 20) + ["2026-09-25"]:
+            seasons.note_high(store, day, 20.0)
         # Fifteen days after the last run is not yet enough.
         self.assertEqual(seasons.detect(store, "2026-09-19"), [])
         new = seasons.detect(store, "2026-09-25")
