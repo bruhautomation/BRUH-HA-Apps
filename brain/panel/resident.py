@@ -1422,7 +1422,8 @@ def not_due(case: dict, drivers: dict, value_of, aliases=None) -> str:
                          MAX_WHY)
 
 
-def faulty_case(case: dict, entities, faulty: dict) -> str:
+def faulty_case(case: dict, entities, faulty: dict,
+                device_class=None) -> str:
     """Why a case rests on a sensor the owner called broken, or "".
 
     ``entities`` is what the signal was about; the case's own entity and
@@ -1431,15 +1432,63 @@ def faulty_case(case: dict, entities, faulty: dict) -> str:
     """
     if not isinstance(case, dict) or not faulty:
         return ""
+    import corrections  # noqa: PLC0415 — it imports the stores
     named = [str(case.get("entity_id") or ""), *[str(e) for e in entities or ()],
              *[str(r.get("entity") or "") for r in case.get("evidence") or ()
                if isinstance(r, dict)]]
     for eid in named:
-        if eid in faulty:
+        # The one helper (`corrections.broken_answer`): its floors first;
+        # the caller writes the trail entry, with the case's claim.
+        said = corrections.broken_answer(
+            eid, "resident", faulty=faulty,
+            device_class=device_class(eid) if device_class else "",
+            note=lambda row: None)
+        if said:
             return textclip.clip(
                 f"{eid} was called broken or finished with by the owner "
-                f"({faulty[eid]})", MAX_WHY)
+                f"({said})", MAX_WHY)
     return ""
+
+
+def set_aside_broken(batch: list[dict], verdicts: dict[int, dict],
+                     faulty: dict, *, device_class=None, protected=None,
+                     note=None) -> dict[int, dict]:
+    """``verdicts`` with every signal about a sensor the household called
+    broken set to ``ignore`` (#701): the look may read what was said, and
+    nothing it concludes about that sensor's readings goes further — no
+    watch, no investigation, no case.
+
+    Through the one helper every reader shares (`corrections.
+    broken_answer`): a signal on a never-ignore floor (`never_ignore`: a
+    leak, smoke, a safety or protected flag) keeps its verdict before the
+    answer is read, the helper's own floors keep a leak or smoke sensor, a
+    lock, an alarm and the protected list, and every signal set aside
+    leaves a decision trail entry. A row a rule already filed
+    (``finding_ts``) keeps its verdict: its check answers for it."""
+    out = dict(verdicts or {})
+    if not faulty:
+        return out
+    import corrections  # noqa: PLC0415 — it imports the stores
+    for idx, sig in enumerate(batch or [], 1):
+        subject = str(sig.get("subject") or "")
+        if sig.get("finding_ts") or never_ignore(sig)[0] or not subject:
+            continue
+        answer = out.get(idx) or {}
+        if answer.get("verdict") == "ignore":
+            continue
+        source = str(sig.get("source") or "")
+        check = source.split(":", 1)[1] if source.startswith("check:") \
+            else "resident"
+        said = corrections.broken_answer(
+            subject, check, faulty=faulty,
+            device_class=device_class(subject) if device_class else "",
+            protected=protected, note=note)
+        if said:
+            out[idx] = {"verdict": "ignore", "forced": True,
+                        "why": textclip.shorten(
+                            f"You said this sensor is broken ({said}).",
+                            MAX_WHY)}
+    return out
 
 
 def ungrounded_did_not_run(case: dict, drivers: dict) -> str:
