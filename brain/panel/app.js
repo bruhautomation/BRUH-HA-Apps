@@ -17861,7 +17861,7 @@ function renderDeepReview() {
     const last = d.latest ? `Last ${reviewDate(d.latest.at)}` : "Not run yet";
     const cost = d.running ? `started ${agoAt(d.started_at)}` : reviewCostText(d.estimate);
     meta.textContent = d.authenticated ? [last, cost].filter(Boolean).join(" · ")
-      : `${last} · open to sign in first`;
+      : "Sign in to Claude in Settings › Account first";
   }
   const run = el("div", "kreviewrun");
   const btn = el("button", "btn small", d.running ? "Running…" : "Run");
