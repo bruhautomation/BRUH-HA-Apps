@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## Unreleased
+
+### Added
+
+- brAIn keeps Home Assistant's long-term statistics healthy itself, so the statistics issues on the Repairs page do not need a press each. Once a day, after brAIn starts and after Home Assistant is updated, it fixes a changed unit the sensor already reports and deletes the statistics of a sensor that is gone or disabled; a live sensor's history is only ever cleared on a Yes to one question, and sensors excluded from the recorder are left alone. Each change is in History with an Undo where it can be put back (#576).
+- The morning brief marks the turns of the year with one sentence each, once: the solstices and equinoxes, the first frost of the autumn, the first morning the heating ran, and the last cooling run of the year, said in hindsight (#643).
+
 ## 5.1.7
 
 ### Fixed

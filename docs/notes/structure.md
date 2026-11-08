@@ -76,7 +76,9 @@ BRUH-HA-Apps/
 │   │   ├── world_model.py       # What each device is, read once per fingerprint and checked in code
 │   │   ├── situation.py         # What the house is doing right now, in one line every look reads
 │   │   ├── occasions.py         # The next three days of weather and calendar, as facts that expire
+│   │   ├── seasons.py           # The turns of the year (solstices, first frost, first heating, last cooling), each said once
 │   │   ├── tidy.py              # Names, rooms and aliases, proposed as one table and undone by field
+│   │   ├── stats_upkeep.py      # Home Assistant's long-term statistics: the safe fixes alone, a live history only on a Yes
 │   │   ├── memory_cleanup.py    # What brAIn remembers that is wrong or useless, proposed for removal
 │   │   ├── upgrades.py          # Should I update tonight — two quotes checked as substrings
 │   │   ├── sre.py               # The overnight check: root causes that cite the records they rest on

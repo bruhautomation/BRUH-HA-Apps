@@ -479,6 +479,19 @@ def tidy(text: str) -> str:
     return body
 
 
+def with_turns(body: str, turns: list[str]) -> str:
+    """The paragraph, then the turns of the year (`seasons.due_lines`), each
+    exactly as composed.
+
+    After `tidy`, never through it: the cap is the model's budget, and a
+    sentence that arrives once a season must not be the one cut short. A
+    morning with nothing else to say is the sentences alone, with no model
+    asked — the decision and the words are both arithmetic.
+    """
+    parts = [str(body or "").strip()] + [str(t).strip() for t in turns or ()]
+    return " ".join(p for p in parts if p)
+
+
 def due(now: float, minute_now: int, wake_minute: float | None,
         fallback_hour: int, last_sent: float,
         grace_min: int = 45) -> bool:
@@ -539,5 +552,5 @@ def state_from(findings: list[dict], health: dict, overnight: dict,
 
 __all__ = [
     "MAX_TURNS", "MAX_WORDS", "MIN_CHARS", "SYSTEM", "TIMEOUT_S",
-    "clock_style", "due", "format_clock", "frame", "morning_facts", "state_from", "tidy", "worth_saying",
+    "clock_style", "due", "format_clock", "frame", "morning_facts", "state_from", "tidy", "with_turns", "worth_saying",
 ]

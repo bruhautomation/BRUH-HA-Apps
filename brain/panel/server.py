@@ -254,6 +254,7 @@ import run_queue
 import run_sources
 import scenes
 import schedule_store
+import seasons
 import header_brand
 import settings_store
 import shadow
@@ -2150,6 +2151,9 @@ async def _send_brief(now: float) -> str:
         log.info("brief could not read the health verdict: %s", exc)
 
     night = await _brief_overnight(now)
+    # The turns of the year (#643): composed in code, said once, and a
+    # reason to send on their own — without asking a model.
+    turns = await asyncio.to_thread(_season_turns, now)
     state = brief.state_from(
         await asyncio.to_thread(findings_store.list_all, "live"),
         verdict, {}, BRIEF_STATE["last_sent"] or (now - 86400),
@@ -2158,12 +2162,31 @@ async def _send_brief(now: float) -> str:
 
     reasons = brief.worth_saying(state)
     BRIEF_STATE["last_reasons"] = reasons
-    if not reasons:
+    if not reasons and not turns:
         # The whole point. "All quiet" every morning is the message people
         # mute, and it would cost a Claude turn to produce.
         log.info("morning brief: nothing worth saying, not sent")
         return ""
+    body = await _brief_body(now, reasons, state) if reasons else ""
+    if not body and not turns:
+        return ""
+    body = brief.with_turns(body, [text for _key, text in turns])
+    BRIEF_STATE["last_text"] = body
+    schedule_store.set_text(BRIEF_TEXT_KEY, body)
+    # Its own title, not the findings composer's "brAIn found a problem"
+    # with "[info]" in front of the paragraph.
+    sent = await _send_notification([{"text": body, "severity": "info"}],
+                                    message=notify_router.compose_brief(body),
+                                    kind="brief")
+    if sent and turns:
+        # Said once delivered, never when composed: a message that did not
+        # go out still owes its sentence to the next morning in its window.
+        await asyncio.to_thread(_seasons_said, [key for key, _t in turns], now)
+    return body
 
+
+async def _brief_body(now: float, reasons: list[str], state: dict) -> str:
+    """The model's paragraph over the reasons, or '' when there is none."""
     local = _local_now(now)
     style = await asyncio.to_thread(_clock_style)
     state["clock_style"] = style
@@ -2200,14 +2223,80 @@ async def _send_brief(now: float) -> str:
         return ""
 
     BRIEF_STATE["last_error"] = ""
-    BRIEF_STATE["last_text"] = body
-    schedule_store.set_text(BRIEF_TEXT_KEY, body)
-    # Its own title, not the findings composer's "brAIn found a problem"
-    # with "[info]" in front of the paragraph.
-    await _send_notification([{"text": body, "severity": "info"}],
-                             message=notify_router.compose_brief(body),
-                             kind="brief")
     return body
+
+
+def _seasons_path():
+    """Beside the forecast the occasions read keeps (`seasons.path_for`)."""
+    return seasons.path_for(occasions.STORE)
+
+
+def _house_hemisphere() -> str:
+    """North or south, from the house's latitude in Core's config. Best
+    effort: an unreadable config is the north, as `clock_style`'s zone
+    fallback is the documented answer when the country is missing."""
+    try:
+        with open("/config/.storage/core.config", encoding="utf-8") as fh:
+            lat = (json.load(fh).get("data") or {}).get("latitude")
+    except (OSError, ValueError, TypeError, AttributeError):
+        lat = None
+    return seasons.hemisphere(lat)
+
+
+def _season_turns(now: float) -> list[tuple[str, str]]:
+    """This morning's turns of the year not said yet, or nothing."""
+    try:
+        tz, _name = baselines.house_timezone()
+        store = seasons.load(_seasons_path())
+        return seasons.due_lines(store, _house_date(now), tz,
+                                 _house_hemisphere())
+    except Exception as exc:  # noqa: BLE001 — a brief without this is still one
+        log.info("brief could not read the season record: %s", exc)
+        return []
+
+
+def _seasons_said(keys: list[str], now: float) -> None:
+    path = _seasons_path()
+    store = seasons.load(path)
+    seasons.mark_said(store, keys, now)
+    seasons.save(store, path, _house_date(now))
+
+
+async def _seasons_note(now: float, days: list[dict]) -> None:
+    """Keep the season record off the read that already fetched the
+    forecast: today's low, and the climate entities' `hvac_action` in the
+    recorder's history since the last read (one history request, over the
+    climate entities the last checks pass named)."""
+    import datetime as dt  # noqa: PLC0415
+
+    import aiohttp  # noqa: PLC0415
+    import ha_data  # noqa: PLC0415
+
+    path = _seasons_path()
+    tz, _name = baselines.house_timezone()
+    today = _house_date(now)
+    store = await asyncio.to_thread(seasons.load, path)
+    seasons.note_forecast(store, days, today)
+    ids = sorted(e for e in _NAMES if e.startswith("climate."))[
+        :seasons.MAX_CLIMATE]
+    if ids:
+        start = max(now - 26 * 3600, float(store.get("climate_read_at") or 0))
+        begin = dt.datetime.fromtimestamp(start, dt.timezone.utc)
+        end = dt.datetime.fromtimestamp(now, dt.timezone.utc)
+        try:
+            async with aiohttp.ClientSession() as session:
+                raw = await ha_data._rest_get(
+                    session, ha_data.history_path(begin), timeout=60,
+                    params=ha_data.history_params(ids, end))
+            seasons.note_climate(store, seasons.climate_days(raw, tz),
+                                 seasons.dates_between(start, now, tz))
+            store["climate_read_at"] = int(now)
+        except Exception as exc:  # noqa: BLE001 — a day not looked is a day
+            # not counted, which is what `LOOKED_MIN` is for.
+            log.info("could not read the climate history: %s", exc)
+    for event in seasons.detect(store, today, _house_hemisphere()):
+        log.info("season: %s on %s", event.get("kind"), event.get("date"))
+    await asyncio.to_thread(seasons.save, store, path, today)
 
 
 async def _brief_loop():
@@ -17594,6 +17683,11 @@ async def _occasions_read(reason: str, pressed: bool,
         calendars, now)
     days = occasions.forecast_days(daily, hourly, now=now, tz=tz, unit=unit)
     rows = occasions.notable_weather(days)
+    if days:
+        try:
+            await _seasons_note(now, days)
+        except Exception as exc:  # noqa: BLE001 — the read is not about this
+            log.info("could not keep the season record: %s", exc)
 
     events = occasions.calendar_events(cal, now=now, tz=tz) if calendars else []
     judged: list[dict] | None = None
