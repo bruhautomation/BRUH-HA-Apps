@@ -489,6 +489,62 @@ def known_faulty(now: float | None = None) -> dict[str, str]:
     return out
 
 
+# The security checks' prefix: never stood down by an answer about a device.
+SECURITY_PREFIX = "sec."
+
+
+def broken_answer(entity_id: str, check_id: str = "", *, faulty,
+                  never=None, device_class: str = "", protected=None,
+                  note=None, now: float | None = None) -> str:
+    """The household's own words calling ``entity_id`` broken, when they
+    cover a row from ``check_id`` about it; "" when they do not (#701).
+
+    The ONE answer every reader shares — the device checks
+    (`House.answered_off`), the first look (`resident.set_aside_broken`)
+    and the investigation gate (`resident.faulty_case`). In order:
+
+    * the floors first: a security check (`SECURITY_PREFIX`), and a pair
+      `never_covered` names — a leak, smoke or gas sensor, a lock, an
+      alarm, the protected list — is reasoned about whatever was said.
+      ``never`` is the caller's own reading of those floors
+      (`House._never_covered`, over the snapshot's table) when it has one;
+    * only the wording that already finishes a device (`gone_for_good`,
+      as `known_faulty` keeps it) — never words of its own;
+    * a decision trail entry for the row it drops, through ``note`` (a
+      check's pass collects them) or straight onto the trail.
+    """
+    eid = str(entity_id or "")
+    check = str(check_id or "")
+    if not eid or not isinstance(faulty, dict):
+        return ""
+    reason = str(faulty.get(eid) or "")
+    if not reason or not gone_for_good(reason):
+        return ""
+    if check.startswith(SECURITY_PREFIX):
+        return ""
+    if never is not None:
+        if never(eid, check):
+            return ""
+    else:
+        if protected is None:
+            raw = os.environ.get("BRAIN_PROTECTED_ENTITIES", "").split(",")
+            protected = [x.strip().lower() for x in raw if x.strip()]
+        if never_covered(eid, check, device_class=device_class,
+                         protected=protected):
+            return ""
+    row = {"kind": "exception", "subject": eid, "check": check,
+           "reason": reason, "text": "you said this sensor is broken"}
+    try:
+        if note is not None:
+            note(row)
+        else:
+            import decision_trail  # noqa: PLC0415 — a leaf, read lazily
+            decision_trail.note_many([row], now)
+    except Exception as exc:  # noqa: BLE001 — the trail never costs the answer
+        log.debug("broken_answer: %s", exc)
+    return reason
+
+
 # A reason that asks not to be reminded: "don't remind me", "it's on my to
 # do list, stop reminding me", "I am aware, don't bring this up again". It is
 # not a statement that the report is wrong (a rule would be for ever) and

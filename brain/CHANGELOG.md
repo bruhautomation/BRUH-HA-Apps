@@ -2,6 +2,19 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.9
+
+### Changed
+
+- A device's late or low battery report is shown on the same card as that device's weak, dropping or unavailable connection, which is the step said first, with the battery report kept on the card as probably the same trouble (#582).
+
+### Fixed
+
+- A finding saying something is offline or unplugged is checked against the device's latest state just before it is shown, and is not shown once the device is back. A reminder figure more than ten times its own interval is asked about as the reminder's setting, never stated as overdue (#722).
+- The overnight check no longer files a single logged "could not load" error as serious when what it named reports a state, or when the error has not come back since it last loaded: it files nothing, or files it as information without a file name or line number (#723).
+- What a card says to do never holds a file path, a line number or one of brAIn's tool names, never asks you to check something brAIn can read itself, and "Nothing is needed" is no longer shown under a what-to-do heading. A report about a line of brAIn's own instructions becomes brAIn's own yes/no question (#736).
+- A sensor you said is broken is no longer raised by the impossible-readings check or looked into by brAIn, and is not used as evidence for a fault; leak, smoke and gas sensors, locks, alarms and protected devices are still watched whatever was said (#701).
+
 ## 5.1.8
 
 ### Added

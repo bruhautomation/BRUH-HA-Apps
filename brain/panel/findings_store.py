@@ -1042,6 +1042,15 @@ def shown_fix(entry: dict) -> str:
     """
     entry = entry if isinstance(entry, dict) else {}
     fix = str(entry.get("fix") or "")
+    # And whatever wrote it, the step is the household's to carry out
+    # (#736): no path, line number or tool name (brAIn's own upkeep is
+    # brAIn's), no "nothing is needed" under a what-to-do heading, and from
+    # a model no errand to check what brAIn reads itself — a check's own
+    # sentences are held to plain words by their rule's tests. Nothing left
+    # is no step, and a surface shows no heading over nothing.
+    check = str(entry.get("source") or "").startswith("check:")
+    fix = house_words.household_step(
+        fix, own_checks=bool(entry.get("fix_by")) or not check)
     if not fix or entry.get("fix_by"):
         return fix
     # A house-book question filed before its sentence changed said "Answer
@@ -1049,7 +1058,7 @@ def shown_fix(entry: dict) -> str:
     # one (#502). Read as today's sentence; the row itself is untouched.
     if entry.get("source") == "house_book" and fix == _HOUSE_BOOK_OLD_FIX:
         return _HOUSE_BOOK_FIX
-    if not str(entry.get("source") or "").startswith("check:"):
+    if not check:
         return fix
     look = shown_look(_clean_triage(entry.get("triage")), entry)
     if isinstance(look, dict) and str(look.get("reason") or "").strip():
@@ -1731,7 +1740,8 @@ def listing() -> dict:
     them separately meant parsing (and fully shaping) the same file twice
     per request — on a Pi, for a screen that polls.
     """
-    shaped = [s for s in (_shape(e) for e in _load()) if s["text"]]
+    shaped = [s for s in (_shape(e) for e in _load())
+              if s["text"] and holds_now(s)]
     for row in shaped:
         row["fix"] = shown_fix(row)
         if row.get("triage"):
@@ -2388,7 +2398,7 @@ OFFLINE_RE = re.compile(
     r"answering)|(?:keeps?|kept) (?:dropping|disconnecting|going offline)|"
     r"dropp(?:ing|ed|s) (?:off|out)|drops off|disconnect(?:ed|s|ing)?|"
     r"(?:lost|losing|loses) (?:its |the )?(?:connection|controller)|"
-    r"gone (?:quiet|silent)|went (?:quiet|silent))\b", re.I)
+    r"gone (?:quiet|silent)|went (?:quiet|silent)|unplugged)\b", re.I)
 
 
 def is_drop_report(entry: dict) -> bool:
@@ -2402,13 +2412,62 @@ def is_drop_report(entry: dict) -> bool:
                                   or str(entry.get("text") or "")))
 
 
+# One cause, one row (#582). A device's link — weak, dropping, unavailable —
+# is upstream of what it reports late: a lock on a weak Bluetooth link was a
+# "weak signal" row and a "stopped reporting its battery" row with two
+# different steps, and nothing said the first probably explains the second.
+# So a row about a device's battery going low or quiet (`LINK_SYMPTOM_CHECKS`,
+# or a model's row saying so) folds into a live row about the SAME device's
+# link: the link's row is the card and its step is said first, and the
+# battery row stays on it as evidence naming the shared cause. A symptom
+# row never hosts, so two battery rows with no link row stay apart, and the
+# refusals are `_fold_shared`'s (a safety or security row never folds).
+WEAK_LINK_CHECKS = frozenset({"check:net.zwave_link", "check:net.zigbee_weak"})
+LINK_SYMPTOM_CHECKS = frozenset({"check:dev.battery_low"})
+WEAK_LINK_RE = re.compile(
+    r"\b(?:weak|poor|low|bad|marginal|unreliable)\s+(?:(?:bluetooth|ble|"
+    r"wi-?fi|zigbee|z-?wave|radio|wireless)\s+)?(?:signal|link|connection|"
+    r"reception)\b|\bsignal\s+(?:is\s+|was\s+)?(?:weak|poor)\b", re.I)
+LINK_SYMPTOM_RE = re.compile(
+    r"\bbattery\b|\b(?:stale|late|delayed)\s+(?:readings?|reports?|"
+    r"values?|updates?)\b", re.I)
+SAME_LINK = "Likely the same link trouble: "
+
+
+def _said(entry: dict) -> str:
+    return str(entry.get("claim") or "") or str(entry.get("text") or "")
+
+
+def is_link_report(entry: dict) -> bool:
+    """Whether a row reports a device's link: dropping off, or weak."""
+    if is_drop_report(entry):
+        return True
+    source = str(entry.get("source") or "")
+    if source in WEAK_LINK_CHECKS:
+        return True
+    if source.startswith("check:"):
+        return False
+    return bool(WEAK_LINK_RE.search(_said(entry)))
+
+
+def is_link_symptom(entry: dict) -> bool:
+    """Whether a row reports what a weak link shows up as on the device
+    itself: a battery low or gone quiet, a late reading."""
+    source = str(entry.get("source") or "")
+    if source in LINK_SYMPTOM_CHECKS:
+        return True
+    if source.startswith("check:"):
+        return False
+    return bool(LINK_SYMPTOM_RE.search(_said(entry)))
+
+
 def _row_devices(entry: dict, names: dict) -> set[str]:
     """The keys a row is folded on: ``int:<domain>`` for a row about an
     integration as a whole, else the devices its entities are on."""
     integration = str(entry.get("integration") or "")
     if integration:
         return {f"int:{integration}"}
-    if not is_drop_report(entry):
+    if not (is_link_report(entry) or is_link_symptom(entry)):
         return set()
     out = set()
     for eid in _devices_named(entry) | set(entry.get("about") or ()):
@@ -2432,9 +2491,12 @@ def _fold_devices(items: list[dict]) -> set[int]:
                 rows.append((f, keys))
     if len(rows) < 2:
         return set()
-    # The widest first, then a house check, then the oldest: the order in
+    # A link's row before a symptom's, so the cause hosts what it explains;
+    # then the widest, then a house check, then the oldest: the order in
     # which a row becomes the card the others are folded into.
-    rows.sort(key=lambda r: (-len(r[1]),
+    symptom = {id(f) for f, keys in rows
+               if not f.get("integration") and not is_link_report(f)}
+    rows.sort(key=lambda r: (id(r[0]) in symptom, -len(r[1]),
                              not str(r[0].get("source") or "").startswith("check:"),
                              int(r[0].get("ts") or 0)))
     hosts: list[tuple[dict, set]] = []
@@ -2443,10 +2505,15 @@ def _fold_devices(items: list[dict]) -> set[int]:
         host = next((h for h, hk in hosts if keys <= hk and _may_host(h, f)),
                     None)
         if host is not None and _may_fold_away(f):
+            if id(f) in symptom:
+                # What it reported stays on the card, saying why it is here.
+                f = {**f, "claim": textclip.clip(SAME_LINK + _said(f),
+                                                 MAX_EVIDENCE_VALUE)}
             _take_in(host, f, counts=True)
             gone.add(int(f.get("ts") or 0))
             continue
-        hosts.append((f, keys))
+        if id(f) not in symptom:
+            hosts.append((f, keys))
     if gone:
         items[:] = [f for f in items if int(f.get("ts") or 0) not in gone]
         log.info("folded %d finding(s) into the card about their device",
@@ -2486,6 +2553,63 @@ def quotes_other_counts(sentence, detail) -> bool:
         if word in now and not numbers <= now[word]:
             return True
     return False
+
+
+# A reminder's figure that cannot be real (#722). "19,766 miles overdue" on a
+# service reminder that repeats every 1,000 miles is a reminder set up
+# wrong — a last-done date never entered, an interval in the wrong unit —
+# and a card stating it as overdue sends somebody to book a service on a
+# setting. A figure past `REMINDER_MISREAD_X` times the interval it is
+# measured against, in the same unit, is asked about as the setting.
+REMINDER_MISREAD_X = 10
+_UNIT = (r"(miles?|mi|km|kilomet(?:er|re)s?|days?|weeks?|months?|hours?|"
+         r"hrs?)")
+_NUMBER = r"(\d[\d,]*(?:\.\d+)?)"
+_OVERDUE_RE = re.compile(_NUMBER + r"\s*" + _UNIT
+                         + r"\s+(?:overdue|past due|late)\b", re.I)
+_INTERVAL_RE = re.compile(
+    r"\b(?:every|each|interval(?:\s+(?:is|of))?:?|repeats? every)\s+"
+    + _NUMBER + r"[\s-]*" + _UNIT, re.I)
+_UNIT_KEY = {"mile": "mi", "miles": "mi", "mi": "mi", "km": "km",
+             "kilometer": "km", "kilometers": "km", "kilometre": "km",
+             "kilometres": "km", "day": "d", "days": "d", "week": "w",
+             "weeks": "w", "month": "mo", "months": "mo", "hour": "h",
+             "hours": "h", "hr": "h", "hrs": "h"}
+REMINDER_FIX = ("If the reminder's interval or its last-done date is wrong, "
+                "correct it where the reminder is set up, and brAIn will "
+                "read the new figure.")
+
+
+def _figure(text: str) -> float:
+    return float(text.replace(",", ""))
+
+
+def misread_reminder(row: dict) -> dict | None:
+    """The fields that turn a row stating an impossible overdue figure into
+    a question about the reminder's setting, or None."""
+    words = " ".join([str(row.get(k) or "") for k in
+                      ("text", "claim", "detail", "fix")]
+                     + [str(e.get("value") or "") for e in
+                        row.get("evidence") or [] if isinstance(e, dict)])
+    late = _OVERDUE_RE.search(words)
+    if not late:
+        return None
+    unit = _UNIT_KEY.get(late.group(2).lower(), "")
+    for m in _INTERVAL_RE.finditer(words):
+        if _UNIT_KEY.get(m.group(2).lower(), "") != unit or not unit:
+            continue
+        figure, interval = _figure(late.group(1)), _figure(m.group(1))
+        if interval <= 0 or figure <= REMINDER_MISREAD_X * interval:
+            continue
+        said = (f"A reminder reads {late.group(1)} {late.group(2)} past its "
+                f"date on a {m.group(1)}-{m.group(2).rstrip('s')} interval. "
+                "Is the reminder's setting right?")
+        return {"text": said, "claim": said,
+                "detail": (f"That is more than {REMINDER_MISREAD_X} times "
+                           "the interval, which a reminder set up wrong "
+                           "reads and a real one does not."),
+                "fix": REMINDER_FIX, "kind": "question", "severity": "info"}
+    return None
 
 
 def _asks_about_own_setup(row: dict) -> bool:
@@ -2560,6 +2684,15 @@ def add_many(objs: list[dict]) -> list[dict]:
         if entry is not None and care:
             # brAIn's own upkeep: its question, not the owner's chore.
             entry.update(care)
+        if entry is not None and not care and _model_written(
+                entry.get("source")):
+            # A figure no real reminder reads is a question about its
+            # setting (#722); a code-chosen key keeps its text.
+            asked = misread_reminder(entry)
+            if asked:
+                if entry.get("source") in SUBJECT_FOLD_EXCLUDED:
+                    asked.pop("text")
+                entry.update(asked)
         if entry is None:
             continue
         if (own_question and not care and _model_written(entry.get("source"))
@@ -2743,6 +2876,13 @@ def add_case(row: dict, *, run_id: str = "", when: float | None = None) -> dict 
     """
     if not isinstance(row, dict):
         return None
+    # A case pointing at a line of brAIn's own instructions that brAIn can
+    # find is brAIn's own question, read off the words as the run wrote
+    # them — the plain pass below takes the file and line out (#736).
+    care = _self_care({**row, "source": str(row.get("source")
+                                           or RESIDENT_SOURCE)})
+    if care:
+        row = {**row, **care}
     # A case is a model's sentence: stored in the house's own words, `text`
     # included where it is the claim (the Resident's), and left alone where
     # code chose it as a key (`SUBJECT_FOLD_EXCLUDED`'s producers).
@@ -4327,8 +4467,12 @@ def set_fix(ts: int, fix: str, by: str) -> dict | None:
     row cannot name (`FIX_AUTHORS`); answers None for a row that is gone.
     """
     # Every author on `FIX_AUTHORS` is a model, so its sentence is stored
-    # in the house's words.
-    fix = textclip.shorten(plain(str(fix or "").strip()), MAX_FIX)
+    # in the house's words — the same pass every model row takes, its
+    # developer words out (#736).
+    fix = str(_plain_row({"source": RESIDENT_SOURCE,
+                          "fix": str(fix or "").strip()},
+                         ("fix",)).get("fix") or "")
+    fix = textclip.shorten(fix.strip(), MAX_FIX)
     if (not fix or by not in FIX_AUTHORS or house_words.placeholder(fix)
             or house_words.fork(fix)):
         return None
@@ -4719,6 +4863,59 @@ def _all_back(entry: dict, states: dict, now: float) -> bool:
         if now - since < RETURN_SETTLE_S:
             return False
     return True
+
+
+# The latest state of each entity, as the panel last heard it: seeded by
+# every checks pass (`seed_states`) and kept current by the event bus
+# (`note_state`). Read just before a row is shown (`holds_now`), so a row
+# saying a plug is unplugged is not shown after the plug came back (#722) —
+# the store's own sweep (`clear_returned`) still waits `RETURN_SETTLE_S`
+# before it ends the row, and a device that drops again is shown again.
+LIVE_STATES: dict[str, dict] = {}
+
+
+def note_state(entity_id: str, state) -> None:
+    """One entity's new state (``{state, last_changed}``), or its removal."""
+    eid = str(entity_id or "")
+    if not eid:
+        return
+    if not isinstance(state, dict):
+        LIVE_STATES.pop(eid, None)
+        return
+    LIVE_STATES[eid] = {"state": str(state.get("state") or ""),
+                        "last_changed": state.get("last_changed")}
+
+
+def seed_states(states) -> None:
+    """Every state a checks pass read (``{entity_id: state}``)."""
+    if isinstance(states, dict):
+        for eid, st in states.items():
+            note_state(eid, st)
+
+
+def holds_now(entry: dict, states: dict | None = None) -> bool:
+    """Whether a row's claim that something is down still holds as the
+    house is now. False only for a row from a producer that does not
+    re-check its own rows (`_sweepable`: never a house check, never the
+    harm family) that reports something offline, unavailable or unplugged,
+    when EVERY entity it names reports a real state that changed after the
+    row was filed. An entity not heard from proves nothing."""
+    states = LIVE_STATES if states is None else states
+    if not states or not isinstance(entry, dict) or not _sweepable(entry, None):
+        return True
+    if not (_reported_missing(entry) or is_drop_report(entry)):
+        return True
+    named = _named_entities(entry)
+    if not named:
+        return True
+    filed = float(entry.get("ts") or 0)
+    for eid in named:
+        live = states.get(eid)
+        if (not isinstance(live, dict) or live.get("state") in (None, "")
+                or _no_reading(live.get("state"))
+                or _changed_at(live.get("last_changed")) <= filed):
+            return True
+    return False
 
 
 @_mutates

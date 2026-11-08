@@ -5482,6 +5482,8 @@ def _on_bus_event(event_type: str, data: dict) -> None:
     if event_type == "state_changed" and isinstance(data, dict):
         _note_live_reading(str(data.get("entity_id") or ""),
                            data.get("new_state"))
+        findings_store.note_state(str(data.get("entity_id") or ""),
+                                  data.get("new_state"))
     # A person coming home, or a button on one of the presence loop's
     # touches. Its own try: a greeting must never cost the bus a reading.
     if event_type in ("state_changed", "mobile_app_notification_action"):
@@ -14524,8 +14526,22 @@ async def _resident_look(now: float, settings: dict, thinking: str,
     verdicts = resident.parse_first_look(
         _answer(result), len(batch), batch,
         floors=outcomes.overruled_floors(batch, passed_over))
+    # A sensor the household called broken is not reasoned about (#701):
+    # whatever the look said of it, it is let go, with a trail entry; the
+    # never-ignore floors keep a leak, a lock or an alarm whatever was said.
+    verdicts = await asyncio.to_thread(_set_aside_broken, batch, verdicts)
     return await _resident_apply(batch, verdicts, run_id, now, settings,
                                  thinking, surfaced, len(watched_off))
+
+
+def _set_aside_broken(batch: list[dict], verdicts: dict) -> dict:
+    try:
+        faulty = corrections.known_faulty()
+    except Exception as exc:  # noqa: BLE001 — unread sets nothing aside
+        log.debug("could not read the sensors called broken: %s", exc)
+        return verdicts
+    return resident.set_aside_broken(batch, verdicts, faulty,
+                                     device_class=_device_class)
 
 
 def _resident_timed_out(size: int, limit) -> None:
@@ -15065,7 +15081,8 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     # never-ignore floors hold (safety, protected, hot) is still looked at.
     if not resident.never_ignore(signal)[0]:
         faulty = await asyncio.to_thread(corrections.known_faulty)
-        broken = resident.faulty_case(case, _signal_entities(signal), faulty)
+        broken = resident.faulty_case(case, _signal_entities(signal), faulty,
+                                      _device_class)
         if broken:
             RESIDENT_STATE["refused"] = RESIDENT_STATE.get("refused", 0) + 1
             log.info("an investigation of %s rests on a sensor the owner "
@@ -16663,6 +16680,9 @@ async def run_checks(reason: str = "schedule") -> dict:
             if (snapshot.get("available") or {}).get("states"):
                 cleared = cleared + findings_store.clear_returned(
                     snapshot.get("states") or {}, started)
+                # What a row is read against just before it is shown
+                # (`findings_store.holds_now`, #722); the bus keeps it current.
+                findings_store.seed_states(snapshot.get("states") or {})
             # And the other store, which nothing renders. Rows from a check
             # being trialled go here instead — a separate file rather than
             # a status, because `add_many` dedupes across every status and
