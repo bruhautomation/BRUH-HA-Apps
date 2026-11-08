@@ -70,7 +70,7 @@ class TestTurningPoints(unittest.TestCase):
         self.assertEqual(dec["name"], "summer solstice")
         lines = seasons.due_lines({}, "2026-12-22", SYDNEY_DEC, seasons.SOUTH)
         self.assertEqual(lines, [(dec["key"], "Today is the summer solstice, "
-                                  "the longest day of the year.")])
+                                  + "the longest day of the year.")])
 
     def test_said_once(self):
         store: dict = {}
@@ -100,7 +100,7 @@ class TestFirstFrost(unittest.TestCase):
         lines = seasons.due_lines(store, "2026-11-08", UTC)
         self.assertEqual(lines, [("frost:2026",
                                   "The first frost of the autumn is forecast "
-                                  "for tomorrow, with a low of −2 °C.")])
+                                  + "for tomorrow, with a low of −2 °C.")])
         # A second frost that season is not a first.
         seasons.note_forecast(store, [{"date": "2026-11-20", "low": -4.0,
                                        "unit": "°C"}], "2026-11-20")
@@ -137,7 +137,7 @@ class TestHeatingAndCooling(unittest.TestCase):
                          ["heating:2026"])
         self.assertEqual(seasons.due_lines(store, "2026-10-15", UTC),
                          [("heating:2026", "The heating came on for the first "
-                           "time this autumn this morning.")])
+                           + "time this autumn this morning.")])
 
     def test_a_heating_run_in_spring_is_not_the_first_of_autumn(self):
         store: dict = {}

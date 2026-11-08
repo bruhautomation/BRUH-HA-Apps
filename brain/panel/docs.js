@@ -2457,6 +2457,18 @@ greeting and no headings, because this is read on a lock screen. It can look
 things up to make a reason specific ("the freezer is at -12, usually -18") but
 it is not handed your house and it may not invent a number.
 
+**The turns of the year** get one sentence each, the morning they happen, and
+never again: the solstices and equinoxes (worked out for your own date and
+hemisphere), the first frost of the autumn (from the forecast brAIn already
+reads), the first morning the heating ran (from your thermostats' history), and
+the last cooling run of the year — said in hindsight, once three weeks have
+passed without one. A first is only a first when brAIn has been watching for
+most of the month before it, so the day it is installed is never "the first
+frost". These sentences are worked out in code and sent as they are: on a
+morning with nothing else to say the brief is just that sentence, and no
+Claude turn is spent on it. A sentence counts as said only once the brief
+carrying it was sent.
+
 Until brAIn has watched for a couple of weeks it uses the fallback hour you
 set. If it has been restarted and missed the window it waits for tomorrow
 rather than delivering breakfast at lunchtime.
@@ -3886,6 +3898,28 @@ Supervisor accepted is not a working add-on. What proves a repair is the next
 house-checks pass: the finding clears, or it does not — and the morning brief
 tells you which, with the time: *"started the Mosquitto broker add-on at 03:10;
 it is working now."*
+
+**Home Assistant's long-term statistics** are kept healthy without being
+switched on, because the fixes brAIn makes on its own cannot lose anything.
+Once a day, a quarter of an hour after brAIn starts and after Home Assistant
+is updated, brAIn asks the recorder to check its statistics — the issues the
+Repairs page and the developer tools' Statistics tab show with a **Fix issue**
+button — and:
+
+| What Home Assistant flags | What brAIn does |
+| --- | --- |
+| A sensor's unit changed, and the sensor reports the new unit now | Sets the statistics' unit to it, without touching any history |
+| Statistics for a sensor that no longer exists, or that you disabled | Deletes those statistics, after checking the entity registry says so |
+| A sensor that no longer has a state class, or reports a different kind of average | Asks you one question in Today: **Clear the old long-term statistics of …?** Only **Yes** deletes them |
+| A sensor the recorder leaves out because you excluded it | Nothing, and it never asks |
+
+A sensor that has not reported yet after a restart is left for the next day,
+never treated as gone. Nothing on your protected entities is touched. Each
+change is in **History › Changes brAIn made**; a unit brAIn set has an
+**Undo**, and once you undo one brAIn leaves that statistic alone. After the
+fixes brAIn checks again and the change says if Home Assistant still flags
+it. Pausing automatic runs pauses this too, and \`GET /api/statistics\` shows
+the last pass and what it left alone and why.
 
 **Emergency playbooks** are the other half, and brAIn never runs one. It
 **writes** one and offers it on Needs you; Home Assistant runs it if you
