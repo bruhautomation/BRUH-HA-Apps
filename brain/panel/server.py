@@ -12459,6 +12459,20 @@ def _core_loaded_at() -> float:
         return 0.0
 
 
+def _stats_settled_kind(text: str) -> str:
+    """The kind the settled ledger holds for a card's exact words, or ''
+    when it holds none or cannot be read: what a refused card's earlier
+    ending was, so only a No is taken as one."""
+    try:
+        key = findings_store.normalize(text)
+        for e in findings_store.settled_listing():
+            if e.get("key") == key:
+                return str(e.get("kind") or "")
+    except Exception:  # noqa: BLE001 — unreadable is "cannot tell"
+        pass
+    return ""
+
+
 def _stats_live_cards() -> set | None:
     """The ids (`ts`) of the statistics questions still on Today, or None
     when the findings store could not be read ("could not tell")."""
@@ -12574,18 +12588,32 @@ async def _run_statistics(reason: str = "schedule",
     new = stats_upkeep.to_ask(store, planned["ask"], now)
     filed = None
     if new and stats_upkeep.SOURCE not in settings_store.muted():
-        row = stats_upkeep.ask_row(new, dict(_NAMES))
+        # One card per pass, naming every statistic its Yes may clear and
+        # nothing it does not; what does not fit waits for a later card.
+        names = dict(_NAMES)
+        batch = stats_upkeep.batch(new, names)
+        row = stats_upkeep.ask_row(batch, names,
+                                   again=stats_upkeep.asked_before(store, batch))
         filed = await asyncio.to_thread(
             lambda: findings_store.add_case(row, when=now))
         if filed and filed.get("ts") is not None:
-            stats_upkeep.note_asked(store, new, filed["ts"], now)
+            stats_upkeep.note_asked(store, batch, filed["ts"], now)
         else:
-            # The store refused the card: that question was answered before
-            # (its settled key). The answer stands as a No for its term,
-            # rather than the same refused card being tried every day.
-            stats_upkeep.note_declined(store, new, now)
-            log.info("statistics: the question about %s was answered before; "
-                     "not asked again", ", ".join(a["statistic_id"] for a in new))
+            # The store refused the card: those words were settled before.
+            # Only a No is a No. A Yes whose clear did not happen (Core
+            # unreachable when it was answered), or an ending nobody can
+            # tell, is asked again later in other words — not every pass.
+            kind = await asyncio.to_thread(_stats_settled_kind, row["text"])
+            which = ", ".join(a["statistic_id"] for a in batch)
+            if kind in stats_upkeep.NO_KINDS:
+                stats_upkeep.note_declined(store, batch, now)
+                log.info("statistics: the question about %s was answered "
+                         "No before; not asked again", which)
+            else:
+                stats_upkeep.note_refused(store, batch, now)
+                log.info("statistics: the question about %s could not be "
+                         "filed (%s); asked again later in other words",
+                         which, "settled as " + kind if kind else "no card")
 
     store["missing"] = planned["missing"]
     store["changes"] = list(store.get("changes") or []) + done

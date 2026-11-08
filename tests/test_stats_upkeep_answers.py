@@ -62,7 +62,11 @@ class FakeHouse(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.saved = (stats_upkeep.STORE, s._stats_ws, s._stats_states,
                       fs.add_case, fs.list_all, fs.settle_and_clear,
-                      s._findings_payload, dict(s._NAMES))
+                      fs.settled_listing, s._findings_payload, dict(s._NAMES))
+        # The settled ledger: `{normalized text: kind}`. A card whose words
+        # are in it is refused, as the real store refuses one.
+        self.ledger: dict[str, str] = {}
+        self.refuse_all = False
         stats_upkeep.STORE = Path(self.tmp.name) / "stats.json"
         s._NAMES.clear()
         s._NAMES.update(NAMES)
@@ -94,9 +98,14 @@ class FakeHouse(unittest.TestCase):
             return list(self.states)
 
         def add_case(row, **kw):
+            if self.refuse_all or fs.normalize(row["text"]) in self.ledger:
+                return None
             card = {**row, "ts": 100 + len(self.cards), "status": "open"}
             self.cards.append(card)
             return card
+
+        def settled_listing():
+            return [{"key": k, "kind": v} for k, v in self.ledger.items()]
 
         def list_all(status=None):
             return [c for c in self.cards if c["status"] == "open"]
@@ -109,13 +118,14 @@ class FakeHouse(unittest.TestCase):
         s._stats_ws, s._stats_states = ws, states
         fs.add_case, fs.list_all, fs.settle_and_clear = (
             add_case, list_all, settle_and_clear)
+        fs.settled_listing = settled_listing
         s._findings_payload = lambda: {}
 
     def tearDown(self):
         s, fs = self.server, self.server.findings_store
         (stats_upkeep.STORE, s._stats_ws, s._stats_states, fs.add_case,
-         fs.list_all, fs.settle_and_clear, s._findings_payload,
-         names) = self.saved
+         fs.list_all, fs.settle_and_clear, fs.settled_listing,
+         s._findings_payload, names) = self.saved
         s._NAMES.clear()
         s._NAMES.update(names)
         self.tmp.cleanup()
@@ -398,6 +408,110 @@ class TestTheMaintainerSeesCoreRestart(unittest.TestCase):
         # the retry wait holding it, not the poll.
         self.tick(NOW + 2 * self.server.MAINT_POLL_S)
         self.assertEqual(self.started, ["statistics"])
+
+
+class TestACardNamesEverythingItsYesClears(FakeHouse):
+    """Review round 3: the card named five and said "and N more", while its
+    Yes cleared every statistic recorded under it. A card carries only the
+    statistics its text names; the rest wait for a later card."""
+
+    def flag(self, n):
+        for i in range(n):
+            sid = f"sensor.meter_{i}"
+            self.issues.update(flagged(sid))
+            self.states.append(live(sid))
+            self.server._NAMES[sid] = {"name": f"Meter {i}"}
+
+    def named_in(self, card):
+        return sorted(f"sensor.meter_{i}" for i in range(8)
+                      if f"Meter {i}" in card["text"])
+
+    def test_eight_flagged_are_asked_five_then_the_rest(self):
+        self.flag(8)
+        self.run_pass(NOW)
+        [card] = self.open_cards()
+        first = self.named_in(card)
+        self.assertEqual(len(first), stats_upkeep.MAX_NAMED)
+        self.assertNotIn("more", card["text"])
+        # The card's own record is exactly what its text names.
+        self.assertEqual(sorted(a["statistic_id"]
+                                for a in stats_upkeep.load()["asked"]), first)
+        self.answer(card, YES)
+        self.assertEqual(sorted(self.cleared()), first)
+        # The rest are asked on a later card, and only then cleared.
+        self.run_pass(NOW + DAYS)
+        [second] = self.open_cards()
+        rest = self.named_in(second)
+        self.assertEqual(len(rest), 8 - stats_upkeep.MAX_NAMED)
+        self.assertEqual(set(rest) & set(first), set())
+        self.answer(second, YES)
+        self.assertEqual(sorted(self.cleared()), sorted(first + rest))
+
+    def test_long_names_make_a_shorter_card_never_a_clipped_one(self):
+        asks = [{"statistic_id": f"sensor.m{i}", "type": "state_class_removed",
+                 "why": "w"} for i in range(5)]
+        names = {f"sensor.m{i}": {"name": f"A very long sensor name number {i} "
+                                          "in the back of the garage"}
+                 for i in range(5)}
+        batch = stats_upkeep.batch(asks, names)
+        self.assertLess(len(batch), 5)
+        row = stats_upkeep.ask_row(batch, names)
+        self.assertLessEqual(len(row["text"]), stats_upkeep.TEXT_BUDGET)
+        for a in batch:
+            self.assertIn(names[a["statistic_id"]]["name"], row["text"])
+
+
+class TestARefusedCardIsNotANoUnlessItWasOne(FakeHouse):
+    """Review round 3: a card the findings store refuses (its words were
+    settled before) was written down as a 90-day No — but the settled
+    ending may have been a Yes whose clear failed. Only a No is a No; a
+    Yes, or an ending that cannot be told, is asked again later in other
+    words, and not on every pass in between."""
+
+    def words(self):
+        plan = stats_upkeep.plan(stats_upkeep.issues_from(self.issues),
+                                 self.states, [], core_state="RUNNING")
+        return stats_upkeep.ask_row(plan["ask"], NAMES)["text"]
+
+    def setUp(self):
+        super().setUp()
+        self.issues = flagged("sensor.attic_temp")
+        self.states = [live("sensor.attic_temp", "°C")]
+        self.key = self.server.findings_store.normalize(self.words())
+
+    def test_words_settled_by_a_no_hold_as_a_no(self):
+        self.ledger[self.key] = "ignored"
+        self.run_pass(NOW)
+        self.assertEqual(self.open_cards(), [])
+        self.assertIn("sensor.attic_temp", stats_upkeep.load()["declined"])
+        self.run_pass(NOW + 2 * DAYS)
+        self.assertEqual(self.open_cards(), [])
+
+    def test_words_settled_by_a_yes_are_asked_again_in_other_words(self):
+        self.ledger[self.key] = "accepted"
+        self.run_pass(NOW)
+        self.assertEqual(self.open_cards(), [])
+        self.assertEqual(stats_upkeep.load()["declined"], {})
+        # A restart pass an hour later does not try the same card again.
+        self.run_pass(NOW + HOURS)
+        self.assertEqual(self.open_cards(), [])
+        # A day later it is asked in other words, and that Yes clears it.
+        self.run_pass(NOW + DAYS + HOURS)
+        [card] = self.open_cards()
+        self.assertNotEqual(self.server.findings_store.normalize(card["text"]),
+                            self.key)
+        self.assertIn("Attic temperature", card["text"])
+        self.assertNotIn("sensor.", card["text"] + card["claim"])
+        self.answer(card, YES)
+        self.assertEqual(self.cleared(), ["sensor.attic_temp"])
+
+    def test_a_refusal_nobody_can_explain_is_not_a_no_either(self):
+        self.refuse_all = True
+        self.run_pass(NOW)
+        self.assertEqual(stats_upkeep.load()["declined"], {})
+        self.refuse_all = False
+        self.run_pass(NOW + DAYS + HOURS)
+        self.assertEqual(len(self.open_cards()), 1)
 
 
 if __name__ == "__main__":

@@ -31,13 +31,20 @@ is asked, and every fix is one of two recorder calls.
 reports have only one fix in Core — delete the old statistics — so they
 become a question in Today ("Clear the old long-term statistics of …?"),
 and only its Yes clears them, after validating again. **Each card carries
-its own list** (`asked` holds the card's id beside every statistic it
-named, `note_asked` / `answer`): a Yes clears exactly what THAT card asked
-about, never a statistic the owner said No to on an earlier card and never
-a second card's, open at the same time. **A No is remembered** (`declined`,
-for `DECLINED_S`): never cleared, not asked again for a long time, and
-forgotten by the toast's Undo (`forget_answer`). Doesn't apply records
-nothing. A card that vanished unanswered (`open_questions`) is asked again.
+its own list, and names all of it** (`batch` takes at most `MAX_NAMED` and
+only as many as the text names within `TEXT_BUDGET`; `asked` holds the
+card's id beside every statistic it named, `note_asked` / `answer`): a Yes
+clears exactly what THAT card asked about — never a statistic the card did
+not name, never one the owner said No to on an earlier card, never a
+second card's, open at the same time; the rest wait for a later card. **A
+No is remembered** (`declined`, for `DECLINED_S`): never cleared, not asked
+again for a long time, and forgotten by the toast's Undo
+(`forget_answer`). Doesn't apply records nothing. A card that vanished
+unanswered (`open_questions`) is asked again. **A card the findings store
+refused** (its words were settled before) is a No only when that ending
+was one (`NO_KINDS`); after a Yes whose clear did not happen, or an ending
+nobody can tell, it is asked again in other words after `REFUSED_S`
+(`note_refused` / `asked_before`, `ask_row(again=True)`).
 
 **What is left alone is never flagged.** `entity_no_longer_recorded` and
 `entity_not_recorded` are an entity the recorder's own `exclude` keeps out
@@ -73,7 +80,17 @@ INTERVAL_S = 24 * 3600
 MAX_FIXES = 20
 # How long a change stays on History, as `changes.CHANGES_DAYS`.
 KEEP_DAYS = 30
+# A card names every statistic its Yes may clear — never "and N more" —
+# so one card asks about at most this many, and only as many as fit its
+# text (`batch`); the rest wait for a later card.
 MAX_NAMED = 5
+TEXT_BUDGET = 180
+# How long a card the findings store refused (its words were settled
+# before by something other than a No) waits before it is asked again in
+# other words: not on the next restart pass, not every poll.
+REFUSED_S = 86400
+# The settled kinds that are a No to the words: a No, and Doesn't apply.
+NO_KINDS = ("ignored", "not_applicable")
 # How long a No holds: the statistic is not asked about again for this
 # long, and never cleared while it holds.
 DECLINED_S = 90 * 86400
@@ -309,27 +326,51 @@ def _name(sid: str, names: dict | None) -> str:
 
 
 def _join(words: list[str]) -> str:
-    shown = words[:MAX_NAMED]
-    more = len(words) - len(shown)
-    if more > 0:
-        return ", ".join(shown) + f" and {more} more"
-    if len(shown) <= 1:
-        return "".join(shown)
-    return ", ".join(shown[:-1]) + " and " + shown[-1]
+    """Every word, never "and N more": a card names all its Yes may clear."""
+    if len(words) <= 1:
+        return "".join(words)
+    return ", ".join(words[:-1]) + " and " + words[-1]
 
 
-def ask_row(asks: list[dict], names: dict | None = None) -> dict | None:
-    """The one question for the statistics only a deletion would fix."""
+def _text(named: list[str], again: bool) -> str:
+    verb = "Shall brAIn clear" if again else "Clear"
+    return f"{verb} the old long-term statistics of {_join(named)}?"
+
+
+def batch(asks: list[dict], names: dict | None = None) -> list[dict]:
+    """The first asks one card may carry: at most `MAX_NAMED`, and only as
+    many as its text names within `TEXT_BUDGET` (the store clips a longer
+    text, and a clipped card would not name what its Yes clears). At least
+    one, whatever its name's length."""
+    out: list[dict] = []
+    for a in asks or []:
+        trial = out + [a]
+        if len(trial) > MAX_NAMED:
+            break
+        named = [_name(x["statistic_id"], names) for x in trial]
+        if out and len(_text(named, True)) > TEXT_BUDGET:
+            break
+        out = trial
+    return out
+
+
+def ask_row(asks: list[dict], names: dict | None = None,
+            again: bool = False) -> dict | None:
+    """The question for the statistics only a deletion would fix: it names
+    every one of `asks`, which is exactly what its Yes may clear. `again`
+    is the same question in other words, for a card the store refused
+    because the first words were settled before."""
     if not asks:
         return None
     named = [_name(a["statistic_id"], names) for a in asks]
     reasons = []
-    for a in asks[:MAX_NAMED]:
+    for a in asks:
         reasons.append(f"{_name(a['statistic_id'], names)}: {a['why']}")
     many = len(asks) > 1
-    text = (f"Clear the old long-term statistics of {_join(named)}?")
-    claim = ("Home Assistant flags the long-term statistics of "
-             f"{_join(named)}. " + "; ".join(reasons) + ". The only fix "
+    text = _text(named, again)
+    claim = ("Home Assistant " + ("still flags" if again else "flags")
+             + f" the long-term statistics of {_join(named)}. "
+             + "; ".join(reasons) + ". The only fix "
              "Home Assistant offers deletes that history, so brAIn has not "
              "done it on its own. Shall brAIn clear "
              + ("them" if many else "it") + "? The sensor"
@@ -378,6 +419,10 @@ def load(path: Path | str | None = None) -> dict:
     # The Nos: `{statistic_id: {"at", "card", "type"}}`.
     if not isinstance(data.get("declined"), dict):
         data["declined"] = {}
+    # Cards the findings store refused: `{statistic_id: at}`, asked again
+    # in other words after `REFUSED_S`.
+    if not isinstance(data.get("refused"), dict):
+        data["refused"] = {}
     return data
 
 
@@ -390,6 +435,9 @@ def save(store: dict, path: Path | str | None = None,
     store["declined"] = {
         sid: rec for sid, rec in (store.get("declined") or {}).items()
         if isinstance(rec, dict) and now - float(rec.get("at") or 0) < DECLINED_S}
+    store["refused"] = {
+        sid: at for sid, at in (store.get("refused") or {}).items()
+        if now - float(at or 0) < 7 * REFUSED_S}
     atomic_write.write_json(Path(path) if path else STORE, store)
 
 
@@ -437,6 +485,7 @@ def to_ask(store: dict, asks: list[dict], now: float) -> list[dict]:
     `DECLINED_S`."""
     open_ids = {a.get("statistic_id") for a in store.get("asked") or []}
     declined = store.get("declined") or {}
+    refused = store.get("refused") or {}
     out = []
     for a in asks or []:
         sid = a["statistic_id"]
@@ -445,18 +494,37 @@ def to_ask(store: dict, asks: list[dict], now: float) -> list[dict]:
         rec = declined.get(sid)
         if isinstance(rec, dict) and now - float(rec.get("at") or 0) < DECLINED_S:
             continue
+        if sid in refused and now - float(refused[sid] or 0) < REFUSED_S:
+            continue
         out.append(a)
     return out
 
 
 def note_asked(store: dict, asks: list[dict], card, now: float) -> None:
-    """These statistics are on the card `card`. A No that had lapsed goes:
-    the new card's answer is the one that counts now."""
+    """These statistics are on the card `card`. A No that had lapsed goes,
+    and so does a refusal: the new card's answer is the one that counts."""
     store.setdefault("asked", []).extend(
         {"statistic_id": a["statistic_id"], "type": a.get("type"),
          "at": int(now), "card": str(card)} for a in asks)
     for a in asks:
         (store.get("declined") or {}).pop(a["statistic_id"], None)
+        (store.get("refused") or {}).pop(a["statistic_id"], None)
+
+
+def note_refused(store: dict, asks: list[dict], now: float) -> None:
+    """The findings store refused the card (its words were settled before
+    by something that was not a No): not a No. Asked again after
+    `REFUSED_S`, in other words (`asked_before`)."""
+    refused = store.setdefault("refused", {})
+    for a in asks:
+        refused[a["statistic_id"]] = int(now)
+
+
+def asked_before(store: dict, asks: list[dict]) -> bool:
+    """Whether any of these was on a card the store refused, so the next
+    card is worded differently from the one that was."""
+    refused = store.get("refused") or {}
+    return any(a["statistic_id"] in refused for a in asks)
 
 
 def note_declined(store: dict, asks: list[dict], now: float,
@@ -523,8 +591,9 @@ def mark_undone(store: dict, change_id: str, at: float) -> dict | None:
 
 __all__ = [
     "CHANNEL", "CLEAR_ONLY", "DECLINED_S", "EXCLUDED_ON_PURPOSE",
-    "INTERVAL_S", "RETRY_S", "SOURCE", "SOURCE_TITLE", "answer", "ask_row",
-    "change_title", "due", "entry", "forget_answer", "issues_from", "load",
-    "mark_undone", "note_asked", "note_declined", "open_questions", "plan",
-    "save", "to_ask", "undoable", "verify",
+    "INTERVAL_S", "MAX_NAMED", "NO_KINDS", "REFUSED_S", "RETRY_S", "SOURCE",
+    "SOURCE_TITLE", "TEXT_BUDGET", "answer", "ask_row", "asked_before",
+    "batch", "change_title", "due", "entry", "forget_answer", "issues_from",
+    "load", "mark_undone", "note_asked", "note_declined", "note_refused",
+    "open_questions", "plan", "save", "to_ask", "undoable", "verify",
 ]

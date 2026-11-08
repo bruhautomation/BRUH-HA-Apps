@@ -6,7 +6,7 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ### Added
 
-- brAIn keeps Home Assistant's long-term statistics healthy itself, so the statistics issues on the Repairs page do not need a press each. Once a day, after brAIn starts, after Home Assistant restarts or is updated (and only once it has fully started), it fixes a changed unit the sensor already reports when no conversion between the two exists, and deletes the statistics of a sensor that is disabled, or that is not in the entity registry and has been missing on two passes hours apart; a live sensor's history is only ever cleared on a Yes to a question that names it, a Yes clears only what that card named, a No is remembered, and sensors excluded from the recorder are left alone. Each change is in History with an Undo where it can be put back (#576).
+- brAIn keeps Home Assistant's long-term statistics healthy itself, so the statistics issues on the Repairs page do not need a press each. Once a day, after brAIn starts, after Home Assistant restarts or is updated (and only once it has fully started), it fixes a changed unit the sensor already reports when no conversion between the two exists, and deletes the statistics of a sensor that is disabled, or that is not in the entity registry and has been missing on two passes hours apart; a live sensor's history is only ever cleared on a Yes to a question that names it, a Yes clears only what that card named (a card names up to five at a time; the rest are asked on a later one), a No is remembered, and sensors excluded from the recorder are left alone. Each change is in History with an Undo where it can be put back (#576).
 
 ## 5.1.10
 

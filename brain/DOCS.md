@@ -2178,7 +2178,7 @@ button — and:
 | A sensor's unit changed, the sensor reports the new unit now, and the two cannot be converted | Sets the statistics' unit to it, without touching any history |
 | A unit that could be converted (Wh to kWh) | Nothing: relabelling would change what every old value means |
 | Statistics for a sensor you disabled, or one the entity registry does not know that has been missing on two passes at least six hours apart | Deletes those statistics |
-| A sensor that no longer has a state class, or reports a different kind of average | Asks you in Today: *Clear the old long-term statistics of …?* Only **Yes** deletes them, and only the ones that card names |
+| A sensor that no longer has a state class, or reports a different kind of average | Asks you in Today: *Clear the old long-term statistics of …?* Only **Yes** deletes them, and only the ones that card names; a card names up to five, and the rest are asked on a later one |
 | A sensor the recorder leaves out because you excluded it | Nothing, and it never asks |
 
 A **No** is remembered: those statistics are never deleted and you are not
