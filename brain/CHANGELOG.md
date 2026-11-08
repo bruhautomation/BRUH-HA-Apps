@@ -2,6 +2,17 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.10
+
+### Changed
+
+- Settings › Features is one card with the four switches as rows divided by lines, each description is three lines or fewer on a phone, and Morph's experimental note is part of its description (#746).
+
+### Fixed
+
+- On a phone an open Settings section no longer says "Settings" twice above its title (#744).
+- A Deep review that cannot run says "Sign in to Claude in Settings › Account first", and its disabled Run is readable (#745).
+
 ## 5.1.9
 
 ### Changed
