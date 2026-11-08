@@ -4,7 +4,7 @@
      change lessons.json, then run `python3 scripts/lessons.py render --write`. -->
 
 Last retro: 2026-11-03
-Last UX audit: 2026-10-30
+Last UX audit: 2026-11-08
 
 The fixer reads this index at the start of every run. Each line is one
 lesson: its id, how it is held (a guard rule, a test, a hook, or only
