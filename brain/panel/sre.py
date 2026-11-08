@@ -2408,7 +2408,7 @@ def _judge_load_error(recs: list[dict], dig: dict) -> tuple[str, str]:
     if named and len(reporting) == len(named):
         who = _and([names.get(e) or _spoken(e) for e in reporting][:3])
         return ("transient", f"{who} reports a state now, so it loaded; the "
-                "error was not about anything that is failing")
+                + "error was not about anything that is failing")
     failing = [e for e in named if e not in reporting
                and (e not in known or (health.get(e) or {}).get("state", "")
                     in _DOWN)]
@@ -2421,7 +2421,7 @@ def _judge_load_error(recs: list[dict], dig: dict) -> tuple[str, str]:
                                            (int, float))]
     if count < 2 or any(s < last for s in since):
         return ("downgrade", "the error has not come back since it was "
-                "last loaded")
+                + "last loaded")
     return ("", "")
 
 
