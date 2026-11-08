@@ -1042,6 +1042,15 @@ def shown_fix(entry: dict) -> str:
     """
     entry = entry if isinstance(entry, dict) else {}
     fix = str(entry.get("fix") or "")
+    # And whatever wrote it, the step is the household's to carry out
+    # (#736): no path, line number or tool name (brAIn's own upkeep is
+    # brAIn's), no "nothing is needed" under a what-to-do heading, and from
+    # a model no errand to check what brAIn reads itself — a check's own
+    # sentences are held to plain words by their rule's tests. Nothing left
+    # is no step, and a surface shows no heading over nothing.
+    check = str(entry.get("source") or "").startswith("check:")
+    fix = house_words.household_step(
+        fix, own_checks=bool(entry.get("fix_by")) or not check)
     if not fix or entry.get("fix_by"):
         return fix
     # A house-book question filed before its sentence changed said "Answer
@@ -1049,7 +1058,7 @@ def shown_fix(entry: dict) -> str:
     # one (#502). Read as today's sentence; the row itself is untouched.
     if entry.get("source") == "house_book" and fix == _HOUSE_BOOK_OLD_FIX:
         return _HOUSE_BOOK_FIX
-    if not str(entry.get("source") or "").startswith("check:"):
+    if not check:
         return fix
     look = shown_look(_clean_triage(entry.get("triage")), entry)
     if isinstance(look, dict) and str(look.get("reason") or "").strip():
@@ -2867,6 +2876,13 @@ def add_case(row: dict, *, run_id: str = "", when: float | None = None) -> dict 
     """
     if not isinstance(row, dict):
         return None
+    # A case pointing at a line of brAIn's own instructions that brAIn can
+    # find is brAIn's own question, read off the words as the run wrote
+    # them — the plain pass below takes the file and line out (#736).
+    care = _self_care({**row, "source": str(row.get("source")
+                                           or RESIDENT_SOURCE)})
+    if care:
+        row = {**row, **care}
     # A case is a model's sentence: stored in the house's own words, `text`
     # included where it is the claim (the Resident's), and left alone where
     # code chose it as a key (`SUBJECT_FOLD_EXCLUDED`'s producers).
@@ -4451,8 +4467,12 @@ def set_fix(ts: int, fix: str, by: str) -> dict | None:
     row cannot name (`FIX_AUTHORS`); answers None for a row that is gone.
     """
     # Every author on `FIX_AUTHORS` is a model, so its sentence is stored
-    # in the house's words.
-    fix = textclip.shorten(plain(str(fix or "").strip()), MAX_FIX)
+    # in the house's words — the same pass every model row takes, its
+    # developer words out (#736).
+    fix = str(_plain_row({"source": RESIDENT_SOURCE,
+                          "fix": str(fix or "").strip()},
+                         ("fix",)).get("fix") or "")
+    fix = textclip.shorten(fix.strip(), MAX_FIX)
     if (not fix or by not in FIX_AUTHORS or house_words.placeholder(fix)
             or house_words.fork(fix)):
         return None

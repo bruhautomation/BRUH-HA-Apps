@@ -849,6 +849,43 @@ def _tool_re():
         + r")(?!\w|\.\w)`?")
 
 
+_LINE_NO_RE = re.compile(r"\bline\s+\d+\b", re.I)
+
+
+def developer_sentence(sentence: str) -> bool:
+    """Whether a sentence holds what only a developer acts on: a file path
+    or name, a line number, one of brAIn's tool names."""
+    text = str(sentence or "")
+    if not text:
+        return False
+    if _FILE_RE.search(text) or _LINE_NO_RE.search(text) \
+            or _MCP_RE.search(text):
+        return True
+    tools = _tool_re()
+    return bool(tools is not None and tools.search(text))
+
+
+def household_step(text: str, *, own_checks: bool = True) -> str:
+    """``text`` as a step the household carries out (#736): less every
+    sentence holding a path, a line number or a tool name (brAIn's own
+    upkeep is brAIn's), every "nothing is needed" (a result, not a step),
+    and — with ``own_checks`` — every sentence asking somebody to check
+    what brAIn reads itself. "" when nothing of it is left."""
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    import triage  # noqa: PLC0415 — the one NOTHING_RE, read lazily
+    kept = []
+    for sentence in _LOG_SENTENCES.split(text.strip()):
+        if not sentence.strip():
+            continue
+        if developer_sentence(sentence) or triage.NOTHING_RE.search(sentence):
+            continue
+        if own_checks and _SELF_CHECK.search(sentence):
+            continue
+        kept.append(sentence.strip())
+    return " ".join(kept).strip()
+
+
 def without_files(text: str) -> str:
     """``text`` with every file path, file name and line number in it said
     as "a configuration file" — and nothing else of `technical`'s touched,
