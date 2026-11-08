@@ -2402,13 +2402,62 @@ def is_drop_report(entry: dict) -> bool:
                                   or str(entry.get("text") or "")))
 
 
+# One cause, one row (#582). A device's link — weak, dropping, unavailable —
+# is upstream of what it reports late: a lock on a weak Bluetooth link was a
+# "weak signal" row and a "stopped reporting its battery" row with two
+# different steps, and nothing said the first probably explains the second.
+# So a row about a device's battery going low or quiet (`LINK_SYMPTOM_CHECKS`,
+# or a model's row saying so) folds into a live row about the SAME device's
+# link: the link's row is the card and its step is said first, and the
+# battery row stays on it as evidence naming the shared cause. A symptom
+# row never hosts, so two battery rows with no link row stay apart, and the
+# refusals are `_fold_shared`'s (a safety or security row never folds).
+WEAK_LINK_CHECKS = frozenset({"check:net.zwave_link", "check:net.zigbee_weak"})
+LINK_SYMPTOM_CHECKS = frozenset({"check:dev.battery_low"})
+WEAK_LINK_RE = re.compile(
+    r"\b(?:weak|poor|low|bad|marginal|unreliable)\s+(?:(?:bluetooth|ble|"
+    r"wi-?fi|zigbee|z-?wave|radio|wireless)\s+)?(?:signal|link|connection|"
+    r"reception)\b|\bsignal\s+(?:is\s+|was\s+)?(?:weak|poor)\b", re.I)
+LINK_SYMPTOM_RE = re.compile(
+    r"\bbattery\b|\b(?:stale|late|delayed)\s+(?:readings?|reports?|"
+    r"values?|updates?)\b", re.I)
+SAME_LINK = "Likely the same link trouble: "
+
+
+def _said(entry: dict) -> str:
+    return str(entry.get("claim") or "") or str(entry.get("text") or "")
+
+
+def is_link_report(entry: dict) -> bool:
+    """Whether a row reports a device's link: dropping off, or weak."""
+    if is_drop_report(entry):
+        return True
+    source = str(entry.get("source") or "")
+    if source in WEAK_LINK_CHECKS:
+        return True
+    if source.startswith("check:"):
+        return False
+    return bool(WEAK_LINK_RE.search(_said(entry)))
+
+
+def is_link_symptom(entry: dict) -> bool:
+    """Whether a row reports what a weak link shows up as on the device
+    itself: a battery low or gone quiet, a late reading."""
+    source = str(entry.get("source") or "")
+    if source in LINK_SYMPTOM_CHECKS:
+        return True
+    if source.startswith("check:"):
+        return False
+    return bool(LINK_SYMPTOM_RE.search(_said(entry)))
+
+
 def _row_devices(entry: dict, names: dict) -> set[str]:
     """The keys a row is folded on: ``int:<domain>`` for a row about an
     integration as a whole, else the devices its entities are on."""
     integration = str(entry.get("integration") or "")
     if integration:
         return {f"int:{integration}"}
-    if not is_drop_report(entry):
+    if not (is_link_report(entry) or is_link_symptom(entry)):
         return set()
     out = set()
     for eid in _devices_named(entry) | set(entry.get("about") or ()):
@@ -2432,9 +2481,12 @@ def _fold_devices(items: list[dict]) -> set[int]:
                 rows.append((f, keys))
     if len(rows) < 2:
         return set()
-    # The widest first, then a house check, then the oldest: the order in
+    # A link's row before a symptom's, so the cause hosts what it explains;
+    # then the widest, then a house check, then the oldest: the order in
     # which a row becomes the card the others are folded into.
-    rows.sort(key=lambda r: (-len(r[1]),
+    symptom = {id(f) for f, keys in rows
+               if not f.get("integration") and not is_link_report(f)}
+    rows.sort(key=lambda r: (id(r[0]) in symptom, -len(r[1]),
                              not str(r[0].get("source") or "").startswith("check:"),
                              int(r[0].get("ts") or 0)))
     hosts: list[tuple[dict, set]] = []
@@ -2443,10 +2495,15 @@ def _fold_devices(items: list[dict]) -> set[int]:
         host = next((h for h, hk in hosts if keys <= hk and _may_host(h, f)),
                     None)
         if host is not None and _may_fold_away(f):
+            if id(f) in symptom:
+                # What it reported stays on the card, saying why it is here.
+                f = {**f, "claim": textclip.clip(SAME_LINK + _said(f),
+                                                 MAX_EVIDENCE_VALUE)}
             _take_in(host, f, counts=True)
             gone.add(int(f.get("ts") or 0))
             continue
-        hosts.append((f, keys))
+        if id(f) not in symptom:
+            hosts.append((f, keys))
     if gone:
         items[:] = [f for f in items if int(f.get("ts") or 0) not in gone]
         log.info("folded %d finding(s) into the card about their device",
