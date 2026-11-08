@@ -494,8 +494,10 @@ HOUSE_TZ = None
 # (the tripwire's card must never name its entity).
 # A Minecraft approval (`minecraft_approvals.py`) is written by code from
 # the call it holds, and its words name that call.
+# A statistics question (`stats_upkeep.ask_row`) is written by code from
+# the recorder's own issues.
 PLAIN_EXEMPT = frozenset({"correction", "safety", "security", "self_care",
-                          "minecraft_approval"})
+                          "minecraft_approval", "statistics"})
 # Who brAIn is here, the one stored answer (`personality.identity`):
 # `IDENTITY() -> {"name", "voice"}`, handed in by the panel. A model's
 # sentence about brAIn's voice reads it (`house_words.self_said`); unset,

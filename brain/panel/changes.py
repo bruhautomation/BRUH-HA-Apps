@@ -79,6 +79,10 @@ WHERE = {
     # scope, and a grown-up who can ask for anything (⚙ › Minecraft).
     "minecraft": "from Minecraft",
     "minecraft_trusted": "from Minecraft",
+    # Home Assistant's long-term statistics, kept healthy on a schedule
+    # (`stats_upkeep`), and a statistic cleared on a Yes to its question.
+    "upkeep": "routine upkeep",
+    "answer": "from a question you answered",
 }
 # Service calls whose effect is a message: nothing on a device to put back.
 MESSAGE_DOMAINS = frozenset({"notify", "persistent_notification", "tts"})
@@ -180,13 +184,15 @@ def build(*, journal: list[dict], ledger: list[dict], fixes: list[dict],
           tidy_batches: list[dict], intents: list[dict],
           accepted: list[dict], names: dict | None = None,
           mtime=None, protected=None, honeytokens=(),
-          now: float = 0.0, mc_jobs: list[dict] | None = None) -> list[dict]:
+          now: float = 0.0, mc_jobs: list[dict] | None = None,
+          stat_changes: dict | None = None) -> list[dict]:
     """Every change, newest first, as History rows.
 
     ``mtime`` is ``path -> epoch | None`` (a file's modification time), and
     ``protected``/``honeytokens`` are the restore press's own refusals.
     ``mc_jobs`` is the Minecraft companion's jobs (its jobs.json): one row
     for each that ended having changed the world, its Undo the faculty's.
+    ``stat_changes`` is `stats_upkeep`'s store: one row per statistics fix.
     """
     names = names or {}
     since = now - CHANGES_DAYS * 86400
@@ -343,6 +349,33 @@ def build(*, journal: list[dict], ledger: list[dict], fixes: list[dict],
         title = f"{verb} “{str(job.get('title') or 'a job')[:80]}” in Minecraft"
         rows.append(_row(f"mcjob:{job.get('id')}", "mcjob", title, at, where, press,
                          reason))
+
+    # Home Assistant's long-term statistics brAIn fixed (`stats_upkeep`):
+    # a unit it set is put back by its Undo; a cleared history is gone.
+    if stat_changes:
+        import stats_upkeep  # noqa: PLC0415 — panel-local
+
+        offered = stats_upkeep.undoable(stat_changes)
+        for c in stat_changes.get("changes") or []:
+            at = float(c.get("at") or 0)
+            if at < since or not c.get("ok"):
+                continue
+            cid = str(c.get("id") or "")
+            reason = ""
+            if c.get("action") != "unit":
+                reason = "Deleted history cannot be put back."
+            elif c.get("undone_at"):
+                reason = "It has already been put back."
+            elif cid not in offered:
+                reason = ("A later change to the same statistics is listed "
+                          "above — undo that one first.")
+            press = None if reason else _press(
+                "Undo", f"/api/statistics/undo/{cid}",
+                "Puts the unit of these statistics back to what it was. "
+                "brAIn will not change it again.")
+            rows.append(_row(f"stat:{cid}", "statistics",
+                             stats_upkeep.change_title(c, names), at,
+                             where_words(c.get("channel")), press, reason))
 
     rows.sort(key=lambda r: r["at"], reverse=True)
     return rows
