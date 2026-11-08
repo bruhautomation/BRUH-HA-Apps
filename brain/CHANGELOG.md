@@ -2,11 +2,35 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
-## Unreleased
+## 5.1.11
 
 ### Added
 
 - brAIn keeps Home Assistant's long-term statistics healthy itself, so the statistics issues on the Repairs page do not need a press each. Once a day, after brAIn starts, after Home Assistant restarts or is updated (and only once it has fully started), it fixes a changed unit the sensor already reports when no conversion between the two exists, and deletes the statistics of a sensor that is disabled, or that is not in the entity registry and has been missing on two passes hours apart; a live sensor's history is only ever cleared on a Yes to a question that names it, a Yes clears only what that card named, a No is remembered, and sensors excluded from the recorder are left alone. Each change is in History with an Undo where it can be put back (#576).
+
+## 5.1.10
+
+### Changed
+
+- Settings › Features is one card with the four switches as rows divided by lines, each description is three lines or fewer on a phone, and Morph's experimental note is part of its description (#746).
+
+### Fixed
+
+- On a phone an open Settings section no longer says "Settings" twice above its title (#744).
+- A Deep review that cannot run says "Sign in to Claude in Settings › Account first", and its disabled Run is readable (#745).
+
+## 5.1.9
+
+### Changed
+
+- A device's late or low battery report is shown on the same card as that device's weak, dropping or unavailable connection, which is the step said first, with the battery report kept on the card as probably the same trouble (#582).
+
+### Fixed
+
+- A finding saying something is offline or unplugged is checked against the device's latest state just before it is shown, and is not shown once the device is back. A reminder figure more than ten times its own interval is asked about as the reminder's setting, never stated as overdue (#722).
+- The overnight check no longer files a single logged "could not load" error as serious when what it named reports a state, or when the error has not come back since it last loaded: it files nothing, or files it as information without a file name or line number (#723).
+- What a card says to do never holds a file path, a line number or one of brAIn's tool names, never asks you to check something brAIn can read itself, and "Nothing is needed" is no longer shown under a what-to-do heading. A report about a line of brAIn's own instructions becomes brAIn's own yes/no question (#736).
+- A sensor you said is broken is no longer raised by the impossible-readings check or looked into by brAIn, and is not used as evidence for a fault; leak, smoke and gas sensors, locks, alarms and protected devices are still watched whatever was said (#701).
 
 ## 5.1.8
 

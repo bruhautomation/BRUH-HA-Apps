@@ -713,8 +713,10 @@ def _all_cases(snoozes: dict[str, int], stores=STORES) -> list[dict]:
     stores = set(stores)
     out: list[dict] = []
     if "findings" in stores:
+        # A row whose "it is down" no longer holds is not shown (#722).
         out += [_from_finding(row, snoozes) for row in findings_store.list_all()
-                if row.get("text") and row.get("status") in _FINDING_STATUS]
+                if row.get("text") and row.get("status") in _FINDING_STATUS
+                and findings_store.holds_now(row)]
     if "proposals" in stores:
         out += [_from_proposal(row, snoozes) for row in proposals.listing()
                 if row.get("status") in proposals.OPEN_STATUSES]

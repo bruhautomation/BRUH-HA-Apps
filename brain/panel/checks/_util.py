@@ -715,11 +715,13 @@ class House:
         if self._never_covered(entity_id, check_id):
             return None
         finished = check_id in DEVICE_FINISHED
+        gone = broken = None
         try:
             import corrections  # noqa: PLC0415 — lazy: it imports the stores
             gone = corrections.gone_for_good
+            broken = corrections.broken_answer
         except Exception:  # noqa: BLE001
-            gone = None
+            pass
         own = (answers.get(entity_id) or {}).get(check_id)
         limit = 1 if check_id in ANSWERED_ONCE else WRONG_LIMIT
         if isinstance(own, dict) and int(own.get("wrong") or 0) >= limit:
@@ -730,11 +732,21 @@ class House:
         # Said on any card, not only this check's: "I don't use that remote
         # any more" on a Resident case or an overnight card is the same
         # device finished with (`corrections.known_faulty`, #697).
+        # Through the one helper every reader shares (#701): the floors
+        # are this entity's, whichever entity of the device was answered,
+        # and the drop goes on the trail.
         faulty = self.snap.get("faulty")
         if finished and isinstance(faulty, dict) and faulty:
             for eid in [entity_id, *self.siblings(entity_id)]:
-                if faulty.get(eid):
-                    return {"text": str(faulty[eid]), "scope": "answers"}
+                said = broken(eid, check_id, faulty=faulty,
+                              never=lambda _e, c: self._never_covered(
+                                  entity_id, c),
+                              note=lambda row: self._note(
+                                  {**row, "subject": entity_id}),
+                              ) if broken else str(faulty.get(eid) or "")
+                if said:
+                    return {"text": said, "scope": "answers",
+                            "noted": bool(broken)}
         if not (finished and gone):
             return None
         for eid in [entity_id, *self.siblings(entity_id)]:
@@ -776,6 +788,9 @@ class House:
             or self.answered_off(entity_id, check_id)
         if rule is None:
             return True
+        if rule.get("noted"):
+            # Its own trail entry is written (`corrections.broken_answer`).
+            return False
         self._note({"kind": "exception", "subject": entity_id,
                     "check": check_id,
                     "reason": str(rule.get("text") or
