@@ -6,9 +6,9 @@ sensor, and then the impossible-readings check and the Resident's first
 look both raised that sensor's readings again. ONE helper now says whether
 such an answer covers an entity (`corrections.broken_answer`), and every
 reader shares it: the device checks through `House.answered_off` (so
-`dev.implausible` with them) and the first look before its batch is built
-(`resident.set_aside_broken`: whatever the look
-said of such a sensor, it is let go). It applies the never-ignore floors FIRST —
+`dev.implausible` with them), the investigation gate, and the first look
+(`resident.set_aside_broken`: whatever the look said of such a sensor, it
+is let go). It applies the never-ignore floors FIRST —
 a leak, smoke or gas sensor, a lock, an alarm, the protected list and the
 security checks are reasoned about whatever was said — writes a decision
 trail entry for every row it drops, and reads only the broken wording that
