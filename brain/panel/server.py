@@ -13972,6 +13972,25 @@ def _used_by_map(snapshot: dict) -> dict[str, list[str]]:
         if name:
             note(house.entity_refs(cfg) - {f"script.{key}"},
                  f"script “{name[:80]}”")
+    # And every other entity on a device something uses: a door sensor's
+    # signal-strength reading is not named by the auto-lock that reads its
+    # contact, but the radio it reports is the one the contact rides on —
+    # so a look handed "only a signal-strength note" was handed nothing
+    # behind it, and passed it over twice.
+    by_device: dict[str, list[str]] = {}
+    for row in house.entities:
+        if row.get("device_id") and row.get("entity_id"):
+            by_device.setdefault(str(row["device_id"]), []).append(
+                str(row["entity_id"]))
+    direct = {eid: list(users) for eid, users in out.items()}
+    for members in by_device.values():
+        for eid in members:
+            if eid in direct:
+                continue
+            for other in members:
+                for label in direct.get(other, ()):
+                    note({eid}, f"{label} (through {other}, on the same "
+                                "device)")
     return out
 
 
@@ -14758,6 +14777,11 @@ async def _resident_look(now: float, settings: dict, thinking: str,
         if note:
             notes.append(note)
     look_inputs: dict = {}   # what the prompt was built from, for a capture
+    # One read of the graded log for both of its uses: the worked examples,
+    # and the subjects the household keeps saying mattered after a look
+    # passed them over — shown to the look AND floored after its reply.
+    graded_items = await asyncio.to_thread(_graded_items, now)
+    passed_over = outcomes.overruled(graded_items)
     prompt = resident.first_look_prompt(
         # `numbered=False`: `first_look_prompt` lays the rows out in its own
         # numbered list, and two numbers on one row is a reply that means
@@ -14775,9 +14799,12 @@ async def _resident_look(now: float, settings: dict, thinking: str,
         await asyncio.to_thread(_open_case_rows),
         now_line=_now_line(now), watch_notes=notes,
         used_by=_used_by_rows(outcomes.scope_subjects(batch)),
-        examples=await asyncio.to_thread(_outcome_examples, batch, now),
+        controlled_by=_controlled_by_rows(outcomes.scope_subjects(batch)),
+        examples=await asyncio.to_thread(_outcome_examples, batch, now,
+                                         graded_items=graded_items),
         situation_line=await asyncio.to_thread(_situation_line, now),
         rule_records=await asyncio.to_thread(_rule_records, batch),
+        passed_over=outcomes.overruled_lines(batch, passed_over),
         inputs=look_inputs)
     TRIAGE_STATE["runs"] = _triage_runs_today(now) + 1
     RESIDENT_STATE["last_look_at"] = now
@@ -14823,7 +14850,9 @@ async def _resident_look(now: float, settings: dict, thinking: str,
         RESIDENT_STATE.get("batch_limit"))
     await asyncio.to_thread(_capture_look, settings, run_id, batch,
                             look_inputs, result, cost, now)
-    verdicts = resident.parse_first_look(_answer(result), len(batch), batch)
+    verdicts = resident.parse_first_look(
+        _answer(result), len(batch), batch,
+        floors=outcomes.overruled_floors(batch, passed_over))
     return await _resident_apply(batch, verdicts, run_id, now, settings,
                                  thinking, surfaced, len(watched_off))
 
@@ -15681,8 +15710,19 @@ async def _outcome(signal: dict, result: str, run_id: str, now: float,
         asked=why, refines=refines, row=row, case=case, escalated=escalated)
 
 
+def _graded_items(now: float) -> list[dict]:
+    """The graded log, one entry per thing judged. Never raises: a log
+    that cannot be read is no record, which floors nothing."""
+    try:
+        return outcomes.items(outcomes.load_graded(now))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not grade the verdict log for a look: %s", exc)
+        return []
+
+
 def _outcome_examples(batch: list[dict], now: float, *,
-                      investigating: bool = False) -> list[str]:
+                      investigating: bool = False,
+                      graded_items: list[dict] | None = None) -> list[str]:
     """Past calls like these, with what the household did — for a prompt.
 
     An investigation gets fewer, and the calibration sentence above them:
@@ -15702,7 +15742,8 @@ def _outcome_examples(batch: list[dict], now: float, *,
             note = outcomes.calibration_note(facts_store.with_predicate(
                 outcomes.CALIBRATION_PREDICATE, now))
             return ([f"Your own calibration: {note}"] if note else []) + lines
-        return outcomes.examples_for(batch, now, tz=tz)
+        return outcomes.examples_for(batch, now, tz=tz,
+                                     graded_items=graded_items)
     except Exception as exc:  # noqa: BLE001
         log.debug("could not build the worked examples: %s", exc)
         return []
@@ -21500,6 +21541,12 @@ def _cases_payload(now: float | None = None) -> dict:
         except Exception:  # noqa: BLE001 — a row that cannot be read is not urgent
             case["urgent"] = False
         case["chip"] = answers_mod.chip(case, case["urgent"])
+        # Ignore's reason chips on the Resident's own reports
+        # (`answers.reason_chips`): words for the box, never a press.
+        chips = answers_mod.reason_chips(case, case["urgent"])
+        for press in (*case["answers"], *case["more"]):
+            if chips and press.get("verb") == "wrong":
+                press["chips"] = chips
         # Which heading on Needs you it is read under (`answers.group`).
         case["group"] = answers_mod.group(case, case["urgent"])
         case["mutable"] = bool(case.get("source")) and (
@@ -21793,6 +21840,13 @@ def _findings_payload() -> dict:
         gap = (row.get("kind") == "question"
                and row.get("source") == answers_mod.HOUSE_BOOK_SOURCE)
         row["who"] = _who_for("answer" if gap else "todo", name=name)
+        # A card no case covers is drawn with its own Ignore, which offers
+        # the same chips a case's would (`answers.reason_chips`).
+        try:
+            urgent = bool(notify_router.is_urgent(row))
+        except Exception:  # noqa: BLE001 — unreadable is not urgent; the
+            urgent = False  # other rules still hold the chips back
+        row["reason_chips"] = answers_mod.reason_chips(row, urgent)
     for row in open_claims:
         row["who"] = _who_for("yes", name=name)
     # The badge's number, and it is THE queue count (`cases.queue_count`)

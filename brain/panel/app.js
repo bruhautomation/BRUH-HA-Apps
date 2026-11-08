@@ -6153,6 +6153,27 @@ function openNoteForm(card, actions, onSend, opts) {
   // hint: it is one tap to send and still edits, where a placeholder is
   // the thing somebody has to retype.
   if (opts.prefill) ta.value = opts.prefill;
+  // Short reasons as chips (`answers.reason_chips`, the Resident's own
+  // reports). A chip writes its words into the box and sends nothing: the
+  // reason is still the box's, so a chip and a typed reason are one path,
+  // and the words still edit before Send.
+  if (opts.chips && opts.chips.length) {
+    const chips = el("div", "findnotechips");
+    chips.setAttribute("role", "group");
+    chips.setAttribute("aria-label", "Quick reasons");
+    opts.chips.forEach((words) => {
+      const chip = el("button", "findnotechip", words);
+      chip.type = "button";
+      chip.setAttribute("aria-pressed", "false");
+      chip.addEventListener("click", () => {
+        ta.value = words;
+        chips.querySelectorAll(".findnotechip").forEach((c) =>
+          c.setAttribute("aria-pressed", c === chip ? "true" : "false"));
+      });
+      chips.appendChild(chip);
+    });
+    form.appendChild(chips);
+  }
   form.appendChild(ta);
   // An optional box beside the note, for the one ending that has a second
   // thing to say: "Wrong — and stop raising these". `opts.check` is its
@@ -7078,6 +7099,7 @@ function askThenRun(row, answer, btns) {
       prefill: answer.prefill || "",
       check: ignore && answer.verb === "wrong" && row.mutable
         ? "Ignore all like this" : "",
+      chips: ignore ? answer.chips || [] : [],
     });
 }
 
@@ -7337,6 +7359,7 @@ function makeLooseFinding(f) {
     hint: "Why? (helps brAIn learn)",
     placeholder: "That sensor always reads on — it's not stuck.",
     send: "Ignore",
+    chips: f.reason_chips || [],
   }));
   if (fold) {
     const menu = cardMenuButton(secondary.map(([label, hint, fn]) => ["", label, hint, fn]));
