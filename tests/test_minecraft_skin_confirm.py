@@ -140,7 +140,8 @@ class TestTheAnswerArrivesLate(SkinCase):
 
 class TestTheBridge(BridgeTestCase):
     def test_the_skin_kind_answers_with_skinsrestorers_words(self):
-        log = self.bridge.CONSOLE_LOG
+        # Its own console file: MC_CONSOLE_LOG may name another test's.
+        log = self.bridge.CONSOLE_LOG = Path(self.tmp.name) / "console.log"
         log.write_text("")
         server = Path(self.tmp.name) / "server"
         server.mkdir()

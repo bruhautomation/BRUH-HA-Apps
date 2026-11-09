@@ -1744,8 +1744,8 @@ class Companion:
             focus = {"x": (min(xs) + max(xs)) // 2, "y": max(ys), "z": (min(zs) + max(zs)) // 2,
                      "dimension": dim}
             return dict(act, cells=sum(c["n"] for c in cells), changed=len(changed),
-                        undoable=undoable(act), backup_note=backup_note, focus=focus,
-                        dimension=dim)
+                        undoable=undoable(act), backup_note=backup_note, dimension=dim,
+                        focus=focus)
 
     def _restore(self, act: dict[str, Any]) -> dict[str, int]:
         """Put back each cell that still holds what was placed."""
