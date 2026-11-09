@@ -1692,7 +1692,7 @@ def _call_refusal(domain, service, data, script, extra):
     return None
 
 
-def call_service(domain, service, data=None, return_response=False):
+def call_service(domain, service, data=None, return_response=False, timeout=None):
     """Call a Home Assistant service.
 
     Single chokepoint: every control_* tool, activate_scene, run_script,
@@ -1702,7 +1702,9 @@ def call_service(domain, service, data=None, return_response=False):
     With return_response the call goes over the WebSocket API, which is the
     only transport that returns service response data (e.g. the area_id
     from brain.create_area, or the orphan list from
-    brain.delete_orphaned_entities).
+    brain.delete_orphaned_entities). `timeout` (seconds, response calls
+    only) is for a service that answers late: BRUH Minecraft's `set_skin`
+    waits up to 45 s for SkinsRestorer.
     """
     domain, service = str(domain or ""), str(service or "")
     # `script.<object_id>` runs that script exactly as `script.turn_on` on it
@@ -1738,9 +1740,14 @@ def call_service(domain, service, data=None, return_response=False):
                 "service": service,
                 "service_data": payload,
                 "return_response": True,
-            })
+            }, **({"timeout": timeout} if timeout else {}))
         except ImportError:
             return {"error": "websockets package not available in this environment"}
+        except TimeoutError as e:
+            # The call went out and no answer came back in time: what it did
+            # is unknown, and the caller may say so rather than "it failed".
+            return {"error": str(e) or "Home Assistant did not answer in time",
+                    "timed_out": True}
         except Exception as e:  # noqa: BLE001
             return {"error": str(e)}
         if isinstance(result, dict) and "error" in result:
@@ -2822,7 +2829,10 @@ VOICE_ADMIN_SERVICES = frozenset({
         "rename_world", "undo_action", "ask_choice", "set_zone", "companion_say",
         "companion_build", "companion_appear", "set_companion", "companion_handover",
         "companion_edit", "look_blocks", "atlas", "room", "label_place",
-        "companion_progress", "give_spyglass")
+        "companion_progress", "give_spyglass",
+        # A skin is a console command by another name (#760): held where
+        # `rcon_command`'s skin is held, so voice reaches neither.
+        "set_skin")
 } | {("bright", "import_show")} | {
     # Voice may design a part and start a print (the owner's rule since
     # 3.9); stopping one cannot be undone, G-code is anything at all, and a
@@ -2847,18 +2857,22 @@ ADDON_NAMES = {
 }
 
 
-def _addon_call(domain, service, data=None):
+ADDON_TOO_OLD = "is older than this action"
+
+
+def _addon_call(domain, service, data=None, timeout=None):
     """One service call with response data, its failure said in words."""
-    result = call_service(domain, service, data or {}, return_response=True)
+    result = call_service(domain, service, data or {}, return_response=True,
+                          **({"timeout": timeout} if timeout else {}))
     if isinstance(result, dict) and result.get("error"):
         text = str(result["error"])
         if "not found" in text.lower() and "service" in text.lower():
             name = ADDON_NAMES.get(domain, (domain,))[0]
             return {"error": (
-                f"{name}'s Home Assistant integration is not set up, or is older "
-                f"than this action ({domain}.{service}). Tell the user to install "
+                f"{name}'s Home Assistant integration is not set up, or {ADDON_TOO_OLD} "
+                f"({domain}.{service}). Tell the user to install "
                 f"or update the {name} add-on and add its integration.")}
-        return {"error": text}
+        return {"error": text, **({"timed_out": True} if result.get("timed_out") else {})}
     response = result.get("response") if isinstance(result, dict) else None
     return response if isinstance(response, dict) else {}
 
@@ -3222,6 +3236,18 @@ def _minecraft_chat_refusal(domain, service, data=None):
             and isinstance(data, dict) and set(data) == {"command"}:
         why = _mc_skin_refusal(data["command"])
         return {"error": why} if why else None
+    if (str(domain).lower(), str(service).lower()) == ("bruh_minecraft", "set_skin"):
+        # The same skin as the console command's, by the add-on's own
+        # service (#760): exactly {player, skin}, held to the same shape and
+        # the same own-account, online rule.
+        if not (isinstance(data, dict) and set(data) == {"player", "skin"}
+                and isinstance(data["skin"], str) and isinstance(data["player"], str)
+                and _mc_rules().skin_value(data["skin"]) == data["skin"]):
+            return {"error": MINECRAFT_CHAT_REFUSAL.format(what="bruh_minecraft.set_skin")}
+        command = _mc_rules().skin_command(data["skin"], data["player"])
+        why = _mc_skin_refusal(command) if command and command.split()[-1] == data["player"] \
+            else MINECRAFT_CHAT_REFUSAL.format(what="bruh_minecraft.set_skin")
+        return {"error": why} if why else None
     return {"error": MINECRAFT_CHAT_REFUSAL.format(what=f"{domain}.{service}")}
 
 
@@ -3242,7 +3268,7 @@ def _game_player():
 def _mc_skin_refusal(command):
     """Why the guarded game channel may not send this console command, or
     None. The one command it may send is a skin (#670), and only exactly
-    `skin set <Java name|https://textures.minecraft.net/texture/<hex>> <player>`
+    `skin set <Java name|texture or https .png picture link> <player>`
     or `skin clear <player>` (`rules.SKIN_COMMAND`, matched whole: no space,
     quote, newline, slash or extra word rides it), for the account the run
     is for, while that account is online."""
@@ -3261,7 +3287,7 @@ def _mc_skin_refusal(command):
 
 
 def minecraft_world(action, value=None, player=None, options=None, blocks=None, fills=None,
-                    shapes=None, job=None):
+                    shapes=None, job=None, dimension=None):
     """The world everyone is in: time of day, weather, a chat message; and
     the companion's part of it: say something as brAIn's companion to a
     person or the family, build something small, change any blocks (undoably),
@@ -3288,7 +3314,7 @@ def minecraft_world(action, value=None, player=None, options=None, blocks=None, 
         return _mc_companion_say(value, player or "family")
     if action in MC_COMPANION_ACTIONS:
         return _mc_companion_action(action, value, player, options, blocks, fills,
-                                    shapes, job)
+                                    shapes, job, dimension)
     if action == "skin":
         return _mc_skin(value, player)
     if action == "time":
@@ -3324,20 +3350,57 @@ MC_SKIN_BEDROCK_NOTE = (
     "hat layer over the face): offer a newer one.")
 
 
+# How long a skin is waited for: BRUH Minecraft waits up to 30 s for
+# SkinsRestorer's answer and its integration 45 s for the add-on (#760).
+MC_SKIN_TIMEOUT = 60
+
+
+def _mc_has_service(domain, service):
+    """Whether Core lists this service: True, False, or None when the list
+    could not be read ("could not ask" is not "not there")."""
+    try:
+        result = _ws_command({"type": "get_services"}, timeout=5)
+    except Exception:  # noqa: BLE001 - any failure is "could not ask"
+        return None
+    if not isinstance(result, dict) or (
+            set(result) == {"error"} and isinstance(result.get("error"), str)):
+        return None
+    services = result.get(domain)
+    return isinstance(services, dict) and service in services
+
+
+def _mc_set_skin(target, skin):
+    """BRUH Minecraft's `set_skin` (1.19.7, #760): it waits for SkinsRestorer
+    and answers {worked, reply, note}. None when this add-on is older than
+    it, so the caller uses the console command."""
+    has = _mc_has_service("bruh_minecraft", "set_skin")
+    if has is False:
+        return None
+    result = _addon_call("bruh_minecraft", "set_skin", {"player": target, "skin": skin},
+                         timeout=MC_SKIN_TIMEOUT)
+    if has is None and ADDON_TOO_OLD in str(result.get("error") or ""):
+        return None
+    return result
+
+
 def _mc_skin(value, player):
-    """Put a skin on one player (SkinsRestorer's `skin set <name|link>
-    <player>`, or `skin clear <player>`) over BRUH Minecraft's rcon_command,
-    which answers with the plugin's console lines; remembered per account by
-    brAIn's companion. Refused to voice."""
+    """Put a skin on one player through BRUH Minecraft's `set_skin`, which
+    waits for SkinsRestorer's answer and says whether it went on — or, from
+    an add-on older than it, SkinsRestorer's `skin set <name|link> <player>`
+    / `skin clear <player>` over rcon_command, which answers with the
+    plugin's console lines; remembered per account by brAIn's companion.
+    Refused to voice."""
     refusal = _voice_admin_refusal("Changing a Minecraft skin")
     if refusal:
         return refusal
     rules = _mc_rules()
     skin = rules.skin_value(value)
     if skin is None:
-        return {"error": ("value is a Java Edition player's name (their skin is used), a "
-                          "https://textures.minecraft.net/texture/… link, or clear — not a "
-                          "website or a file. Ask them for the Java name or the texture link.")}
+        return {"error": ("value is a Java Edition player's name (their skin is used), an "
+                          "https link to a skin picture (a .png, e.g. a "
+                          "https://textures.minecraft.net/texture/… link), or clear — not a "
+                          "website page or a file. Ask them for the Java name or a link to "
+                          "the picture.")}
     online, down = _mc_online()
     if down:
         return {"error": down}
@@ -3354,15 +3417,41 @@ def _mc_skin(value, player):
         # their own; the trusted scope may change anyone's.
         return {"error": MC_SKIN_OWN.format(who=_game_player() or "nobody named",
                                             target=target)}
-    result = _addon_call("bruh_minecraft", "rcon_command", {"command": command})
-    if result.get("error"):
-        return {"error": f"The server refused the skin: {result['error']}"}
-    worked, line = rules.skin_answer(skin, target, result.get("reply"))
+    result = _mc_set_skin(target, skin)
+    if result is not None:
+        if result.get("timed_out"):
+            # The request went out and no answer came back: the skin may
+            # well be on, so the outcome is unknown, not a failure.
+            return {"done": None, "player": target, "skin": skin,
+                    "error": ("The server did not say whether the skin went on "
+                              f"(no answer within {MC_SKIN_TIMEOUT} s). Ask the player "
+                              "to look, or rejoin to see it."),
+                    "said": rules.SKIN_LINES["unsure"].format(skin=rules.skin_label(skin))}
+        if result.get("error"):
+            # The add-on's refusal is SkinsRestorer's reason, in its words.
+            why = str(result["error"])
+            return {"done": False, "player": target, "skin": skin,
+                    "error": f"The skin did not go on: {why}",
+                    "said": rules.SKIN_LINES["failed"].format(why=why[:160])}
+        worked = result.get("worked")
+        if worked is None:
+            line = rules.SKIN_LINES["unsure"].format(skin=rules.skin_label(skin))
+        elif worked is False:
+            line = rules.SKIN_LINES["failed"].format(why=str(result.get("reply") or "")[:160])
+        else:
+            _, line = rules.skin_answer(skin, target, "ok")
+    else:
+        result = _addon_call("bruh_minecraft", "rcon_command", {"command": command})
+        if result.get("error"):
+            return {"error": f"The server refused the skin: {result['error']}"}
+        worked, line = rules.skin_answer(skin, target, result.get("reply"))
     out = {"done": worked is not False, "player": target, "skin": skin,
            "server_reply": _reply(result), "said": line}
     if worked is None:
+        said = str(result.get("note") or "")[:300]
         out["note"] = ("The server said nothing back: it may not have SkinsRestorer "
-                       "(minecraft_addons list), so do not say it worked.")
+                       "(minecraft_addons list), so do not say it worked."
+                       + (f" {said}" if said else ""))
     if worked is not False:
         _job_call({"action": "skin", "player": target, "skin": skin})
         if rules.is_bedrock(target):
@@ -3452,7 +3541,45 @@ def _mc_point(value):
         return None
 
 
-def _mc_look(value, player, options):
+# A look or an edit by coordinates is read in the dimension the add-on works
+# out (the job's, else the nearest player's) unless one is named (#782): the
+# add-on's own spelling, and the short words a person or a model says.
+MC_DIMENSIONS = {"overworld": "minecraft:overworld", "nether": "minecraft:the_nether",
+                 "the_nether": "minecraft:the_nether", "end": "minecraft:the_end",
+                 "the_end": "minecraft:the_end"}
+MC_DIMENSION_OLD = ("This BRUH Minecraft is older than naming a dimension, so it used its "
+                    "own (the Overworld unless a player gave one); update the add-on to "
+                    "look or edit in the Nether or the End by coordinates.")
+
+
+def _mc_dimension(value):
+    """(the add-on's dimension id or None for "let the add-on pick", why
+    not) for a `dimension` argument."""
+    text = str(value or "").strip().lower()
+    if not text:
+        return None, None
+    bare = text[len("minecraft:"):] if text.startswith("minecraft:") else text
+    dim = MC_DIMENSIONS.get(bare)
+    if dim is None:
+        why = ("dimension is minecraft:overworld, minecraft:the_nether or "
+               "minecraft:the_end (or overworld, nether, end).")
+        return None, why
+    return dim, None
+
+
+def _mc_dimension_call(service, data):
+    """`_addon_call` with a dimension that an add-on older than the field
+    refuses (its schema: extra keys not allowed) asked again without it.
+    (result, note) — the note says the dimension was not used."""
+    result = _addon_call("bruh_minecraft", service, data)
+    err = str(result.get("error") or "")
+    if "dimension" in data and "dimension" in err and "extra keys" in err.lower():
+        rest = {k: v for k, v in data.items() if k != "dimension"}
+        return _addon_call("bruh_minecraft", service, rest), MC_DIMENSION_OLD
+    return result, None
+
+
+def _mc_look(value, player, options, dimension=None):
     """What is in a box around a player or a point: the add-on's own read of
     the saved world (bruh_minecraft.look_blocks). Reading only."""
     data = {}
@@ -3479,13 +3606,16 @@ def _mc_look(value, player, options):
             # An unreadable size looks at the add-on's default box: a look
             # that reads a little more is better than no look at all.
             pass
-    result = _addon_call("bruh_minecraft", "look_blocks", data)
+    if dimension:
+        data["dimension"] = dimension
+    result, old = _mc_dimension_call("look_blocks", data)
     if result.get("error"):
         return result
-    return {"done": True, "action": "look", **result}
+    return {"done": True, "action": "look", **result,
+            **({"dimension_note": old} if old else {})}
 
 
-def _mc_edit(value, player, blocks, fills, shapes=None, job=None):
+def _mc_edit(value, player, blocks, fills, shapes=None, job=None, dimension=None):
     """An edit (bruh_minecraft.companion_edit): any block, anywhere — cells,
     boxes and shapes (a tapering trunk, a dome, foliage), which the add-on
     expands — snapshotted by the add-on for Undo. On every game scope since
@@ -3541,6 +3671,8 @@ def _mc_edit(value, player, blocks, fills, shapes=None, job=None):
         data["shapes"] = forms
     if job:
         data["job"] = job
+    if dimension:
+        data["dimension"] = dimension
     if player:
         online, down = _mc_online()
         if down:
@@ -3550,7 +3682,7 @@ def _mc_edit(value, player, blocks, fills, shapes=None, job=None):
         if not found:
             return {"error": "That player is not in the game right now."}
         data["player"] = found[0]
-    result = _addon_call("bruh_minecraft", "companion_edit", data)
+    result, old = _mc_dimension_call("companion_edit", data)
     if result.get("error"):
         return result
     act = result.get("action") or {}
@@ -3563,6 +3695,8 @@ def _mc_edit(value, player, blocks, fills, shapes=None, job=None):
     return _tag_text({"done": True, "action": "edit", "id": act.get("id"),
                       "text": act.get("text"), "changed": result.get("changed"),
                       "note": result.get("note", ""),
+                      **({"dimension": result["dimension"]} if result.get("dimension") else {}),
+                      **({"dimension_note": old} if old else {}),
                       "undo": "minecraft_world undo with this id puts every block back"},
                      ("text",))
 
@@ -3640,7 +3774,7 @@ def _mc_atlas(action, value, player, options):
 
 
 def _mc_companion_action(action, value, player, options, blocks=None, fills=None,
-                         shapes=None, job=None):
+                         shapes=None, job=None, dimension=None):
     """rename, ask, undo, build, look, edit, atlas, room and label: each one
     service, each refused to voice, and build and ask held to brAIn's switch,
     pause and bedtime. look, atlas and room only read; edit changes any
@@ -3656,10 +3790,13 @@ def _mc_companion_action(action, value, player, options, blocks=None, fills=None
                                     "label": "Naming a place in Minecraft"}[action])
     if refusal:
         return refusal
-    if action == "look":
-        return _mc_look(value, player, options)
-    if action == "edit":
-        return _mc_edit(value, player, blocks, fills, shapes, job)
+    if action in ("look", "edit"):
+        dim, why = _mc_dimension(dimension)
+        if why:
+            return {"error": why}
+        if action == "look":
+            return _mc_look(value, player, options, dim)
+        return _mc_edit(value, player, blocks, fills, shapes, job, dim)
     if action in ("atlas", "room", "label"):
         return _mc_atlas(action, value, player, options)
     if action in ("build", "ask"):
@@ -7569,7 +7706,8 @@ TOOLS = [
             "newest); look (player: around whom, or value 'x y z'; options: the box "
             "size [x, y, z], at most 32 16 32, default 16 8 16 — every block that is "
             "not air, with its state, as runs [x, y, z, length] along +x: walls, "
-            "doors, beds); edit (value: what it is, for the log; blocks: [{x, y, z, "
+            "doors, beds; the way to check a block — never a command ending in `run "
+            "say`, which talks in every player's chat); edit (value: what it is, for the log; blocks: [{x, y, z, "
             "block, mode}] where block is any state like "
             "red_bed[facing=east,part=head] and mode remove takes one out; fills: "
             "[{x1, y1, z1, x2, y2, z2, block}] (air clears a box); shapes: [{kind, "
@@ -7580,15 +7718,17 @@ TOOLS = [
             "coordinates, or offsets from player's feet — over existing blocks, inside "
             "builds, anywhere; every block's state before is saved, so undo with its "
             "id puts it all back; job: the job id when a job is doing it, so "
-            "cancelling the job puts it back); think (value: a few words of what you "
+            "cancelling the job puts it back; dimension: for look and edit by "
+            "coordinates, overworld, nether or end — left out, the job's, else the "
+            "nearest player's); think (value: a few words of what you "
             "are working out or about to do — shown to the person you are working for "
             "in a small bubble over your allay (everybody in the game sees it) and in "
             "their journal book, never in chat; "
             "each game tool you call is already shown as a step, so think is for the "
             "reasoning between them); skin (player; value: a Java Edition player's name — "
-            "their skin is used — or a https://textures.minecraft.net/texture/… link, or "
-            "clear: SkinsRestorer puts it on and its reply comes back; a Bedrock player sees "
-            "their own only after joining again)."
+            "their skin is used — or an https link to a skin picture (.png), or clear: "
+            "SkinsRestorer puts it on and whether it went on comes back, waited for up to "
+            "half a minute; a Bedrock player sees their own only after joining again)."
         ),
         "inputSchema": {"type": "object", "properties": {
             "action": {"type": "string",
@@ -7614,7 +7754,11 @@ TOOLS = [
                 "edit: [{kind: line|ellipsoid|blob|cylinder|box, block, …}]."),
                        "items": {"type": "object"}},
             "job": {"type": "string", "description": (
-                "edit: the job doing it (minecraft_job), so a cancel puts it back.")}},
+                "edit: the job doing it (minecraft_job), so a cancel puts it back.")},
+            "dimension": {"type": "string", "description": (
+                "look, edit by coordinates: minecraft:overworld, minecraft:the_nether or "
+                "minecraft:the_end (overworld, nether, end); leave out for the job's, else "
+                "the nearest player's.")}},
             "required": ["action", "value"]},
     },
     {

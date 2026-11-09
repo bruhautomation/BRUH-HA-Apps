@@ -223,7 +223,7 @@ _JOB_REQUEST = {
     "required": ["title", "brief"],
 }
 # A skin offered on the choice pads: what the pad says and the skin itself
-# (a Java player's name or a textures.minecraft.net link, `skin_value`).
+# (a Java player's name, a texture link or an https picture link, `skin_value`).
 _SKIN_CHOICE = {
     "type": "object",
     "properties": {
@@ -848,19 +848,25 @@ def capabilities(who: dict, *, trusted: bool, house: dict | None = None,
 # ---------------------------------------------------------------------------
 # Skins (#670): SkinsRestorer's console command, over rcon_command
 # ---------------------------------------------------------------------------
-# What a skin may be: a Java Edition player's name (their skin is used) or a
-# skin's own texture link on Mojang's texture server. Nothing else reaches
-# the console: a value is one token, so no second command can ride it.
-_SKIN_NAME = re.compile(r"[A-Za-z0-9_]{3,16}")
-_SKIN_URL = re.compile(r"https://textures\.minecraft\.net/texture/[0-9a-f]{32,128}")
+# What a skin may be: a Java Edition player's name (their skin is used), a
+# skin's own texture link on Mojang's texture server, or an https link to a
+# skin picture (a PNG, which SkinsRestorer uploads; #760/#762). Nothing else
+# reaches the console: a value is one token — no space, quote, semicolon or
+# newline — so no second command can ride it.
+_SKIN_NAME_RE = r"[A-Za-z0-9_]{3,16}"
+_SKIN_URL_RE = (r"https://textures\.minecraft\.net/texture/[0-9a-f]{32,128}"
+                r"|https://(?:[A-Za-z0-9-]{1,63}\.)+[A-Za-z]{2,24}(?::[0-9]{1,5})?"
+                r"/(?:[A-Za-z0-9._~%+-]{1,120}/){0,12}[A-Za-z0-9_~%+-][A-Za-z0-9._~%+-]{0,119}"
+                r"\.[Pp][Nn][Gg](?:\?[A-Za-z0-9._~%+=&-]{1,200})?")
+_SKIN_NAME = re.compile(_SKIN_NAME_RE)
+_SKIN_URL = re.compile(_SKIN_URL_RE)
 # An account name as the server knows it (Floodgate's "." prefix for
 # Bedrock): no selector, wildcard, space, quote or slash.
 _PLAYER = re.compile(r"[A-Za-z0-9_.]{1,17}")
 # The only console command a game run may send (`ha_mcp_server` lets exactly
 # this through the game channel's chokepoint, and nothing else).
 SKIN_COMMAND = re.compile(
-    r"skin (?:set (?:[A-Za-z0-9_]{3,16}|https://textures\.minecraft\.net/texture/[0-9a-f]{32,128})"
-    r"|clear) ([A-Za-z0-9_.]{1,17})")
+    r"skin (?:set (?:" + _SKIN_NAME_RE + "|" + _SKIN_URL_RE + r")|clear) ([A-Za-z0-9_.]{1,17})")
 # SkinsRestorer's answers that mean it did not change the skin (it answers
 # the console, and BRUH Minecraft's rcon_command now returns those lines).
 _SKIN_FAILED = re.compile(
@@ -872,14 +878,15 @@ SKIN_LINES = {
     "bedrock": " Leave the game and join again to see it yourself.",
     "failed": "That skin didn't work: {why}",
     "unsure": "I asked for {skin}, but the server didn't say whether it worked.",
-    "bad": ("A skin is a Java player's name or a textures.minecraft.net link, "
+    "bad": ("A skin is a Java player's name or an https link to a skin picture (a PNG), "
             "so I couldn't use that one."),
 }
 
 
 def skin_value(value: Any) -> str | None:
-    """A skin as the console takes it: "clear", a Java player's name, or a
-    texture link; None for anything else (a website, two words, a file)."""
+    """A skin as the console takes it: "clear", a Java player's name, a
+    texture link or an https link to a skin picture (a PNG); None for
+    anything else (a website page, two words, a file)."""
     text = str(value or "").strip()
     if text.lower() in ("clear", "reset", "default", "none"):
         return "clear"

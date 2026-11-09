@@ -6573,6 +6573,11 @@ async def _generate(insight_id: str) -> None:
                  f", {len(filed)} new finding(s)" if filed else "",
                  f", {accepted} hypothesis(es) queued" if accepted else "")
     except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
+        if _cancel_requested():
+            # The app is closing and the cancel arrived dressed as this
+            # exception (`_cancel_requested`): not a failed card, so no
+            # journal row, no problem report and no backoff.
+            raise asyncio.CancelledError from exc
         log.warning("insight %s failed: %s", insight_id, exc)
         journal.record("insight", journal.classify({"ok": False, "error": str(exc)}),
                        error=str(exc), extra={"id": insight_id,
@@ -8399,6 +8404,10 @@ def _loop_ended(name: str, task: asyncio.Task) -> None:
 # is hung: the longest passes run Claude turns behind the run queue (a
 # look and three investigations, a brief, a weekly report).
 LOOP_PASS_S = 2 * 3600
+# How long the app's cleanup waits for its cancelled loops to finish.
+LOOP_STOP_WAIT_S = 5.0
+# How often a loop that has not ended yet is cancelled again.
+LOOP_RECANCEL_S = 0.2
 
 
 def _stall_after(first_delay_s: float, poll_s: float) -> float:
@@ -8474,6 +8483,21 @@ async def _dispatch(job_id: str) -> None:
         await _generate(job_id)
 
 
+def _cancel_requested() -> bool:
+    """Whether the running task has been asked to stop, whatever arrived.
+
+    A cancel does not always arrive as `CancelledError`. `asyncio.gather`
+    sets its outer future from the first child to finish, so a child that
+    had already failed — a DNS lookup that came back "not known" in the
+    same pass of the loop — turns a cancel of the task awaiting it into
+    that child's exception, and a handler's `except Exception` then
+    swallows the shutdown as an ordinary failed job. `Task.cancelling()`
+    still counts the request, which is what this reads.
+    """
+    task = asyncio.current_task()
+    return bool(task is not None and task.cancelling())
+
+
 async def _worker() -> None:
     """The generation queue's one consumer, which must outlive its jobs.
 
@@ -8492,6 +8516,11 @@ async def _worker() -> None:
         _beat("worker")
         try:
             await _dispatch(job_id)
+            # A cancel that reached the job as some other exception (see
+            # `_cancel_requested`) is still a cancel: honoured here rather
+            # than going back to `QUEUE.get()` with nothing left to end it.
+            if _cancel_requested():
+                raise asyncio.CancelledError
         except Exception as exc:  # noqa: BLE001 — one job, never the worker
             log.warning("the %s job %s failed outside its own handling: %s",
                         JOBS.get(job_id, {}).get("kind") or "insight",
@@ -11931,7 +11960,11 @@ async def _run_sre(reason: str = "schedule") -> None:
         if held:
             await asyncio.to_thread(decision_trail.note_many,
                                     sre.trail_rows(held), now)
-        parsed["causes"] = kept
+        # A cause drawn from a sensor the owner called broken is not filed
+        # (#788): the one helper the checks and the Resident read, its
+        # floors first, a trail entry for each cause it drops.
+        parsed["causes"] = await asyncio.to_thread(
+            _sre_without_broken, kept, dig, collected.get("states"))
         rows = sre.rows(parsed["causes"], dig, state, now)
         summary.update(transient=len(held))
         summary.update(ran=True, causes=len(parsed["causes"]),
@@ -11968,6 +12001,23 @@ async def _run_sre(reason: str = "schedule") -> None:
     journal.record("sre", "ok", extra={"records": summary["records"],
                                        "causes": summary["causes"],
                                        "filed": len(created)})
+
+
+def _sre_without_broken(causes: list[dict], dig: dict,
+                        states: dict | None) -> list[dict]:
+    try:
+        faulty = corrections.known_faulty()
+    except Exception as exc:  # noqa: BLE001 — unread sets nothing aside
+        log.debug("sre: the sensors called broken unread: %s", exc)
+        return causes
+    states = states if isinstance(states, dict) else {}
+
+    def device_class(eid: str) -> str:
+        attrs = (states.get(eid) or {}).get("attributes") or {}
+        return str(attrs.get("device_class") or "") or _device_class(eid)
+
+    return sre.set_aside_broken(causes, dig, faulty,
+                                device_class=device_class)
 
 
 def _sre_payload() -> dict:
@@ -14073,7 +14123,12 @@ def _open_case_rows(limit: int = 12, exclude=None) -> list[str]:
         # id — the half that answers it — always survives the cap.
         eid = str(c.get("entity_id") or "").strip()
         tail = f" — {eid}" if eid else ""
-        out.append(textclip.clip(f"[{c['kind']}] {c['claim']}",
+        # A finding's id leads its line, so a look that says a row repeats
+        # it names it by the id (`same_as`), never in prose
+        # that would point at nothing on screen (#790).
+        cid = str(c.get("id") or "")
+        lead = f"{cid} " if cid.startswith("f:") else ""
+        out.append(textclip.clip(f"{lead}[{c['kind']}] {c['claim']}",
                                  160 - len(tail)) + tail)
     return out
 
@@ -14557,7 +14612,8 @@ async def _resident_look(now: float, settings: dict, thinking: str,
                             look_inputs, result, cost, now)
     verdicts = resident.parse_first_look(
         _answer(result), len(batch), batch,
-        floors=outcomes.overruled_floors(batch, passed_over))
+        floors=outcomes.overruled_floors(batch, passed_over),
+        device_class=_device_class)
     # A sensor the household called broken is not reasoned about (#701):
     # whatever the look said of it, it is let go, with a trail entry; the
     # never-ignore floors keep a leak, a lock or an alarm whatever was said.
@@ -14655,7 +14711,12 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
                 # A row the look called already answered, marked wrong
                 # before or a duplicate is held even if silence already
                 # showed it (`findings_store.record_triage`'s third slot).
-                decided[ts] = ("held", why, bool(answer.get("already")))
+                # The card it named (`same_as`) keeps the look's sentence
+                # about it only when the owner can see that card, and the
+                # word decides the store's floor (#790).
+                decided[ts] = ("held", why, bool(answer.get("already")),
+                               int(answer.get("same_as") or 0),
+                               str(answer.get("already") or ""))
             continue
         if (ts and answer.get("fallback") and signal.get("record_hold")
                 and not resident.never_ignore(signal)[0]):
@@ -15169,7 +15230,18 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     # tripped detector or a protected lock is looked at whatever a run
     # says about what the house knows (the same floor the gate above and
     # the first look hold).
-    code, said = resident.unfinished(case, resident.never_ignore(signal)[0])
+    # The not-news floor too (#790): a lock, a security check, a critical
+    # row or a leak or smoke sensor is reported whatever the word said.
+    code, said = resident.unfinished(
+        case, resident.never_ignore(signal)[0]
+        or findings_store.not_news_floor({
+            **(refining or {}),
+            **({"stakes": case["stakes"]} if case.get("stakes") else {}),
+            "entity_id": (str((refining or {}).get("entity_id") or "")
+                          or str(case.get("entity_id") or "")
+                          or str(signal.get("subject") or "")),
+            "source": str((refining or {}).get("source")
+                          or signal.get("source") or "")}))
     if code:
         log.info("an investigation of %s was not a finding (%s)",
                  signal.get("subject"), code)
@@ -29800,6 +29872,29 @@ def make_app() -> web.Application:
                 await task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001 — cancelled on the way out
                 pass
+        # The loops `_startup_body` started end with the app, the worker
+        # first among them. Left running, a card a request had just queued
+        # went on generating after the app was closed — collecting from
+        # Home Assistant, resolving its host in an executor thread, filing
+        # a problem report on the reports thread — while whoever closed the
+        # app went on to its next step. In the suite that next step is a
+        # test's teardown restoring `os.environ`, and glibc's setenv racing
+        # a getaddrinfo's getenv in another thread is a segfault: the
+        # xdist worker died "while running" test_proposal_accept's
+        # ordinary-question test. Bounded, because a loop that swallowed
+        # its cancellation must not hold the shutdown.
+        loops = [t for name, t in app["tasks"].items()
+                 if name != "startup" and t is not None and not t.done()]
+        # Re-cancelled on a short tick until each is done: a cancel can be
+        # turned into another exception on its way down
+        # (`_cancel_requested`), and one that was is a loop back at its
+        # wait with nothing pending to end it.
+        deadline = time.monotonic() + LOOP_STOP_WAIT_S
+        while loops and time.monotonic() < deadline:
+            for t in loops:
+                t.cancel()
+            await asyncio.wait(loops, timeout=LOOP_RECANCEL_S)
+            loops = [t for t in loops if not t.done()]
         # The chat session is a child process of ours; leaving it running
         # after the panel goes down orphans a Claude that nothing will ever
         # read from again.
