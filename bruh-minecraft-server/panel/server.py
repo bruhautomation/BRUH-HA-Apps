@@ -3314,13 +3314,14 @@ async def api_builds_render(request: web.Request) -> web.Response:
 #
 # Every game happening the collector reads is a neutral Home Assistant event
 # — bruh_minecraft_chat, _join, _leave, _death, _advancement and _place (and
-# _answer when a choice pad is answered) — with no scoring, caps or persona,
+# _answer when a choice pad is answered, _signal when a command block says
+# `bruh:signal`) — with no scoring, caps or persona,
 # whether or not anything listens. A companion (brAIn's, when brAIn is
 # installed) listens and acts only through the integration's services,
 # which reach the routes below. With no brAIn installed the panel shows no
 # companion and nothing here logs a word: a server is still a server.
 # ---------------------------------------------------------------------------
-GAME_EVENTS = ("join", "leave", "death", "advancement", "chat", "place", "point")
+GAME_EVENTS = ("join", "leave", "death", "advancement", "chat", "place", "point", "signal")
 EVENT_QUEUE = 500
 
 
@@ -3412,6 +3413,13 @@ def game_event(ev: dict, verified=None, world: str = "") -> tuple[str, dict] | N
     elif kind == "place":
         data["place"] = str(ev.get("place") or "")[:60]
         data["dimension"] = ev.get("dimension")
+    elif kind == "signal":
+        # A command block's `say bruh:signal <name> [data]` (#777): nobody
+        # to name, no account to check — as trusted as a command block.
+        data.pop("player", None)
+        data["name"] = str(ev.get("name") or "")[:40]
+        data["data"] = str(ev.get("data") or "")[:mcworld.SIGNAL_DATA_CAP]
+        return "bruh_minecraft_signal", data
     elif kind == "point":
         # A spyglass use (spyglass.Pointer): what was hit, and where that is.
         data["name"] = ev.get("shown") or ev.get("player")
@@ -3476,6 +3484,13 @@ def save_world() -> None:
         # still the world as of the last save, and a cell an edit changes is
         # checked again by the undo before it is put back.
         log.debug("save-all before a block read did not answer")
+
+
+def fresh_read() -> None:
+    """The next read from disk saves first: a look or an edit is about to
+    read, and a save from a moment ago is older than the change just made
+    (an edit's, or one sent over RCON) — read, it came back empty (#776)."""
+    _SAVED["at"] = -1e12
 
 
 def world_dir() -> Path:
@@ -3573,6 +3588,7 @@ def _companion() -> "companion.Companion":
     if hands is None or hands.col is not col:
         hands = companion.Companion(col, emit=_companion_emit, snapshot=_companion_snapshot,
                                     modern=_companion_modern, reader=_companion_reader,
+                                    reading=fresh_read,
                                     item_syntax=_companion_item_syntax)
         col.on_event = _on_world_event
         col.extra = lambda: {"companion": hands.brief()}

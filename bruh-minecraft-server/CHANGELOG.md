@@ -5,6 +5,20 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.19.7
+
+### Added
+
+- A command block can signal Home Assistant with no Skript: `say bruh:signal <name> [data]` fires the `bruh_minecraft_signal` event, so a button or lever in the world can drive real lights. Only an unrenamed command block can fire it (#777).
+- A skin can be set or cleared and the result confirmed: the `set_skin` service and `skin set`/`skin clear` wait for SkinsRestorer's own answer, and a picture link is accepted (#760, #762).
+
+### Fixed
+
+- Looking and editing by coordinates work in the End and the Nether: the dimension is taken from the request, the job or the nearest player, and cancelling a job undoes its edits in its own dimension (#782, #779, #780, #781).
+- Edits clear blocks with air, work far from any player by loading the chunks they need and releasing them after, and a cell that already holds the block no longer fails the whole edit; looks read a fresh save (#776).
+- Block checks during a build no longer put "[Rcon] ok" in every player's chat (#761).
+- An edit that flips a lever, button or other power source updates the redstone it drives (#778).
+
 ## 1.19.6
 
 ### Added

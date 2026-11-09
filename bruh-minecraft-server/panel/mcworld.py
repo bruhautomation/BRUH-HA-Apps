@@ -281,6 +281,17 @@ def shown_name(name: str) -> str:
             break
         text = cut
     return text[:40]
+# A command block's `say bruh:signal <name> [data]` (#777): the line the
+# server logs for it, "[@] bruh:signal porch_lights on" — `@` is the name of
+# a command block nobody renamed, which no player, no console and no
+# `execute as <player>` can speak as (their lines are "<Steve> …",
+# "[Steve] …", "[Server] …"). Read before anything else, so a player's chat
+# can never be one.
+_SIGNAL_RE = re.compile(r"^\[@\] bruh:signal (?P<name>[A-Za-z0-9_]{1,40})(?: (?P<data>.*))?$")
+SIGNAL_DATA_CAP = 200
+# The same signal said again sooner than this (a repeating command block
+# says it twenty times a second) is not said again.
+SIGNAL_REPEAT_S = 1.0
 _DONE_RE = re.compile(r"^Done \([\d.,]+s\)! For help")
 _DEATH_RE = re.compile(
     rf"^(?P<name>{_NAME}) (?P<how>"
@@ -325,6 +336,12 @@ def parse_log_line(line: str, known: set[str] | frozenset[str] = frozenset()) ->
     marked = msg.startswith(_NOT_SECURE)
     if marked:
         msg = msg[len(_NOT_SECURE):].strip()
+    if msg.startswith("[@] "):
+        if (j := _SIGNAL_RE.match(msg)):
+            data = (j["data"] or "").strip()[:SIGNAL_DATA_CAP]
+            return {"kind": "signal", "player": None, "name": j["name"].lower(), "data": data,
+                    "text": f"Signal {j['name'].lower()}" + (f": {data}" if data else "")}
+        return None
     if (j := _JOIN_RE.match(msg)) and not marked:
         return {"kind": "join", "player": j["name"], "text": f"{j['name']} joined"}
     if (j := _LEAVE_RE.match(msg)):
@@ -805,6 +822,7 @@ class WorldCollector:
         # a named place, which is not written to the feed) and adds its own
         # small view to the snapshot; both stay None without it.
         self.on_event: Callable[[dict[str, Any]], None] | None = None
+        self.signal_at: dict[tuple[str, str], float] = {}
         self.extra: Callable[[], dict[str, Any]] | None = None
         # The building and room a position is in (the panel's atlas):
         # `where(dimension, pos)` → {"building": …, "room": …}.
@@ -924,6 +942,21 @@ class WorldCollector:
         if ev is None:
             return None
         now = self.clock()
+        if ev["kind"] == "signal":
+            # Told to whoever listens, never the feed or the journal, which a
+            # repeating command block would fill; the same one again within
+            # SIGNAL_REPEAT_S is the same signal.
+            key = (ev["name"], ev["data"])
+            last = self.signal_at.get(key)
+            if last is not None and now - last < SIGNAL_REPEAT_S:
+                return None
+            if len(self.signal_at) > 256:
+                self.signal_at = {k: t for k, t in self.signal_at.items()
+                                  if now - t < SIGNAL_REPEAT_S}
+            self.signal_at[key] = now
+            if self.on_event is not None:
+                self.on_event({"t": int(now), **ev})
+            return None
         self._heard(now, ev["kind"])
         if ev["kind"] == "chat":
             shown = ev["player"]
