@@ -117,8 +117,12 @@ async function cardHelpers() {
 // every open shadow root in the card the 16px floor, once (#677).
 let _floorSheet;
 const _floored = new WeakSet();
+const _watched = new WeakSet();
+// A card's text boxes are often made after the card is on the page, in a
+// shadow root of a root of a root (Home Assistant's own fields upgrade late),
+// so the floor is handed out again whenever a root changes, not once.
 function floorFields(node, depth = 0) {
-  if (!node || depth > 4 || typeof CSSStyleSheet === 'undefined') return;
+  if (!node || depth > 10 || typeof CSSStyleSheet === 'undefined') return;
   const root = node.shadowRoot;
   if (!root || !('adoptedStyleSheets' in root)) return;
   if (!_floored.has(root)) {
@@ -127,6 +131,15 @@ function floorFields(node, depth = 0) {
       root.adoptedStyleSheets = [...root.adoptedStyleSheets, _floorSheet];
       _floored.add(root);
     } catch (e) { /* a browser without constructable sheets keeps the card's own size */ }
+  }
+  if (!_watched.has(root) && typeof MutationObserver !== 'undefined') {
+    _watched.add(root);
+    let queued = false;
+    new MutationObserver(() => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => { queued = false; root.querySelectorAll('*').forEach((n) => { if (n.shadowRoot) floorFields(n, depth + 1); }); });
+    }).observe(root, { childList: true, subtree: true });
   }
   root.querySelectorAll('*').forEach((n) => { if (n.shadowRoot) floorFields(n, depth + 1); });
 }
@@ -1307,7 +1320,9 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
   floorFacts(fl) {
     const H = this.hass; const facts = [];
     const ents = [...new Set(this.floorEntities(fl))];
-    const clim = ents.map((e) => H.states[e]).filter((s) => s && domainOf(s.entity_id) === 'climate');
+    // A thermostat that stopped answering keeps its last temperature in its
+    // attributes; that is not the floor's temperature now (#764).
+    const clim = ents.map((e) => H.states[e]).filter((s) => s && domainOf(s.entity_id) === 'climate' && !UNAVAILABLE.includes(s.state));
     const temps = ents.map((e) => H.states[e]).filter((s) => s && s.attributes.device_class === 'temperature' && !isNaN(parseFloat(s.state)));
     const c = clim[0];
     if (c) {
@@ -1760,7 +1775,7 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
     // The room's line: asleep, how warm (and what is usual, when brAIn has
     // measured it), whether anyone is there. What is on is on the tiles.
     const temp = ents.map((e) => H.states[e]).find((s) => s && s.attributes.device_class === 'temperature' && !isNaN(parseFloat(s.state)));
-    const clim = temp ? null : ents.map((e) => H.states[e]).find((s) => s && domainOf(s.entity_id) === 'climate' && s.attributes.current_temperature != null);
+    const clim = temp ? null : ents.map((e) => H.states[e]).find((s) => s && domainOf(s.entity_id) === 'climate' && !UNAVAILABLE.includes(s.state) && s.attributes.current_temperature != null);
     const slept = this.asleepSince(sec);
     const here = slept ? null : this.presence(sec);
     const usual = temp && this.feedState().usable ? (((this.brain().feed || {}).normal || {})[temp.entity_id] || {}).now : null;
@@ -1961,11 +1976,20 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
         if (tag.startsWith('custom:') && window.customElements && !customElements.get(tag.slice(7))) {
           await Promise.race([customElements.whenDefined(tag.slice(7)), new Promise((r) => setTimeout(r, 4000))]);
         }
+        // `ll-rebuild` is Home Assistant saying "this stand-in was made before
+        // its custom card existed". A card made once its tag was defined has
+        // nothing to rebuild, whatever the element is called: acting on it
+        // anyway evicted the card on every mount, so every render made every
+        // hosted card again (#795, the dashboard flashing).
+        const madeEarly = tag.startsWith('custom:') && !!window.customElements && !customElements.get(tag.slice(7));
         if (helpers) el = await helpers.createCardElement(card.card);
         else el = customCardWithoutHelpers(card.card);
         el.__sig = sig;
         el.hass = this.hass;
-        el.addEventListener('ll-rebuild', () => { this.llCards.delete(card.id); this.schedule(); });
+        el.addEventListener('ll-rebuild', () => {
+          if (!madeEarly || this.llCards.get(card.id) !== el) return;
+          this.llCards.delete(card.id); this.schedule();
+        });
         this.llCards.set(card.id, el);
       } catch (e) {
         slot.innerHTML = '<p class="sm" style="padding:12px">This card could not be drawn yet; reload the page.</p>';

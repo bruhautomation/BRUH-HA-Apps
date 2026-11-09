@@ -15,7 +15,7 @@
 // (who or what changed it). Every fetch is cached for a minute and asked at
 // most once at a time; the panel re-renders when an answer lands.
 
-import { esc, mix, clock, dur, fmt, outdoorStale } from './util.js';
+import { esc, mix, clock, dur, fmt, outdoorStale, domainOf, probeOffline } from './util.js';
 
 const CACHE = new Map();
 const MAX_CACHE = 400;
@@ -298,11 +298,11 @@ function climateTargets(rows) {
 
 function labelsHtml(o, at) {
   const { lines, yOf, focus, unit, digits } = o;
-  let lab = lines.map((l) => { const v = at == null ? l.now : valueAt(l.pts, at); return { l, v, y: v == null ? CH : yOf(v) }; }).sort((a, b) => a.y - b.y);
+  let lab = lines.map((l) => { let v = at == null ? l.now : valueAt(l.pts, at); if (v != null && !isFinite(v)) v = null; return { l, v, y: v == null ? CH : yOf(v) }; }).sort((a, b) => a.y - b.y);
   for (let i = 1; i < lab.length; i++) lab[i].y = Math.max(lab[i].y, lab[i - 1].y + LABEL_GAP);
   const over = lab.length ? lab[lab.length - 1].y - (CH - 9) : 0;
   if (over > 0) { lab[lab.length - 1].y -= over; for (let i = lab.length - 2; i >= 0; i--) lab[i].y = Math.min(lab[i].y, lab[i + 1].y - LABEL_GAP); }
-  return lab.map((x) => `<button type="button" class="ovlab" data-act="r-focus" data-v="${esc(x.l.id)}" aria-pressed="${focus === x.l.id}" style="top:${(x.y - 9).toFixed(1)}px;opacity:${focus && focus !== x.l.id ? 0.45 : x.l.old && at == null ? 0.55 : 1}"><span class="sw" style="background:${x.l.color}"></span><span class="nm">${esc(x.l.short)}</span><b style="color:${x.l.valColor || 'inherit'}">${x.v == null ? '—' : esc(Number(x.v).toFixed(digits) + unit)}</b></button>`).join('');
+  return lab.map((x) => `<button type="button" class="ovlab" data-act="r-focus" data-v="${esc(x.l.id)}" aria-pressed="${focus === x.l.id}" style="top:${(x.y - 9).toFixed(1)}px;opacity:${focus && focus !== x.l.id ? 0.45 : x.l.old && at == null ? 0.55 : 1}"><span class="sw" style="background:${x.l.color}"></span><span class="nm">${esc(x.l.short)}</span>${x.v == null ? `<b style="color:var(--quiet)">${x.l.dead && at == null ? 'offline' : '—'}</b>` : `<b style="color:${x.l.valColor || 'inherit'}">${esc(Number(x.v).toFixed(digits) + unit)}</b>`}</button>`).join('');
 }
 
 // What the overlay says under a finger: the labels' values, a dot on every
@@ -328,6 +328,13 @@ function sparkPts(pts, w, h) {
   return v.map((p) => `${((p[0] - t0) / (t1 - t0 || 1) * w).toFixed(1)},${(1 + (1 - (p[1] - lo) / (hi - lo)) * (h - 2)).toFixed(1)}`).join(' ');
 }
 
+// The sensor a chart of readings takes its kind and unit from: its first
+// sensor, since a thermostat's own state is its mode, not a reading.
+export const readingsFirst = (hass, ids) => {
+  const S = hass.states; const own = (ids || []).filter((e) => S[e]);
+  return S[own.find((e) => domainOf(e) !== 'climate') || own[0]];
+};
+
 export function readings(hass, card, H, colorFor, head) {
   const hd = head || {};
   const ids = (card.entities || []).filter((e) => hass.states[e]);
@@ -335,8 +342,9 @@ export function readings(hass, card, H, colorFor, head) {
   if (!ids.length) return header('') + '<p class="sm">None of these sensors exist.</p>';
   const now = Date.now(), t0 = now - 86400000;
   const opts = card.options || {};
-  const first = hass.states[ids[0]];
-  const unitRaw = first.attributes.unit_of_measurement || '';
+  const first = readingsFirst(hass, ids);
+  const thermostats = domainOf(first.entity_id) === 'climate';
+  const unitRaw = thermostats ? (hass.config && hass.config.unit_system && hass.config.unit_system.temperature) || '°' : first.attributes.unit_of_measurement || '';
   const dc = first.attributes.device_class;
   // What these lines ARE: a soil-moisture card was called "rooms", given a
   // degree sign and drawn under the thermostats' target band.
@@ -346,24 +354,46 @@ export function readings(hass, card, H, colorFor, head) {
   const unit = temperature ? '°' : unitRaw === '%' ? '%' : unitRaw ? ' ' + unitRaw : '';
   const digits = humidity || moisture || unitRaw === '%' ? 0 : 1;
   const what = moisture ? 'line' : temperature || humidity ? 'room' : 'line';
+  // A thermostat's reading is its own sensor: an attribute, not its state.
+  const attr = humidity ? 'current_humidity' : 'current_temperature';
+  // #764: a thermostat that stopped answering keeps its last attributes, so
+  // its reading is nothing (no live label, no line to now) while its state
+  // is unavailable or unknown, now and in each history row.
+  const valueOf = (eid, s, a) => GAP.includes(String(s)) ? NaN : parseFloat(domainOf(eid) === 'climate' ? (a || {})[attr] : s);
   const series = [];
   let pending = false;
   ids.forEach((eid) => {
+    // #757: a chart of rooms drew no lines although every room had a
+    // reading. Statistics exist only for a sensor with a state_class, and
+    // never for a thermostat, so a room with none is read from its recorded
+    // history instead (a thermostat's with its attributes).
     const rows = stats(hass, eid, t0, now, '5minute');
     if (rows === undefined) { pending = true; return; }
-    const pts = Array.isArray(rows) && rows.length ? rows.map((p) => [p.t, p.mean]) : [];
+    let pts = Array.isArray(rows) ? rows.map((p) => [p.t, p.mean]).filter((p) => p[1] != null && isFinite(p[1])) : [];
     const st = hass.states[eid];
+    const cur = valueOf(eid, st.state, st.attributes);
+    if (!pts.length) {
+      const tl = timeline(hass, eid, t0, now, domainOf(eid) === 'climate');
+      if (tl === undefined) pending = true;
+      pts = Array.isArray(tl) ? tl.map((r) => [Math.max(t0, r.t), valueOf(eid, r.s, r.a)]).filter((p) => isFinite(p[1])) : [];
+      if (pts.length && isFinite(cur)) pts.push([now, cur]);
+    }
+    // #787: a moisture probe that fell straight to 0 is drawn up to the
+    // fall and read as a probe to check, never as 0%.
+    const dead = probeOffline(hass, eid, isFinite(cur) ? pts.concat([[now, cur]]) : pts);
+    if (dead) { let i = pts.length; while (i > 0 && pts[i - 1][1] === 0) i -= 1; pts = pts.slice(0, i); }
     const nm = st.attributes.friendly_name || eid;
     // A line's colour is its place in a fixed palette, so two rooms never
     // share one; the reading's own warmth colours its value instead.
-    series.push({ id: eid, old: outdoorStale(hass, eid), name: nm, short: nm.replace(/\s*(temperature|humidity|temp|moisture)$/i, ''), color: SERIES[series.length % SERIES.length], valColor: colorFor(parseFloat(st.state)), pts, now: parseFloat(st.state) });
+    series.push({ id: eid, old: outdoorStale(hass, eid), dead, name: nm, short: nm.replace(/\s*(temperature|humidity|temp|moisture)$/i, ''), color: SERIES[series.length % SERIES.length], valColor: colorFor(cur), pts, now: dead ? NaN : cur });
   });
-  if (pending && !series.length) return header('') + '<p class="sm">Reading the day…</p>';
-  // Extremes (an attic, the outside) leave the plot for the line below it.
+  if (pending && !series.some((x) => x.pts.length)) return header('') + '<p class="sm">Reading the day…</p>';
+  // Extremes (an attic, the outside) leave the plot for the line below it;
+  // a reading with nothing now (it stopped answering) keeps its place.
   const meds = series.map((x) => x.now).filter(isFinite).sort((a, b) => a - b);
   const med = meds[Math.floor(meds.length / 2)];
   const spread = meds.length > 3 ? (meds[Math.floor(meds.length * 0.75)] - meds[Math.floor(meds.length * 0.25)]) || 2 : Infinity;
-  const main = series.filter((x) => !isFinite(spread) || Math.abs(x.now - med) <= 3 * spread);
+  const main = series.filter((x) => !isFinite(spread) || !isFinite(x.now) || Math.abs(x.now - med) <= 3 * spread);
   const extreme = series.filter((x) => !main.includes(x));
   (opts.env || []).forEach((eid) => {
     const st = hass.states[eid]; if (!st || series.some((x) => x.id === eid)) return;
@@ -380,7 +410,7 @@ export function readings(hass, card, H, colorFor, head) {
     const fixed = [Number(opts.band[0]), Number(opts.band[1])];
     bandAt = () => fixed;
   } else if (temperature) {
-    const climates = (opts.climate ? [].concat(opts.climate) : Object.keys(hass.states).filter((e) => e.startsWith('climate.'))).filter((e) => hass.states[e]).slice(0, 4);
+    const climates = (opts.climate ? [].concat(opts.climate) : Object.keys(hass.states).filter((e) => e.startsWith('climate.'))).filter((e) => hass.states[e] && !GAP.includes(hass.states[e].state)).slice(0, 4);
     const tls = climates.map((c) => climateTargets(timeline(hass, c, t0, now, true))).filter((r) => r.length);
     if (tls.length) {
       const at = (rows, t) => { let cur = null; for (const r of rows) { if (r[0] > t) break; cur = r; } return cur || rows[0]; };
@@ -410,8 +440,10 @@ export function readings(hass, card, H, colorFor, head) {
     }
   }
 
-  // Scale: every line and the band.
+  // Scale: every line and the band. With no line to draw, the card says so
+  // rather than drawing a band and labels over an empty plot.
   const vals = main.flatMap((x) => x.pts.map((p) => p[1])).filter((v) => v != null && isFinite(v));
+  if (!vals.length) return header('') + `<p class="sm">No history for these ${what}s in the last 24 hours: Home Assistant has recorded nothing for them yet.</p>`;
   const BN = 96; const bandPts = [];
   if (bandAt) for (let i = 0; i < BN; i++) { const t = t0 + (i / (BN - 1)) * (now - t0); const b = bandAt(t); bandPts.push([t, b]); if (b) vals.push(b[0], b[1]); }
   if (!vals.length) return header('') + '<p class="sm">Nothing recorded for this stretch.</p>';
@@ -450,7 +482,9 @@ export function readings(hass, card, H, colorFor, head) {
   ticks.push('<span style="left:100%;transform:translateX(-100%)">Now</span>');
   const axis = `<div class="ovrow" aria-hidden="true" style="margin-top:4px"><div class="ovaxis">${ticks.join('')}</div><span class="ovside"></span></div>`;
   const env = extreme.length ? `<div class="ovenv">${extreme.map((x) => `<div class="ovenvi${x.old ? ' stale' : ''}"><span class="nm">${esc(x.short)}</span><b style="color:${x.color}">${isFinite(x.now) ? esc(Number(x.now).toFixed(digits) + unit) : '—'}</b>${x.old ? `<span class="age">${esc(x.old)}</span>` : ''}<svg width="56" height="14" viewBox="0 0 56 14" aria-hidden="true"><polyline points="${sparkPts(x.pts, 56, 14)}" stroke-width="1.25" style="fill:none;stroke:${x.color};opacity:.6"></polyline></svg></div>`).join('')}</div>` : '';
-  return `${header(sub)}<div class="ovrow" data-ctl="1" style="margin-top:10px"><div class="chart ovplot" data-chart="${key}" data-ov="1" role="img" aria-label="${esc(hd.name || 'Readings')}, last 24 hours, one line per room. Slide along it to read any moment."><svg width="100%" height="${CH}" viewBox="0 0 600 ${CH}" preserveAspectRatio="none" aria-hidden="true">${band}${polys}</svg><span class="scrub" hidden></span><div class="ovdots" data-ovdots="${key}"></div></div><div class="ovside ovlabels" data-ovlabels="${key}">${labelsHtml(o, null)}</div></div>${runsRow}${axis}${env}`;
+  const notes = series.filter((x) => x.dead).map((x) => `<p class="sm ovnote">${esc(x.short)}: ${esc(x.dead.replace(/^Sensor offline/, 'sensor offline'))}.</p>`).join('')
+    + (lines.some((l) => !l.pts.length) ? `<p class="sm ovnote">No history in the last 24 hours for ${esc(lines.filter((l) => !l.pts.length).map((l) => l.short).join(', '))}.</p>` : '');
+  return `${header(sub)}<div class="ovrow" data-ctl="1" style="margin-top:10px"><div class="chart ovplot" data-chart="${key}" data-ov="1" role="img" aria-label="${esc(hd.name || 'Readings')}, last 24 hours, one line per room. Slide along it to read any moment."><svg width="100%" height="${CH}" viewBox="0 0 600 ${CH}" preserveAspectRatio="none" aria-hidden="true">${band}${polys}</svg><span class="scrub" hidden></span><div class="ovdots" data-ovdots="${key}"></div></div><div class="ovside ovlabels" data-ovlabels="${key}">${labelsHtml(o, null)}</div></div>${runsRow}${axis}${notes}${env}`;
 }
 
 export function clearCache() { CACHE.clear(); }

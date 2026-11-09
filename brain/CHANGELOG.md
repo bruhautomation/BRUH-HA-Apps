@@ -2,6 +2,92 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.22
+
+### Fixed
+
+- Settings' three fixes from 5.1.10 are back, without the background work that the revert removed. They are now only text, markup and styling.
+  - On a phone, an open Settings section shows "Settings" once (#744).
+  - When you are signed out, Deep review says "Sign in to Claude in Settings › Account first", and its disabled Run button stays readable (#745).
+  - Settings › Features is one box with the switches as rows, and Morph's experimental note is part of its description (#746).
+
+## 5.1.21
+
+### Changed
+
+- The development loop no longer caps how many new reports it files a day unless you set a limit. One pass files every report that is ready. The Developer setting reads "No limit" when it is empty. A stored 10 or 20 from before this release (the old default, or what autopilot saved back) is read as no limit; a number you set from now on is kept. A held report is never blamed on a cap that isn't set (#797).
+
+## 5.1.20
+
+### Fixed
+
+- If brAIn's panel is stopped while it is still starting up, it now waits for the start-up step already running to finish before it returns. Before, the step's thread could keep writing into brAIn's folders after the panel had stopped.
+
+## 5.1.19
+
+### Fixed
+
+- When brAIn's panel stops, every background loop now stops with it, including a card that was still being written. Before, a loop could outlive the panel. A cancel could also be lost when a Home Assistant request failed at the same moment, and the card was then recorded as failed and the stop took 5 s longer. Shutdown no longer writes a failed card or a problem report for work it cancelled itself.
+
+## 5.1.18
+
+### Fixed
+
+- A Morph tile or card for a device that has stopped answering no longer shows its last readings as if they were live. A freezer that is unavailable says so and when it was last seen, rather than showing a temperature, a target and how long the compressor has been off. An unavailable media player shows no track. In the rooms chart, an unavailable thermostat's line stops where it last answered (#764).
+- The rooms chart draws a line for every room that has readings, falling back to recorded history when a room has no statistics, and says which rooms have none (#757).
+- A soil probe whose reading falls to exactly 0% within minutes is shown as a probe to check, not as dry soil.
+- On a phone, a second tap on the Ask list's Send while the new chat is being made no longer starts two chats. If the chat could not be made, the message stays in the box.
+
+## 5.1.17
+
+### Fixed
+
+- When the Resident's first look decides a finding is not news (already answered, a duplicate, explained, recovered, or marked Wrong), the finding is held in History instead of shown, with the reason kept. `cosmetic` and `known` hold back only a single light, media player, weather, sun, zone or TTS entity whose name says nothing of food, water or a leak. Anything about safety, security, a protected entity or no entity at all is always shown. A look's link to a card you cannot see is dropped from its sentence and never moves the row (#790).
+- After you say a sensor is broken or to be ignored, the Resident and the overnight check stop building new reports on that sensor's readings (#788).
+
+## 5.1.16
+
+### Added
+
+- brAIn's Minecraft tools follow BRUH Minecraft 1.19.7: `minecraft_world` takes a `dimension` (Overworld, Nether, End) for looks and edits, and a skin is set through the add-on's `set_skin` service, which waits for the server's own answer and accepts a picture link (#782, #760).
+- A grown-up's game run is told how a lever or button can drive the house (a command block saying `bruh:signal`); a child's run and the shared tool description never carry it (#777).
+
+### Fixed
+
+- A skin request that gets no answer within a minute says the outcome is unknown instead of saying it failed (#760).
+- Block checks during a build use the add-on's quiet check, so players no longer see "[Rcon] ok" in chat (#761).
+
+## 5.1.15
+
+### Fixed
+
+- On a phone, the Ask list now carries a message box that starts a new chat, so there is always somewhere to type; a new chat no longer inherits the busy state of the one just left, and if a message cannot be sent it is put back in the chat's box rather than dropped (#796).
+- A Lovelace card hosted in Morph is rebuilt only when it was made before its element existed, so a card that was already defined stays on the page instead of being dropped on the next render (#795).
+- Morph's scene chips are 40px touch targets (#786); a text field that appears late keeps the 16px text floor, so iOS no longer zooms the page when it is tapped (#755).
+- Morph's quiet section labels keep readable contrast when their room dims (#758).
+- A Morph tile with a pressable word (Open, Unlock, Start, Dock) is one button named by that word, so a garage tile no longer reads as "Closed" and "Open" at once (#756); vacuums get labelled Start and Dock buttons (#765); entity tiles get an icon and how long they have been idle (#767).
+
+## 5.1.14
+
+### Fixed
+
+- When a task is refused by one model and answered by another, the run journal now always shows the refusal first: the refused run's row was written after the retry and could land below the answer, so anything reading a task's last row could read the refusal as its ending.
+
+## 5.1.13
+
+### Fixed
+
+- A finding that says a device is unplugged and scenes still set it is read against the house again before it is shown: it closes when the device is back, and when the device no longer exists it says so and points at the scenes that still use it (#789).
+- The "waiting" chore check reads the automation that runs a plug, such as a dehumidifier's humidity rule, and says the machine is waiting only when that rule's own sensor is past its set point (#772).
+- A weak Bluetooth signal finding first lists the house's Bluetooth proxies and says to bring an offline one back before suggesting new hardware; devices near an offline proxy share one finding about it (#770).
+- Marking a "never fired" automation Wrong, even with "not now" words, stops that check raising that automation again (#768).
+
+## 5.1.12
+
+### Removed
+
+- The 5.1.10 Settings changes are taken back while a new fault is looked into: the house saw runs end on a timeout twice in the day after installing 5.1.10, and the cause could not be traced to one change, so the whole release is reverted (#747). Settings shows its earlier layout until the three fixes come back (#744, #745, #746).
+
 ## 5.1.11
 
 ### Fixed

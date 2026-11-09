@@ -160,6 +160,11 @@ class TestWhatTheStreamCarries(unittest.TestCase):
         self.assertEqual([e["type"] for e in out], ["text", "resolutions"])
 
 
+def _give_the_server_its_prompt_back(chat_session) -> None:
+    server = sys.modules.get("server")
+    chat_session.PROMPT_PROVIDER = getattr(server, "_chat_system_prompt", None)
+
+
 class TestARealTurnOffersThem(unittest.IsolatedAsyncioTestCase):
     """Against the fake CLI, because reading the stream IS the mechanism."""
 
@@ -177,6 +182,11 @@ class TestARealTurnOffersThem(unittest.IsolatedAsyncioTestCase):
         os.environ.pop("FAKE_CHAT_RESOLUTIONS", None)
         importlib.reload(importlib.import_module("engine"))
         self.mod = importlib.reload(importlib.import_module("chat_session"))
+        # The reload resets `chat_session.PROMPT_PROVIDER`, which only the
+        # server's import sets: put the server's back after, or a later file
+        # on the same worker (test_ask_face_parity) spawns a chat with no
+        # prompt at all.
+        self.addCleanup(_give_the_server_its_prompt_back, self.mod)
         self.session = self.mod.ChatSession()
 
     async def asyncTearDown(self):

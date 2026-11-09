@@ -67,6 +67,11 @@ def tearDownModule():
 pytestmark = pytest.mark.slow
 
 
+def _give_the_server_its_prompt_back(chat_session) -> None:
+    server = sys.modules.get("server")
+    chat_session.PROMPT_PROVIDER = getattr(server, "_chat_system_prompt", None)
+
+
 class _RegistryCase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -87,6 +92,11 @@ class _RegistryCase(unittest.IsolatedAsyncioTestCase):
             os.environ.pop(key, None)
         for name in ("engine", "settings_store", "chat_session"):
             setattr(self, name, importlib.reload(importlib.import_module(name)))
+        # Each reload (here and in asyncTearDown) resets
+        # `chat_session.PROMPT_PROVIDER`, which only the server's import sets:
+        # put the server's back after, or a later file on the same worker
+        # (test_ask_face_parity) spawns a chat with no prompt at all.
+        self.addCleanup(_give_the_server_its_prompt_back, self.chat_session)
         self.reg = self.chat_session.SessionRegistry()
 
     async def asyncTearDown(self):

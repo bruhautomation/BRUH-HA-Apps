@@ -1335,8 +1335,13 @@ for (const width of WIDTHS) {
       const subs = [...document.querySelectorAll('#setsecFeatures .bigcheck .subtext')]
         .map((n) => ({ id: n.closest('label').querySelector('input').id, lines: lines(n) }));
       const morph = document.querySelector('#featMorph').closest('label').textContent;
+      const saidAt = [...document.querySelectorAll('#setModal .panetitle, #setModal .setback')]
+        .filter(vis).filter((n) => /^[\u2039< ]*Settings$/.test(n.textContent.replace(/\s+/g, ' ').trim()))
+        .map((n) => n.getBoundingClientRect().bottom);
+      const name = [...document.querySelectorAll('#setsecFeatures .setsecname')].find(vis);
+      const above = !!name && saidAt.length > 0 && saidAt.every((b) => b <= name.getBoundingClientRect().top + 1);
       return {
-        said, subs, morph,
+        said, subs, morph, above,
         depths: ['featMorph', 'featPersonality', 'featLearning', 'setDevloop'].map(depth),
         warn: !!document.querySelector('#setsecFeatures .featwarn'),
       };
@@ -1344,6 +1349,7 @@ for (const width of WIDTHS) {
     if (narrow && f.said.length !== 1) {
       note(where, `an open section says "Settings" ${f.said.length} times: ${JSON.stringify(f.said)}`);
     }
+    if (narrow && !f.above) note(where, 'the one "Settings" does not sit above the section\'s title');
     if (f.depths.some((d) => d > 1)) note(where, `Features has boxes inside boxes (depths ${f.depths})`);
     if (f.warn) note(where, 'Morph\'s experimental note is a second paragraph, not part of its description');
     if (!/Experimental/.test(f.morph)) note(where, 'Morph\'s description no longer says it is experimental');
