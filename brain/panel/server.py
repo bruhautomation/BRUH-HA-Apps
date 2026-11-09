@@ -9272,12 +9272,40 @@ async def _options_poller() -> None:
         await _shell_sync()
 
 
+async def _thread_to_the_end(func, /, *args, **kwargs):
+    """`asyncio.to_thread`, except that a cancel waits for the thread.
+
+    A thread cannot be stopped, so cancelling the coroutine that awaits
+    `to_thread` returns at once while the work carries on writing. The
+    start's steps run this way because `on_cleanup` cancels a start that
+    has not finished: a panel stopped seconds after it bound returned from
+    cleanup with `instructions.apply_all` (or the mirror, or the prompt)
+    still writing into the directories it owns, and whatever removed them
+    next — a test's temporary directory, "Directory not empty" — raced it.
+    Here the cancel still lands, but only once the step it interrupted is
+    over, so nothing the start began outlives the app.
+    """
+    fut = asyncio.ensure_future(asyncio.to_thread(func, *args, **kwargs))
+    try:
+        return await asyncio.shield(fut)
+    except asyncio.CancelledError:
+        while not fut.done():
+            try:
+                await asyncio.wait({fut})
+            except asyncio.CancelledError:
+                # A second cancel changes nothing: the thread still runs.
+                continue
+        if not fut.cancelled():
+            fut.exception()  # retrieved: the step's own fault is moot now
+        raise
+
+
 async def _shell_sync() -> None:
     """The switches' file, the address of this page for the shell, and
     which sidebar entry shows (shell_link.py). Never raises: the panel is
     the ingress target, and a sidebar entry is not worth its loop."""
     try:
-        await asyncio.to_thread(features.publish)
+        await _thread_to_the_end(features.publish)
         await shell_link.sync(addon_options)
     except Exception as exc:  # noqa: BLE001
         log.debug("shell sync failed: %s", exc)
@@ -29687,54 +29715,54 @@ def make_app() -> web.Application:
         # Every prompt's shipped text is captured before any override is put
         # in force, then the overrides, then the shipped copies are written
         # where Claude in the terminal can read them.
-        await asyncio.to_thread(instructions.apply_all)
-        await asyncio.to_thread(instructions.export_builtins)
+        await _thread_to_the_end(instructions.apply_all)
+        await _thread_to_the_end(instructions.export_builtins)
         # A browser left over from before the restart (report #355).
-        await asyncio.to_thread(browser_reaper.maybe_reap)
+        await _thread_to_the_end(browser_reaper.maybe_reap)
         # ⚙ › Minecraft's "Default" models, written beside its settings for
         # the integration's listener (the thinking level may have moved).
         try:
-            await asyncio.to_thread(minecraft_companion.publish)
+            await _thread_to_the_end(minecraft_companion.publish)
         except Exception:  # noqa: BLE001 — a game setting never holds the panel up
             log.debug("could not publish the Minecraft models", exc_info=True)
         # The household's personality used to live in Morph's own code;
         # read it out of Morph's copy ONCE, while brAIn has no file of its
         # own, before the terminal's prompt is written from it. Morph's
         # file is never written.
-        moved = await asyncio.to_thread(personality.migrate_from_morph)
+        moved = await _thread_to_the_end(personality.migrate_from_morph)
         if moved:
             log.info("personality: %s", moved)
         # And an earlier import that kept only the top-level strings of
         # Morph's persona is read again, once, while nobody has edited it.
-        repaired = await asyncio.to_thread(personality.repair_from_morph)
+        repaired = await _thread_to_the_end(personality.repair_from_morph)
         if repaired:
             log.info("personality: %s", repaired)
         # brAIn's four switches (⚙ › Features), decided once from what the
         # house already had and published for Morph's service, the
         # integration and the prompts below to read.
-        await asyncio.to_thread(features.ensure)
-        await asyncio.to_thread(_write_terminal_prompt)
+        await _thread_to_the_end(features.ensure)
+        await _thread_to_the_end(_write_terminal_prompt)
         # Republish the shared-volume mirror so the integration's findings
         # sensor reads the current list, not the one from the last change.
-        await asyncio.to_thread(findings_store.publish_state)
+        await _thread_to_the_end(findings_store.publish_state)
         # ...and the to-do mirror beside it, for the same reason: a boot
         # must not serve last week's list to the To-do app.
-        await asyncio.to_thread(todo_store.publish_state)
+        await _thread_to_the_end(todo_store.publish_state)
         # ...and the status line, so `sensor.brain_status` does not wait a
         # minute after a boot to stop reading as the panel being down.
-        await asyncio.to_thread(publish_status)
+        await _thread_to_the_end(publish_status)
         # Transcripts from before the pool's reflection pass and one-shot
         # voice fallback claimed their ids sat in the person's own Chats
         # list. Label the backlog once, by our own shipped prompt openers
         # (marker-guarded).
-        relabelled = await asyncio.to_thread(
+        relabelled = await _thread_to_the_end(
             conversations.backfill_sources, chat_session.WORK_DIR)
         if relabelled:
             log.info("labelled %d machine conversation(s) from before their "
                      "callers claimed session ids", relabelled)
         # ...and what Morph sent before the listener claimed its tasks as
         # Morph's: filed as Automation or as the person's own (marker-guarded).
-        morphs = await asyncio.to_thread(
+        morphs = await _thread_to_the_end(
             conversations.relabel_morph, chat_session.WORK_DIR)
         if morphs:
             log.info("listed %d conversation(s) Morph started under Morph", morphs)
@@ -29827,7 +29855,7 @@ def make_app() -> web.Application:
             stall_after_s=_stall_after(0, FOLLOWUP_TICK_S))
         app["tasks"]["timed"] = _supervise("timed", _timed_loop(), stall_after_s=120)
         try:
-            await asyncio.to_thread(security.publish)
+            await _thread_to_the_end(security.publish)
         except Exception as exc:  # noqa: BLE001 — a guard that could not
             # be republished is a fault row, not a panel that will not start
             log.warning("could not publish the tripwire file: %s", exc)
