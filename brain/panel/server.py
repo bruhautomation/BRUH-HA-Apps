@@ -6573,6 +6573,11 @@ async def _generate(insight_id: str) -> None:
                  f", {len(filed)} new finding(s)" if filed else "",
                  f", {accepted} hypothesis(es) queued" if accepted else "")
     except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
+        if _cancel_requested():
+            # The app is closing and the cancel arrived dressed as this
+            # exception (`_cancel_requested`): not a failed card, so no
+            # journal row, no problem report and no backoff.
+            raise asyncio.CancelledError from exc
         log.warning("insight %s failed: %s", insight_id, exc)
         journal.record("insight", journal.classify({"ok": False, "error": str(exc)}),
                        error=str(exc), extra={"id": insight_id,
@@ -8399,6 +8404,10 @@ def _loop_ended(name: str, task: asyncio.Task) -> None:
 # is hung: the longest passes run Claude turns behind the run queue (a
 # look and three investigations, a brief, a weekly report).
 LOOP_PASS_S = 2 * 3600
+# How long the app's cleanup waits for its cancelled loops to finish.
+LOOP_STOP_WAIT_S = 5.0
+# How often a loop that has not ended yet is cancelled again.
+LOOP_RECANCEL_S = 0.2
 
 
 def _stall_after(first_delay_s: float, poll_s: float) -> float:
@@ -8474,6 +8483,21 @@ async def _dispatch(job_id: str) -> None:
         await _generate(job_id)
 
 
+def _cancel_requested() -> bool:
+    """Whether the running task has been asked to stop, whatever arrived.
+
+    A cancel does not always arrive as `CancelledError`. `asyncio.gather`
+    sets its outer future from the first child to finish, so a child that
+    had already failed — a DNS lookup that came back "not known" in the
+    same pass of the loop — turns a cancel of the task awaiting it into
+    that child's exception, and a handler's `except Exception` then
+    swallows the shutdown as an ordinary failed job. `Task.cancelling()`
+    still counts the request, which is what this reads.
+    """
+    task = asyncio.current_task()
+    return bool(task is not None and task.cancelling())
+
+
 async def _worker() -> None:
     """The generation queue's one consumer, which must outlive its jobs.
 
@@ -8492,6 +8516,11 @@ async def _worker() -> None:
         _beat("worker")
         try:
             await _dispatch(job_id)
+            # A cancel that reached the job as some other exception (see
+            # `_cancel_requested`) is still a cancel: honoured here rather
+            # than going back to `QUEUE.get()` with nothing left to end it.
+            if _cancel_requested():
+                raise asyncio.CancelledError
         except Exception as exc:  # noqa: BLE001 — one job, never the worker
             log.warning("the %s job %s failed outside its own handling: %s",
                         JOBS.get(job_id, {}).get("kind") or "insight",
@@ -29815,6 +29844,29 @@ def make_app() -> web.Application:
                 await task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001 — cancelled on the way out
                 pass
+        # The loops `_startup_body` started end with the app, the worker
+        # first among them. Left running, a card a request had just queued
+        # went on generating after the app was closed — collecting from
+        # Home Assistant, resolving its host in an executor thread, filing
+        # a problem report on the reports thread — while whoever closed the
+        # app went on to its next step. In the suite that next step is a
+        # test's teardown restoring `os.environ`, and glibc's setenv racing
+        # a getaddrinfo's getenv in another thread is a segfault: the
+        # xdist worker died "while running" test_proposal_accept's
+        # ordinary-question test. Bounded, because a loop that swallowed
+        # its cancellation must not hold the shutdown.
+        loops = [t for name, t in app["tasks"].items()
+                 if name != "startup" and t is not None and not t.done()]
+        # Re-cancelled on a short tick until each is done: a cancel can be
+        # turned into another exception on its way down
+        # (`_cancel_requested`), and one that was is a loop back at its
+        # wait with nothing pending to end it.
+        deadline = time.monotonic() + LOOP_STOP_WAIT_S
+        while loops and time.monotonic() < deadline:
+            for t in loops:
+                t.cancel()
+            await asyncio.wait(loops, timeout=LOOP_RECANCEL_S)
+            loops = [t for t in loops if not t.done()]
         # The chat session is a child process of ours; leaving it running
         # after the panel goes down orphans a Claude that nothing will ever
         # read from again.
