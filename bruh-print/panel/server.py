@@ -421,7 +421,7 @@ class Panel:
                        for s in self.stocks.all()},
             "templates": [
                 {"id": t.id, "name": t.name, "icon": t.icon,
-                 "fields": [f.as_dict() for f in t.fields],
+                 "fields": [f.as_dict() for f in t.form()[1]],
                  "stock": t.label.get("stock", ""), "copies": t.copies}
                 for t in self.templates.all()],
             "last_print": (self.history.all(1)[0].as_dict()
@@ -1708,13 +1708,17 @@ async def h_template_delete(request: web.Request) -> web.Response:
     return ok(templates=[t.as_dict() for t in state.templates.all()])
 
 
-def _fill(state: Panel, template, payload: dict) -> tuple[dict, list[str]]:
+def _values(payload: dict) -> dict:
     values = payload.get("fields") or {}
-    if not isinstance(values, dict):
-        values = {}
-    defaults = {f.key: f.default for f in template.fields if f.default}
+    return values if isinstance(values, dict) else {}
+
+
+def _fill(state: Panel, template, payload: dict) -> tuple[dict, list[str]]:
+    values = _values(payload)
+    label, fields = template.form()
+    defaults = {f.key: f.default for f in fields if f.default}
     merged = {**defaults, **{k: v for k, v in values.items() if v not in (None, "")}}
-    return template_store.apply_fields(template.label, merged)
+    return template_store.apply_fields(label, merged)
 
 
 async def h_template_preview(request: web.Request) -> web.Response:
@@ -1750,6 +1754,14 @@ async def h_template_print(request: web.Request) -> web.Response:
         return bad(
             f"{template.name} still needs: {', '.join(missing)}.",
             422, missing=missing)
+    # A field the template has nowhere to put is SAID, never refused: it
+    # used to vanish without a word (#784, `lesson: 29` dropped and lesson
+    # 16 printed), but an automation or a card still sending a field the
+    # template has since lost must not start failing after an update.
+    unknown = template.unknown(_values(payload))
+    taken = ", ".join(f.key for f in template.form()[1]) or "no fields"
+    said = (f"{template.name} has no field called "
+            f"{', '.join(unknown)} — it takes: {taken}.") if unknown else ""
 
     copies = max(1, min(500, int(payload.get("copies", template.copies) or 1)))
     parsed, entry, rendered = await asyncio.to_thread(_render, state, document)
@@ -1766,7 +1778,8 @@ async def h_template_print(request: web.Request) -> web.Response:
         printer=(state.chosen().key if state.chosen() else ""))
     state.mirror_state()
     return ok(printed=copies, side=side, entry=record.as_dict(),
-              missing=missing, notes=notes + rendered.notes, **result)
+              missing=missing, notes=([said] if said else []) + notes
+              + rendered.notes, **result)
 
 
 # -- history ----------------------------------------------------------------

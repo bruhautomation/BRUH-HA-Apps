@@ -2,6 +2,28 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.13
+
+### Fixed
+
+- A finding that says a device is unplugged and scenes still set it is read against the house again before it is shown: it closes when the device is back, and when the device no longer exists it says so and points at the scenes that still use it (#789).
+- The "waiting" chore check reads the automation that runs a plug, such as a dehumidifier's humidity rule, and says the machine is waiting only when that rule's own sensor is past its set point (#772).
+- A weak Bluetooth signal finding first lists the house's Bluetooth proxies and says to bring an offline one back before suggesting new hardware; devices near an offline proxy share one finding about it (#770).
+- Marking a "never fired" automation Wrong, even with "not now" words, stops that check raising that automation again (#768).
+
+## 5.1.12
+
+### Removed
+
+- The 5.1.10 Settings changes are taken back while a new fault is looked into: the house saw runs end on a timeout twice in the day after installing 5.1.10, and the cause could not be traced to one change, so the whole release is reverted (#747). Settings shows its earlier layout until the three fixes come back (#744, #745, #746).
+
+## 5.1.11
+
+### Fixed
+
+- The development loop's screenshot page no longer waits for ever on a question Home Assistant never answers: after 10 seconds it says Home Assistant did not answer in time, so a capture always finishes.
+- brAIn's looks at the house no longer slow down as their record grows: each look used to read and judge the whole record of past verdicts again, and now only reads what was added since the last one.
+
 ## 5.1.10
 
 ### Changed
