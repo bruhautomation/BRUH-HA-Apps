@@ -350,6 +350,13 @@ jobs:
       # — and splitting a file across workers would make those tests pass
       # or fail on which worker drew them. The per-test timeout comes from
       # pytest.ini, so a hung test fails by name instead of eating the job.
+      # --max-worker-restart 0: a test past pytest.ini's timeout ends its
+      # worker (timeout_method = thread), and with --dist loadfile xdist's
+      # scheduler then crashes on the replacement worker (KeyError on its
+      # WorkerController) and the job hangs until its 15-minute limit with
+      # no name in the log, which is what main's CI did after #609. With no
+      # restarts the run ends at once with "worker 'gwN' crashed while
+      # running '<test id>'" and the other workers' tests still run.
       # PYTEST_ARGS is the changes job's --ignore list, empty when
       # everything runs; it is left unquoted on purpose so each --ignore
       # is its own word (the paths it holds contain no spaces).
@@ -357,9 +364,9 @@ jobs:
         env:
           PYTEST_ARGS: ${{ needs.changes.outputs.pytest_args }}
         run: |
-          echo "python -m pytest tests -q -n 4 --dist loadfile $PYTEST_ARGS"
+          echo "python -m pytest tests -q -n 4 --dist loadfile --max-worker-restart 0 $PYTEST_ARGS"
           # shellcheck disable=SC2086
-          python -m pytest tests -q -n 4 --dist loadfile $PYTEST_ARGS
+          python -m pytest tests -q -n 4 --dist loadfile --max-worker-restart 0 $PYTEST_ARGS
 
   morph-real-ha:
     # Morph's Home Assistant half in REAL Home Assistant
