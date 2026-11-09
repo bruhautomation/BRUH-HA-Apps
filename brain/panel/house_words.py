@@ -21,8 +21,9 @@ sentence a person has to translate before they can read the card:
 
 So this is the deterministic half of the rule the prompts state: it turns
 what it can recognise and leaves everything else exactly as it was. An id
-the house has no name for stays an id — a made-up name is worse than the
-id — and a time it cannot parse keeps its words. It is pure over what it
+the house has no name for stays an id here — a made-up name is worse than
+the id — and a time it cannot parse keeps its words; on screen `ids` then
+says such an id as the kind of thing it is ("the voice service", #774). It is pure over what it
 is handed (the names map, the zone, the clock), imports nothing of the
 panel's, and never raises: a cleanup that failed returns the text it was
 given. (`plain_words` is the other half of the same rule, for brAIn's
@@ -804,14 +805,27 @@ _HEX_RE = re.compile(
     r"|\b(?:(?:an?\s+)?(?:error|fault|status|result)\s+)?(?:code\s+)?"
     r"0x[0-9a-f]{1,16}\b", re.I)
 _BUILD_RE = re.compile(
-    r"\b(v?\d+(?:\.\d+){1,3})[-+](?:build[.\-]?\d+[\w.]*|g?[0-9a-f]{7,}|"
+    r"\b(v?\d+(?:\.\d+){1,3})[-+_](?:build[.\-]?\d+[\w.]*|g?[0-9a-f]{7,}|"
     r"\d{6,}|[a-z]+\d*\.[0-9a-f]{6,})\b", re.I)
+# A build string with no version in front of it ("build 24C101", #774): the
+# word, then a token of four or more that holds a digit. "build 3 shelves"
+# is a sentence, not a build.
+_BARE_BUILD_RE = re.compile(
+    r"\s*\(\s*(?:firmware\s+)?build\s+(?=[\w.\-]*\d)[A-Za-z0-9][\w.\-]{3,}\s*\)"
+    r"|\b(firmware\s+)?build\s+(?=[\w.\-]*\d)[A-Za-z0-9][\w.\-]{2,}[A-Za-z0-9]",
+    re.I)
 _MCP_RE = re.compile(r"`?\bmcp__\w+`?")
 # A snake_case word with no dot: an event, a service call or a setting's key
 # (`bruh_minecraft_moment`), which is what the code calls a thing and never
-# what the house does (#618). A dotted id (`sensor.hall_motion`) is an
-# entity and is `entities`' to name or leave.
+# what the house does (#618). It is said by the house's name for it when an
+# entity's object id is that word, and otherwise as its own words ("bruh
+# minecraft moment") — never as "an internal name", which broke the
+# sentence and left nobody able to tell which thing was meant (#791). In
+# brackets it is an aside, and goes. A dotted id (`sensor.hall_motion`) is
+# an entity and is `ids`' to name.
 _SNAKE_RE = re.compile(r"`?(?<![\w.])[a-z][a-z0-9]*(?:_[a-z0-9]+)+(?![\w]|\.\w)`?")
+_SNAKE_ASIDE_RE = re.compile(
+    r"\s*\(\s*`?([a-z][a-z0-9]*(?:_[a-z0-9]+)+)`?\s*\)")
 _TOOL_NAMES: frozenset | None = None
 _TOOL_FILES = ("/opt/ha-mcp-server/ha_mcp_server.py",)
 
@@ -897,12 +911,33 @@ def without_files(text: str) -> str:
     return out.strip()
 
 
-def technical(text: str, files: bool = True) -> tuple[str, list[str]]:
+def _object_ids(names: Mapping | None) -> dict[str, str]:
+    """``{object id: name}`` for every object id one entity alone has."""
+    out: dict[str, str] = {}
+    twice: set[str] = set()
+    for eid, name in _names_for(names).items():
+        obj = eid.split(".", 1)[-1]
+        if obj in out:
+            twice.add(obj)
+        out[obj] = name
+    return {k: v for k, v in out.items() if k not in twice}
+
+
+def code_words(token: str, names: Mapping | None = None) -> str:
+    """A snake_case code name as a person reads it: the house's name for
+    the entity whose object id it is, or its own words."""
+    token = str(token or "").strip().strip("`").strip()
+    return _object_ids(names).get(token) or token.replace("_", " ")
+
+
+def technical(text: str, files: bool = True,
+              names: Mapping | None = None) -> tuple[str, list[str]]:
     """``(text, found)``: ``text`` with the strings only a developer reads
     taken out of the sentence, and those strings. Text with none comes back
-    exactly as it was, with an empty list. ``files=False`` leaves paths and
-    file names (a look's conclusion, whose file names are held on screen by
-    `tests/test_open_row_look_reason.py`)."""
+    exactly as it was, with an empty list. ``files=False`` leaves a file's
+    NAME (a look's conclusion, whose file names are held on screen by
+    `tests/test_open_row_look_reason.py`) and still takes out a path and a
+    line number (#774). A code name is said in words (`code_words`)."""
     if not isinstance(text, str) or not text:
         return text, []
     found: list[str] = []
@@ -923,6 +958,15 @@ def technical(text: str, files: bool = True) -> tuple[str, list[str]]:
         keep(m.group(0))
         return m.group(1)
 
+    def bare_build(m: re.Match) -> str:
+        keep(m.group(0).strip(" ()"))
+        whole = m.group(0)
+        if whole.strip().startswith("("):
+            return ""
+        lead = whole[:len(whole) - len(whole.lstrip())]
+        return lead + ("its current firmware" if m.group(1) else
+                       "its current build")
+
     def hexcode(m: re.Match) -> str:
         whole = m.group(0)
         keep(re.search(r"0x[0-9a-f]+", whole, re.I).group(0))
@@ -931,8 +975,17 @@ def technical(text: str, files: bool = True) -> tuple[str, list[str]]:
         lead = whole[:len(whole) - len(whole.lstrip())]
         return lead + "an error code"
 
+    def aside(m: re.Match) -> str:
+        keep(m.group(1))
+        return ""
+
+    def code(m: re.Match) -> str:
+        keep(m.group(0))
+        return code_words(m.group(0), names)
+
     try:
         out = _BUILD_RE.sub(build, text)
+        out = _BARE_BUILD_RE.sub(bare_build, out)
         out = _HEX_RE.sub(hexcode, out)
         out = _MCP_RE.sub(swap("one of brAIn's tools"), out)
         tools = _tool_re()
@@ -940,14 +993,197 @@ def technical(text: str, files: bool = True) -> tuple[str, list[str]]:
             out = tools.sub(swap("one of brAIn's tools"), out)
         if files:
             out = _FILE_RE.sub(swap("a configuration file"), out)
-        out = _SNAKE_RE.sub(swap("an internal name"), out)
+        else:
+            out = _PATH_RE.sub(swap("a configuration file"), out)
+            out = _LINE_AT_RE.sub(swap(""), out)
+        out = _SNAKE_ASIDE_RE.sub(aside, out)
+        out = _SNAKE_RE.sub(code, out)
     except Exception:  # noqa: BLE001 — a cleanup must never cost the row
         return text, []
     if not found:
         return text, []
     out = re.sub(r"\s+([,.;:!?])", r"\1", re.sub(r"[ \t]{2,}", " ", out))
     out = re.sub(r"\(\s*\)", "", out).strip()
+    # "Code 0xFF failed" became "an error code failed": a sentence that
+    # began with a capital still does.
+    if text[:1].isupper() and out[:1].islower():
+        out = out[0].upper() + out[1:]
     return out, found
+
+
+# A path (never a bare file name) and a line number on their own, for the
+# look's conclusion, which keeps file names.
+_PATH_RE = re.compile(
+    r"(?:\b(?:at\s+|on\s+)?line\s+\d+\s+(?:of|in)\s+)?" + _PATH + _LINE, re.I)
+_LINE_AT_RE = re.compile(r"\s*,?\s*\b(?:at\s+|on\s+)?line\s+\d+\b", re.I)
+
+
+# ---------------------------------------------------------------------------
+# Ids in words, the lint, and the display pass (#774, #791)
+# ---------------------------------------------------------------------------
+#
+# A house's findings quoted `tts.google_en_com` and `sensor.…` ids the names
+# map had no name for — `entities` leaves those on purpose, because a
+# made-up name is worse than the id — and a service id (`tts.speak`) is in
+# no names map at all. What the household can read is what the thing IS:
+# "the voice service", "the sensor". So `ids` says a known id by its name
+# and any other by its kind, in the sentence's grammar ("The sensor.x
+# sensor" is "The sensor"; an id in brackets is an aside and goes).
+# `lint` names every fragment a household should not meet, and
+# `said_plainly` is the display pass: the rewrites, then any sentence the
+# lint still flags is dropped.
+
+_ID_NOUNS = {
+    "air_quality": "air quality sensor", "alarm_control_panel": "alarm panel",
+    "assist_satellite": "voice satellite", "automation": "automation",
+    "binary_sensor": "sensor", "button": "button", "calendar": "calendar",
+    "camera": "camera", "climate": "thermostat", "conversation": "assistant",
+    "counter": "counter", "cover": "cover", "date": "date setting",
+    "datetime": "date setting", "device_tracker": "tracker", "event": "event",
+    "fan": "fan", "geo_location": "location", "group": "group",
+    "humidifier": "humidifier", "image": "image", "input_boolean": "helper",
+    "input_button": "helper", "input_datetime": "helper",
+    "input_number": "helper", "input_select": "helper", "input_text": "helper",
+    "lawn_mower": "lawn mower", "light": "light", "lock": "lock",
+    "media_player": "speaker", "number": "setting", "person": "person",
+    "plant": "plant", "remote": "remote", "scene": "scene",
+    "schedule": "schedule", "script": "script", "select": "setting",
+    "sensor": "sensor", "siren": "siren", "stt": "speech service",
+    "sun": "sun", "switch": "switch", "tag": "tag", "text": "text setting",
+    "time": "time setting", "timer": "timer", "todo": "list",
+    "tts": "voice service", "update": "update", "vacuum": "vacuum",
+    "valve": "valve", "wake_word": "wake word service",
+    "water_heater": "water heater", "weather": "weather service",
+    "zone": "zone", "notify": "notification service",
+    "persistent_notification": "notification",
+    "homeassistant": "Home Assistant action",
+}
+_ID_RE = re.compile(
+    r"`?(?<![\w./])([a-z][a-z_]*)\.([a-z0-9][a-z0-9_]*)(?![\w]|\.\w)`?")
+_NOT_AN_ID = frozenset({"md", "json", "yaml", "yml", "py", "sh", "txt", "log",
+                        "toml", "db", "conf", "jsonl", "js", "css", "html"})
+_DETERMINER_RE = re.compile(
+    r"\b(?:the|a|an|this|that|its|your|their|our|his|her)\s+$", re.I)
+_SENTENCE_START_RE = re.compile(r"(?:^|[.!?]\s+)\s*$")
+
+
+def _an_id(m: re.Match) -> bool:
+    return m.group(1) in _ID_NOUNS and m.group(2) not in _NOT_AN_ID
+
+
+def ids(text: str, names: Mapping | None = None) -> tuple[str, list[str]]:
+    """``(text, found)``: every entity or service id in ``text`` said by the
+    house's name for it, or as the kind of thing it is, and the ids. Text
+    with none comes back exactly as it was."""
+    if not isinstance(text, str) or not text:
+        return text, []
+    known = _names_for(names)
+    found: list[str] = []
+    out = ""
+    pos = 0
+    try:
+        for m in _ID_RE.finditer(text):
+            if m.start() < pos or not _an_id(m):
+                continue
+            eid = f"{m.group(1)}.{m.group(2)}"
+            if eid not in found:
+                found.append(eid)
+            before = out + text[pos:m.start()]
+            after_at = m.end()
+            if eid in known:
+                said = known[eid]
+            elif re.search(r"\(\s*$", before) and re.match(r"\s*\)",
+                                                          text[after_at:]):
+                # An aside: "The hall speaker (media_player.den_echo)".
+                before = re.sub(r"\s*\(\s*$", "", before)
+                after_at += re.match(r"\s*\)", text[after_at:]).end()
+                said = ""
+            else:
+                noun = _ID_NOUNS[m.group(1)]
+                tail = noun.split()[-1]
+                again = re.match(r"\s+" + re.escape(tail) + r"\b",
+                                 text[after_at:], re.I)
+                if again:
+                    after_at += again.end()
+                if re.search(r"\b" + re.escape(tail) + r"\s+$", before, re.I):
+                    # "Leak sensor sensor.kitchen_leak shows wet": the
+                    # sentence already said what it is.
+                    said = ""
+                elif _DETERMINER_RE.search(before):
+                    said = noun
+                else:
+                    said = "the " + noun
+                    if _SENTENCE_START_RE.search(before):
+                        said = said[0].upper() + said[1:]
+            out = before + said
+            pos = after_at
+        if not found:
+            return text, []
+        out += text[pos:]
+        for name in set(known.values()):
+            out = re.sub(re.escape(name) + r"\s*\(\s*" + re.escape(name)
+                         + r"\s*\)", name, out)
+        out = re.sub(r"\s+([,.;:!?])", r"\1", re.sub(r"[ \t]{2,}", " ", out))
+    except Exception:  # noqa: BLE001 — a cleanup must never cost the row
+        return text, []
+    return out.strip(), found
+
+
+# What the step above wrote until #791, and real stores still hold.
+_LEGACY_CODE_NAME = "an internal name"
+_LEGACY_RE = re.compile(r"\ban internal name\b", re.I)
+_LEGACY_AFTER_ARTICLE_RE = re.compile(
+    r"\b((?:the|a|an|this|that|its|your)\s+)an internal name\s+(?=[a-z])",
+    re.I)
+
+
+def lint(text: str, files: bool = True) -> list[str]:
+    """Every fragment of ``text`` a household should not meet in a
+    finding: a path (and with ``files`` a file name), a line number, an
+    entity or service id, a hex code, a build string, one of brAIn's tool
+    names, a code name, and the old "an internal name"."""
+    text = str(text or "")
+    if not text:
+        return []
+    out: list[str] = []
+    for pattern in ((_FILE_RE if files else _PATH_RE), _LINE_NO_RE, _HEX_RE,
+                    _BUILD_RE, _BARE_BUILD_RE, _MCP_RE, _SNAKE_RE,
+                    _LEGACY_RE):
+        out += [m.group(0).strip() for m in pattern.finditer(text)]
+    out += [m.group(0).strip("`") for m in _ID_RE.finditer(text) if _an_id(m)]
+    tools = _tool_re()
+    if tools is not None:
+        out += [m.group(0) for m in tools.finditer(text)]
+    seen: list[str] = []
+    for frag in out:
+        if frag and frag not in seen:
+            seen.append(frag)
+    return seen
+
+
+def said_plainly(text: str, names: Mapping | None = None, files: bool = True,
+                 known: list | tuple = ()) -> str:
+    """``text`` as a surface shows it (#774, #791): developer strings out
+    (`technical`), ids by name or kind (`ids`), the old "an internal name"
+    repaired — after an article it simply goes ("the event"), and elsewhere
+    it is the one code name the row kept in ``known`` (its Technical
+    line), said in words — and then any sentence `lint` still flags is
+    dropped. Text the lint finds nothing in comes back as it was."""
+    if not isinstance(text, str) or not text or not lint(text, files):
+        return text
+    out = technical(text, files, names)[0]
+    out = ids(out, names)[0]
+    if _LEGACY_RE.search(out):
+        out = _LEGACY_AFTER_ARTICLE_RE.sub(r"\1", out)
+        codes = [t for t in known or () if isinstance(t, str)
+                 and _SNAKE_RE.fullmatch(t.strip())]
+        if len(codes) == 1:
+            out = _LEGACY_RE.sub(code_words(codes[0], names), out)
+    if not lint(out, files):
+        return out
+    kept = [s for s in _LOG_SENTENCES.split(out)
+            if s.strip() and not lint(s, files)]
+    return " ".join(kept).strip()
 
 
 # brAIn's own setup — its instructions, personality, identity, voice — as
