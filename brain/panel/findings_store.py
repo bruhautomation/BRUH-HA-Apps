@@ -1740,7 +1740,7 @@ def listing() -> dict:
     them separately meant parsing (and fully shaping) the same file twice
     per request — on a Pi, for a screen that polls.
     """
-    shaped = [s for s in (_shape(e) for e in _load())
+    shaped = [as_now(s) for s in (_shape(e) for e in _load())
               if s["text"] and holds_now(s)]
     for row in shaped:
         row["fix"] = shown_fix(row)
@@ -4891,6 +4891,67 @@ def seed_states(states) -> None:
     if isinstance(states, dict):
         for eid, st in states.items():
             note_state(eid, st)
+
+
+# The entity ids the registry held at the last checks pass
+# (`seed_registry`): beside `LIVE_STATES`, what says an entity is GONE from
+# Home Assistant rather than down (#789). Empty is "not read", which proves
+# nothing.
+LIVE_REGISTRY: set[str] = set()
+
+
+def seed_registry(entities) -> None:
+    """The registry a checks pass read: rows with an ``entity_id``, or ids."""
+    ids = set()
+    for row in entities or ():
+        eid = row.get("entity_id") if isinstance(row, dict) else row
+        if isinstance(eid, str) and eid:
+            ids.add(eid)
+    if ids:
+        LIVE_REGISTRY.clear()
+        LIVE_REGISTRY.update(ids)
+
+
+# "is unplugged", "has gone offline": the words a claim that a thing is down
+# says it with, replaced when the thing is not in the house at all.
+_DOWN_PHRASE_RE = re.compile(
+    r"\b(?:is|are|was|were|has been|have been|went|has gone|have gone)\s+"
+    r"(?:\w+\s+)?(?:offline|unavailable|unplugged|unreachable|"
+    r"disconnected|not (?:reachable|responding|connected))\b", re.I)
+GONE_FIX = ("It is no longer in Home Assistant, so there is nothing to bring "
+            "back: take it out of the scenes, automations and scripts that "
+            "still name it.")
+
+
+def gone_now(entry: dict) -> list[str]:
+    """The entities a row says are down that are now in neither the states
+    nor the registry, when that is every entity it names — or []. Only for
+    a row `holds_now` would read (never a house check, never the harm
+    family), and only once both the states and the registry were read."""
+    if (not LIVE_STATES or not LIVE_REGISTRY or not isinstance(entry, dict)
+            or not _sweepable(entry, None)):
+        return []
+    if not (_reported_missing(entry) or is_drop_report(entry)):
+        return []
+    named = _named_entities(entry)
+    if not named or any(e in LIVE_STATES or e in LIVE_REGISTRY
+                        for e in named):
+        return []
+    return sorted(named)
+
+
+def as_now(row: dict) -> dict:
+    """A row as it reads against the house now: one saying a device is
+    down, whose device is gone from Home Assistant, says it no longer
+    exists, and its step is taking it out of what still names it (#789).
+    The stored row and its `text` (the key) are left as they are."""
+    if not gone_now(row):
+        return row
+    claim = str(row.get("claim") or row.get("text") or "")
+    said, n = _DOWN_PHRASE_RE.subn("no longer exists", claim, count=1)
+    if not n:
+        said = f"{claim.rstrip('. ')}: it no longer exists"
+    return {**row, "claim": said, "fix": GONE_FIX, "gone": True}
 
 
 def holds_now(entry: dict, states: dict | None = None) -> bool:

@@ -171,6 +171,8 @@ def waiting(snap: dict, now: float) -> list[dict]:
         ago_min = (now - finished) / 60.0
         if ago_min < QUIET_MIN or ago_min > STALE_HOURS * 60.0:
             continue
+        if _rule_waits(house, snap, eid, "chore.waiting"):
+            continue
         hits.append((finished, kind, eid, shape))
 
     if len(hits) > MAX_ROWS:
@@ -798,10 +800,34 @@ def _reading(house: House):
     return value_of
 
 
+def _rule_waits(house: House, snap: dict, eid: str, check_id: str) -> bool:
+    """Whether the automations that start this machine (or a plug on its
+    device) are all waiting on a reading that is not past their threshold.
+
+    The automation decides when the machine should run, off its own sensor
+    and set point: while that reading is on the wrong side of it, a stopped
+    machine is the rule working, not a chore or a full tank (#772). Nothing
+    that starts it, or a rule this cannot read (a time, a template), is
+    False — the check says what it always did. Why goes on the trail.
+    """
+    import shadow  # noqa: PLC0415 — panel-local, a leaf
+
+    waits = next((w for w in (shadow.not_due(snap.get("automations"), a,
+                                             _reading(house))
+                              for a in [eid] + house.siblings(eid)) if w),
+                 None)
+    if not waits:
+        return False
+    alias, bounds = waits[0]
+    house.gave_up(check_id, [{"entity_id": eid}],
+                  f"“{alias}” starts it on {house.label(bounds[0]['entity'])}, "
+                  "which is not past its threshold", kind="explained")
+    return True
+
+
 def dehumidifier(snap: dict, now: float) -> list[dict]:
     """Dehumidifiers at standby in a room damper than they run at."""
     import appliances  # noqa: PLC0415
-    import shadow  # noqa: PLC0415 — panel-local, a leaf
 
     store = snap.get("appliances") or {}
     shapes = store.get("entities") or {}
@@ -830,18 +856,7 @@ def dehumidifier(snap: dict, now: float) -> list[dict]:
             continue
         plug = next((o for o in switches
                      if (house.states.get(o) or {}).get("state") == "on"), "")
-        # The automation that starts it decides when it should run, off its
-        # own sensor and threshold; while that reading is on the wrong side
-        # of it, standby is the rule working, whatever this room reads.
-        waits = next((w for w in (shadow.not_due(snap.get("automations"), a,
-                                                 _reading(house))
-                                  for a in [eid] + house.siblings(eid)) if w),
-                     None)
-        if waits:
-            alias, bounds = waits[0]
-            house.gave_up("chore.dehumidifier", [{"entity_id": eid}],
-                          f"“{alias}” starts it on {bounds[0]['entity']}, "
-                          "which is not past its threshold", kind="explained")
+        if _rule_waits(house, snap, eid, "chore.dehumidifier"):
             continue
         points = recent.get(eid) or []
         reading = appliances.state_at(shape, points, now)
