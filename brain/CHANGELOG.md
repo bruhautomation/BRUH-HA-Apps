@@ -2,6 +2,18 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.16
+
+### Added
+
+- brAIn's Minecraft tools follow BRUH Minecraft 1.19.7: `minecraft_world` takes a `dimension` (Overworld, Nether, End) for looks and edits, and a skin is set through the add-on's `set_skin` service, which waits for the server's own answer and accepts a picture link (#782, #760).
+- A grown-up's game run is told how a lever or button can drive the house (a command block saying `bruh:signal`); a child's run and the shared tool description never carry it (#777).
+
+### Fixed
+
+- A skin request that gets no answer within a minute says the outcome is unknown instead of saying it failed (#760).
+- Block checks during a build use the add-on's quiet check, so players no longer see "[Rcon] ok" in chat (#761).
+
 ## 5.1.15
 
 ### Fixed
