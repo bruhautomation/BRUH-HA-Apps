@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.14.6
+
+### Fixed
+
+- Printing text from brAIn (`print_label`) prints the label on the loaded roll; it used to build a preview and print nothing. A print that prints nothing now always says why (#783).
+- A template whose label holds one number (such as "Lesson 16") takes that number as a field, so "print lesson 29" prints Lesson 29; the printer's status lists the field, and a field the template doesn't have is named in a note instead of being ignored silently (#784).
+- The panel shows its tabs and form on phones whose frame starts at no width, without opening and closing the sidebar first (#794).
+
 ## 0.14.5
 
 ### Fixed
