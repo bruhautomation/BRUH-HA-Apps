@@ -1309,6 +1309,59 @@ for (const width of WIDTHS) {
     note(where, `driving Permissions' names failed: ${String(e.message).split('\n')[0]}`);
   }
 
+  // ---- #744 / #746: an open section says "Settings" once; Features is one
+  // level of boxes with short descriptions ---------------------------------
+  try {
+    await showSection(page, 'features');
+    await page.waitForTimeout(200);
+    const f = await page.evaluate(() => {
+      const vis = (n) => n && n.offsetParent !== null && getComputedStyle(n).visibility !== 'hidden';
+      const said = [...document.querySelectorAll('#setModal .panetitle, #setModal .setback')]
+        .filter(vis).map((n) => n.textContent.replace(/\s+/g, ' ').trim())
+        .filter((t) => /^[\u2039< ]*Settings$/.test(t));
+      const boxed = (n) => ['Top', 'Right', 'Bottom', 'Left'].every(
+        (side) => parseFloat(getComputedStyle(n)['border' + side + 'Width']) > 0);
+      const depth = (id) => {
+        let d = 0;
+        for (let n = document.getElementById(id); n && n.id !== 'setModal'; n = n.parentElement) {
+          if (boxed(n)) d += 1;
+        }
+        return d;
+      };
+      const lines = (n) => {
+        const cs = getComputedStyle(n);
+        return Math.round(n.getBoundingClientRect().height / parseFloat(cs.lineHeight));
+      };
+      const subs = [...document.querySelectorAll('#setsecFeatures .bigcheck .subtext')]
+        .map((n) => ({ id: n.closest('label').querySelector('input').id, lines: lines(n) }));
+      const morph = document.querySelector('#featMorph').closest('label').textContent;
+      const saidAt = [...document.querySelectorAll('#setModal .panetitle, #setModal .setback')]
+        .filter(vis).filter((n) => /^[\u2039< ]*Settings$/.test(n.textContent.replace(/\s+/g, ' ').trim()))
+        .map((n) => n.getBoundingClientRect().bottom);
+      const name = [...document.querySelectorAll('#setsecFeatures .setsecname')].find(vis);
+      const above = !!name && saidAt.length > 0 && saidAt.every((b) => b <= name.getBoundingClientRect().top + 1);
+      return {
+        said, subs, morph, above,
+        depths: ['featMorph', 'featPersonality', 'featLearning', 'setDevloop'].map(depth),
+        warn: !!document.querySelector('#setsecFeatures .featwarn'),
+      };
+    });
+    if (narrow && f.said.length !== 1) {
+      note(where, `an open section says "Settings" ${f.said.length} times: ${JSON.stringify(f.said)}`);
+    }
+    if (narrow && !f.above) note(where, 'the one "Settings" does not sit above the section\'s title');
+    if (f.depths.some((d) => d > 1)) note(where, `Features has boxes inside boxes (depths ${f.depths})`);
+    if (f.warn) note(where, 'Morph\'s experimental note is a second paragraph, not part of its description');
+    if (!/Experimental/.test(f.morph)) note(where, 'Morph\'s description no longer says it is experimental');
+    if (width === 390) {
+      for (const s of f.subs) {
+        if (s.lines > 3) note(where, `${s.id}'s description runs ${s.lines} lines at 390px`);
+      }
+    }
+  } catch (e) {
+    note(where, `reading Features failed: ${String(e.message).split('\n')[0]}`);
+  }
+
   // ---- #555: no summary on the list is cut off ----------------------------
   try {
     if (narrow) await page.locator('#setModal .setsec:not([hidden]) .setback').click({ timeout: 3000 }).catch(() => {});
