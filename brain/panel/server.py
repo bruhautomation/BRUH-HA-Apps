@@ -6487,6 +6487,9 @@ async def _generate(insight_id: str) -> None:
             "tags": tags,
             # Drawn as ONE chip; the prose no longer says it.
             "verdict": card_judgement,
+            # What to do when it is not all fine (`card_verdict.next_step`).
+            **({"next": verdict["obj"]["next"]}
+               if verdict["obj"].get("next") else {}),
             # All fine about nothing that changed: Reports folds it into
             # its "All quiet" line rather than a card of its own.
             "quiet": bool(quiet_card) or blind,
@@ -10335,8 +10338,12 @@ async def h_insights(request: web.Request) -> web.Response:
                 ins.pop("verdict", None)
             if ins.get("id") in superseded:
                 ins["superseded_by"] = superseded[ins["id"]]
-            twin = card_claims.finding_twin(set(ins["entities"]), live_rows,
-                                            device_of)
+            # Its headline decides too: a side remark about another
+            # sensor does not make a card about a finding's thing a
+            # second item (#759).
+            twin = card_claims.finding_twin(
+                set(ins["entities"]), live_rows, device_of,
+                headline=_card_entities({"title": ins.get("title")}))
             if twin is not None and twin.get("ts"):
                 ins["told_in"] = f"f:{twin['ts']}"
             # The heading an asked card carries in place of "Custom". A
@@ -27395,12 +27402,14 @@ async def h_personality_put(request: web.Request) -> web.Response:
                               or len(voice.strip()) > personality.VOICE_MAX):
         raise web.HTTPBadRequest(
             text=f"a voice is at most {personality.VOICE_MAX} characters")
+    before = await asyncio.to_thread(personality.identity)
     try:
         await asyncio.to_thread(personality.save, name, persona, None, voice)
     except (ValueError, OSError):
         log.exception("could not save the personality")
         raise web.HTTPInternalServerError(
             text="brAIn could not save that; the add-on log says why.")
+    await asyncio.to_thread(_voice_settled, before.get("voice") or "")
     await asyncio.to_thread(features.publish)
     await asyncio.to_thread(_write_terminal_prompt)
     _refresh_claude_md()
@@ -27439,6 +27448,25 @@ async def h_header_logo_delete(request: web.Request) -> web.Response:
     return web.json_response(header_brand.payload(settings_store.load()))
 
 
+def _voice_settled(old: str) -> int:
+    """In the step that stores a new voice, a line of brAIn's instruction
+    overrides or its persona that still names another voice becomes one
+    yes/no question per file, whose Yes makes the edit (`self_care.
+    voice_questions`, #769). Not an unattended write: those files are
+    words a person wrote. How many were filed."""
+    voice = personality.identity().get("voice") or ""
+    if not voice or voice.lower() == str(old or "").lower():
+        return 0
+    filed = 0
+    try:
+        for row in self_care.voice_questions(voice, old):
+            if findings_store.add_case(row):
+                filed += 1
+    except Exception as exc:  # noqa: BLE001 — never the save it followed
+        log.warning("could not read brAIn's files for the old voice: %s", exc)
+    return filed
+
+
 async def h_personality_growth(request: web.Request) -> web.Response:
     """POST {text}: one dated growth entry (the `note_personality_change`
     MCP tool, from a conversation about who brAIn is)."""
@@ -27449,12 +27477,14 @@ async def h_personality_growth(request: web.Request) -> web.Response:
     refusal = await asyncio.to_thread(personality.growth_refusal, text)
     if refusal:
         raise web.HTTPBadRequest(text=refusal)
+    before = await asyncio.to_thread(personality.identity)
     try:
         entry = await asyncio.to_thread(personality.add_growth, text)
     except (ValueError, OSError):
         log.exception("could not record a personality change")
         raise web.HTTPInternalServerError(
             text="brAIn could not record that; the add-on log says why.")
+    await asyncio.to_thread(_voice_settled, before.get("voice") or "")
     await asyncio.to_thread(_write_terminal_prompt)
     _refresh_claude_md()
     return web.json_response({"ok": True, "entry": entry})

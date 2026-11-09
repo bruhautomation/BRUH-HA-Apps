@@ -543,7 +543,42 @@ def review(obj: dict, previous: dict | None = None,
         out["verdict"] = verdict
     else:
         out.pop("verdict", None)
+    step = next_step(out, verdict, open_rows)
+    if step:
+        out["next"] = step
+    else:
+        out.pop("next", None)
     return got
+
+
+NEXT_MAX = 200
+
+
+def next_step(out: dict, verdict: str, open_rows=()) -> str:
+    """The ONE thing to do on a card that is not all fine (#793): its own
+    `next`, else the fix of a finding it filed, the open finding it is
+    about, or a suggestion it made. "" on an all-fine card, and "" when
+    the card says nothing to do: a step is never made up."""
+    if verdict not in (LOOK, ACTION):
+        return ""
+    out = out or {}
+
+    def one(text) -> str:
+        return " ".join(str(text or "").split())[:NEXT_MAX]
+
+    if one(out.get("next")):
+        return one(out.get("next"))
+    for f in out.get("findings") or []:
+        if isinstance(f, dict) and one(f.get("fix")):
+            return one(f.get("fix"))
+    row = open_row_named(out, open_rows)
+    if row is not None:
+        return one(row.get("fix")) or one(
+            f"See the open finding: {str(row.get('text') or '').rstrip('.')}.")
+    for opp in out.get("opportunities") or []:
+        if isinstance(opp, dict) and one(opp.get("text")):
+            return one(opp.get("text"))
+    return ""
 
 
 def _strip_verdict_sentence(out: dict, changed: list[str]) -> None:
@@ -674,8 +709,8 @@ def claims_fixed(obj: dict, open_rows) -> list[dict]:
 # "no cooling since 17 Oct", "neither unit has run since".
 _NO_CHANGE = re.compile(
     r"\b(?:no|nothing)\s+(?:\w+\s+){0,2}since\b|"
-    r"\b(?:has|have|had)(?:n'?t| not)\s+(?:\w+\s+)?(?:run|been|cycled|changed|"
-    r"moved|fired|started|come on)\b[^.]*\bsince\b|"
+    r"\b(?:has|have|had)(?:n'?t| not)\s+(?:\w+\s+)?(?:run|been|come on|"
+    r"\w+ed)\b[^.]*\bsince\b|"
     r"\bneither \w+ (?:has|have) (?:\w+ )?(?:run|cycled|changed|fired|started)\b|"
     r"\bno change\b|\bunchanged\b", re.I)
 
@@ -722,7 +757,10 @@ def folds_quiet(card: dict) -> bool:
             and shown["verdict"] not in (LOOK, ACTION)):
         # A headline that was a blind spot or a non-event (`card_claims`).
         return True
-    if shown["verdict"] != FINE or not nothing_to_act(card):
+    # No verdict is no judgement either way: "Nothing new since <date>"
+    # (the rewrite that takes a fine verdict off) is still a card about
+    # nothing changing, and folds with the all-fine ones (#793).
+    if shown["verdict"] in (LOOK, ACTION) or not nothing_to_act(card):
         return False
     return bool(card.get("quiet")) or quiet(card) or no_change(card, None)
 
@@ -797,11 +835,11 @@ def _review(obj: dict, previous: dict | None = None,
     return {"obj": out, "hold": "", "changed": changed}
 
 
-__all__ = ["ACTION", "FINE", "HOLD_WHY", "LOOK", "QUIET_WHY", "RISE",
+__all__ = ["ACTION", "FINE", "HOLD_WHY", "LOOK", "NEXT_MAX", "QUIET_WHY", "RISE",
            "VERDICTS", "claims_fixed", "clean_verdict", "disagreeing_row",
            "drop_title_echo", "folds_quiet", "initial_verdict",
            "is_reassurance", "lead_verdict", "legacy", "no_change",
            "nothing_to_act", "quiet_now", "verdict_of_sentence",
-           "lead_clause", "nothing_new", "open_row_named", "quiet",
+           "lead_clause", "next_step", "nothing_new", "open_row_named", "quiet",
            "strip_reassurance", "title_echo",
            "review", "rises", "says_fine", "strip_verdict", "when_said"]

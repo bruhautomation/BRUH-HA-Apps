@@ -1804,6 +1804,13 @@ function makeCard(catInfo, insight, fallbackId) {
     const chip = verdictChip(shown);
     if (chip) card.appendChild(chip);
     if (shown.summary) card.appendChild(summaryNode(view ? withoutVerdictLead(shown.summary) : shown.summary));
+    // A card that is not all fine says the one thing to do (#793).
+    if (shown.next && shown.verdict && shown.verdict !== "all fine") {
+      const step = el("p", "nextstep");
+      step.appendChild(el("strong", null, "Next: "));
+      step.appendChild(document.createTextNode(shown.next));
+      card.appendChild(step);
+    }
     if (shown.highlights && shown.highlights.length) {
       const prevData = view ? view.prev : state.prevLatest[id];
       const prevHls = (prevData && prevData.highlights) || [];

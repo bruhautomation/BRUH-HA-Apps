@@ -17,8 +17,9 @@ its CLAIMS. Three rules, each pure over the parsed reply so `review` and
   sentence of the summary under `GAP_LINE_MAX` stays, every other goes,
   and a tile whose value is a gap ("no data", "n/a") is not a tile.
 * **A card and a finding about one thing are one item**
-  (`finding_twin`): a card every entity of which is an open finding's
-  entity, or on that entity's device, is drawn as that finding.
+  (`finding_twin`): a card every entity of which — or every entity its
+  title names — is an open finding's entity, or on that entity's device,
+  is drawn as that finding.
 
 Nothing here invents a word: a rewrite only removes a sentence or a tile.
 """
@@ -105,7 +106,7 @@ def blind_lead(obj: dict, verdict: str = "") -> str:
         return ""
     if re.search(r"\bnothing to compare\b|\bno comparison\b", claim, re.I):
         return "no comparison"
-    if _GAP.search(claim):
+    if _GAP.search(claim) or _only_gaps(obj):
         return "a data gap"
     if _NON_EVENT.search(claim):
         return "nothing happened"
@@ -140,6 +141,19 @@ def _only_absence(obj: dict) -> bool:
         for p in parts)
 
 
+def _only_gaps(obj: dict) -> bool:
+    """Whether the card says only what brAIn could not check: every summary
+    sentence a gap, and no tile with a reading in it (#793). Such a card is
+    a check that was not done, not a card."""
+    parts = [p for p in _SENTENCE_END.split(str(obj.get("summary") or "")
+                                            .strip()) if p.strip()]
+    if not parts or not all(_GAP.search(p) and not _NEWS.search(p)
+                            for p in parts):
+        return False
+    return all(isinstance(h, dict) and _GAP_VALUE.fullmatch(
+        str(h.get("value") or "")) for h in obj.get("highlights") or [])
+
+
 def trim_gaps(out: dict, changed: list[str]) -> None:
     """At most one short gap line in the summary, and no gap tiles."""
     summary = str(out.get("summary") or "")
@@ -163,13 +177,19 @@ def trim_gaps(out: dict, changed: list[str]) -> None:
             changed.append("a tile with no value")
 
 
-def finding_twin(card_entities: set, rows, device_of=None) -> dict | None:
-    """The open finding a card is wholly about: every entity the card names
-    is that row's entity (or one in its evidence), or on its device."""
-    ents = {str(e) for e in card_entities or () if e}
-    if not ents:
-        return None
+def finding_twin(card_entities: set, rows, device_of=None,
+                 headline=None) -> dict | None:
+    """The open finding a card is about: every entity the card names — or,
+    given ``headline``, every entity its TITLE names (#759: a side remark
+    about another sensor kept a card about a finding's sensor a second
+    item) — is that row's entity (or one in its evidence), or on its
+    device."""
     device_of = device_of or (lambda _e: None)
+    sets = [{str(e) for e in card_entities or () if e},
+            {str(e) for e in headline or () if e}]
+    sets = [s for s in sets if s]
+    if not sets:
+        return None
     for row in rows or ():
         if not isinstance(row, dict) or not row.get("entity_id"):
             continue
@@ -179,7 +199,8 @@ def finding_twin(card_entities: set, rows, device_of=None) -> dict | None:
                 theirs.add(str(ev["entity"]))
         theirs |= {str(e) for e in row.get("about") or [] if e}
         devices = {device_of(e) for e in theirs} - {None, ""}
-        if all(e in theirs or (device_of(e) or None) in devices for e in ents):
+        if any(all(e in theirs or (device_of(e) or None) in devices
+                   for e in ents) for ents in sets):
             return row
     return None
 

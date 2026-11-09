@@ -313,14 +313,21 @@ def digest(snap: dict) -> dict:
     # still a room); every entity an automation's ACTIONS operate, with
     # the service and the automation, whose "how is it done?" that
     # automation answers; and the names a question can call them by.
-    placed = sorted(e for e in set(house.states) | set(house.registry)
-                    if (house.registry.get(e) or {}).get("area_id")
-                    or (house.device_of(e) or {}).get("area_id"))
+    placed = {e: str((house.registry.get(e) or {}).get("area_id")
+                     or (house.device_of(e) or {}).get("area_id"))
+              for e in sorted(set(house.states) | set(house.registry))
+              if (house.registry.get(e) or {}).get("area_id")
+              or (house.device_of(e) or {}).get("area_id")}
     operated = operated_by(snap.get("automations"))
+    on_device: dict[str, list[str]] = {}
+    for eid, reg in house.registry.items():
+        if (reg or {}).get("device_id"):
+            on_device.setdefault(str(reg["device_id"]), []).append(eid)
+    triggered = triggered_by(snap.get("automations"), on_device, house.name)
     names: dict[str, list[str]] = {}
     fact_subjects = {str(f.get("subject") or "") for f in facts} & set(
         house.states)
-    for eid in (set(placed) | set(operated) | fact_subjects
+    for eid in (set(placed) | set(operated) | set(triggered) | fact_subjects
                 | {e["id"] for e in entities}):
         device = house.device_of(eid)
         names[eid] = [n for n in (house.name(eid),
@@ -329,7 +336,7 @@ def digest(snap: dict) -> dict:
     return {"automations": autos, "scripts": scripts, "scenes": scenes,
             "facts": facts, "areas": areas, "entities": entities,
             "index": index, "placed": placed, "operated": operated,
-            "names": names}
+            "triggered": triggered, "names": names}
 
 
 def operated_by(automations) -> dict[str, list[dict]]:
@@ -344,7 +351,52 @@ def operated_by(automations) -> dict[str, list[dict]]:
         for call in shadow.would_do(cfg):
             verb = str(call.get("service") or "").split(".", 1)[-1]
             for eid in call.get("entity_id") or ():
-                row = {"service": verb, "alias": alias}
+                row = {"service": verb, "alias": alias,
+                       "id": str(cfg.get("id") or "")}
+                if row not in out.setdefault(str(eid), []):
+                    out[str(eid)].append(row)
+    return out
+
+
+def _does(service: str) -> str:
+    """A service as the verb a sentence says: "alarm_disarm" → "disarms",
+    "turn_on" → "turns on"."""
+    words = str(service or "").removeprefix("alarm_").split("_")
+    first = words[0] + ("es" if words[0].endswith(("s", "x", "ch", "sh"))
+                        else "s")
+    return " ".join([first] + words[1:])
+
+
+def triggered_by(automations, on_device=None, name_of=None) -> dict:
+    """``{entity: [{"alias", "id", "does"}]}`` — the automations each
+    entity starts: a button, a remote or any sensor named in a trigger,
+    and every entity of a device a device trigger names (a remote is
+    usually mapped by its device). ``does`` is what the automation does,
+    in words: "toggles Desk lamp" (#773)."""
+    import shadow  # noqa: PLC0415 — panel-local, a leaf
+    on_device = on_device or {}
+    name_of = name_of or (lambda e: e)
+    out: dict[str, list[dict]] = {}
+    for cfg in automations or ():
+        if not isinstance(cfg, dict):
+            continue
+        triggers = shadow.triggers_of(cfg)
+        if not triggers:
+            continue
+        does = []
+        for call in shadow.would_do(cfg):
+            verb = _does(str(call.get("service") or "").split(".", 1)[-1])
+            for eid in call.get("entity_id") or ():
+                does.append(f"{verb} {name_of(str(eid))}")
+        row = {"alias": str(cfg.get("alias") or cfg.get("id")
+                            or "an automation")[:80],
+               "id": str(cfg.get("id") or ""),
+               "does": ", ".join(does[:3])}
+        for trig in triggers:
+            ids = trig.get("entity_id")
+            ids = [ids] if isinstance(ids, str) else list(ids or [])
+            ids += on_device.get(str(trig.get("device_id") or ""), [])
+            for eid in ids:
                 if row not in out.setdefault(str(eid), []):
                     out[str(eid)].append(row)
     return out
@@ -626,42 +678,99 @@ def _fact_answers(text: str, about: str, dig: dict) -> str:
     return ""
 
 
-def registry_answers(text: str, about: str, dig: dict) -> str:
-    """What already answers a question to the homeowner, or "".
+# A question asking what something does: "what does the study button
+# do?", "what is the hall remote for?", "what happens when you press the
+# porch button?". Answered by the automations it starts (`triggered_by`).
+_ASKS_WHAT_FOR = re.compile(
+    r"^\s*what\s+(?:does|do)\s+(?P<a>[^?.,;:]+?)\s+do\b"
+    r"|^\s*what\s+(?:is|are)\s+(?P<b>[^?.,;:]+?)\s+(?:used\s+)?for\b"
+    r"|^\s*what\s+happens\s+when\s+(?:you\s+|someone\s+|somebody\s+)?"
+    r"(?:press|push|tap|click|use)(?:es|ed)?\s+(?P<c>[^?.,;:]+)", re.I)
+
+
+def _area_name(area_id: str, dig: dict) -> str:
+    for a in dig.get("areas") or []:
+        if isinstance(a, dict) and str(a.get("id") or "") == area_id:
+            return str(a.get("name") or "")
+    return ""
+
+
+def _found(why: str, text: str = "", sources=(), section: str = "") -> dict:
+    return {"why": why, "text": text, "sources": list(sources),
+            "section": section}
+
+
+def lookup(text: str, about: str, dig: dict) -> dict | None:
+    """What the house already holds that answers a question to the
+    homeowner: ``{"why", "text", "sources", "section"}``, or None.
 
     ``about`` is the entity its subject is (or ""). A where-question about
     an entity that has a room — its subject, or the thing it asks about
     named in its words — is answered by the registry. A how-question about
     operating an entity (its subject, or one it names) that an automation
-    operates that way is answered by the automation.
-    A fact the house holds that says where it is, or how that is done
-    (an earlier answer among them), answers either (`_fact_answers`).
+    operates that way is answered by the automation. A what-does-it-do
+    question about a button, a remote or anything an automation is
+    triggered by is answered by those automations (#773). A fact the house
+    holds that says where it is, or how that is done (an earlier answer
+    among them), answers either (`_fact_answers`). ``text`` and
+    ``sources`` are the line the book gets instead of the question, when
+    the answer can be cited ("" when it cannot: still not asked).
     """
     text = str(text or "")
     known = _fact_answers(text, about, dig)
     if known:
-        return known
-    placed = set(dig.get("placed") or ())
+        return _found(known)
+    placed = dig.get("placed") or {}
+    rooms = placed if isinstance(placed, dict) else {}
+    placed = set(placed)
     placed |= {str(e.get("id")) for e in dig.get("entities") or []
                if isinstance(e, dict) and e.get("area")}
     names = dig.get("names") or {}
+
+    def called(eid: str) -> str:
+        return (names.get(eid) or [eid])[0]
+
+    def room_line(eid: str) -> dict:
+        area = str(rooms.get(eid) or "")
+        room = _area_name(area, dig)
+        if not room:
+            return _found(f"{eid} has a room in the registry")
+        return _found(f"{eid} has a room in the registry",
+                      f"{called(eid)} is in the {room}.", [f"area:{area}"],
+                      "shutoffs")
+
     if _ASKS_WHERE.search(text):
         if about and about in placed:
-            return f"{about} has a room in the registry"
+            return room_line(about)
         for m in _WHERE_OBJECT.finditer(text):
             phrase = m.group("a") or m.group("b") or ""
             for eid in sorted(placed & set(names)):
                 if eid.lower() in phrase.lower() or any(
                         _is_the_thing(phrase, n) for n in names[eid]):
-                    return f"{eid} has a room in the registry"
+                    return room_line(eid)
+    triggered = dig.get("triggered") or {}
+    for m in _ASKS_WHAT_FOR.finditer(text):
+        phrase = m.group("a") or m.group("b") or m.group("c") or ""
+        for eid in sorted(triggered):
+            if not (eid.lower() in phrase.lower() or any(
+                    _is_the_thing(phrase, n) for n in names.get(eid) or ())):
+                continue
+            rows = triggered[eid][:3]
+            runs = "; ".join(
+                f"“{r['alias']}”" + (f", which {r['does']}" if r.get("does")
+                                     else "") for r in rows)
+            return _found(f"{eid} starts {', '.join(r['alias'] for r in rows)}",
+                          f"{called(eid)} runs {runs}.",
+                          [f"automation:{r['id']}" for r in rows if r.get("id")],
+                          "automations")
     active = bool(_ASKS_HOW.search(text))
     if not (active or _ASKS_HOW_PASSIVE.search(text)):
-        return ""
+        return None
     operated = dig.get("operated") or {}
     asked = [svc for rx, svcs in _OPERATIONS if rx.search(text)
              for svc in svcs]
     if not asked and not active:
-        return ""
+        return None
     candidates = [about] if about in operated else []
     if asked:
         candidates += [e for e in _named_in(text, dig, sorted(operated))
@@ -669,8 +778,19 @@ def registry_answers(text: str, about: str, dig: dict) -> str:
     for eid in candidates:
         for row in operated[eid]:
             if not asked or any(row["service"].startswith(a) for a in asked):
-                return f"“{row['alias']}” does it ({row['service']} on {eid})"
-    return ""
+                return _found(
+                    f"“{row['alias']}” does it ({row['service']} on {eid})",
+                    f"“{row['alias']}” {_does(row['service'])} {called(eid)}.",
+                    [f"automation:{row['id']}"] if row.get("id") else [],
+                    "automations")
+    return None
+
+
+def registry_answers(text: str, about: str, dig: dict) -> str:
+    """Why a question to the homeowner is already answered (`lookup`), or
+    ""."""
+    return (lookup(text, about, dig) or {}).get("why", "")
+
 
 def _about_entity(key: str, dig: dict) -> str:
     """The entity a question's subject is about: an entity subject's id, or
@@ -739,8 +859,6 @@ def parse(answer: dict | None, dig: dict, request: str = "",
                 bucket.append({"id": entry_id(key_out, text), "text": text, "sources": [
                     {"key": k, "label": textclip.clip(redact_text(index[k]), MAX_LABEL)}
                     for k in keys[:MAX_SOURCES]]})
-    sections = [{"key": k, "title": SECTIONS[k], "entries": out_sections[k]}
-                for k in SECTIONS if out_sections.get(k)]
     questions = []
     q_in = (answer or {}).get("questions") if isinstance(answer, dict) else None
     for q in q_in if isinstance(q_in, list) and not request else []:
@@ -756,12 +874,28 @@ def parse(answer: dict | None, dig: dict, request: str = "",
         # "how is the alarm disarmed?" about an alarm an automation
         # disarms, ask the homeowner for what brAIn was handed: the
         # registry and the automation are the answer (#561).
-        if registry_answers(text, _about_entity(key, dig), dig):
+        found = lookup(text, _about_entity(key, dig), dig)
+        if found is not None:
+            # Looked up, so written: the book says it, cited to the area or
+            # the automation, and nobody is asked (#773).
+            keys = [k for k in found["sources"] if k in index]
+            line = textclip.clip(redact_text(found["text"]), MAX_ENTRY)
+            put = only if only in SECTIONS else found["section"] or "other"
+            bucket = out_sections.setdefault(put, [])
+            if keys and line and len(bucket) < MAX_ENTRIES and not any(
+                    _norm(b["text"]) == _norm(line) for b in bucket):
+                bucket.append({
+                    "id": entry_id(put, line), "text": line,
+                    "sources": [{"key": k, "label": textclip.clip(
+                        redact_text(index[k]), MAX_LABEL)}
+                        for k in keys[:MAX_SOURCES]]})
             continue
         questions.append({"question": textclip.clip(text, MAX_QUESTION),
                           "why": textclip.clip(redact_text(str(q.get("why") or "")), 300),
                           "subject": key,
                           "label": textclip.clip(index[key], MAX_LABEL)})
+    sections = [{"key": k, "title": SECTIONS[k], "entries": out_sections[k]}
+                for k in SECTIONS if out_sections.get(k)]
     return {"sections": sections, "questions": questions,
             "uncited": uncited, "redacted": redacted}
 
@@ -1118,4 +1252,5 @@ __all__ = ["NOTE_KEY", "YOU_KEY", "add_written", "delete_entry", "edit_entry",
            "entry_id", "find_entry", "index_for", "merge", "normalize",
            "SCHEMA", "answer_fact", "clean_fact_text", "SECTIONS", "SOURCE", "SYSTEM", "digest", "fingerprint",
            "frame", "load", "moved", "parse", "publish", "question_rows",
-           "redact_text", "render_page", "revoke", "save"]
+           "redact_text", "render_page", "revoke", "save", "lookup",
+           "operated_by", "registry_answers", "triggered_by"]

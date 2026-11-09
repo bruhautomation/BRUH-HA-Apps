@@ -446,6 +446,11 @@ CARD_SCHEMA = {
         "verdict": {"type": "string",
                     "enum": ["all fine", "worth a look", "needs action"],
                     "description": "The card's one judgement; the summary never says it again."},
+        # The ONE thing to do when the verdict is not all fine (#793),
+        # drawn under the summary; filled from the card's own findings when
+        # left out (`card_verdict.next_step`).
+        "next": {"type": "string",
+                 "description": "One thing to do when the verdict is not all fine; empty when it is."},
         "summary": {"type": "string",
                     "description": "Opens with the finding itself: the reason, comparison or next step, never the title's figures again and never a verdict (that is `verdict`); a no-action verdict only where the reader would otherwise worry."},
         "highlights": {
@@ -513,14 +518,14 @@ CARD_SCHEMA = {
 _CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The highlights ARE the product: concrete numbers with names and times. The title holds the conclusion; the summary opens with the finding itself — the reason, the comparison or the next step — never the title's figures again. "Nothing to do" only where the reader would otherwise worry, never as the opener. When all is normal, title and summary both say so in one short sentence, with at most two highlights, none with a status, and "html": "".
 
 OUTPUT CONTRACT (strict JSON; title, summary, highlights and html are required):
-{"title": "max 60 chars", "verdict": "all fine|worth a look|needs action", "summary": "1-2 sentences, max ~220 chars, one usual-vs-now comparison",
+{"title": "max 60 chars", "verdict": "all fine|worth a look|needs action", "next": "one step", "summary": "1-2 sentences, max ~220 chars, one usual-vs-now comparison",
  "highlights": [{"label": "Metric", "value": "42 kWh", "delta": "+12% vs avg (optional)", "status": "good|warning|serious|critical (optional)"}],
  "hypotheses": ["optional, usually none"], "learned": ["optional, max 3"],
  "findings": [{"text": "ONE sentence, under 120 chars", "detail": "the evidence", "fix": "the specific change", "severity": "info|warning|serious|critical", "fixable": true, "entity_id": "sensor.example (optional)"}],
  "opportunities": [{"text": "optional, max 2", "entities": ["light.example"]}], "fixed": ["entity_ids of listed problems already fixed"],
  "tags": ["2-4 lowercase topic tags"], "live": ["optional entity_ids to keep current"], "html": "one complete self-contained HTML document"}
 
-verdict: one judgement, shown as a chip; the summary never repeats it.
+verdict: one judgement, shown as a chip; the summary never repeats it. next: ONE thing to do; none when all fine.
 highlights: 3-6 checkable data points, each with its unit, the entity/room/person it belongs to, and a time when relevant. "delta" compares against the period; "status" only when something deserves attention.
 tags: what the card is ABOUT, not the category it was asked for.
 hypotheses: usually ZERO, and never the ending. A belief the data cannot settle that would change how you read this home, answerable yes or no; never one memory answers.
@@ -551,10 +556,10 @@ ANALYSIS RULES:
 - Calling a reading unusual names the cause you checked, or says none was found and gives one next step; "not a leak" needs its evidence. Before describing a missing or odd event, check its sensor's availability and battery; if it was offline, the sensor is the story.
 - Idle is not broken: a machine an automation starts waits until that automation's sensor passes its threshold; read both first.
 - Write about brAIn as "brAIn", never "I", and never name its internal parts (the Resident, the first look, an investigation).
-- Thin data: visualize what IS there. Never mention the recorder, its retention, missing history or a comparison it could not make unless it changes what to do; make the comparison the data does allow. A blind spot or nothing happening is never the headline.
+- Thin data: visualize what IS there. Never mention the recorder, its retention, missing history or a comparison it could not make; make the one the data allows. A blind spot or nothing happening is never the headline.
 - A day or hour with NO samples is missing data, never zero: leave it out of BOTH sides of any comparison, draw it as a gap; too little left means no comparison.
 - Before saying "nothing for N h", check related sensors and history_incomplete; if they disagree, report that, not silence.
-- OPEN QUESTIONS are unconfirmed, but name one as the possible cause when it could explain what the card shows.
+- OPEN QUESTIONS are unconfirmed; name one as the possible cause when it could explain the card.
 - Never cite brAIn's own numbering ("signal 7", "finding #3"); name the device and time.
 - The title names the device, door or room measured ("Back door: evening openings 14 → 5", never "14 openings to 5"); a title number the summary uses keeps the same meaning, and is in a tile or the summary with the same value and unit.
 - Never raise again what the household turned down (listed with the findings) — as a finding, an opportunity or in the summary — unless something new happened."""

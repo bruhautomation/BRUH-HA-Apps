@@ -373,6 +373,36 @@ def add_growth(text, when: float | None = None, path: str | None = None,
     return entry
 
 
+def edit_persona_lines(edits, path: str | None = None) -> bool:
+    """Rewrite lines of the persona, ``[(line, new)]``, each the first line
+    reading exactly ``line``: the one-press Yes on brAIn's own question
+    about a line naming a replaced voice (`self_care`). Nothing else in
+    the file moves. Whether any line changed."""
+    import atomic_write  # noqa: PLC0415 — panel-local
+
+    target = path or STORE
+    if not writable(target):
+        return False
+    with atomic_write.locked(target):
+        data = load(target)
+        lines = str(data.get("persona") or "").split("\n")
+        changed = False
+        for line, new in edits or ():
+            wanted = str(line or "").strip()
+            for i, have in enumerate(lines):
+                if wanted and have.strip() == wanted:
+                    lines[i] = str(new)
+                    changed = True
+                    break
+        if not changed:
+            return False
+        data["persona"] = _block("\n".join(lines), PERSONA_MAX)
+        data["updated_at"] = int(time.time())
+        data["morph_import"] = False
+        _write(data, target)
+    return True
+
+
 def remove_growth(at, text, path: str | None = None) -> bool:
     """Take back one growth entry the assistant wrote itself. Returns
     whether one went. An entry the household settled is never removed
