@@ -309,6 +309,38 @@ class TestSixFindingsNoneReachTheList(LoopCase):
             else:
                 self.assertNotEqual(status, "held", row["text"])
 
+    def test_a_domain_whose_meaning_is_its_name_is_never_set_aside(self):
+        # The last review's ids: each is whatever its name says, and an
+        # id naming two entities is two things. Both words, the first look
+        # and the store's own re-check.
+        srv = self.server
+        ids = ("input_boolean.alarm_armed", "select.alarm_mode",
+               "script.arm_alarm", "script.unlock_door",
+               "button.unlock_front_door", "button.siren_test",
+               "input_boolean.garage_door_open",
+               "update.front_door_lock_firmware", "scene.goodnight",
+               "light.a, lock.b", "light.a lock.b")
+        for n, eid in enumerate(ids):
+            for word in ("cosmetic", "known"):
+                self.assertTrue(corrections.strict_floor(eid, "resident",
+                                                         protected=()),
+                                (eid, word))
+                out = resident.parse_first_look({"verdicts": [
+                    {"id": 1, "verdict": "ignore", "already": word,
+                     "why": "Only its name."}]}, 1,
+                    [{"kind": "check", "subject": eid, "source": "resident"}])
+                self.assertNotEqual(out[1]["verdict"], "ignore", (eid, word))
+                row = self.file_check_row(text=f"Row {n} {eid} looks odd ({word})",
+                                          entity_id=eid,
+                                          source="check:dev.frozen")
+                srv.findings_store.record_triage(
+                    {row["ts"]: ("held", "Only its name.", True, 0, word)},
+                    "look-n")
+                self.assertEqual(srv.findings_store.get(row["ts"])["status"],
+                                 "open", (eid, word))
+        self.assertEqual(corrections.strict_floor("light.hall", "resident",
+                                                  protected=()), "")
+
     def test_the_store_refuses_the_new_words_off_the_allow_list(self):
         srv = self.server
         for eid in ("", "switch.sump_pump", "siren.x"):

@@ -597,11 +597,17 @@ def not_news_floor(entity_id: str = "", source: str = "", *,
 # to KEEP a row shown). Everything else — no entity, a sensor, a switch, a
 # lock, a camera, a siren, a climate, a cover, a valve — stays shown. The
 # older words (`answered`, `duplicate`, …) keep `not_news_floor` alone.
-HARMLESS_DOMAINS = frozenset({
-    "light", "media_player", "update", "scene", "script", "button",
-    "input_boolean", "input_number", "input_select", "input_text",
-    "input_datetime", "select", "text", "weather", "sun", "zone", "tts",
-    "remote"})
+# Only domains harmless by KIND, never one whose meaning is the name a
+# person gave it: an `input_boolean.alarm_armed`, a `script.unlock_door`,
+# a `button.siren_test`, a `select.alarm_mode` or an
+# `update.front_door_lock_firmware` is whatever its name says, and a name
+# is not something a floor can read safely (review of #790). A scene is out
+# for the same reason: it can set a lock or an alarm.
+HARMLESS_DOMAINS = frozenset({"light", "media_player", "weather", "sun",
+                              "zone", "tts"})
+# One entity id, exactly: "light.a, lock.b" or "light.a lock.b" is two
+# things, and the other one may be anything.
+_ONE_ENTITY_RE = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
 _WARY_WORDS_RE = re.compile(
     r"(?:freez|fridge|refrigerat|chiller|cooler|food|water|flood|leak|"
     r"smoke|moist)", re.I)
@@ -615,8 +621,8 @@ def strict_floor(entity_id: str = "", source: str = "", *,
     it is one entity of a `HARMLESS_DOMAINS` domain that passes
     `not_news_floor` and names no food or water."""
     eid = str(entity_id or "")
-    if not eid or _domain(eid) not in HARMLESS_DOMAINS:
-        return "only a light, a speaker or a setting may be set aside so"
+    if not _ONE_ENTITY_RE.match(eid) or _domain(eid) not in HARMLESS_DOMAINS:
+        return "only a light or a speaker may be set aside so"
     said = not_news_floor(entity_id, source, severity=severity,
                           stakes=stakes, device_class=device_class,
                           protected=protected)
