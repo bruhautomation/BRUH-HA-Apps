@@ -438,8 +438,10 @@ export class MorphCard extends HTMLElement {
         if (this._open && !T.noOpen) more = `<div class="more rise">${T.more(ctx)}${this._card.options.detail ? '<div class="mcdetail" data-morph-keep></div>' : ''}${this._moreInfo(ctx)}</div>`;
         const slide = T.slide ? T.slide(ctx) : null;
         const tap = T.tap ? T.tap(ctx) : null;
-        const role = slide ? 'slider' : tap && !tap.confirm ? 'switch' : 'button';
-        aria = ` tabindex="0" role="${role}" aria-label="${esc(ctx.name)}"${role === 'slider' ? ` aria-valuemin="0" aria-valuemax="100" aria-valuenow="${esc(slide.get())}"` : ''}${role === 'button' ? ` aria-expanded="${this._open}"` : ''}`;
+        // A pressable word beside the state (Unlock, Open door, Dock) makes the tile a button named by it.
+        const act = !slide && T.act ? T.act(ctx) : '';
+        const role = slide ? 'slider' : tap && !tap.confirm && !act ? 'switch' : 'button';
+        aria = ` tabindex="0" role="${role}" aria-label="${esc(act ? `${ctx.name}. ${act}` : ctx.name)}"${role === 'slider' ? ` aria-valuemin="0" aria-valuemax="100" aria-valuenow="${esc(slide.get())}"` : ''}${role === 'button' ? ` aria-expanded="${this._open}"` : ''}`;
       } catch (e) {
         face = `<div class="box"><span class="sm">This card could not be drawn: ${esc((e && e.message) || e)}</span></div>`;
       }

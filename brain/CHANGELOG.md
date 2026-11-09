@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.15
+
+### Fixed
+
+- On a phone, the Ask list now carries a message box that starts a new chat, so there is always somewhere to type; a new chat no longer inherits the busy state of the one just left, and if a message cannot be sent it is put back in the chat's box rather than dropped (#796).
+- A Lovelace card hosted in Morph is rebuilt only when it was made before its element existed, so a card that was already defined stays on the page instead of being dropped on the next render (#795).
+- Morph's scene chips are 40px touch targets (#786); a text field that appears late keeps the 16px text floor, so iOS no longer zooms the page when it is tapped (#755).
+- Morph's quiet section labels keep readable contrast when their room dims (#758).
+- A Morph tile with a pressable word (Open, Unlock, Start, Dock) is one button named by that word, so a garage tile no longer reads as "Closed" and "Open" at once (#756); vacuums get labelled Start and Dock buttons (#765); entity tiles get an icon and how long they have been idle (#767).
+
 ## 5.1.14
 
 ### Fixed
