@@ -14406,8 +14406,12 @@ async def _resident_look(now: float, settings: dict, thinking: str,
     # watch holds back is COUNTED onto the watch (`note_withheld`), which is
     # what lets three separate nights re-open it.
     ready, watched_off = list(filed), []
+    # One read of the watch list for the whole pending list: nothing in
+    # this loop writes it, and a busy house's list is hundreds long.
+    watching = resident.watched() if live else {}
     for row in live:
-        (ready if resident.rejudge_due(row, now) else watched_off).append(row)
+        (ready if resident.rejudge_due(row, now, watching)
+         else watched_off).append(row)
     if watched_off:
         await asyncio.to_thread(resident.note_withheld, watched_off, now)
     # Half the batch is kept for rows a rule filed. A row is already on the
@@ -14896,18 +14900,27 @@ async def _resident_investigations(queued: list[tuple[dict, str, int]],
     RESIDENT_PARKED.clear()
     ran, filed = 0, 0
     held: list[tuple[dict, str, int]] = []
+    # The allowance is asked again only after an investigation has run:
+    # until one has, nothing between two asks can spend it (a refusal
+    # `continue`s without awaiting), and a long parked list asked the ledger
+    # and the settings file once per item, every look.
+    allowance: tuple[bool, str] | None = None
     for item in work:
         signal, why, refines = item
         if ran >= MAX_INVESTIGATIONS_PER_LOOK:
             held.append(item)
             continue
-        allowed, reason = LEDGER.allows(
-            _resident_tier(resident.JOB_INVESTIGATE, thinking), thinking, now=now)
+        if allowance is None:
+            allowance = LEDGER.allows(
+                _resident_tier(resident.JOB_INVESTIGATE, thinking), thinking,
+                now=now)
+        allowed, reason = allowance
         if not allowed:
             RESIDENT_STATE["last_error"] = reason
             held.append(item)
             continue
         ran += 1
+        allowance = None
         try:
             if await _resident_investigate(signal, now, thinking, why=why,
                                            refines=refines):
@@ -15402,7 +15415,7 @@ def _graded_items(now: float) -> list[dict]:
     """The graded log, one entry per thing judged. Never raises: a log
     that cannot be read is no record, which floors nothing."""
     try:
-        return outcomes.items(outcomes.load_graded(now))
+        return outcomes.graded_items(now)
     except Exception as exc:  # noqa: BLE001
         log.debug("could not grade the verdict log for a look: %s", exc)
         return []
@@ -20616,6 +20629,10 @@ async def h_harness_morph_cards(request: web.Request) -> web.StreamResponse:
 
 
 HARNESS_MSG_MAX = 20_000
+# How long the harness page's question waits for Core. Below the page's own
+# wait (`devloop.screens.ANSWERS_MAX_S`), so a Core that never answers is an
+# error the page sees, not a request held until the capture's cleanup.
+HARNESS_WS_TIMEOUT_S = 10
 
 
 async def h_harness_ws(request: web.Request) -> web.Response:
@@ -20641,7 +20658,11 @@ async def h_harness_ws(request: web.Request) -> web.Response:
 
         import ha_data
         async with aiohttp.ClientSession() as session:
-            calls = await ha_data._ws_calls(session, [msg])
+            calls = await asyncio.wait_for(ha_data._ws_calls(session, [msg]),
+                                           HARNESS_WS_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        return web.json_response({"error": "Home Assistant did not answer in time"},
+                                 status=504)
     except Exception as exc:  # noqa: BLE001
         return web.json_response({"error": f"Home Assistant did not answer: {exc}"[:200]},
                                  status=502)
