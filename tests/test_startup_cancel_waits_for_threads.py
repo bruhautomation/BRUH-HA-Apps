@@ -60,8 +60,10 @@ class TestCleanupWaitsForTheStartsThread(unittest.IsolatedAsyncioTestCase):
         }.items():
             os.environ[key] = value
         for name in ("journal", "usage_store", "settings_store", "run_sources",
-                     "conversations", "chat_session", "server"):
-            setattr(self, name, importlib.reload(importlib.import_module(name)))
+                     "conversations"):
+            importlib.reload(importlib.import_module(name))
+        self.chat_session = importlib.reload(importlib.import_module("chat_session"))
+        self.server = importlib.reload(importlib.import_module("server"))
         self.instructions = importlib.import_module("instructions")
         self._real_apply_all = self.instructions.apply_all
         self.entered = threading.Event()
