@@ -103,7 +103,7 @@
   "services": {
     "rcon_command": {
       "name": "Run RCON command",
-      "description": "Execute an arbitrary server command (no leading slash). Returns the server's reply; when a plugin answers only on the server console (SkinsRestorer, Skript), the console lines it wrote right after the command."
+      "description": "Execute an arbitrary server command (no leading slash). Returns the server's reply; when a plugin answers only on the server console (SkinsRestorer, Skript), the console lines it wrote right after the command. A block or entity check that ends in \"run say <one word>\" is sent without the say, so it answers \"Test passed\" or \"Test failed\" here instead of in every player's chat."
     },
     "say": {
       "name": "Broadcast chat",
@@ -509,7 +509,7 @@
         },
         "dimension": {
           "name": "Dimension",
-          "description": "For absolute coordinates (no player); minecraft:overworld unless given."
+          "description": "For absolute coordinates (no player). Unless given: an edit's job's (where its earlier edits were), else that of the player nearest the coordinates, else minecraft:overworld."
         },
         "title": {
           "name": "Title",
@@ -551,7 +551,7 @@
         },
         "dimension": {
           "name": "Dimension",
-          "description": "For absolute coordinates (no player); minecraft:overworld unless given."
+          "description": "For absolute coordinates (no player). Unless given: an edit's job's (where its earlier edits were), else that of the player nearest the coordinates, else minecraft:overworld."
         },
         "title": {
           "name": "Title",
@@ -564,6 +564,20 @@
         "by": {
           "name": "Asked by",
           "description": "Who asked, for the log."
+        }
+      }
+    },
+    "set_skin": {
+      "name": "Set a player's skin",
+      "description": "Put a skin on one player through SkinsRestorer, or give them their own back, and answer with whether it went on in SkinsRestorer's words — it is waited for (up to 30 seconds), since SkinsRestorer answers after fetching the skin. Fails with SkinsRestorer's reason when it could not.",
+      "fields": {
+        "player": {
+          "name": "Player",
+          "description": "The player's Minecraft name (a Bedrock player's with its \".\" prefix)."
+        },
+        "skin": {
+          "name": "Skin",
+          "description": "A Java Edition player's name (their skin is used), an https link to a skin picture (a PNG), or clear for their own skin."
         }
       }
     },
@@ -593,7 +607,7 @@
         },
         "dimension": {
           "name": "Dimension",
-          "description": "Dimension."
+          "description": "For absolute coordinates (no player). Unless given: an edit's job's (where its earlier edits were), else that of the player nearest the coordinates, else minecraft:overworld."
         }
       }
     },

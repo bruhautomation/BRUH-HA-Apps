@@ -110,6 +110,14 @@ EDIT_REACH = 128              # relative offsets in a trusted edit
 # An action whose cells are more than this many records keeps them beside
 # the log (`actions/<id>.json`), so the log stays small to read and rewrite.
 INLINE_CELLS = 400
+# A chunk nobody is standing in answers "That position is not loaded": an
+# edit (and its undo) force-loads the chunks it needs, asks again while
+# they load, and lets go of the ones it loaded (#776).
+_NOT_LOADED = re.compile(r"not loaded", re.I)
+FORCE_MAX = 256               # chunks one edit may force-load
+LOAD_TRIES = 20
+LOAD_WAIT_S = 0.1
+VANILLA_DIMS = {"nether": "the_nether", "end": "the_end", "overworld": "overworld"}
 _JOB = re.compile(r"^[A-Za-z0-9_.:\-]{1,40}$")
 LOOK_DEFAULT = (16, 8, 16)    # a look's box, x by y by z
 LOOK_MAX = (32, 16, 32)
@@ -733,6 +741,23 @@ def _runs(cells: dict[tuple[int, int, int], Any]) -> list[tuple[int, int, int, i
     return [tuple(r) for r in out]
 
 
+def _without(cells: list[dict[str, Any]], gone: set[tuple[int, int, int]]) -> list[dict[str, Any]]:
+    """An edit's run records with the cells in `gone` taken out of them."""
+    out: list[dict[str, Any]] = []
+    for c in cells:
+        run: list[int] = []
+        for x in range(c["x"], c["x"] + int(c.get("n") or 1)):
+            if (x, c["y"], c["z"]) in gone:
+                if run:
+                    out.append(dict(c, x=run[0], n=len(run)))
+                run = []
+            else:
+                run.append(x)
+        if run:
+            out.append(dict(c, x=run[0], n=len(run)))
+    return out
+
+
 def undoable(act: dict[str, Any]) -> bool:
     if act.get("status") in ("undone", "failed"):
         return False
@@ -820,12 +845,18 @@ class Companion:
                  item_syntax: Callable[[], str] = lambda: "snbt",
                  accounts: Callable[[], dict] | None = None,
                  reader: Callable[[str, tuple], Any] | None = None,
+                 reading: Callable[[], Any] | None = None,
                  clock: Callable[[], float] = time.time):
         self.col = collector
         # The world's blocks as saved (the panel's: `save-all flush`, then
         # mcmap's region reader): `reader(dimension, (x1, y1, z1, x2, y2, z2))`
         # → {(x, y, z): block state}, or why not (mcmap.Unread, or None).
         self.reader = reader
+        # Called once before a look or an edit reads the world, so the
+        # panel's read from disk saves first instead of trusting a save
+        # from a moment ago — which an edit just made stale (#776).
+        self.reading = reading or (lambda: None)
+        self.pause = time.sleep
         self.clock = clock
         self.emit_fn = emit or (lambda kind, data: None)
         self.snapshot_fn = snapshot
@@ -1229,10 +1260,6 @@ class Companion:
                     raise CompanionError(f"Where {beside} is is not known yet.")
                 pos, dim = here
                 base = [math.floor(c) for c in pos]
-            else:
-                dim = str(dimension or "minecraft:overworld")
-                if not re.fullmatch(r"[a-z0-9_.\-]+:[a-z0-9_./\-]+", dim):
-                    raise CompanionError("dimension is an id like minecraft:overworld.")
             cells, seen = [], set()
             for b in blocks:
                 if not isinstance(b, dict):
@@ -1251,6 +1278,8 @@ class Companion:
                     raise CompanionError("Two blocks in the same place.")
                 seen.add((x, y, z))
                 cells.append({"x": x, "y": y, "z": z, "block": block_id(b.get("block"))})
+            if base is None:
+                dim = self._work_dim(dimension, near=(cells[0]["x"], cells[0]["z"]))
             here_all = [self._pos(p) for p in self.col.sessions]
             here_all = [f for f in here_all if f and f[1] == dim]
             if base is None and not all(
@@ -1363,6 +1392,67 @@ class Companion:
                 continue
         return None
 
+    def _raw_loaded(self, cmd: str, dim: str, xs: tuple[int, int], zs: tuple[int, int],
+                    forced: dict[tuple[str, int, int], bool]) -> str | None:
+        """`_raw(cmd)`, and when the server says the place is not loaded:
+        force-load its chunks (`forced` records each, and whether this
+        edit loaded it), then ask again while they load."""
+        reply = self._raw(cmd)
+        if reply is None or not _NOT_LOADED.search(reply):
+            return reply
+        for cx in range(min(xs) >> 4, (max(xs) >> 4) + 1):
+            for cz in range(min(zs) >> 4, (max(zs) >> 4) + 1):
+                key = (dim, cx, cz)
+                if key in forced:
+                    continue
+                if len(forced) >= FORCE_MAX:
+                    return reply
+                at = f"{cx * 16} {cz * 16}"
+                said = self._raw(f"minecraft:execute in {dim} run minecraft:forceload query {at}")
+                # A chunk somebody already keeps loaded is theirs to let go.
+                mine = not (said and re.search(r"\bis marked\b", said, re.I))
+                if mine:
+                    self._raw(f"minecraft:execute in {dim} run minecraft:forceload add {at}")
+                forced[key] = mine
+        for _ in range(LOAD_TRIES):
+            reply = self._raw(cmd)
+            if reply is None or not _NOT_LOADED.search(reply):
+                return reply
+            self.pause(LOAD_WAIT_S)
+        return reply
+
+    def _release(self, forced: dict[tuple[str, int, int], bool]) -> None:
+        for (dim, cx, cz), mine in forced.items():
+            if mine:
+                self._raw(f"minecraft:execute in {dim} run minecraft:forceload remove "
+                          f"{cx * 16} {cz * 16}")
+        forced.clear()
+
+    def _work_dim(self, dimension: Any, job: str | None = None,
+                  near: tuple[int, int] | None = None) -> str:
+        """The dimension of a look, a build or an edit given by coordinates
+        (#782): the one named; else its job's (where that job's earlier
+        edits were made); else where the people playing are — the one
+        nearest `near` when they are in several; else the Overworld."""
+        dim = str(dimension or "").strip().lower()
+        if dim and ":" not in dim:
+            dim = "minecraft:" + VANILLA_DIMS.get(dim, dim)
+        if not dim and job:
+            for act in self.actions.list(MAX_ACTIONS):
+                if act.get("job") == job:
+                    cells = act.get("cells") or [{}]
+                    dim = str(act.get("dimension") or cells[0].get("dim") or "")
+                    if dim:
+                        break
+        if not dim:
+            here = [h for h in (self._pos(p) for p in sorted(self.col.sessions)) if h]
+            if here and near is not None:
+                here.sort(key=lambda h: math.hypot(h[0][0] - near[0], h[0][2] - near[1]))
+            dim = here[0][1] if here else "minecraft:overworld"
+        if not re.fullmatch(r"[a-z0-9_.\-]+:[a-z0-9_./\-]+", dim):
+            raise CompanionError("dimension is an id like minecraft:overworld.")
+        return dim
+
     def _box_of(self, player: Any, x: Any, y: Any, z: Any, size: Any,
                 dimension: Any) -> tuple[str, tuple[int, ...], str | None, list[int] | None]:
         sx, sy, sz = LOOK_DEFAULT
@@ -1389,10 +1479,8 @@ class Companion:
                 cx, cy, cz = int(x), int(y), int(z)
             except (TypeError, ValueError):
                 raise CompanionError("Give a player, or x, y and z.") from None
-            dim = str(dimension or "minecraft:overworld")
+            dim = self._work_dim(dimension, near=(cx, cz))
             y1 = cy - sy // 2
-        if not re.fullmatch(r"[a-z0-9_.\-]+:[a-z0-9_./\-]+", dim):
-            raise CompanionError("dimension is an id like minecraft:overworld.")
         x1, z1 = cx - sx // 2, cz - sz // 2
         return dim, (x1, y1, z1, x1 + sx - 1, y1 + sy - 1, z1 + sz - 1), who, feet
 
@@ -1405,6 +1493,7 @@ class Companion:
         dim, box, who, feet = self._box_of(player, x, y, z, size, dimension)
         if self.reader is None:
             raise CompanionError("The world's blocks cannot be read here.")
+        self.reading()
         states = self.reader(dim, box)
         if not isinstance(states, dict):
             raise CompanionError(f"{unread_why(states)} So it was not looked at.")
@@ -1547,11 +1636,11 @@ class Companion:
                     raise CompanionError("Where that player is is not known yet.")
                 pos, dim = here
                 base = [math.floor(c) for c in pos]
-            else:
-                dim = str(dimension or "minecraft:overworld")
-                if not re.fullmatch(r"[a-z0-9_.\-]+:[a-z0-9_./\-]+", dim):
-                    raise CompanionError("dimension is an id like minecraft:overworld.")
             targets, boxes = self._edit_targets(blocks, fills, base, shapes)
+            if base is None:
+                first = min(targets)
+                dim = self._work_dim(dimension, job, near=(first[0], first[2]))
+            self.reading()
             before = self._snapshot_states(dim, list(targets))
             if not isinstance(before, dict):
                 raise CompanionError(f"{unread_why(before)} So the change could not be made "
@@ -1576,7 +1665,7 @@ class Companion:
             text = f"{speaker} changed {title}" + (f" beside {beside}" if beside else "") + \
                 (f" (asked by {who})" if who else "")
             act = self.actions.start("edit", beside, text, by=who, name=speaker, trusted=True,
-                                     job=job)
+                                     job=job, dimension=dim)
             # Runs of one before and one after along x; a bed's or door's
             # half is a cell of its own, because its undo checks its partner.
             pairs = {c: (before.get(c, "minecraft:air"), st, c if _MULTI_PART.search(st) else None)
@@ -1591,35 +1680,56 @@ class Companion:
             act["cells"] = cells
             self.actions.put(act)
             failed = ""
-            for x1, y1, z1, x2, y2, z2, st in boxes:
-                reply = self._raw(f"minecraft:execute in {dim} run minecraft:fill "
-                                  f"{x1} {y1} {z1} {x2} {y2} {z2} {st} replace")
-                if reply is None or not re.search(r"filled|no blocks were filled", reply, re.I):
-                    failed = f"The server would not fill a box: {why_refused(reply)}"
-                    break
-            singles = dict(changed)
-            for box in boxes:
-                for c in list(singles):
-                    if (box[0] <= c[0] <= box[3] and box[1] <= c[1] <= box[4]
-                            and box[2] <= c[2] <= box[5] and singles[c] == box[6]):
-                        singles.pop(c)
-            if not failed:
-                for x1, x2, y, z, st in _runs(singles):
-                    if x1 == x2:
-                        reply = self._raw(f"minecraft:execute in {dim} run minecraft:setblock "
-                                          f"{x1} {y} {z} {st} replace")
-                        ok = reply is not None and re.search(r"changed the block", reply, re.I)
-                    else:
-                        reply = self._raw(f"minecraft:execute in {dim} run minecraft:fill "
-                                          f"{x1} {y} {z} {x2} {y} {z} {st} replace")
-                        ok = reply is not None and re.search(r"filled", reply, re.I)
-                    if not ok:
-                        failed = ("The server would not place a block: "
-                                  f"{why_refused(reply)}")
+            # Cells the server says already hold what was asked ("Could not
+            # set the block", "No blocks were filled"): no failure, and out
+            # of the undo, which would otherwise "put back" what they never
+            # were. Only a read from a moment before the edit can say so.
+            already: set[tuple[int, int, int]] = set()
+            forced: dict[tuple[str, int, int], bool] = {}
+            try:
+                for x1, y1, z1, x2, y2, z2, st in boxes:
+                    reply = self._raw_loaded(f"minecraft:execute in {dim} run minecraft:fill "
+                                             f"{x1} {y1} {z1} {x2} {y2} {z2} {st} replace",
+                                             dim, (x1, x2), (z1, z2), forced)
+                    if reply is not None and re.search(r"no blocks were filled", reply, re.I):
+                        already |= {c for c in changed
+                                    if x1 <= c[0] <= x2 and y1 <= c[1] <= y2 and z1 <= c[2] <= z2}
+                    elif reply is None or not re.search(r"filled", reply, re.I):
+                        failed = f"The server would not fill a box: {why_refused(reply)}"
                         break
+                singles = dict(changed)
+                for box in boxes:
+                    for c in list(singles):
+                        if (box[0] <= c[0] <= box[3] and box[1] <= c[1] <= box[4]
+                                and box[2] <= c[2] <= box[5] and singles[c] == box[6]):
+                            singles.pop(c)
+                if not failed:
+                    for x1, x2, y, z, st in _runs(singles):
+                        if x1 == x2:
+                            cmd = (f"minecraft:execute in {dim} run minecraft:setblock "
+                                   f"{x1} {y} {z} {st} replace")
+                            done, same = r"changed the block", r"could not set the block"
+                        else:
+                            cmd = (f"minecraft:execute in {dim} run minecraft:fill "
+                                   f"{x1} {y} {z} {x2} {y} {z} {st} replace")
+                            done, same = r"filled", r"no blocks were filled"
+                        reply = self._raw_loaded(cmd, dim, (x1, x2), (z, z), forced)
+                        if reply is not None and re.search(same, reply, re.I):
+                            already |= {(x, y, z) for x in range(x1, x2 + 1)}
+                        elif reply is None or not re.search(done, reply, re.I):
+                            failed = ("The server would not place a block: "
+                                      f"{why_refused(reply)}")
+                            break
+                if failed:
+                    self._restore(act)
+            finally:
+                self._release(forced)
+            if already:
+                cells = _without(cells, already)
+                act["cells"] = cells
+                changed = {c: st for c, st in changed.items() if c not in already}
             now = self.clock()
             if failed:
-                self._restore(act)
                 act.update(status="failed", ended_at=int(now), note=failed[:200])
                 self.actions.put(act)
                 raise CompanionError(failed)
@@ -1634,7 +1744,8 @@ class Companion:
             focus = {"x": (min(xs) + max(xs)) // 2, "y": max(ys), "z": (min(zs) + max(zs)) // 2,
                      "dimension": dim}
             return dict(act, cells=sum(c["n"] for c in cells), changed=len(changed),
-                        undoable=undoable(act), backup_note=backup_note, focus=focus)
+                        undoable=undoable(act), backup_note=backup_note, focus=focus,
+                        dimension=dim)
 
     def _restore(self, act: dict[str, Any]) -> dict[str, int]:
         """Put back each cell that still holds what was placed."""
@@ -1674,32 +1785,45 @@ class Companion:
         replace <what was set>`, which leaves a cell somebody changed since
         alone — then the neighbours it broke (the other half of a bed or
         door) are put back where they are missing."""
+        forced: dict[tuple[str, int, int], bool] = {}
+        try:
+            return self._restore_runs(act.get("cells") or [], forced)
+        finally:
+            self._release(forced)
+
+    def _restore_runs(self, cells: list[dict[str, Any]],
+                      forced: dict[tuple[str, int, int], bool]) -> dict[str, int]:
         restored = changed = 0
-        cells = act.get("cells") or []
         for c in sorted(cells, key=lambda c: c.get("after") is None):
             if not c.get("placed"):
                 continue
             dim = c.get("dim") or "minecraft:overworld"
             n = int(c.get("n") or 1)
             where = f"{c['x']} {c['y']} {c['z']}"
+
+            def raw(cmd: str, c: dict = c, n: int = n, dim: str = dim) -> str | None:
+                # Nobody near the edit any more: its chunks are loaded for the undo.
+                return self._raw_loaded(cmd, dim, (c["x"], c["x"] + n - 1), (c["z"], c["z"]),
+                                        forced)
+
             if c.get("after") is None:
-                same = self._raw(f"minecraft:execute in {dim} if block {where} {c['before']}")
+                same = raw(f"minecraft:execute in {dim} if block {where} {c['before']}")
                 if same is not None and parse_test(same) is False:
-                    self._raw(f"minecraft:execute in {dim} run minecraft:setblock {where} "
-                              f"{c['before']} replace")
+                    raw(f"minecraft:execute in {dim} run minecraft:setblock {where} "
+                        f"{c['before']} replace")
                 c["placed"] = False
                 continue
             if n == 1 and _MULTI_PART.search(c["after"]):
-                still = self._raw(f"minecraft:execute in {dim} if block {where} {c['after']}")
+                still = raw(f"minecraft:execute in {dim} if block {where} {c['after']}")
                 verdict = None if still is None else parse_test(still)
                 if verdict is False:
                     # Half of a bed or door this edit set, which fell when its
                     # other half was put back a moment ago: gone, not changed.
-                    gone = self._raw(f"minecraft:execute in {dim} if block {where} minecraft:air")
+                    gone = raw(f"minecraft:execute in {dim} if block {where} minecraft:air")
                     verdict = True if gone is not None and parse_test(gone) else verdict
                 if verdict:
-                    self._raw(f"minecraft:execute in {dim} run minecraft:setblock {where} "
-                              f"{c['before']} replace")
+                    raw(f"minecraft:execute in {dim} run minecraft:setblock {where} "
+                        f"{c['before']} replace")
                     restored += 1
                 elif verdict is False:
                     changed += 1
@@ -1707,9 +1831,9 @@ class Companion:
                     continue      # the server did not answer: try again on the next undo
                 c["placed"] = False
                 continue
-            reply = self._raw(f"minecraft:execute in {dim} run minecraft:fill {where} "
-                              f"{c['x'] + n - 1} {c['y']} {c['z']} {c['before']} replace "
-                              f"{c['after']}")
+            reply = raw(f"minecraft:execute in {dim} run minecraft:fill {where} "
+                        f"{c['x'] + n - 1} {c['y']} {c['z']} {c['before']} replace "
+                        f"{c['after']}")
             if reply is None:
                 continue          # the server did not answer: try again on the next undo
             m = re.search(r"filled (\d+)", reply, re.I)

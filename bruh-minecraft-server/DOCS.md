@@ -561,6 +561,7 @@ three minutes, so a stopped add-on never reads as a world with people in it.
 | `bruh_minecraft.save_build` | `title` to add a job, or `id` to change one; `part`, `status`, `progress`, `bounds`, `notes`, `image`, `by` |
 | `bruh_minecraft.delete_build` | `id` |
 | `bruh_minecraft.rename_world` | `name` (as said; the folder takes a safe form of it) |
+| `bruh_minecraft.set_skin` | `player`, `skin` (a Java Edition player's name, an https link to a skin picture such as a PNG, or `clear`): through SkinsRestorer, answering whether it went on |
 | `bruh_minecraft.list_scripts` | — (response only: the scripts written through `write_script`, and whether Skript is installed) |
 | `bruh_minecraft.write_script` | `kind` (`skript` or `datapack_function`), `name`, `content`, optional `by` |
 | `bruh_minecraft.remove_script` | `kind`, `name` |
@@ -576,7 +577,15 @@ and `sr status`, Skript) send their message to the server console instead of
 back over RCON. When RCON's reply is empty, `rcon_command` (and the panel's
 console box) answers with the console lines the server wrote in the second
 after the command instead, so a plugin's success or error comes back as the
-reply.
+reply. SkinsRestorer answers a skin only after fetching it, seconds later, so
+`set_skin` — and a `skin set`/`skin clear` through `rcon_command` — waits up
+to 30 seconds for its last word (or for its record of the player to change)
+and answers with it; a failure fails the call with SkinsRestorer's reason.
+
+**A check is not chat.** `execute if block … run say ok` puts "[Rcon] ok" in
+every player's chat. `rcon_command` sends a check that ends in `run say` and
+one word without the say, so it answers "Test passed" or "Test failed" to
+the caller alone.
 
 **Scripts in the running world.** `write_script` puts a Skript script into
 `plugins/Skript/scripts/<name>.sk` (only when the Skript plugin is installed)
@@ -736,7 +745,15 @@ item nobody can pick up; what a player carries is only ever counted. A **trusted
 companion's own act and does not pass that chokepoint — it is the caller's
 promise that a person it trusts asked (brAIn sends one only for a grown-up
 with "Can ask for anything" whose name the server checks, below) — and what
-holds it is the undo: every block it changes is saved before it changes. The companion's entities are swept by tag when
+holds it is the undo: every block it changes is saved before it changes.
+An edit, a look or a build by coordinates without a `dimension` is in its
+job's dimension (where that job's earlier edits were), else in the
+dimension of the player nearest the coordinates, else the Overworld, and
+the answer says which. An edit (and its undo) force-loads the chunks the
+server says are not loaded and lets go of the ones it loaded; a cell that
+already holds what was asked is not a failure and is left out of the undo;
+and a look or an edit reads after a fresh save, never one from before a
+change it should see. The companion's entities are swept by tag when
 someone joins, so nothing is left behind after a restart (the 1.17.7
 engine's tag is swept too).
 

@@ -89,6 +89,7 @@ SERVICE_COMPANION_BUILD = "companion_build"
 # anything, and to understand a room before changing it.
 SERVICE_COMPANION_EDIT = "companion_edit"
 SERVICE_LOOK_BLOCKS = "look_blocks"
+SERVICE_SET_SKIN = "set_skin"
 # brAIn's desk: a job's progress on the action bar, and the spyglass a
 # player points with (the bruh_companion data pack; bruh_minecraft_point).
 SERVICE_COMPANION_PROGRESS = "companion_progress"

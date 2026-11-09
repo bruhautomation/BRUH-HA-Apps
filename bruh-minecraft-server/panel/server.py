@@ -3478,6 +3478,13 @@ def save_world() -> None:
         log.debug("save-all before a block read did not answer")
 
 
+def fresh_read() -> None:
+    """The next read from disk saves first: a look or an edit is about to
+    read, and a save from a moment ago is older than the change just made
+    (an edit's, or one sent over RCON) — read, it came back empty (#776)."""
+    _SAVED["at"] = -1e12
+
+
 def world_dir() -> Path:
     return MC_SERVER_DIR / _level_name()
 
@@ -3573,6 +3580,7 @@ def _companion() -> "companion.Companion":
     if hands is None or hands.col is not col:
         hands = companion.Companion(col, emit=_companion_emit, snapshot=_companion_snapshot,
                                     modern=_companion_modern, reader=_companion_reader,
+                                    reading=fresh_read,
                                     item_syntax=_companion_item_syntax)
         col.on_event = _on_world_event
         col.extra = lambda: {"companion": hands.brief()}
