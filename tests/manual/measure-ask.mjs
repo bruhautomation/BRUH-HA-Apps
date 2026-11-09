@@ -743,6 +743,63 @@ for (const { width, touch } of CASES) {
   await context.close();
 }
 
+// ---- the list's Send never throws the message away -----------------------
+// The box on the list opens a new chat and sends there. The chat being left
+// may still be answering; its "busy" belongs to it, and a send refused on it
+// used to clear the box and drop the message in silence. Both answers from
+// the server: a new chat that has a key (the page moves onto it) and one
+// that does not (the page cannot move): either it is sent or it is kept.
+for (const moves of [true, false]) {
+  const where = `390px list send, previous chat busy, ${moves ? 'new chat made' : 'no new chat key'}`;
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 860 }, hasTouch: true, isMobile: true });
+  const page = await context.newPage();
+  page.on('pageerror', (e) => note(where, `page error: ${e.message}`));
+  await page.addInitScript(STUB);
+  await page.addInitScript(`
+    window.__streams = 0;
+    window.EventSource = function () {
+      const n = ++window.__streams;
+      const es = { close() {}, addEventListener() {}, onmessage: null, onerror: null };
+      // Only the first stream (the chat being left) speaks, and it is answering.
+      if (n === 1) setTimeout(() => es.onmessage && es.onmessage({ data: JSON.stringify(
+        { type: 'snapshot', state: 'busy', key: 'k-old', session_id: 'c-here', events: [] }) }), 50);
+      return es;
+    };
+    const f = window.fetch;
+    window.fetch = async (url, opts = {}) => {
+      if (/api\\/chat\\/new/.test(String(url))) {
+        await f(url, opts);
+        return new Response(JSON.stringify(${moves} ? { key: 'k-new', session_id: '' } : {}),
+          { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return f(url, opts);
+    };
+  `);
+  await page.goto(`file://${path.join(PANEL, 'index.html')}`);
+  await openView(page, 'terminal');
+  await page.waitForSelector('#chatRailInput', { state: 'visible', timeout: 5000 })
+    .catch(() => note(where, 'the list has no box'));
+  await page.waitForFunction(() => chatState.runState === 'busy', null, { timeout: 4000 })
+    .catch(() => note(where, 'the harness never made the chat being left busy'));
+  await page.evaluate(() => { window.__posts.length = 0; });
+  await page.fill('#chatRailInput', 'Is the back door locked');
+  await page.click('#chatRailForm button[type="submit"]');
+  await page.waitForFunction(() => window.__posts.some((x) => /chat\/new$/.test(x.path)),
+    null, { timeout: 4000 }).catch(() => note(where, 'Send did not start a new chat'));
+  await page.waitForTimeout(400);
+  const out = await page.evaluate(() => ({
+    sent: (window.__posts.find((x) => /chat\/send$/.test(x.path)) || { body: {} }).body.text || '',
+    kept: [document.querySelector('#chatRailInput').value, document.querySelector('#chatInput').value],
+  }));
+  const said = 'Is the back door locked';
+  if (out.sent !== said && !out.kept.some((v) => v.includes(said))) {
+    note(where, `the message was neither sent nor kept (sent "${out.sent}", boxes ${JSON.stringify(out.kept)})`);
+  }
+  if (moves && out.sent !== said) note(where, `a brand-new chat refused its first message (sent "${out.sent}")`);
+  await context.close();
+}
+
 await browser.close();
 
 if (failures.length) {

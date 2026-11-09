@@ -1055,16 +1055,68 @@ def bluetooth_absent(snap: dict) -> str | None:
     return None if _loaded(snap, "bluetooth") else "Bluetooth is not set up"
 
 
+def _bt_macs(dev: dict) -> list[str]:
+    return [str(c[1]).lower() for c in dev.get("connections") or ()
+            if isinstance(c, (list, tuple)) and len(c) == 2
+            and c[0] == "bluetooth"]
+
+
+def bluetooth_proxies(snap: dict, house: House) -> list[dict]:
+    """The house's ESPHome Bluetooth proxies and whether each answers:
+    ``[{device, name, area, up}]``, sorted by name. A proxy is an ESPHome
+    device carrying a Bluetooth address (Home Assistant records one for a
+    device that relays Bluetooth). It answers while its ESPHome entry is
+    loaded and not every one of its entities reads unavailable."""
+    esphome = {str(e.get("entry_id")): str(e.get("state") or "")
+               for e in snap.get("config_entries") or ()
+               if isinstance(e, dict) and e.get("domain") == "esphome"}
+    out = []
+    for dev_id, dev in house.devices.items():
+        if not _bt_macs(dev):
+            continue
+        ents = [str(r["entity_id"]) for r in house.entities
+                if r.get("device_id") == dev_id and r.get("entity_id")]
+        entries = [esphome[e] for e in dev.get("config_entries") or ()
+                   if e in esphome]
+        if not entries and not any(
+                (house.registry.get(e) or {}).get("platform") == "esphome"
+                for e in ents):
+            continue
+        states = [str((house.states.get(e) or {}).get("state") or "")
+                  for e in ents if e in house.states]
+        up = (all(st == "loaded" for st in entries)
+              and not (states and all(st == "unavailable" for st in states)))
+        out.append({"device": dev_id, "name": house.device_name(dev),
+                    "area": str(dev.get("area_id") or ""), "up": up,
+                    "entities": ents})
+    return sorted(out, key=lambda p: p["name"].lower())
+
+
+def _proxies_said(proxies: list[dict]) -> str:
+    if not proxies:
+        return ""
+    listed = ", ".join(f"{p['name']} ({'answering' if p['up'] else 'offline'})"
+                       for p in proxies)
+    return (f" This house's Bluetooth proxies: {listed}.")
+
+
 def bluetooth_faint(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     heard = {str(a).lower(): r for a, r in
              ((snap.get("bluetooth") or {}).get("rssi") or {}).items()}
-    rows = []
+    # What already relays Bluetooth here, and whether it answers — read
+    # before any step suggests new hardware (#770).
+    proxies = bluetooth_proxies(snap, house)
+    proxy_ids = {p["device"] for p in proxies}
+    offline = [p for p in proxies if not p["up"]]
+    by_room = {p["area"]: p for p in offline if p["area"]}
+    listed = _proxies_said(proxies)
+    faint = []
     for dev_id, dev in sorted(house.devices.items()):
-        macs = [str(c[1]).lower() for c in dev.get("connections") or ()
-                if isinstance(c, (list, tuple)) and len(c) == 2
-                and c[0] == "bluetooth"]
-        rssi = [heard[m] for m in macs if isinstance(heard.get(m), (int, float))]
+        if dev_id in proxy_ids:
+            continue
+        rssi = [heard[m] for m in _bt_macs(dev)
+                if isinstance(heard.get(m), (int, float))]
         if not rssi or max(rssi) > BLUETOOTH_FAINT_DBM:
             continue
         entity = next((str(r.get("entity_id")) for r in house.entities
@@ -1072,19 +1124,66 @@ def bluetooth_faint(snap: dict, now: float) -> list[dict]:
                       "")
         if not entity or not house.should_report(entity, "net.bluetooth_faint"):
             continue
+        faint.append((max(rssi), dev, entity))
+    rows = []
+    # One cause, one row: every device heard faintly in the room of a
+    # proxy that is offline is that proxy's to fix.
+    near: dict[str, list] = {}
+    alone = []
+    for rssi, dev, entity in faint:
+        proxy = by_room.get(house.area_id_of(entity))
+        if proxy:
+            near.setdefault(proxy["device"], []).append((rssi, dev, entity))
+        else:
+            alone.append((rssi, dev, entity))
+    for proxy in offline:
+        group = near.get(proxy["device"])
+        if not group:
+            continue
+        anchor = proxy["entities"][0] if proxy["entities"] else group[0][2]
+        if not house.should_report(anchor, "net.bluetooth_faint"):
+            continue
+        names = [house.device_name(dev) for _r, dev, _e in group]
+        heard_at = "; ".join(f"{house.device_name(dev)} at {r:g} dBm"
+                             for r, dev, _e in group)
+        rows.append({
+            "text": f"{proxy['name']} is offline and Bluetooth devices near "
+                    "it are barely heard",
+            "detail": (f"{proxy['name']} relays Bluetooth in the "
+                       f"{house.areas.get(proxy['area'], 'same room')} and "
+                       "is not answering, so what is near it is heard only "
+                       f"faintly from further away: {heard_at} (at or under "
+                       f"{BLUETOOTH_FAINT_DBM} is faint)." + listed),
+            "fix": (f"Bring {proxy['name']} back first: check it has power "
+                    "and is on the Wi-Fi. "
+                    + _and_names(names) + " should be heard properly again "
+                    "once it answers."),
+            "severity": "info",
+            "fixable": False,
+            "entity_id": anchor,
+            "items": [e for _r, _d, e in group],
+            "_rssi": min(r for r, _d, _e in group),
+        })
+    first = (f"Bring {_and_names([p['name'] for p in offline])} back first: "
+             "it is a Bluetooth proxy this house already has, and it is "
+             "offline. If it is still faint after that, "
+             if offline else "")
+    for rssi, dev, entity in alone:
+        step = ("move the Bluetooth adapter or an ESPHome Bluetooth proxy "
+                "closer to it, or add a proxy in that room; a USB adapter "
+                "on an extension cable away from USB 3 ports helps too.")
         rows.append({
             "text": f"{house.device_name(dev)} is barely heard over Bluetooth",
-            "detail": (f"The strongest receiver hears it at {max(rssi):g} dBm "
+            "detail": (f"The strongest receiver hears it at {rssi:g} dBm "
                        f"(at or under {BLUETOOTH_FAINT_DBM} is faint), so its "
                        "readings arrive late or not at all."
-                       + house.placed(entity, house.device_name(dev))),
-            "fix": ("Move the Bluetooth adapter or an ESPHome Bluetooth proxy "
-                    "closer to it, or add a proxy in that room; a USB adapter "
-                    "on an extension cable away from USB 3 ports helps too."),
+                       + house.placed(entity, house.device_name(dev))
+                       + listed),
+            "fix": first + step if first else step[:1].upper() + step[1:],
             "severity": "info",
             "fixable": False,
             "entity_id": entity,
-            "_rssi": max(rssi),
+            "_rssi": rssi,
         })
     rows.sort(key=lambda r: r["_rssi"])
     for r in rows:
@@ -1094,6 +1193,13 @@ def bluetooth_faint(snap: dict, now: float) -> list[dict]:
                       "more faint Bluetooth devices than one card each can say")
         rows = rows[:MAX_ROWS]
     return rows
+
+
+def _and_names(names: list[str]) -> str:
+    names = [n for n in names if n]
+    if len(names) <= 1:
+        return "".join(names)
+    return ", ".join(names[:-1]) + " and " + names[-1]
 
 WIFI = "Network (Wi-Fi)"
 ZWAVE = "Network (Z-Wave)"

@@ -874,187 +874,6 @@ for (const [label, define] of [['a defined custom card', true], ['no way to draw
   await ctx.close();
 }
 
-// BEGIN batch-ui
-// The house reports of 2026-11-09 (#786 #755 #758 #756 #765 #767), one class
-// each, every one driven on a second example the report never named:
-//   * #786 every row of chips (scenes, rooms) is a 40px target on touch;
-//   * #755 no field is under 16px on a phone, also one in a card's own
-//     shadow root that only exists after the card has been put on the page;
-//   * #758 a section's small capital labels are 4.5:1 in light and dark in
-//     every form of the page (a wall display dims its rooms to a third),
-//     counting the dimming;
-//   * #756 a tile that pairs a state with an action draws the action as a
-//     button (a border, a verb and what it acts on), apart from the state;
-//   * #765 a vacuum's press is a labelled button with an icon, not a switch;
-//   * #767 a tile for something the board has no icon for still has one,
-//     and says how long it has been idle.
-for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
-  const touch = name === 'phone';
-  const where = `batch ${name}`;
-  const ctx = await browser.newContext({ viewport: { width: w, height: h }, ...(touch ? { hasTouch: true, isMobile: true } : {}) });
-  await route(ctx, { narrow: touch, shell: true });
-  const p = await ctx.newPage();
-  const errors = [];
-  p.on('pageerror', (e) => errors.push(String(e)));
-  await p.goto(ORIGIN + '/');
-  await p.waitForFunction(() => window.__panel && window.__panel.data);
-  await settle(p, 1800);
-  await p.evaluate(() => {
-    // A card whose text box is made late, deep in nested shadow roots, the way Home Assistant's own fields upgrade.
-    customElements.define('mx-late-say', class extends HTMLElement {
-      setConfig() { this.style.cssText = 'display:block;height:70px'; this.attachShadow({ mode: 'open' }); }
-      connectedCallback() { setTimeout(() => { let root = this.shadowRoot; for (let i = 0; i < 5; i++) { const d = document.createElement('div'); root.appendChild(d); root = d.attachShadow({ mode: 'open' }); } root.innerHTML = '<input type="text" placeholder="Ask to say something in the main rooms" style="font-size:15px">'; }, 500); }
-    });
-    const P = window.__panel;
-    P.data.state.settings = { ...(P.data.state.settings || {}), fold_rooms: false };
-    const states = { ...P.hass.states };
-    const iso = (h, m) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
-    const put = (e, state, attributes, at) => { states[e] = { entity_id: e, state, attributes, last_changed: at || iso(4, 2), last_updated: at || iso(4, 2) }; };
-    put('water_heater.oven', 'off', { friendly_name: 'Oven' });
-    put('humidifier.nursery', 'off', { friendly_name: 'Nursery Humidifier' });
-    put('cover.side_gate', 'closed', { friendly_name: 'Side Gate', device_class: 'gate' });
-    put('lock.shed', 'locked', { friendly_name: 'Shed' });
-    put('vacuum.dot', 'cleaning', { friendly_name: 'Dot', battery_level: 64 });
-    P.hass = { ...P.hass, states };
-    const d = JSON.parse(JSON.stringify(P.dash));
-    const yard = d.floors.flatMap((f) => f.sections).find((x) => x.id === 's_yard');
-    yard.groups[0].cards.push({ id: 'c_late', type: 'lovelace', card: { type: 'custom:mx-late-say' } },
-      { id: 'c_oven', type: 'entity', entity: 'water_heater.oven' }, { id: 'c_humid', type: 'entity', entity: 'humidifier.nursery' },
-      { id: 'c_gate', type: 'cover', entity: 'cover.side_gate' }, { id: 'c_shed', type: 'lock', entity: 'lock.shed' }, { id: 'c_dot', type: 'vacuum', entity: 'vacuum.dot' });
-    // Every room says what its first group is, so the labels are on every room, dimmed or not.
-    d.floors.forEach((f) => f.sections.forEach((sec) => { if (sec.groups && sec.groups[0] && !sec.groups[0].label) sec.groups[0].label = 'Comfort'; }));
-    P.dash = d; P._secEnts = null; P._watch = null; P._forceApply = true; P.engine.invalidate(); P.schedule();
-  });
-  await settle(p, 2600);
-
-  // #786: every row of chips is a target on touch.
-  if (touch) {
-    const small = await p.evaluate(() => [...window.__panel.shadowRoot.querySelectorAll('.roomw, .scenes .wd, .secscenes .wd, .scenesline .wd, .cl-acts .wd')]
-      .filter((b) => b.getBoundingClientRect().width > 0 && b.getBoundingClientRect().height < 39.5)
-      .map((b) => `${b.textContent.trim()} ${Math.round(b.getBoundingClientRect().width)}x${Math.round(b.getBoundingClientRect().height)}`));
-    if (small.length) fail(where, `#786: chips under 40px tall: ${[...new Set(small)].slice(0, 6).join(', ')}`);
-  }
-
-  // #755: no field under 16px, the late one in nested shadow roots too.
-  if (touch) {
-    const fields = await p.evaluate(() => {
-      const deep = (r) => [...r.querySelectorAll('*')].flatMap((el) => [el, ...(el.shadowRoot ? deep(el.shadowRoot) : [])]);
-      return deep(window.__panel.shadowRoot).filter((el) => /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) && !/^(range|checkbox|radio|hidden|color)$/.test(el.type))
-        .map((el) => ({ n: `${el.tagName.toLowerCase()} ${el.placeholder || el.className || ''}`.trim(), fs: parseFloat(getComputedStyle(el).fontSize) }));
-    });
-    if (!fields.some((f) => /main rooms/.test(f.n))) fail(where, '#755: the card with a late, deeply nested text box was not drawn');
-    const small = fields.filter((f) => f.fs < 16);
-    if (small.length) fail(where, `#755: fields under 16px zoom a phone on focus: ${small.map((x) => `${x.n} ${x.fs}px`).join(', ')}`);
-  }
-
-  // #758: small capital labels, counting how much the page dims them.
-  for (const th of ['dark', 'light']) {
-    for (const form of ['', 'still', 'away', 'night']) {
-      await p.evaluate(([th, form]) => { const P = window.__panel; P.data.state.settings = { ...(P.data.state.settings || {}), theme: th }; P.form = () => form; P.schedule(); }, [th, form]);
-      await settle(p, 900);
-      const low = await p.evaluate(() => {
-        const R = window.__panel.shadowRoot;
-        const cv = document.createElement('canvas'); cv.width = cv.height = 1; const g = cv.getContext('2d', { willReadFrequently: true });
-        const parse = (c) => { g.clearRect(0, 0, 1, 1); g.fillStyle = '#000'; g.fillStyle = c; g.fillRect(0, 0, 1, 1); const d = g.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
-        const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
-        const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
-        const root = R.querySelector('[data-morph-root]');
-        const surface = parse(getComputedStyle(root).getPropertyValue('--surface').trim() || '#000');
-        const page = parse(getComputedStyle(root).getPropertyValue('--bg').trim() || '#000');
-        const out = [];
-        // Every small capital label, found the way #679 finds them.
-        R.querySelectorAll('*').forEach((el) => {
-          if (![...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim()) || el.closest('[data-ll]')) return;
-          const r = el.getBoundingClientRect(); if (!r.width || el.closest('.campic')) return;
-          const st = getComputedStyle(el);
-          if (st.textTransform !== 'uppercase' && !(parseFloat(st.fontSize) <= 13 && parseFloat(st.letterSpacing) > 0)) return;
-          let alpha = 1, bright = 1;
-          for (let e = el; e; e = e.parentElement) { const cs = getComputedStyle(e); alpha *= parseFloat(cs.opacity); const m = /brightness\(([\d.]+)\)/.exec(cs.filter || ''); if (m) bright *= parseFloat(m[1]); }
-          const cs = getComputedStyle(el); const fg = parse(cs.color);
-          const bg = [0, 1, 2].map((i) => surface[i] * alpha + page[i] * (1 - alpha));
-          const fgc = [0, 1, 2].map((i) => (fg[i] * fg[3] + surface[i] * (1 - fg[3])) * alpha + page[i] * (1 - alpha));
-          const rr = ratio(fgc.map((v) => v * bright), bg.map((v) => v * bright));
-          if (rr < 4.5) out.push(`${el.textContent.trim().slice(0, 14)} ${rr.toFixed(2)}:1`);
-        });
-        return [...new Set(out)];
-      });
-      if (low.length) fail(where, `#758: ${th}${form ? ' ' + form : ''}: section labels under 4.5:1: ${low.slice(0, 5).join(', ')}`);
-    }
-  }
-  await p.evaluate(() => { const P = window.__panel; delete P.form; P.data.state.settings = { ...(P.data.state.settings || {}), theme: 'dark' }; P.schedule(); });
-  await settle(p, 900);
-
-  // #756 #765: a state beside an action is a button apart from the state.
-  {
-    const tiles = await p.evaluate(() => {
-      const R = window.__panel.shadowRoot;
-      return ['c_garage', 'c_gate', 'c_front_lock', 'c_shed', 'c_obi', 'c_dot'].map((id) => {
-        const t = R.querySelector(`[data-tile="${id}"]`); if (!t) return { id, missing: true };
-        t.scrollIntoView({ block: 'center' });
-        const a = t.querySelector('.actword'); const st = t.querySelector('.nv > span');
-        const cs = a && getComputedStyle(a); const r = a && a.getBoundingClientRect();
-        return { id, state: st ? st.textContent.trim() : '', act: a ? a.textContent.trim() : '', border: cs ? parseFloat(cs.borderTopWidth) + parseFloat(cs.borderLeftWidth) : 0,
-          h: r ? Math.round(r.height) : 0, svg: !!(a && a.querySelector('svg')), label: a ? (a.getAttribute('aria-label') || a.textContent.trim()) : '',
-          track: !!t.querySelector('.track'), actColor: cs ? cs.color : '', stColor: st ? getComputedStyle(st).color : '', inside: a ? r.right <= t.getBoundingClientRect().right + 0.5 : false };
-      });
-    });
-    for (const t of tiles) {
-      if (t.missing) { fail(where, `#756: the ${t.id} tile is not on the page`); continue; }
-      if (!t.act) fail(where, `#756: ${t.id} pairs "${t.state}" with no action`);
-      else {
-        if (!t.border) fail(where, `#756: ${t.id}'s "${t.act}" has no outline, so it reads as more state text`);
-        if (touch && t.h < 40) fail(where, `#756: ${t.id}'s "${t.act}" is ${t.h}px tall`);
-        if (!t.inside) fail(where, `#756: ${t.id}'s "${t.act}" runs off its tile`);
-      }
-    }
-    const by = Object.fromEntries(tiles.map((t) => [t.id, t]));
-    if (by.c_garage && !/^Open door$/.test(by.c_garage.act)) fail(where, `#756: the closed garage's action says "${by.c_garage.act}", not "Open door"`);
-    if (by.c_gate && !/^Open gate$/.test(by.c_gate.act)) fail(where, `#756: the closed gate's action says "${by.c_gate.act}", not "Open gate"`);
-    for (const id of ['c_obi', 'c_dot']) {
-      const t = by[id]; if (!t || t.missing) continue;
-      if (t.track) fail(where, `#765: ${id} still draws a switch (two circles with no words)`);
-      if (!t.svg) fail(where, `#765: ${id}'s button has no icon`);
-      if (!/^(Start|Dock)$/.test(t.label)) fail(where, `#765: ${id}'s button is labelled "${t.label}", not Start or Dock`);
-    }
-    if (by.c_obi && by.c_obi.label !== 'Start') fail(where, `#765: a docked vacuum offers "${by.c_obi.label}", not Start`);
-    if (by.c_dot && by.c_dot.label !== 'Dock') fail(where, `#765: a cleaning vacuum offers "${by.c_dot.label}", not Dock`);
-    // Light and dark: the button's words are readable against its tile.
-    for (const th of ['light', 'dark']) {
-      await p.evaluate((th) => { const P = window.__panel; P.data.state.settings = { ...(P.data.state.settings || {}), theme: th }; P.schedule(); }, th);
-      await settle(p, 800);
-      const low = await p.evaluate(() => {
-        const R = window.__panel.shadowRoot; const cv = document.createElement('canvas'); cv.width = cv.height = 1; const g = cv.getContext('2d', { willReadFrequently: true });
-        const parse = (c) => { g.clearRect(0, 0, 1, 1); g.fillStyle = '#000'; g.fillStyle = c; g.fillRect(0, 0, 1, 1); const d = g.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2]]; };
-        const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
-        const root = R.querySelector('[data-morph-root]'); const bg = parse(getComputedStyle(root).getPropertyValue('--surface').trim());
-        return ['c_garage', 'c_obi', 'c_dot', 'c_front_lock'].map((id) => { const a = R.querySelector(`[data-tile="${id}"] .actword`); if (!a) return `${id} none`; const x = lum(parse(getComputedStyle(a).color)), y = lum(bg); const r = (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); return r < 4.5 ? `${id} ${r.toFixed(2)}:1` : ''; }).filter(Boolean);
-      });
-      if (low.length) fail(where, `#756 #765: ${th}: action words under 4.5:1: ${low.join(', ')}`);
-    }
-    await p.evaluate(() => { const P = window.__panel; P.data.state.settings = { ...(P.data.state.settings || {}), theme: 'dark' }; P.schedule(); });
-    await settle(p, 600);
-  }
-
-  // #767: a tile for something with no icon of its own has one, and says how long it has been idle.
-  {
-    const rows = await p.evaluate(() => ['c_oven', 'c_humid'].map((id) => {
-      const t = window.__panel.shadowRoot.querySelector(`[data-tile="${id}"]`); if (!t) return { id, missing: true };
-      const svg = t.querySelector('.sline > svg'); const path = svg ? svg.querySelector('path').getAttribute('d') : '';
-      const r = svg ? svg.getBoundingClientRect() : { width: 0 };
-      return { id, svg: !!svg, w: Math.round(r.width), generic: path === 'M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z', words: (t.querySelector('.nv > span') || {}).textContent || '' };
-    }));
-    for (const t of rows) {
-      if (t.missing) { fail(where, `#767: the ${t.id} tile is not on the page`); continue; }
-      if (!t.svg || t.w < 16) fail(where, `#767: ${t.id} has a gap where its icon should be`);
-      else if (t.generic) fail(where, `#767: ${t.id} shows the plain ring that stands for "no icon"`);
-      if (!/^Off since /.test(t.words.trim())) fail(where, `#767: ${t.id} says "${t.words.trim()}", not how long it has been off`);
-    }
-  }
-  if (errors.length) fail(where, `page errors: ${errors.slice(0, 2).join(' | ')}`);
-  await ctx.close();
-}
-// END batch-ui
-
 // #795 "the dashboard is flashing a lot": a hosted card is made once and
 // kept (llCards). Home Assistant's element for a custom card can announce
 // `ll-rebuild` and be a different element from the card's tag (a wrapper);
@@ -1197,6 +1016,192 @@ for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
 }
 
 } // one process only
+
+// BEGIN batch-ui
+// The house reports of 2026-11-09 (#786 #755 #758 #756 #765 #767), one class
+// each, every one driven on a second example the report never named:
+//   * #786 every row of chips (scenes, rooms) is a 40px target on touch;
+//   * #755 no field is under 16px on a phone, also one in a card's own
+//     shadow root that only exists after the card has been put on the page;
+//   * #758 a section's small capital labels are 4.5:1 in light and dark in
+//     every form of the page (a wall display dims its rooms to a third),
+//     counting the dimming;
+//   * #756 a tile that pairs a state with an action draws the action as a
+//     button (a border, a verb and what it acts on), apart from the state;
+//   * #765 a vacuum's press is a labelled button with an icon, not a switch;
+//   * #767 a tile for something the board has no icon for still has one,
+//     and says how long it has been idle.
+for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
+  const touch = name === 'phone';
+  const where = `batch ${name}`;
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, ...(touch ? { hasTouch: true, isMobile: true } : {}) });
+  await route(ctx, { narrow: touch, shell: true });
+  const p = await ctx.newPage();
+  const errors = [];
+  p.on('pageerror', (e) => errors.push(String(e)));
+  await p.goto(ORIGIN + '/');
+  await p.waitForFunction(() => window.__panel && window.__panel.data);
+  await settle(p, 1800);
+  await p.evaluate(() => {
+    // A card whose text box is made late, deep in nested shadow roots, the way Home Assistant's own fields upgrade.
+    customElements.define('mx-late-say', class extends HTMLElement {
+      setConfig() { this.style.cssText = 'display:block;height:70px'; this.attachShadow({ mode: 'open' }); }
+      connectedCallback() { setTimeout(() => { let root = this.shadowRoot; for (let i = 0; i < 5; i++) { const d = document.createElement('div'); root.appendChild(d); root = d.attachShadow({ mode: 'open' }); } root.innerHTML = '<input type="text" placeholder="Ask to say something in the main rooms" style="font-size:15px">'; }, 500); }
+    });
+    const P = window.__panel;
+    P.data.state.settings = { ...(P.data.state.settings || {}), fold_rooms: false };
+    const states = { ...P.hass.states };
+    const iso = (h, m) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
+    const put = (e, state, attributes, at) => { states[e] = { entity_id: e, state, attributes, last_changed: at || iso(4, 2), last_updated: at || iso(4, 2) }; };
+    put('water_heater.oven', 'off', { friendly_name: 'Oven' });
+    put('humidifier.nursery', 'off', { friendly_name: 'Nursery Humidifier' });
+    put('cover.side_gate', 'closed', { friendly_name: 'Side Gate', device_class: 'gate' });
+    put('lock.shed', 'locked', { friendly_name: 'Shed' });
+    put('vacuum.dot', 'cleaning', { friendly_name: 'Dot', battery_level: 64 });
+    P.hass = { ...P.hass, states };
+    const d = JSON.parse(JSON.stringify(P.dash));
+    const yard = d.floors.flatMap((f) => f.sections).find((x) => x.id === 's_yard');
+    yard.groups[0].cards.push({ id: 'c_late', type: 'lovelace', card: { type: 'custom:mx-late-say' } },
+      { id: 'c_oven', type: 'entity', entity: 'water_heater.oven' }, { id: 'c_humid', type: 'entity', entity: 'humidifier.nursery' },
+      { id: 'c_gate', type: 'cover', entity: 'cover.side_gate' }, { id: 'c_shed', type: 'lock', entity: 'lock.shed' }, { id: 'c_dot', type: 'vacuum', entity: 'vacuum.dot' });
+    // Every room says what its first group is, so the labels are on every room, dimmed or not.
+    d.floors.forEach((f) => f.sections.forEach((sec) => { if (sec.groups && sec.groups[0] && !sec.groups[0].label) sec.groups[0].label = 'Comfort'; }));
+    P.dash = d; P._secEnts = null; P._watch = null; P._forceApply = true; P.engine.invalidate(); P.schedule();
+  });
+  await settle(p, 2600);
+
+  // #786: every row of chips is a target on touch.
+  if (touch) {
+    const small = await p.evaluate(() => [...window.__panel.shadowRoot.querySelectorAll('.roomw, .scenes .wd, .secscenes .wd, .scenesline .wd, .cl-acts .wd')]
+      .filter((b) => b.getBoundingClientRect().width > 0 && b.getBoundingClientRect().height < 39.5)
+      .map((b) => `${b.textContent.trim()} ${Math.round(b.getBoundingClientRect().width)}x${Math.round(b.getBoundingClientRect().height)}`));
+    if (small.length) fail(where, `#786: chips under 40px tall: ${[...new Set(small)].slice(0, 6).join(', ')}`);
+  }
+
+  // #755: no field under 16px, the late one in nested shadow roots too.
+  if (touch) {
+    const fields = await p.evaluate(() => {
+      const deep = (r) => [...r.querySelectorAll('*')].flatMap((el) => [el, ...(el.shadowRoot ? deep(el.shadowRoot) : [])]);
+      return deep(window.__panel.shadowRoot).filter((el) => /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) && !/^(range|checkbox|radio|hidden|color)$/.test(el.type))
+        .map((el) => ({ n: `${el.tagName.toLowerCase()} ${el.placeholder || el.className || ''}`.trim(), fs: parseFloat(getComputedStyle(el).fontSize) }));
+    });
+    if (!fields.some((f) => /main rooms/.test(f.n))) fail(where, '#755: the card with a late, deeply nested text box was not drawn');
+    const small = fields.filter((f) => f.fs < 16);
+    if (small.length) fail(where, `#755: fields under 16px zoom a phone on focus: ${small.map((x) => `${x.n} ${x.fs}px`).join(', ')}`);
+  }
+
+  // #758: small capital labels, counting how much the page dims them.
+  for (const th of ['dark', 'light']) {
+    for (const form of ['', 'still', 'away', 'night']) {
+      await p.evaluate(([th, form]) => { const P = window.__panel; P.data.state.settings = { ...(P.data.state.settings || {}), theme: th }; P.form = () => form; P.schedule(); }, [th, form]);
+      await settle(p, 900);
+      const low = await p.evaluate(() => {
+        const R = window.__panel.shadowRoot;
+        const cv = document.createElement('canvas'); cv.width = cv.height = 1; const g = cv.getContext('2d', { willReadFrequently: true });
+        const parse = (c) => { g.clearRect(0, 0, 1, 1); g.fillStyle = CSS.supports('color', c) ? c : '#000'; g.fillRect(0, 0, 1, 1); const d = g.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
+        const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+        const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+        const root = R.querySelector('[data-morph-root]');
+        const surface = parse(getComputedStyle(root).getPropertyValue('--surface').trim() || '#000');
+        const page = parse(getComputedStyle(root).getPropertyValue('--bg').trim() || '#000');
+        const out = [];
+        // Every small capital label, found the way #679 finds them.
+        R.querySelectorAll('*').forEach((el) => {
+          if (![...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim()) || el.closest('[data-ll]')) return;
+          const r = el.getBoundingClientRect(); if (!r.width || el.closest('.campic')) return;
+          const st = getComputedStyle(el);
+          if (st.textTransform !== 'uppercase' && !(parseFloat(st.fontSize) <= 13 && parseFloat(st.letterSpacing) > 0)) return;
+          let alpha = 1, bright = 1;
+          for (let e = el; e; e = e.parentElement) { const cs = getComputedStyle(e); alpha *= parseFloat(cs.opacity); const m = /brightness\(([\d.]+)\)/.exec(cs.filter || ''); if (m) bright *= parseFloat(m[1]); }
+          const cs = getComputedStyle(el); const fg = parse(cs.color);
+          const bg = [0, 1, 2].map((i) => surface[i] * alpha + page[i] * (1 - alpha));
+          const fgc = [0, 1, 2].map((i) => (fg[i] * fg[3] + surface[i] * (1 - fg[3])) * alpha + page[i] * (1 - alpha));
+          const rr = ratio(fgc.map((v) => v * bright), bg.map((v) => v * bright));
+          if (rr < 4.5) out.push(`${el.textContent.trim().slice(0, 14)} ${rr.toFixed(2)}:1`);
+        });
+        return [...new Set(out)];
+      });
+      if (low.length) fail(where, `#758: ${th}${form ? ' ' + form : ''}: section labels under 4.5:1: ${low.slice(0, 5).join(', ')}`);
+    }
+  }
+  await p.evaluate(() => { const P = window.__panel; delete P.form; P.data.state.settings = { ...(P.data.state.settings || {}), theme: 'dark' }; P.schedule(); });
+  await settle(p, 900);
+
+  // #756 #765: a state beside an action is a button apart from the state.
+  {
+    const tiles = await p.evaluate(() => {
+      const R = window.__panel.shadowRoot;
+      return ['c_garage', 'c_gate', 'c_front_lock', 'c_shed', 'c_obi', 'c_dot'].map((id) => {
+        const t = R.querySelector(`[data-tile="${id}"]`); if (!t) return { id, missing: true };
+        t.scrollIntoView({ block: 'center' });
+        const a = t.querySelector('.actword'); const st = t.querySelector('.nv > span');
+        const cs = a && getComputedStyle(a); const r = a && a.getBoundingClientRect();
+        return { id, state: st ? st.textContent.trim() : '', act: a ? a.textContent.trim() : '', border: cs ? parseFloat(cs.borderTopWidth) + parseFloat(cs.borderLeftWidth) : 0,
+          h: r ? Math.round(r.height) : 0, svg: !!(a && a.querySelector('svg')), label: a ? (a.dataset.name || a.textContent.trim()) : '',
+          hidden: a ? a.getAttribute('aria-hidden') === 'true' : true, role: t.querySelector('.mtile').getAttribute('role') || '', name: t.querySelector('.mtile').getAttribute('aria-label') || '',
+          track: !!t.querySelector('.track'), actColor: cs ? cs.color : '', stColor: st ? getComputedStyle(st).color : '', inside: a ? r.right <= t.getBoundingClientRect().right + 0.5 : false };
+      });
+    });
+    for (const t of tiles) {
+      if (t.missing) { fail(where, `#756: the ${t.id} tile is not on the page`); continue; }
+      if (!t.act) fail(where, `#756: ${t.id} pairs "${t.state}" with no action`);
+      else {
+        if (!t.border) fail(where, `#756: ${t.id}'s "${t.act}" has no outline, so it reads as more state text`);
+        if (touch && t.h < 40) fail(where, `#756: ${t.id}'s "${t.act}" is ${t.h}px tall`);
+        if (!t.inside) fail(where, `#756: ${t.id}'s "${t.act}" runs off its tile`);
+        // The tile is what is pressed, so it is the button and carries the word in its name; the word itself is not read twice.
+        if (t.role !== 'button') fail(where, `#756: ${t.id} is a ${t.role || 'nothing'} to a screen reader, not a button`);
+        if (!t.name.endsWith('. ' + t.label)) fail(where, `#756: ${t.id} is named "${t.name}", which does not say "${t.label}"`);
+        if (!t.hidden) fail(where, `#756: ${t.id}'s word is read as well as the tile's name`);
+      }
+    }
+    const by = Object.fromEntries(tiles.map((t) => [t.id, t]));
+    if (by.c_garage && !/^Open door$/.test(by.c_garage.act)) fail(where, `#756: the closed garage's action says "${by.c_garage.act}", not "Open door"`);
+    if (by.c_gate && !/^Open gate$/.test(by.c_gate.act)) fail(where, `#756: the closed gate's action says "${by.c_gate.act}", not "Open gate"`);
+    for (const id of ['c_obi', 'c_dot']) {
+      const t = by[id]; if (!t || t.missing) continue;
+      if (t.track) fail(where, `#765: ${id} still draws a switch (two circles with no words)`);
+      if (!t.svg) fail(where, `#765: ${id}'s button has no icon`);
+      if (!/^(Start|Dock)$/.test(t.label)) fail(where, `#765: ${id}'s button is labelled "${t.label}", not Start or Dock`);
+    }
+    if (by.c_obi && by.c_obi.label !== 'Start') fail(where, `#765: a docked vacuum offers "${by.c_obi.label}", not Start`);
+    if (by.c_dot && by.c_dot.label !== 'Dock') fail(where, `#765: a cleaning vacuum offers "${by.c_dot.label}", not Dock`);
+    // Light and dark: the button's words are readable against its tile.
+    for (const th of ['light', 'dark']) {
+      await p.evaluate((th) => { const P = window.__panel; P.data.state.settings = { ...(P.data.state.settings || {}), theme: th }; P.schedule(); }, th);
+      await settle(p, 800);
+      const low = await p.evaluate(() => {
+        const R = window.__panel.shadowRoot; const cv = document.createElement('canvas'); cv.width = cv.height = 1; const g = cv.getContext('2d', { willReadFrequently: true });
+        const parse = (c) => { g.clearRect(0, 0, 1, 1); g.fillStyle = CSS.supports('color', c) ? c : '#000'; g.fillRect(0, 0, 1, 1); const d = g.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2]]; };
+        const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+        const root = R.querySelector('[data-morph-root]'); const bg = parse(getComputedStyle(root).getPropertyValue('--surface').trim());
+        return ['c_garage', 'c_obi', 'c_dot', 'c_front_lock'].map((id) => { const a = R.querySelector(`[data-tile="${id}"] .actword`); if (!a) return `${id} none`; const x = lum(parse(getComputedStyle(a).color)), y = lum(bg); const r = (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); return r < 4.5 ? `${id} ${r.toFixed(2)}:1` : ''; }).filter(Boolean);
+      });
+      if (low.length) fail(where, `#756 #765: ${th}: action words under 4.5:1: ${low.join(', ')}`);
+    }
+    await p.evaluate(() => { const P = window.__panel; P.data.state.settings = { ...(P.data.state.settings || {}), theme: 'dark' }; P.schedule(); });
+    await settle(p, 600);
+  }
+
+  // #767: a tile for something with no icon of its own has one, and says how long it has been idle.
+  {
+    const rows = await p.evaluate(() => ['c_oven', 'c_humid'].map((id) => {
+      const t = window.__panel.shadowRoot.querySelector(`[data-tile="${id}"]`); if (!t) return { id, missing: true };
+      const svg = t.querySelector('.sline > svg'); const path = svg ? svg.querySelector('path').getAttribute('d') : '';
+      const r = svg ? svg.getBoundingClientRect() : { width: 0 };
+      return { id, svg: !!svg, w: Math.round(r.width), generic: path === 'M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z', words: (t.querySelector('.nv > span') || {}).textContent || '' };
+    }));
+    for (const t of rows) {
+      if (t.missing) { fail(where, `#767: the ${t.id} tile is not on the page`); continue; }
+      if (!t.svg || t.w < 16) fail(where, `#767: ${t.id} has a gap where its icon should be`);
+      else if (t.generic) fail(where, `#767: ${t.id} shows the plain ring that stands for "no icon"`);
+      if (!/^Off since /.test(t.words.trim())) fail(where, `#767: ${t.id} says "${t.words.trim()}", not how long it has been off`);
+    }
+  }
+  if (errors.length) fail(where, `page errors: ${errors.slice(0, 2).join(' | ')}`);
+  await ctx.close();
+}
+// END batch-ui
 
 // A copy an update paused: "Make it again" has to answer where it was
 // pressed. It shipped answering with a line in the header and leaving the

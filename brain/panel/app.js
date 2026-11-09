@@ -14488,7 +14488,13 @@ async function startFresh() {
 async function chatNewHere() {
   const out = await chatSwitching(() => api("api/chat/new", {
     method: "POST", body: JSON.stringify(chatWho()) }));
-  if (out && out.key) chatReconnect(out.key, out.session_id);
+  if (out && out.key) {
+    chatReconnect(out.key, out.session_id);
+    // The chat just left may still be answering; that was ITS turn. The new
+    // one has none, and a "busy" carried over would make chatSend drop the
+    // first message until the new stream's snapshot said otherwise.
+    if (chatState.runState === "busy") chatSetState("idle");
+  }
   return out;
 }
 
@@ -15154,6 +15160,15 @@ $("#chatRailForm").addEventListener("submit", async (ev) => {
   box.style.height = "auto";
   askShow("chat");
   refreshChatRail();
+  if (chatState.runState === "busy") {
+    // Nothing may throw the message away: if it cannot go yet, it waits in
+    // the chat's own box.
+    const input = $("#chatInput");
+    input.value = text;
+    chatGrow();
+    input.focus();
+    return;
+  }
   chatSend(text);
 });
 $("#chatRailInput").addEventListener("input", (ev) => {
@@ -17882,7 +17897,7 @@ function renderDeepReview() {
     const last = d.latest ? `Last ${reviewDate(d.latest.at)}` : "Not run yet";
     const cost = d.running ? `started ${agoAt(d.started_at)}` : reviewCostText(d.estimate);
     meta.textContent = d.authenticated ? [last, cost].filter(Boolean).join(" · ")
-      : "Sign in to Claude in Settings › Account first";
+      : `${last} · open to sign in first`;
   }
   const run = el("div", "kreviewrun");
   const btn = el("button", "btn small", d.running ? "Running…" : "Run");

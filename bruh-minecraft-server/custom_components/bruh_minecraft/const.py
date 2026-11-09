@@ -89,6 +89,7 @@ SERVICE_COMPANION_BUILD = "companion_build"
 # anything, and to understand a room before changing it.
 SERVICE_COMPANION_EDIT = "companion_edit"
 SERVICE_LOOK_BLOCKS = "look_blocks"
+SERVICE_SET_SKIN = "set_skin"
 # brAIn's desk: a job's progress on the action bar, and the spyglass a
 # player points with (the bruh_companion data pack; bruh_minecraft_point).
 SERVICE_COMPANION_PROGRESS = "companion_progress"
@@ -110,6 +111,8 @@ SERVICE_RENAME_WORLD = "rename_world"
 # Fired by the add-on for every game happening it reads, whether or not
 # anything listens: neutral facts, no scores, caps or persona (DOCS.md, "The
 # companion contract"). `answer` is a choice pad being answered, `point` a
-# spyglass use.
-GAME_EVENTS = ("chat", "join", "leave", "death", "advancement", "place", "answer", "point")
+# spyglass use, `signal` a command block's `say bruh:signal <name> [data]` —
+# a button or a lever in a build telling the house something.
+GAME_EVENTS = ("chat", "join", "leave", "death", "advancement", "place", "answer", "point",
+               "signal")
 EVENT_PREFIX = "bruh_minecraft_"
