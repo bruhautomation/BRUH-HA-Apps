@@ -7,6 +7,7 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 ### Fixed
 
 - The development loop's screenshot page no longer waits for ever on a question Home Assistant never answers: after 10 seconds it says Home Assistant did not answer in time, so a capture always finishes.
+- brAIn's looks at the house no longer slow down as their record grows: each look used to read and judge the whole record of past verdicts again, and now only reads what was added since the last one.
 
 ## 5.1.10
 
