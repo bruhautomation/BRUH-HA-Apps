@@ -2467,6 +2467,32 @@ def hold_transient(causes: list[dict], dig: dict,
     return kept, held
 
 
+def set_aside_broken(causes: list[dict], dig: dict, faulty: dict, *,
+                     device_class=None, note=None) -> list[dict]:
+    """``causes`` less every one about a sensor the owner called broken
+    (#788): its subject (the model's entity, else the one its records are
+    about, `subject_of`) answered by `corrections.broken_answer` — the one
+    helper the device checks and the Resident read, so its floors come
+    first (a leak or smoke sensor, a lock, an alarm, the protected list)
+    and only the wording that already finishes a device counts. The helper
+    writes the trail entry for each cause it drops, through ``note`` when
+    given."""
+    if not faulty:
+        return list(causes)
+    import corrections  # noqa: PLC0415 — it imports the stores
+    kept = []
+    for cause in causes:
+        subject = (str(cause.get("entity_id") or "")
+                   or subject_of(cause.get("records") or [], dig))
+        said = corrections.broken_answer(
+            subject, SOURCE, faulty=faulty,
+            device_class=device_class(subject) if device_class and subject
+            else "", note=note) if subject else ""
+        if not said:
+            kept.append(cause)
+    return kept
+
+
 def trail_rows(held: list[dict]) -> list[dict]:
     """The decision trail's rows for the causes `hold_transient` held."""
     out = []
@@ -2612,5 +2638,6 @@ def keep_keys(open_rows: list[dict], state: dict, available: dict,
 __all__ = ["SCHEMA", "SOURCE", "SYSTEM", "collect", "digest", "explain_key",
            "explained", "frame",
            "hold_transient", "integration_of", "keep_keys", "load",
-           "parse_causes", "read_user_text", "rows", "save", "subject_of",
+           "parse_causes", "read_user_text", "rows", "save",
+           "set_aside_broken", "subject_of",
            "trail_rows", "worth_a_run"]
