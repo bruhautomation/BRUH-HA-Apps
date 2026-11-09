@@ -614,7 +614,7 @@ def _plain_row(row: dict, keys=("claim", "detail", "fix", "todo_text")) -> dict:
             # may weigh two causes, the step a person carries out may not.
             if key in FORK_REFUSED and house_words.fork(out[key]):
                 out[key] = ""
-            out[key] = house_words.technical(out[key])[0]
+            out[key] = house_words.technical(out[key], names=names)[0]
             # The household is "you", the dashboard the dashboard (#562).
             out[key] = house_words.household(out[key])
     technical = clean_technical(technical)
@@ -688,7 +688,11 @@ def _publish_state(items: list[dict]) -> None:
     if not STATE_FILE.parent.parent.is_dir():
         return
     now = time.time()
-    shaped = [s for s in (_shape(e) for e in items) if s["text"]]
+    # What leaves the panel reads as the card does (#774, #791): no id,
+    # path or code name, never "an internal name". `ts` is the key every
+    # reader there holds; the stored row is untouched.
+    shaped = [{**s, **shown_words(s)} for s in (_shape(e) for e in items)
+              if s["text"]]
     shaped.sort(key=lambda f: f["ts"], reverse=True)
     live = [s for s in shaped
             if s["status"] in LIVE_STATUSES and not is_snoozed(s, now)]
@@ -976,6 +980,59 @@ def _names_itself(reason, entry: dict) -> bool:
     return False
 
 
+def _plainly(text, entry: dict, files: bool = True) -> str:
+    """`house_words.said_plainly` with the panel's names map, read only
+    when the text holds something to name."""
+    if not isinstance(text, str) or not house_words.lint(text, files):
+        return text
+    return house_words.said_plainly(
+        text, _names_now(), files=files,
+        known=clean_technical((entry or {}).get("technical")))
+
+
+def shown_words(entry: dict) -> dict:
+    """The fields of a model-written row a surface shows, in plain words
+    (#774, #791): no path, line number, id, hex code, build string or
+    code name, and never the "an internal name" a row stored before the
+    rule. Only the fields that change come back; the stored row is never
+    touched, and a row whose words are its code's (a check, the safety
+    lane, a person's correction) comes back with nothing changed."""
+    entry = entry if isinstance(entry, dict) else {}
+    if not _model_written(entry.get("source")):
+        return {}
+    out = {}
+    for key in ("text", "claim", "detail", "fix"):
+        said = entry.get(key)
+        if isinstance(said, str) and said:
+            plain_said = _plainly(said, entry)
+            if plain_said != said and (plain_said or key != "text"):
+                out[key] = plain_said
+    return out
+
+
+def outbound(rows) -> list[dict]:
+    """``rows`` as a message leaving the panel says them (#774, #791):
+    each in `shown_words`' plain words. A notification's slim copy (``ts``,
+    ``text``, ``severity``) is read against its stored row for who wrote
+    it; only the keys the copy already had are replaced, and ``ts`` —
+    the key every reader holds — never is."""
+    out = []
+    for row in rows or ():
+        if not isinstance(row, dict):
+            continue
+        try:
+            stored = row if row.get("source") is not None else (
+                get(int(row.get("ts") or 0)) or {})
+            said = shown_words({**stored, **row,
+                                "source": stored.get("source"),
+                                "technical": stored.get("technical")})
+        except Exception:  # noqa: BLE001 — a row we can't reword is sent as it was, never dropped
+            out.append(row)
+            continue
+        out.append({**row, **{k: v for k, v in said.items() if k in row}})
+    return out
+
+
 def shown_look(record: dict, entry: dict) -> dict:
     """``record`` (a cleaned triage block) as a surface a person reads
     shows it: an echo blanked (`without_echo`) and the reason cut to what
@@ -1014,6 +1071,9 @@ def shown_look(record: dict, entry: dict) -> dict:
     # (`tests/test_open_row_look_reason.py` holds it on screen).
     said = house_words.household(house_words.technical(said, files=False)[0])
     said = house_words.one_name(said)   # one assistant, one name
+    # No id, path, line number or code name — and never "an internal
+    # name" — under "brAIn checked" (#774, #791): `shown_words`' pass.
+    said = _plainly(said, entry, files=False)
     if said == record["reason"]:
         return record
     return {**record, "reason": said}
@@ -1782,6 +1842,7 @@ def listing() -> dict:
     shaped = [as_now(s) for s in (_shape(e) for e in _load())
               if s["text"] and holds_now(s)]
     for row in shaped:
+        row.update(shown_words(row))
         row["fix"] = shown_fix(row)
         if row.get("triage"):
             row["triage"] = shown_look(row["triage"], row)
