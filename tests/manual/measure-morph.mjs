@@ -874,6 +874,53 @@ for (const [label, define] of [['a defined custom card', true], ['no way to draw
   await ctx.close();
 }
 
+// #795 "the dashboard is flashing a lot": a hosted card is made once and
+// kept (llCards). Home Assistant's element for a custom card can announce
+// `ll-rebuild` and be a different element from the card's tag (a wrapper);
+// that announcement is only meant for a card made BEFORE its tag was
+// defined. When the tag was already defined it used to evict the card on
+// every mount, so each render made every hosted card again. Ten hass updates
+// must change nothing inside any card's slot, and llCards must hold exactly
+// the hosted cards.
+{
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  await route(ctx, { narrow: false });
+  const p = await ctx.newPage();
+  await p.goto(ORIGIN + '/');
+  await p.waitForFunction(() => window.__panel && window.__panel.data);
+  await settle(p, 900);
+  await p.evaluate(() => {
+    const P = window.__panel;
+    P.data.state.settings = { ...(P.data.state.settings || {}), fold_rooms: false }; P._forceApply = true;
+    customElements.define('morph-wrapped', class extends HTMLElement { setConfig() {} });
+    // Like Home Assistant's: the element it hands back is a wrapper whose
+    // name is not the card's tag, and it says `ll-rebuild` whenever it is
+    // put on the page.
+    customElements.define('hui-wrapped-card', class extends HTMLElement { setConfig() {} connectedCallback() { this.dispatchEvent(new Event('ll-rebuild')); } });
+    window.loadCardHelpers = async () => ({ createCardElement(cfg) {
+      if (cfg.type === 'custom:morph-wrapped') return document.createElement('hui-wrapped-card');
+      const d = document.createElement('div'); d.textContent = 'Lovelace ' + cfg.type; return d;
+    } });
+    const seek = (o) => { if (!o || typeof o !== 'object') return; if (o.id === 'c_tile') { o.card = { type: 'custom:morph-wrapped' }; return; } Object.values(o).forEach(seek); };
+    seek(P.dash); P.llCards.clear(); P.engine.invalidate(); P.schedule();
+  });
+  await settle(p, 2500);
+  const r = await p.evaluate(async () => {
+    const P = window.__panel;
+    const slots = [...P.shadowRoot.querySelectorAll('[data-ll]')].filter((s) => !s.dataset.ll.endsWith(':detail'));
+    let muts = 0;
+    const mo = new MutationObserver((l) => { muts += l.filter((m) => m.type === 'childList').length; });
+    slots.forEach((s) => mo.observe(s, { childList: true }));
+    for (let i = 0; i < 10; i++) { P.hass = { ...P.hass, states: { ...P.hass.states } }; await new Promise((res) => setTimeout(res, 250)); }
+    mo.disconnect();
+    return { hosted: slots.length, kept: P.llCards.size, muts };
+  });
+  if (r.hosted < 2) fail('flashing', `the harness hosts ${r.hosted} cards, not 2`);
+  if (r.muts) fail('flashing', `ten hass updates changed the inside of a hosted card's slot ${r.muts} times (every render made the cards again)`);
+  if (r.kept !== r.hosted) fail('flashing', `llCards holds ${r.kept} cards for ${r.hosted} hosted`);
+  await ctx.close();
+}
+
 // `options.detail`: a Lovelace card that belongs inside an opened card (a
 // thermostat's performance chart) is folded away on the face and shown only
 // while the card is open, without the rooms overlapping either way.

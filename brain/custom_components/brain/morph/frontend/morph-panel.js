@@ -1961,11 +1961,20 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
         if (tag.startsWith('custom:') && window.customElements && !customElements.get(tag.slice(7))) {
           await Promise.race([customElements.whenDefined(tag.slice(7)), new Promise((r) => setTimeout(r, 4000))]);
         }
+        // `ll-rebuild` is Home Assistant saying "this stand-in was made before
+        // its custom card existed". A card made once its tag was defined has
+        // nothing to rebuild, whatever the element is called: acting on it
+        // anyway evicted the card on every mount, so every render made every
+        // hosted card again (#795, the dashboard flashing).
+        const madeEarly = tag.startsWith('custom:') && !!window.customElements && !customElements.get(tag.slice(7));
         if (helpers) el = await helpers.createCardElement(card.card);
         else el = customCardWithoutHelpers(card.card);
         el.__sig = sig;
         el.hass = this.hass;
-        el.addEventListener('ll-rebuild', () => { this.llCards.delete(card.id); this.schedule(); });
+        el.addEventListener('ll-rebuild', () => {
+          if (!madeEarly || this.llCards.get(card.id) !== el) return;
+          this.llCards.delete(card.id); this.schedule();
+        });
         this.llCards.set(card.id, el);
       } catch (e) {
         slot.innerHTML = '<p class="sm" style="padding:12px">This card could not be drawn yet; reload the page.</p>';
