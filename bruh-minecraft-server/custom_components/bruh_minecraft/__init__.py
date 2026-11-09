@@ -92,6 +92,7 @@ from .const import (
     SERVICE_COMPANION_HANDOVER,
     SERVICE_COMPANION_SAY,
     SERVICE_SET_COMPANION,
+    SERVICE_SET_SKIN,
     SERVICE_SET_ZONE,
     SERVICE_UNDO_ACTION,
     SERVICE_WEATHER,
@@ -272,12 +273,24 @@ def _reply(answer: dict[str, Any]) -> dict[str, Any]:
     return {"reply": text}
 
 
+# How long a skin is waited for: the add-on's own 30 s, and the round trip.
+SKIN_TIMEOUT = 45.0
+
+
 def _register_services(hass: HomeAssistant) -> None:
-    async def run(command: str) -> dict[str, Any]:
-        return _reply(await _ask("command", {"command": _one_line(command)}))
+    async def run(command: str, timeout: float = 15.0) -> dict[str, Any]:
+        return _reply(await _ask("command", {"command": _one_line(command)}, timeout=timeout))
 
     async def handle_command(call: ServiceCall) -> dict[str, Any]:
-        return await run(call.data["command"])
+        command = call.data["command"]
+        # SkinsRestorer answers a skin command seconds after RCON returns,
+        # and the add-on waits up to 30 s for it (scripts/skins.py).
+        late = re.match(r"^/?(?:skinsrestorer:)?skin\s", str(command).strip(), re.IGNORECASE)
+        return await run(command, timeout=SKIN_TIMEOUT if late else 15.0)
+
+    async def handle_set_skin(call: ServiceCall) -> dict[str, Any]:
+        return _strip(await _ask("skin", {"player": call.data["player"],
+                                          "skin": call.data["skin"]}, timeout=SKIN_TIMEOUT))
 
     async def handle_say(call: ServiceCall) -> dict[str, Any]:
         return _reply(await _ask("say", {"message": _one_line(call.data["message"])}))
@@ -698,6 +711,10 @@ def _register_services(hass: HomeAssistant) -> None:
         vol.Optional("size"): vol.All([vol.Coerce(int)], vol.Length(min=3, max=3)),
         vol.Optional("dimension"): cv.string,
     })
+    set_skin_schema = vol.Schema({
+        vol.Required("player"): player_name,
+        vol.Required("skin"): vol.All(cv.string, vol.Length(min=1, max=320)),
+    })
     undo_action_schema = vol.Schema({vol.Optional("id"): cv.string,
                                      vol.Optional("job"): job_id})
     set_zone_schema = vol.Schema({
@@ -753,6 +770,7 @@ def _register_services(hass: HomeAssistant) -> None:
     register(SERVICE_COMPANION_BUILD, handle_companion_build, companion_build_schema, optional)
     register(SERVICE_COMPANION_EDIT, handle_companion_edit, companion_edit_schema, optional)
     register(SERVICE_LOOK_BLOCKS, handle_look_blocks, look_blocks_schema, only)
+    register(SERVICE_SET_SKIN, handle_set_skin, set_skin_schema, optional)
     register(SERVICE_COMPANION_PROGRESS, handle_companion_progress, companion_progress_schema,
              optional)
     register(SERVICE_COMPANION_BAR, handle_companion_bar, companion_bar_schema, optional)

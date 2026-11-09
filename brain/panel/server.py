@@ -171,7 +171,7 @@ import card_claims
 import card_verdict
 import cases
 import changes
-from checks._util import House
+from checks._util import ANSWERED_ONCE, House
 import chat_session
 import closures
 import checks
@@ -6495,6 +6495,9 @@ async def _generate(insight_id: str) -> None:
             "tags": tags,
             # Drawn as ONE chip; the prose no longer says it.
             "verdict": card_judgement,
+            # What to do when it is not all fine (`card_verdict.next_step`).
+            **({"next": verdict["obj"]["next"]}
+               if verdict["obj"].get("next") else {}),
             # All fine about nothing that changed: Reports folds it into
             # its "All quiet" line rather than a card of its own.
             "quiet": bool(quiet_card) or blind,
@@ -6581,6 +6584,11 @@ async def _generate(insight_id: str) -> None:
                  f", {len(filed)} new finding(s)" if filed else "",
                  f", {accepted} hypothesis(es) queued" if accepted else "")
     except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
+        if _cancel_requested():
+            # The app is closing and the cancel arrived dressed as this
+            # exception (`_cancel_requested`): not a failed card, so no
+            # journal row, no problem report and no backoff.
+            raise asyncio.CancelledError from exc
         log.warning("insight %s failed: %s", insight_id, exc)
         journal.record("insight", journal.classify({"ok": False, "error": str(exc)}),
                        error=str(exc), extra={"id": insight_id,
@@ -8407,6 +8415,10 @@ def _loop_ended(name: str, task: asyncio.Task) -> None:
 # is hung: the longest passes run Claude turns behind the run queue (a
 # look and three investigations, a brief, a weekly report).
 LOOP_PASS_S = 2 * 3600
+# How long the app's cleanup waits for its cancelled loops to finish.
+LOOP_STOP_WAIT_S = 5.0
+# How often a loop that has not ended yet is cancelled again.
+LOOP_RECANCEL_S = 0.2
 
 
 def _stall_after(first_delay_s: float, poll_s: float) -> float:
@@ -8482,6 +8494,21 @@ async def _dispatch(job_id: str) -> None:
         await _generate(job_id)
 
 
+def _cancel_requested() -> bool:
+    """Whether the running task has been asked to stop, whatever arrived.
+
+    A cancel does not always arrive as `CancelledError`. `asyncio.gather`
+    sets its outer future from the first child to finish, so a child that
+    had already failed — a DNS lookup that came back "not known" in the
+    same pass of the loop — turns a cancel of the task awaiting it into
+    that child's exception, and a handler's `except Exception` then
+    swallows the shutdown as an ordinary failed job. `Task.cancelling()`
+    still counts the request, which is what this reads.
+    """
+    task = asyncio.current_task()
+    return bool(task is not None and task.cancelling())
+
+
 async def _worker() -> None:
     """The generation queue's one consumer, which must outlive its jobs.
 
@@ -8500,6 +8527,11 @@ async def _worker() -> None:
         _beat("worker")
         try:
             await _dispatch(job_id)
+            # A cancel that reached the job as some other exception (see
+            # `_cancel_requested`) is still a cancel: honoured here rather
+            # than going back to `QUEUE.get()` with nothing left to end it.
+            if _cancel_requested():
+                raise asyncio.CancelledError
         except Exception as exc:  # noqa: BLE001 — one job, never the worker
             log.warning("the %s job %s failed outside its own handling: %s",
                         JOBS.get(job_id, {}).get("kind") or "insight",
@@ -9251,12 +9283,40 @@ async def _options_poller() -> None:
         await _shell_sync()
 
 
+async def _thread_to_the_end(func, /, *args, **kwargs):
+    """`asyncio.to_thread`, except that a cancel waits for the thread.
+
+    A thread cannot be stopped, so cancelling the coroutine that awaits
+    `to_thread` returns at once while the work carries on writing. The
+    start's steps run this way because `on_cleanup` cancels a start that
+    has not finished: a panel stopped seconds after it bound returned from
+    cleanup with `instructions.apply_all` (or the mirror, or the prompt)
+    still writing into the directories it owns, and whatever removed them
+    next — a test's temporary directory, "Directory not empty" — raced it.
+    Here the cancel still lands, but only once the step it interrupted is
+    over, so nothing the start began outlives the app.
+    """
+    fut = asyncio.ensure_future(asyncio.to_thread(func, *args, **kwargs))
+    try:
+        return await asyncio.shield(fut)
+    except asyncio.CancelledError:
+        while not fut.done():
+            try:
+                await asyncio.wait({fut})
+            except asyncio.CancelledError:
+                # A second cancel changes nothing: the thread still runs.
+                continue
+        if not fut.cancelled():
+            fut.exception()  # retrieved: the step's own fault is moot now
+        raise
+
+
 async def _shell_sync() -> None:
     """The switches' file, the address of this page for the shell, and
     which sidebar entry shows (shell_link.py). Never raises: the panel is
     the ingress target, and a sidebar entry is not worth its loop."""
     try:
-        await asyncio.to_thread(features.publish)
+        await _thread_to_the_end(features.publish)
         await shell_link.sync(addon_options)
     except Exception as exc:  # noqa: BLE001
         log.debug("shell sync failed: %s", exc)
@@ -10343,8 +10403,12 @@ async def h_insights(request: web.Request) -> web.Response:
                 ins.pop("verdict", None)
             if ins.get("id") in superseded:
                 ins["superseded_by"] = superseded[ins["id"]]
-            twin = card_claims.finding_twin(set(ins["entities"]), live_rows,
-                                            device_of)
+            # Its headline decides too: a side remark about another
+            # sensor does not make a card about a finding's thing a
+            # second item (#759).
+            twin = card_claims.finding_twin(
+                set(ins["entities"]), live_rows, device_of,
+                headline=_card_entities({"title": ins.get("title")}))
             if twin is not None and twin.get("ts"):
                 ins["told_in"] = f"f:{twin['ts']}"
             # The heading an asked card carries in place of "Custom". A
@@ -11911,7 +11975,11 @@ async def _run_sre(reason: str = "schedule") -> None:
         if held:
             await asyncio.to_thread(decision_trail.note_many,
                                     sre.trail_rows(held), now)
-        parsed["causes"] = kept
+        # A cause drawn from a sensor the owner called broken is not filed
+        # (#788): the one helper the checks and the Resident read, its
+        # floors first, a trail entry for each cause it drops.
+        parsed["causes"] = await asyncio.to_thread(
+            _sre_without_broken, kept, dig, collected.get("states"))
         rows = sre.rows(parsed["causes"], dig, state, now)
         summary.update(transient=len(held))
         summary.update(ran=True, causes=len(parsed["causes"]),
@@ -11948,6 +12016,23 @@ async def _run_sre(reason: str = "schedule") -> None:
     journal.record("sre", "ok", extra={"records": summary["records"],
                                        "causes": summary["causes"],
                                        "filed": len(created)})
+
+
+def _sre_without_broken(causes: list[dict], dig: dict,
+                        states: dict | None) -> list[dict]:
+    try:
+        faulty = corrections.known_faulty()
+    except Exception as exc:  # noqa: BLE001 — unread sets nothing aside
+        log.debug("sre: the sensors called broken unread: %s", exc)
+        return causes
+    states = states if isinstance(states, dict) else {}
+
+    def device_class(eid: str) -> str:
+        attrs = (states.get(eid) or {}).get("attributes") or {}
+        return str(attrs.get("device_class") or "") or _device_class(eid)
+
+    return sre.set_aside_broken(causes, dig, faulty,
+                                device_class=device_class)
 
 
 def _sre_payload() -> dict:
@@ -14053,7 +14138,12 @@ def _open_case_rows(limit: int = 12, exclude=None) -> list[str]:
         # id — the half that answers it — always survives the cap.
         eid = str(c.get("entity_id") or "").strip()
         tail = f" — {eid}" if eid else ""
-        out.append(textclip.clip(f"[{c['kind']}] {c['claim']}",
+        # A finding's id leads its line, so a look that says a row repeats
+        # it names it by the id (`same_as`), never in prose
+        # that would point at nothing on screen (#790).
+        cid = str(c.get("id") or "")
+        lead = f"{cid} " if cid.startswith("f:") else ""
+        out.append(textclip.clip(f"{lead}[{c['kind']}] {c['claim']}",
                                  160 - len(tail)) + tail)
     return out
 
@@ -14537,7 +14627,8 @@ async def _resident_look(now: float, settings: dict, thinking: str,
                             look_inputs, result, cost, now)
     verdicts = resident.parse_first_look(
         _answer(result), len(batch), batch,
-        floors=outcomes.overruled_floors(batch, passed_over))
+        floors=outcomes.overruled_floors(batch, passed_over),
+        device_class=_device_class)
     # A sensor the household called broken is not reasoned about (#701):
     # whatever the look said of it, it is let go, with a trail entry; the
     # never-ignore floors keep a leak, a lock or an alarm whatever was said.
@@ -14635,7 +14726,12 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
                 # A row the look called already answered, marked wrong
                 # before or a duplicate is held even if silence already
                 # showed it (`findings_store.record_triage`'s third slot).
-                decided[ts] = ("held", why, bool(answer.get("already")))
+                # The card it named (`same_as`) keeps the look's sentence
+                # about it only when the owner can see that card, and the
+                # word decides the store's floor (#790).
+                decided[ts] = ("held", why, bool(answer.get("already")),
+                               int(answer.get("same_as") or 0),
+                               str(answer.get("already") or ""))
             continue
         if (ts and answer.get("fallback") and signal.get("record_hold")
                 and not resident.never_ignore(signal)[0]):
@@ -15149,7 +15245,18 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     # tripped detector or a protected lock is looked at whatever a run
     # says about what the house knows (the same floor the gate above and
     # the first look hold).
-    code, said = resident.unfinished(case, resident.never_ignore(signal)[0])
+    # The not-news floor too (#790): a lock, a security check, a critical
+    # row or a leak or smoke sensor is reported whatever the word said.
+    code, said = resident.unfinished(
+        case, resident.never_ignore(signal)[0]
+        or findings_store.not_news_floor({
+            **(refining or {}),
+            **({"stakes": case["stakes"]} if case.get("stakes") else {}),
+            "entity_id": (str((refining or {}).get("entity_id") or "")
+                          or str(case.get("entity_id") or "")
+                          or str(signal.get("subject") or "")),
+            "source": str((refining or {}).get("source")
+                          or signal.get("source") or "")}))
     if code:
         log.info("an investigation of %s was not a finding (%s)",
                  signal.get("subject"), code)
@@ -16704,6 +16811,10 @@ async def run_checks(reason: str = "schedule") -> dict:
                 # What a row is read against just before it is shown
                 # (`findings_store.holds_now`, #722); the bus keeps it current.
                 findings_store.seed_states(snapshot.get("states") or {})
+                # And the registry, so a device gone from Home Assistant is
+                # said to be gone rather than down (#789).
+                if (snapshot.get("available") or {}).get("registry"):
+                    findings_store.seed_registry(snapshot.get("entities") or [])
             # And the other store, which nothing renders. Rows from a check
             # being trialled go here instead — a separate file rather than
             # a status, because `add_many` dedupes across every status and
@@ -20740,7 +20851,8 @@ def _devloop_held(now: float | None = None) -> dict:
     panel words a held row from this rather than promising a send ("will
     be sent" read as brAIn stalling). `frees_at` is when the oldest of
     today's issues leaves the window, which is when the next one can go.
-    Read-only, and "could not tell" is `today: None`, never a full day."""
+    Read-only, and "could not tell" is `today: None`, never a full day.
+    A limit of 0 is no limit (#797), and no limit is never full."""
     now = time.time() if now is None else now
     try:
         limit = int(devloop.load_settings().get("max_issues_per_day") or 0)
@@ -20753,12 +20865,12 @@ def _devloop_held(now: float | None = None) -> dict:
                         if isinstance(e, dict) and e.get("created_here")
                         and now - float(e.get("sent_at") or 0) < 86400)
         today = len(stamps)
-        if stamps and today >= limit:
-            frees_at = stamps[max(0, today - limit)] + 86400 if limit else 0.0
+        if limit > 0 and stamps and today >= limit:
+            frees_at = stamps[max(0, today - limit)] + 86400
     except Exception:  # noqa: BLE001
         today = None
     return {"limit": limit, "today": today,
-            "full": today is not None and today >= limit,
+            "full": limit > 0 and today is not None and today >= limit,
             "frees_at": frees_at}
 
 
@@ -21948,6 +22060,13 @@ def _for_now(finding: dict, spec: dict, note: str) -> bool:
     if not (source.startswith("check:") or source in _FOR_NOW_SOURCES):
         return False
     if corrections.is_offer(finding):
+        return False
+    if source.split(":", 1)[-1] in ANSWERED_ONCE:
+        # A standing fact about an automation (it has never fired, it has
+        # been off for months) is the same fact next pass, so there is
+        # nothing for a snooze to wait for: "don't remind me" on it is the
+        # Wrong it was pressed as, and the ledger closes the check for that
+        # automation (#768).
         return False
     return corrections.puts_off(note)
 
@@ -27403,12 +27522,14 @@ async def h_personality_put(request: web.Request) -> web.Response:
                               or len(voice.strip()) > personality.VOICE_MAX):
         raise web.HTTPBadRequest(
             text=f"a voice is at most {personality.VOICE_MAX} characters")
+    before = await asyncio.to_thread(personality.identity)
     try:
         await asyncio.to_thread(personality.save, name, persona, None, voice)
     except (ValueError, OSError):
         log.exception("could not save the personality")
         raise web.HTTPInternalServerError(
             text="brAIn could not save that; the add-on log says why.")
+    await asyncio.to_thread(_voice_settled, before.get("voice") or "")
     await asyncio.to_thread(features.publish)
     await asyncio.to_thread(_write_terminal_prompt)
     _refresh_claude_md()
@@ -27447,6 +27568,25 @@ async def h_header_logo_delete(request: web.Request) -> web.Response:
     return web.json_response(header_brand.payload(settings_store.load()))
 
 
+def _voice_settled(old: str) -> int:
+    """In the step that stores a new voice, a line of brAIn's instruction
+    overrides or its persona that still names another voice becomes one
+    yes/no question per file, whose Yes makes the edit (`self_care.
+    voice_questions`, #769). Not an unattended write: those files are
+    words a person wrote. How many were filed."""
+    voice = personality.identity().get("voice") or ""
+    if not voice or voice.lower() == str(old or "").lower():
+        return 0
+    filed = 0
+    try:
+        for row in self_care.voice_questions(voice, old):
+            if findings_store.add_case(row):
+                filed += 1
+    except Exception as exc:  # noqa: BLE001 — never the save it followed
+        log.warning("could not read brAIn's files for the old voice: %s", exc)
+    return filed
+
+
 async def h_personality_growth(request: web.Request) -> web.Response:
     """POST {text}: one dated growth entry (the `note_personality_change`
     MCP tool, from a conversation about who brAIn is)."""
@@ -27457,12 +27597,14 @@ async def h_personality_growth(request: web.Request) -> web.Response:
     refusal = await asyncio.to_thread(personality.growth_refusal, text)
     if refusal:
         raise web.HTTPBadRequest(text=refusal)
+    before = await asyncio.to_thread(personality.identity)
     try:
         entry = await asyncio.to_thread(personality.add_growth, text)
     except (ValueError, OSError):
         log.exception("could not record a personality change")
         raise web.HTTPInternalServerError(
             text="brAIn could not record that; the add-on log says why.")
+    await asyncio.to_thread(_voice_settled, before.get("voice") or "")
     await asyncio.to_thread(_write_terminal_prompt)
     _refresh_claude_md()
     return web.json_response({"ok": True, "entry": entry})
@@ -29612,54 +29754,54 @@ def make_app() -> web.Application:
         # Every prompt's shipped text is captured before any override is put
         # in force, then the overrides, then the shipped copies are written
         # where Claude in the terminal can read them.
-        await asyncio.to_thread(instructions.apply_all)
-        await asyncio.to_thread(instructions.export_builtins)
+        await _thread_to_the_end(instructions.apply_all)
+        await _thread_to_the_end(instructions.export_builtins)
         # A browser left over from before the restart (report #355).
-        await asyncio.to_thread(browser_reaper.maybe_reap)
+        await _thread_to_the_end(browser_reaper.maybe_reap)
         # ⚙ › Minecraft's "Default" models, written beside its settings for
         # the integration's listener (the thinking level may have moved).
         try:
-            await asyncio.to_thread(minecraft_companion.publish)
+            await _thread_to_the_end(minecraft_companion.publish)
         except Exception:  # noqa: BLE001 — a game setting never holds the panel up
             log.debug("could not publish the Minecraft models", exc_info=True)
         # The household's personality used to live in Morph's own code;
         # read it out of Morph's copy ONCE, while brAIn has no file of its
         # own, before the terminal's prompt is written from it. Morph's
         # file is never written.
-        moved = await asyncio.to_thread(personality.migrate_from_morph)
+        moved = await _thread_to_the_end(personality.migrate_from_morph)
         if moved:
             log.info("personality: %s", moved)
         # And an earlier import that kept only the top-level strings of
         # Morph's persona is read again, once, while nobody has edited it.
-        repaired = await asyncio.to_thread(personality.repair_from_morph)
+        repaired = await _thread_to_the_end(personality.repair_from_morph)
         if repaired:
             log.info("personality: %s", repaired)
         # brAIn's four switches (⚙ › Features), decided once from what the
         # house already had and published for Morph's service, the
         # integration and the prompts below to read.
-        await asyncio.to_thread(features.ensure)
-        await asyncio.to_thread(_write_terminal_prompt)
+        await _thread_to_the_end(features.ensure)
+        await _thread_to_the_end(_write_terminal_prompt)
         # Republish the shared-volume mirror so the integration's findings
         # sensor reads the current list, not the one from the last change.
-        await asyncio.to_thread(findings_store.publish_state)
+        await _thread_to_the_end(findings_store.publish_state)
         # ...and the to-do mirror beside it, for the same reason: a boot
         # must not serve last week's list to the To-do app.
-        await asyncio.to_thread(todo_store.publish_state)
+        await _thread_to_the_end(todo_store.publish_state)
         # ...and the status line, so `sensor.brain_status` does not wait a
         # minute after a boot to stop reading as the panel being down.
-        await asyncio.to_thread(publish_status)
+        await _thread_to_the_end(publish_status)
         # Transcripts from before the pool's reflection pass and one-shot
         # voice fallback claimed their ids sat in the person's own Chats
         # list. Label the backlog once, by our own shipped prompt openers
         # (marker-guarded).
-        relabelled = await asyncio.to_thread(
+        relabelled = await _thread_to_the_end(
             conversations.backfill_sources, chat_session.WORK_DIR)
         if relabelled:
             log.info("labelled %d machine conversation(s) from before their "
                      "callers claimed session ids", relabelled)
         # ...and what Morph sent before the listener claimed its tasks as
         # Morph's: filed as Automation or as the person's own (marker-guarded).
-        morphs = await asyncio.to_thread(
+        morphs = await _thread_to_the_end(
             conversations.relabel_morph, chat_session.WORK_DIR)
         if morphs:
             log.info("listed %d conversation(s) Morph started under Morph", morphs)
@@ -29752,7 +29894,7 @@ def make_app() -> web.Application:
             stall_after_s=_stall_after(0, FOLLOWUP_TICK_S))
         app["tasks"]["timed"] = _supervise("timed", _timed_loop(), stall_after_s=120)
         try:
-            await asyncio.to_thread(security.publish)
+            await _thread_to_the_end(security.publish)
         except Exception as exc:  # noqa: BLE001 — a guard that could not
             # be republished is a fault row, not a panel that will not start
             log.warning("could not publish the tripwire file: %s", exc)
@@ -29769,6 +29911,29 @@ def make_app() -> web.Application:
                 await task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001 — cancelled on the way out
                 pass
+        # The loops `_startup_body` started end with the app, the worker
+        # first among them. Left running, a card a request had just queued
+        # went on generating after the app was closed — collecting from
+        # Home Assistant, resolving its host in an executor thread, filing
+        # a problem report on the reports thread — while whoever closed the
+        # app went on to its next step. In the suite that next step is a
+        # test's teardown restoring `os.environ`, and glibc's setenv racing
+        # a getaddrinfo's getenv in another thread is a segfault: the
+        # xdist worker died "while running" test_proposal_accept's
+        # ordinary-question test. Bounded, because a loop that swallowed
+        # its cancellation must not hold the shutdown.
+        loops = [t for name, t in app["tasks"].items()
+                 if name != "startup" and t is not None and not t.done()]
+        # Re-cancelled on a short tick until each is done: a cancel can be
+        # turned into another exception on its way down
+        # (`_cancel_requested`), and one that was is a loop back at its
+        # wait with nothing pending to end it.
+        deadline = time.monotonic() + LOOP_STOP_WAIT_S
+        while loops and time.monotonic() < deadline:
+            for t in loops:
+                t.cancel()
+            await asyncio.wait(loops, timeout=LOOP_RECANCEL_S)
+            loops = [t for t in loops if not t.done()]
         # The chat session is a child process of ours; leaving it running
         # after the panel goes down orphans a Claude that nothing will ever
         # read from again.

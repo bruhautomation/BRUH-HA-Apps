@@ -686,6 +686,16 @@
     <div id="chatRailKinds" class="pillseg crkinds" role="group" aria-label="Show"></div>
     <p id="chatRailHint" class="crhint" hidden></p>
     <div id="chatRailList" class="crlist"></div>
+    <!-- Below the breakpoint only: this list is the page Ask opens on, and
+         somebody who opens Ask came to ask. Sending starts a new chat with
+         the message; the chats above stay one scroll away. -->
+    <form id="chatRailForm" class="chatbar crnewchat">
+      <textarea id="chatRailInput" rows="1" enterkeyhint="send" autocomplete="off"
+                placeholder="Ask brAIn…" aria-label="Ask brAIn in a new chat"></textarea>
+      <button type="submit" class="chatsend" aria-label="Send in a new chat">
+        <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+      </button>
+    </form>
   </aside>
 
   <section id="termChat" class="chat">
@@ -1721,7 +1731,8 @@
             <div class="row devcaps">
               <div class="setfield">
                 <label for="devCapIssues">New issues a day</label>
-                <input id="devCapIssues" type="number" min="0" max="50" inputmode="numeric">
+                <input id="devCapIssues" type="number" min="0" step="1" placeholder="No limit"
+                  inputmode="numeric" aria-describedby="devCapIssuesHint">
               </div>
               <div class="setfield">
                 <label for="devCapRuns">Claude runs a day</label>
@@ -1729,6 +1740,9 @@
               </div>
               <button id="devCapSave" class="btn" aria-label="Save the daily caps">Save</button>
             </div>
+            <p id="devCapIssuesHint" class="hint tight">Leave new issues a day empty for no limit:
+              every report that is ready goes out on the next pass. A number holds the rest
+              until the next day.</p>
 
             <h5 class="setsubhead"><label for="devLook">What do you want to fix?</label></h5>
             <p class="hint tight">Say it the way you would to a person. One Claude run works out

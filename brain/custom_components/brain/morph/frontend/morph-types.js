@@ -169,9 +169,13 @@ export class MorphTypeCard extends HTMLElement {
       } else {
         const h = await helpers();
         const cfg = expand(def.card, vars);
+        const ctag = String((cfg && cfg.type) || '');
+        const madeEarly = ctag.startsWith('custom:') && !customElements.get(ctag.slice(7));
         el = h ? h.createCardElement(cfg) : null;
         if (!el) throw new Error('Home Assistant’s card helpers did not load.');
-        el.addEventListener('ll-rebuild', (e) => { e.stopPropagation(); this.build(); });
+        // Only a stand-in made before its card was defined has anything to
+        // rebuild; anything else would redraw this card on every mount.
+        el.addEventListener('ll-rebuild', (e) => { e.stopPropagation(); if (madeEarly && this._inner === el) this.build(); });
       }
     } catch (e) {
       if (n === this._n) this.note(`The card type “${def.name}” could not be drawn: ${(e && e.message) || e}`);

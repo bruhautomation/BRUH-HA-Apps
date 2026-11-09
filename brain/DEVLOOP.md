@@ -70,8 +70,8 @@ fix?* run can use it too.
 
 **Autopilot** (the switch at the top of the section) is the one choice
 for somebody handing brAIn's development to the loop: every stream on, on
-its own schedule, nothing waiting for you to press Send, and the caps at
-least 20 issues and 8 runs a day. Switching it off puts back exactly the
+its own schedule, nothing waiting for you to press Send, and at least 8
+Claude runs a day. Switching it off puts back exactly the
 switches you had. It changes what the HOUSE sends; what the cloud may
 change is `.claude/devloop.json`'s.
 
@@ -81,9 +81,12 @@ you typed it. It is never held back because an earlier report about the
 same screen was declined, and the line under the box says which issue it
 became and what the cloud said when it closed it.
 
-Two daily caps keep it in proportion. Both refuse rather than queue up:
+Two daily limits, in ⚙ › Developer › Daily limits:
 
-- **Issues a day** (default 10): past it, new reports wait for tomorrow.
+- **New issues a day** (default: no limit): every report that is ready goes
+  out on the next pass, all of them. Set a number only if you want one;
+  past it, new reports wait for the next day rather than being dropped.
+  Leave the field empty for no limit.
 - **Claude runs a day** (default 4): covers Gaps, Ideas and *What do you
   want to fix?*.
   Scheduled runs also stop when automatic insights are paused or the usage

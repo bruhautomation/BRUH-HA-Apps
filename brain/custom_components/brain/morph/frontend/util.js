@@ -116,6 +116,8 @@ export const ICONS = {
   garage: I('M3 21V9l9-6 9 6v12', 'M6 12h12M6 15h12M6 18h12', '', '50% 40%'),
   play: I('M5 4l14 8-14 8z', 'M5 4l14 8-14 8z', 'breathe'),
   dot: I('M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z', 'M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z'),
+  // A plain appliance: a body, its control row and a door. The picture for anything the board has no picture for.
+  appliance: I('M5 3h14v18H5zM5 8h14', 'M8.5 5.5h.01M12 5.5h.01M15.5 5.5h.01M8 12h8v6H8z', 'breathe'),
   brain: I('M12 3c.7 4.4 2.3 6.1 6.8 6.8-4.5.7-6.1 2.4-6.8 6.8-.7-4.4-2.3-6.1-6.8-6.8C9.7 9.1 11.3 7.4 12 3z', 'M19 14.5c.3 1.9 1 2.6 2.9 2.9-1.9.3-2.6 1-2.9 2.9-.3-1.9-1-2.6-2.9-2.9 1.9-.3 2.6-1 2.9-2.9z'),
 };
 
@@ -166,6 +168,22 @@ export function shortName(name, room) {
 }
 
 export const UNAVAILABLE = ['unavailable', 'unknown'];
+
+// #764: a freezer whose entity had stopped answering showed its last
+// temperature, its target and a running timer under an "unavailable" badge,
+// as if they were live. Home Assistant sets `last_changed` when an entity goes
+// unavailable, so that is when it was last heard from, and it is all a tile
+// can honestly say about it now: "last seen 4:02 PM", "last seen Mon 4:02
+// PM", "last seen Oct 30". Empty for anything that is answering.
+export function lastSeen(st) {
+  if (!st || !UNAVAILABLE.includes(st.state)) return '';
+  const t = Date.parse(st.last_changed || st.last_updated || '');
+  if (!t) return 'not answering';
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  if (t >= today.getTime()) return 'last seen ' + clock(t);
+  if (t >= today.getTime() - 6 * 86400000) return 'last seen ' + new Date(t).toLocaleDateString([], { weekday: 'short' }) + ' ' + clock(t);
+  return 'last seen ' + new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
 
 // A module whose FETCH failed (a request dropped on the way through the
 // cloud link, a restart mid-load) is a different thing from one whose code
@@ -517,4 +535,54 @@ export function minecraftStatus(hass, eid) {
   const tps = S[sib('sensor', '_tps_1m')]; const t = tps ? parseFloat(tps.state) : NaN;
   const who = !pl || isNaN(n) ? 'Online' : n <= 0 ? 'Online · nobody playing' : `${n} playing${names.length ? ': ' + names.join(', ') : ''}`;
   return who + (isFinite(t) ? ` · ${Math.round(t)} TPS` : '');
+}
+
+// ---------------------------------------------------------------- dead probes
+// #787: a soil probe fell from 47% to a flat 0% and was drawn as bone-dry
+// soil. Soil dries over hours; a moisture reading that lands on exactly 0
+// straight from 10 or more (the reading before it, or any within the 15
+// minutes before it) is a probe that stopped answering, was pulled out of the
+// soil or lost its battery. Soil that dried down through the low numbers to 0
+// is a real 0% and is left alone. `pts` is [time, value] in time order, the
+// last one now.
+export const CLIFF_FROM = 10;
+const CLIFF_MS = 15 * 60000;
+export function isMoisture(st) {
+  if (!st || domainOf(st.entity_id) !== 'sensor') return false;
+  const a = st.attributes || {};
+  if (a.unit_of_measurement && a.unit_of_measurement !== '%') return false;
+  return a.device_class === 'moisture' || /\b(soil|moisture)\b/i.test(`${a.friendly_name || ''} ${String(st.entity_id).replace(/_/g, ' ')}`);
+}
+export function fellToZero(pts) {
+  const v = (pts || []).filter((p) => p && isFinite(p[1]));
+  if (!v.length || v[v.length - 1][1] !== 0) return false;
+  let i = v.length - 1;
+  while (i > 0 && v[i - 1][1] === 0) i -= 1;
+  if (i === 0) return false;
+  const t0 = v[i][0];
+  for (let j = i - 1; j >= 0; j -= 1) {
+    if (j < i - 1 && t0 - v[j][0] > CLIFF_MS) break;
+    if (v[j][1] >= CLIFF_FROM) return true;
+  }
+  return false;
+}
+// The probe's battery, as its own sensor says it (a voltage or a percentage),
+// from the same device, else from an entity named like it, else its own
+// battery_level attribute: "battery 1.6 V".
+export function batteryOf(hass, eid) {
+  const S = (hass && hass.states) || {}; const reg = (hass && hass.entities) || {};
+  const own = reg[eid]; const stem = String(eid).split('.')[1].replace(/_?(soil_)?moisture$/, '');
+  const ids = own && own.device_id ? Object.keys(reg).filter((e) => e !== eid && reg[e].device_id === own.device_id)
+    : stem ? Object.keys(S).filter((e) => e !== eid && domainOf(e) === 'sensor' && e.split('.')[1].startsWith(stem)) : [];
+  const b = ids.map((e) => S[e]).find((s) => s && isFinite(parseFloat(s.state)) && /battery/i.test(`${s.entity_id} ${s.attributes.friendly_name || ''} ${s.attributes.device_class || ''}`));
+  if (b) return 'battery ' + fmt(b.state, b.attributes.unit_of_measurement || '');
+  const lvl = S[eid] && S[eid].attributes && S[eid].attributes.battery_level;
+  return lvl != null && isFinite(Number(lvl)) ? `battery ${lvl}%` : '';
+}
+// What a moisture tile says instead of 0% when its probe went dead, or ''.
+export function probeOffline(hass, eid, pts) {
+  const st = hass && hass.states && hass.states[eid];
+  if (!isMoisture(st) || !fellToZero(pts)) return '';
+  const bat = batteryOf(hass, eid);
+  return 'Sensor offline · check the probe' + (bat ? ' · ' + bat : '');
 }

@@ -565,6 +565,8 @@ a.btn {
 .vchip-fine { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good-ink); }
 .vchip-look { background: color-mix(in srgb, var(--warning) 20%, transparent); color: var(--warning-ink); }
 .vchip-act { background: color-mix(in srgb, var(--critical) 16%, transparent); color: var(--critical-ink); }
+/* The one thing to do on a card that is not all fine. */
+.nextstep { margin: var(--sp-2) var(--card-pad) 0; font-size: var(--fs-body); color: var(--ink); }
 /* Every card that is all fine about nothing changing, folded into one line
    under the cards that have something to say. */
 .quietline {
@@ -1445,7 +1447,7 @@ body.modal-open {
   #setModal.setindex .setbody { display: none; }
   #setModal:not(.setindex) .setnav { display: none; }
   /* An open section is reached by "‹ Settings" and named by its own title;
-     the page's "Settings" above them said the same word a third time (#744). */
+     the page's "Settings" above them made it say the word twice (#744). */
   #setModal:not(.setindex) .setpagehead .panetitle { display: none; }
   .setback {
     display: inline-flex; align-items: center; min-height: 44px; margin: -6px 0 2px -8px;
@@ -2703,6 +2705,12 @@ html.shell-home.shell-raised, html.shell-home.shell-raised body { background: rg
 @media (min-width: 900px) {
   /* Beside a rail, the rail is the list: the menu item would open nothing. */
   #chatOpen { display: none; }
+}
+/* The list page's own message box (a new chat): only where the list is the
+   page Ask opens on. Beside a transcript the transcript's box is the one. */
+.chatrail .crnewchat { display: none; }
+@media (max-width: 899px) {
+  body:not(.term-classic) .chatrail .crnewchat { display: flex; }
 }
 .chathead .btn.icon { width: 44px; height: 44px; flex: none; }
 .chathead .chtitle {

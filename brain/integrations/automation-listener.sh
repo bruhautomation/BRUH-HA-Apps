@@ -638,18 +638,29 @@ PYMEM
 # written: accounting may cost the run nothing, least of all time the
 # bridge is waiting on. Args: outcome, duration, envelope file (or ""),
 # model, error text, scheduled flag.
+#
+# A task can write two rows (a refused or MCP-failed first run, then the
+# retry that answers it), and two background writers race: on a loaded
+# machine the answer's row landed first, and "the last row for this task"
+# read as the refusal. So each writer waits for the one before it to finish
+# — the previous writer's pid is kept in `journal_task_pid`, which
+# process_task declares local so it never names another task's child.
 journal_task() {
     local outcome="$1" duration="$2" envelope="$3" model="$4" error="$5" scheduled="$6"
     local journal_py="${BRAIN_SCRIPTS_DIR:-/opt/scripts}/brain_run_journal.py"
     [ -r "$journal_py" ] || { [ -n "$envelope" ] && rm -f "$envelope"; return 0; }
-    local extra=()
+    local extra=() prev="${journal_task_pid:-}"
     [ "$scheduled" = "true" ] && extra=(--extra scheduled=1)
+    if [ -n "$prev" ]; then
+        wait "$prev" 2>/dev/null || true
+    fi
     (
         python3 "$journal_py" record task "$outcome" --duration "$duration" \
             ${envelope:+--envelope "$envelope"} --model "$model" \
             --error "$error" "${extra[@]}" > /dev/null 2>&1 || true
         [ -n "$envelope" ] && rm -f "$envelope"
     ) &
+    journal_task_pid=$!
 }
 
 # The validated object out of a `--json-schema` run's envelope, compact,
@@ -789,6 +800,8 @@ task_envelope_from_stream() {
 # Process an automation task file
 process_task() {
     local task_file="$1"
+    # The last journal writer this task started (journal_task chains on it).
+    local journal_task_pid=""
 
     # The helpers below are this task's own (defined here so every caller
     # of process_task has them).
@@ -1321,6 +1334,15 @@ ${prompt}"
     if [ -n "$retry_why" ]; then
         local remaining=$((claude_limit - duration)) first_duration="$duration"
         if [ "$remaining" -ge 30 ]; then
+            # The first run was a run too — it spent tokens and failed — so
+            # it is journaled on its own, and before the retry starts, so
+            # its row is the first of the two (journal_task chains the
+            # retry's writer behind this one; it removes the envelope once
+            # it has read it).
+            if [ -n "$envelope_file" ]; then
+                journal_task error "$first_duration" "$envelope_file" "${task_model:-}" \
+                    "$retry_note" "$task_scheduled"
+            fi
             output_file=$(mktemp)
             stderr_file=$(mktemp)
 
@@ -1347,14 +1369,6 @@ ${prompt}"
                 task_sid=$(jq -r 'if type == "object" then (.session_id // empty) else empty end' "$output_file" 2>/dev/null || true)
             fi
             stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
-            # The retry's envelope is the one that answers the task. The
-            # first run was a run too — it spent tokens and failed — so it
-            # is journaled on its own before its envelope goes (journal_task
-            # removes the file once it has read it).
-            if [ -n "$envelope_file" ]; then
-                journal_task error "$first_duration" "$envelope_file" "${task_model:-}" \
-                    "$retry_note" "$task_scheduled"
-            fi
             envelope_file="${output_file}.envelope"
             mv -f "$output_file" "$envelope_file" 2>/dev/null || envelope_file=""
             rm -f "$stderr_file"
