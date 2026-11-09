@@ -162,6 +162,35 @@ _BLOCK_STATE = re.compile(
 # edit's snapshot takes these neighbours too and an undo puts them back.
 _MULTI_PART = re.compile(r"[\[,](part|half)=")
 _ACTION_ID = re.compile(r"^[0-9]{8}-[0-9a-f]{6}$")
+# A power source with no block entity, whose power is in its state (#778):
+# a lever, a button, a plate, dust, a torch, a repeater, an observer… A
+# `setblock` updates only the six cells beside the one it sets, and a lever
+# or a button powers the block it hangs on, which powers ITS neighbours —
+# so a lever set off by an edit left the command block it drove running.
+_POWER_SOURCE = re.compile(
+    r"^minecraft:(lever|[a-z_]*_button|[a-z_]*_pressure_plate|redstone_wire|"
+    r"redstone_(wall_)?torch|repeater|observer|tripwire_hook|target|redstone_block|"
+    r"lightning_rod)(\[|$)")
+_POWER_PROPS = re.compile(r"[\[,](powered|power|lit)=(\w+)")
+# The moment's block a power change is passed through: an UNLIT torch gives
+# no power, and putting one in and taking it away each update the neighbours
+# of all six cells around it — the attached block's neighbours among them.
+_NUDGE = "minecraft:redstone_torch[lit=false]"
+_NUDGE_TOO = "minecraft:redstone_wall_torch[facing=north,lit=false]"
+
+
+def _power(state: str) -> tuple[str, tuple] | None:
+    """What a cell gives redstone: the source and its power, or None."""
+    if not _POWER_SOURCE.match(state or ""):
+        return None
+    return state.split("[", 1)[0], tuple(sorted(_POWER_PROPS.findall(state)))
+
+
+def power_changed(before: str, after: str) -> bool:
+    """Whether setting `before` to `after` changes the power a source gives."""
+    return _power(before) != _power(after)
+
+
 _UNQUOTED = re.compile(r"^[0-9A-Za-z_\-.+]+$")
 _PLAYER = re.compile(r"^[A-Za-z0-9_.*]{1,17}$")
 _COLOUR_CODE = re.compile(r"§.")
@@ -1720,6 +1749,10 @@ class Companion:
                             failed = ("The server would not place a block: "
                                       f"{why_refused(reply)}")
                             break
+                if not failed:
+                    failed = self._nudge({c: (before.get(c, "minecraft:air"), st)
+                                          for c, st in changed.items() if c not in already},
+                                         dim, forced)
                 if failed:
                     self._restore(act)
             finally:
@@ -1746,6 +1779,32 @@ class Companion:
             return dict(act, cells=sum(c["n"] for c in cells), changed=len(changed),
                         undoable=undoable(act), backup_note=backup_note, dimension=dim,
                         focus=focus)
+
+    def _nudge(self, cells: dict[tuple[int, int, int], tuple[str, str]], dim: str,
+               forced: dict[tuple[str, int, int], bool]) -> str:
+        """After an edit or its undo: every cell whose power changed (#778),
+        `{cell: (before, after)}`, is set for a moment to an unlit redstone
+        torch and then to what it now holds, so what the power drives —
+        through the block a lever hangs on too — is updated as a flip in the
+        game would. Every other cell is left alone. '' when done, else what
+        went wrong (the cell holds the torch only if the server stopped
+        answering between the two)."""
+        for (x, y, z), (was, now) in sorted(cells.items()):
+            if not power_changed(was, now):
+                continue
+            via = _NUDGE_TOO if now == _NUDGE else _NUDGE
+            where = f"minecraft:execute in {dim} run minecraft:setblock {x} {y} {z}"
+            reply = self._raw_loaded(f"{where} {via} replace", dim, (x, x), (z, z), forced)
+            if reply is None or not re.search(r"changed the block", reply, re.I):
+                continue          # nothing changed: the cell still holds what was asked
+            for _ in range(2):
+                back = self._raw_loaded(f"{where} {now} replace", dim, (x, x), (z, z), forced)
+                if back is not None and re.search(r"changed the block", back, re.I):
+                    break
+            else:
+                return (f"The server stopped answering while updating the redstone at "
+                        f"{x} {y} {z}: {why_refused(back)}")
+        return ""
 
     def _restore(self, act: dict[str, Any]) -> dict[str, int]:
         """Put back each cell that still holds what was placed."""
@@ -1787,9 +1846,33 @@ class Companion:
         door) are put back where they are missing."""
         forced: dict[tuple[str, int, int], bool] = {}
         try:
-            return self._restore_runs(act.get("cells") or [], forced)
+            cells = act.get("cells") or []
+            out = self._restore_runs(cells, forced)
+            self._nudge_restored(cells, forced)
+            return out
         finally:
             self._release(forced)
+
+    def _nudge_restored(self, cells: list[dict[str, Any]],
+                        forced: dict[tuple[str, int, int], bool]) -> None:
+        """An undo's power changes (#778): each cell of a run whose power
+        the edit changed, and which now holds what it held before, has the
+        redstone it drives updated as `_nudge` does for an edit."""
+        by_dim: dict[str, dict[tuple[int, int, int], tuple[str, str]]] = {}
+        for c in cells:
+            after, before = c.get("after"), c.get("before")
+            if c.get("placed") or after is None or not before or \
+                    not power_changed(after, before):
+                continue
+            dim = c.get("dim") or "minecraft:overworld"
+            for x in range(c["x"], c["x"] + int(c.get("n") or 1)):
+                said = self._raw_loaded(f"minecraft:execute in {dim} if block {x} {c['y']} "
+                                        f"{c['z']} {before}", dim, (x, x), (c["z"], c["z"]),
+                                        forced)
+                if said is not None and parse_test(said):
+                    by_dim.setdefault(dim, {})[(x, c["y"], c["z"])] = (after, before)
+        for dim, todo in by_dim.items():
+            self._nudge(todo, dim, forced)
 
     def _restore_runs(self, cells: list[dict[str, Any]],
                       forced: dict[tuple[str, int, int], bool]) -> dict[str, int]:
