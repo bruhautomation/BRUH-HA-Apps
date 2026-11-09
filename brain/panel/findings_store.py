@@ -614,7 +614,7 @@ def _plain_row(row: dict, keys=("claim", "detail", "fix", "todo_text")) -> dict:
             # may weigh two causes, the step a person carries out may not.
             if key in FORK_REFUSED and house_words.fork(out[key]):
                 out[key] = ""
-            out[key] = house_words.technical(out[key])[0]
+            out[key] = house_words.technical(out[key], names=names)[0]
             # The household is "you", the dashboard the dashboard (#562).
             out[key] = house_words.household(out[key])
     technical = clean_technical(technical)
@@ -976,6 +976,119 @@ def _names_itself(reason, entry: dict) -> bool:
     return False
 
 
+def _plainly(text, entry: dict, files: bool = True) -> str:
+    """`house_words.said_plainly` with the panel's names map, read only
+    when the text holds something to name."""
+    if not isinstance(text, str) or not house_words.lint(text, files):
+        return text
+    return house_words.said_plainly(
+        text, _names_now(), files=files,
+        known=clean_technical((entry or {}).get("technical")))
+
+
+def shown_words(entry: dict) -> dict:
+    """The fields of a model-written row a surface shows, in plain words
+    (#774, #791): no path, line number, id, hex code, build string or
+    code name, and never the "an internal name" a row stored before the
+    rule. Only the fields that change come back; the stored row is never
+    touched, and a row whose words are its code's (a check, the safety
+    lane, a person's correction) comes back with nothing changed."""
+    entry = entry if isinstance(entry, dict) else {}
+    if not _model_written(entry.get("source")):
+        return {}
+    out = {}
+    for key in ("text", "claim", "detail", "fix"):
+        said = entry.get(key)
+        if isinstance(said, str) and said:
+            plain_said = _plainly(said, entry)
+            if plain_said != said and (plain_said or key != "text"):
+                out[key] = plain_said
+    return out
+
+
+# A duration a look states and the row's detail states too (#771). The
+# row's figure was read off the entity's history by the rule or the run
+# that filed it; a look restating it in other words ("for about 14 hours"
+# beside "for 3 days") is a second answer to one fact on one card.
+_DURATION_UNITS = {"second": 1, "sec": 1, "minute": 60, "min": 60,
+                   "hour": 3600, "hr": 3600, "day": 86400, "week": 604800,
+                   "month": 2592000}
+_UNIT_WORD = r"(?:seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?)"
+_STATED_DURATION_RE = re.compile(
+    r"(?<![\d.:])(?P<n>\d+(?:\.\d+)?|an?|one)\s*(?P<u>" + _UNIT_WORD + r")\b",
+    re.I)
+_LOOK_DURATION_RE = re.compile(
+    r"\bfor\s+(?P<q>(?:about|around|roughly|over|nearly|almost|more than|"
+    r"at least|under|less than|several|a few|many|some)\s+)?"
+    r"(?:(?P<n>\d+(?:\.\d+)?|an?|one)\s*)?(?P<u>" + _UNIT_WORD + r")\b", re.I)
+# A look's vague "for hours": what the word can honestly cover.
+_VAGUE_SPAN = {"second": (2, 120), "minute": (120, 3600),
+               "hour": (7200, 86400 * 1.5), "day": (86400 * 1.5, 86400 * 21),
+               "week": (604800 * 1.5, 604800 * 9),
+               "month": (2592000 * 1.5, 2592000 * 30)}
+DURATION_TOLERANCE = 0.25
+
+
+def _unit_of(word: str) -> str:
+    word = word.lower().rstrip("s")
+    return {"sec": "second", "min": "minute", "hr": "hour"}.get(word, word)
+
+
+def _amount(n) -> float | None:
+    if n is None:
+        return None
+    n = n.lower()
+    return 1.0 if n in ("a", "an", "one") else float(n)
+
+
+def _stated_durations(entry: dict) -> list[tuple[float, str]]:
+    """``[(seconds, words)]`` the row's own text, claim and detail state."""
+    out: list[tuple[float, str]] = []
+    for key in ("detail", "claim", "text"):
+        for m in _STATED_DURATION_RE.finditer(str(entry.get(key) or "")):
+            secs = _amount(m.group("n")) * _DURATION_UNITS[_unit_of(m.group("u"))]
+            if all(abs(secs - s) > 1 for s, _w in out):
+                out.append((secs, m.group(0)))
+    return out
+
+
+def _duration_agrees(m: re.Match, secs: float) -> bool:
+    unit = _unit_of(m.group("u"))
+    amount = _amount(m.group("n"))
+    if amount is None:
+        low, high = _VAGUE_SPAN[unit]
+        return low <= secs < high
+    said = amount * _DURATION_UNITS[unit]
+    return abs(said - secs) <= max(DURATION_TOLERANCE * secs, 300)
+
+
+def with_row_durations(said: str, entry: dict) -> str:
+    """A look's ``said`` stating the row's own durations (#771). Where the
+    row states one, a look's "for <duration>" that disagrees with it says
+    the row's; where it states several and the look's agrees with none,
+    that sentence goes. Agreeing durations, and a row that states none,
+    leave the look exactly as written."""
+    if not isinstance(said, str) or not said or not _LOOK_DURATION_RE.search(said):
+        return said
+    stated = _stated_durations(entry if isinstance(entry, dict) else {})
+    if not stated:
+        return said
+    kept = []
+    for sentence in _SENTENCE_SPLIT_RE.split(said):
+        wrong = [m for m in _LOOK_DURATION_RE.finditer(sentence)
+                 if not any(_duration_agrees(m, secs) for secs, _w in stated)]
+        if not wrong:
+            kept.append(sentence)
+            continue
+        if len(stated) > 1:
+            continue
+        kept.append(_LOOK_DURATION_RE.sub(
+            lambda m: ("for " + stated[0][1]) if m in wrong or not any(
+                _duration_agrees(m, s) for s, _w in stated) else m.group(0),
+            sentence))
+    return " ".join(s for s in kept if s.strip()).strip()
+
+
 def shown_look(record: dict, entry: dict) -> dict:
     """``record`` (a cleaned triage block) as a surface a person reads
     shows it: an echo blanked (`without_echo`) and the reason cut to what
@@ -1014,6 +1127,11 @@ def shown_look(record: dict, entry: dict) -> dict:
     # (`tests/test_open_row_look_reason.py` holds it on screen).
     said = house_words.household(house_words.technical(said, files=False)[0])
     said = house_words.one_name(said)   # one assistant, one name
+    # No id, path, line number or code name — and never "an internal
+    # name" — under "brAIn checked" (#774, #791): `shown_words`' pass.
+    said = _plainly(said, entry, files=False)
+    # The look states the row's own durations (#771).
+    said = with_row_durations(said, entry)
     if said == record["reason"]:
         return record
     return {**record, "reason": said}
@@ -1471,7 +1589,49 @@ def _case_fields(entry: dict) -> dict:
     todo = clean_todo_text(entry.get("todo_text"))
     if todo:
         out["todo_text"] = todo
+    # "Nothing to do, because …" (#775): the producer's stated reason a
+    # row needs no step, which files it held with that reason.
+    why = textclip.shorten(" ".join(str(entry.get("no_action") or "").split()),
+                           MAX_FIX)
+    if why:
+        out["no_action"] = why
     return out
+
+
+def next_step(entry: dict) -> tuple[str, str]:
+    """``(what, why)``: what a row asks of its reader (#775). ``step``: a
+    step the household can carry out (its shown `fix`, an action, an
+    errand); ``question``: a question to answer or an approval to give;
+    ``note``: news to read (`informational`); ``no_action``: it says
+    nothing needs doing, and ``why`` is that sentence; ``urgent``: none of
+    those, on a high-stakes row, which is never dropped for its wording;
+    ``""``: none at all — a row that leaves its reader unable to tell
+    whether to act, answer or ignore."""
+    entry = entry if isinstance(entry, dict) else {}
+    if (entry.get("kind") == "question" or entry.get("asked") is True
+            or entry.get("minecraft_approval")):
+        return "question", ""
+    if entry.get("informational") is True:
+        return "note", ""
+    check = str(entry.get("source") or "").startswith("check:")
+    fix = str(entry.get("fix") or "")
+    if (house_words.household_step(
+            fix, own_checks=bool(entry.get("fix_by")) or not check)
+            or entry.get("actions") or str(entry.get("todo_text") or "").strip()):
+        return "step", ""
+    why = str(entry.get("no_action") or "").strip()
+    if not why:
+        for sentence in re.split(r"(?<=[.!?])\s+",
+                                 fix or str(entry.get("detail") or "")):
+            if triage.NOTHING_RE.search(sentence):
+                why = sentence.strip()
+                break
+    if why:
+        return "no_action", why
+    if (entry.get("stakes") == "high" or entry.get("severity") == "critical"
+            or _urgent(entry)):
+        return "urgent", ""
+    return "", ""
 
 
 def _shape(entry: dict) -> dict:
@@ -1743,6 +1903,7 @@ def listing() -> dict:
     shaped = [s for s in (_shape(e) for e in _load())
               if s["text"] and holds_now(s)]
     for row in shaped:
+        row.update(shown_words(row))
         row["fix"] = shown_fix(row)
         if row.get("triage"):
             row["triage"] = shown_look(row["triage"], row)
@@ -2695,6 +2856,29 @@ def add_many(objs: list[dict]) -> list[dict]:
                 entry.update(asked)
         if entry is None:
             continue
+        # A model's case that says nothing is needed, and why (#775), is
+        # filed held with that reason and raised to nobody — read after the
+        # passes above, which can empty a step (a placeholder, a fork, a
+        # sentence holding only a path). The case contract (a `kind` or a
+        # `claim`) or a stated `no_action` is what the rule reads: a bare
+        # producer's line keeps its old door. A case with no step at all is
+        # refused where it is written (`resident.unfinished`), because this
+        # store files a case whose step it emptied (`add_case`, held by
+        # `tests/test_finding_placeholders.py`).
+        quiet = False
+        if not care and _model_written(entry.get("source")) and (
+                entry.get("kind") in CASE_KINDS or entry.get("claim")
+                or entry.get("no_action")):
+            what, why = next_step(entry)
+            if what == "no_action":
+                entry["status"] = "held"
+                entry["triage"] = _clean_triage({
+                    "verdict": "held",
+                    "reason": textclip.shorten(why, triage.MAX_REASON),
+                    "run_id": entry.get("run_id") or "",
+                    "at": int(time.time()), "wrote_fix": False,
+                    "v": triage.LOOK_VERSION})
+                quiet = True
         if (own_question and not care and _model_written(entry.get("source"))
                 and house_words.about_own_setup(*(entry.get(k) for k in (
                     "text", "claim", "detail", "fix")))):
@@ -2754,7 +2938,10 @@ def add_many(objs: list[dict]) -> list[dict]:
         if ck:
             checked.setdefault(ck, entry)
         items.append(entry)
-        created.append(_shape(entry))
+        if quiet:
+            refreshed = True
+        else:
+            created.append(_shape(entry))
     gone = _fold_shared(items) if created or refreshed else set()
     if created or refreshed:
         gone |= _fold_devices(items)
