@@ -14488,7 +14488,13 @@ async function startFresh() {
 async function chatNewHere() {
   const out = await chatSwitching(() => api("api/chat/new", {
     method: "POST", body: JSON.stringify(chatWho()) }));
-  if (out && out.key) chatReconnect(out.key, out.session_id);
+  if (out && out.key) {
+    chatReconnect(out.key, out.session_id);
+    // The chat just left may still be answering; that was ITS turn. The new
+    // one has none, and a "busy" carried over would make chatSend drop the
+    // first message until the new stream's snapshot said otherwise.
+    if (chatState.runState === "busy") chatSetState("idle");
+  }
   return out;
 }
 
@@ -15154,6 +15160,15 @@ $("#chatRailForm").addEventListener("submit", async (ev) => {
   box.style.height = "auto";
   askShow("chat");
   refreshChatRail();
+  if (chatState.runState === "busy") {
+    // Nothing may throw the message away: if it cannot go yet, it waits in
+    // the chat's own box.
+    const input = $("#chatInput");
+    input.value = text;
+    chatGrow();
+    input.focus();
+    return;
+  }
   chatSend(text);
 });
 $("#chatRailInput").addEventListener("input", (ev) => {

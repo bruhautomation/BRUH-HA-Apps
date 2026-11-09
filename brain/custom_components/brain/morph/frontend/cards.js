@@ -105,7 +105,7 @@ export function stripFace(o) {
   const bg = o.stripBg || (isSwitch && active ? mix(accent, 10) : 'transparent');
   return `<div class="strip" style="box-shadow:inset 0 0 0 1px ${active ? mix(accent, o.edgeMix || 30) : 'var(--line)'};background-color:${bg}">${layer}
 <div class="sline">${icon(o.icon, { color: o.iconColor || (active ? accent : 'var(--quiet)'), active, dur: o.dur, transform: o.iconTransform, partOpacity: o.partOpacity })}
-<span class="nv"><b>${esc(o.name)}</b><span style="color:${valColor}">${esc(o.val)}</span></span><span class="flex1"></span>${o.hint ? `<span class="hint">${esc(o.hint)}</span>` : ''}${o.action ? `<span class="actword${o.armed ? ' armed' : ''}${o.actIcon && !o.armed ? ' hasicon' : ''}" style="--ac:${o.actionColor || accent}"${o.armed ? '' : ` aria-label="${esc(o.action + (o.actNoun ? ' ' + o.actNoun : ''))}"`}>${o.actIcon && !o.armed ? ACT_ICONS[o.actIcon] : ''}<span class="acttext">${esc(o.armed || o.action)}${o.actNoun && !o.armed ? `<span class="actnoun"> ${esc(o.actNoun)}</span>` : ''}</span></span>` : sw}</div></div>`;
+<span class="nv"><b>${esc(o.name)}</b><span style="color:${valColor}">${esc(o.val)}</span></span><span class="flex1"></span>${o.hint ? `<span class="hint">${esc(o.hint)}</span>` : ''}${o.action ? `<span class="actword${o.armed ? ' armed' : ''}${o.actIcon && !o.armed ? ' hasicon' : ''}" style="--ac:${o.actionColor || accent}" aria-hidden="true"${o.armed ? '' : ` data-name="${esc(o.action + (o.actNoun ? ' ' + o.actNoun : ''))}"`}>${o.actIcon && !o.armed ? ACT_ICONS[o.actIcon] : ''}<span class="acttext">${esc(o.armed || o.action)}${o.actNoun && !o.armed ? `<span class="actnoun"> ${esc(o.actNoun)}</span>` : ''}</span></span>` : sw}</div></div>`;
 }
 
 function histBlock(ctx, label) {
@@ -202,6 +202,12 @@ const fan = {
 };
 
 const isGarage = (st) => st && ['garage', 'gate', 'door'].includes(st.attributes.device_class);
+// What a tap on a garage door or gate does, in words: Open, Close, or Stop while it moves.
+const garageAct = (st) => {
+  const moving = st && ['opening', 'closing'].includes(st.state);
+  const action = off(st) ? '' : moving ? 'Stop' : st && ['open', 'opening'].includes(st.state) ? 'Close' : 'Open';
+  return { action, noun: !action || action === 'Stop' ? '' : st.attributes.device_class === 'gate' ? 'gate' : 'door' };
+};
 const cover = {
   item: STRIP,
   accent: () => 'var(--sky)',
@@ -211,9 +217,8 @@ const cover = {
     if (isGarage(st)) {
       // The word says what a tap will do: Open, Close, or Stop while it
       // moves. The old switch could only ever open the door.
-      const moving = st && ['opening', 'closing'].includes(st.state);
-      const action = off(st) ? '' : moving ? 'Stop' : open ? 'Close' : 'Open';
-      return stripFace({ kind: 'switch', icon: 'garage', accent: open ? 'var(--amber)' : 'var(--indigo)', active: open, name: ctx.name, val: stateWord(st), action, armed: ctx.confirm || '', actIcon: action.toLowerCase(), actNoun: action === 'Stop' ? '' : st.attributes.device_class === 'gate' ? 'gate' : 'door', actionColor: open ? 'var(--amber)' : 'var(--indigo)', iconTransform: open ? 'translateY(-4px)' : 'none', hint: ctx.hint });
+      const { action, noun } = garageAct(st);
+      return stripFace({ kind: 'switch', icon: 'garage', accent: open ? 'var(--amber)' : 'var(--indigo)', active: open, name: ctx.name, val: stateWord(st), action, armed: ctx.confirm || '', actIcon: action.toLowerCase(), actNoun: noun, actionColor: open ? 'var(--amber)' : 'var(--indigo)', iconTransform: open ? 'translateY(-4px)' : 'none', hint: ctx.hint });
     }
     return stripFace({ kind: 'slats', icon: 'blinds', accent: ctx.accent, iconColor: 'var(--sky)', edgeMix: 28, fillA: mix(ctx.accent, 20), fillB: mix(ctx.accent, 6), active: pos > 0, pct: pos, iconTransform: `scaleY(${Math.max(0.08, (100 - pos) / 100).toFixed(2)})`, name: ctx.name, val: off(st) ? 'Unavailable' : st.state === 'opening' ? 'Opening' : st.state === 'closing' ? 'Closing' : pos >= 100 ? 'Open' : pos <= 0 ? 'Closed' : pos + '% open', hint: ctx.hint });
   },
@@ -223,6 +228,7 @@ const cover = {
     if (a.current_tilt_position != null) parts.push(`${blockLabel('Tilt')}<input type="range" class="mrange" min="0" max="100" value="${a.current_tilt_position}" data-act="range" data-domain="cover" data-service="set_cover_tilt_position" data-key="tilt_position" data-entity="${esc(e)}" aria-label="Tilt">`);
     return parts.join('') + histBlock(ctx);
   },
+  act: (ctx) => { if (!isGarage(ctx.st)) return ''; const a = garageAct(ctx.st); return a.action ? `${a.action}${a.noun ? ' ' + a.noun : ''}` : ''; },
   tap: (ctx) => {
     const st = ctx.st; const open = st && ['open', 'opening'].includes(st.state);
     if (isGarage(st) && st && ['opening', 'closing'].includes(st.state)) return { domain: 'cover', service: 'stop_cover', data: { entity_id: ctx.card.entity } };
@@ -258,7 +264,7 @@ const lock = {
   accent: (ctx) => (ctx.st && ctx.st.state === 'unlocked' ? 'var(--amber)' : 'var(--indigo)'),
   face: (ctx) => {
     const st = ctx.st; const unlocked = st && ['unlocked', 'open', 'opening', 'unlocking'].includes(st.state);
-    const action = off(st) ? '' : unlocked ? 'Lock' : 'Unlock';
+    const action = lock.act(ctx);
     return stripFace({ kind: 'switch', icon: 'lock', accent: ctx.accent, active: unlocked || (st && st.state === 'locked'), name: ctx.name, val: stateWord(st), action, actIcon: action.toLowerCase(), armed: ctx.confirm || '', actionColor: ctx.night && unlocked ? 'var(--rose)' : ctx.accent, iconTransform: unlocked ? 'translateY(-3px)' : 'none', hint: ctx.hint });
   },
   more: (ctx) => {
@@ -266,6 +272,8 @@ const lock = {
     const bat = a.battery_level != null ? `<p class="sm">Battery ${esc(a.battery_level)}%</p>` : '';
     return bat + histBlock(ctx);
   },
+  // The pressable word's name, which the tile carries for a screen reader.
+  act: (ctx) => (off(ctx.st) ? '' : ['unlocked', 'open', 'opening', 'unlocking'].includes(ctx.st.state) ? 'Lock' : 'Unlock'),
   // Unlocking from a dashboard is the one tap that needs a second tap.
   tap: (ctx) => (ctx.st && ctx.st.state === 'locked'
     ? { domain: 'lock', service: 'unlock', data: { entity_id: ctx.card.entity }, confirm: 'Unlock?' }
@@ -298,9 +306,10 @@ const vacuum = {
     // The press is a button that says what it does, as a lock's is: Start,
     // or Dock while it cleans (the same as a tap). It was a switch with
     // nothing written on it, which a tap could not be told apart from.
-    const action = off(st) ? '' : st.state === 'cleaning' ? 'Dock' : 'Start';
+    const action = vacuum.act(ctx);
     return stripFace({ kind: 'switch', icon: 'vacuum', accent: ctx.accent, active: run, name: ctx.name, val: off(st) ? stateWord(st) : stateWord(st) + bat, action, actIcon: action === 'Dock' ? 'dock' : 'start', armed: ctx.confirm || '', actionColor: ctx.accent, hint: ctx.hint });
   },
+  act: (ctx) => (off(ctx.st) ? '' : ctx.st.state === 'cleaning' ? 'Dock' : 'Start'),
   more: (ctx) => words([svcBtn('Start', 'vacuum', 'start', { entity_id: ctx.card.entity }), svcBtn('Pause', 'vacuum', 'pause', { entity_id: ctx.card.entity }), svcBtn('Go home', 'vacuum', 'return_to_base', { entity_id: ctx.card.entity })]) + histBlock(ctx),
   tap: (ctx) => ({ domain: 'vacuum', service: ctx.st && ctx.st.state === 'cleaning' ? 'return_to_base' : 'start', data: { entity_id: ctx.card.entity } }),
 };
@@ -716,6 +725,10 @@ export function tileAria(T, ctx, name) {
   const tap = T.tap ? T.tap(ctx) : null;
   const word = ctx.st ? stateWord(ctx.st) : '';
   if (slide) { const v = slide.get(); return { role: 'slider', label: name, value: `${v}%`, now: v }; }
+  // A tile that shows a pressable word beside its state is a button named by
+  // both: "Garage, Closed. Open door" (the word itself is hidden from readers).
+  const act = T.act ? T.act(ctx) : '';
+  if (act) return { role: 'button', label: `${name}${word ? ', ' + word : ''}. ${act}`, expanded: !!ctx.open };
   if (tap && !tap.confirm) return { role: 'switch', label: name, checked: !!(ctx.st && ['on', 'open', 'unlocked', 'playing'].includes(ctx.st.state)), value: word };
   return { role: 'button', label: `${name}${word ? ', ' + word : ''}`, expanded: !!ctx.open };
 }
