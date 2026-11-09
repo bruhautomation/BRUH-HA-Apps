@@ -125,7 +125,11 @@ class TestSixFindingsNoneReachTheList(LoopCase):
             "binary_sensor.basement_leak": {"name": "Basement leak",
                                             "class": "moisture"},
             "binary_sensor.hall_smoke": {"name": "Hall smoke",
-                                         "class": "smoke"}})
+                                         "class": "smoke"},
+            "sensor.garage_plug_rssi": {"name": "Garage plug signal",
+                                        "class": "signal_strength"},
+            "sensor.kitchen_fridge_temp": {"name": "Kitchen fridge",
+                                           "class": "temperature"}})
 
     def row(self, eid, text, source="check:dev.frozen", **fields):
         return self.file_check_row(text=text, entity_id=eid, source=source,
@@ -242,6 +246,41 @@ class TestSixFindingsNoneReachTheList(LoopCase):
         for row in rows:
             self.assertNotEqual(srv.findings_store.get(row["ts"])["status"],
                                 "held", row["text"])
+
+    def test_cosmetic_or_known_never_holds_food_water_or_an_unknown_sensor(
+            self):
+        # The review's gaps: a fridge temperature, a water row no class
+        # names, and a sensor of no known kind. Each looked at on its own.
+        srv = self.server
+        clock = time.time()
+        for eid, text, word in (
+                ("sensor.kitchen_fridge_temp",
+                 "The kitchen fridge reads 9 °C", "known"),
+                ("sensor.chest_freezer_temperature",
+                 "The chest freezer reads -9 °C", "cosmetic"),
+                ("switch.garden_water_valve",
+                 "The garden water valve has been on for 6 hours", "known"),
+                ("sensor.boiler_pressure_raw",
+                 "The boiler pressure reads 0.4", "known")):
+            row = self.row(eid, text)
+            self.look([{"id": 1, "verdict": "ignore", "already": word,
+                        "why": "Long-standing; the household knows."}],
+                      clock)
+            clock += srv.RESIDENT_LOOK_S + 1
+            self.assertNotEqual(srv.findings_store.get(row["ts"])["status"],
+                                "held", text)
+
+    def test_the_store_reapplies_the_strict_floor_for_the_new_words(self):
+        srv = self.server
+        row = self.row("sensor.chest_freezer", "The chest freezer reads -9 °C")
+        srv.findings_store.record_triage(
+            {row["ts"]: ("held", "They know.", True, 0, "known")}, "look-x")
+        self.assertEqual(srv.findings_store.get(row["ts"])["status"], "open")
+        other = self.row("light.porch", "The porch light shows the wrong icon")
+        srv.findings_store.record_triage(
+            {other["ts"]: ("held", "Only the icon.", True, 0, "cosmetic")},
+            "look-y")
+        self.assertEqual(srv.findings_store.get(other["ts"])["status"], "held")
 
     def test_the_store_keeps_its_floor_whoever_calls_it(self):
         srv = self.server

@@ -14657,7 +14657,8 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
                 # A card it named (`same_as`) is the one it is listed
                 # under, when the owner can see that card (#790, #792).
                 decided[ts] = ("held", why, bool(answer.get("already")),
-                               int(answer.get("same_as") or 0))
+                               int(answer.get("same_as") or 0),
+                               str(answer.get("already") or ""))
             continue
         if (ts and answer.get("fallback") and signal.get("record_hold")
                 and not resident.never_ignore(signal)[0]):

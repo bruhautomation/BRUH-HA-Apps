@@ -584,6 +584,41 @@ def not_news_floor(entity_id: str = "", source: str = "", *,
     return ""
 
 
+# The stricter floor for what is NEW in #790 and #792 — the first look's
+# `cosmetic` and `known`, and a row folded under another card by a cause a
+# model named: a review found a freezer reading, a water row no class
+# names and a sensor nobody knows the kind of could all be held or folded
+# away by those. So on top of `not_news_floor`: a temperature, water or
+# moisture class, an id or name that says freezer, fridge, food, water,
+# flood, leak or smoke (a name read only ever to KEEP a row shown, never to
+# hide one), and a sensor whose kind is unknown. Unknown is not "safe".
+WARY_CLASSES = frozenset({"temperature", "water", "moisture"})
+_WARY_WORDS_RE = re.compile(
+    r"(?:freez|fridge|refrigerat|chiller|cooler|food|water|flood|leak|"
+    r"smoke|moist)", re.I)
+CLASSED_DOMAINS = ("sensor", "binary_sensor")
+
+
+def strict_floor(entity_id: str = "", source: str = "", *,
+                 severity: str = "", stakes: str = "",
+                 device_class: str = "", name: str = "",
+                 protected=None) -> str:
+    """`not_news_floor`, and the stricter refusals above; "" only when
+    the row may be held by `cosmetic`/`known` or folded by a cause."""
+    said = not_news_floor(entity_id, source, severity=severity,
+                          stakes=stakes, device_class=device_class,
+                          protected=protected)
+    if said:
+        return said
+    eid = str(entity_id or "")
+    klass = str(device_class or "")
+    if klass in WARY_CLASSES or _WARY_WORDS_RE.search(f"{eid} {name or ''}"):
+        return "it may be about food, water or a leak"
+    if eid and _domain(eid) in CLASSED_DOMAINS and not klass:
+        return "brAIn does not know what kind of sensor it is"
+    return ""
+
+
 # A reason that asks not to be reminded: "don't remind me", "it's on my to
 # do list, stop reminding me", "I am aware, don't bring this up again". It is
 # not a statement that the report is wrong (a rule would be for ever) and

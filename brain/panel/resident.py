@@ -265,17 +265,24 @@ def never_ignore(signal: dict) -> tuple[str, str]:
     return floor, why
 
 
-def not_news_floor(signal: dict, device_class=None) -> str:
+# The words new in #790, read under the stricter floor
+# (`corrections.strict_floor`): food or water, and a sensor of unknown kind.
+STRICT_WORDS = ("cosmetic", "known")
+
+
+def not_news_floor(signal: dict, device_class=None, word: str = "") -> str:
     """Why a look's not-news word may not set this signal aside, or ""
-    (`corrections.not_news_floor`, the floor the store reads too)."""
+    (`corrections.not_news_floor`, the floor the store reads too; the
+    strict one for `STRICT_WORDS`)."""
     if not isinstance(signal, dict):
         return ""
     import corrections  # noqa: PLC0415 — it imports the stores
     subject = str(signal.get("subject") or "")
-    return corrections.not_news_floor(
-        subject, str(signal.get("source") or ""),
-        device_class=device_class(subject) if device_class and subject
-        else "")
+    floor = (corrections.strict_floor if word in STRICT_WORDS
+             else corrections.not_news_floor)
+    return floor(subject, str(signal.get("source") or ""),
+                 device_class=device_class(subject) if device_class and subject
+                 else "")
 
 
 FIRST_LOOK_SCHEMA = {
@@ -786,7 +793,7 @@ def parse_first_look(obj, count: int, rows=None,
         signal = batch[idx - 1] if idx <= len(batch) else None
         gave = answer.pop("gave", answer["verdict"])
         if answer.get("already") and signal is not None:
-            kept = not_news_floor(signal, device_class)
+            kept = not_news_floor(signal, device_class, answer["already"])
             if kept:
                 answer = {"verdict": VERDICTS[max(_RANK[gave],
                                                   _RANK[HOT_FLOOR])],

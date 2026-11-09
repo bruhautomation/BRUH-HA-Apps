@@ -1443,9 +1443,13 @@ def cause_row(value) -> int:
 
 
 def _cause_visible(items: list[dict], entry: dict) -> bool:
-    """Whether ``entry``'s ``f:<ts>`` cause names a card the owner can see
-    (open or needs_you, not the row itself). A cause key that is not a
-    card's is always kept."""
+    """Whether ``entry``'s cause may stand: the row is not one the strict
+    floor keeps on its own (`not_news_floor(strict=True)`: a leak, smoke,
+    a lock, food or water, a sensor of unknown kind, critical, high
+    stakes…), and an ``f:<ts>`` cause names a card the owner can see (open
+    or needs_you, not the row itself)."""
+    if not_news_floor(entry, strict=True):
+        return False
     target = cause_row(entry.get("cause"))
     if not target:
         return True
@@ -1468,21 +1472,28 @@ def _list_under(items: list[dict], entry: dict, ts: int) -> bool:
     return False
 
 
-def not_news_floor(entry: dict) -> str:
+def not_news_floor(entry: dict, strict: bool = False,
+                   names: dict | None = None) -> str:
     """Why a look's not-news word may NOT set ``entry`` aside, or ""
     (`corrections.not_news_floor`, the one floor both tiers read): a
     harm or security producer, a critical row, high stakes, a leak or smoke
-    sensor, a lock, an alarm, a protected entity."""
+    sensor, a lock, an alarm, a protected entity. ``strict`` is
+    `corrections.strict_floor`, for `cosmetic`/`known` and for a fold by
+    cause: food or water, and a sensor of unknown kind, too."""
     if not isinstance(entry, dict):
         return ""
     import corrections  # noqa: PLC0415 — the store imports no producer eagerly
     eid = str(entry.get("entity_id") or "")
-    named = _names_now().get(eid) if eid else None
+    named = (names if names is not None else _names_now()).get(eid) \
+        if eid else None
     klass = str(named.get("class") or "") if isinstance(named, dict) else ""
-    return corrections.not_news_floor(
-        eid, str(entry.get("source") or ""),
-        severity=str(entry.get("severity") or ""),
-        stakes=str(entry.get("stakes") or ""), device_class=klass)
+    said = str(named.get("name") or "") if isinstance(named, dict) else ""
+    floor = corrections.strict_floor if strict else corrections.not_news_floor
+    extra = {"name": said} if strict else {}
+    return floor(eid, str(entry.get("source") or ""),
+                 severity=str(entry.get("severity") or ""),
+                 stakes=str(entry.get("stakes") or ""), device_class=klass,
+                 **extra)
 
 
 def _case_fields(entry: dict) -> dict:
@@ -2532,7 +2543,7 @@ def _row_devices(entry: dict, names: dict) -> set[str]:
     (`cause`, #792), else ``int:<domain>`` for a row about an integration
     as a whole, else the devices its entities are on."""
     cause = clean_cause(entry.get("cause"))
-    if cause:
+    if cause and not not_news_floor(entry, strict=True, names=names):
         return {cause}
     integration = str(entry.get("integration") or "")
     if integration:
@@ -2573,10 +2584,17 @@ def _fold_devices(items: list[dict]) -> set[int]:
     if len(rows) < 2:
         return set()
 
+    def by_cause(f: dict) -> str:
+        """The cause ``f`` is folded on, or "" — never one the strict
+        floor refuses, whatever it carries."""
+        cause = clean_cause(f.get("cause"))
+        return "" if not cause or not_news_floor(
+            f, strict=True, names=names) else cause
+
     def is_symptom(f: dict) -> bool:
         if id(f) in targets:
             return False
-        cause = clean_cause(f.get("cause"))
+        cause = by_cause(f)
         if cause:
             return bool(cause_row(cause))
         return not f.get("integration") and not is_link_report(f)
@@ -2590,11 +2608,24 @@ def _fold_devices(items: list[dict]) -> set[int]:
                              int(r[0].get("ts") or 0)))
     hosts: list[tuple[dict, set]] = []
     gone: set[int] = set()
+    trail: list[dict] = []
     for f, keys in rows:
         host = next((h for h, hk in hosts if keys <= hk and _may_host(h, f)),
                     None)
         if host is not None and _may_fold_away(f):
-            if id(f) in symptom and not clean_cause(f.get("cause")):
+            if by_cause(f):
+                # Listed under another card by a cause: the trail says
+                # which, so "where did that report go" has an answer.
+                trail.append({
+                    "kind": "listed_under",
+                    "subject": str(f.get("entity_id") or ""),
+                    "check": str(f.get("source") or ""),
+                    "reason": textclip.clip(
+                        "listed under " + str(host.get("claim")
+                                              or host.get("text") or ""),
+                        200),
+                    "text": str(f.get("claim") or f.get("text") or "")})
+            elif id(f) in symptom:
                 # What it reported stays on the card, saying why it is here.
                 f = {**f, "claim": textclip.clip(SAME_LINK + _said(f),
                                                  MAX_EVIDENCE_VALUE)}
@@ -2607,6 +2638,12 @@ def _fold_devices(items: list[dict]) -> set[int]:
         items[:] = [f for f in items if int(f.get("ts") or 0) not in gone]
         log.info("folded %d finding(s) into the card about their device",
                  len(gone))
+    if trail:
+        try:
+            import decision_trail  # noqa: PLC0415 — a leaf, read lazily
+            decision_trail.note_many(trail)
+        except Exception as exc:  # noqa: BLE001 — the trail never costs a fold
+            log.debug("could not write the fold's trail: %s", exc)
     return gone
 
 
@@ -3283,7 +3320,9 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
     ``verdicts`` is ``{ts: (verdict, reason)}``, or ``(verdict, reason,
     True)`` for a hold the look said is NOT NEWS (`resident.ALREADY`), which
     holds a row silence already showed too, while nobody has touched it
-    (:func:`nobody_has_touched`). An ``elevated`` or
+    (:func:`nobody_has_touched`); a fourth slot is the card it named
+    (`same_as`) and a fifth the word itself, which decides the floor
+    (`not_news_floor`, strict for `cosmetic`/`known`). An ``elevated`` or
     ``untriaged`` row becomes ``open`` — the second because nothing looked,
     which surfaces exactly like the first and says so on the card — and a
     ``held`` row becomes ``held``.
@@ -3327,7 +3366,13 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
         not_news = len(verdicts[ts]) > 2 and verdicts[ts][2] is True
         if verdict not in triage.VERDICTS:
             continue
-        if not_news and verdict == "held" and not_news_floor(entry):
+        # The store's floor, with the row's own severity and stakes, before
+        # any hold by a word is final; the strict one for `cosmetic` and
+        # `known` (5th slot, the word), whose first-look floor sees
+        # neither.
+        word = str(verdicts[ts][4] or "") if len(verdicts[ts]) > 4 else ""
+        if not_news and verdict == "held" and not_news_floor(
+                entry, strict=word in ("cosmetic", "known")):
             # The look's word is not read here (#790): a lock, a security
             # check, a critical row, a leak or smoke sensor is shown. The
             # verdict stays on the record, so the card does not carry the

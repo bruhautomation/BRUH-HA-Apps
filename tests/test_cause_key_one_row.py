@@ -28,7 +28,31 @@ sys.path.insert(0, str(TESTS_DIR))
 from test_resident_loop import LoopCase, case_reply, reply  # noqa: E402
 
 
+# What kind of thing each sensor is: a fold by cause never takes a sensor
+# of unknown kind, food or water (`corrections.strict_floor`).
+CLASSES = {"sensor.basement_humidity": "humidity",
+           "sensor.dehumidifier_power": "power",
+           "sensor.softener_salt": "distance",
+           "sensor.softener_brine": "distance",
+           "sensor.softener_regen": "duration",
+           "sensor.garage_motion_battery": "battery"}
+
+
 class TestOneRowPerCause(LoopCase):
+    def setUp(self):
+        super().setUp()
+        import decision_trail
+        old = decision_trail.TRAIL_FILE
+        decision_trail.TRAIL_FILE = str(Path(self.tmp.name) / "trail.jsonl")
+        decision_trail._RECENT.clear()
+        self.addCleanup(setattr, decision_trail, "TRAIL_FILE", old)
+        self.trail = decision_trail
+        names = self.server._NAMES
+        saved = dict(names)
+        self.addCleanup(lambda: (names.clear(), names.update(saved)))
+        names.update({e: {"name": e.split(".")[1].replace("_", " "),
+                          "class": c} for e, c in CLASSES.items()})
+
     def fs(self):
         return self.server.findings_store
 
@@ -83,10 +107,10 @@ class TestOneRowPerCause(LoopCase):
             entity_id="switch.garage_plug", source="check:dev.unavailable")
         fs.record_triage({host["ts"]: ("elevated", "Worth a look.")}, "l0")
         row = self.file_check_row(
-            text="The garage freezer sensor stops reporting at night",
-            entity_id="sensor.garage_freezer")
+            text="The garage motion sensor's battery stops reporting at night",
+            entity_id="sensor.garage_motion_battery")
         self.investigations.append(case_reply(
-            claim="The garage freezer sensor stops reporting at night",
+            claim="The garage motion sensor's battery stops reporting at night",
             stakes="medium", same_as=f"f:{host['ts']}",
             detail="It drops out exactly when the plug does.",
             fix="Move the plug closer to the access point."))
@@ -95,7 +119,7 @@ class TestOneRowPerCause(LoopCase):
         self.tick(time.time())
         live = self.live()
         self.assertNotIn(row["ts"], live)
-        self.assertIn("sensor.garage_freezer", self.evidence(live[host["ts"]]))
+        self.assertIn("sensor.garage_motion_battery", self.evidence(live[host["ts"]]))
 
     def test_a_cause_naming_nothing_visible_is_dropped(self):
         fs = self.fs()
@@ -118,6 +142,57 @@ class TestOneRowPerCause(LoopCase):
         self.assertIn("binary_sensor.basement_leak",
                       [f["entity_id"] for f in self.live().values()])
         self.assertTrue(made)
+
+    def test_a_fold_by_cause_writes_the_trail(self):
+        fs = self.fs()
+        fs.add_many(self.server.triage.gate([
+            {"text": f"The water softener's {part} reads low",
+             "entity_id": f"sensor.softener_{part}", "severity": "warning",
+             "source": "check:dev.frozen", "cause": "softener_salt"}
+            for part in ("salt", "brine")]))
+        rows, readable = self.trail.read()
+        self.assertTrue(readable)
+        self.assertEqual([r["kind"] for r in rows], ["listed_under"])
+
+
+class TestTheReviewersThreeStayVisible(LoopCase):
+    """An investigation names a pending question as the card a leak sensor,
+    a smoke alarm and a lock wait on (the review's reproduction, #790):
+    none of them is folded under it. No class is known for the two
+    binary sensors, as in the review."""
+
+    def run_one(self, host, eid, text, source, clock):
+        row = self.file_check_row(text=text, entity_id=eid, source=source)
+        self.investigations.append(case_reply(
+            claim=text, stakes="medium", same_as=f"f:{host['ts']}",
+            detail="Related to the dehumidifier.", fix="Check it.",
+            evidence=[{"entity": eid, "value": "low", "when": "today"}]))
+        self.looks.append(reply([{"id": 1, "verdict": "investigate",
+                                  "why": "Worth a look."}]))
+        self.tick(clock)
+        return row
+
+    def test_leak_smoke_and_lock_rows_are_never_folded(self):
+        clock = time.time()
+        host = self.server.findings_store.add_case({
+            "kind": "question", "text": "Is the dehumidifier still in use?",
+            "claim": "Is the dehumidifier still in use?",
+            "detail": "It has been off for nine days.",
+            "entity_id": "switch.dehum", "stakes": "low"})
+        for eid, text, source in (
+                ("binary_sensor.basement_leak",
+                 "Basement leak sensor unavailable", "check:dev.unavailable"),
+                ("binary_sensor.hall_smoke",
+                 "Hall smoke detector battery is at 3%", "check:dev.battery"),
+                ("lock.front_door", "Front door lock battery low",
+                 "check:dev.battery")):
+            self.run_one(host, eid, text, source, clock)
+            clock += self.server.RESIDENT_LOOK_S + 1
+            live = {f["entity_id"]: f for f in
+                    self.server.findings_store.list_all()}
+            self.assertIn(eid, live, text)
+            self.assertIn(live[eid]["status"], ("open", "needs_you"), text)
+            self.assertNotIn("cause", live[eid])
 
 
 if __name__ == "__main__":
