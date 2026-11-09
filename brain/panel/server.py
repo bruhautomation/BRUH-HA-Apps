@@ -20616,6 +20616,10 @@ async def h_harness_morph_cards(request: web.Request) -> web.StreamResponse:
 
 
 HARNESS_MSG_MAX = 20_000
+# How long the harness page's question waits for Core. Below the page's own
+# wait (`devloop.screens.ANSWERS_MAX_S`), so a Core that never answers is an
+# error the page sees, not a request held until the capture's cleanup.
+HARNESS_WS_TIMEOUT_S = 10
 
 
 async def h_harness_ws(request: web.Request) -> web.Response:
@@ -20641,7 +20645,11 @@ async def h_harness_ws(request: web.Request) -> web.Response:
 
         import ha_data
         async with aiohttp.ClientSession() as session:
-            calls = await ha_data._ws_calls(session, [msg])
+            calls = await asyncio.wait_for(ha_data._ws_calls(session, [msg]),
+                                           HARNESS_WS_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        return web.json_response({"error": "Home Assistant did not answer in time"},
+                                 status=504)
     except Exception as exc:  # noqa: BLE001
         return web.json_response({"error": f"Home Assistant did not answer: {exc}"[:200]},
                                  status=502)
