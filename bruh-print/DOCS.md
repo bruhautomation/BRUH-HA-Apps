@@ -471,8 +471,10 @@ or `Drawer 2` beside a QR code of `2` — takes that number as a field called
 prints the number it was saved with. Two different numbers (`Box 3 of 12`) are
 left alone; write `{{field}}` for the one you mean.
 
-A field the template does not have is refused by the `print_template` service,
-naming the ones it takes, rather than printed past.
+A field the template does not have does not stop the print: the
+`print_template` service answers with a note naming it and the fields the
+template takes, so a stale field in an automation keeps working and is still
+said.
 
 Substitution is plain string replacement with no expression language, on
 purpose: a template that can evaluate is a template that can be made to

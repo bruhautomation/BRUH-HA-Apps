@@ -171,22 +171,33 @@ class TestAFieldTheTemplateDoesNotHaveIsSaid(BridgeCase):
                 {"type": "text", "x_mm": 1, "y_mm": 1, "w_mm": 40,
                  "h_mm": 12, "props": {"text": text}}]}})
 
-    async def test_an_unknown_field_is_refused_with_the_ones_it_takes(self):
+    async def test_an_unknown_field_prints_with_a_note_naming_what_it_takes(self):
+        """A stale field must not fail an automation after an update, and
+        it must not vanish without a word either."""
         await self.save("Lessons", "Lesson 16")
         answer = await self.call("print_template", {
             "template": "Lessons", "fields": {"lesson": "29"}})
-        self.assertIs(False, answer.get("ok"), answer)
-        self.assertIn("lesson", answer["error"])
-        self.assertIn("number", answer["error"])
-        self.assertEqual([], self.sent)
+        self.assertEqual(1, answer.get("printed"), answer)
+        said = [n for n in answer["notes"] if "lesson" in n]
+        self.assertTrue(said, answer["notes"])
+        self.assertIn("number", said[0])
 
     async def test_the_same_for_a_template_with_placeholders(self):
         await self.save("Freezer bag", "{{contents}}")
         answer = await self.call("print_template", {
             "template": "Freezer bag",
             "fields": {"contents": "Chili", "colour": "red"}})
+        self.assertEqual(1, answer.get("printed"), answer)
+        said = [n for n in answer["notes"] if "colour" in n]
+        self.assertTrue(said, answer["notes"])
+        self.assertIn("contents", said[0])
+
+    async def test_a_missing_field_is_still_refused(self):
+        await self.save("Freezer bag", "{{contents}}")
+        answer = await self.call("print_template", {
+            "template": "Freezer bag", "fields": {"colour": "red"}})
         self.assertIs(False, answer.get("ok"), answer)
-        self.assertIn("colour", answer["error"])
+        self.assertIn("contents", answer["error"])
         self.assertEqual([], self.sent)
 
     async def test_the_date_is_always_a_field(self):
@@ -195,15 +206,6 @@ class TestAFieldTheTemplateDoesNotHaveIsSaid(BridgeCase):
             "template": "Freezer bag",
             "fields": {"contents": "Chili", "date": "2026-11-09"}})
         self.assertEqual(1, answer.get("printed"), answer)
-
-    async def test_with_fields_not_required_it_is_a_note(self):
-        await self.save("Freezer bag", "{{contents}}")
-        status, body = await self.post("/api/template/Freezer bag/print", {
-            "fields": {"contents": "Chili", "colour": "red"},
-            "require_fields": False})
-        self.assertEqual(200, status, body)
-        self.assertTrue(any("colour" in n for n in body["notes"]), body["notes"])
-
 
 if __name__ == "__main__":
     unittest.main()

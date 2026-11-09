@@ -67,7 +67,7 @@ print_template:
         The values to put in, keyed by field name. {{date}} and
         {{time}} fill themselves in and do not need to be given. A
         template whose text holds one number takes it as "number". A
-        field the template does not have is refused.
+        field the template does not have is ignored with a note.
       example: '{"contents": "Chili", "date": "3 Sep"}'
       selector:
         object:

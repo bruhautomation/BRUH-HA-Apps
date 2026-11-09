@@ -1754,15 +1754,14 @@ async def h_template_print(request: web.Request) -> web.Response:
         return bad(
             f"{template.name} still needs: {', '.join(missing)}.",
             422, missing=missing)
-    # A field the template has nowhere to put is the same mistake from the
-    # other side: what the caller meant to be on the label is not, and the
-    # label prints anyway (#784, `lesson: 29` dropped and lesson 16 printed).
+    # A field the template has nowhere to put is SAID, never refused: it
+    # used to vanish without a word (#784, `lesson: 29` dropped and lesson
+    # 16 printed), but an automation or a card still sending a field the
+    # template has since lost must not start failing after an update.
     unknown = template.unknown(_values(payload))
     taken = ", ".join(f.key for f in template.form()[1]) or "no fields"
     said = (f"{template.name} has no field called "
             f"{', '.join(unknown)} — it takes: {taken}.") if unknown else ""
-    if unknown and payload.get("require_fields", True):
-        return bad(said, 422, unknown=unknown)
 
     copies = max(1, min(500, int(payload.get("copies", template.copies) or 1)))
     parsed, entry, rendered = await asyncio.to_thread(_render, state, document)
