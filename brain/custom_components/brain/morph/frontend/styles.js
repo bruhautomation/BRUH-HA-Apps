@@ -286,6 +286,13 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .box{padding:12px 12px 12px 16px;display:flex;flex-direction:column;gap:2px;border-radius:18px}
 .big{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-size:42px;font-weight:300;letter-spacing:-.04em;line-height:1.05;font-variant-numeric:tabular-nums}
 .mid{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-size:28px;font-weight:300;letter-spacing:-.03em;line-height:1.1;font-variant-numeric:tabular-nums}
+/* #764: a figure from something that has stopped answering is the last one
+   heard, never drawn as live; a tile's title is whole, wrapped, never cut. */
+.big.gone,.mid.gone{color:var(--quiet)}
+.gonerow{flex-wrap:wrap;row-gap:2px}
+.goneword{flex:1 1 9em;min-width:0}
+.box .ttl{font-size:13px;flex:1 1 0;min-width:0;overflow-wrap:break-word}
+.box>.row>svg{flex:none}
 .small{font-size:12px;color:var(--quiet)}
 .sm{font-size:13px;color:var(--muted)}
 .ruler{position:relative;height:16px;margin-top:6px}
@@ -336,6 +343,7 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .ovaxis{position:relative;flex:1;min-width:0;height:14px;font-size:11px;color:var(--quiet)}
 .ovaxis span{position:absolute;top:0;white-space:nowrap}
 .ovenv{display:flex;flex-wrap:wrap;gap:6px 24px;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+.ovnote{margin:8px 0 0}
 .ovenvi{display:flex;align-items:center;gap:8px}
 .ovenvi .nm{font-size:12px;color:var(--muted)}
 .ovenvi.stale{opacity:.55}

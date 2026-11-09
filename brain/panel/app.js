@@ -15148,14 +15148,28 @@ function renderChatRail() {
 $("#chatRailNew").addEventListener("click", () => $("#chatNew").click());
 
 // The list page's message box: what was typed opens a new chat and is its
-// first message. The text stays in the box if the chat could not be made.
+// first message. The text stays in the box if the chat could not be made —
+// and a chat that came back without a key was not made: sending then would
+// put the message into the chat being left. A second press while the first
+// is still making its chat is the same message, so it makes nothing.
+let chatRailSending = false;
 $("#chatRailForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
+  if (chatRailSending) return;
   const box = $("#chatRailInput");
   const text = box.value.trim();
   if (!text) return;
-  try { await chatNewHere(); }
+  const btn = $("#chatRailForm").querySelector('button[type="submit"]');
+  chatRailSending = true;
+  if (btn) btn.disabled = true;
+  let out;
+  try { out = await chatNewHere(); }
   catch (e) { toast(e.message); return; }
+  finally {
+    chatRailSending = false;
+    if (btn) btn.disabled = false;
+  }
+  if (!out || !out.key) { toast("Could not start a new chat. Your message is still in the box."); return; }
   box.value = "";
   box.style.height = "auto";
   askShow("chat");
