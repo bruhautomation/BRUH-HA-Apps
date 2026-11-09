@@ -1913,7 +1913,8 @@ def expire(now: float | None = None) -> int:
     return len(rows) - len(kept)
 
 
-def rejudge_due(signal: dict, now: float | None = None) -> bool:
+def rejudge_due(signal: dict, now: float | None = None,
+                watching: dict[str, dict] | None = None) -> bool:
     """May this signal go into the next look?
 
     True for a subject nothing is watching, for one whose watch has aged
@@ -1922,12 +1923,15 @@ def rejudge_due(signal: dict, now: float | None = None) -> bool:
     passed. A signal the guard
     will not let anybody ignore always passes, because a watch must not be
     able to hold a leak back.
+
+    ``watching`` is `_load_watch()` read once by a caller asking about a
+    whole pending list, which otherwise re-read the file once per signal.
     """
     now = time.time() if now is None else now
     if never_ignore(signal)[0]:
         return True
     subject = str((signal or {}).get("subject") or "")
-    entry = _load_watch().get(subject)
+    entry = (_load_watch() if watching is None else watching).get(subject)
     if entry is None:
         return True
     if (now - float(entry.get("at") or 0)) > WATCH_TTL_S:
