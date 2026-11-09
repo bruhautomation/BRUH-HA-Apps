@@ -77,13 +77,14 @@ export const CSS = `
 /* THEN: the page as it was. Desaturated, and nothing can be pressed. */
 /* Still, night and away (§10): the rooms recede, the verdict and Now
    stay; at night the page dims to a floor of 40%. */
-.form-still section.sec:not(.nowband),.form-still .flh{opacity:.35;transition:opacity .4s ease}
+/* A quiet room is dimmed with brightness, never opacity: opacity at a third took every small label in it to 1.5:1, and a label has to stay readable however quiet the page is (#758). */
+.form-still section.sec:not(.nowband),.form-still .flh{filter:brightness(.8);transition:filter .4s ease}
 .form-still h1.hello{font-size:clamp(44px,6vw,64px)}
 .form-still .story{font-size:clamp(24px,2.8vw,32px)}
 .form-night.night-dim section.sec:not(.nowband),.form-night.night-dim .flh,.form-night.night-dim [data-region="scenes"],.form-night.night-dim [data-region="upcoming"],.form-night.night-dim [data-region="rooms"]{filter:brightness(.8);transition:filter 2s ease}
 .form-night.night-dim,.form-night.night-dim .scroll{background:var(--bg)}
 .t-light.form-night.night-dim{--bg:var(--sunk)}
-.form-away section.sec:not(.nowband){opacity:.6}
+.form-away section.sec:not(.nowband){filter:brightness(.88)}
 /* The Now layer: the page's largest cards, on the surface at full
    opacity, no heading, no border. */
 section.sec.nowband .secbg{background:transparent!important}
@@ -143,8 +144,11 @@ section.sec[data-state="asleep"] .mtile{opacity:1}
 .todorow .tick{width:18px;height:18px;border-radius:6px;box-shadow:inset 0 0 0 1.5px var(--line2);flex-shrink:0}
 .todorow .lx span:first-child{font-size:14px}
 .todoacts{display:inline-flex;gap:0 14px}
-.actword{flex:none;font-size:13px;font-weight:700;color:var(--ac);padding:0 2px;white-space:nowrap}
-.actword.armed{color:var(--ink);background:var(--ac);border-radius:8px;padding:4px 10px}
+.actword{flex:none;display:inline-flex;align-items:center;gap:6px;box-sizing:border-box;min-height:36px;padding:0 12px;border:1px solid color-mix(in oklab,var(--ac) 65%,transparent);border-radius:999px;font-size:13px;font-weight:700;color:color-mix(in oklab,var(--ac) 75%,var(--text));white-space:nowrap}
+.actword.armed{color:var(--ink);background:var(--ac);border-color:var(--ac)}
+@media (pointer:coarse){.actword{min-height:40px}}
+/* A tile on a phone is half the screen: the noun goes, and a button that has an icon is only the icon (its name is its aria-label), so the state beside it keeps its words whole. */
+@media (max-width:520px){.actnoun{display:none}.actword{padding:0 6px;font-size:12px}.actword.hasicon{width:40px;padding:0;justify-content:center}.actword.hasicon .acttext{display:none}}
 .keeprow .wd{font-size:14px}
 .mprog{will-change:width}
 @keyframes mprog{from{width:var(--p0)}to{width:100%}}
@@ -282,6 +286,13 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .box{padding:12px 12px 12px 16px;display:flex;flex-direction:column;gap:2px;border-radius:18px}
 .big{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-size:42px;font-weight:300;letter-spacing:-.04em;line-height:1.05;font-variant-numeric:tabular-nums}
 .mid{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-size:28px;font-weight:300;letter-spacing:-.03em;line-height:1.1;font-variant-numeric:tabular-nums}
+/* #764: a figure from something that has stopped answering is the last one
+   heard, never drawn as live; a tile's title is whole, wrapped, never cut. */
+.big.gone,.mid.gone{color:var(--quiet)}
+.gonerow{flex-wrap:wrap;row-gap:2px}
+.goneword{flex:1 1 9em;min-width:0}
+.box .ttl{font-size:13px;flex:1 1 0;min-width:0;overflow-wrap:break-word}
+.box>.row>svg{flex:none}
 .small{font-size:12px;color:var(--quiet)}
 .sm{font-size:13px;color:var(--muted)}
 .ruler{position:relative;height:16px;margin-top:6px}
@@ -332,6 +343,7 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .ovaxis{position:relative;flex:1;min-width:0;height:14px;font-size:11px;color:var(--quiet)}
 .ovaxis span{position:absolute;top:0;white-space:nowrap}
 .ovenv{display:flex;flex-wrap:wrap;gap:6px 24px;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+.ovnote{margin:8px 0 0}
 .ovenvi{display:flex;align-items:center;gap:8px}
 .ovenvi .nm{font-size:12px;color:var(--muted)}
 .ovenvi.stale{opacity:.55}
@@ -457,6 +469,8 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .reduce *,.reduce *::before,.reduce *::after{animation:none!important;transition:none!important}
 @media (prefers-reduced-motion:reduce){.srpanel,.morph.railing section.sec[data-sec],.morph section.sec .sechead h2,.secbg{transition:none!important}.rise,.holdbar,.nowdot,.w,.spin,.breathe,.wave,.bob,.pulse,.mprog{animation:none}.mtile,.cu-track.glide,.cu-dot,.cu-lens,.cu-bar,.todorow{transition:none}.form-night section.sec,.form-night .flh{transition:none}}
+/* A row of chips (rooms, a chart's legend, a note's words) is a row of targets on touch: 40px, like every other chip (#786). */
+@media (pointer:coarse){.morph .roomw,.morph .legend .wd,.morph .bnote .wd{min-height:40px}}
 @media (pointer:coarse),(max-width:700px){.morph input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=color]),.morph textarea,.morph select{font-size:16px}}
 `;
 /* The 16px text floor: below it iOS zooms the page when a field takes focus (#677). Every field Morph draws, and the same floor handed to a card's own shadow root by morph-panel.js (FIELD_FLOOR). */

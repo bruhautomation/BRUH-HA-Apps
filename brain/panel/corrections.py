@@ -545,6 +545,94 @@ def broken_answer(entity_id: str, check_id: str = "", *, faulty,
     return reason
 
 
+# What a look's not-news word (`resident.ALREADY`: cosmetic, already known,
+# already answered, a duplicate…) may never set aside, whatever it says
+# (#790). Two attempts read "can wait" and "needs nothing" out of a look's
+# prose and held a wet leak sensor and a smoke alarm whose battery needed
+# replacing that day; the word is a field now, and this is the floor under
+# it: the harm producers, a security check, a critical row, high stakes,
+# and every pair `never_covered` names (a leak, smoke or gas sensor, a
+# lock, an alarm, the protected list) — plus a lock or tamper class on a
+# binary sensor, which is a lock however it is wired.
+NOT_NEWS_SOURCES = frozenset({"safety", "security", "correction"})
+NOT_NEWS_CLASSES = NEVER_CLASSES | {"lock", "tamper", "co"}
+
+
+def not_news_floor(entity_id: str = "", source: str = "", *,
+                   severity: str = "", stakes: str = "",
+                   device_class: str = "", protected=None) -> str:
+    """Why a look's not-news word may NOT set this row aside, or "" when
+    it may. The one floor both tiers and the store read."""
+    src = str(source or "")
+    check = src[len("check:"):] if src.startswith("check:") else ""
+    if src in NOT_NEWS_SOURCES:
+        return "it is a safety or security report"
+    if check.startswith(SECURITY_PREFIX):
+        return "it is a security check"
+    if str(severity or "") == "critical":
+        return "it is critical"
+    if str(stakes or "") == "high":
+        return "its stakes are high"
+    if protected is None:
+        raw = os.environ.get("BRAIN_PROTECTED_ENTITIES", "").split(",")
+        protected = [x.strip().lower() for x in raw if x.strip()]
+    if str(device_class or "") in NOT_NEWS_CLASSES or never_covered(
+            str(entity_id or ""), check, device_class=device_class,
+            protected=protected):
+        return ("it is about a leak, smoke or gas sensor, a lock, an alarm "
+                "or a protected device")
+    return ""
+
+
+# The stricter floor for the first look's new words, `cosmetic` and
+# `known` (#790), and it is an ALLOW-list: default-deny. Three reviews in a
+# row found a real problem a deny-list let through — a freezer reading, a
+# water row no class names, a sensor of unknown kind, then a siren, a
+# camera, a sump-pump switch, a row with no entity at all and a sump level
+# sensor — and a list of what is dangerous cannot be made complete. So the
+# two words may set a row aside only when it is about ONE entity whose
+# domain is on this short list of things whose being wrong harms nothing,
+# it passes `not_news_floor` (protected, critical, high stakes…), and its
+# id or name says nothing of food, water or a leak (a name read only ever
+# to KEEP a row shown). Everything else — no entity, a sensor, a switch, a
+# lock, a camera, a siren, a climate, a cover, a valve — stays shown. The
+# older words (`answered`, `duplicate`, …) keep `not_news_floor` alone.
+# Only domains harmless by KIND, never one whose meaning is the name a
+# person gave it: an `input_boolean.alarm_armed`, a `script.unlock_door`,
+# a `button.siren_test`, a `select.alarm_mode` or an
+# `update.front_door_lock_firmware` is whatever its name says, and a name
+# is not something a floor can read safely (review of #790). A scene is out
+# for the same reason: it can set a lock or an alarm.
+HARMLESS_DOMAINS = frozenset({"light", "media_player", "weather", "sun",
+                              "zone", "tts"})
+# One entity id, exactly: "light.a, lock.b" or "light.a lock.b" is two
+# things, and the other one may be anything.
+_ONE_ENTITY_RE = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
+_WARY_WORDS_RE = re.compile(
+    r"(?:freez|fridge|refrigerat|chiller|cooler|food|water|flood|leak|"
+    r"smoke|moist)", re.I)
+
+
+def strict_floor(entity_id: str = "", source: str = "", *,
+                 severity: str = "", stakes: str = "",
+                 device_class: str = "", name: str = "",
+                 protected=None) -> str:
+    """Why `cosmetic`/`known` may NOT set this row aside, or "" only when
+    it is one entity of a `HARMLESS_DOMAINS` domain that passes
+    `not_news_floor` and names no food or water."""
+    eid = str(entity_id or "")
+    if not _ONE_ENTITY_RE.match(eid) or _domain(eid) not in HARMLESS_DOMAINS:
+        return "only a light or a speaker may be set aside so"
+    said = not_news_floor(entity_id, source, severity=severity,
+                          stakes=stakes, device_class=device_class,
+                          protected=protected)
+    if said:
+        return said
+    if _WARY_WORDS_RE.search(f"{eid} {name or ''}"):
+        return "it may be about food, water or a leak"
+    return ""
+
+
 # A reason that asks not to be reminded: "don't remind me", "it's on my to
 # do list, stop reminding me", "I am aware, don't bring this up again". It is
 # not a statement that the report is wrong (a rule would be for ever) and

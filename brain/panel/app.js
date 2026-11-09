@@ -4483,7 +4483,6 @@ function devHeldReason(r, data, capped) {
   if (!s.repo || !data.token_set) return "held: set a repository and a token to send";
   if (held.full) {
     const limit = Number(held.limit) || 0;
-    if (!limit) return "held: Daily limits allows no new issues — raise it to send";
     let when = "tomorrow";
     if (held.frees_at) {
       const d = new Date(held.frees_at * 1000);
@@ -4494,7 +4493,7 @@ function devHeldReason(r, data, capped) {
     return `held: today's limit of ${limit} new issue${limit === 1 ? "" : "s"} is used`
       + ` — goes out after ${when}, or raise Daily limits`;
   }
-  if (capped) return "held: only a few go in one pass — the rest go on the next pass, within the hour";
+  if (capped) return "held: today's limit of new issues is used — raise or clear Daily limits to send";
   return "queued: goes out on the next pass, within the hour";
 }
 
@@ -4758,7 +4757,8 @@ function paintDevloop(data) {
     : devLookOutcome(looks.last);
   $("#devLookRun").disabled = !!looks.running;
   if (document.activeElement !== $("#devCapIssues")) {
-    $("#devCapIssues").value = s.max_issues_per_day ?? 10;
+    // 0 is no limit (#797), shown as the empty field's "No limit".
+    $("#devCapIssues").value = Number(s.max_issues_per_day) > 0 ? s.max_issues_per_day : "";
   }
   if (document.activeElement !== $("#devCapRuns")) {
     $("#devCapRuns").value = s.max_runs_per_day ?? 4;
@@ -4832,7 +4832,8 @@ $("#devLookRun").addEventListener("click", async () => {
 });
 $("#devCapSave").addEventListener("click", () =>
   devloopCall("api/devloop", { method: "PUT", body: JSON.stringify({
-    max_issues_per_day: Number($("#devCapIssues").value),
+    // Empty is no limit, which the server stores as 0.
+    max_issues_per_day: Math.max(0, Math.floor(Number($("#devCapIssues").value) || 0)),
     max_runs_per_day: Number($("#devCapRuns").value) }) }, "Saved"));
 
 $("#devStreams").addEventListener("change", (ev) => {
@@ -14488,7 +14489,13 @@ async function startFresh() {
 async function chatNewHere() {
   const out = await chatSwitching(() => api("api/chat/new", {
     method: "POST", body: JSON.stringify(chatWho()) }));
-  if (out && out.key) chatReconnect(out.key, out.session_id);
+  if (out && out.key) {
+    chatReconnect(out.key, out.session_id);
+    // The chat just left may still be answering; that was ITS turn. The new
+    // one has none, and a "busy" carried over would make chatSend drop the
+    // first message until the new stream's snapshot said otherwise.
+    if (chatState.runState === "busy") chatSetState("idle");
+  }
   return out;
 }
 
@@ -15140,6 +15147,50 @@ function renderChatRail() {
 }
 
 $("#chatRailNew").addEventListener("click", () => $("#chatNew").click());
+
+// The list page's message box: what was typed opens a new chat and is its
+// first message. The text stays in the box if the chat could not be made —
+// and a chat that came back without a key was not made: sending then would
+// put the message into the chat being left. A second press while the first
+// is still making its chat is the same message, so it makes nothing.
+let chatRailSending = false;
+$("#chatRailForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  if (chatRailSending) return;
+  const box = $("#chatRailInput");
+  const text = box.value.trim();
+  if (!text) return;
+  const btn = $("#chatRailForm").querySelector('button[type="submit"]');
+  chatRailSending = true;
+  if (btn) btn.disabled = true;
+  let out;
+  try { out = await chatNewHere(); }
+  catch (e) { toast(e.message); return; }
+  finally {
+    chatRailSending = false;
+    if (btn) btn.disabled = false;
+  }
+  if (!out || !out.key) { toast("Could not start a new chat. Your message is still in the box."); return; }
+  box.value = "";
+  box.style.height = "auto";
+  askShow("chat");
+  refreshChatRail();
+  if (chatState.runState === "busy") {
+    // Nothing may throw the message away: if it cannot go yet, it waits in
+    // the chat's own box.
+    const input = $("#chatInput");
+    input.value = text;
+    chatGrow();
+    input.focus();
+    return;
+  }
+  chatSend(text);
+});
+$("#chatRailInput").addEventListener("input", (ev) => {
+  const box = ev.target;
+  box.style.height = "auto";
+  box.style.height = Math.min(box.scrollHeight, window.innerHeight * 0.3) + "px";
+});
 
 // ------------------------------------------------- the list page (narrow)
 //
