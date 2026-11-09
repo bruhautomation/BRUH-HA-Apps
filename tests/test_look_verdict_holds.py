@@ -18,7 +18,7 @@ And the floor under every one of those words (`corrections.not_news_floor`):
 a leak or smoke sensor, a lock, a security check, a critical row and high
 stakes are never held this way, whatever word the look gave.
 
-Made-up examples: a porch light's icon, a utility-room radiator valve, a
+Made-up examples: a porch light's icon, a utility-room speaker, a
 garage plug, a shed motion sensor, a basement leak sensor, a hall smoke
 alarm, the back-door lock and a `sec.` check.
 """
@@ -165,9 +165,10 @@ class TestSixFindingsNoneReachTheList(LoopCase):
             one("light.porch", "The porch light shows the wrong icon",
                 {"verdict": "watch", "already": "cosmetic",
                  "why": "Only the icon is wrong; the light works."}),
-            one("climate.utility", "The utility radiator valve is slow",
+            one("media_player.utility_speaker",
+                "The utility speaker drops its group every evening",
                 {"verdict": "investigate", "already": "known",
-                 "why": "The household has lived with this valve for a year."}),
+                 "why": "The household has lived with this for a year."}),
             one("sensor.shed_motion_battery",
                 "The shed motion sensor reads 31% battery",
                 {"verdict": "watch", "already": "answered",
@@ -270,6 +271,55 @@ class TestSixFindingsNoneReachTheList(LoopCase):
             clock += srv.RESIDENT_LOOK_S + 1
             self.assertNotEqual(srv.findings_store.get(row["ts"])["status"],
                                 "held", text)
+
+    def test_cosmetic_and_known_are_allow_list_default_deny(self):
+        # The final review's cases: none of these may be set aside by the
+        # two new words, whatever floor a deny-list would have missed.
+        srv = self.server
+        srv._NAMES["sensor.basement_sump_level"] = {
+            "name": "Basement sump level", "class": "distance"}
+        clock = time.time()
+        refused = (
+            ("siren.x", "The house siren has been unavailable since noon"),
+            ("camera.front", "The front camera has not recorded since 03:00"),
+            ("switch.sump_pump", "The sump pump switch has been off for "
+             + "two days"),
+            ("", "Water is leaking under the kitchen sink"),
+            ("sensor.basement_sump_level", "The sump level reads 41 cm"),
+        )
+        allowed = (
+            ("light.hall", "The hall light shows the wrong icon"),
+            ("media_player.den_speaker", "The den speaker has a default name"),
+        )
+        rows = []
+        for (eid, text), word in [(r, w) for r in refused + allowed
+                                  for w in ("cosmetic", "known")]:
+            fields = {"entity_id": eid} if eid else {"entity_id": ""}
+            row = self.file_check_row(
+                text=f"{text} ({word})", source="check:dev.frozen", **fields)
+            self.look([{"id": 1, "verdict": "ignore", "already": word,
+                        "why": "Only how it looks; they have known for "
+                               + "years."}], clock)
+            clock += srv.RESIDENT_LOOK_S + 1
+            rows.append((eid, row))
+        for eid, row in rows:
+            status = srv.findings_store.get(row["ts"])["status"]
+            if eid in ("light.hall", "media_player.den_speaker"):
+                self.assertEqual(status, "held", row["text"])
+            else:
+                self.assertNotEqual(status, "held", row["text"])
+
+    def test_the_store_refuses_the_new_words_off_the_allow_list(self):
+        srv = self.server
+        for eid in ("", "switch.sump_pump", "siren.x"):
+            row = self.file_check_row(
+                text=f"Something about {eid or 'nothing'}", entity_id=eid,
+                source="resident")
+            srv.findings_store.record_triage(
+                {row["ts"]: ("held", "Cosmetic.", True, 0, "cosmetic")},
+                "look-z")
+            self.assertEqual(srv.findings_store.get(row["ts"])["status"],
+                             "open", eid)
 
     def test_the_store_reapplies_the_strict_floor_for_the_new_words(self):
         srv = self.server

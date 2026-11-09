@@ -585,36 +585,45 @@ def not_news_floor(entity_id: str = "", source: str = "", *,
 
 
 # The stricter floor for the first look's new words, `cosmetic` and
-# `known` (#790): a review found a freezer reading, a water row no class
-# names and a sensor nobody knows the kind of could all be held by them.
-# So on top of `not_news_floor`: a temperature, water or moisture class, an
-# id or name that says freezer, fridge, food, water, flood, leak or smoke
-# (a name read only ever to KEEP a row shown, never to hide one), and a
-# sensor whose kind is unknown. Unknown is not "safe".
-WARY_CLASSES = frozenset({"temperature", "water", "moisture"})
+# `known` (#790), and it is an ALLOW-list: default-deny. Three reviews in a
+# row found a real problem a deny-list let through — a freezer reading, a
+# water row no class names, a sensor of unknown kind, then a siren, a
+# camera, a sump-pump switch, a row with no entity at all and a sump level
+# sensor — and a list of what is dangerous cannot be made complete. So the
+# two words may set a row aside only when it is about ONE entity whose
+# domain is on this short list of things whose being wrong harms nothing,
+# it passes `not_news_floor` (protected, critical, high stakes…), and its
+# id or name says nothing of food, water or a leak (a name read only ever
+# to KEEP a row shown). Everything else — no entity, a sensor, a switch, a
+# lock, a camera, a siren, a climate, a cover, a valve — stays shown. The
+# older words (`answered`, `duplicate`, …) keep `not_news_floor` alone.
+HARMLESS_DOMAINS = frozenset({
+    "light", "media_player", "update", "scene", "script", "button",
+    "input_boolean", "input_number", "input_select", "input_text",
+    "input_datetime", "select", "text", "weather", "sun", "zone", "tts",
+    "remote"})
 _WARY_WORDS_RE = re.compile(
     r"(?:freez|fridge|refrigerat|chiller|cooler|food|water|flood|leak|"
     r"smoke|moist)", re.I)
-CLASSED_DOMAINS = ("sensor", "binary_sensor")
 
 
 def strict_floor(entity_id: str = "", source: str = "", *,
                  severity: str = "", stakes: str = "",
                  device_class: str = "", name: str = "",
                  protected=None) -> str:
-    """`not_news_floor`, and the stricter refusals above; "" only when
-    the row may be held by `cosmetic`/`known`."""
+    """Why `cosmetic`/`known` may NOT set this row aside, or "" only when
+    it is one entity of a `HARMLESS_DOMAINS` domain that passes
+    `not_news_floor` and names no food or water."""
+    eid = str(entity_id or "")
+    if not eid or _domain(eid) not in HARMLESS_DOMAINS:
+        return "only a light, a speaker or a setting may be set aside so"
     said = not_news_floor(entity_id, source, severity=severity,
                           stakes=stakes, device_class=device_class,
                           protected=protected)
     if said:
         return said
-    eid = str(entity_id or "")
-    klass = str(device_class or "")
-    if klass in WARY_CLASSES or _WARY_WORDS_RE.search(f"{eid} {name or ''}"):
+    if _WARY_WORDS_RE.search(f"{eid} {name or ''}"):
         return "it may be about food, water or a leak"
-    if eid and _domain(eid) in CLASSED_DOMAINS and not klass:
-        return "brAIn does not know what kind of sensor it is"
     return ""
 
 
