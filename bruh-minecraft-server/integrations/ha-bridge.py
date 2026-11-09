@@ -31,6 +31,7 @@ for _candidate in (_SCRIPTS_DIR, str(Path(__file__).resolve().parent.parent / "s
         sys.path.insert(0, _candidate)
 from rcon_client import Rcon  # noqa: E402
 import console_reply  # noqa: E402
+import skins  # noqa: E402
 
 PANEL_STATE = Path(os.environ.get("MC_PANEL_STATE", "/data/panel"))
 SHARED = Path("/config/.bruh_minecraft")
@@ -49,6 +50,9 @@ RCON_PORT = 25575
 # The server's console (the launcher's copy of stdout): where a plugin's
 # answer to a console command goes when it sends RCON nothing.
 CONSOLE_LOG = Path(os.environ.get("MC_CONSOLE_LOG", str(PANEL_STATE / "console.log")))
+
+# The server's folder: SkinsRestorer's record of a player is under it.
+SERVER_DIR = Path(os.environ.get("MC_SERVER_DIR", "/config/minecraft"))
 
 MIRROR_FILES = ("stats.json", "state.json", "players.json", "world.json")
 MIRROR_INTERVAL = 5
@@ -94,6 +98,32 @@ async def _rcon_answer(command: str) -> str:
             return r.command(cmd)
 
     return await asyncio.to_thread(console_reply.command, _exec, command, CONSOLE_LOG)
+
+
+async def skin(skin_value: Any, player: Any, cmd: str | None = None) -> dict[str, Any]:
+    """Put a skin on one player and say whether it went on, in
+    SkinsRestorer's words (scripts/skins.py: its answer comes seconds
+    after RCON returns)."""
+    pw = _rcon_password()
+
+    def _exec(c: str) -> str:
+        with Rcon(RCON_HOST, pw, port=RCON_PORT, timeout=5) as r:
+            return r.command(c)
+
+    try:
+        out = await asyncio.to_thread(skins.apply, _exec, skin_value, player, CONSOLE_LOG,
+                                      SERVER_DIR, cmd=cmd)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    if out["worked"] is False:
+        return {"ok": False, "worked": False, "reply": out["reply"],
+                "error": f"SkinsRestorer did not change the skin: {out['reply']}"}
+    answer = {"ok": True, "worked": out["worked"], "reply": out["reply"],
+              "player": str(player)}
+    if out["worked"] is None:
+        answer["note"] = (f"SkinsRestorer said nothing within {skins.SKIN_WAIT_S:.0f} s, so it "
+                          "is not known whether the skin went on (is SkinsRestorer installed?).")
+    return answer
 
 
 _LIST_RE = re.compile(
@@ -336,8 +366,17 @@ async def handle(request: dict[str, Any]) -> dict[str, Any]:
             command = str(payload.get("command", "")).strip().lstrip("/")
             if not command:
                 return {"ok": False, "error": "No command given."}
-            reply = await _rcon_answer(command.replace("\n", " "))
+            sr = skins.COMMAND.match(command)
+            if sr:
+                # SkinsRestorer answers seconds later: wait for its word (#760).
+                out = await skin(None, sr.group("player"), cmd=command)
+                return {"ok": True, "reply": out.get("reply") or out.get("error") or ""}
+            # A check's `run say ok` would be in every player's chat (#761).
+            reply = await _rcon_answer(console_reply.quiet_probe(command.replace("\n", " ")))
             return {"ok": True, "reply": reply}
+
+        if kind == "skin":
+            return await skin(payload.get("skin"), payload.get("player"))
 
         if kind == "status":
             return await status()

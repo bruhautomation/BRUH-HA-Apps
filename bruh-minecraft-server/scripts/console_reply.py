@@ -41,9 +41,25 @@ _NOISE = (
 # Somebody talking in chat in the same second is not the command's answer.
 _CHAT = re.compile(r"^(\[Not Secure\] )?<[^>]{1,40}> ")
 
+# A block or entity check written as `execute if block … run say ok` (#761):
+# `say` broadcasts, so every check put "[Rcon] ok" in every player's chat —
+# about 1,300 times in one build. The same check without its `run say`
+# answers the sender alone, "Test passed" or "Test failed". A say of one
+# word after a test is a check; anything longer is an announcement.
+_PROBE = re.compile(r"^(?P<test>(?:minecraft:)?execute\s.*?\b(?:if|unless)\s.+?)"
+                    r"\s+run\s+(?:minecraft:)?say\s+\S{1,24}\s*$", re.IGNORECASE)
+
 WAIT_S = 1.0       # how long a silent command is listened for
 SETTLE_S = 0.3     # once lines arrive, this long with nothing new ends it
 STEP_S = 0.1
+
+
+def quiet_probe(cmd: str) -> str:
+    """`cmd` without the `run say <word>` a check ends in, or `cmd`."""
+    m = _PROBE.match(str(cmd or "").strip())
+    if not m or re.search(r"\srun\s", m.group("test"), re.IGNORECASE):
+        return cmd
+    return m.group("test")
 
 
 def plain(text: str) -> str:
