@@ -846,6 +846,36 @@ class TestOneOffIntents(AcceptCase):
         alive = sorted(n for n, t in loops.items() if not t.done())
         self.assertEqual(alive, [])
 
+    async def test_a_cancel_the_job_swallowed_still_ends_the_worker(self):
+        """`asyncio.gather` hands a cancel back as a child's exception when
+        that child had already failed, and `_generate`'s `except Exception`
+        then reads the shutdown as a failed card. The worker asks the task
+        rather than trusting the exception, or it waits on the queue with
+        no cancel left to end it — which was 5s of every close, and the
+        test above failing one run in eight."""
+        server = self.server
+        started = asyncio.Event()
+
+        async def swallowing(job_id):
+            started.set()
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                pass  # what a converted cancel looks like from above
+
+        self.addCleanup(setattr, server, "_dispatch", server._dispatch)
+        server._dispatch = swallowing
+        queue = asyncio.Queue()
+        self.addCleanup(setattr, server, "QUEUE", server.QUEUE)
+        server.QUEUE = queue
+        worker = asyncio.create_task(server._worker())
+        queue.put_nowait("custom-swallowed")
+        await asyncio.wait_for(started.wait(), 5)
+        worker.cancel()
+        done, _ = await asyncio.wait({worker}, timeout=2)
+        self.assertIn(worker, done)
+        self.assertTrue(worker.cancelled())
+
     async def test_the_drain_turns_the_sentence_into_a_proposal(self):
         await self.ask()
         self.assertEqual(await self.server._apply_intent_requests(), 1)
