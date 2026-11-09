@@ -128,6 +128,25 @@ class TestTheLookupWritesTheBook(unittest.TestCase):
             self.assertEqual(lines(out["sections"]), [])
 
 
+class TestACutAnswerSaysSo(unittest.TestCase):
+    def test_more_than_three_automations_and_actions_say_and_more(self):
+        snap = house()
+        lights = [f"light.hall_{n}" for n in range(5)]
+        for eid in lights:
+            snap["states"][eid] = {"state": "off", "attributes": {
+                "friendly_name": eid.split(".")[1].replace("_", " ").title()}}
+        snap["automations"] += [
+            {"id": f"study-{n}", "alias": f"Study press {n}",
+             "triggers": [{"trigger": "state", "entity_id": BUTTON}],
+             "actions": [{"action": "light.turn_on",
+                          "target": {"entity_id": lights}}]}
+            for n in range(4)]
+        out = parsed(house_book.digest(snap), QUESTIONS[1])
+        [line] = lines(out["sections"])
+        self.assertIn("and 2 more automations", line["text"])
+        self.assertIn("and 2 more", line["text"].split(";")[1])
+
+
 class TestReplayedThroughThePass(BookPassCase):
     def test_two_looked_up_questions_reach_nobody(self):
         self.replies = [{"ok": True, "meta": {"session_id": "hb2"},

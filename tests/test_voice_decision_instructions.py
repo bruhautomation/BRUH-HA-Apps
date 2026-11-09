@@ -121,6 +121,40 @@ class TestTheQuestionsAndTheirYes(FilesCase):
         self.assertNotIn("Alba", self.files_say())
 
 
+class TestOnlyAReplacedVoiceIsRead(FilesCase):
+    """A capitalised word beside "voice" is the household's words, not a
+    voice: only a voice the store replaced is ever rewritten."""
+
+    PROBES = ("Use the Assistant voice pipeline for TTS.\n"
+              "Voice: Dutch accent please\n")
+
+    def test_the_probes_change_nothing(self):
+        self.identity.write_text(self.PROBES, encoding="utf-8")
+        personality.save("Juniper", "Plain.", voice="Alba")
+        personality.add_growth("The voice changed from Alba to Sara.")
+        self.assertEqual(self_care.voice_questions("Sara", "Alba"), [])
+        [row] = findings_store.add_many([{
+            "text": "brAIn's instructions name another voice",
+            "source": "resident", "severity": "info"}])
+        self.assertNotEqual(row["source"], self_care.SOURCE)
+        self.assertEqual(self.identity.read_text(encoding="utf-8"),
+                         self.PROBES)
+
+    def test_a_two_line_question_quotes_both_lines(self):
+        self.identity.write_text(
+            "You speak with the Alba voice.\nKeep it short.\n"
+            "Say goodnight in the Alba voice.\n", encoding="utf-8")
+        personality.save("Juniper", "Plain.", voice="Alba")
+        personality.add_growth("The voice changed from Alba to Sara.")
+        [row] = self_care.voice_questions("Sara")
+        self.assertIn("You speak with the Alba voice.", row["claim"])
+        self.assertIn("Say goodnight in the Alba voice.", row["claim"])
+        self.assertTrue(self_care.correct(row))
+        self.assertEqual(self.identity.read_text(encoding="utf-8"),
+                         "You speak with the Sara voice.\nKeep it short.\n"
+                         "Say goodnight in the Sara voice.\n")
+
+
 class TestInTheSameStep(FilesCase):
     def setUp(self):
         super().setUp()

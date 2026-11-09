@@ -111,6 +111,12 @@ class TestNothingChangedIsNoCard(unittest.TestCase):
                 "highlights": [{"label": "Last", "value": "Thu 15 Oct"}]}
         self.assertTrue(card_verdict.folds_quiet(card))
 
+    def test_a_sensor_gone_silent_is_not_folded(self):
+        card = {"title": "Porch motion",
+                "summary": "It hasn't reported since 3am.",
+                "highlights": [{"label": "Last report", "value": "03:00"}]}
+        self.assertFalse(card_verdict.folds_quiet(card))
+
     def test_news_or_a_judgement_is_still_a_card(self):
         news = {"title": "Water softener: 3 regenerations, usually 1",
                 "summary": "It regenerated 3 times this week against 1.",

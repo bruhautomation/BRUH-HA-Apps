@@ -388,10 +388,14 @@ def triggered_by(automations, on_device=None, name_of=None) -> dict:
             verb = _does(str(call.get("service") or "").split(".", 1)[-1])
             for eid in call.get("entity_id") or ():
                 does.append(f"{verb} {name_of(str(eid))}")
+        said = ", ".join(does[:3])
+        if len(does) > 3:
+            # Cut, and says so: a line that reads complete is believed.
+            said += f" and {len(does) - 3} more"
         row = {"alias": str(cfg.get("alias") or cfg.get("id")
                             or "an automation")[:80],
                "id": str(cfg.get("id") or ""),
-               "does": ", ".join(does[:3])}
+               "does": said}
         for trig in triggers:
             ids = trig.get("entity_id")
             ids = [ids] if isinstance(ids, str) else list(ids or [])
@@ -759,6 +763,8 @@ def lookup(text: str, about: str, dig: dict) -> dict | None:
             runs = "; ".join(
                 f"“{r['alias']}”" + (f", which {r['does']}" if r.get("does")
                                      else "") for r in rows)
+            if len(triggered[eid]) > 3:
+                runs += f"; and {len(triggered[eid]) - 3} more automations"
             return _found(f"{eid} starts {', '.join(r['alias'] for r in rows)}",
                           f"{called(eid)} runs {runs}.",
                           [f"automation:{r['id']}" for r in rows if r.get("id")],

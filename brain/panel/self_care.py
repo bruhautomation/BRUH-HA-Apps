@@ -76,32 +76,27 @@ def stale_line(obj: dict) -> tuple[str, str] | None:
 # own that says who it is.
 PERSONA_KEY = "personality"
 PERSONA_WHAT = "who brAIn is (⚙ › Personality)"
-# A line naming a voice: "the Alba voice", "voice: Nova", "voice is Ember".
-_NAME = r"(?P<{g}>[A-Z][\w'’-]*|[\w-]*[_\d][\w-]*)"
-_LINE_VOICE = re.compile(
-    r"\bthe\s+" + _NAME.format(g="a") + r"\s+(?i:voice)\b"
-    r"|\b(?i:voice)\s*(?::|=|\bis\b|\bcalled\b|\bnamed\b)\s*(?:now\s+)?"
-    r"(?:the\s+)?[“\"']?" + _NAME.format(g="b"))
-
-
 def _what(key: str) -> str:
     return PERSONA_WHAT if key == PERSONA_KEY else instructions.CATALOG[key][0]
 
 
-def _voices_named(line: str, voice: str, old: str = "") -> list[str]:
-    """The voices other than ``voice`` a line names."""
-    out = []
-    for m in _LINE_VOICE.finditer(line):
-        name = m.group("a") or m.group("b") or ""
-        if name and name.lower() not in ("the", "a", "an", "same", "this"):
-            out.append(name)
-    said = personality.voice_named(line)
-    if said:
-        out.append(said)
-    if old and re.search(r"\bvoice\b", line, re.I) and re.search(
-            r"(?<![\w])" + re.escape(old) + r"(?![\w])", line, re.I):
-        out.append(old)
-    return [n for n in dict.fromkeys(out) if n.lower() != voice.lower()]
+def _replaced(voice: str, old: str = "") -> list[str]:
+    """The voices brAIn no longer speaks with: the one just replaced and
+    every one the store remembers replacing. Only these are ever read as a
+    voice in a line — a capitalised word beside "voice" ("the Assistant
+    voice pipeline", "Voice: Dutch accent") is the household's words."""
+    known = ([old] if old else []) + list(personality.load().get("replaced")
+                                          or [])
+    return [k for k in dict.fromkeys(str(k).strip() for k in known)
+            if k and k.lower() != voice.lower()]
+
+
+def _voices_named(line: str, known) -> list[str]:
+    """The replaced voices a line about a voice names."""
+    if not re.search(r"\bvoice\b", line, re.I):
+        return []
+    return [k for k in known if re.search(
+        r"(?<![\w])" + re.escape(k) + r"(?![\w])", line, re.I)]
 
 
 def voice_conflicts(voice: str, old: str = "") -> list[tuple[str, str, str]]:
@@ -109,7 +104,8 @@ def voice_conflicts(voice: str, old: str = "") -> list[tuple[str, str, str]]:
     its persona that names a voice other than ``voice``, with that name
     replaced by ``voice``. [] when no voice is stored."""
     voice = str(voice or "").strip()
-    if not voice:
+    known = _replaced(voice, old) if voice else []
+    if not known:
         return []
     files = [(key, instructions.override_lines(key))
              for key in instructions.CATALOG]
@@ -118,7 +114,7 @@ def voice_conflicts(voice: str, old: str = "") -> list[tuple[str, str, str]]:
     out = []
     for key, lines in files:
         for line in lines:
-            names = _voices_named(line, voice, old)
+            names = _voices_named(line, known)
             if not names:
                 continue
             new = line
@@ -132,7 +128,10 @@ def voice_conflicts(voice: str, old: str = "") -> list[tuple[str, str, str]]:
 def _voice_question(voice: str, conflicts) -> dict:
     keys = list(dict.fromkeys(k for k, _l, _n in conflicts))
     what = " and ".join(f"“{_what(k)}”" for k in keys)
-    quoted = textclip.clip(conflicts[0][1], QUOTE_MAX)
+    # Every line the Yes changes is quoted: a press is agreement to what
+    # it can see.
+    quoted = " and “".join(textclip.clip(line, QUOTE_MAX)
+                           for _k, line, _n in conflicts)
     claim = (f"brAIn's voice is now {voice}, but its instructions for {what} "
              f"still say “{quoted}”. Shall brAIn change "
              f"{'that line' if len(conflicts) == 1 else 'those lines'} "

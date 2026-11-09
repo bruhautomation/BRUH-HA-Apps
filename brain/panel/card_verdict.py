@@ -709,8 +709,9 @@ def claims_fixed(obj: dict, open_rows) -> list[dict]:
 # "no cooling since 17 Oct", "neither unit has run since".
 _NO_CHANGE = re.compile(
     r"\b(?:no|nothing)\s+(?:\w+\s+){0,2}since\b|"
-    r"\b(?:has|have|had)(?:n'?t| not)\s+(?:\w+\s+)?(?:run|been|come on|"
-    r"\w+ed)\b[^.]*\bsince\b|"
+    r"\b(?:has|have|had)(?:n'?t| not)\s+(?:\w+\s+)?(?:run|been|cycled|changed|"
+    r"moved|fired|started|come on|regenerated|opened|been used)\b[^.]*"
+    r"\bsince\b|"
     r"\bneither \w+ (?:has|have) (?:\w+ )?(?:run|cycled|changed|fired|started)\b|"
     r"\bno change\b|\bunchanged\b", re.I)
 
