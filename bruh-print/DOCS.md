@@ -465,6 +465,17 @@ placeholder you deleted stops being asked for.
 
 `{{date}}`, `{{time}}` and `{{datetime}}` fill themselves in.
 
+A template with no fields of its own whose text holds one number — `Lesson 16`,
+or `Drawer 2` beside a QR code of `2` — takes that number as a field called
+`number`, so `fields: {number: 29}` prints `Lesson 29` and leaving it out
+prints the number it was saved with. Two different numbers (`Box 3 of 12`) are
+left alone; write `{{field}}` for the one you mean.
+
+A field the template does not have does not stop the print: the
+`print_template` service answers with a note naming it and the fields the
+template takes, so a stale field in an automation keeps working and is still
+said.
+
 Substitution is plain string replacement with no expression language, on
 purpose: a template that can evaluate is a template that can be made to
 evaluate something else by whoever sends the automation payload, and the

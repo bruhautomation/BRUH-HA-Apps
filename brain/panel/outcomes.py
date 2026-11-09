@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import operator
 import os
 import re
 import threading
@@ -200,17 +201,24 @@ def _count_lines() -> int:
         return 0
 
 
-def load_rows() -> list[dict]:
-    """Every row, oldest first. A torn line is skipped, never fatal, and a
-    log that cannot be read is no rows — which grades nothing, the honest
-    answer to "I could not look"."""
-    try:
-        with open(VERDICTS_FILE, "r", encoding="utf-8", errors="replace") as fh:
-            lines = fh.readlines()
-    except OSError:
-        return []
+# The log as last read, so a read parses only what was appended since.
+# Content-addressed: the bytes already parsed must be byte-for-byte the
+# start of what is read now, or everything is parsed again — a rewrite
+# (the cap, a hand edit, another file at the same path) is never trusted
+# by its size or its clock. `gen` changes whenever the bytes do, and is
+# what `load_graded`'s own cache is keyed on.
+_ROWS_LOCK = threading.Lock()
+_ROWS: dict = {"data": b"", "done": 0, "rows": [], "all": [], "gen": 0}
+
+
+def _parse_rows(chunk: bytes) -> list[dict]:
+    """Rows out of whole lines, read the way a text-mode `readlines` reads
+    them (UTF-8 with replacement, universal newlines). A chunk always ends
+    on a b"\\n", which is never inside a UTF-8 sequence, so parsing the log
+    in pieces gives what parsing it whole gives."""
+    text = chunk.decode("utf-8", errors="replace")
     out: list[dict] = []
-    for line in lines:
+    for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         line = line.strip()
         if not line:
             continue
@@ -221,6 +229,49 @@ def load_rows() -> list[dict]:
         if isinstance(obj, dict) and obj.get("stage") in STAGES:
             out.append(obj)
     return out
+
+
+def _read_rows() -> tuple[list[dict], int]:
+    """`(rows, generation)`, the rows SHARED with the cache — callers inside
+    this module only, and never to be changed. Parses only the lines
+    appended since the last read when the bytes before them are unchanged.
+    A line still being written (no newline yet) is parsed on every read and
+    never kept, so it is a row once — and only once — it is whole."""
+    try:
+        with open(VERDICTS_FILE, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        data = None
+    with _ROWS_LOCK:
+        c = _ROWS
+        if data is None:
+            if c["data"] or c["all"]:
+                c.update(data=b"", done=0, rows=[], all=[], gen=c["gen"] + 1)
+            return [], -1
+        if data == c["data"]:
+            return c["all"], c["gen"]
+        done = c["done"]
+        if done and (memoryview(data)[:done]
+                     == memoryview(c["data"])[:done]):
+            rows = list(c["rows"])
+        else:
+            done, rows = 0, []
+        cut = data.rfind(b"\n") + 1
+        if cut > done:
+            rows.extend(_parse_rows(data[done:cut]))
+            done = cut
+        tail = _parse_rows(data[done:]) if len(data) > done else []
+        c.update(data=data, done=done, rows=rows,
+                 all=rows + tail if tail else rows, gen=c["gen"] + 1)
+        return c["all"], c["gen"]
+
+
+def load_rows() -> list[dict]:
+    """Every row, oldest first. A torn line is skipped, never fatal, and a
+    log that cannot be read is no rows — which grades nothing, the honest
+    answer to "I could not look". Each row is the caller's own copy."""
+    rows, _gen = _read_rows()
+    return [dict(r) for r in rows]
 
 
 def _rows_by_ts(stamps) -> dict[int, dict]:
@@ -448,6 +499,16 @@ def grade(rows: list[dict], findings: list[dict], settled: list[dict],
     homeowner's own words where an ending carried some.
     """
     now = _now(now)
+    ctx = _grade_context(rows, findings, settled)
+    return [_grade_row(row, ctx, now) for row in ctx["verdicts"]]
+
+
+def _grade_context(rows: list[dict], findings: list[dict],
+                   settled: list[dict]) -> dict:
+    """What every row's grade reads besides the row and the clock: the live
+    rows, the ledger, the undos and which subjects were confirmed when.
+    `grade`'s first half, kept apart so `_graded_entry` can tell whether a
+    longer log changed it for the rows it has already graded."""
     live = {int(f.get("ts") or 0): f for f in findings or []
             if isinstance(f, dict)}
     by_key: dict[str, dict] = {}
@@ -489,62 +550,68 @@ def grade(rows: list[dict], findings: list[dict], settled: list[dict],
             stamps.append(int(entry.get("ts") or 0))
         for subject in key_subjects.get(key, ()):
             confirmed_at.setdefault(subject, []).extend(t for t in stamps if t)
+    return {"live": live, "by_key": by_key, "undone": undone,
+            "undone_keys": undone_keys, "confirmed_at": confirmed_at,
+            "verdicts": verdicts}
 
-    out: list[dict] = []
-    for row in verdicts:
-        klass = classify(row)
-        at = int(row.get("at") or 0)
-        row_ts = int(row.get("case_ts") or 0) or int(row.get("finding_ts") or 0)
-        key = str(row.get("key") or "")
-        outcome, ended_at, note = "pending", 0, ""
-        answer = _answer_for(by_key.get(key) if key else None, at)
-        # A row's id is a second-resolution stamp the store mints past what
-        # is LIVE, so once a row is settled and gone its id can be handed to
-        # the next one. Where the verdict knows its row's text, the text is
-        # what says it is the same row; the id alone is the fallback.
-        current = live.get(row_ts) if row_ts else None
-        if current is not None and key and findings_store.normalize(
-                current.get("text") or "") != key:
-            current = None
-        undone_at = (undone_keys.get(key, -1) if key
-                     else undone.get(row_ts, -1) if row_ts else -1)
-        if undone_at >= at:
-            outcome = "undone"
-            ended_at = undone_at
-        elif answer is not None:
-            kind, ended_at, note = answer
-            outcome = ("confirmed" if kind in CONFIRMED_KINDS
-                       else "wrong" if kind in WRONG_KINDS
-                       else "pending")
-            note = note[:MAX_NOTE]
-        elif current is not None:
-            triaged = current.get("triage") or {}
-            if klass == "dismissed" and triaged.get("elevated_by_person"):
-                outcome = "put_back"
-        elif row_ts:
-            # Gone, with nobody saying anything: the check stopped
-            # reporting it or the case aged out. Not a label.
-            outcome = "cleared"
-        by_card = klass == "dismissed" and covered(row)
-        if klass == "dismissed" and outcome in ("pending", "cleared"):
-            # Passed over, and nothing has contradicted it yet — unless the
-            # same thing became a confirmed case inside the window. A row
-            # set aside as another card's problem is not: that card being
-            # confirmed is the look's own reason coming true.
-            subjects = {s for s in (row.get("subject"), row.get("entity")) if s}
-            hit = [] if by_card else [
-                t for s in subjects for t in confirmed_at.get(s, ())
-                if at < t <= at + MISSED_WINDOW_S]
-            if hit:
-                outcome, ended_at = "missed", min(hit)
-            elif outcome == "pending" and now - at > STOOD_AFTER_S:
-                outcome = "stood"
-        graded = dict(row)
-        graded.update({"class": klass, "outcome": outcome,
-                       "agree": _agree(klass, outcome, by_card),
-                       "ended_at": ended_at, "note": note})
-        out.append(graded)
-    return out
+
+def _grade_row(row: dict, ctx: dict, now: float) -> dict:
+    """One verdict row with what happened next — `grade`'s second half."""
+    live, by_key = ctx["live"], ctx["by_key"]
+    undone, undone_keys = ctx["undone"], ctx["undone_keys"]
+    confirmed_at = ctx["confirmed_at"]
+    klass = classify(row)
+    at = int(row.get("at") or 0)
+    row_ts = int(row.get("case_ts") or 0) or int(row.get("finding_ts") or 0)
+    key = str(row.get("key") or "")
+    outcome, ended_at, note = "pending", 0, ""
+    answer = _answer_for(by_key.get(key) if key else None, at)
+    # A row's id is a second-resolution stamp the store mints past what
+    # is LIVE, so once a row is settled and gone its id can be handed to
+    # the next one. Where the verdict knows its row's text, the text is
+    # what says it is the same row; the id alone is the fallback.
+    current = live.get(row_ts) if row_ts else None
+    if current is not None and key and findings_store.normalize(
+            current.get("text") or "") != key:
+        current = None
+    undone_at = (undone_keys.get(key, -1) if key
+                 else undone.get(row_ts, -1) if row_ts else -1)
+    if undone_at >= at:
+        outcome = "undone"
+        ended_at = undone_at
+    elif answer is not None:
+        kind, ended_at, note = answer
+        outcome = ("confirmed" if kind in CONFIRMED_KINDS
+                   else "wrong" if kind in WRONG_KINDS
+                   else "pending")
+        note = note[:MAX_NOTE]
+    elif current is not None:
+        triaged = current.get("triage") or {}
+        if klass == "dismissed" and triaged.get("elevated_by_person"):
+            outcome = "put_back"
+    elif row_ts:
+        # Gone, with nobody saying anything: the check stopped
+        # reporting it or the case aged out. Not a label.
+        outcome = "cleared"
+    by_card = klass == "dismissed" and covered(row)
+    if klass == "dismissed" and outcome in ("pending", "cleared"):
+        # Passed over, and nothing has contradicted it yet — unless the
+        # same thing became a confirmed case inside the window. A row
+        # set aside as another card's problem is not: that card being
+        # confirmed is the look's own reason coming true.
+        subjects = {s for s in (row.get("subject"), row.get("entity")) if s}
+        hit = [] if by_card else [
+            t for s in subjects for t in confirmed_at.get(s, ())
+            if at < t <= at + MISSED_WINDOW_S]
+        if hit:
+            outcome, ended_at = "missed", min(hit)
+        elif outcome == "pending" and now - at > STOOD_AFTER_S:
+            outcome = "stood"
+    graded = dict(row)
+    graded.update({"class": klass, "outcome": outcome,
+                   "agree": _agree(klass, outcome, by_card),
+                   "ended_at": ended_at, "note": note})
+    return graded
 
 
 def items(graded: list[dict]) -> list[dict]:
@@ -557,58 +624,146 @@ def items(graded: list[dict]) -> list[dict]:
     Each item takes its LATEST judging verdict as its own, because a
     deeper look supersedes a cheaper one about the same row.
     """
-    groups: dict[str, list[dict]] = {}
-    order: list[str] = []
-    investigations = sorted((g for g in graded if g.get("stage") == "investigate"),
-                            key=lambda g: int(g.get("at") or 0))
-    claimed: set[str] = set()
+    return _items(graded, None)[0]
+
+
+def _row_key(g: dict) -> str:
+    """The row a verdict is about: its id AND its text's key, because the
+    store hands a settled row's id to the next row it files."""
+    row_ts = int(g.get("case_ts") or 0) or int(g.get("finding_ts") or 0)
+    return f"row:{row_ts}:{g.get('key') or ''}" if row_ts else ""
+
+
+def _at(g: dict) -> int:
+    return int(g.get("at") or 0)
+
+
+def _item_of(key: str, rows: list[dict]) -> dict:
+    """The entry for one thing, from every verdict about it, oldest first."""
+    if len(rows) == 1:
+        # Most things were judged once: the same entry as below, built
+        # without the folding a longer history needs.
+        row = rows[0]
+        item = dict(row)
+        item["item"] = key
+        item["entity"] = row.get("entity") or ""
+        item["flags"] = sorted(set(row.get("flags") or []))
+        item["history"] = [{"stage": row.get("stage"),
+                            "verdict": row.get("verdict"),
+                            "at": row.get("at")}]
+        return item
+    judging = [r for r in rows if r.get("class") in ("surfaced", "dismissed")]
+    final = (judging or rows)[-1]
+    item = dict(final)
+    item["item"] = key
+    item["entity"] = next((r.get("entity") for r in reversed(rows)
+                           if r.get("entity")), "")
+    item["flags"] = sorted({f for r in rows for f in (r.get("flags") or [])})
+    item["history"] = [{"stage": r.get("stage"), "verdict": r.get("verdict"),
+                        "at": r.get("at")} for r in rows]
+    return item
+
+
+_UNRESUMABLE = object()
+
+
+def _resumable(fold: dict | None, graded: list[dict]) -> int:
+    """How many of `graded` an earlier fold already placed, when the fold
+    can carry on from where it stopped; -1 when it must start again.
+
+    It can when `graded` is the fold's rows (the very objects) and more,
+    the new rows sort after every old one (so the order the old rows were
+    placed in is unchanged), and no new investigation could be claimed by
+    a look an old row SENT and nothing claimed — the one way a new row
+    reaches back and moves an old one."""
+    if (fold is None or _UNRESUMABLE in fold["unclaimed"]
+            or not _same_rows(fold["graded"], graded)):
+        return -1
+    done = len(fold["graded"])
+    try:
+        fresh = graded[done:]
+        if fresh and min(_at(g) for g in fresh) < fold["max_at"]:
+            return -1
+        for g in fresh:
+            if g.get("stage") != "investigate":
+                continue
+            at = _at(g)
+            for sent_at in fold["unclaimed"].get(g.get("subject"), ()):
+                if sent_at <= at <= sent_at + LINK_S:
+                    return -1
+    except (TypeError, ValueError):
+        return -1
+    return done
+
+
+def _items(graded: list[dict], fold: dict | None
+           ) -> tuple[list[dict], dict]:
+    """`items`, and the state of the fold that built them.
+
+    Given the fold of an earlier, shorter `graded` (`_graded_entry`'s rows,
+    which keep their identity while the log only grows), it places only
+    the new rows and builds only the things they touched — the same answer
+    `items` gives from scratch, which it falls back to whenever
+    `_resumable` cannot promise that. The fold holds its rows, so an
+    identity is never mistaken for a row that has since gone."""
+    done = _resumable(fold, graded)
+    if done < 0:
+        fold = {"graded": [], "groups": {}, "order": [], "claimed": set(),
+                "unclaimed": {}, "max_at": 0, "invs": [], "built": {}}
+        done = 0
+    groups = dict(fold["groups"])
+    order = list(fold["order"])
+    claimed = set(fold["claimed"])
+    unclaimed = {k: list(v) for k, v in fold["unclaimed"].items()}
+    fresh = sorted(graded[done:], key=_at)
+    investigations = fold["invs"] + [g for g in fresh
+                                     if g.get("stage") == "investigate"]
+    touched: set[str] = set()
 
     def place(key: str, row: dict) -> None:
         if key not in groups:
             groups[key] = []
             order.append(key)
+        elif key not in touched:
+            groups[key] = list(groups[key])  # the old fold keeps its own
+        touched.add(key)
         groups[key].append(row)
 
-    def row_key(g: dict) -> str:
-        """The row a verdict is about: its id AND its text's key, because
-        the store hands a settled row's id to the next row it files."""
-        row_ts = int(g.get("case_ts") or 0) or int(g.get("finding_ts") or 0)
-        return f"row:{row_ts}:{g.get('key') or ''}" if row_ts else ""
-
-    for g in sorted(graded, key=lambda r: int(r.get("at") or 0)):
-        if row_key(g):
-            place(row_key(g), g)
+    for g in fresh:
+        key = _row_key(g)
+        if key:
+            place(key, g)
             continue
         if g.get("class") == "sent":
-            at = int(g.get("at") or 0)
+            at = _at(g)
             for inv in investigations:
                 if (str(inv.get("id")) not in claimed
                         and inv.get("subject") == g.get("subject")
-                        and at <= int(inv.get("at") or 0) <= at + LINK_S):
+                        and at <= _at(inv) <= at + LINK_S):
                     claimed.add(str(inv.get("id")))
-                    place(row_key(inv) or f"v:{inv.get('id')}", g)
+                    place(_row_key(inv) or f"v:{inv.get('id')}", g)
                     break
             else:
+                try:
+                    unclaimed.setdefault(g.get("subject"), []).append(at)
+                except TypeError:
+                    # A subject no dict can hold: no later fold may assume
+                    # this look stays unclaimed, so none resumes this one.
+                    unclaimed.setdefault(_UNRESUMABLE, []).append(at)
                 place(f"v:{g.get('id')}", g)
             continue
         # An investigation with no row of its own: the look that sent it
         # was filed under this same key above, so the two fold into one.
         place(f"v:{g.get('id')}", g)
 
-    out: list[dict] = []
-    for key in order:
-        rows = groups[key]
-        judging = [r for r in rows if r.get("class") in ("surfaced", "dismissed")]
-        final = (judging or rows)[-1]
-        item = dict(final)
-        item["item"] = key
-        item["entity"] = next((r.get("entity") for r in reversed(rows)
-                               if r.get("entity")), "")
-        item["flags"] = sorted({f for r in rows for f in (r.get("flags") or [])})
-        item["history"] = [{"stage": r.get("stage"), "verdict": r.get("verdict"),
-                            "at": r.get("at")} for r in rows]
-        out.append(item)
-    return out
+    built = dict(fold["built"])
+    for key in touched:
+        built[key] = _item_of(key, groups[key])
+    out = [built[key] for key in order]
+    return out, {"graded": graded, "groups": groups, "order": order,
+                 "claimed": claimed, "unclaimed": unclaimed,
+                 "max_at": max([fold["max_at"]] + [_at(g) for g in fresh]),
+                 "invs": investigations, "built": built}
 
 
 def _blank() -> dict:
@@ -619,18 +774,30 @@ def _blank() -> dict:
             "whys": [], "notes": []}
 
 
-def tallies(graded_items: list[dict]) -> dict[str, dict[str, dict]]:
-    """Per scope — by producer, by entity, by kind — how its items went."""
+def tallies(graded_items: list[dict],
+            only: tuple[str, ...] = ("source", "entity", "kind"),
+            ) -> dict[str, dict[str, dict]]:
+    """Per scope — by producer, by entity, by kind — how its items went.
+
+    ``only`` names the scopes wanted; each scope's tally is its own, so
+    leaving one out changes nothing about the others (`overruled` reads
+    the entity scope alone, once per look)."""
     scopes: dict[str, dict[str, dict]] = {"source": {}, "entity": {}, "kind": {}}
+    # Each tally's flags as a set while counting, sorted once at the end:
+    # the same sorted union, without re-sorting it once per item.
+    flags: dict[int, tuple[dict, set]] = {}
     for it in graded_items:
-        keys = {"source": it.get("source"), "entity": it.get("entity"),
-                "kind": it.get("kind")}
-        for scope, name in keys.items():
+        klass, outcome = it.get("class"), it.get("outcome")
+        for scope in only:
+            name = it.get(scope)
             if not name:
                 continue
-            t = scopes[scope].setdefault(str(name), _blank())
+            table = scopes[scope]
+            t = table.get(str(name))
+            if t is None:
+                t = table[str(name)] = _blank()
+                flags[id(t)] = (t, set())
             t["items"] += 1
-            klass, outcome = it.get("class"), it.get("outcome")
             ended = int(it.get("ended_at") or 0)
             if klass == "surfaced":
                 t["surfaced"] += 1
@@ -649,7 +816,7 @@ def tallies(graded_items: list[dict]) -> dict[str, dict[str, dict]]:
                     t["passed_ok"] += 1
             if outcome in ("undone", "cleared", "stood", "pending"):
                 t[outcome] += 1
-            t["flags"] = sorted(set(t["flags"]) | set(it.get("flags") or []))
+            flags[id(t)][1].update(it.get("flags") or [])
             # The NEWEST few: items arrive oldest first, and what the
             # household said last week is the better evidence of what is
             # true now than what it said in March.
@@ -657,6 +824,8 @@ def tallies(graded_items: list[dict]) -> dict[str, dict[str, dict]]:
                 t["whys"] = (t["whys"] + [str(it["why"])[:160]])[-5:]
             if it.get("note"):
                 t["notes"] = (t["notes"] + [str(it["note"])[:MAX_NOTE]])[-5:]
+    for t, seen in flags.values():
+        t["flags"] = sorted(seen)
     return scopes
 
 
@@ -709,16 +878,137 @@ def calibration_line(table: list[dict]) -> str:
             + ". Weigh your own stated confidence against that.")
 
 
-def load_graded(now: float | None = None) -> list[dict]:
-    """The join over the live stores. Never raises: an empty answer is the
-    honest one when the stores cannot be read."""
+# The last join, kept until something it read changes. A first look asks
+# for the graded log every time it runs, and re-reading, re-grading and
+# re-folding a log that only grows made every look slower than the one
+# before it. What a row's grade reads is the row, the clock and
+# `_grade_context`; so the last answer is served again when the log is the
+# same rows (`_read_rows` hands back the same row objects for the lines it
+# has already parsed), the context reads the same (`_context_view`) and the
+# clock has crossed no row's `STOOD_AFTER_S` (the one way `now` enters: an
+# answer holds for any `now` in (`lo`, `hi`]). A log that only GREW under an
+# unchanged context keeps its graded rows and grades the new ones alone;
+# anything else is graded afresh.
+_GRADED_LOCK = threading.Lock()
+_GRADED: dict = {"entry": None}
+
+
+def _context_view(ctx: dict) -> tuple:
+    """Every value of `_grade_context` that `_grade_row` reads, as plain
+    values compared with ==: the text and the `elevated_by_person` of each
+    live row, the ledger's four fields `_answer_for` reads, the undos and
+    the confirmed stamps. An odd stored value is kept raw, so a grade that
+    raised on it raises again rather than being served from here."""
+    def elevated(f: dict):
+        t = f.get("triage")
+        return ("d", t.get("elevated_by_person")) if isinstance(t, dict) \
+            else ("raw", t)
+    live = {ts: (f.get("text"), elevated(f)) for ts, f in ctx["live"].items()}
+    ledger = {k: (e.get("ts"), e.get("previous_at"), e.get("kind"),
+                  e.get("note")) for k, e in ctx["by_key"].items()}
+    return (live, ledger, ctx["undone"], ctx["undone_keys"],
+            ctx["confirmed_at"])
+
+
+def _stood_window(rows: list[dict], now: float) -> tuple[float, float]:
+    """`(lo, hi)`: every `now'` with lo < now' <= hi puts the same rows past
+    `STOOD_AFTER_S` (`now' - at > STOOD_AFTER_S`) as `now` does."""
+    lo, hi = float("-inf"), float("inf")
+    for row in rows:
+        try:
+            edge = int(row.get("at") or 0) + STOOD_AFTER_S
+        except (TypeError, ValueError):
+            # A stamp `grade` cannot read: never serve this answer again.
+            return now, now - 1
+        if edge < now:
+            lo = max(lo, edge)
+        else:
+            hi = min(hi, edge)
+    return lo, hi
+
+
+def _same_rows(old: list[dict], new: list[dict]) -> bool:
+    """Is `new` the rows of `old` (the very objects, in order) and perhaps
+    more after them?"""
+    return len(new) >= len(old) and all(map(operator.is_, old, new))
+
+
+def _graded_entry(now: float) -> dict | None:
+    """The cache entry for this `now`, graded afresh if anything it read
+    changed. None when the stores cannot be read (an empty answer)."""
     try:
-        rows = load_rows()
+        rows, _gen = _read_rows()
         findings = findings_store.list_all()
         settled = findings_store.settled_listing()
     except Exception:  # noqa: BLE001
+        return None
+    with _GRADED_LOCK:
+        ctx = _grade_context(rows, findings, settled)
+        view = _context_view(ctx)
+        verdicts = ctx["verdicts"]
+        entry = _GRADED["entry"]
+        kept: list[dict] = []
+        lo, hi = float("-inf"), float("inf")
+        if (entry is not None and entry["view"] == view
+                and entry["lo"] < now <= entry["hi"]
+                and _same_rows(entry["verdicts"], verdicts)):
+            if len(verdicts) == len(entry["verdicts"]):
+                return entry
+            kept, lo, hi = entry["graded"], entry["lo"], entry["hi"]
+        fresh = verdicts[len(kept):]
+        new_lo, new_hi = _stood_window(fresh, now)
+        # A new entry rather than the old one changed in place, so a caller
+        # holding the old one still reads one consistent answer. The old
+        # entry's folded items go with it, for `_items` to reuse what a
+        # longer log left as it was.
+        entry = {"view": view, "verdicts": verdicts,
+                 "lo": max(lo, new_lo), "hi": min(hi, new_hi),
+                 "graded": kept + [_grade_row(r, ctx, now) for r in fresh],
+                 "items": None,
+                 "fold": (entry or {}).get("fold") if kept else None}
+        _GRADED["entry"] = entry
+        return entry
+
+
+def load_graded(now: float | None = None) -> list[dict]:
+    """The join over the live stores. Never raises: an empty answer is the
+    honest one when the stores cannot be read. Graded once per change of
+    what it reads; each row is the caller's own copy."""
+    now = _now(now)
+    entry = _graded_entry(now)
+    if entry is None:
         return []
-    return grade(rows, findings, settled, now)
+    with _GRADED_LOCK:
+        return [dict(g) for g in entry["graded"]]
+
+
+_LOAD_GRADED = load_graded
+
+
+def graded_items(now: float | None = None) -> list[dict]:
+    """`items(load_graded(now))`, folded once per change of the log and the
+    stores, not once per ask. Each item is the caller's own copy."""
+    return _items_now(now)
+
+
+def _items_now(now: float | None) -> list[dict]:
+    """`graded_items` under a name the functions whose parameter is called
+    `graded_items` can still reach.
+
+    `load_graded` is the seam a stand-in replaces (a test's fixed record):
+    when the module's own is not the one in place, the stand-in's answer is
+    folded as given, exactly as `items(load_graded(now))` always did."""
+    now = _now(now)
+    if load_graded is not _LOAD_GRADED:
+        return items(load_graded(now))
+    entry = _graded_entry(now)
+    if entry is None:
+        return []
+    with _GRADED_LOCK:
+        if entry["items"] is None:
+            entry["items"], entry["fold"] = _items(entry["graded"],
+                                                   entry["fold"])
+        return [dict(i) for i in entry["items"]]
 
 
 def summary(graded: list[dict]) -> dict:
@@ -865,7 +1155,7 @@ def similar(signal: dict, k: int = EXAMPLES_K,
     for no reason is a prompt nobody can reason about.
     """
     if graded_items is None:
-        graded_items = items(load_graded(now))
+        graded_items = _items_now(now)
     ranked = []
     for it in graded_items:
         if it.get("outcome") not in EXAMPLE_OUTCOMES:
@@ -940,7 +1230,7 @@ def examples_for(batch: list[dict], now: float | None = None, *,
     """
     try:
         if graded_items is None:
-            graded_items = items(load_graded(now))
+            graded_items = _items_now(now)
         if not graded_items:
             return []
         per_signal = [similar(s, k, graded_items) for s in batch or []
@@ -1007,7 +1297,8 @@ def overruled(graded_items: list[dict]) -> dict[str, str]:
     household saying the louder look has done its job. Never a person or
     their phone, `candidates`' rule. Pure; an unreadable log is {}."""
     out: dict[str, str] = {}
-    for name, t in (tallies(graded_items or []).get("entity") or {}).items():
+    for name, t in (tallies(graded_items or [], only=("entity",))
+                    .get("entity") or {}).items():
         if _is_person_scope(name):
             continue
         counts = _louder(t)
@@ -1462,7 +1753,7 @@ __all__ = [
     "REFLECT_SCHEMA", "REFLECT_SYSTEM", "STAGES", "STATE_FILE",
     "VERDICTS_FILE", "calibration", "calibration_line", "calibration_note",
     "candidates", "classify", "diagnostics", "example_line", "examples_for",
-    "grade", "items", "join_due", "judgement_rows", "judgement_text",
+    "grade", "graded_items", "items", "join_due", "judgement_rows", "judgement_text",
     "load_graded", "load_rows", "load_state", "look_labels", "note_undone",
     "parse_reflect", "predicate_for", "record_investigation", "record_look",
     "reflect_prompt", "replay_look", "replay_prompt", "report", "save_state",
