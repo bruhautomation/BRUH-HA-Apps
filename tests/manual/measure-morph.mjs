@@ -1098,7 +1098,7 @@ for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
       const low = await p.evaluate(() => {
         const R = window.__panel.shadowRoot;
         const cv = document.createElement('canvas'); cv.width = cv.height = 1; const g = cv.getContext('2d', { willReadFrequently: true });
-        const parse = (c) => { g.clearRect(0, 0, 1, 1); g.fillStyle = '#000'; g.fillStyle = c; g.fillRect(0, 0, 1, 1); const d = g.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
+        const parse = (c) => { g.clearRect(0, 0, 1, 1); g.fillStyle = CSS.supports('color', c) ? c : '#000'; g.fillRect(0, 0, 1, 1); const d = g.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
         const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
         const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
         const root = R.querySelector('[data-morph-root]');
@@ -1172,7 +1172,7 @@ for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
       await settle(p, 800);
       const low = await p.evaluate(() => {
         const R = window.__panel.shadowRoot; const cv = document.createElement('canvas'); cv.width = cv.height = 1; const g = cv.getContext('2d', { willReadFrequently: true });
-        const parse = (c) => { g.clearRect(0, 0, 1, 1); g.fillStyle = '#000'; g.fillStyle = c; g.fillRect(0, 0, 1, 1); const d = g.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2]]; };
+        const parse = (c) => { g.clearRect(0, 0, 1, 1); g.fillStyle = CSS.supports('color', c) ? c : '#000'; g.fillRect(0, 0, 1, 1); const d = g.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2]]; };
         const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
         const root = R.querySelector('[data-morph-root]'); const bg = parse(getComputedStyle(root).getPropertyValue('--surface').trim());
         return ['c_garage', 'c_obi', 'c_dot', 'c_front_lock'].map((id) => { const a = R.querySelector(`[data-tile="${id}"] .actword`); if (!a) return `${id} none`; const x = lum(parse(getComputedStyle(a).color)), y = lum(bg); const r = (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); return r < 4.5 ? `${id} ${r.toFixed(2)}:1` : ''; }).filter(Boolean);
@@ -1699,7 +1699,7 @@ for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
       const low = await p.evaluate(() => {
         const R = window.__panel.shadowRoot;
         const cv = document.createElement('canvas'); cv.width = cv.height = 1; const g = cv.getContext('2d', { willReadFrequently: true });
-        const parse = (c) => { g.clearRect(0, 0, 1, 1); g.fillStyle = '#000'; g.fillStyle = c; g.fillRect(0, 0, 1, 1); const d = g.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
+        const parse = (c) => { g.clearRect(0, 0, 1, 1); g.fillStyle = CSS.supports('color', c) ? c : '#000'; g.fillRect(0, 0, 1, 1); const d = g.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
         const bgOf = (el) => { const chain = []; for (let e = el; e; e = e.parentElement || (e.getRootNode() && e.getRootNode().host)) chain.push(e); let base = [255, 255, 255]; for (const e of chain.reverse()) { const c = parse(getComputedStyle(e).backgroundColor); if (c[3] > 0) base = base.map((b, i) => b * (1 - c[3]) + c[i] * c[3]); } return base; };
         const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
         const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
