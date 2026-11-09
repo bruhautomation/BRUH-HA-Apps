@@ -1020,11 +1020,15 @@ def outbound(rows) -> list[dict]:
     for row in rows or ():
         if not isinstance(row, dict):
             continue
-        stored = row if row.get("source") is not None else (
-            get(int(row.get("ts") or 0)) or {})
-        said = shown_words({**stored, **row,
-                            "source": stored.get("source"),
-                            "technical": stored.get("technical")})
+        try:
+            stored = row if row.get("source") is not None else (
+                get(int(row.get("ts") or 0)) or {})
+            said = shown_words({**stored, **row,
+                                "source": stored.get("source"),
+                                "technical": stored.get("technical")})
+        except Exception:  # noqa: BLE001 — a row we can't reword is sent as it was, never dropped
+            out.append(row)
+            continue
         out.append({**row, **{k: v for k, v in said.items() if k in row}})
     return out
 
