@@ -1980,6 +1980,95 @@ for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
   await ctx.close();
 }
 
+// ------------------------------------------------------------------
+// The tiles batch of 2026-11-09 (#764 #757 #766 #787), on the Tiles floor
+// of the fixture (`tiles: true`), at 1200 and at 390 with touch, dark and
+// light. #764: a tile whose entity is unavailable or unknown shows no
+// live-looking figure: the number is greyed, it says when it was last seen,
+// and its title is whole. #757/#766: a chart of rooms draws a line for every
+// room across the day even when a reading has no statistics (a thermostat,
+// a sensor with no state_class), says in words when there is no history,
+// and nothing on it overlaps the plot. #787: a soil probe that fell straight
+// to 0 reads as a probe to check, with no percentage, while soil that dried
+// to 0 over the day still reads 0%.
+for (const [w, h, name, theme] of W([[1200, 860, 'wide', 'dark'], [390, 844, 'phone', 'light'], [1200, 860, 'wide', 'light'], [390, 844, 'phone', 'dark']])) {
+  const touch = name === 'phone';
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, colorScheme: theme, ...(touch ? { hasTouch: true, isMobile: true } : {}) });
+  await route(ctx, { narrow: touch, tiles: true, theme, dark: theme === 'dark' });
+  const p = await ctx.newPage();
+  const errors = [];
+  p.on('pageerror', (e) => errors.push(String(e)));
+  await p.goto(ORIGIN + '/');
+  await p.waitForFunction(() => window.__panel && window.__panel.data);
+  await settle(p, 1500);
+  await p.evaluate(() => { window.__panel.data.state.settings = { ...(window.__panel.data.state.settings || {}), fold_rooms: false }; window.__panel._forceApply = true; window.__panel.engine.invalidate(); window.__panel.schedule(); });
+  await settle(p, 2500);
+  const at = `tiles ${name} ${theme}`;
+  for (const id of ['ct_freezer', 'ct_spaces', 'ct_soil', 'ct_garden']) {
+    await p.evaluate((id) => { const el = window.__panel.shadowRoot.querySelector(`[data-tile="${id}"]`); if (el) el.scrollIntoView({ block: 'center' }); }, id);
+    await settle(p, 400);
+    await shot(p, `tiles-${id}-${name}-${theme}`);
+  }
+  const f = await p.evaluate(() => {
+    const root = window.__panel.shadowRoot;
+    const tile = (id) => root.querySelector(`[data-tile="${id}"]`);
+    const text = (id) => { const t = tile(id); return t ? t.innerText.replace(/\s+/g, ' ').trim() : ''; };
+    const R = (e) => { const r = e.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom }; };
+    const overlap = (a, b) => Math.min(a.r, b.r) - Math.max(a.l, b.l) > 1 && Math.min(a.b, b.b) - Math.max(a.t, b.t) > 1;
+    const clipped = (e) => e.scrollWidth > e.clientWidth + 1 || getComputedStyle(e).textOverflow === 'ellipsis' && e.scrollWidth > e.clientWidth;
+    const out = { text: {}, live: {}, titles: {} };
+    // A figure drawn as live: the big number in a colour other than the quiet one.
+    const quiet = getComputedStyle(root.querySelector('.wrap') || root.host).getPropertyValue('--quiet').trim();
+    ['ct_freezer', 'ct_probe', 'ct_wine', 'ct_runtime', 'ct_energy'].forEach((id) => {
+      const t = tile(id); if (!t) { out.text[id] = '(no tile)'; return; }
+      t.scrollIntoView({ block: 'center' });
+      out.text[id] = text(id);
+      const num = t.querySelector('.big, .mid');
+      out.live[id] = !!num && /\d/.test(num.textContent) && !num.closest('.gone') && !num.classList.contains('gone');
+      const b = t.querySelector('.box b, .nv b'); out.titles[id] = b ? { t: b.textContent, cut: clipped(b) } : null;
+    });
+    out.tgt = tile('ct_freezer') ? tile('ct_freezer').querySelectorAll('[data-act="tgt"]').length : -1;
+    out.quiet = quiet;
+    // The chart of rooms: one line per room, across the day.
+    const lines = (id) => [...(tile(id) || document).querySelectorAll('.ovplot polyline')].map((pl) => { const xs = (pl.getAttribute('points') || '').trim().split(/\s+/).filter(Boolean).map((p) => parseFloat(p.split(',')[0])); return xs.length > 1 ? Math.max(...xs) - Math.min(...xs) : 0; });
+    tile('ct_spaces').scrollIntoView({ block: 'center' });
+    out.spaces = { lines: lines('ct_spaces'), labels: [...tile('ct_spaces').querySelectorAll('.ovlab')].map((l) => l.innerText.replace(/\s+/g, ' ').trim()), text: text('ct_spaces'), over: [] };
+    const plot = tile('ct_spaces').querySelector('.ovplot');
+    if (plot) [...tile('ct_spaces').querySelectorAll('.ovlab, .ovhead, button')].forEach((e) => { if (e.getBoundingClientRect().width && overlap(R(e), R(plot))) out.spaces.over.push(e.textContent.trim().slice(0, 30)); });
+    out.empty = { lines: lines('ct_empty').filter((x) => x > 0).length, text: text('ct_empty') };
+    tile('ct_soil').scrollIntoView({ block: 'center' });
+    out.soil = { labels: [...tile('ct_soil').querySelectorAll('.ovlab')].map((l) => l.innerText.replace(/\s+/g, ' ').trim()), text: text('ct_soil') };
+    out.garden = text('ct_garden'); out.bed = text('ct_bed');
+    return out;
+  });
+  // #764
+  for (const id of ['ct_freezer', 'ct_probe', 'ct_wine', 'ct_runtime', 'ct_energy']) {
+    if (!/last seen/i.test(f.text[id])) fail(at, `#764: ${id} stopped answering and does not say when it was last seen ("${f.text[id].slice(0, 90)}")`);
+    if (f.live[id]) fail(at, `#764: ${id} draws a figure as if it were live ("${f.text[id].slice(0, 90)}")`);
+    if (/\bunavailable\b|\bunknown\b|NaN/.test(f.text[id])) fail(at, `#764: ${id} shows a raw state or NaN ("${f.text[id].slice(0, 90)}")`);
+  }
+  if (f.tgt) fail(at, `#764: the unavailable freezer still offers ${f.tgt} target buttons`);
+  if (/target/i.test(f.text.ct_freezer)) fail(at, `#764: the unavailable freezer still shows a target ("${f.text.ct_freezer}")`);
+  for (const id of ['ct_probe', 'ct_wine']) if (!f.titles[id] || f.titles[id].cut) fail(at, `#764: ${id}'s title is cut off (${JSON.stringify(f.titles[id])})`);
+  if (/NaN/.test(f.spaces.text)) fail(at, `#764: the chart of rooms shows NaN for a room that stopped answering ("${f.spaces.text.slice(0, 120)}")`);
+  // #757 #766
+  const drawn = f.spaces.lines.filter((x) => x >= 600 * 0.8).length;
+  if (drawn < 4) fail(at, `#757: the chart of rooms draws ${drawn} lines across the day for 4 rooms with a history (spans ${f.spaces.lines.map((x) => x.toFixed(0)).join(', ')} of 600)`);
+  if (f.spaces.over.length) fail(at, `#766: these overlap the chart: ${f.spaces.over.join(', ')}`);
+  if (f.empty.lines) fail(at, `#757: a chart with no history drew ${f.empty.lines} lines`);
+  if (!/no history/i.test(f.empty.text)) fail(at, `#757: a chart with no history does not say so ("${f.empty.text.slice(0, 120)}")`);
+  // #787
+  const garden = f.soil.labels.find((l) => /Garden/.test(l)) || '';
+  const bed = f.soil.labels.find((l) => /Bed/.test(l)) || '';
+  if (/\d\s*%/.test(garden) || !/offline/i.test(garden)) fail(at, `#787: the dead soil probe reads "${garden}" on the chart`);
+  if (!/check the probe/i.test(f.soil.text)) fail(at, `#787: the chart does not say to check the probe ("${f.soil.text.slice(0, 160)}")`);
+  if (!/\b0\s*%/.test(bed)) fail(at, `#787: soil that dried to 0 over the day does not read 0% ("${bed}")`);
+  if (/\b0\s*%/.test(f.garden) || !/offline/i.test(f.garden) || !/check the probe/i.test(f.garden)) fail(at, `#787: the dead probe's own tile reads "${f.garden}"`);
+  if (!/\b0\s*%/.test(f.bed.replace(/0\s+%/, '0%'))) fail(at, `#787: the dried bed's tile does not read 0% ("${f.bed}")`);
+  if (errors.length) fail(at, `page errors: ${errors.slice(0, 2).join(' | ')}`);
+  await ctx.close();
+}
+
 await browser.close();
 if (problems.length) {
   console.error(`measure-morph: ${problems.length} problem(s)`);

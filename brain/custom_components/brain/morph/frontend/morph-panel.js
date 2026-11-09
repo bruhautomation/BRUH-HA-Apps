@@ -1320,7 +1320,9 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
   floorFacts(fl) {
     const H = this.hass; const facts = [];
     const ents = [...new Set(this.floorEntities(fl))];
-    const clim = ents.map((e) => H.states[e]).filter((s) => s && domainOf(s.entity_id) === 'climate');
+    // A thermostat that stopped answering keeps its last temperature in its
+    // attributes; that is not the floor's temperature now (#764).
+    const clim = ents.map((e) => H.states[e]).filter((s) => s && domainOf(s.entity_id) === 'climate' && !UNAVAILABLE.includes(s.state));
     const temps = ents.map((e) => H.states[e]).filter((s) => s && s.attributes.device_class === 'temperature' && !isNaN(parseFloat(s.state)));
     const c = clim[0];
     if (c) {
@@ -1773,7 +1775,7 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
     // The room's line: asleep, how warm (and what is usual, when brAIn has
     // measured it), whether anyone is there. What is on is on the tiles.
     const temp = ents.map((e) => H.states[e]).find((s) => s && s.attributes.device_class === 'temperature' && !isNaN(parseFloat(s.state)));
-    const clim = temp ? null : ents.map((e) => H.states[e]).find((s) => s && domainOf(s.entity_id) === 'climate' && s.attributes.current_temperature != null);
+    const clim = temp ? null : ents.map((e) => H.states[e]).find((s) => s && domainOf(s.entity_id) === 'climate' && !UNAVAILABLE.includes(s.state) && s.attributes.current_temperature != null);
     const slept = this.asleepSince(sec);
     const here = slept ? null : this.presence(sec);
     const usual = temp && this.feedState().usable ? (((this.brain().feed || {}).normal || {})[temp.entity_id] || {}).now : null;

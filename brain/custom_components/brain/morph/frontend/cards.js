@@ -18,7 +18,7 @@
 // dispatches it. `svc` is a service call described in the markup, so a new
 // control is markup, not a new handler.
 
-import { esc, mix, clamp, lightColor, lightTone, fmt, since, clock, icon, friendly, shortName, UNAVAILABLE, domainOf, outdoorStale, minecraftStatus } from './util.js';
+import { esc, mix, clamp, lightColor, lightTone, fmt, since, clock, icon, friendly, shortName, UNAVAILABLE, domainOf, outdoorStale, minecraftStatus, lastSeen, isMoisture, probeOffline } from './util.js';
 import * as history from './history.js';
 
 const STRIP = { span: 1, grow: 2, dir: 'side', want: 3, hk: 's' };
@@ -348,7 +348,11 @@ const climate = {
   face: (ctx) => {
     const st = ctx.st; if (!st) return `<div class="box"><b>${esc(ctx.name)}</b><span class="sm">Missing</span></div>`;
     const a = st.attributes; const unit = ctx.hass.config.unit_system.temperature || '°';
-    const cur = a.current_temperature; const tgt = a.temperature != null ? a.temperature : a.target_temp_low;
+    const cur = a.current_temperature;
+    // #764: a thermostat that stopped answering keeps its last attributes;
+    // its temperature is the last one heard, greyed, and it has no target,
+    // controls or running state to show until it answers again.
+    if (off(st)) return goneBox(ctx, cur != null ? Number(cur).toFixed(1) + '°' : '—', 'big'); const tgt = a.temperature != null ? a.temperature : a.target_temp_low;
     const lo = a.min_temp != null ? a.min_temp : 7, hi = a.max_temp != null ? a.max_temp : 35;
     const P = (v) => clamp(((v - lo) / (hi - lo || 1)) * 100, 0, 100);
     const action = a.hvac_action ? ACTION[a.hvac_action] || a.hvac_action : (MODE[st.state] || MODE.off)[0];
@@ -393,6 +397,25 @@ function sparkline(hass, eid, color) {
   return `<svg viewBox="0 0 200 22" preserveAspectRatio="none" style="width:100%;height:22px;display:block"><path d="${d}" fill="none" stroke="${color}" stroke-width="1.6" vector-effect="non-scaling-stroke"></path></svg>`;
 }
 
+// #764: the face of something that has stopped answering, for every card
+// that shows a figure: the last figure it had (or —) greyed, the state in
+// words where the live state would be, and when it was last heard from.
+function goneBox(ctx, figure, size, ic, more) {
+  const said = more || `${stateWord(ctx.st)} · ${lastSeen(ctx.st)}`;
+  return `<div class="box" style="box-shadow:inset 0 0 0 1px var(--line)"><div class="row">${ic || ''}<b class="ttl">${esc(ctx.name)}</b>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div><div class="rowb gonerow"><span class="${size} gone">${esc(figure)}</span><span class="sm goneword">${esc(said)}</span></div></div>`;
+}
+
+// #787: a moisture sensor that reads 0 is checked against its last day: one
+// that fell straight there is a dead probe, not dry soil.
+function deadProbe(ctx) {
+  const st = ctx.st;
+  if (!isMoisture(st) || parseFloat(st.state) !== 0) return '';
+  const now = Date.now();
+  const rows = history.stats(ctx.hass, ctx.card.entity, now - 86400000, now, '5minute');
+  if (!Array.isArray(rows)) return '';
+  return probeOffline(ctx.hass, ctx.card.entity, rows.map((r) => [r.t, r.mean]).concat([[now, 0]]));
+}
+
 const sensor = {
   item: { span: 1, grow: 2, dir: 'down', want: 3, hk: 'r' },
   accent: (ctx) => {
@@ -406,9 +429,13 @@ const sensor = {
     const st = ctx.st; const unit = (st && st.attributes.unit_of_measurement) || '';
     const dc = st && st.attributes.device_class;
     const mc = st ? minecraftStatus(ctx.hass, ctx.card.entity) : null;
-    const val = !st ? 'Missing' : mc || (UNAVAILABLE.includes(st.state) ? '—' : isNaN(parseFloat(st.state)) ? st.state : fmt(st.state, ''));
+    const ic = icon(dc === 'humidity' ? 'humid' : dc === 'temperature' ? 'thermo' : dc === 'power' || dc === 'energy' ? 'bolt' : 'dot', { color: ctx.accent, size: 16 });
+    if (st && !mc && UNAVAILABLE.includes(st.state)) return goneBox(ctx, '—', 'mid', ic);
+    const probe = deadProbe(ctx);
+    if (probe) return goneBox(ctx, 'Offline', 'mid', ic, probe.replace(/^Sensor offline · /, ''));
+    const val = !st ? 'Missing' : mc || (isNaN(parseFloat(st.state)) ? st.state : fmt(st.state, ''));
     const old = outdoorStale(ctx.hass, ctx.card.entity);
-    return `<div class="box" style="box-shadow:inset 0 0 0 1px var(--line)${old ? ';opacity:.6' : ''}"><div class="row">${icon(dc === 'humidity' ? 'humid' : dc === 'temperature' ? 'thermo' : dc === 'power' || dc === 'energy' ? 'bolt' : 'dot', { color: ctx.accent, size: 16 })}<b style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(ctx.name)}</b><span class="flex1"></span>${old ? `<span class="hint">${esc(old)}</span>` : ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div><div class="rowb"><span class="mid"${mc ? ' style="font-size:18px;font-weight:500;letter-spacing:0"' : ''}>${esc(val)}</span><span class="sm">${esc(mc || isNaN(parseFloat(st && st.state)) ? '' : unit)}</span></div>${st ? sparkline(ctx.hass, ctx.card.entity, ctx.accent) : ''}</div>`;
+    return `<div class="box" style="box-shadow:inset 0 0 0 1px var(--line)${old ? ';opacity:.6' : ''}"><div class="row">${ic}<b class="ttl">${esc(ctx.name)}</b><span class="flex1"></span>${old ? `<span class="hint">${esc(old)}</span>` : ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div><div class="rowb"><span class="mid"${mc ? ' style="font-size:18px;font-weight:500;letter-spacing:0"' : ''}>${esc(val)}</span><span class="sm">${esc(mc || isNaN(parseFloat(st && st.state)) ? '' : unit)}</span></div>${st ? sparkline(ctx.hass, ctx.card.entity, ctx.accent) : ''}</div>`;
   },
   more: (ctx) => histBlock(ctx),
   tap: () => null,
@@ -418,10 +445,13 @@ const readings = {
   item: { span: 3, grow: 4, dir: 'down', want: 4, full: true },
   accent: () => 'var(--sky)',
   face: (ctx) => {
-    const first = ctx.hass.states[(ctx.card.entities || [])[0]];
-    const unit = first && first.attributes.unit_of_measurement;
+    const first = history.readingsFirst(ctx.hass, ctx.card.entities);
+    const unit = (first && first.attributes.unit_of_measurement) || ctx.hass.config.unit_system.temperature;
     const dc = first && first.attributes.device_class;
-    const color = dc === 'humidity' ? (v) => (v < 35 ? 'var(--amber)' : v <= 55 ? 'var(--teal)' : v <= 60 ? 'var(--sky)' : 'var(--indigo)') : (v) => warmth(v, unit);
+    // Soil is coloured by how wet it is, never by warmth: 35% read as 35°C
+    // and was drawn rose, as if it were hot.
+    const color = dc === 'humidity' ? (v) => (v < 35 ? 'var(--amber)' : v <= 55 ? 'var(--teal)' : v <= 60 ? 'var(--sky)' : 'var(--indigo)')
+      : isMoisture(first) ? (v) => (v < 20 ? 'var(--amber)' : v <= 60 ? 'var(--teal)' : 'var(--sky)') : (v) => warmth(v, unit);
     return `<div class="box ov" style="box-shadow:inset 0 0 0 1px var(--line)">${history.readings(ctx.hass, ctx.card, ctx.H, color, { name: ctx.card.name || (dc === 'humidity' ? 'Humidity' : 'Temperature'), hint: ctx.hint })}</div>`;
   },
   more: () => '',
@@ -434,6 +464,7 @@ const meter = {
   accent: (ctx) => (ctx.st && /water|gas/.test(ctx.st.attributes.device_class || '') ? 'var(--sky)' : 'var(--amber)'),
   face: (ctx) => {
     const st = ctx.st; const unit = (st && st.attributes.unit_of_measurement) || '';
+    const seen = lastSeen(st);
     const now = Date.now(); const d0 = new Date(); d0.setHours(0, 0, 0, 0);
     const week = st ? history.stats(ctx.hass, ctx.card.entity, d0.getTime() - 6 * 86400000, now, 'day') : null;
     const ok = week && !week.error && week.length;
@@ -444,7 +475,7 @@ const meter = {
     const vals = ok ? week.map((w) => w.change || 0) : [];
     const hi = Math.max(1e-6, ...vals);
     const bars = ok ? `<div class="cols" style="height:40px;gap:4px">${week.map((w, i) => `<span class="colbar" role="img" aria-label="${esc(new Date(w.t).toLocaleDateString([], { weekday: 'short' }) + ' · ' + fmt(vals[i], unit))}" style="flex:1;height:${Math.max(2, vals[i] / hi * 38)}px;background:${mix(ctx.accent, i === vals.length - 1 ? 85 : 45)}"></span>`).join('')}</div>` : '';
-    return `<div class="box" style="box-shadow:inset 0 0 0 1px var(--line)"><div class="row">${icon(/water/.test((st && st.attributes.device_class) || '') ? 'water' : 'bolt', { color: ctx.accent, size: 16 })}<b style="font-size:13px">${esc(ctx.name)}</b><span class="flex1"></span>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div><div class="rowb"><span class="mid">${today != null ? esc(fmt(today, '')) : '—'}</span><span class="sm">${esc(unit)} today</span></div>${bars}</div>`;
+    return `<div class="box" style="box-shadow:inset 0 0 0 1px var(--line)"><div class="row">${icon(/water/.test((st && st.attributes.device_class) || '') ? 'water' : 'bolt', { color: ctx.accent, size: 16 })}<b style="font-size:13px">${esc(ctx.name)}</b><span class="flex1"></span>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div><div class="rowb"><span class="mid${seen ? ' gone' : ''}">${today != null ? esc(fmt(today, '')) : '—'}</span><span class="sm">${esc(unit)} today${seen ? ' · ' + esc(seen) : ''}</span></div>${bars}</div>`;
   },
   more: (ctx) => histBlock(ctx),
   tap: () => null,
@@ -602,6 +633,7 @@ const weather = {
   accent: () => 'var(--amber)',
   face: (ctx) => {
     const st = ctx.st; if (!st) return `<div class="box"><b>${esc(ctx.name)}</b><span class="sm">Missing</span></div>`;
+    if (off(st)) return goneBox(ctx, '—', 'big');
     const a = st.attributes; const unit = a.temperature_unit || '°';
     const days = forecast(ctx.hass, ctx.card.entity, 'daily') || [];
     const sunny = ['sunny', 'clear-night', 'partlycloudy'].includes(st.state);
@@ -673,7 +705,7 @@ const entity = {
     const st = ctx.st; const unit = (st && st.attributes.unit_of_measurement) || '';
     const mc = st ? minecraftStatus(ctx.hass, ctx.card.entity) : null;
     const idle = st && !mc && IDLE.includes(st.state) && !unit;
-    const val = !st ? 'Missing' : mc || (idle ? `${stateWord(st)} ${since(st.last_changed)}`.trim() : isNaN(parseFloat(st.state)) ? st.state : fmt(st.state, unit));
+    const val = !st ? 'Missing' : mc || (off(st) ? `${stateWord(st)} · ${lastSeen(st)}` : idle ? `${stateWord(st)} ${since(st.last_changed)}`.trim() : isNaN(parseFloat(st.state)) ? st.state : fmt(st.state, unit));
     return stripFace({ kind: 'none', icon: entityIcon(ctx), accent: ctx.accent, active: st && st.state === 'on', name: ctx.name, val, valColor: 'var(--muted)', hint: ctx.hint });
   },
   more: (ctx) => histBlock(ctx),
