@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.20
+
+### Fixed
+
+- If brAIn's panel is stopped while it is still starting up, it now waits for the start-up step already running to finish before it returns. Before, the step's thread could keep writing into brAIn's folders after the panel had stopped.
+
 ## 5.1.19
 
 ### Fixed
