@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.11
+
+### Removed
+
+- The 5.1.10 Settings changes are taken back while a new fault is looked into: the house saw runs end on a timeout twice in the day after installing 5.1.10, and the cause could not be traced to one change, so the whole release is reverted (#747). Settings shows its earlier layout until the three fixes come back (#744, #745, #746).
+
 ## 5.1.10
 
 ### Changed
