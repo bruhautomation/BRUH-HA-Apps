@@ -25,8 +25,9 @@ import json
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
@@ -61,10 +62,10 @@ class GradedOnce(unittest.TestCase):
         self.findings: list[dict] = []
         self.settled: list[dict] = []
         for patch in (
-                mock.patch.object(outcomes, "VERDICTS_FILE", self.path),
-                mock.patch.object(outcomes.findings_store, "list_all",
+                unittest.mock.patch.object(outcomes, "VERDICTS_FILE", self.path),
+                unittest.mock.patch.object(outcomes.findings_store, "list_all",
                                   side_effect=lambda *a: list(self.findings)),
-                mock.patch.object(outcomes.findings_store, "settled_listing",
+                unittest.mock.patch.object(outcomes.findings_store, "settled_listing",
                                   side_effect=lambda: list(self.settled))):
             patch.start()
             self.addCleanup(patch.stop)
@@ -84,17 +85,17 @@ class GradedOnce(unittest.TestCase):
     def test_an_unchanged_log_is_graded_once(self):
         now = T0 + 3600
         # A grade is the context, then `_grade_row` once per verdict row.
-        with mock.patch.object(outcomes, "_grade_row",
+        with unittest.mock.patch.object(outcomes, "_grade_row",
                                wraps=outcomes._grade_row) as g, \
-                mock.patch.object(outcomes.json, "loads",
+                unittest.mock.patch.object(outcomes.json, "loads",
                                   wraps=json.loads) as parsed:
             graded = [outcomes.load_graded(now + k) for k in range(5)]
         self.assertEqual(g.call_count, 40, "the log was graded on every ask")
         self.assertEqual(parsed.call_count, 40,
                          "the log's lines were parsed on every ask")
-        with mock.patch.object(outcomes, "_grade_row",
+        with unittest.mock.patch.object(outcomes, "_grade_row",
                                wraps=outcomes._grade_row) as g, \
-                mock.patch.object(outcomes, "_items",
+                unittest.mock.patch.object(outcomes, "_items",
                                   wraps=outcomes._items) as it:
             answers = [outcomes.graded_items(now + k) for k in range(5)]
         self.assertEqual(g.call_count, 0, "the same log was graded again")
@@ -119,7 +120,7 @@ class GradedOnce(unittest.TestCase):
     def test_an_appended_row_is_parsed_alone_and_seen(self):
         outcomes.load_rows()
         self.append(look_row(40))
-        with mock.patch.object(outcomes.json, "loads",
+        with unittest.mock.patch.object(outcomes.json, "loads",
                                wraps=json.loads) as loads:
             rows = outcomes.load_rows()
         self.assertEqual(loads.call_count, 1,
@@ -128,7 +129,7 @@ class GradedOnce(unittest.TestCase):
         self.assertEqual(rows[-1]["id"], "r40")
         outcomes.graded_items(T0 + 3600)
         self.append(look_row(41))
-        with mock.patch.object(outcomes, "_grade_row",
+        with unittest.mock.patch.object(outcomes, "_grade_row",
                                wraps=outcomes._grade_row) as g:
             its = outcomes.graded_items(T0 + 3600)
         self.assertEqual(g.call_count, 1,
