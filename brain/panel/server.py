@@ -11903,7 +11903,11 @@ async def _run_sre(reason: str = "schedule") -> None:
         if held:
             await asyncio.to_thread(decision_trail.note_many,
                                     sre.trail_rows(held), now)
-        parsed["causes"] = kept
+        # A cause drawn from a sensor the owner called broken is not filed
+        # (#788): the one helper the checks and the Resident read, its
+        # floors first, a trail entry for each cause it drops.
+        parsed["causes"] = await asyncio.to_thread(
+            _sre_without_broken, kept, dig, collected.get("states"))
         rows = sre.rows(parsed["causes"], dig, state, now)
         summary.update(transient=len(held))
         summary.update(ran=True, causes=len(parsed["causes"]),
@@ -11940,6 +11944,23 @@ async def _run_sre(reason: str = "schedule") -> None:
     journal.record("sre", "ok", extra={"records": summary["records"],
                                        "causes": summary["causes"],
                                        "filed": len(created)})
+
+
+def _sre_without_broken(causes: list[dict], dig: dict,
+                        states: dict | None) -> list[dict]:
+    try:
+        faulty = corrections.known_faulty()
+    except Exception as exc:  # noqa: BLE001 — unread sets nothing aside
+        log.debug("sre: the sensors called broken unread: %s", exc)
+        return causes
+    states = states if isinstance(states, dict) else {}
+
+    def device_class(eid: str) -> str:
+        attrs = (states.get(eid) or {}).get("attributes") or {}
+        return str(attrs.get("device_class") or "") or _device_class(eid)
+
+    return sre.set_aside_broken(causes, dig, faulty,
+                                device_class=device_class)
 
 
 def _sre_payload() -> dict:
@@ -14045,7 +14066,12 @@ def _open_case_rows(limit: int = 12, exclude=None) -> list[str]:
         # id — the half that answers it — always survives the cap.
         eid = str(c.get("entity_id") or "").strip()
         tail = f" — {eid}" if eid else ""
-        out.append(textclip.clip(f"[{c['kind']}] {c['claim']}",
+        # A finding's id leads its line, so a look that says a row repeats
+        # it names it by the id (`same_as`), never in prose
+        # that would point at nothing on screen (#790).
+        cid = str(c.get("id") or "")
+        lead = f"{cid} " if cid.startswith("f:") else ""
+        out.append(textclip.clip(f"{lead}[{c['kind']}] {c['claim']}",
                                  160 - len(tail)) + tail)
     return out
 
@@ -14529,7 +14555,8 @@ async def _resident_look(now: float, settings: dict, thinking: str,
                             look_inputs, result, cost, now)
     verdicts = resident.parse_first_look(
         _answer(result), len(batch), batch,
-        floors=outcomes.overruled_floors(batch, passed_over))
+        floors=outcomes.overruled_floors(batch, passed_over),
+        device_class=_device_class)
     # A sensor the household called broken is not reasoned about (#701):
     # whatever the look said of it, it is let go, with a trail entry; the
     # never-ignore floors keep a leak, a lock or an alarm whatever was said.
@@ -14627,7 +14654,12 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
                 # A row the look called already answered, marked wrong
                 # before or a duplicate is held even if silence already
                 # showed it (`findings_store.record_triage`'s third slot).
-                decided[ts] = ("held", why, bool(answer.get("already")))
+                # The card it named (`same_as`) keeps the look's sentence
+                # about it only when the owner can see that card, and the
+                # word decides the store's floor (#790).
+                decided[ts] = ("held", why, bool(answer.get("already")),
+                               int(answer.get("same_as") or 0),
+                               str(answer.get("already") or ""))
             continue
         if (ts and answer.get("fallback") and signal.get("record_hold")
                 and not resident.never_ignore(signal)[0]):
@@ -15141,7 +15173,18 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     # tripped detector or a protected lock is looked at whatever a run
     # says about what the house knows (the same floor the gate above and
     # the first look hold).
-    code, said = resident.unfinished(case, resident.never_ignore(signal)[0])
+    # The not-news floor too (#790): a lock, a security check, a critical
+    # row or a leak or smoke sensor is reported whatever the word said.
+    code, said = resident.unfinished(
+        case, resident.never_ignore(signal)[0]
+        or findings_store.not_news_floor({
+            **(refining or {}),
+            **({"stakes": case["stakes"]} if case.get("stakes") else {}),
+            "entity_id": (str((refining or {}).get("entity_id") or "")
+                          or str(case.get("entity_id") or "")
+                          or str(signal.get("subject") or "")),
+            "source": str((refining or {}).get("source")
+                          or signal.get("source") or "")}))
     if code:
         log.info("an investigation of %s was not a finding (%s)",
                  signal.get("subject"), code)

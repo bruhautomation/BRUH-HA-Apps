@@ -2,6 +2,25 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.17
+
+### Fixed
+
+- When the Resident's first look decides a finding is not news (already answered, a duplicate, explained, recovered, or marked Wrong), the finding is held in History instead of shown, with the reason kept. `cosmetic` and `known` hold back only a single light, media player, weather, sun, zone or TTS entity whose name says nothing of food, water or a leak. Anything about safety, security, a protected entity or no entity at all is always shown. A look's link to a card you cannot see is dropped from its sentence and never moves the row (#790).
+- After you say a sensor is broken or to be ignored, the Resident and the overnight check stop building new reports on that sensor's readings (#788).
+
+## 5.1.16
+
+### Added
+
+- brAIn's Minecraft tools follow BRUH Minecraft 1.19.7: `minecraft_world` takes a `dimension` (Overworld, Nether, End) for looks and edits, and a skin is set through the add-on's `set_skin` service, which waits for the server's own answer and accepts a picture link (#782, #760).
+- A grown-up's game run is told how a lever or button can drive the house (a command block saying `bruh:signal`); a child's run and the shared tool description never carry it (#777).
+
+### Fixed
+
+- A skin request that gets no answer within a minute says the outcome is unknown instead of saying it failed (#760).
+- Block checks during a build use the add-on's quiet check, so players no longer see "[Rcon] ok" in chat (#761).
+
 ## 5.1.15
 
 ### Fixed
