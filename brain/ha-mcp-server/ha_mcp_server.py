@@ -1743,6 +1743,11 @@ def call_service(domain, service, data=None, return_response=False, timeout=None
             }, **({"timeout": timeout} if timeout else {}))
         except ImportError:
             return {"error": "websockets package not available in this environment"}
+        except TimeoutError as e:
+            # The call went out and no answer came back in time: what it did
+            # is unknown, and the caller may say so rather than "it failed".
+            return {"error": str(e) or "Home Assistant did not answer in time",
+                    "timed_out": True}
         except Exception as e:  # noqa: BLE001
             return {"error": str(e)}
         if isinstance(result, dict) and "error" in result:
@@ -2867,7 +2872,7 @@ def _addon_call(domain, service, data=None, timeout=None):
                 f"{name}'s Home Assistant integration is not set up, or {ADDON_TOO_OLD} "
                 f"({domain}.{service}). Tell the user to install "
                 f"or update the {name} add-on and add its integration.")}
-        return {"error": text}
+        return {"error": text, **({"timed_out": True} if result.get("timed_out") else {})}
     response = result.get("response") if isinstance(result, dict) else None
     return response if isinstance(response, dict) else {}
 
@@ -3414,6 +3419,14 @@ def _mc_skin(value, player):
                                             target=target)}
     result = _mc_set_skin(target, skin)
     if result is not None:
+        if result.get("timed_out"):
+            # The request went out and no answer came back: the skin may
+            # well be on, so the outcome is unknown, not a failure.
+            return {"done": None, "player": target, "skin": skin,
+                    "error": ("The server did not say whether the skin went on "
+                              f"(no answer within {MC_SKIN_TIMEOUT} s). Ask the player "
+                              "to look, or rejoin to see it."),
+                    "said": rules.SKIN_LINES["unsure"].format(skin=rules.skin_label(skin))}
         if result.get("error"):
             # The add-on's refusal is SkinsRestorer's reason, in its words.
             why = str(result["error"])
@@ -7707,10 +7720,7 @@ TOOLS = [
             "id puts it all back; job: the job id when a job is doing it, so "
             "cancelling the job puts it back; dimension: for look and edit by "
             "coordinates, overworld, nether or end — left out, the job's, else the "
-            "nearest player's). A lever or button that drives the house is a command "
-            "block running `say bruh:signal <name> [data]` (one name per button, the "
-            "block unrenamed): it fires the bruh_minecraft_signal event {name, data} a "
-            "Home Assistant automation triggers on; think (value: a few words of what you "
+            "nearest player's); think (value: a few words of what you "
             "are working out or about to do — shown to the person you are working for "
             "in a small bubble over your allay (everybody in the game sees it) and in "
             "their journal book, never in chat; "

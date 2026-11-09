@@ -13,13 +13,17 @@ Driven here: every game run's rules say how to check a block and never
 `run say`; a trusted grown-up's run (the one with the console and the house)
 is told the signal recipe — one name per button, an unrenamed command block,
 the event an automation triggers on; a child's run is not offered a link to
-the house; and `minecraft_world`'s own description carries the same.
+the house; and `minecraft_world`'s own description carries only the quiet
+check, because tools/list serves it to the game channel a child's run uses.
 """
 from __future__ import annotations
 
+import json
+import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -56,6 +60,11 @@ class TestTheRules(DeskCase):
                       "automation", "one name per button", "unrenamed command block"):
             self.assertIn(words, head)
 
+    def test_only_the_trusted_head_carries_the_signal(self):
+        self.assertIn("bruh:signal", self.head(GROWN_UP, mc.TRUSTED_TOOLS))
+        tool = next(t for t in m.TOOLS if t["name"] == "minecraft_world")
+        self.assertNotIn("bruh:signal", tool["description"])
+
     def test_a_childs_run_is_offered_no_link_to_the_house(self):
         for who in (CHILD, GROWN_UP):
             head = self.head(who, mc.TALK_TOOLS)
@@ -64,18 +73,31 @@ class TestTheRules(DeskCase):
 
 
 class TestTheToolSaysSo(unittest.TestCase):
-    def test_the_description_names_the_signal_and_the_quiet_check(self):
-        tool = next(t for t in m.TOOLS if t["name"] == "minecraft_world")
-        text = tool["description"]
-        self.assertIn("say bruh:signal <name> [data]", text)
-        self.assertIn("bruh_minecraft_signal", text)
+    """`minecraft_world`'s description is served on every non-voice channel,
+    the game channel a child's guarded run uses among them, so the house
+    link lives only in the trusted run's head and never in the tool."""
+
+    def description(self):
+        return next(t for t in m.TOOLS if t["name"] == "minecraft_world")["description"]
+
+    def test_the_description_names_the_quiet_check_but_not_the_signal(self):
+        text = self.description()
+        self.assertNotIn("bruh:signal", text)
+        self.assertNotIn("bruh_minecraft_signal", text)
         self.assertIn("run say", text)
         self.assertIn("dimension", text)
+
+    def test_the_game_channels_tool_list_offers_no_signal(self):
+        env = {"BRAIN_CHANNEL": m.MINECRAFT_CHANNEL, "BRAIN_GAME_PLAYER": KAZ}
+        with patch.dict(os.environ, env), \
+                patch.object(m, "_absent_addon_tools", return_value=set()):
+            tools = m.tools_for_channel()
+        self.assertIn("minecraft_world", [t["name"] for t in tools])
+        self.assertNotIn("bruh:signal", json.dumps(tools))
 
     def test_voice_sees_none_of_it(self):
         voice = m.VOICE_TOOL_VARIANTS["minecraft_world"]["description"]
         self.assertNotIn("bruh:signal", voice)
-
 
 if __name__ == "__main__":
     unittest.main()

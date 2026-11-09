@@ -51,6 +51,7 @@ class SetSkinCore(FakeCore):
     has_set_skin = True
     answer = {"worked": True, "reply": "Your skin has been changed.", "player": ".EmmaPlays"}
     refuse = ""
+    silent = False
 
     def __call__(self, payload, timeout=15):
         if payload.get("type") == "get_services":
@@ -66,6 +67,8 @@ class SetSkinCore(FakeCore):
             if key[1] == "set_skin":
                 if not self.has_set_skin:
                     return {"error": "Service bruh_minecraft.set_skin not found."}
+                if self.silent:
+                    raise TimeoutError("timed out during opening handshake")
                 if self.refuse:
                     return {"error": self.refuse}
                 return {"response": dict(self.answer)}
@@ -137,6 +140,14 @@ class TestTheToolUsesSetSkin(ToolCase):
         got = m.minecraft_world("skin", "Notch", player="DadCraft42")
         self.assertIn("do not say it worked", got["note"])
         self.assertIn("SkinsRestorer said nothing", got["note"])
+
+    def test_no_answer_at_all_is_unknown_not_a_failure(self):
+        self.core.silent = True
+        got = m.minecraft_world("skin", "Notch", player="DadCraft42")
+        self.assertIsNone(got["done"])
+        self.assertIn("did not say", got["error"])
+        self.assertNotIn("did not go on:", got["error"])
+        self.assertIn("didn't say whether", got["said"])
 
     def test_a_refusal_is_a_refusal_in_its_words_and_is_not_remembered(self):
         self.core.refuse = "SkinsRestorer did not change the skin: Error: skin not found"
