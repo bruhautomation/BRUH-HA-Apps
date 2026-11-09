@@ -1571,6 +1571,83 @@ for (const width of WIDTHS) {
   await context.close();
 }
 
+// #745: a Run that cannot run says why, in words that name where to go, and
+// its disabled button is still readable.
+for (const width of WIDTHS) {
+  const touch = width < 800;
+  const at = `review signed out ${width}px`;
+  const { context, page } = await openPanel(width,
+    `window.__review = ${JSON.stringify({ ...REVIEW, authenticated: false })};`, touch);
+  await openView(page, 'memory');
+  await page.waitForSelector('#kReviewRun .kreviewrun', { timeout: 5000 })
+    .catch(() => note(at, 'the deep review line never rendered'));
+  const so = await page.evaluate(() => {
+    const btn = document.querySelector('#kReviewRun .kreviewrun .btn');
+    const cs = btn ? getComputedStyle(btn) : null;
+    const rgb = (c) => (c.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+    const lum = (c) => { const [r, g, b] = rgb(c).map((v) => {
+      v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+    let bg = null;
+    for (let n = btn; n && !bg; n = n.parentElement) {
+      const c = getComputedStyle(n).backgroundColor;
+      if (!/rgba\(.*, 0\)|transparent/.test(c)) bg = c;
+    }
+    const a = lum(cs ? cs.color : 'rgb(0,0,0)'), b = lum(bg || 'rgb(255,255,255)');
+    return { meta: (document.getElementById('kReviewMeta') || {}).textContent || '',
+             disabled: !!(btn && btn.disabled), opacity: cs ? Number(cs.opacity) : 0,
+             ratio: (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05) };
+  });
+  if (!/Sign in to Claude in Settings › Account first/.test(so.meta)) {
+    note(at, `the caption says "${so.meta}", not where to sign in`);
+  }
+  if (/open to sign in/.test(so.meta)) note(at, 'the caption still says "open to sign in first"');
+  if (!so.disabled) note(at, 'Run is pressable while signed out');
+  if (so.opacity < 1 || so.ratio < 4.5) {
+    note(at, `the disabled Run is faded (opacity ${so.opacity}, contrast ${so.ratio.toFixed(2)}:1)`);
+  }
+  console.log(`${failures.length ? 'ok? ' : 'ok  '}deep review signed out ${String(width).padStart(4)}px`);
+  await context.close();
+}
+
+// #745 in the dark (the panel's default ground): the disabled Run is as
+// readable there as in the light.
+{
+  const at = 'review signed out, dark, 390px';
+  const { context, page } = await openPanel(390,
+    `window.__review = ${JSON.stringify({ ...REVIEW, authenticated: false })};`, true);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await openView(page, 'memory');
+  await page.waitForSelector('#kReviewRun .kreviewrun', { timeout: 5000 })
+    .catch(() => note(at, 'the deep review line never rendered'));
+  const dk = await page.evaluate(() => {
+    const btn = document.querySelector('#kReviewRun .kreviewrun .btn');
+    const cs = btn ? getComputedStyle(btn) : null;
+    const rgb = (c) => (c.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+    const lum = (c) => { const [r, g, b] = rgb(c).map((v) => {
+      v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+    let bg = null;
+    for (let n = btn; n && !bg; n = n.parentElement) {
+      const c = getComputedStyle(n).backgroundColor;
+      if (!/rgba\(.*, 0\)|transparent/.test(c)) bg = c;
+    }
+    const a = lum(cs ? cs.color : 'rgb(0,0,0)'), b = lum(bg || 'rgb(0,0,0)');
+    return { disabled: !!(btn && btn.disabled), opacity: cs ? Number(cs.opacity) : 0,
+             ratio: (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05),
+             meta: (document.getElementById('kReviewMeta') || {}).textContent || '' };
+  });
+  if (!/Sign in to Claude in Settings › Account first/.test(dk.meta)) {
+    note(at, `the caption says "${dk.meta}", not where to sign in`);
+  }
+  if (!dk.disabled) note(at, 'Run is pressable while signed out');
+  if (dk.opacity < 1 || dk.ratio < 4.5) {
+    note(at, `the disabled Run is faded (opacity ${dk.opacity}, contrast ${dk.ratio.toFixed(2)}:1)`);
+  }
+  console.log(`${failures.length ? 'ok? ' : 'ok  '}deep review signed out, dark  390px`);
+  await context.close();
+}
+
 // ------------------------------------------- the one home for memory
 // Memory › Knowledge holds the memory document (Edit, Export, the queue and
 // its count) and "What brAIn brings to a run"; ⚙ holds neither (asserted in
