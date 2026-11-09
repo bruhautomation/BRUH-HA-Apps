@@ -1444,6 +1444,9 @@ body.modal-open {
   /* The list alone, or the section alone: never both on a phone. */
   #setModal.setindex .setbody { display: none; }
   #setModal:not(.setindex) .setnav { display: none; }
+  /* An open section is reached by "‹ Settings" and named by its own title;
+     the page's "Settings" above them made it say the word twice (#744). */
+  #setModal:not(.setindex) .setpagehead .panetitle { display: none; }
   .setback {
     display: inline-flex; align-items: center; min-height: 44px; margin: -6px 0 2px -8px;
     padding: 0 8px; border: 0; background: transparent; color: var(--accent-2);
@@ -1540,6 +1543,11 @@ body.modal-open {
   border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--hairline));
   border-radius: var(--control-radius);
 }
+/* ⚙ › Features: the section is the one box and the switches are rows in it,
+   divided by lines, not cards inside a card (#746). */
+#setsecFeatures .setgroup.featlist { border: 0; border-radius: 0; background: transparent; }
+#setModal #setsecFeatures .setgroup > .setrow { padding-left: 0; padding-right: 0; }
+#setModal #setsecFeatures .setgroup > .setgroupnote { padding-left: 0; padding-right: 0; }
 #setModal .setgroup > .setgroupfield { padding: var(--sp-3) var(--sp-4) var(--sp-2); }
 #setModal .setgroup > .setgroupfield > label:not(.check):not(.setcam) { margin-top: 0; }
 /* The budget slider's two ends: 5% at the left, "No limit" past 100% at
@@ -5899,6 +5907,8 @@ body.term-classic #termMode .ico-out { display: block; }
 .kreview { max-width: 68ch; }
 .kreviewrun { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
 .kreviewrun .btn { min-height: 44px; }
+/* A Run that cannot run is still legible: the caption beside it says why. */
+.kreviewrun .btn:disabled { opacity: 1; color: var(--ink-2); background: var(--surface-2); border-style: dashed; }
 .kreviewsignin { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .kreviewsignin .btn { min-height: 44px; }
 .reportrowhint { margin: var(--sp-1) 0 0; font-size: var(--fs-meta); line-height: var(--lh-meta);

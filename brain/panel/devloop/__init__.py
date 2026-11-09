@@ -171,10 +171,31 @@ STREAMS: dict[str, dict] = {
 # The schedule choices, in hours. 0 is "only when asked" — Run now, the
 # What do you want to fix? box and `brain devloop` still work.
 HOURS_CHOICES = (0, 1, 3, 6, 12, 24, 168)
-# The two caps that keep an unattended loop from being an unattended bill
-# or an unattended flood. A cap REFUSES rather than queueing: the next day
-# is a fresh allowance, and a backlog filed all at once is the flood.
-CAP_LIMITS = {"max_issues_per_day": (0, 50), "max_runs_per_day": (0, 24)}
+# The two daily caps, as (lowest, highest); None is no ceiling. Claude runs
+# cost money, so they keep a cap. New issues do not (#797, the owner: "If
+# there is an issue to send, just send it"): 0, the default, is NO limit,
+# and every ready report goes on the next pass. A number the owner sets is
+# kept, and past it a report waits for tomorrow rather than being dropped.
+CAP_LIMITS = {"max_issues_per_day": (0, None), "max_runs_per_day": (0, 24)}
+# Before #797 the issue cap defaulted to 10, and autopilot read it as at
+# least 20 — which the panel then saved back. A stored 10 or 20 written
+# before the marker below existed is one of those, not a number anybody
+# chose, so it reads as no limit; a save writes the marker, and from then
+# on every stored number is the owner's own.
+OLD_ISSUE_CAPS = (10, 20)
+ISSUE_CAP_MARK = "issue_cap_chosen"
+
+
+def in_limits(value, limits: tuple) -> bool:
+    """A whole number (never a bool) within (lowest, highest)."""
+    lo, hi = limits
+    return (isinstance(value, int) and not isinstance(value, bool)
+            and value >= lo and (hi is None or value <= hi))
+
+
+def limits_text(limits: tuple) -> str:
+    lo, hi = limits
+    return f"from {lo} to {hi}" if hi is not None else f"of {lo} or more"
 
 # "Autopilot": the owner has handed brAIn's development to the loop. Every
 # stream on, on these schedules, nothing waiting for a press, and caps no
@@ -185,7 +206,9 @@ AUTOPILOT_HOURS = {"faults": 1, "scorecard": 24, "wrongs": 24, "outcomes": 24, "
                    "snapshot": 168, "gaps": 24, "ideas": 168, "design": 24,
                    "screens": 168, "morph": 1, "siblings": 1,
                    "walkthrough": 24, "look": 0, "canary": 1, "corpus": 24}
-AUTOPILOT_CAPS = {"max_issues_per_day": 20, "max_runs_per_day": 8}
+# Only runs: the issue cap is no limit unless the owner sets one (#797),
+# and autopilot leaves a number they set alone.
+AUTOPILOT_CAPS = {"max_runs_per_day": 8}
 
 DEFAULTS = {
     "enabled": False,
@@ -197,7 +220,8 @@ DEFAULTS = {
     # default because the first few reports are how somebody learns what
     # "aliased" means on their own house.
     "review": True,
-    "max_issues_per_day": 10,
+    # 0 is no limit (#797): every ready report goes on the next pass.
+    "max_issues_per_day": 0,
     "max_runs_per_day": 4,
     # How long a declined, not-brAIn or duplicate verdict silences a report
     # (`upstream.STAND_DOWN_STREAMS`): it used to be for ever, and a wrong
@@ -241,8 +265,6 @@ def _apply_autopilot(settings: dict) -> dict:
     out["schedule"] = {k: AUTOPILOT_HOURS.get(k, v["default_hours"])
                        for k, v in STREAMS.items()}
     out["review"] = False
-    out["max_issues_per_day"] = max(int(out.get("max_issues_per_day") or 0),
-                                    AUTOPILOT_CAPS["max_issues_per_day"])
     out["max_runs_per_day"] = max(int(out.get("max_runs_per_day") or 0),
                                   AUTOPILOT_CAPS["max_runs_per_day"])
     return out
@@ -279,11 +301,13 @@ def _raw_settings() -> dict:
             if isinstance(data.get("schedule"), dict) else []:
         if name in STREAMS and hours in HOURS_CHOICES:
             out["schedule"][name] = hours
-    for key, (lo, hi) in {**CAP_LIMITS, **NUMBER_LIMITS}.items():
+    for key, limits in {**CAP_LIMITS, **NUMBER_LIMITS}.items():
         value = data.get(key)
-        if isinstance(value, int) and not isinstance(value, bool) \
-                and lo <= value <= hi:
+        if in_limits(value, limits):
             out[key] = value
+    if data.get(ISSUE_CAP_MARK) is not True \
+            and out["max_issues_per_day"] in OLD_ISSUE_CAPS:
+        out["max_issues_per_day"] = 0
     login = data.get("house_login")
     if isinstance(login, str) and LOGIN_RE.match(login):
         out["house_login"] = login
@@ -319,10 +343,10 @@ def save_settings(changes: dict) -> dict:
                                      f"{', '.join(map(str, HOURS_CHOICES))} hours")
                 current["schedule"][name] = hours
         elif key in CAP_LIMITS or key in NUMBER_LIMITS:
-            lo, hi = {**CAP_LIMITS, **NUMBER_LIMITS}[key]
-            if not isinstance(value, int) or isinstance(value, bool) \
-                    or not lo <= value <= hi:
-                raise ValueError(f"{key} must be a whole number from {lo} to {hi}")
+            limits = {**CAP_LIMITS, **NUMBER_LIMITS}[key]
+            if not in_limits(value, limits):
+                raise ValueError(f"{key} must be a whole number "
+                                 f"{limits_text(limits)}")
             current[key] = value
         elif key == "house_login":
             value = str(value or "").strip()
@@ -336,7 +360,9 @@ def save_settings(changes: dict) -> dict:
             current[key] = value
         else:
             raise ValueError(f"unknown setting: {key}")
-    atomic_write.write_json(settings_file(), current)
+    # Every stored issue cap from here on is the owner's own (or the
+    # no-limit default), never the old default read as a choice.
+    atomic_write.write_json(settings_file(), {**current, ISSUE_CAP_MARK: True})
     return _apply_autopilot(current)
 
 

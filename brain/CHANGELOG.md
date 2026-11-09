@@ -2,6 +2,42 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.22
+
+### Fixed
+
+- Settings' three fixes from 5.1.10 are back, without the background work that the revert removed. They are now only text, markup and styling.
+  - On a phone, an open Settings section shows "Settings" once (#744).
+  - When you are signed out, Deep review says "Sign in to Claude in Settings › Account first", and its disabled Run button stays readable (#745).
+  - Settings › Features is one box with the switches as rows, and Morph's experimental note is part of its description (#746).
+
+## 5.1.21
+
+### Changed
+
+- The development loop no longer caps how many new reports it files a day unless you set a limit. One pass files every report that is ready. The Developer setting reads "No limit" when it is empty. A stored 10 or 20 from before this release (the old default, or what autopilot saved back) is read as no limit; a number you set from now on is kept. A held report is never blamed on a cap that isn't set (#797).
+
+## 5.1.20
+
+### Fixed
+
+- If brAIn's panel is stopped while it is still starting up, it now waits for the start-up step already running to finish before it returns. Before, the step's thread could keep writing into brAIn's folders after the panel had stopped.
+
+## 5.1.19
+
+### Fixed
+
+- When brAIn's panel stops, every background loop now stops with it, including a card that was still being written. Before, a loop could outlive the panel. A cancel could also be lost when a Home Assistant request failed at the same moment, and the card was then recorded as failed and the stop took 5 s longer. Shutdown no longer writes a failed card or a problem report for work it cancelled itself.
+
+## 5.1.18
+
+### Fixed
+
+- A Morph tile or card for a device that has stopped answering no longer shows its last readings as if they were live. A freezer that is unavailable says so and when it was last seen, rather than showing a temperature, a target and how long the compressor has been off. An unavailable media player shows no track. In the rooms chart, an unavailable thermostat's line stops where it last answered (#764).
+- The rooms chart draws a line for every room that has readings, falling back to recorded history when a room has no statistics, and says which rooms have none (#757).
+- A soil probe whose reading falls to exactly 0% within minutes is shown as a probe to check, not as dry soil.
+- On a phone, a second tap on the Ask list's Send while the new chat is being made no longer starts two chats. If the chat could not be made, the message stays in the box.
+
 ## 5.1.17
 
 ### Fixed

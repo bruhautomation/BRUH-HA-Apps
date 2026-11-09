@@ -1119,49 +1119,37 @@
           <p class="hint">Each switch takes effect at once. Only the development loop sends
             anything out of this house.</p>
 
-          <div class="setgroup">
+          <div class="setgroup featlist">
             <div class="setrow top">
               <label class="check bigcheck"><input id="featMorph" class="tog" type="checkbox" data-feature="morph">
                 <span><b>Morph dashboard</b>
-                <span class="subtext">The Morph UI tab: a dashboard laid out by what matters in the
-                  house right now, which brAIn designs and edits with you.</span></span></label>
+                <span class="subtext">A dashboard laid out by what matters now, which brAIn designs
+                  with you. Experimental: actively developed, may be unstable.</span></span></label>
             </div>
-            <p class="hint setgroupnote featwarn">Experimental: Morph is still being actively
-              developed and may be unstable. Keep your usual dashboards beside it.</p>
             <p class="hint setgroupnote featwhere">Stays in this house.</p>
-          </div>
 
-          <div class="setgroup">
             <div class="setrow top">
               <label class="check bigcheck"><input id="featPersonality" class="tog" type="checkbox" data-feature="personality">
                 <span><b>Personality</b>
-                <span class="subtext">brAIn takes the name and personality you give it in
-                  Personality, everywhere: the sidebar, every screen, the chat, voice and
-                  notifications.</span></span></label>
+                <span class="subtext">brAIn uses the name and personality you give it on every
+                  screen, in chat, voice and notifications.</span></span></label>
             </div>
             <p class="hint setgroupnote featwhere">Stays in this house.</p>
-          </div>
 
-          <div class="setgroup">
             <div class="setrow top">
               <label class="check bigcheck"><input id="featLearning" class="tog" type="checkbox" data-feature="learning_loop">
                 <span><b>Learning loop (self-improvement)</b>
-                <span class="subtext">Everything brAIn learns here: what you say in a conversation
-                  or to voice, the nightly lessons from how its reports ended, the presence loop,
-                  the Morph dashboard's lessons and memory clean-up. Off, it still does what you
-                  ask, and learns and changes nothing on its own.</span></span></label>
+                <span class="subtext">brAIn learns from chats, voice and how its reports end. Off,
+                  it only does what you ask.</span></span></label>
             </div>
             <p class="hint setgroupnote" id="featLearned" hidden></p>
             <p class="hint setgroupnote featwhere">Stays in this house.</p>
-          </div>
 
-          <div class="setgroup">
             <div class="setrow top">
               <label class="check bigcheck"><input id="setDevloop" class="tog" type="checkbox">
                 <span><b>Development loop</b>
-                <span class="subtext">brAIn reports its own faults as issues in your private GitHub
-                  repository, where the cloud routine fixes brAIn's code and ships an
-                  update.</span></span></label>
+                <span class="subtext">brAIn files its own faults as issues in your private GitHub
+                  repository, so the cloud routine can fix them.</span></span></label>
             </div>
             <p class="hint setgroupnote featwhere featout">Leaves this house, with names, rooms and
               entity ids replaced by aliases. Set the repository in
@@ -1743,7 +1731,8 @@
             <div class="row devcaps">
               <div class="setfield">
                 <label for="devCapIssues">New issues a day</label>
-                <input id="devCapIssues" type="number" min="0" max="50" inputmode="numeric">
+                <input id="devCapIssues" type="number" min="0" step="1" placeholder="No limit"
+                  inputmode="numeric" aria-describedby="devCapIssuesHint">
               </div>
               <div class="setfield">
                 <label for="devCapRuns">Claude runs a day</label>
@@ -1751,6 +1740,9 @@
               </div>
               <button id="devCapSave" class="btn" aria-label="Save the daily caps">Save</button>
             </div>
+            <p id="devCapIssuesHint" class="hint tight">Leave new issues a day empty for no limit:
+              every report that is ready goes out on the next pass. A number holds the rest
+              until the next day.</p>
 
             <h5 class="setsubhead"><label for="devLook">What do you want to fix?</label></h5>
             <p class="hint tight">Say it the way you would to a person. One Claude run works out

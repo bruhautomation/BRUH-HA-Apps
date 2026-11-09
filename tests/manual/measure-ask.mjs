@@ -97,6 +97,9 @@ window.fetch = async (url, opts = {}) => {
                               { id: 'voice', label: 'Voice', count: 55 }],
                     sessions: [], max_sessions: 3 });
   }
+  // The server's new chat always has a key; the page treats one without
+  // a key as a chat that was not made.
+  if (p.includes('api/chat/new')) return answer({ ok: true, session_id: '', key: 'k-stub' });
   if (p.includes('api/chat/resume')) {
     return answer({ ok: true, resumed: true, row_state: { state: 'paused', label: '', hint: '' } });
   }
@@ -797,6 +800,61 @@ for (const moves of [true, false]) {
     note(where, `the message was neither sent nor kept (sent "${out.sent}", boxes ${JSON.stringify(out.kept)})`);
   }
   if (moves && out.sent !== said) note(where, `a brand-new chat refused its first message (sent "${out.sent}")`);
+  await context.close();
+}
+
+// ---- a second press while the first is making its chat makes nothing -----
+// The list's Send awaits the new chat before sending, and a second tap in
+// that round trip passed the same text check and started a second chat
+// with the same message. And a new chat that comes back without a key was
+// not made: the message stays in the box rather than going into the chat
+// being left.
+for (const made of [true, false]) {
+  const where = `390px list send pressed twice, ${made ? 'new chat made' : 'no new chat key'}`;
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 860 }, hasTouch: true, isMobile: true });
+  const page = await context.newPage();
+  page.on('pageerror', (e) => note(where, `page error: ${e.message}`));
+  await page.addInitScript(STUB);
+  await page.addInitScript(`
+    const f = window.fetch;
+    window.fetch = async (url, opts = {}) => {
+      if (/api\\/chat\\/new/.test(String(url))) {
+        await f(url, opts);
+        await new Promise((r) => setTimeout(r, 300));
+        return new Response(JSON.stringify(${made} ? { key: 'k-new', session_id: '' } : {}),
+          { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return f(url, opts);
+    };
+  `);
+  await page.goto(`file://${path.join(PANEL, 'index.html')}`);
+  await openView(page, 'terminal');
+  await page.waitForSelector('#chatRailInput', { state: 'visible', timeout: 5000 })
+    .catch(() => note(where, 'the list has no box'));
+  await page.evaluate(() => { window.__posts.length = 0; });
+  const said = 'Is the garage door shut';
+  await page.fill('#chatRailInput', said);
+  await page.evaluate(() => {
+    const form = document.querySelector('#chatRailForm');
+    form.requestSubmit(); form.requestSubmit();
+  });
+  await page.waitForFunction(() => window.__posts.some((x) => /chat\/new$/.test(x.path)),
+    null, { timeout: 4000 }).catch(() => note(where, 'Send did not start a new chat'));
+  await page.waitForTimeout(800);
+  const twice = await page.evaluate(() => ({
+    news: window.__posts.filter((x) => /chat\/new$/.test(x.path)).length,
+    sends: window.__posts.filter((x) => /chat\/send$/.test(x.path)).map((x) => x.body.text),
+    rail: document.querySelector('#chatRailInput').value,
+    busy: document.querySelector('#chatRailForm button[type="submit"]').disabled,
+  }));
+  if (twice.news !== 1) note(where, `two presses made ${twice.news} chats`);
+  if (twice.busy) note(where, 'Send stayed disabled after the chat was made');
+  if (made && (twice.sends.length !== 1 || twice.sends[0] !== said)) {
+    note(where, `the message was not sent once (sends ${JSON.stringify(twice.sends)})`);
+  }
+  if (!made && twice.sends.length) note(where, `a chat with no key was sent to anyway (${JSON.stringify(twice.sends)})`);
+  if (!made && twice.rail !== said) note(where, `the message left the box although no chat was made ("${twice.rail}")`);
   await context.close();
 }
 

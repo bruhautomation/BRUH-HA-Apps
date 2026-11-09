@@ -228,6 +228,51 @@ export function addBatch(fx) {
   ] });
 }
 
+// The tiles batch of 2026-11-09 (measure-morph's "tiles" block, `tiles: true`).
+// #764: things that stopped answering, of every kind that shows a figure —
+// a freezer's thermostat whose attributes still hold its last temperature
+// and target, a probe with a long name, a runtime, an energy meter, a sensor
+// that says `unknown`. #757: a chart of rooms whose readings have no
+// statistics (two thermostats, a sensor with no state_class) beside one
+// that has them, and a chart whose sensors have no history at all. #787: a
+// soil probe that fell straight to 0 with its battery at 1.6 V, beside one
+// that dried to 0 over the day (a real 0%) and one at 35%.
+export function addTiles(fx) {
+  const iso = (h) => new Date(Date.now() - h * 3600000).toISOString();
+  const put = (id, state, attributes, h) => { fx.states[id] = { entity_id: id, state, attributes, last_changed: iso(h == null ? 1 : h), last_updated: iso(h == null ? 1 : h) }; };
+  put('climate.chest_freezer', 'unavailable', { friendly_name: 'Chest Freezer', current_temperature: 52, temperature: 52, min_temp: -10, max_temp: 60, hvac_action: 'idle', hvac_modes: ['cool', 'off'] }, 26);
+  put('sensor.garage_freezer_temperature_probe', 'unavailable', { friendly_name: 'Garage Freezer Temperature Probe', device_class: 'temperature', unit_of_measurement: '°F', state_class: 'measurement' }, 73);
+  put('sensor.chest_freezer_compressor_runtime', 'unavailable', { friendly_name: 'Compressor runtime', unit_of_measurement: 'min' }, 26);
+  put('sensor.freezer_energy', 'unavailable', { friendly_name: 'Freezer energy', device_class: 'energy', unit_of_measurement: 'kWh', state_class: 'total_increasing' }, 26);
+  put('sensor.wine_fridge_temperature', 'unknown', { friendly_name: 'Wine Fridge Temperature', device_class: 'temperature', unit_of_measurement: '°F', state_class: 'measurement' }, 5);
+  put('sensor.den_temperature', '68.7', { friendly_name: 'Den Temperature', device_class: 'temperature', unit_of_measurement: '°F' });
+  put('sensor.shed_temperature', '57.3', { friendly_name: 'Shed Temperature', device_class: 'temperature', unit_of_measurement: '°F' });
+  put('sensor.studio_temperature', '66.1', { friendly_name: 'Studio Temperature', device_class: 'temperature', unit_of_measurement: '°F' });
+  put('sensor.garden_soil_moisture', '0', { friendly_name: 'Garden Soil Moisture', device_class: 'moisture', unit_of_measurement: '%', state_class: 'measurement' }, 3);
+  put('sensor.garden_soil_battery', '1.6', { friendly_name: 'Garden Soil Battery', device_class: 'voltage', unit_of_measurement: 'V' });
+  put('sensor.bed_soil_moisture', '0', { friendly_name: 'Bed Soil Moisture', device_class: 'moisture', unit_of_measurement: '%', state_class: 'measurement' }, 2);
+  put('sensor.lawn_soil_moisture', '35', { friendly_name: 'Lawn Soil Moisture', device_class: 'moisture', unit_of_measurement: '%', state_class: 'measurement' });
+  fx.entities = { 'sensor.garden_soil_moisture': { entity_id: 'sensor.garden_soil_moisture', platform: 'zha', device_id: 'dev_garden_probe' }, 'sensor.garden_soil_battery': { entity_id: 'sensor.garden_soil_battery', platform: 'zha', device_id: 'dev_garden_probe' } };
+  // Statistics exist only for a state_class; a thermostat has none of its own.
+  fx.noStats = ['sensor.den_temperature', 'sensor.shed_temperature', 'sensor.studio_temperature'];
+  fx.noHistory = ['sensor.shed_temperature', 'sensor.studio_temperature'];
+  fx.shapes = { 'sensor.garden_soil_moisture': 'cliff', 'sensor.bed_soil_moisture': 'dried', 'sensor.lawn_soil_moisture': 'flat' };
+  fx.dash.floors.unshift({ id: 'f_tiles', title: 'Tiles', sections: [
+    { id: 's_t_freezer', title: 'Freezers', color: 'sky', width: 4, groups: [
+      { cards: [C('climate.chest_freezer', { id: 'ct_freezer', type: 'climate' }), C('sensor.garage_freezer_temperature_probe', { id: 'ct_probe', type: 'sensor' }), C('sensor.wine_fridge_temperature', { id: 'ct_wine', type: 'sensor' })] },
+      { cards: [C('sensor.chest_freezer_compressor_runtime', { id: 'ct_runtime', type: 'entity' }), { id: 'ct_energy', type: 'meter', entity: 'sensor.freezer_energy' }] },
+    ] },
+    { id: 's_t_spaces', title: 'Spaces', color: 'teal', width: 4, groups: [
+      { cards: [{ id: 'ct_spaces', type: 'readings', name: 'Spaces', entities: ['climate.downstairs', 'sensor.den_temperature', 'climate.upstairs', 'sensor.kitchen_temperature', 'sensor.garage_freezer_temperature_probe'] }] },
+      { cards: [{ id: 'ct_empty', type: 'readings', name: 'Outbuildings', entities: ['sensor.shed_temperature', 'sensor.studio_temperature'] }] },
+    ] },
+    { id: 's_t_soil', title: 'Garden', color: 'lime', width: 4, groups: [
+      { cards: [{ id: 'ct_soil', type: 'readings', name: 'Soil moisture', entities: ['sensor.garden_soil_moisture', 'sensor.bed_soil_moisture', 'sensor.lawn_soil_moisture'] }] },
+      { cards: [C('sensor.garden_soil_moisture', { id: 'ct_garden', type: 'sensor', name: 'Garden' }), C('sensor.bed_soil_moisture', { id: 'ct_bed', type: 'sensor', name: 'Bed' })] },
+    ] },
+  ] });
+}
+
 export function state() {
   return {
     version: VERSION,
@@ -300,13 +345,24 @@ customElements.define('morph-next', class extends HTMLElement {
 </script>
 <script>window.__calls = []; window.__ws = []; window.__fixture = ${JSON.stringify({ states: house(), dash: dashboard(), state: themed(state(), o.theme), brain: brainFeed(o.brain), dark: o.dark !== false })};</script>
 ${o.batch ? `<script>window.__fixture = ${JSON.stringify((() => { const fx = { states: house(), dash: dashboard(), state: themed(state(), o.theme), brain: brainFeed(o.brain), dark: o.dark !== false }; addBatch(fx); return fx; })())};</script>` : ''}
+${o.tiles ? `<script>window.__fixture = ${JSON.stringify((() => { const fx = { states: house(), dash: dashboard(), state: themed(state(), o.theme), brain: brainFeed(o.brain), dark: o.dark !== false }; addTiles(fx); return fx; })())};</script>` : ''}
 <script type="module">
 const F = window.__fixture;
 let states = F.states;
 let dash = F.dash; let rev = 'r1'; let tells = {}; let seq = 0;
 const now = Date.now();
 const listeners = [];
+// A shaped reading (\`tiles: true\`): a probe that fell straight to 0 two hours
+// ago, soil that dried from 47% to 0 over the day, and one that held at 35.
+function shaped(kind, t, end) {
+  if (kind === 'cliff') return t < end - 2 * 3600000 ? 47 - (end - t) / 86400000 * 4 : 0;
+  if (kind === 'dried') return Math.max(0, 47 * (1 - (t - (end - 86400000)) / (86400000 - 3 * 3600000)));
+  return 35 + Math.sin(t / 3600000) * 0.5;
+}
 function series(eid, start, end, step) {
+  // Statistics exist only for a state_class, and never for a thermostat.
+  if ((F.noStats || []).includes(eid) || eid.startsWith('climate.')) return [];
+  if ((F.shapes || {})[eid]) { const out = []; for (let t = start; t <= end; t += step) { const v = shaped(F.shapes[eid], t, Date.now()); out.push({ start: t, end: t + step, mean: v, min: v, max: v, state: v }); } return out; }
   const st = states[eid]; const base = parseFloat(st && st.state) || 50; const out = [];
   for (let t = start; t <= end; t += step) out.push({ start: t, end: t + step, mean: base + Math.sin(t / 3600000 / 3 + base) * 1.5, min: base - 2, max: base + 2, change: 120 + Math.sin(t / 86400000) * 40, state: base });
   return out;
@@ -413,8 +469,14 @@ const hass = {
           // A thermostat's day: a setback overnight, cooling in runs.
           const tgt = (s && s.attributes.temperature) || 72;
           out[e] = Array.from({ length: 24 }, (_, i) => ({ s: s ? s.state : 'cool', lu: st + i * 3600, a: { temperature: i < 7 ? tgt + 2 : tgt, hvac_action: i % 3 === 0 ? 'cooling' : 'idle' } }));
+          // What the thermostat read, as its attributes carry it.
+          const cur = (s && s.attributes.current_temperature) || 72;
+          out[e].forEach((r, i) => { r.a.current_temperature = Math.round((cur + Math.sin(i / 4) * 1.2) * 10) / 10; r.a.current_humidity = 50; });
           return;
         }
+        if ((F.noHistory || []).includes(e)) return;
+        // A reading's day, compressed the way Home Assistant sends it: {s, lu} in seconds.
+        if (s && isFinite(parseFloat(s.state))) { out[e] = Array.from({ length: 48 }, (_, i) => { const t = st + i * 1800; const v = parseFloat(s.state) + Math.sin(i / 5) * 1.4; return { s: String(Math.round(v * 10) / 10), lu: t }; }); return; }
         out[e] = [{ s: s && s.state === 'on' ? 'off' : 'on', lu: st }, { s: 'on', lu: st + 3600 * 3 }, { s: 'off', lu: st + 3600 * 5 }, { s: s ? s.state : 'off', lu: st + 3600 * 7 }];
       }); return out;
     }
@@ -429,6 +491,7 @@ const hass = {
   },
   connection: { subscribeMessage(cb) { listeners.push(cb); return Promise.resolve(() => {}); } },
 };
+Object.assign(hass.entities, F.entities || {});
 window.loadCardHelpers = async () => ({ createCardElement(cfg) { const tag = String(cfg.type || ''); if (tag.startsWith('custom:') && customElements.get(tag.slice(7))) { const c = document.createElement(tag.slice(7)); c.setConfig(cfg); return c; } const el = document.createElement('div'); el.className = 'fake-ll'; el.style.cssText = 'padding:14px;border-radius:12px;background:#223;color:#cde;font:14px sans-serif'; el.textContent = 'Lovelace ' + cfg.type + ' · ' + (cfg.entity || ''); return el; } });
 function push() { const h = { ...hass, states }; el.hass = h; }
 // Home Assistant's order (ha-panel-custom.ts): import the module, create
