@@ -2642,6 +2642,17 @@ html.shell-home.shell-raised, html.shell-home.shell-raised body { background: rg
   margin: -18px -20px 0;
 }
 
+/* The keyboard over the chat (`measureKbOverlap` in app.js). Inside HA's
+   ingress frame on an iPhone the keyboard covers the frame's bottom without
+   resizing it, so `dvh` never moves; the overlap is measured off the page
+   that holds the frame and the chat view gives exactly that much up, which
+   puts the composer right above the keys. The classic terminal's frame
+   keeps its own toolbar above them (`inject.html`), so it is left alone. */
+body.kb-lift:not(.term-classic) #viewTerminal.active {
+  height: calc(100vh - var(--bar-h) - var(--tabbar-h, 0px) - var(--kb-overlap, 0px));
+  height: calc(100dvh - var(--bar-h) - var(--tabbar-h, 0px) - var(--kb-overlap, 0px));
+}
+
 /* The conversations rail. A flex row only once there is room for one —
    900px, not 1100: at 1024 the rail was a whole page you had to back out
    of while 700px of transcript width went unused beside it — the

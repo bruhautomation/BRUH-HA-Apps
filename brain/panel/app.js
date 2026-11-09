@@ -14354,6 +14354,100 @@ if (window.visualViewport) {
   });
 }
 
+// Folding the bar was not enough: on an iPhone in the companion app the
+// keyboard covers the bottom of HA's ingress frame without resizing it, so
+// our own viewport and `dvh` never change and the composer stayed under the
+// keys. The frame is same-origin, though, so the page that holds it can be
+// asked: how far its visual viewport's bottom sits above our frame's bottom
+// is how much of us the keyboard covers. That overlap goes into
+// `--kb-overlap` with `body.kb-lift`, and the chat view gives it up
+// (style.css). Every cross-frame read is guarded — outside ingress `top` is
+// this window, and behind a proxy it can be another origin — and unframed or
+// unreadable means nothing happens at all.
+const KB_LIFT_MIN_PX = 60;
+const kbLift = { px: 0, raf: 0, timer: 0, stop: null };
+
+// The visual viewport of the top page and the bottom of our content in its
+// coordinates, or null when there is no such page we may read.
+function kbTopViewport() {
+  try {
+    const top = window.top;
+    if (!top || top === window) return null;
+    const vv = top.visualViewport; // throws when `top` is another origin
+    if (!vv) return null;
+    let y = 0;
+    for (let w = window; w !== top; w = w.parent) {
+      const fe = w.frameElement; // null when the parent is another origin
+      if (!fe) return null;
+      y += fe.getBoundingClientRect().top + (fe.clientTop || 0);
+    }
+    return { vv, bottom: y + window.innerHeight };
+  } catch (e) {
+    return null;
+  }
+}
+
+function measureKbOverlap() {
+  kbLift.raf = 0;
+  const m = kbTopViewport();
+  let px = 0;
+  if (m) {
+    const vv = m.vv;
+    // Pinch-zoom shrinks the visual viewport too; that is not a keyboard.
+    if (!(vv.scale > 1.05)) {
+      const overlap = Math.round(m.bottom - (vv.offsetTop + vv.height));
+      if (overlap >= KB_LIFT_MIN_PX) px = Math.max(0, Math.min(overlap, window.innerHeight - 120));
+    }
+  }
+  if (px === kbLift.px) return;
+  kbLift.px = px;
+  if (px) document.body.style.setProperty("--kb-overlap", px + "px");
+  else document.body.style.removeProperty("--kb-overlap");
+  document.body.classList.toggle("kb-lift", px > 0);
+}
+
+function installKbLift() {
+  if (kbLift.stop) return;
+  const m = kbTopViewport();
+  if (!m) return;
+  const vv = m.vv;
+  const schedule = () => {
+    try {
+      if (!kbLift.raf) kbLift.raf = requestAnimationFrame(measureKbOverlap);
+    } catch (e) { /* this frame is going away */ }
+  };
+  // Focus moves before the keyboard has finished arriving or leaving, so
+  // measure now and once more after it has settled; the top viewport's own
+  // resize covers the rest.
+  const focusMoved = () => {
+    schedule();
+    clearTimeout(kbLift.timer);
+    kbLift.timer = setTimeout(schedule, 350);
+  };
+  vv.addEventListener("resize", schedule);
+  vv.addEventListener("scroll", schedule);
+  document.addEventListener("focusin", focusMoved);
+  document.addEventListener("focusout", focusMoved);
+  // The top page outlives this frame, and a listener left on its viewport
+  // would call into a dead document; pagehide is the frame going away.
+  kbLift.stop = () => {
+    try {
+      vv.removeEventListener("resize", schedule);
+      vv.removeEventListener("scroll", schedule);
+    } catch (e) { /* the top page is already gone */ }
+    document.removeEventListener("focusin", focusMoved);
+    document.removeEventListener("focusout", focusMoved);
+    if (kbLift.raf) cancelAnimationFrame(kbLift.raf);
+    clearTimeout(kbLift.timer);
+    kbLift.raf = 0;
+    kbLift.stop = null;
+  };
+  measureKbOverlap();
+}
+window.addEventListener("pagehide", () => { if (kbLift.stop) kbLift.stop(); });
+window.addEventListener("pageshow", () => installKbLift());
+installKbLift();
+
 $("#chatStop").addEventListener("click", async () => {
   try { await api("api/chat/stop", { method: "POST", body: JSON.stringify(chatWho()) }); }
   catch (e) { toast(e.message); }
