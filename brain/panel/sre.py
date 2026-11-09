@@ -313,6 +313,22 @@ async def _caller_runs(session, collected: dict, ha_data) -> dict:
     return runs
 
 
+def gone_targets(message, known: set[str]) -> list[str]:
+    """The entity ids a missing-entity line names that the house has in
+    neither its states nor its registry (`known`): gone, not down."""
+    m = _MISSING_RE.search(str(message or ""))
+    if not m or not known:
+        return []
+    return sorted({i.group(1) for i in _ID_IN_TEXT.finditer(m.group(1))
+                   if i.group(1) not in known})
+
+
+def gone_name(eid: str) -> str:
+    """"Hall plug" for `switch.hall_plug`: what to call a gone entity."""
+    words = str(eid or "").split(".", 1)[-1].replace("_", " ").strip()
+    return words[:1].upper() + words[1:]
+
+
 def called_by(rec: dict, collected: dict) -> list[dict]:
     """What made the failed calls a missing-entity log line counts, and how
     many each: the automation or script the line's own logger names (with
@@ -956,9 +972,13 @@ def answered_down(snoozed, ignored, states, now: float) -> set[str]:
             continue
         for eid in [row.get("entity_id"), *(row.get("items") or ()),
                     *(row.get("about") or ())]:
-            st = states.get(str(eid or ""))
-            if isinstance(st, dict) and str(st.get("state") or "") in _DOWN:
-                out.add(str(eid))
+            eid = str(eid or "")
+            st = states.get(eid)
+            # Still down, or gone from the house altogether (#789): a plug
+            # removed is as out as a plug pulled, and is not coming back.
+            if (isinstance(st, dict) and str(st.get("state") or "") in _DOWN) \
+                    or (st is None and "." in eid and " " not in eid):
+                out.add(eid)
     return out
 
 
@@ -1086,6 +1106,15 @@ def digest(collected: dict, now: float, set_aside=frozenset(),
                      if str(e["entity_id"]) in aside and e.get("device_id")}
     kept = []
     for rec in logs:
+        # A line about calls to an entity the house no longer has at all —
+        # in neither the states nor the registry — names it as GONE: the
+        # automations, scripts and scenes still aimed at it are what is
+        # left, and "bring it back online" is no step (#789).
+        gone = gone_targets(rec.get("message"), known)
+        if gone:
+            rec["gone"] = gone
+            rec["entities"] = sorted(set(rec.get("entities") or ())
+                                     | set(gone))[:4]
         ents = set(rec.get("entities") or [])
         devs = set(rec.get("devices") or [])
         if (ents or devs) and ents <= aside and devs <= aside_devices:
@@ -1133,6 +1162,11 @@ def digest(collected: dict, now: float, set_aside=frozenset(),
         names[str(eid)] = friendly
     for eid in known:
         names.setdefault(eid, "")
+    # An entity gone from the house has no friendly name left: the words of
+    # its id are what a person last called it, never the id itself.
+    for r in logs:
+        for eid in r.get("gone") or ():
+            names.setdefault(eid, gone_name(eid))
     device_names = {}
     for d in collected.get("devices") or []:
         if isinstance(d, dict) and d.get("id"):
@@ -1445,6 +1479,10 @@ def _without(text: str, names: set[str]) -> str:
 
 
 _TEMPLATE_WORDS = re.compile(r"\btemplates?\b", re.I)
+# A sentence saying a thing is down, which is not what a thing that is gone
+# from Home Assistant is.
+_DOWN_WORDS = re.compile(r"\b(?:offline|unavailable|unplugged|unreachable|"
+                         r"back online|plug \w+(?: \w+)? back in)\b", re.I)
 
 
 def _without_words(text: str, pattern) -> str:
@@ -1493,7 +1531,7 @@ def _name_the_callers(recs: list[dict], dig: dict, title: str, detail: str,
     when there are two or fewer: a list of eight in the title, again in the
     detail and a third time in the fix was one card saying one list three
     times."""
-    callers, seen, target = [], set(), ""
+    callers, seen, target, gone = [], set(), "", False
     names = dig.get("names") or {}
     for rec in recs:
         for c in rec.get("called_by") or []:
@@ -1503,11 +1541,29 @@ def _name_the_callers(recs: list[dict], dig: dict, title: str, detail: str,
         if rec.get("called_by") and not target and rec.get("entities"):
             eid = rec["entities"][0]
             target = names.get(eid) or _spoken(eid)
+            gone = eid in (rec.get("gone") or ())
     if not callers:
         return title, detail, fix
     listing = ", ".join(_caller_said(c) for c in callers)
     noun = _callers_noun(callers)
     use = "uses" if len(callers) == 1 else "use"
+    if gone:
+        # Not in Home Assistant at all: what still names it is all that is
+        # left of it, and that is the one thing to change (#789).
+        rest = _without_words(detail, _VAGUE_RE)
+        rest = _without_words(rest, _DOWN_WORDS)
+        rest = _without_words(rest, re.compile(
+            "|".join(re.escape(c["name"]) for c in callers)))
+        detail = (f"{target} is no longer in Home "
+                  f"Assistant, and these still try to control it: {listing}."
+                  f" {rest}").strip()
+        who = (_and([c["name"] for c in callers]) if len(callers) <= 2
+               else f"those {noun}")
+        fix = (f"Take {target} out of {who}: nothing else of it is left in "
+               "Home Assistant.")
+        title = textclip.clip(f"{target} no longer "
+                              f"exists and {noun} still {use} it", MAX_TITLE)
+        return title, detail, fix
     said = f"{target} is unavailable, and these still try to control it: {listing}."
     rest = _without_words(detail, _VAGUE_RE)
     # The model's own sentences naming a caller again are the list said
@@ -2467,6 +2523,32 @@ def hold_transient(causes: list[dict], dig: dict,
     return kept, held
 
 
+def set_aside_broken(causes: list[dict], dig: dict, faulty: dict, *,
+                     device_class=None, note=None) -> list[dict]:
+    """``causes`` less every one about a sensor the owner called broken
+    (#788): its subject (the model's entity, else the one its records are
+    about, `subject_of`) answered by `corrections.broken_answer` — the one
+    helper the device checks and the Resident read, so its floors come
+    first (a leak or smoke sensor, a lock, an alarm, the protected list)
+    and only the wording that already finishes a device counts. The helper
+    writes the trail entry for each cause it drops, through ``note`` when
+    given."""
+    if not faulty:
+        return list(causes)
+    import corrections  # noqa: PLC0415 — it imports the stores
+    kept = []
+    for cause in causes:
+        subject = (str(cause.get("entity_id") or "")
+                   or subject_of(cause.get("records") or [], dig))
+        said = corrections.broken_answer(
+            subject, SOURCE, faulty=faulty,
+            device_class=device_class(subject) if device_class and subject
+            else "", note=note) if subject else ""
+        if not said:
+            kept.append(cause)
+    return kept
+
+
 def trail_rows(held: list[dict]) -> list[dict]:
     """The decision trail's rows for the causes `hold_transient` held."""
     out = []
@@ -2612,5 +2694,6 @@ def keep_keys(open_rows: list[dict], state: dict, available: dict,
 __all__ = ["SCHEMA", "SOURCE", "SYSTEM", "collect", "digest", "explain_key",
            "explained", "frame",
            "hold_transient", "integration_of", "keep_keys", "load",
-           "parse_causes", "read_user_text", "rows", "save", "subject_of",
+           "parse_causes", "read_user_text", "rows", "save",
+           "set_aside_broken", "subject_of",
            "trail_rows", "worth_a_run"]

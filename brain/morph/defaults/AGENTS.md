@@ -138,7 +138,7 @@ wrapper yourself is the same thing:
 | `button` | `entity` (script, button, input_button) | runs it on tap |
 | `climate` | `entity`; optional `options.actions` (up to 4 scripts, buttons or scenes: an id, or `{entity, label}`) | current temperature, a target ruler, −/+, the actions as buttons (a script reads as pressed while it runs) · — · — · modes, history |
 | `sensor` | `entity` | the value and a 24 h trace · opens history |
-| `readings` | `entities` (several sensors of one kind) | ONE overlaid chart, one line per sensor; slide to read every value at that moment |
+| `readings` | `entities` (several sensors of one kind; a thermostat counts as its own temperature) | ONE overlaid chart, one line per sensor across the day (from statistics, else recorded history); slide to read every value at that moment |
 | `meter` | `entity` (an energy or water total) | today's total and 7-day bars |
 | `media` | `entity` | now playing, transport · play/pause |
 | `camera` | `entity` | a live still, refreshed |
@@ -307,6 +307,26 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   the story.
 - **Render with no data at all**: `hass` may arrive late, and an entity may be
   unavailable.
+- **An entity that is `unavailable` or `unknown` has no reading now.** Its
+  attributes may still hold its last temperature, target or timer: grey that
+  figure, leave out the targets, controls and running timers, and say when it
+  was last heard from ("last seen 4:02 PM", from its `last_changed`). A name
+  is whole: it wraps, it is never cut off with an ellipsis.
+- **History, as Home Assistant sends it.** `history/history_during_period`
+  answers compressed rows, `{s, a, lu}` with `lu` in SECONDS (and `lc` only
+  when it differs), never `state`/`last_changed`: a chart that reads those
+  draws nothing. `recorder/statistics_during_period` has rows only for a
+  sensor with a `state_class`, and none for a thermostat, whose temperature
+  is its `current_temperature` attribute (ask history with attributes for
+  it). For temperature or humidity by room, use the `readings` card, which
+  takes thermostats and sensors alike. With nothing to draw, say so in
+  words, never an empty plot.
+- **Controls sit in their own row**, above or below a chart, never on it:
+  chips and toggles that wrap push the chart down rather than lying over it.
+- **A moisture reading that drops straight to exactly 0** (from 10% or more
+  within 15 minutes) is a probe that stopped answering, not dry soil: say
+  "Sensor offline · check the probe" (with its battery when one is known) and
+  no percentage. Soil that dried to 0 over hours is a real 0%.
 - **Say what the reading is, not what the card is usually.** A reading outside
   its target, hold or comfort band is stated in the card's status line, with
   how far outside ("11° below its hold band"): never "Idle", "OK" or

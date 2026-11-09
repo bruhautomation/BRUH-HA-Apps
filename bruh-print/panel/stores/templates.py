@@ -77,9 +77,32 @@ class Template:
 
     def as_dict(self) -> dict:
         data = asdict(self)
-        data["fields"] = [f.as_dict() for f in self.fields]
+        data["fields"] = [f.as_dict() for f in self.form()[1]]
         data["stock"] = self.label.get("stock", "")
         return data
+
+    def form(self) -> tuple[dict, list[Field]]:
+        """The label to fill and the fields that fill it.
+
+        A template saved with no fields of its own whose text holds ONE
+        number — `Lesson 16`, `Freezer drawer 2` — takes that number as a
+        field called `number`, defaulting to the number it was saved with
+        (#784). Without it the only way to print lesson 29 was to open the
+        designer, and a caller asking for it got lesson 16 and no word. Read
+        off the label every time and never written back: the saved template
+        is somebody's, and this is how it is filled, not what it is.
+        """
+        numbered = number_hole(self.label)
+        if numbered is None or self.fields:
+            return self.label, self.fields
+        label, value = numbered
+        return label, [Field(key=NUMBER_FIELD, label="Number", default=value,
+                             hint=f"Prints {value} unless you give another.")]
+
+    def unknown(self, values: dict) -> list[str]:
+        """Fields a caller sent that this template has nowhere to put."""
+        known = {f.key for f in self.form()[1]} | set(builtin_now())
+        return [str(k) for k in values or {} if str(k) not in known]
 
 
 def builtin_now() -> dict[str, str]:
@@ -89,6 +112,40 @@ def builtin_now() -> dict[str, str]:
         "time": time.strftime("%H:%M"),
         "datetime": time.strftime("%Y-%m-%d %H:%M"),
     }
+
+
+NUMBER = re.compile(r"\d+")
+NUMBER_FIELD = "number"
+
+
+def number_hole(label: dict) -> tuple[dict, str] | None:
+    """The label with its one number made a `{{number}}` hole, and the number.
+
+    None unless every run of digits in its `text` and `data` is the same
+    number — `Lesson 16`, or `Drawer 2` beside a QR code of `2` — and it has
+    no placeholders of its own. Two different numbers (`Box 3 of 12`) are
+    not guessed between: which one somebody means is not on the label.
+    """
+    found: set[str] = set()
+    for element in label.get("elements") or []:
+        props = element.get("props") or {}
+        for key in SUBSTITUTED:
+            text = str(props.get(key, "") or "")
+            if PLACEHOLDER.search(text):
+                return None
+            found.update(NUMBER.findall(text))
+    if len(found) != 1:
+        return None
+    (value,) = found
+    hole = "{{" + NUMBER_FIELD + "}}"
+    filled = {**label, "elements": []}
+    for element in label.get("elements") or []:
+        copy = {**element, "props": dict(element.get("props") or {})}
+        for key in SUBSTITUTED:
+            if key in copy["props"]:
+                copy["props"][key] = NUMBER.sub(hole, str(copy["props"][key] or ""))
+        filled["elements"].append(copy)
+    return filled, value
 
 
 def placeholders(label: dict) -> list[str]:
@@ -168,8 +225,12 @@ class TemplateStore:
             self._items[template.id] = template
 
     def save(self) -> None:
-        atomic_write.write_json(self.path, {
-            "templates": [t.as_dict() for t in self._items.values()]})
+        # The fields as saved, never `form()`'s: a number read off the label
+        # is how it is filled, and writing it back would make it the
+        # template's own field the next time it loads.
+        atomic_write.write_json(self.path, {"templates": [
+            {**t.as_dict(), "fields": [asdict(f) for f in t.fields]}
+            for t in self._items.values()]})
 
     def all(self) -> list[Template]:
         """Pinned first, then most-used, then newest.
