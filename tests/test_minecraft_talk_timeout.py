@@ -207,6 +207,7 @@ class TestChatterIsNotAJobOrALineEachTime(TimeoutCase):
         self.assertIn(rules.CANNED["handoff_again"].format(title=job["title"]),
                       self.lines_to(KAZ))
 
+
 class TestOnlyBrainBeingDownHoldsTheDesk(TimeoutCase):
     def test_one_runs_own_failure_does_not_hold_the_next_line(self):
         for code in ("safeguard", "max_turns", "empty", "error"):
