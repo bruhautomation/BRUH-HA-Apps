@@ -111,6 +111,8 @@ SERVICE_RENAME_WORLD = "rename_world"
 # Fired by the add-on for every game happening it reads, whether or not
 # anything listens: neutral facts, no scores, caps or persona (DOCS.md, "The
 # companion contract"). `answer` is a choice pad being answered, `point` a
-# spyglass use.
-GAME_EVENTS = ("chat", "join", "leave", "death", "advancement", "place", "answer", "point")
+# spyglass use, `signal` a command block's `say bruh:signal <name> [data]` —
+# a button or a lever in a build telling the house something.
+GAME_EVENTS = ("chat", "join", "leave", "death", "advancement", "place", "answer", "point",
+               "signal")
 EVENT_PREFIX = "bruh_minecraft_"

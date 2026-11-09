@@ -680,6 +680,45 @@ anything listens; `t` is Unix seconds, `time` the same as ISO 8601 UTC,
 | `bruh_minecraft_place` | `player`, `place` (a named place they walked into), `dimension` |
 | `bruh_minecraft_answer` | `player`, `question_id`, `question`, `answer`, `index`, `other` (the first option not chosen), `others`, `options`, `by` (a choice pad was answered) |
 | `bruh_minecraft_point` | `player`, `name`, `verified`, `dimension`, `target` (`{x, y, z, block}` — the first block that is not air or a fluid within 96 blocks, or null), `building` and `room` (the atlas's `{id, name}` there, or null), `eye`, `yaw`, `pitch` (somebody looked through a spyglass) |
+| `bruh_minecraft_signal` | `name` (a word: letters, digits, `_`; lower-cased), `data` (the rest of the line, or empty) — a command block ran `say bruh:signal <name> [data]` (below) |
+
+**A button, a lever or a pressure plate in a build can drive the house**
+with no Skript. Wire it to a command block (impulse, *Needs Redstone*) whose
+command is
+
+```
+say bruh:signal porch_lights on
+```
+
+and the server logs `[@] bruh:signal porch_lights on`, which the panel turns
+into `bruh_minecraft_signal` with `name: porch_lights`, `data: on`. A second
+command block on the lever's *off* side can say `… porch_lights off`. An
+automation listens for it:
+
+```yaml
+triggers:
+  - trigger: event
+    event_type: bruh_minecraft_signal
+    event_data: {name: porch_lights, data: "on"}
+actions:
+  - action: light.turn_on
+    target: {entity_id: light.porch}
+```
+
+Who can fire it: only a command block nobody renamed — its name is `@`,
+which no player can have. A player typing the same words in chat
+(`<Steve> [@] bruh:signal …`), a player's or the console's `/say`
+(`[Steve] …`, `[Server] …`), `execute as <player> run say …` and a command
+block renamed in an anvil (`[Porch Button] …`) fire nothing. So a signal is
+exactly as trusted as a command block, which only an operator can place or
+change; anybody can *press* the button wired to one, which is the point. The
+event carries no player and no authority — what `porch_lights` is allowed to
+do is the automation's. `say` is seen in chat by everyone on the server
+(`[@] bruh:signal …`). The block's position is not in the event (a command
+block cannot say where it is), so a name per button is how they are told
+apart. The same signal said again within a second (a repeating command block
+says it every tick) is one event, and signals are not written to the feed or
+the journal.
 
 `verified` is the account check: Java names are real with `online-mode` on (or
 a Velocity proxy checking them); Bedrock names when Floodgate signs them in

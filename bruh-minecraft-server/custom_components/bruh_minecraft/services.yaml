@@ -301,7 +301,7 @@ list_scripts:
 
 write_script:
   name: Write a script
-  description: Write a Skript script or a data pack function into the running world and load it without a restart. A script that does not load is an error carrying the loader's messages. Only a script written through this service can be overwritten.
+  description: Write a Skript script or a data pack function into the running world and load it without a restart. A script that does not load is an error carrying the loader's messages. Only a script written through this service can be overwritten. A button or lever needs no script to reach the house. A command block running `say bruh:signal <name> [data]` fires the bruh_minecraft_signal event.
   fields:
     kind:
       name: Kind
