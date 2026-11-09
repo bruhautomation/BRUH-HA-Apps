@@ -1068,11 +1068,11 @@ def _duration_agrees(m: re.Match, secs: float) -> bool:
 # minutes, a normal cycle" under "unavailable for 3 days" is another fact.
 _STATE_WORDS = (
     ("away", r"unavailable|offline|unreachable|unresponsive|not responding|"
-             r"disconnected|dropped off|off the network|not reporting|"
-             r"stopped reporting|silent|gone quiet|went quiet|down"),
+             + r"disconnected|dropped off|off the network|not reporting|"
+             + r"stopped reporting|silent|gone quiet|went quiet|down"),
     ("open", r"open(?:ed)?|left open|ajar|unlocked"),
     ("held", r"read(?:s|ing)?|sat at|sits at|stuck|frozen|flat|unchanged|"
-             r"held at|stayed at"),
+             + r"held at|stayed at"),
     ("on", r"(?:stayed|been|left|was|is) on|running"),
     ("low", r"low|below"),
 )
