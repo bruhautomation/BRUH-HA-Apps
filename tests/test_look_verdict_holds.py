@@ -10,9 +10,9 @@ minutes"; "…can wait, but this smoke alarm battery needs replacing
 today"). So the verdict is a field the look gives (`resident.ALREADY`, with
 `cosmetic` and `known` beside the older words), never a reading of its
 sentence; a cross-reference is a field too (`same_as`, a case id from the
-list the look was shown), and it merges the row into that card only when
-the card is one the owner can see — otherwise it is dropped, and the
-sentence naming "the list" is not shown.
+list the look was shown). It never moves the row anywhere: the row is held
+like any other, and when the card it names is not one the owner can see,
+the look's sentence about that card is not shown either.
 
 And the floor under every one of those words (`corrections.not_news_floor`):
 a leak or smoke sensor, a lock, a security check, a critical row and high
@@ -145,7 +145,7 @@ class TestSixFindingsNoneReachTheList(LoopCase):
         self.looks.append(reply(verdicts))
         return self.tick(now if now is not None else time.time())
 
-    def test_six_not_news_rows_are_held_or_merged(self):
+    def test_six_not_news_rows_are_held(self):
         srv = self.server
         host = self.visible("switch.garage_plug",
                             "The garage plug drops off Wi-Fi every night")
@@ -197,15 +197,16 @@ class TestSixFindingsNoneReachTheList(LoopCase):
                       if f["status"] == "open"]
         for row in rows:
             self.assertNotIn(row["text"], open_texts)
-        # The duplicate is merged into the card it named, which the owner
-        # can see: its device is listed under that card.
-        # (A row's id is minted past what is live, so the merged row's id
-        # can be the next row's: it is looked for by its words.)
-        live = {f["ts"]: f for f in srv.findings_store.list_all()}
-        self.assertNotIn(rows[3]["text"], [f["text"] for f in live.values()])
+        # The duplicate is HELD, never folded: it is still its own row in
+        # History (put back in one press), and the card it named is
+        # untouched — a model's link moves nothing (#792 withdrawn).
+        live = {f["text"]: f for f in srv.findings_store.list_all()}
+        self.assertEqual(live[rows[3]["text"]]["status"], "held")
         self.assertIn(host["ts"], shown)
-        self.assertIn("sensor.garage_plug_rssi",
-                      [e["entity"] for e in live[host["ts"]]["evidence"]])
+        self.assertNotIn("evidence",
+                         srv.findings_store.get(host["ts"]) or {})
+        # Its cross-reference names a card the owner can see: kept.
+        self.assertTrue(live[rows[3]["text"]]["triage"]["reason"])
 
     def test_a_reference_to_nothing_visible_is_dropped(self):
         srv = self.server

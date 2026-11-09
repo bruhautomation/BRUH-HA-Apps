@@ -123,13 +123,15 @@ _RANK = {word: i for i, word in enumerate(VERDICTS)}
 ALREADY = ("answered", "marked_wrong", "duplicate", "recovered", "explained",
            "cosmetic", "known")
 # A look's cross-reference to another card, as the card's id from the list
-# it was shown (`server._open_case_rows`), never as prose: "f:<ts>".
+# it was shown (`server._open_case_rows`), never as prose: "f:<ts>". It
+# only decides whether the look's sentence about that card is kept (the
+# card must be one the owner can see); it never moves the row.
 _SAME_AS_RE = re.compile(r"^f:(\d{1,12})$")
 
 
 def same_as(value) -> int:
-    """The finding a look or a case named as the card a row repeats or
-    waits on, or 0 for anything that is not a case id."""
+    """The finding a look named as the card a row repeats, or 0 for
+    anything that is not a case id."""
     m = _SAME_AS_RE.match(str(value or "").strip().lower())
     return int(m.group(1)) if m else 0
 
@@ -446,8 +448,8 @@ Rules:
   stops working), "known" (long-standing and the household already knows,
   or it is already on their To Do). Leave it out otherwise. "same_as" is
   the id in front of the row under ALREADY IN FRONT OF THE HOMEOWNER
-  ("f:123") that this one repeats or is a symptom of — the id only, never
-  a description; leave it out when there is none. When your reason says there is nothing
+  ("f:123") that this one repeats — the id only, never a description;
+  leave it out when there is none. When your reason says there is nothing
   for anybody to do, it needs one of these words — a reason like that
   beside a card that stays on the list contradicts the card. A row you give one of these is set aside whatever verdict
   you write, so never use it to dismiss something you would investigate
@@ -900,10 +902,6 @@ CASE_SCHEMA = {
         # a sentence that mentions what the house knows is just as often
         # the problem ("the automation already locks it, yet…"), #697.
         "already": {"type": "string", "enum": ["", CASE_ANSWERED]},
-        # The card this is a symptom of or waits on, by the id in front of
-        # it under ALREADY IN FRONT OF THE HOMEOWNER (#792): stored as the
-        # row's cause and folded under that card.
-        "same_as": {"type": "string"},
     },
     "required": ["claim", "detail", "confidence", "stakes", "evidence",
                  "actions", "escalate"],
@@ -1024,10 +1022,6 @@ Answer with ONE JSON object and nothing else. What it means:
   never give it to something you would report for any other reason: a
   door an automation locks at night that was found unlocked at 3am is a
   problem, not a thing the house already answers. Leave it out otherwise.
-- "same_as" — when what you found is a symptom of, or waits on, a card
-  listed under ALREADY IN FRONT OF THE HOMEOWNER (a pending question, an
-  open problem), that card's id ("f:123"): this one is listed under it
-  rather than beside it. The id only; leave it out otherwise.
 
 Rules that matter more than anything about style:
 
@@ -1343,8 +1337,6 @@ def parse_case(obj, *, read_entities=None) -> dict | None:
                      and confidence < ESCALATE_CONFIDENCE
                      and stakes == "high"),
         **already,
-        **({"cause": f"f:{same_as(obj.get('same_as'))}"}
-           if same_as(obj.get("same_as")) else {}),
     }
 
 

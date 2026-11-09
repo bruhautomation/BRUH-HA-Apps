@@ -1416,76 +1416,21 @@ def _subject_fields(entry: dict) -> dict:
             about.append(e)
     if about:
         out["about"] = about[:MAX_ABOUT]
-    cause = clean_cause(entry.get("cause"))
-    if cause:
-        out["cause"] = cause
     return out
 
 
-# The cause a row is a symptom of (#792): a key a producer names
-# (``softener_salt``), or ``f:<ts>`` — the visible card a look or an
-# investigation said this row waits on (its `same_as`). Rows sharing one are
-# one card (`_fold_devices`), the others listed under it.
-_CAUSE_RE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,63}$")
-_CAUSE_ROW_RE = re.compile(r"^f:(\d{1,12})$")
-
-
-def clean_cause(value) -> str:
-    """A cause key, cleaned, or "" ."""
-    text = str(value or "").strip().lower() if isinstance(value, str) else ""
-    return text if _CAUSE_RE.match(text) and text != "f:" else ""
-
-
-def cause_row(value) -> int:
-    """The ts of the card a ``f:<ts>`` cause names, or 0."""
-    m = _CAUSE_ROW_RE.match(clean_cause(value))
-    return int(m.group(1)) if m else 0
-
-
-def _cause_visible(items: list[dict], entry: dict) -> bool:
-    """Whether ``entry``'s cause may stand: the row is not one the strict
-    floor keeps on its own (`not_news_floor(strict=True)`: a leak, smoke,
-    a lock, food or water, a sensor of unknown kind, critical, high
-    stakes…), and an ``f:<ts>`` cause names a card the owner can see (open
-    or needs_you, not the row itself)."""
-    if not_news_floor(entry, strict=True):
-        return False
-    target = cause_row(entry.get("cause"))
-    if not target:
-        return True
-    if target == int(entry.get("ts") or 0):
-        return False
-    return any(int(f.get("ts") or 0) == target
-               and f.get("status") in _VISIBLE_HOSTS for f in items)
-
-
-def _list_under(items: list[dict], entry: dict, ts: int) -> bool:
-    """Give ``entry`` the cause ``f:<ts>`` — the card a look said it
-    repeats or waits on — when the owner can see that card, so the fold
-    lists it there (`_fold_devices`); True when it did."""
-    if not ts:
-        return False
-    entry["cause"] = f"f:{int(ts)}"
-    if _cause_visible(items, entry):
-        return True
-    entry.pop("cause", None)
-    return False
-
-
-def not_news_floor(entry: dict, strict: bool = False,
-                   names: dict | None = None) -> str:
+def not_news_floor(entry: dict, strict: bool = False) -> str:
     """Why a look's not-news word may NOT set ``entry`` aside, or ""
     (`corrections.not_news_floor`, the one floor both tiers read): a
     harm or security producer, a critical row, high stakes, a leak or smoke
     sensor, a lock, an alarm, a protected entity. ``strict`` is
-    `corrections.strict_floor`, for `cosmetic`/`known` and for a fold by
-    cause: food or water, and a sensor of unknown kind, too."""
+    `corrections.strict_floor`, for `cosmetic`/`known`: food or water, and
+    a sensor of unknown kind, too (#790)."""
     if not isinstance(entry, dict):
         return ""
     import corrections  # noqa: PLC0415 — the store imports no producer eagerly
     eid = str(entry.get("entity_id") or "")
-    named = (names if names is not None else _names_now()).get(eid) \
-        if eid else None
+    named = _names_now().get(eid) if eid else None
     klass = str(named.get("class") or "") if isinstance(named, dict) else ""
     said = str(named.get("name") or "") if isinstance(named, dict) else ""
     floor = corrections.strict_floor if strict else corrections.not_news_floor
@@ -1494,6 +1439,15 @@ def not_news_floor(entry: dict, strict: bool = False,
                  severity=str(entry.get("severity") or ""),
                  stakes=str(entry.get("stakes") or ""), device_class=klass,
                  **extra)
+
+
+def _visible_card(items: list[dict], ts: int, own: int) -> bool:
+    """Whether ``ts`` is a card the owner can see (open or needs_you), and
+    not the row itself — what a look's cross-reference (`same_as`) has to
+    name for its sentence about that card to be kept."""
+    return bool(ts) and ts != own and any(
+        int(f.get("ts") or 0) == ts and f.get("status") in _VISIBLE_HOSTS
+        for f in items)
 
 
 def _case_fields(entry: dict) -> dict:
@@ -2539,12 +2493,8 @@ def is_link_symptom(entry: dict) -> bool:
 
 
 def _row_devices(entry: dict, names: dict) -> set[str]:
-    """The keys a row is folded on: the cause a producer or a look named
-    (`cause`, #792), else ``int:<domain>`` for a row about an integration
-    as a whole, else the devices its entities are on."""
-    cause = clean_cause(entry.get("cause"))
-    if cause and not not_news_floor(entry, strict=True, names=names):
-        return {cause}
+    """The keys a row is folded on: ``int:<domain>`` for a row about an
+    integration as a whole, else the devices its entities are on."""
     integration = str(entry.get("integration") or "")
     if integration:
         return {f"int:{integration}"}
@@ -2563,69 +2513,30 @@ def _fold_devices(items: list[dict]) -> set[int]:
     """Fold the rows one device's (or one integration's) outage was filed
     as (above). Returns the ids that left; ``items`` is changed in place."""
     names = _names_now()
-    # The cards a row names as the one it waits on (`cause` ``f:<ts>``):
-    # each hosts on its own id, whatever its kind — a pending question is
-    # the commonest such card (#792).
-    wanted = {f"f:{t}" for t in (cause_row(f.get("cause")) for f in items)
-              if t}
     rows = []
-    targets = set()
     for f in items:
-        if f.get("status") not in CROSS_FOLD_STATUSES:
-            continue
-        keys = (_row_devices(f, names)
-                if str(f.get("kind") or "") in SHARED_CAUSE_KINDS else set())
-        own = f"f:{int(f.get('ts') or 0)}"
-        if own in wanted:
-            keys = keys | {own}
-            targets.add(id(f))
-        if keys:
-            rows.append((f, keys))
+        if (f.get("status") in CROSS_FOLD_STATUSES
+                and str(f.get("kind") or "") in SHARED_CAUSE_KINDS):
+            keys = _row_devices(f, names)
+            if keys:
+                rows.append((f, keys))
     if len(rows) < 2:
         return set()
-
-    def by_cause(f: dict) -> str:
-        """The cause ``f`` is folded on, or "" — never one the strict
-        floor refuses, whatever it carries."""
-        cause = clean_cause(f.get("cause"))
-        return "" if not cause or not_news_floor(
-            f, strict=True, names=names) else cause
-
-    def is_symptom(f: dict) -> bool:
-        if id(f) in targets:
-            return False
-        cause = by_cause(f)
-        if cause:
-            return bool(cause_row(cause))
-        return not f.get("integration") and not is_link_report(f)
-
     # A link's row before a symptom's, so the cause hosts what it explains;
     # then the widest, then a house check, then the oldest: the order in
     # which a row becomes the card the others are folded into.
-    symptom = {id(f) for f, keys in rows if is_symptom(f)}
+    symptom = {id(f) for f, keys in rows
+               if not f.get("integration") and not is_link_report(f)}
     rows.sort(key=lambda r: (id(r[0]) in symptom, -len(r[1]),
                              not str(r[0].get("source") or "").startswith("check:"),
                              int(r[0].get("ts") or 0)))
     hosts: list[tuple[dict, set]] = []
     gone: set[int] = set()
-    trail: list[dict] = []
     for f, keys in rows:
         host = next((h for h, hk in hosts if keys <= hk and _may_host(h, f)),
                     None)
         if host is not None and _may_fold_away(f):
-            if by_cause(f):
-                # Listed under another card by a cause: the trail says
-                # which, so "where did that report go" has an answer.
-                trail.append({
-                    "kind": "listed_under",
-                    "subject": str(f.get("entity_id") or ""),
-                    "check": str(f.get("source") or ""),
-                    "reason": textclip.clip(
-                        "listed under " + str(host.get("claim")
-                                              or host.get("text") or ""),
-                        200),
-                    "text": str(f.get("claim") or f.get("text") or "")})
-            elif id(f) in symptom:
+            if id(f) in symptom:
                 # What it reported stays on the card, saying why it is here.
                 f = {**f, "claim": textclip.clip(SAME_LINK + _said(f),
                                                  MAX_EVIDENCE_VALUE)}
@@ -2638,12 +2549,6 @@ def _fold_devices(items: list[dict]) -> set[int]:
         items[:] = [f for f in items if int(f.get("ts") or 0) not in gone]
         log.info("folded %d finding(s) into the card about their device",
                  len(gone))
-    if trail:
-        try:
-            import decision_trail  # noqa: PLC0415 — a leaf, read lazily
-            decision_trail.note_many(trail)
-        except Exception as exc:  # noqa: BLE001 — the trail never costs a fold
-            log.debug("could not write the fold's trail: %s", exc)
     return gone
 
 
@@ -2867,9 +2772,6 @@ def add_many(objs: list[dict]) -> list[dict]:
             if _absorb(host, entry):
                 refreshed = True
             continue
-        if not _cause_visible(items, entry):
-            # A card nobody can see is no card to be listed under (#790).
-            entry.pop("cause", None)
         entry["ts"] = _unique_ts(used)
         used.add(entry["ts"])
         seen.add(normalize(entry["text"]))
@@ -3110,9 +3012,6 @@ def refine(ts: int, case: dict, run_id: str = "",
             entry["severity"] = case["severity"]
         if entry.get("status") == "triaging":
             entry["status"] = "open"
-        # The card the run said this row is a symptom of (#792): listed
-        # under it when the owner can see it, never under a card nobody can.
-        _list_under(items, entry, cause_row(case.get("cause")))
         # The reason is what a look CONCLUDED, and the claim is not that:
         # it is the card's title, so writing it here printed the finding
         # back under "brAIn checked". What stands is the reason a look
@@ -3349,7 +3248,6 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
     items = _load()
     changed: list[dict] = []
     wrote = False
-    linked = False
     for entry in items:
         ts = int(entry.get("ts") or 0)
         if ts not in verdicts:
@@ -3389,6 +3287,11 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
             continue
         link = int(verdicts[ts][3] or 0) if (
             not_news and verdict == "held" and len(verdicts[ts]) > 3) else 0
+        if link and not _visible_card(items, link, ts):
+            # It pointed at a card the owner cannot see: the sentence about
+            # that card points at nothing either (#790). The row is held
+            # as any other not-news row; a link never moves it anywhere.
+            reason = ""
         if late and verdict == "held" and (
                 look_may_set_aside(entry)
                 or (not_news and nobody_has_touched(entry))):
@@ -3398,12 +3301,6 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
             if echoes(reason, entry.get("text"), entry.get("claim")):
                 reason = ""
             entry["status"] = "held"
-            if _list_under(items, entry, link):
-                linked = True
-            elif link:
-                # It pointed at a card the owner cannot see: the sentence
-                # about that card points at nothing either (#790).
-                reason = ""
             entry["triage"] = _clean_triage({
                 "verdict": "held", "reason": reason, "run_id": run_id,
                 "at": stamp, "wrote_fix": False, "v": triage.LOOK_VERSION})
@@ -3420,10 +3317,6 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
             continue
         if not late:
             entry["status"] = "held" if verdict == "held" else "open"
-            if verdict == "held" and _list_under(items, entry, link):
-                linked = True
-            elif link:
-                reason = ""   # a card nobody can see, as above
         if verdict != "untriaged":
             # A look answered: the wait is over. "Nothing looked" keeps the
             # stamp, because the row is still waiting for exactly that.
@@ -3435,10 +3328,6 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
         wrote = True
         if not late:
             changed.append(_shape(entry))
-    if linked:
-        gone = _fold_devices(items)
-        changed = [c for c in changed if int(c.get("ts") or 0) not in gone]
-        wrote = True
     if wrote:
         _write(items)
     return changed

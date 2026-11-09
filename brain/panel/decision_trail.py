@@ -101,10 +101,6 @@ KINDS = {
     # "nothing wrong" would be a claim nobody made.
     "unchecked": "brAIn could not check this properly: a read it needed "
                  "failed",
-    # A row that waits on another card (the same cause, a pending
-    # question): listed under that card rather than beside it (#792).
-    "listed_under": "it has the same cause as another card, so it is "
-                    "listed under that card",
 }
 
 # The decisions that are STANDING answers rather than events: a re-report
@@ -120,7 +116,7 @@ KINDS = {
 FOLD_KINDS = frozenset({"dedupe", "exception", "mute", "shadow", "cap",
                         "hold",
                         "drift", "claimed", "explained", "checked",
-                        "unchecked", "transient", "listed_under"})
+                        "unchecked", "transient"})
 
 _LOCK = threading.Lock()
 # `(kind, subject, check, reason)` -> when it was last written. In memory:

@@ -14067,7 +14067,7 @@ def _open_case_rows(limit: int = 12, exclude=None) -> list[str]:
         eid = str(c.get("entity_id") or "").strip()
         tail = f" — {eid}" if eid else ""
         # A finding's id leads its line, so a look that says a row repeats
-        # it or waits on it names it by the id (`same_as`), never in prose
+        # it names it by the id (`same_as`), never in prose
         # that would point at nothing on screen (#790).
         cid = str(c.get("id") or "")
         lead = f"{cid} " if cid.startswith("f:") else ""
@@ -14654,8 +14654,9 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
                 # A row the look called already answered, marked wrong
                 # before or a duplicate is held even if silence already
                 # showed it (`findings_store.record_triage`'s third slot).
-                # A card it named (`same_as`) is the one it is listed
-                # under, when the owner can see that card (#790, #792).
+                # The card it named (`same_as`) keeps the look's sentence
+                # about it only when the owner can see that card, and the
+                # word decides the store's floor (#790).
                 decided[ts] = ("held", why, bool(answer.get("already")),
                                int(answer.get("same_as") or 0),
                                str(answer.get("already") or ""))

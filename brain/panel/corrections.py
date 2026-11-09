@@ -584,14 +584,13 @@ def not_news_floor(entity_id: str = "", source: str = "", *,
     return ""
 
 
-# The stricter floor for what is NEW in #790 and #792 — the first look's
-# `cosmetic` and `known`, and a row folded under another card by a cause a
-# model named: a review found a freezer reading, a water row no class
-# names and a sensor nobody knows the kind of could all be held or folded
-# away by those. So on top of `not_news_floor`: a temperature, water or
-# moisture class, an id or name that says freezer, fridge, food, water,
-# flood, leak or smoke (a name read only ever to KEEP a row shown, never to
-# hide one), and a sensor whose kind is unknown. Unknown is not "safe".
+# The stricter floor for the first look's new words, `cosmetic` and
+# `known` (#790): a review found a freezer reading, a water row no class
+# names and a sensor nobody knows the kind of could all be held by them.
+# So on top of `not_news_floor`: a temperature, water or moisture class, an
+# id or name that says freezer, fridge, food, water, flood, leak or smoke
+# (a name read only ever to KEEP a row shown, never to hide one), and a
+# sensor whose kind is unknown. Unknown is not "safe".
 WARY_CLASSES = frozenset({"temperature", "water", "moisture"})
 _WARY_WORDS_RE = re.compile(
     r"(?:freez|fridge|refrigerat|chiller|cooler|food|water|flood|leak|"
@@ -604,7 +603,7 @@ def strict_floor(entity_id: str = "", source: str = "", *,
                  device_class: str = "", name: str = "",
                  protected=None) -> str:
     """`not_news_floor`, and the stricter refusals above; "" only when
-    the row may be held by `cosmetic`/`known` or folded by a cause."""
+    the row may be held by `cosmetic`/`known`."""
     said = not_news_floor(entity_id, source, severity=severity,
                           stakes=stakes, device_class=device_class,
                           protected=protected)
