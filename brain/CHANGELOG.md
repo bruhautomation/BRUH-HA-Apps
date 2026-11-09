@@ -2,6 +2,18 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.24
+
+### Fixed
+
+- A finding no longer shows a code name such as `snake_case_thing` or calls it "an internal name". It uses the house's name for the thing, or the code name read as words. A stored phrase is repaired when it is shown (#791).
+- Findings written by the model lose their developer strings before they are shown:
+  - ids are said by name or kind;
+  - file paths, line numbers, hex codes and bare build strings are taken out;
+  - a sentence that still reads like code is dropped.
+
+  The Home Assistant mirror and notifications carry the same plain words. If a finding can't be reworded, it is sent as it was rather than dropped (#774).
+
 ## 5.1.23
 
 ### Fixed
