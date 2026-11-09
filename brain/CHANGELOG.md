@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.14
+
+### Fixed
+
+- When a task is refused by one model and answered by another, the run journal now always shows the refusal first: the refused run's row was written after the retry and could land below the answer, so anything reading a task's last row could read the refusal as its ending.
+
 ## 5.1.13
 
 ### Fixed
