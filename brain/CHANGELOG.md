@@ -2,6 +2,15 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.18
+
+### Fixed
+
+- A Morph tile or card for a device that has stopped answering no longer shows its last readings as if they were live. A freezer that is unavailable says so and when it was last seen, rather than showing a temperature, a target and how long the compressor has been off. An unavailable media player shows no track. In the rooms chart, an unavailable thermostat's line stops where it last answered (#764).
+- The rooms chart draws a line for every room that has readings, falling back to recorded history when a room has no statistics, and says which rooms have none (#757).
+- A soil probe whose reading falls to exactly 0% within minutes is shown as a probe to check, not as dry soil.
+- On a phone, a second tap on the Ask list's Send while the new chat is being made no longer starts two chats. If the chat could not be made, the message stays in the box.
+
 ## 5.1.17
 
 ### Fixed
