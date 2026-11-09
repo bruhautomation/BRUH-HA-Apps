@@ -2,6 +2,15 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.22
+
+### Fixed
+
+- Settings' three fixes from 5.1.10 are back, without the background work that the revert removed. They are now only text, markup and styling.
+  - On a phone, an open Settings section shows "Settings" once (#744).
+  - When you are signed out, Deep review says "Sign in to Claude in Settings › Account first", and its disabled Run button stays readable (#745).
+  - Settings › Features is one box with the switches as rows, and Morph's experimental note is part of its description (#746).
+
 ## 5.1.21
 
 ### Changed
