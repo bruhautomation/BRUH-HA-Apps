@@ -2,6 +2,15 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.13
+
+### Fixed
+
+- A finding that says a device is unplugged and scenes still set it is read against the house again before it is shown: it closes when the device is back, and when the device no longer exists it says so and points at the scenes that still use it (#789).
+- The "waiting" chore check reads the automation that runs a plug, such as a dehumidifier's humidity rule, and says the machine is waiting only when that rule's own sensor is past its set point (#772).
+- A weak Bluetooth signal finding first lists the house's Bluetooth proxies and says to bring an offline one back before suggesting new hardware; devices near an offline proxy share one finding about it (#770).
+- Marking a "never fired" automation Wrong, even with "not now" words, stops that check raising that automation again (#768).
+
 ## 5.1.12
 
 ### Removed
