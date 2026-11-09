@@ -115,8 +115,25 @@ _RANK = {word: i for i, word in enumerate(VERDICTS)}
 # beside it, and it is held rather than shown — "the household marked this
 # wrong before" under a card on the list was the look being right and the
 # loop not listening. A word and not a reading of the reason, because
-# prose is what gets reworded.
-ALREADY = ("answered", "marked_wrong", "duplicate", "recovered", "explained")
+# prose is what gets reworded. `cosmetic` (only how it looks or is named)
+# and `known` (long-standing, the household knows, or it is already on
+# their To Do) are #790: two earlier fixes read those out of the reason's
+# prose and held a wet leak sensor and a smoke alarm needing a battery
+# today. No word is read over `corrections.not_news_floor`.
+ALREADY = ("answered", "marked_wrong", "duplicate", "recovered", "explained",
+           "cosmetic", "known")
+# A look's cross-reference to another card, as the card's id from the list
+# it was shown (`server._open_case_rows`), never as prose: "f:<ts>". It
+# only decides whether the look's sentence about that card is kept (the
+# card must be one the owner can see); it never moves the row.
+_SAME_AS_RE = re.compile(r"^f:(\d{1,12})$")
+
+
+def same_as(value) -> int:
+    """The finding a look named as the card a row repeats, or 0 for
+    anything that is not a case id."""
+    m = _SAME_AS_RE.match(str(value or "").strip().lower())
+    return int(m.group(1)) if m else 0
 
 # One sentence per signal, shown on nothing and read in the log and the
 # diagnostics — long enough to say what was read, short enough that a
@@ -250,6 +267,26 @@ def never_ignore(signal: dict) -> tuple[str, str]:
     return floor, why
 
 
+# The words new in #790, read under the stricter floor
+# (`corrections.strict_floor`): food or water, and a sensor of unknown kind.
+STRICT_WORDS = ("cosmetic", "known")
+
+
+def not_news_floor(signal: dict, device_class=None, word: str = "") -> str:
+    """Why a look's not-news word may not set this signal aside, or ""
+    (`corrections.not_news_floor`, the floor the store reads too; the
+    strict one for `STRICT_WORDS`)."""
+    if not isinstance(signal, dict):
+        return ""
+    import corrections  # noqa: PLC0415 — it imports the stores
+    subject = str(signal.get("subject") or "")
+    floor = (corrections.strict_floor if word in STRICT_WORDS
+             else corrections.not_news_floor)
+    return floor(subject, str(signal.get("source") or ""),
+                 device_class=device_class(subject) if device_class and subject
+                 else "")
+
+
 FIRST_LOOK_SCHEMA = {
     "type": "object",
     "properties": {
@@ -265,6 +302,7 @@ FIRST_LOOK_SCHEMA = {
                     "why": {"type": "string"},
                     "already": {"type": "string",
                                 "enum": ["", *ALREADY]},
+                    "same_as": {"type": "string"},
                 },
                 "required": ["id", "verdict", "why"],
                 "additionalProperties": False,
@@ -406,7 +444,12 @@ Rules:
   problem has already ended: the device answers again, the reading is back
   in its range), "explained" (what the row reports is the ordinary state
   of the thing: the device is switched off, the room is not in use, the
-  season). Leave it out otherwise. When your reason says there is nothing
+  season), "cosmetic" (only a name, an icon or a label is wrong; nothing
+  stops working), "known" (long-standing and the household already knows,
+  or it is already on their To Do). Leave it out otherwise. "same_as" is
+  the id in front of the row under ALREADY IN FRONT OF THE HOMEOWNER
+  ("f:123") that this one repeats — the id only, never a description;
+  leave it out when there is none. When your reason says there is nothing
   for anybody to do, it needs one of these words — a reason like that
   beside a card that stays on the list contradicts the card. A row you give one of these is set aside whatever verdict
   you write, so never use it to dismiss something you would investigate
@@ -649,7 +692,7 @@ def strip_signal_refs(text: str) -> str:
 
 
 def parse_first_look(obj, count: int, rows=None,
-                     floors=None) -> dict[int, dict]:
+                     floors=None, device_class=None) -> dict[int, dict]:
     """`{1-based index: {verdict, why, forced}}` out of a reply.
 
     Every index from 1 to ``count`` is in the answer, always. The retired
@@ -672,6 +715,12 @@ def parse_first_look(obj, count: int, rows=None,
     `forced` says the verdict is the guard's rather than the model's: a
     third field instead of a tuple's third slot, because that is the one
     fact a reader has to be able to see and a slot is where it gets lost.
+
+    An `already` word (and its `same_as`, the card id it names) is not
+    read over `not_news_floor` — a leak or smoke sensor, a lock, a
+    security check (#790); the verdict the model gave beside it stands,
+    and is at least `watch`, because the word was its reason to let go.
+    ``device_class`` says what kind of thing a subject is, where known.
     """
     if isinstance(obj, str):
         try:
@@ -722,8 +771,12 @@ def parse_first_look(obj, count: int, rows=None,
             if already in ALREADY:
                 # Not news, whatever verdict rode beside it: the row is
                 # set aside, which is what `ignore` does to a filed row.
+                said[idx]["gave"] = verdict
                 said[idx]["verdict"] = "ignore"
                 said[idx]["already"] = already
+                ref = same_as(row.get("same_as"))
+                if ref:
+                    said[idx]["same_as"] = ref
 
     unreadable = not isinstance(listed, list)
     batch = list(rows or [])
@@ -740,6 +793,13 @@ def parse_first_look(obj, count: int, rows=None,
             "fallback": True,
         }
         signal = batch[idx - 1] if idx <= len(batch) else None
+        gave = answer.pop("gave", answer["verdict"])
+        if answer.get("already") and signal is not None:
+            kept = not_news_floor(signal, device_class, answer["already"])
+            if kept:
+                answer = {"verdict": VERDICTS[max(_RANK[gave],
+                                                  _RANK[HOT_FLOOR])],
+                          "why": answer["why"], "forced": True}
         floor, why = never_ignore(signal) if signal is not None else ("", "")
         extra, extra_why = (floors or {}).get(idx) or ("", "")
         if _RANK.get(extra, -1) > _RANK.get(floor, -1):

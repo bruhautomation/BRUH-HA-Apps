@@ -1419,6 +1419,37 @@ def _subject_fields(entry: dict) -> dict:
     return out
 
 
+def not_news_floor(entry: dict, strict: bool = False) -> str:
+    """Why a look's not-news word may NOT set ``entry`` aside, or ""
+    (`corrections.not_news_floor`, the one floor both tiers read): a
+    harm or security producer, a critical row, high stakes, a leak or smoke
+    sensor, a lock, an alarm, a protected entity. ``strict`` is
+    `corrections.strict_floor`, for `cosmetic`/`known`: food or water, and
+    a sensor of unknown kind, too (#790)."""
+    if not isinstance(entry, dict):
+        return ""
+    import corrections  # noqa: PLC0415 — the store imports no producer eagerly
+    eid = str(entry.get("entity_id") or "")
+    named = _names_now().get(eid) if eid else None
+    klass = str(named.get("class") or "") if isinstance(named, dict) else ""
+    said = str(named.get("name") or "") if isinstance(named, dict) else ""
+    floor = corrections.strict_floor if strict else corrections.not_news_floor
+    extra = {"name": said} if strict else {}
+    return floor(eid, str(entry.get("source") or ""),
+                 severity=str(entry.get("severity") or ""),
+                 stakes=str(entry.get("stakes") or ""), device_class=klass,
+                 **extra)
+
+
+def _visible_card(items: list[dict], ts: int, own: int) -> bool:
+    """Whether ``ts`` is a card the owner can see (open or needs_you), and
+    not the row itself — what a look's cross-reference (`same_as`) has to
+    name for its sentence about that card to be kept."""
+    return bool(ts) and ts != own and any(
+        int(f.get("ts") or 0) == ts and f.get("status") in _VISIBLE_HOSTS
+        for f in items)
+
+
 def _case_fields(entry: dict) -> dict:
     """The Resident's half of a row — only the keys it actually carries.
 
@@ -3188,7 +3219,9 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
     ``verdicts`` is ``{ts: (verdict, reason)}``, or ``(verdict, reason,
     True)`` for a hold the look said is NOT NEWS (`resident.ALREADY`), which
     holds a row silence already showed too, while nobody has touched it
-    (:func:`nobody_has_touched`). An ``elevated`` or
+    (:func:`nobody_has_touched`); a fourth slot is the card it named
+    (`same_as`) and a fifth the word itself, which decides the floor
+    (`not_news_floor`, strict for `cosmetic`/`known`). An ``elevated`` or
     ``untriaged`` row becomes ``open`` — the second because nothing looked,
     which surfaces exactly like the first and says so on the card — and a
     ``held`` row becomes ``held``.
@@ -3231,6 +3264,34 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
         not_news = len(verdicts[ts]) > 2 and verdicts[ts][2] is True
         if verdict not in triage.VERDICTS:
             continue
+        # The store's floor, with the row's own severity and stakes, before
+        # any hold by a word is final; the strict one for `cosmetic` and
+        # `known` (5th slot, the word), whose first-look floor sees
+        # neither.
+        word = str(verdicts[ts][4] or "") if len(verdicts[ts]) > 4 else ""
+        if not_news and verdict == "held" and not_news_floor(
+                entry, strict=word in ("cosmetic", "known")):
+            # The look's word is not read here (#790): a lock, a security
+            # check, a critical row, a leak or smoke sensor is shown. The
+            # verdict stays on the record, so the card does not carry the
+            # look's argument for hiding it (`shown_look`).
+            if late:
+                continue
+            entry["status"] = "open"
+            entry.pop("triaging_since", None)
+            entry["triage"] = _clean_triage({
+                "verdict": "held", "reason": reason, "run_id": run_id,
+                "at": stamp, "wrote_fix": False, "v": triage.LOOK_VERSION})
+            wrote = True
+            changed.append(_shape(entry))
+            continue
+        link = int(verdicts[ts][3] or 0) if (
+            not_news and verdict == "held" and len(verdicts[ts]) > 3) else 0
+        if link and not _visible_card(items, link, ts):
+            # It pointed at a card the owner cannot see: the sentence about
+            # that card points at nothing either (#790). The row is held
+            # as any other not-news row; a link never moves it anywhere.
+            reason = ""
         if late and verdict == "held" and (
                 look_may_set_aside(entry)
                 or (not_news and nobody_has_touched(entry))):

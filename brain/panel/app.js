@@ -14488,7 +14488,13 @@ async function startFresh() {
 async function chatNewHere() {
   const out = await chatSwitching(() => api("api/chat/new", {
     method: "POST", body: JSON.stringify(chatWho()) }));
-  if (out && out.key) chatReconnect(out.key, out.session_id);
+  if (out && out.key) {
+    chatReconnect(out.key, out.session_id);
+    // The chat just left may still be answering; that was ITS turn. The new
+    // one has none, and a "busy" carried over would make chatSend drop the
+    // first message until the new stream's snapshot said otherwise.
+    if (chatState.runState === "busy") chatSetState("idle");
+  }
   return out;
 }
 
@@ -15140,6 +15146,50 @@ function renderChatRail() {
 }
 
 $("#chatRailNew").addEventListener("click", () => $("#chatNew").click());
+
+// The list page's message box: what was typed opens a new chat and is its
+// first message. The text stays in the box if the chat could not be made —
+// and a chat that came back without a key was not made: sending then would
+// put the message into the chat being left. A second press while the first
+// is still making its chat is the same message, so it makes nothing.
+let chatRailSending = false;
+$("#chatRailForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  if (chatRailSending) return;
+  const box = $("#chatRailInput");
+  const text = box.value.trim();
+  if (!text) return;
+  const btn = $("#chatRailForm").querySelector('button[type="submit"]');
+  chatRailSending = true;
+  if (btn) btn.disabled = true;
+  let out;
+  try { out = await chatNewHere(); }
+  catch (e) { toast(e.message); return; }
+  finally {
+    chatRailSending = false;
+    if (btn) btn.disabled = false;
+  }
+  if (!out || !out.key) { toast("Could not start a new chat. Your message is still in the box."); return; }
+  box.value = "";
+  box.style.height = "auto";
+  askShow("chat");
+  refreshChatRail();
+  if (chatState.runState === "busy") {
+    // Nothing may throw the message away: if it cannot go yet, it waits in
+    // the chat's own box.
+    const input = $("#chatInput");
+    input.value = text;
+    chatGrow();
+    input.focus();
+    return;
+  }
+  chatSend(text);
+});
+$("#chatRailInput").addEventListener("input", (ev) => {
+  const box = ev.target;
+  box.style.height = "auto";
+  box.style.height = Math.min(box.scrollHeight, window.innerHeight * 0.3) + "px";
+});
 
 // ------------------------------------------------- the list page (narrow)
 //

@@ -2696,6 +2696,12 @@ html.shell-home.shell-raised, html.shell-home.shell-raised body { background: rg
   /* Beside a rail, the rail is the list: the menu item would open nothing. */
   #chatOpen { display: none; }
 }
+/* The list page's own message box (a new chat): only where the list is the
+   page Ask opens on. Beside a transcript the transcript's box is the one. */
+.chatrail .crnewchat { display: none; }
+@media (max-width: 899px) {
+  body:not(.term-classic) .chatrail .crnewchat { display: flex; }
+}
 .chathead .btn.icon { width: 44px; height: 44px; flex: none; }
 .chathead .chtitle {
   flex: 1;

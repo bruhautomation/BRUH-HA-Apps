@@ -2,6 +2,44 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.18
+
+### Fixed
+
+- A Morph tile or card for a device that has stopped answering no longer shows its last readings as if they were live. A freezer that is unavailable says so and when it was last seen, rather than showing a temperature, a target and how long the compressor has been off. An unavailable media player shows no track. In the rooms chart, an unavailable thermostat's line stops where it last answered (#764).
+- The rooms chart draws a line for every room that has readings, falling back to recorded history when a room has no statistics, and says which rooms have none (#757).
+- A soil probe whose reading falls to exactly 0% within minutes is shown as a probe to check, not as dry soil.
+- On a phone, a second tap on the Ask list's Send while the new chat is being made no longer starts two chats. If the chat could not be made, the message stays in the box.
+
+## 5.1.17
+
+### Fixed
+
+- When the Resident's first look decides a finding is not news (already answered, a duplicate, explained, recovered, or marked Wrong), the finding is held in History instead of shown, with the reason kept. `cosmetic` and `known` hold back only a single light, media player, weather, sun, zone or TTS entity whose name says nothing of food, water or a leak. Anything about safety, security, a protected entity or no entity at all is always shown. A look's link to a card you cannot see is dropped from its sentence and never moves the row (#790).
+- After you say a sensor is broken or to be ignored, the Resident and the overnight check stop building new reports on that sensor's readings (#788).
+
+## 5.1.16
+
+### Added
+
+- brAIn's Minecraft tools follow BRUH Minecraft 1.19.7: `minecraft_world` takes a `dimension` (Overworld, Nether, End) for looks and edits, and a skin is set through the add-on's `set_skin` service, which waits for the server's own answer and accepts a picture link (#782, #760).
+- A grown-up's game run is told how a lever or button can drive the house (a command block saying `bruh:signal`); a child's run and the shared tool description never carry it (#777).
+
+### Fixed
+
+- A skin request that gets no answer within a minute says the outcome is unknown instead of saying it failed (#760).
+- Block checks during a build use the add-on's quiet check, so players no longer see "[Rcon] ok" in chat (#761).
+
+## 5.1.15
+
+### Fixed
+
+- On a phone, the Ask list now carries a message box that starts a new chat, so there is always somewhere to type; a new chat no longer inherits the busy state of the one just left, and if a message cannot be sent it is put back in the chat's box rather than dropped (#796).
+- A Lovelace card hosted in Morph is rebuilt only when it was made before its element existed, so a card that was already defined stays on the page instead of being dropped on the next render (#795).
+- Morph's scene chips are 40px touch targets (#786); a text field that appears late keeps the 16px text floor, so iOS no longer zooms the page when it is tapped (#755).
+- Morph's quiet section labels keep readable contrast when their room dims (#758).
+- A Morph tile with a pressable word (Open, Unlock, Start, Dock) is one button named by that word, so a garage tile no longer reads as "Closed" and "Open" at once (#756); vacuums get labelled Start and Dock buttons (#765); entity tiles get an icon and how long they have been idle (#767).
+
 ## 5.1.14
 
 ### Fixed
