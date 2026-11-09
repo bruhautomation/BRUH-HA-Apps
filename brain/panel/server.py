@@ -20711,7 +20711,8 @@ def _devloop_held(now: float | None = None) -> dict:
     panel words a held row from this rather than promising a send ("will
     be sent" read as brAIn stalling). `frees_at` is when the oldest of
     today's issues leaves the window, which is when the next one can go.
-    Read-only, and "could not tell" is `today: None`, never a full day."""
+    Read-only, and "could not tell" is `today: None`, never a full day.
+    A limit of 0 is no limit (#797), and no limit is never full."""
     now = time.time() if now is None else now
     try:
         limit = int(devloop.load_settings().get("max_issues_per_day") or 0)
@@ -20724,12 +20725,12 @@ def _devloop_held(now: float | None = None) -> dict:
                         if isinstance(e, dict) and e.get("created_here")
                         and now - float(e.get("sent_at") or 0) < 86400)
         today = len(stamps)
-        if stamps and today >= limit:
-            frees_at = stamps[max(0, today - limit)] + 86400 if limit else 0.0
+        if limit > 0 and stamps and today >= limit:
+            frees_at = stamps[max(0, today - limit)] + 86400
     except Exception:  # noqa: BLE001
         today = None
     return {"limit": limit, "today": today,
-            "full": today is not None and today >= limit,
+            "full": limit > 0 and today is not None and today >= limit,
             "frees_at": frees_at}
 
 

@@ -4483,7 +4483,6 @@ function devHeldReason(r, data, capped) {
   if (!s.repo || !data.token_set) return "held: set a repository and a token to send";
   if (held.full) {
     const limit = Number(held.limit) || 0;
-    if (!limit) return "held: Daily limits allows no new issues — raise it to send";
     let when = "tomorrow";
     if (held.frees_at) {
       const d = new Date(held.frees_at * 1000);
@@ -4494,7 +4493,7 @@ function devHeldReason(r, data, capped) {
     return `held: today's limit of ${limit} new issue${limit === 1 ? "" : "s"} is used`
       + ` — goes out after ${when}, or raise Daily limits`;
   }
-  if (capped) return "held: only a few go in one pass — the rest go on the next pass, within the hour";
+  if (capped) return "held: today's limit of new issues is used — raise or clear Daily limits to send";
   return "queued: goes out on the next pass, within the hour";
 }
 
@@ -4758,7 +4757,8 @@ function paintDevloop(data) {
     : devLookOutcome(looks.last);
   $("#devLookRun").disabled = !!looks.running;
   if (document.activeElement !== $("#devCapIssues")) {
-    $("#devCapIssues").value = s.max_issues_per_day ?? 10;
+    // 0 is no limit (#797), shown as the empty field's "No limit".
+    $("#devCapIssues").value = Number(s.max_issues_per_day) > 0 ? s.max_issues_per_day : "";
   }
   if (document.activeElement !== $("#devCapRuns")) {
     $("#devCapRuns").value = s.max_runs_per_day ?? 4;
@@ -4832,7 +4832,8 @@ $("#devLookRun").addEventListener("click", async () => {
 });
 $("#devCapSave").addEventListener("click", () =>
   devloopCall("api/devloop", { method: "PUT", body: JSON.stringify({
-    max_issues_per_day: Number($("#devCapIssues").value),
+    // Empty is no limit, which the server stores as 0.
+    max_issues_per_day: Math.max(0, Math.floor(Number($("#devCapIssues").value) || 0)),
     max_runs_per_day: Number($("#devCapRuns").value) }) }, "Saved"));
 
 $("#devStreams").addEventListener("change", (ev) => {
