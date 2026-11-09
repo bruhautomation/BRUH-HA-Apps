@@ -3435,10 +3435,10 @@ def _mc_skin(value, player):
     out = {"done": worked is not False, "player": target, "skin": skin,
            "server_reply": _reply(result), "said": line}
     if worked is None:
-        out["note"] = " ".join(filter(None, (
-            "The server said nothing back: it may not have SkinsRestorer "
-            "(minecraft_addons list), so do not say it worked.",
-            str(result.get("note") or "")[:300])))
+        said = str(result.get("note") or "")[:300]
+        out["note"] = ("The server said nothing back: it may not have SkinsRestorer "
+                       "(minecraft_addons list), so do not say it worked."
+                       + (f" {said}" if said else ""))
     if worked is not False:
         _job_call({"action": "skin", "player": target, "skin": skin})
         if rules.is_bedrock(target):
@@ -3548,8 +3548,9 @@ def _mc_dimension(value):
     bare = text[len("minecraft:"):] if text.startswith("minecraft:") else text
     dim = MC_DIMENSIONS.get(bare)
     if dim is None:
-        return None, ("dimension is minecraft:overworld, minecraft:the_nether or "
-                      "minecraft:the_end (or overworld, nether, end).")
+        why = ("dimension is minecraft:overworld, minecraft:the_nether or "
+               "minecraft:the_end (or overworld, nether, end).")
+        return None, why
     return dim, None
 
 
