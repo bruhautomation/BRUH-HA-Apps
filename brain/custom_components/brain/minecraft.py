@@ -192,6 +192,10 @@ class Companion:
         # `brain_down_until` they were told under): a line skipped while it
         # is down is never silence, and the same player hears it once.
         self.told_down: dict[str, float] = {}
+        # When each player was last told a run of theirs failed, for a line
+        # that did not name the companion: at most once per FAILED_QUIET, so
+        # chatter while something is wrong is not a failure line each time.
+        self.told_failed: dict[str, float] = {}
         self.published: tuple | None = None
         self.handed_over = False
         self.tasks: set[Any] = set()
@@ -612,18 +616,18 @@ class Companion:
                 timeout=rules.TALK_TIMEOUT, session_id=self._session(player, tools),
                 **self._speaker(who, tools), **self._thought_env(player, "talk", settings))
         except Exception as exc:  # noqa: BLE001 — a failure is a canned line, never a crash
-            # The run was asked for these lines, so how it ended is said
-            # whether or not they named the companion: a run cut off with
-            # half its teleports done and nothing said is the worst ending.
             note = str(exc)[:200]
-            if rules.run_code(exc) == "timeout":
-                # The listener stopped it at its limit: what was asked is
-                # bigger than a quick answer, so it carries on as a job
-                # (the requester's scope as it is now — never more).
+            if rules.run_code(exc) == "timeout" and named:
+                # The listener stopped it at its limit on a line that was
+                # for the companion: what was asked is bigger than a quick
+                # answer, so it carries on as a job (the requester's scope
+                # as it is now — never more). Unnamed chatter that timed
+                # out opens nothing: the faculty cannot see whether the run
+                # had started acting, and a job is an hour of the build model.
                 status = "timed_out"
                 line = (await self._hand_off(who, lines, tools, settings, roster)
                         or rules.CANNED["timeout"])
-            elif isinstance(exc, TimeoutError) and not rules.run_code(exc):
+            elif isinstance(exc, TimeoutError) or rules.run_code(exc) == "timeout":
                 status, line = "timed_out", rules.CANNED["timeout"]
             else:
                 status, line = "down", rules.CANNED["down"]
@@ -631,6 +635,16 @@ class Companion:
                 # desk; one run's own ending never stops the next line.
                 if rules.brain_is_down(exc):
                     self.brain_down_until = self.clock() + rules.BRAIN_RETRY
+            # How it ended is always said for a line that named the
+            # companion; for every other line at most once a player per
+            # FAILED_QUIET, so a run cut off half done is never silence and
+            # chatter while something is wrong is never a line each time.
+            if line and not named:
+                now = self.clock()
+                if now - self.told_failed.get(player, -1e12) < rules.FAILED_QUIET:
+                    line = ""
+                else:
+                    self.told_failed[player] = now
         else:
             self._keep_session(player, tools, answer)
             data = self._data(answer)
@@ -664,14 +678,18 @@ class Companion:
         request = rules.handoff_request(" / ".join(i["text"] for i in lines))
         if request is None:
             return ""
+        # Matched on the words first asked, normalised (`asked`), never on
+        # the brief: `_amend` grows a brief, and an amended job is still
+        # the one these words opened.
+        asked = rules.words_key(request["brief"])
         same = next((j for j in await self._all_jobs()
                      if j.get("status") in rules.JOB_ACTIVE
                      and j.get("player") == who["player"]
-                     and j.get("brief") == request["brief"]), None)
+                     and (j.get("asked") or rules.words_key(j.get("brief"))) == asked), None)
         if same is not None:
             return rules.CANNED["handoff_again"].format(title=same.get("title") or "it")
-        waits = await self._open_job(who, {**request, "from_talk": True}, tools, settings,
-                                     roster)
+        waits = await self._open_job(who, {**request, "from_talk": True, "asked": asked},
+                                     tools, settings, roster)
         return " ".join(x for x in (rules.CANNED["handoff"].format(title=request["title"]),
                                     waits) if x)
 

@@ -88,6 +88,9 @@ POINT_TTL = 2 * 60                # a spyglass point is "this" / "that" this lon
 POINT_QUIET = 8                   # no line this long after a point: offer ideas
 OFFER_TTL = 10 * 60               # an offer's pads can be answered this long
 BRAIN_RETRY = 300
+# A failed run's line, for lines that did not name the companion: at most
+# once a player in this long (a line that named it is always answered).
+FAILED_QUIET = 120
 REPLY_LINES = 4
 REPLY_LINE_CHARS = 160
 PROMPT_CHARS = 12000              # the live view (what they look at, hold, just built) costs room
@@ -199,6 +202,12 @@ def brain_is_down(exc: BaseException) -> bool:
     if code:
         return code in BRAIN_DOWN_CODES
     return not isinstance(exc, TimeoutError)
+
+
+def words_key(text: Any) -> str:
+    """Words as a person means them, for telling one request from another:
+    lower case, letters and digits only, single spaces."""
+    return " ".join(re.sub(r"[^\w ]+", " ", str(text or "").lower()).split())
 
 
 def handoff_request(message: Any) -> dict[str, str] | None:

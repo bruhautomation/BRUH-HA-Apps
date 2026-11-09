@@ -33,6 +33,7 @@ from test_brain_minecraft_faculty import DAD, FAMILY, KAZ  # noqa: E402
 from test_minecraft_desk import DeskBrain, DeskCase, rules  # noqa: E402
 
 TOUR = "teleport me along the list of builds"
+NAMED_TOUR = f"juniper, {TOUR}"
 
 
 class RunFailed(Exception):
@@ -72,7 +73,7 @@ class TestATimedOutQuickRunBecomesAJob(TimeoutCase):
     def test_the_request_carries_on_as_a_job_and_the_player_is_told(self):
         self.join(DAD)
         self.brain.quick_fails = [self.timed_out()]
-        self.chat(DAD, TOUR)                    # no name: every line is for it
+        self.chat(DAD, NAMED_TOUR)              # named: what was asked becomes a job
         self.settle()
         jobs = self.jobs()
         self.assertEqual(len(jobs), 1, jobs)
@@ -107,7 +108,7 @@ class TestATimedOutQuickRunBecomesAJob(TimeoutCase):
     def test_a_childs_handed_on_job_keeps_the_game_scope(self):
         self.join(KAZ)
         self.brain.quick_fails = [self.timed_out()]
-        self.chat(KAZ, "take me to every house one by one")
+        self.chat(KAZ, "juniper take me to every house one by one")
         self.settle()
         job = self.jobs()[0]
         self.assertEqual(job["scope"], "minecraft")
@@ -119,7 +120,7 @@ class TestATimedOutQuickRunBecomesAJob(TimeoutCase):
         self.write_settings(**{**self.settings, "people": people})
         self.join(DAD)
         self.brain.quick_fails = [self.timed_out()]
-        self.chat(DAD, TOUR)
+        self.chat(DAD, NAMED_TOUR)
         self.settle()
         quick_tools = self.brain.of("quick")[0]["tools"]
         self.assertEqual(self.jobs()[0]["scope"], quick_tools)
@@ -128,11 +129,11 @@ class TestATimedOutQuickRunBecomesAJob(TimeoutCase):
         self.join(DAD)
         self.brain.holds["work"] = asyncio.Event()
         self.brain.quick_fails = [self.timed_out(), self.timed_out()]
-        self.fire("chat", player=DAD, name=DAD, text=TOUR, verified=True)
+        self.fire("chat", player=DAD, name=DAD, text=NAMED_TOUR, verified=True)
         self.wait_until(lambda: self.jobs() and self.jobs()[0]["status"] == "running")
         self.wait_until(lambda: not self.c.talking)
         self.clock.t += 10
-        self.fire("chat", player=DAD, name=DAD, text=TOUR, verified=True)
+        self.fire("chat", player=DAD, name=DAD, text=NAMED_TOUR, verified=True)
         self.wait_until(lambda: not self.c.talking)
         self.assertEqual(len(self.jobs()), 1)
         self.assertIn(rules.CANNED["handoff_again"].format(title=self.jobs()[0]["title"]),
@@ -150,6 +151,61 @@ class TestATimedOutQuickRunBecomesAJob(TimeoutCase):
         self.chat(DAD, "hello?")
         self.assertEqual(len(self.brain.of("quick")), 2)
 
+
+class TestChatterIsNotAJobOrALineEachTime(TimeoutCase):
+    """The reviewer's two points on 72e069b: unnamed chatter that timed out
+    opens no job, and failure lines to unnamed lines are at most one per
+    player per FAILED_QUIET; a named line is always answered."""
+
+    def test_unnamed_chatter_that_times_out_opens_no_job(self):
+        self.join(DAD)
+        self.brain.quick_fails = [self.timed_out()]
+        self.chat(DAD, TOUR)
+        self.settle()
+        self.assertEqual(self.jobs(), [])
+        self.assertEqual(self.lines_to(DAD)[-1], rules.CANNED["timeout"])
+        self.assertEqual(self.brain.of("work"), [])
+
+    def test_unnamed_failures_are_said_once_a_window_and_named_ones_always(self):
+        self.join(DAD)
+        fail = [RunFailed("refused", code="safeguard") for _ in range(5)]
+        self.brain.quick_fails = fail
+        self.chat(DAD, "lol", advance=1)
+        self.chat(DAD, "brb", advance=1)
+        self.chat(DAD, "ok", advance=1)
+        self.assertEqual(self.lines_to(DAD), [rules.CANNED["down"]])
+        self.chat(DAD, "juniper make a horse", advance=1)
+        self.assertEqual(self.lines_to(DAD), [rules.CANNED["down"]] * 2)
+        self.clock.t += rules.FAILED_QUIET
+        self.chat(DAD, "hmm", advance=1)
+        self.assertEqual(self.lines_to(DAD), [rules.CANNED["down"]] * 3)
+        self.assertEqual(len(self.brain.of("quick")), 5)
+
+    def test_an_amended_job_is_still_the_one_the_words_opened(self):
+        # A child's job waits at bedtime, so it is queued and an amend grows
+        # its brief; bedtime falls while the quick run is out.
+        self.write_settings(**{**self.settings, "bedtime_entity": "input_boolean.bed"})
+        self.states["input_boolean.bed"] = "off"
+        self.join(KAZ)
+        states = self.states
+
+        class BedtimeFalls(list):
+            def pop(self, *a):
+                states["input_boolean.bed"] = "on"
+                return super().pop(*a)
+        self.brain.quick_fails = BedtimeFalls([self.timed_out()])
+        self.chat(KAZ, "juniper, take me to every house one by one")
+        job = self.jobs()[0]
+        self.assertEqual(job["status"], "queued")
+        self.go(self.c._amend({"person": "Kaz", "role": "child", "player": KAZ},
+                              job["id"], "and the farm too"))
+        self.assertIn("and the farm too", self.jobs()[0]["brief"])
+        self.states["input_boolean.bed"] = "off"
+        self.brain.quick_fails = [self.timed_out()]
+        self.chat(KAZ, "Juniper, Take me to every house, one by one!")
+        self.assertEqual(len(self.jobs()), 1)
+        self.assertIn(rules.CANNED["handoff_again"].format(title=job["title"]),
+                      self.lines_to(KAZ))
 
 class TestOnlyBrainBeingDownHoldsTheDesk(TimeoutCase):
     def test_one_runs_own_failure_does_not_hold_the_next_line(self):
