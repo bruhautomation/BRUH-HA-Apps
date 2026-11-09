@@ -145,6 +145,49 @@ class TestAChartOfRoomsDrawsEveryRoom(unittest.TestCase):
         self.assertNotIn("<polyline", got)
 
 
+class TestLastAttributesOfSomethingGoneAreNotLive(unittest.TestCase):
+    # #764: an unavailable entity keeps its last attributes (a thermostat's
+    # current_temperature, a player's track), and they are not live.
+    def test_no_live_figure_and_no_line_to_now(self):
+        got = run("""
+            const h = house([st('climate.a', 'unavailable', { current_temperature: 71, temperature: 72, friendly_name: 'Upstairs' }, 4),
+              st('sensor.den_temperature', '68.7', { device_class: 'temperature', unit_of_measurement: '°F', state_class: 'measurement' })]);
+            const ws = h.callWS;
+            h.callWS = async (m) => {
+              if (m.type === 'history/history_during_period' && m.entity_ids[0] === 'climate.a') {
+                const t0 = Date.parse(m.start_time) / 1000;
+                return { 'climate.a': Array.from({ length: 24 }, (_, i) => ({ s: i < 20 ? 'cool' : 'unavailable', lu: t0 + i * 3600, a: { current_temperature: i < 20 ? 66 + (i % 3) : 71, temperature: 72 } })) };
+              }
+              return ws(m);
+            };
+            const card = { id: 'g', entities: ['climate.a', 'sensor.den_temperature'] };
+            const draw = () => H.readings(h, card, {}, () => 'var(--teal)', { name: 'Spaces' });
+            draw(); await settle(); draw(); await settle(); draw(); await settle();
+            const html = draw();
+            const spans = [...html.matchAll(/<polyline points="([^"]*)"/g)].map((m) => m[1].trim().split(/\\s+/).map((p) => parseFloat(p.split(',')[0])));
+            const labels = [...html.matchAll(/<button type="button" class="ovlab"[^>]*data-v="([^"]*)"[^>]*>(.*?)<\\/button>/g)].map((m) => [m[1], text(m[2])]);
+            console.log(JSON.stringify({ ends: spans.map((xs) => Math.max(...xs)), labels }));
+        """)
+        labels = dict(got["labels"])
+        self.assertIn("climate.a", labels, got)
+        self.assertNotRegex(labels["climate.a"], r"\d", got)
+        self.assertEqual(len(got["ends"]), 2, got)
+        # The thermostat's line (the first) stops at the last hour it
+        # answered (19 of 24, x=475 of 600) rather than running on to now.
+        self.assertLess(got["ends"][0], 500, got)
+        self.assertGreater(got["ends"][1], 500, got)
+        self.assertRegex(labels["sensor.den_temperature"], r"68\.7", got)
+
+    def test_an_unavailable_player_shows_no_track(self):
+        got = run("""
+            const h = house([st('media_player.den', 'unavailable', { media_title: 'Old Song', media_artist: 'Old Band', media_duration: 200, media_position: 50 }, 2)]);
+            console.log(JSON.stringify(text(face('media', h, { entity: 'media_player.den' }, 'Den'))));
+        """)
+        self.assertNotIn("Old Song", got)
+        self.assertNotIn("Old Band", got)
+        self.assertIn("last seen", got)
+
+
 class TestADeadProbeIsNotDrySoil(unittest.TestCase):
     def fell(self, pts):
         return run(f"console.log(JSON.stringify(U.fellToZero({json.dumps(pts)})));")

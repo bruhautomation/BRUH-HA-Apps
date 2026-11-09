@@ -356,7 +356,10 @@ export function readings(hass, card, H, colorFor, head) {
   const what = moisture ? 'line' : temperature || humidity ? 'room' : 'line';
   // A thermostat's reading is its own sensor: an attribute, not its state.
   const attr = humidity ? 'current_humidity' : 'current_temperature';
-  const valueOf = (eid, s, a) => parseFloat(domainOf(eid) === 'climate' ? (a || {})[attr] : s);
+  // #764: a thermostat that stopped answering keeps its last attributes, so
+  // its reading is nothing (no live label, no line to now) while its state
+  // is unavailable or unknown, now and in each history row.
+  const valueOf = (eid, s, a) => GAP.includes(String(s)) ? NaN : parseFloat(domainOf(eid) === 'climate' ? (a || {})[attr] : s);
   const series = [];
   let pending = false;
   ids.forEach((eid) => {

@@ -361,7 +361,8 @@ const climate = {
     // #764: a thermostat that stopped answering keeps its last attributes;
     // its temperature is the last one heard, greyed, and it has no target,
     // controls or running state to show until it answers again.
-    if (off(st)) return goneBox(ctx, cur != null ? Number(cur).toFixed(1) + '°' : '—', 'big'); const tgt = a.temperature != null ? a.temperature : a.target_temp_low;
+    if (off(st)) return goneBox(ctx, cur != null ? Number(cur).toFixed(1) + '°' : '—', 'big');
+    const tgt = a.temperature != null ? a.temperature : a.target_temp_low;
     const lo = a.min_temp != null ? a.min_temp : 7, hi = a.max_temp != null ? a.max_temp : 35;
     const P = (v) => clamp(((v - lo) / (hi - lo || 1)) * 100, 0, 100);
     const action = a.hvac_action ? ACTION[a.hvac_action] || a.hvac_action : (MODE[st.state] || MODE.off)[0];
@@ -498,10 +499,14 @@ const media = {
   face: (ctx) => {
     const st = ctx.st; const a = (st && st.attributes) || {}; const e = ctx.card.entity;
     const playing = st && st.state === 'playing';
-    const title = a.media_title || (st && !off(st) ? (st.state === 'off' ? 'Off' : st.state[0].toUpperCase() + st.state.slice(1)) : 'Unavailable');
-    const sub = [a.media_artist, a.app_name || a.source].filter(Boolean).join(' · ');
+    // #764: a player that stopped answering keeps its last track in its
+    // attributes; it says it is unavailable and when it was last seen, not
+    // what it was playing.
+    const gone = off(st);
+    const title = gone ? (st ? stateWord(st) : 'Missing') : a.media_title || (st.state === 'off' ? 'Off' : st.state[0].toUpperCase() + st.state.slice(1));
+    const sub = gone ? (st ? lastSeen(st) : '') : [a.media_artist, a.app_name || a.source].filter(Boolean).join(' · ');
     let prog = '';
-    if (a.media_duration && a.media_position != null) {
+    if (!gone && a.media_duration && a.media_position != null) {
       // Drawn from the last reported position and RUN to the end by the
       // stylesheet, so it moves between the player's updates rather than
       // freezing until the next one.
