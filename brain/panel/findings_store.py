@@ -688,7 +688,11 @@ def _publish_state(items: list[dict]) -> None:
     if not STATE_FILE.parent.parent.is_dir():
         return
     now = time.time()
-    shaped = [s for s in (_shape(e) for e in items) if s["text"]]
+    # What leaves the panel reads as the card does (#774, #791): no id,
+    # path or code name, never "an internal name". `ts` is the key every
+    # reader there holds; the stored row is untouched.
+    shaped = [{**s, **shown_words(s)} for s in (_shape(e) for e in items)
+              if s["text"]]
     shaped.sort(key=lambda f: f["ts"], reverse=True)
     live = [s for s in shaped
             if s["status"] in LIVE_STATUSES and not is_snoozed(s, now)]
@@ -1006,57 +1010,23 @@ def shown_words(entry: dict) -> dict:
     return out
 
 
-# A row no wording rule may lower or rewrite: a wrong reading of its words
-# there costs more than an untidy card.
-_HIGH_STAKES_RE = re.compile(
-    r"\b(?:leak|water|flood|smoke|fire|gas|carbon monoxide|co alarm|freez\w*|"
-    r"lock(?:ed|s)?|unlocked|alarm|intrusion|break-in|security)\b", re.I)
-HIGH_STAKES_SOURCES = frozenset({"safety", "security", "tripwire"})
-
-
-def high_stakes(entry: dict) -> bool:
-    """Whether a row is one no wording rule may lower or rewrite: the
-    safety and security lanes, a critical or high-stakes row, an urgent
-    one, or one about water, smoke, fire, gas, a freeze, a lock or an
-    alarm (by its words or its entity's domain)."""
-    entry = entry if isinstance(entry, dict) else {}
-    source = str(entry.get("source") or "")
-    if source in HIGH_STAKES_SOURCES or source.startswith(("safety", "security")):
-        return True
-    if entry.get("severity") == "critical" or entry.get("stakes") == "high":
-        return True
-    if str(entry.get("entity_id") or "").split(".", 1)[0] in (
-            "lock", "alarm_control_panel", "siren"):
-        return True
-    if _HIGH_STAKES_RE.search(" ".join(str(entry.get(k) or "") for k in (
-            "text", "claim", "detail", "entity_id"))):
-        return True
-    return _urgent(entry)
-
-
-# Producers whose rows stay open with no step of their own: a follow-up
-# says a problem came back after brAIn's fix (`server`'s follow-up look
-# files it with only a detail), which is brAIn's regression to answer,
-# never a row to set aside.
-STEPLESS_KEPT = frozenset({"followup"})
-
-
-def stepless(entry: dict) -> bool:
-    """Whether an open model-written row asks nothing of its reader
-    (`next_step` is empty, #775): no step, no question, no stated
-    "nothing needed". A surface shows such a row held — set aside, never
-    on the open list — while the stored row is left as it is, so a look
-    or an investigation that writes a step puts it back. Never a house
-    check's row, a follow-up (`STEPLESS_KEPT`), a row whose step lives in
-    its ``plan``, ``items`` or ``self_edit``, or a high-stakes one
-    (`high_stakes`)."""
-    entry = entry if isinstance(entry, dict) else {}
-    return (entry.get("status") == "open"
-            and _model_written(entry.get("source"))
-            and str(entry.get("source") or "") not in STEPLESS_KEPT
-            and not high_stakes(entry)
-            and not any(entry.get(k) for k in ("plan", "items", "self_edit"))
-            and next_step(entry)[0] == "")
+def outbound(rows) -> list[dict]:
+    """``rows`` as a message leaving the panel says them (#774, #791):
+    each in `shown_words`' plain words. A notification's slim copy (``ts``,
+    ``text``, ``severity``) is read against its stored row for who wrote
+    it; only the keys the copy already had are replaced, and ``ts`` —
+    the key every reader holds — never is."""
+    out = []
+    for row in rows or ():
+        if not isinstance(row, dict):
+            continue
+        stored = row if row.get("source") is not None else (
+            get(int(row.get("ts") or 0)) or {})
+        said = shown_words({**stored, **row,
+                            "source": stored.get("source"),
+                            "technical": stored.get("technical")})
+        out.append({**row, **{k: v for k, v in said.items() if k in row}})
+    return out
 
 
 def shown_look(record: dict, entry: dict) -> dict:
@@ -1557,49 +1527,7 @@ def _case_fields(entry: dict) -> dict:
     todo = clean_todo_text(entry.get("todo_text"))
     if todo:
         out["todo_text"] = todo
-    # "Nothing to do, because …" (#775): the producer's stated reason a
-    # row needs no step, which files it held with that reason.
-    why = textclip.shorten(" ".join(str(entry.get("no_action") or "").split()),
-                           MAX_FIX)
-    if why:
-        out["no_action"] = why
     return out
-
-
-def next_step(entry: dict) -> tuple[str, str]:
-    """``(what, why)``: what a row asks of its reader (#775). ``step``: a
-    step the household can carry out (its shown `fix`, an action, an
-    errand); ``question``: a question to answer or an approval to give;
-    ``note``: news to read (`informational`); ``no_action``: it says
-    nothing needs doing, and ``why`` is that sentence; ``urgent``: none of
-    those, on a high-stakes row, which is never dropped for its wording;
-    ``""``: none at all — a row that leaves its reader unable to tell
-    whether to act, answer or ignore."""
-    entry = entry if isinstance(entry, dict) else {}
-    if (entry.get("kind") == "question" or entry.get("asked") is True
-            or entry.get("minecraft_approval")):
-        return "question", ""
-    if entry.get("informational") is True:
-        return "note", ""
-    check = str(entry.get("source") or "").startswith("check:")
-    fix = str(entry.get("fix") or "")
-    if (house_words.household_step(
-            fix, own_checks=bool(entry.get("fix_by")) or not check)
-            or entry.get("actions") or str(entry.get("todo_text") or "").strip()):
-        return "step", ""
-    why = str(entry.get("no_action") or "").strip()
-    if not why:
-        for sentence in re.split(r"(?<=[.!?])\s+",
-                                 fix or str(entry.get("detail") or "")):
-            if triage.NOTHING_RE.search(sentence):
-                why = sentence.strip()
-                break
-    if why:
-        return "no_action", why
-    if (entry.get("stakes") == "high" or entry.get("severity") == "critical"
-            or _urgent(entry)):
-        return "urgent", ""
-    return "", ""
 
 
 def _shape(entry: dict) -> dict:
@@ -1871,10 +1799,6 @@ def listing() -> dict:
     shaped = [s for s in (_shape(e) for e in _load())
               if s["text"] and holds_now(s)]
     for row in shaped:
-        if stepless(row):
-            # Nothing for anybody to do and no reason given (#775).
-            row["status"] = "held"
-            row["stepless"] = True
         row.update(shown_words(row))
         row["fix"] = shown_fix(row)
         if row.get("triage"):
@@ -2828,29 +2752,6 @@ def add_many(objs: list[dict]) -> list[dict]:
                 entry.update(asked)
         if entry is None:
             continue
-        # A model's case that says nothing is needed, and why (#775), is
-        # filed held with that reason and raised to nobody — read after the
-        # passes above, which can empty a step (a placeholder, a fork, a
-        # sentence holding only a path). The case contract (a `kind` or a
-        # `claim`) or a stated `no_action` is what the rule reads: a bare
-        # producer's line keeps its old door. A case with no step at all is
-        # refused where it is written (`resident.unfinished`), because this
-        # store files a case whose step it emptied (`add_case`, held by
-        # `tests/test_finding_placeholders.py`).
-        quiet = False
-        if not care and _model_written(entry.get("source")) and (
-                entry.get("kind") in CASE_KINDS or entry.get("claim")
-                or entry.get("no_action")):
-            what, why = next_step(entry)
-            if what == "no_action":
-                entry["status"] = "held"
-                entry["triage"] = _clean_triage({
-                    "verdict": "held",
-                    "reason": textclip.shorten(why, triage.MAX_REASON),
-                    "run_id": entry.get("run_id") or "",
-                    "at": int(time.time()), "wrote_fix": False,
-                    "v": triage.LOOK_VERSION})
-                quiet = True
         if (own_question and not care and _model_written(entry.get("source"))
                 and house_words.about_own_setup(*(entry.get(k) for k in (
                     "text", "claim", "detail", "fix")))):
@@ -2910,10 +2811,7 @@ def add_many(objs: list[dict]) -> list[dict]:
         if ck:
             checked.setdefault(ck, entry)
         items.append(entry)
-        if quiet:
-            refreshed = True
-        else:
-            created.append(_shape(entry))
+        created.append(_shape(entry))
     gone = _fold_shared(items) if created or refreshed else set()
     if created or refreshed:
         gone |= _fold_devices(items)

@@ -166,3 +166,50 @@ class TestTheSentenceStillReads(unittest.TestCase):
                  "The den speaker dropped off.")):
             with self.subTest(said):
                 self.assertEqual(house_words.ids(said, {})[0], words)
+
+
+class TestWhatLeavesThePanelIsPlain(StoresCase):
+    """The Home Assistant mirror (Repairs, To-do, the watcher) and a
+    notification's words read as the card does; `ts` stays the key."""
+
+    ROW = {"ts": 1_700_000_900, "status": "open", "severity": "warning",
+           "source": findings_store.RESIDENT_SOURCE,
+           "text": "The an internal name event stopped firing",
+           "claim": "The an internal name event stopped firing on Tuesday.",
+           "detail": "It last fired on Tuesday. tts.google_en_com still "
+                     "answers.",
+           "fix": "Turn on the automation that fires the event.",
+           "technical": ["bruh_minecraft_moment"]}
+
+    def setUp(self):
+        super().setUp()
+        findings_store.STATE_FILE.parent.mkdir(parents=True)
+        items = findings_store._load()
+        items.append(dict(self.ROW))
+        findings_store._write(items)
+
+    def test_the_mirror_is_plain(self):
+        import json
+        findings_store.publish_state()
+        state = json.loads(findings_store.STATE_FILE.read_text())
+        rows = [r for r in state["findings"] if r["ts"] == self.ROW["ts"]]
+        self.assertEqual(len(rows), 1)
+        said = json.dumps(state)
+        self.assertNotIn("an internal name", said.lower())
+        self.assertNotIn("tts.google_en_com", said)
+        self.assertIn("The voice service still answers.", rows[0]["detail"])
+        # the stored row and its key are as they were
+        stored = findings_store.get(self.ROW["ts"])
+        self.assertEqual(stored["text"], self.ROW["text"])
+
+    def test_a_notifications_slim_copy_is_plain(self):
+        slim = {"ts": self.ROW["ts"], "text": self.ROW["text"],
+                "severity": "warning"}
+        out = findings_store.outbound([slim])
+        self.assertEqual(out[0]["ts"], self.ROW["ts"])
+        self.assertEqual(set(out[0]), set(slim))
+        self.assertNotIn("an internal name", out[0]["text"].lower())
+        # a check's own words are its rule's and are left alone
+        self.assertEqual(findings_store.outbound(
+            [{"ts": 1, "text": "sensor.x is stuck", "source": "check:x"}])[0]
+            ["text"], "sensor.x is stuck")

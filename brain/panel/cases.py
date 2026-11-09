@@ -506,11 +506,6 @@ def _from_finding(row: dict, snoozes: dict[str, int]) -> dict:
     # A model's words with no id, path or code name in them (#774, #791).
     row = {**row, **findings_store.shown_words(row)}
     status = row.get("status") or "open"
-    if findings_store.stepless(row):
-        # An open model row that asks nothing of its reader — no step, no
-        # question, no stated "nothing needed" — is shown set aside, never
-        # on the open list (#775). The stored row is untouched.
-        status = "held"
     kind = "change" if status == "fixed" else (
         row["kind"] if row.get("kind") in KINDS else "problem")
     case = _base(

@@ -1836,7 +1836,9 @@ async def _send_notification(rows: list[dict], held: bool = False,
     # A reminder composes its own sentence (which repeat, since when) and
     # otherwise rides this path unchanged: the buttons, the panel link and
     # the failure reporting are the same three questions either way.
-    title, body = message or notify_router.compose(rows, held=held)
+    # In the card's plain words, never an id or a code name (#774, #791).
+    title, body = message or notify_router.compose(
+        await asyncio.to_thread(findings_store.outbound, rows), held=held)
     # Buttons, but only where they can be answered and only when the
     # message is about one finding — see `notify_router.actions_for`.
     # A caller with its own (a confirmation's Undo) replaces them: the
@@ -1904,7 +1906,9 @@ async def _flush_held_findings() -> int:
     if not rows:
         return 0
     await _send_notification(rows, held=True,
-                             message=notify_router.compose_released(rows))
+                             message=notify_router.compose_released(
+                                 await asyncio.to_thread(
+                                     findings_store.outbound, rows)))
     return len(rows)
 
 
@@ -4988,7 +4992,9 @@ async def _escalation_tick() -> int:
     tz, _name = baselines.house_timezone()
     sent = 0
     for row in due:
-        message = notify_router.compose_escalation(row, tz)
+        message = notify_router.compose_escalation(
+            (await asyncio.to_thread(findings_store.outbound, [row])
+             or [row])[0], tz)
         # The buttons are the card's own answers, read off the LIVE row
         # rather than the ledger's slim copy: a battery's reminder offers
         # "Replaced it" because its card does, and the ledger row carries
@@ -5336,7 +5342,9 @@ async def _dispatch_notify_tier(rows: list[dict], now: float) -> list[dict]:
     try:
         if send_now:
             await _send_notification(
-                send_now, message=dispatch.compose_batch(send_now, words),
+                send_now, message=dispatch.compose_batch(
+                    await asyncio.to_thread(findings_store.outbound, send_now),
+                    words),
                 kind="notify", dispatched=True)
         if holds:
             depth = await asyncio.to_thread(notify_router.hold_timed, holds,

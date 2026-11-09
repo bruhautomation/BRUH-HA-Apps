@@ -1736,9 +1736,7 @@ def unfinished(case: dict, floor: str = "") -> tuple[str, str]:
     the claim above it is a headline withdrawn by its own text (#604) — the
     honest answer is no claim, or a held row. ``no_step``: a problem or an
     opportunity with no step, no errand and no action, which leaves the
-    reader unable to tell whether to do, answer or ignore (#616) — the
-    step read as the card shows it, so one the card would not show is
-    none (#775). A
+    reader unable to tell whether to do, answer or ignore (#616). A
     high-stakes reply is never dropped for the second: silence there costs
     more than a card without a step.
     """
@@ -1762,11 +1760,7 @@ def unfinished(case: dict, floor: str = "") -> tuple[str, str]:
                 break
     if said:
         return "nothing_needed", textclip.shorten(said, MAX_WHY)
-    # The step read as the card will show it (`findings_store.shown_fix`,
-    # #775): a step made only of a path, a tool's name or an errand to
-    # check what brAIn reads itself shows nothing, so it is no step.
-    shown = house_words.household_step(house_words.technical(fix)[0])
-    if (not shown and not str(case.get("todo_text") or "").strip()
+    if (not fix and not str(case.get("todo_text") or "").strip()
             and not case.get("actions") and case.get("stakes") != "high"):
         return "no_step", ""
     return "", ""
