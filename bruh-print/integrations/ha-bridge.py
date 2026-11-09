@@ -38,8 +38,14 @@ POLL_INTERVAL = 0.4
 # Request kind -> (method, path builder). A kind not in here is refused by
 # name rather than forwarded blindly: an unknown path would come back as the
 # panel's 404 page, which says nothing about which service was miscalled.
+# A third element is fixed payload the route needs to do what the service
+# says.
 ROUTES: dict[str, Any] = {
-    "print_text": lambda p: ("POST", "/api/quick"),
+    # `/api/quick` is the Quick tab's one route for type, look AND print,
+    # and it only prints when told to. Forwarded bare, `print_text` was a
+    # preview: a 200, a picture nobody saw, `printed: 0` and no label
+    # (#783).
+    "print_text": lambda p: ("POST", "/api/quick", {"print": True}),
     "print_template": lambda p: (
         "POST", f"/api/template/{_seg(p.get('template', ''))}/print"),
     "print_label": lambda p: ("POST", "/api/print"),
@@ -62,6 +68,11 @@ ROUTES: dict[str, Any] = {
     # instead of guessing and meeting the stock refusal.
     "get_status": lambda p: ("GET", "/api/state"),
 }
+
+# The kinds a caller asks for in order to get a label out. An answer to one
+# of these that printed nothing must say why, whatever the route said.
+PRINTS = frozenset({"print_text", "print_template", "print_label", "reprint",
+                    "print_test"})
 
 # A print job can take a while — a run of 200 labels is 200 form feeds and
 # the printer takes them at its own pace — so the forward waits longer than
@@ -166,15 +177,30 @@ async def handle(request: dict) -> dict:
         return {"ok": False,
                 "error": f"BRUH Print does not know how to do {kind!r}. "
                          f"Known: {', '.join(sorted(ROUTES))}."}
-    method, path = route(payload)
+    method, path, *fixed = route(payload)
     if kind == "get_status":
         answer = await asyncio.to_thread(_forward, method, path, {})
         return answer if answer.get("ok") is False else summarise_state(answer)
     # Every service call is a print somebody asked for out loud, so it is
     # tagged as such: the history's `source` column is how you tell a label
     # you printed from one an automation printed at 3am.
-    payload = {**payload, "source": f"ha:{kind}"}
-    return await asyncio.to_thread(_forward, method, path, payload)
+    payload = {**payload, **(fixed[0] if fixed else {}), "source": f"ha:{kind}"}
+    answer = await asyncio.to_thread(_forward, method, path, payload)
+    return _explain_nothing_printed(kind, path, answer)
+
+
+def _explain_nothing_printed(kind: str, path: str, answer: dict) -> dict:
+    """`printed: 0` with no reason is a caller told nothing came out and
+    nothing about why. Every panel route that prints answers `printed` >= 1
+    or refuses, so a 200 without one is a route that did not print — said
+    first, with whatever notes the panel gave kept after it, because those
+    are about the label (a clipped column) rather than the missing print."""
+    if (kind not in PRINTS or answer.get("ok") is False
+            or (answer.get("printed") or 0) >= 1):
+        return answer
+    return {**answer, "printed": 0, "notes": [
+        f"Nothing was printed: BRUH Print's {path} answered without sending "
+        f"a label to the printer.", *(answer.get("notes") or [])]}
 
 
 async def request_loop() -> None:

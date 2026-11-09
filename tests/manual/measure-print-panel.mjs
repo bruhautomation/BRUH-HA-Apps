@@ -896,6 +896,87 @@ await run(PHONE.w, PHONE.h, 'phone-design', true, async (p) => {
   await reachable(p, 'phone-design', async () => {}, ['designRotateEl']);
   await dragToTheEdge(p, 'phone-design');
 });
+/* Home Assistant's frame, on a phone that loads the panel before it has
+ * laid the frame out (#794): the panel stayed blank or tab-less until the
+ * sidebar was opened and shut. The frame starts with no width — either 0px
+ * wide, or not laid out at all, which is what a panel behind a closed
+ * drawer is — and then grows to the phone's width, and NOTHING tells the
+ * page: the window `resize` events are swallowed here, because on those
+ * phones the growth did not deliver one, and the sidebar toggle is what
+ * finally did. So everything the panel measures has to follow the box it
+ * measures rather than the window. */
+const framedFromZero = async (name, start) => {
+  const ctx = await b.newContext({ viewport: { width: PHONE.w, height: PHONE.h },
+    hasTouch: true });
+  await ctx.addInitScript(() => {
+    const real = EventTarget.prototype.addEventListener;
+    EventTarget.prototype.addEventListener = function (type, ...rest) {
+      if (type === 'resize' && this === window) return undefined;
+      return real.call(this, type, ...rest);
+    };
+  });
+  const p = await ctx.newPage();
+  p.on('pageerror', (e) => problems.push(`${name}: ${e.message}`));
+  await p.setContent('<body style="margin:0"><iframe id="ha" src="' + URL
+    + `" style="border:0;display:block;height:${PHONE.h}px;${start}"></iframe></body>`);
+  const frame = await (await p.$('#ha')).contentFrame();
+  try {
+    await frame.waitForFunction(
+      () => window.__bruhPrintReady && document.querySelector('#quickStock option'),
+      null, { timeout: 15000 });
+  } catch {
+    problems.push(`${name}: the panel never booted inside a frame with no width`);
+    await ctx.close();
+    return;
+  }
+  await p.waitForTimeout(400);
+  await p.evaluate((w) => {
+    const f = document.getElementById('ha');
+    f.style.display = 'block'; f.style.width = `${w}px`;
+  }, PHONE.w);
+  await p.waitForTimeout(600);
+  const seen = await frame.evaluate((h) => {
+    const out = [];
+    const bar = document.querySelector('.bar-main').getBoundingClientRect().height;
+    const said = parseFloat(getComputedStyle(document.documentElement)
+      .getPropertyValue('--barmain-h'));
+    if (Math.abs(said - Math.round(bar)) > 0.5)
+      out.push(`--barmain-h is ${said}px for a ${bar}px status row — measured `
+        + 'before the frame had a width and never again');
+    const visible = (n) => {
+      const r = n && n.getBoundingClientRect();
+      return !!r && r.width > 0 && r.height > 0 && r.top >= 0 && r.bottom <= h
+        && r.left >= 0 && r.right <= innerWidth + 1;
+    };
+    const tabs = [...document.querySelectorAll('#tabs .tab')];
+    if (tabs.length !== 5 || !tabs.every(visible))
+      out.push('the tabs are not on screen');
+    if (!visible(document.getElementById('quickText')))
+      out.push('the Quick form is not on screen');
+    return out;
+  }, PHONE.h);
+  /* And the half the variable is for: scrolled past the status row, the
+   * tabs pin to the top. The Printer tab, because Quick is shorter than a
+   * phone and does not scroll at all. */
+  await frame.click('[data-view="printer"]');
+  await p.waitForTimeout(400);
+  const pinned = await frame.evaluate(() => {
+    scrollTo(0, 400);
+    return new Promise((done) => requestAnimationFrame(() => done({
+      y: scrollY,
+      bar: document.querySelector('.bar-main').getBoundingClientRect().height,
+      tabs: document.getElementById('tabs').getBoundingClientRect().top,
+    })));
+  });
+  const wanted = Math.max(0, pinned.bar - pinned.y);
+  if (Math.abs(pinned.tabs - wanted) > 1)
+    seen.push(`scrolled ${pinned.y}px, the tab strip sits at ${pinned.tabs}px `
+      + `instead of ${wanted}px`);
+  if (seen.length) problems.push(`${name}: ${seen.join('; ')}`);
+  await ctx.close();
+};
+await framedFromZero('phone-frame-0px', 'width:0');
+await framedFromZero('phone-frame-not-laid-out', 'width:0;display:none');
 await b.close();
 if (problems.length) { console.error('FAILED:\n- ' + problems.join('\n- ')); process.exit(1); }
 console.log('measure-panel: clean at every width');
