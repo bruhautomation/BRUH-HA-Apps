@@ -15141,6 +15141,27 @@ function renderChatRail() {
 
 $("#chatRailNew").addEventListener("click", () => $("#chatNew").click());
 
+// The list page's message box: what was typed opens a new chat and is its
+// first message. The text stays in the box if the chat could not be made.
+$("#chatRailForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const box = $("#chatRailInput");
+  const text = box.value.trim();
+  if (!text) return;
+  try { await chatNewHere(); }
+  catch (e) { toast(e.message); return; }
+  box.value = "";
+  box.style.height = "auto";
+  askShow("chat");
+  refreshChatRail();
+  chatSend(text);
+});
+$("#chatRailInput").addEventListener("input", (ev) => {
+  const box = ev.target;
+  box.style.height = "auto";
+  box.style.height = Math.min(box.scrollHeight, window.innerHeight * 0.3) + "px";
+});
+
 // ------------------------------------------------- the list page (narrow)
 //
 // Below the rail's breakpoint there is no room for a list beside a

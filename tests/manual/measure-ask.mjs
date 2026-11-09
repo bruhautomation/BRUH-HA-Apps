@@ -674,6 +674,75 @@ for (const { width, touch } of CASES) {
   await context.close();
 }
 
+// ---- the first screen of Ask on a phone has a message box ---------------
+// #796: "The Ask UI doesn't show the text entry field on mobile." Ask opens
+// on the list of chats, and the box lived only inside an open transcript.
+// A person who opens Ask came to ask: the list page carries a box, typing
+// and sending starts a NEW chat with that message, and the list stays.
+{
+  const where = '390px first screen';
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 860 }, hasTouch: true, isMobile: true });
+  const page = await context.newPage();
+  page.on('pageerror', (e) => note(where, `page error: ${e.message}`));
+  await page.addInitScript(STUB);
+  await page.goto(`file://${path.join(PANEL, 'index.html')}`);
+  await openView(page, 'terminal');
+  await page.waitForSelector('#chatRailList .crrow', { state: 'attached', timeout: 5000 })
+    .catch(() => note(where, 'the list rendered no rows'));
+  const first = await page.evaluate(() => {
+    const seen = (n) => {
+      const r = n.getBoundingClientRect();
+      const cs = getComputedStyle(n);
+      return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden'
+        && r.top >= 0 && r.bottom <= window.innerHeight;
+    };
+    const boxes = [...document.querySelectorAll('textarea, input[type="text"], input:not([type])')]
+      .filter(seen);
+    return {
+      onList: document.body.classList.contains('ask-list'),
+      rows: document.querySelectorAll('#chatRailList .crrow').length,
+      boxes: boxes.map((b) => ({ id: b.id, h: Math.round(b.getBoundingClientRect().height),
+        font: parseFloat(getComputedStyle(b).fontSize) })),
+      wide: document.documentElement.scrollWidth > window.innerWidth + 1,
+    };
+  });
+  if (process.env.SHOTS_DIR) {
+    await page.screenshot({ path: path.join(process.env.SHOTS_DIR, `ask-first-390-${process.env.SHOTS_TAG || 'after'}.png`) });
+  }
+  if (!first.onList || first.rows !== 3) note(where, 'the list is not reachable on the first screen');
+  if (first.boxes.length !== 1) {
+    note(where, `${first.boxes.length} text boxes on Ask's first screen, not 1`);
+  } else {
+    const b = first.boxes[0];
+    if (b.h < MIN_TARGET) note(where, `the first screen's box is ${b.h}px tall`);
+    if (b.font < 16) note(where, `the first screen's box has ${b.font}px text`);
+  }
+  if (first.wide) note(where, 'the first screen scrolls sideways');
+  if (first.boxes.length === 1) {
+    await page.evaluate(() => { window.__posts.length = 0; });
+    await page.fill(`#${first.boxes[0].id}`, 'Why is the hall cold');
+    await page.click(`#${first.boxes[0].id} ~ button[type="submit"]`)
+      .catch(() => note(where, 'the box has no Send beside it'));
+    await page.waitForFunction(() => window.__posts.some((x) => /chat\/send$/.test(x.path)),
+      null, { timeout: 4000 }).catch(() => note(where, 'Send did not send'));
+    const out = await page.evaluate(() => ({
+      paths: window.__posts.map((x) => x.path.replace(/^.*api\//, 'api/')),
+      text: (window.__posts.find((x) => /chat\/send$/.test(x.path)) || { body: {} }).body.text,
+      onList: document.body.classList.contains('ask-list'),
+    }));
+    const ni = out.paths.findIndex((x) => /chat\/new$/.test(x));
+    const si = out.paths.findIndex((x) => /chat\/send$/.test(x));
+    if (ni < 0 || si < ni) note(where, `sending did not start a new chat first: ${out.paths.join(' ')}`);
+    if (out.text !== 'Why is the hall cold') note(where, `sent "${out.text}"`);
+    if (out.onList) note(where, 'still on the list after sending');
+    await page.click('#chatBack').catch(() => {});
+    const back = await page.evaluate(() => document.body.classList.contains('ask-list'));
+    if (!back) note(where, 'no way back to the list from the new chat');
+  }
+  await context.close();
+}
+
 await browser.close();
 
 if (failures.length) {
