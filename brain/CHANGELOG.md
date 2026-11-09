@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.19
+
+### Fixed
+
+- When brAIn's panel stops, every background loop now stops with it, including a card that was still being written. Before, a loop could outlive the panel. A cancel could also be lost when a Home Assistant request failed at the same moment, and the card was then recorded as failed and the stop took 5 s longer. Shutdown no longer writes a failed card or a problem report for work it cancelled itself.
+
 ## 5.1.18
 
 ### Fixed
