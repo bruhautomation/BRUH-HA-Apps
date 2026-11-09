@@ -3,10 +3,11 @@
 A task a safety check refused is tried once more on another model, and both
 runs are journaled: the refused first run as a row of its own, the retry as
 the row that answers the task. Both rows were written by `journal_task` in
-the background, and nothing ordered the two writers — so on a loaded
-machine (a CI runner, a busy house) the answer's row could land in the
-journal before the refusal's, and anything reading "the last row for this
-task" read the refusal as the ending.
+the background (brain/integrations/automation-listener.sh), and nothing
+ordered the two writers — so on a loaded machine (a CI runner, a busy
+house) the answer's row could land in the journal before the refusal's,
+and anything reading "the last row for this task" read the refusal as the
+ending.
 
 Driven through the REAL `process_task` against the fake CLI
 (tests/test_task_failures.ListenerCase), with one substitution: the journal
