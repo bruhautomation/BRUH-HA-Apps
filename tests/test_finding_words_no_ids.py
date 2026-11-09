@@ -221,7 +221,6 @@ class TestOutboundNeverRaises(unittest.TestCase):
     an exception in the send path."""
 
     def test_a_row_with_a_bad_ts_is_sent_as_it_was(self):
-        import findings_store
         rows = [{"ts": "abc", "text": "Something", "severity": "warning"},
                 {"ts": "12.5", "text": "Other", "severity": "info"}]
         out = findings_store.outbound(rows)
