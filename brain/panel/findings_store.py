@@ -1006,80 +1006,8 @@ def shown_words(entry: dict) -> dict:
     return out
 
 
-# A duration a look states and the row's detail states too (#771). The
-# row's figure was read off the entity's history by the rule or the run
-# that filed it; a look restating it in other words ("for about 14 hours"
-# beside "for 3 days") is a second answer to one fact on one card.
-_DURATION_UNITS = {"second": 1, "sec": 1, "minute": 60, "min": 60,
-                   "hour": 3600, "hr": 3600, "day": 86400, "week": 604800,
-                   "month": 2592000}
-_UNIT_WORD = r"(?:seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?)"
-_STATED_DURATION_RE = re.compile(
-    r"(?<![\d.:])(?P<n>\d+(?:\.\d+)?|an?|one)\s*(?P<u>" + _UNIT_WORD + r")\b",
-    re.I)
-_LOOK_DURATION_RE = re.compile(
-    r"\bfor\s+(?P<q>(?:about|around|roughly|over|nearly|almost|more than|"
-    r"at least|under|less than|several|a few|many|some)\s+)?"
-    r"(?:(?P<n>\d+(?:\.\d+)?|an?|one)\s*)?(?P<u>" + _UNIT_WORD + r")\b", re.I)
-# A look's vague "for hours": what the word can honestly cover.
-_VAGUE_SPAN = {"second": (2, 120), "minute": (120, 3600),
-               "hour": (7200, 86400 * 1.5), "day": (86400 * 1.5, 86400 * 21),
-               "week": (604800 * 1.5, 604800 * 9),
-               "month": (2592000 * 1.5, 2592000 * 30)}
-DURATION_TOLERANCE = 0.25
-
-
-def _unit_of(word: str) -> str:
-    word = word.lower().rstrip("s")
-    return {"sec": "second", "min": "minute", "hr": "hour"}.get(word, word)
-
-
-def _amount(n) -> float | None:
-    if n is None:
-        return None
-    n = n.lower()
-    return 1.0 if n in ("a", "an", "one") else float(n)
-
-
-def _stated_durations(entry: dict) -> list[tuple[float, str]]:
-    """``[(seconds, words)]`` the row's own text, claim and detail state."""
-    out: list[tuple[float, str]] = []
-    for key in ("detail", "claim", "text"):
-        for m in _STATED_DURATION_RE.finditer(str(entry.get(key) or "")):
-            secs = _amount(m.group("n")) * _DURATION_UNITS[_unit_of(m.group("u"))]
-            if all(abs(secs - s) > 1 for s, _w in out):
-                out.append((secs, m.group(0)))
-    return out
-
-
-def _duration_agrees(m: re.Match, secs: float) -> bool:
-    unit = _unit_of(m.group("u"))
-    amount = _amount(m.group("n"))
-    if amount is None:
-        low, high = _VAGUE_SPAN[unit]
-        return low <= secs < high
-    said = amount * _DURATION_UNITS[unit]
-    return abs(said - secs) <= max(DURATION_TOLERANCE * secs, 300)
-
-
-# The state a duration is OF, by its words: a look's duration is the
-# row's fact only when both sentences say the thing was in the same state
-# ("offline for 14 hours" under "unavailable for 3 days"). "Ran for 20
-# minutes, a normal cycle" under "unavailable for 3 days" is another fact.
-_STATE_WORDS = (
-    ("away", r"unavailable|offline|unreachable|unresponsive|not responding|"
-             + r"disconnected|dropped off|off the network|not reporting|"
-             + r"stopped reporting|silent|gone quiet|went quiet|down"),
-    ("open", r"open(?:ed)?|left open|ajar|unlocked"),
-    ("held", r"read(?:s|ing)?|sat at|sits at|stuck|frozen|flat|unchanged|"
-             + r"held at|stayed at"),
-    ("on", r"(?:stayed|been|left|was|is) on|running"),
-    ("low", r"low|below"),
-)
-_STATE_RES = tuple((name, re.compile(r"\b(?:" + words + r")\b", re.I))
-                   for name, words in _STATE_WORDS)
-# A row whose look is never rewritten by a reading of its words: a wrong
-# rewrite there costs more than two durations on one card.
+# A row no wording rule may lower or rewrite: a wrong reading of its words
+# there costs more than an untidy card.
 _HIGH_STAKES_RE = re.compile(
     r"\b(?:leak|water|flood|smoke|fire|gas|carbon monoxide|co alarm|freez\w*|"
     r"lock(?:ed|s)?|unlocked|alarm|intrusion|break-in|security)\b", re.I)
@@ -1106,45 +1034,11 @@ def high_stakes(entry: dict) -> bool:
     return _urgent(entry)
 
 
-def _states_of(sentence: str) -> set[str]:
-    return {name for name, rx in _STATE_RES if rx.search(sentence)}
-
-
-def with_row_durations(said: str, entry: dict) -> str:
-    """A look's ``said`` stating the row's own duration (#771).
-
-    Only where it is provably the same fact: the row states ONE duration,
-    the look's sentence says the thing was in the same state as the row's
-    sentence holding it does (`_STATE_WORDS`: "offline" for "unavailable",
-    "sat at" for "read"), and the two durations disagree. Then the look
-    says the row's — the figure read off the entity's history. Anything
-    less certain (another state, several durations on the row, none, a
-    high-stakes row) leaves the look exactly as written: a wrong rewrite
-    changes what the look meant, which is worse than a second figure."""
-    if not isinstance(said, str) or not said or not _LOOK_DURATION_RE.search(said):
-        return said
-    entry = entry if isinstance(entry, dict) else {}
-    if high_stakes(entry):
-        return said
-    stated = _stated_durations(entry)
-    if len(stated) != 1:
-        return said
-    secs, words = stated[0]
-    row_states: set[str] = set()
-    for key in ("detail", "claim", "text"):
-        for sentence in re.split(r"(?<=[.!?])\s+", str(entry.get(key) or "")):
-            if words in sentence:
-                row_states |= _states_of(sentence)
-    if not row_states:
-        return said
-    out = []
-    for sentence in _SENTENCE_SPLIT_RE.split(said):
-        if row_states & _states_of(sentence):
-            sentence = _LOOK_DURATION_RE.sub(
-                lambda m: m.group(0) if _duration_agrees(m, secs)
-                else "for " + words, sentence)
-        out.append(sentence)
-    return " ".join(s for s in out if s.strip()).strip()
+# Producers whose rows stay open with no step of their own: a follow-up
+# says a problem came back after brAIn's fix (`server`'s follow-up look
+# files it with only a detail), which is brAIn's regression to answer,
+# never a row to set aside.
+STEPLESS_KEPT = frozenset({"followup"})
 
 
 def stepless(entry: dict) -> bool:
@@ -1153,11 +1047,15 @@ def stepless(entry: dict) -> bool:
     "nothing needed". A surface shows such a row held — set aside, never
     on the open list — while the stored row is left as it is, so a look
     or an investigation that writes a step puts it back. Never a house
-    check's row, and never a high-stakes one (`high_stakes`)."""
+    check's row, a follow-up (`STEPLESS_KEPT`), a row whose step lives in
+    its ``plan``, ``items`` or ``self_edit``, or a high-stakes one
+    (`high_stakes`)."""
     entry = entry if isinstance(entry, dict) else {}
     return (entry.get("status") == "open"
             and _model_written(entry.get("source"))
+            and str(entry.get("source") or "") not in STEPLESS_KEPT
             and not high_stakes(entry)
+            and not any(entry.get(k) for k in ("plan", "items", "self_edit"))
             and next_step(entry)[0] == "")
 
 
@@ -1202,8 +1100,6 @@ def shown_look(record: dict, entry: dict) -> dict:
     # No id, path, line number or code name — and never "an internal
     # name" — under "brAIn checked" (#774, #791): `shown_words`' pass.
     said = _plainly(said, entry, files=False)
-    # The look states the row's own durations (#771).
-    said = with_row_durations(said, entry)
     if said == record["reason"]:
         return record
     return {**record, "reason": said}

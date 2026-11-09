@@ -368,9 +368,6 @@ Rules:
   time beside it says when. Quote that value with its time; if you know a
   newer one, say both with their times rather than a second "now" that
   disagrees with the row.
-- a duration or a count you state about a row is the row's own, in the
-  same unit ("for 3 days", never "for hours" beside it): the row read it
-  off the entity's history, and you cannot.
 - "why" is one plain sentence naming what made you decide. It is read by
   the person who maintains this and it is the only record of your
   reasoning, so "looks fine" is not an answer. The numbers on the signals

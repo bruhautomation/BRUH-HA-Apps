@@ -179,3 +179,41 @@ class TestAStoredSteplessRowIsNotOnTheOpenList(StoresCase):
         self.assertEqual(listed[1_700_000_600]["status"], "open")
         # the stored row is untouched: a step written later puts it back
         self.assertEqual(findings_store.get(1_700_000_500)["status"], "open")
+
+
+class TestWhatIsNeverSetAside(StoresCase):
+    def _stored(self, ts, **fields):
+        items = findings_store._load()
+        items.append({"ts": ts, "status": "open", "severity": "warning",
+                      "source": findings_store.RESIDENT_SOURCE, **fields})
+        findings_store._write(items)
+
+    def _open(self, ts):
+        return cases.case_id("findings", ts) in {
+            c["id"] for c in cases.list_cases("open")}
+
+    def test_a_follow_up_that_came_back_after_brains_fix_stays_open(self):
+        # the follow-up look files it with only a detail (server.py)
+        self._stored(1_700_000_900, source="followup",
+                     source_title="Follow-up looks",
+                     text="Hall plug unavailable — came back after brAIn's fix",
+                     detail="It came back 3 days after brAIn's fix.")
+        self.assertTrue(self._open(1_700_000_900))
+        listed = {r["ts"]: r for r in findings_store.listing()["findings"]}
+        self.assertEqual(listed[1_700_000_900]["status"], "open")
+
+    def test_a_step_held_in_a_plan_items_or_a_self_edit_is_a_step(self):
+        for ts, extra in (
+                (1_700_001_000, {"plan": {"can_fix": True, "summary":
+                                          "Turn the schedule back on.",
+                                          "steps": ["Turn it on."]}}),
+                (1_700_001_100, {"items": ["Hall plug", "Desk lamp"]}),
+                (1_700_001_200, {"self_edit": {"key": "voice",
+                                               "value": "Aria"}})):
+            with self.subTest(next(iter(extra))):
+                row = {"ts": ts, "status": "open",
+                       "source": findings_store.RESIDENT_SOURCE,
+                       "text": f"Row {ts}", **extra}
+                self.assertFalse(findings_store.stepless(row))
+                self.assertTrue(findings_store.stepless(
+                    {k: v for k, v in row.items() if k not in extra}))
