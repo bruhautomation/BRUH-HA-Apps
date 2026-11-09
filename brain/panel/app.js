@@ -14488,7 +14488,13 @@ async function startFresh() {
 async function chatNewHere() {
   const out = await chatSwitching(() => api("api/chat/new", {
     method: "POST", body: JSON.stringify(chatWho()) }));
-  if (out && out.key) chatReconnect(out.key, out.session_id);
+  if (out && out.key) {
+    chatReconnect(out.key, out.session_id);
+    // The chat just left may still be answering; that was ITS turn. The new
+    // one has none, and a "busy" carried over would make chatSend drop the
+    // first message until the new stream's snapshot said otherwise.
+    if (chatState.runState === "busy") chatSetState("idle");
+  }
   return out;
 }
 
@@ -15140,6 +15146,36 @@ function renderChatRail() {
 }
 
 $("#chatRailNew").addEventListener("click", () => $("#chatNew").click());
+
+// The list page's message box: what was typed opens a new chat and is its
+// first message. The text stays in the box if the chat could not be made.
+$("#chatRailForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const box = $("#chatRailInput");
+  const text = box.value.trim();
+  if (!text) return;
+  try { await chatNewHere(); }
+  catch (e) { toast(e.message); return; }
+  box.value = "";
+  box.style.height = "auto";
+  askShow("chat");
+  refreshChatRail();
+  if (chatState.runState === "busy") {
+    // Nothing may throw the message away: if it cannot go yet, it waits in
+    // the chat's own box.
+    const input = $("#chatInput");
+    input.value = text;
+    chatGrow();
+    input.focus();
+    return;
+  }
+  chatSend(text);
+});
+$("#chatRailInput").addEventListener("input", (ev) => {
+  const box = ev.target;
+  box.style.height = "auto";
+  box.style.height = Math.min(box.scrollHeight, window.innerHeight * 0.3) + "px";
+});
 
 // ------------------------------------------------- the list page (narrow)
 //
@@ -17861,7 +17897,7 @@ function renderDeepReview() {
     const last = d.latest ? `Last ${reviewDate(d.latest.at)}` : "Not run yet";
     const cost = d.running ? `started ${agoAt(d.started_at)}` : reviewCostText(d.estimate);
     meta.textContent = d.authenticated ? [last, cost].filter(Boolean).join(" · ")
-      : "Sign in to Claude in Settings › Account first";
+      : `${last} · open to sign in first`;
   }
   const run = el("div", "kreviewrun");
   const btn = el("button", "btn small", d.running ? "Running…" : "Run");

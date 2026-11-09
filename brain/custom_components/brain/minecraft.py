@@ -127,6 +127,15 @@ SPEAKER_KEYS = ("standing_on", "biome", "light", "health", "food", "offhand", "a
 LIST_CAPS = {"nearby": 10, "recent_blocks": 12, "inventory": 20}
 
 
+def _service_missing(exc: BaseException) -> bool:
+    """Home Assistant's "this service does not exist" (ServiceNotFound, or
+    its words), as opposed to the service's own refusal."""
+    if type(exc).__name__ == "ServiceNotFound":
+        return True
+    text = str(exc).lower()
+    return "not found" in text and ("service" in text or "action" in text)
+
+
 def _trim(key: str, value: Any) -> Any:
     cap = LIST_CAPS.get(key)
     if cap is None:
@@ -148,8 +157,12 @@ class Companion:
                  io: Callable[..., Awaitable[Any]] | None = None,
                  spawn: Callable[[Awaitable[Any]], Any] | None = None,
                  clock: Callable[[], float] = time.time,
-                 sleep: Callable[[float], Awaitable[Any]] | None = None):
+                 sleep: Callable[[float], Awaitable[Any]] | None = None,
+                 has_service: Callable[[str], bool] | None = None):
         self.shared_dir = shared_dir
+        # Whether BRUH Minecraft registers a service (an older add-on has no
+        # `set_skin`); unknown reads as not there.
+        self.has_service = has_service or (lambda service: False)
         self.base = rules.folder(shared_dir)
         self.call = call
         self.run_task = run_task
@@ -710,7 +723,7 @@ class Companion:
     async def _offer_skins(self, who: dict, choices: list, tools: str) -> bool:
         """Two or three skins on the choice pads (a player head on each), the
         one picked put on (`_take_offer`). False when there was nothing to
-        offer: a choice whose skin is not a Java name or a texture link is
+        offer: a choice whose skin is not a Java name or a skin link is
         dropped, never sent to the console."""
         player = who["player"]
         ideas = []
@@ -736,20 +749,42 @@ class Companion:
         return True
 
     async def apply_skin(self, who: dict, skin: str) -> tuple[bool | None, str]:
-        """Put one skin on one player through SkinsRestorer's console command
-        (BRUH Minecraft's `rcon_command`, which answers with the plugin's
-        console lines), remember it, and return (worked, the line to say)."""
+        """Put one skin on one player through BRUH Minecraft's `set_skin`,
+        which waits for SkinsRestorer's answer and says whether it went on
+        (#760/#762) — or, from an add-on older than it, SkinsRestorer's
+        console command over `rcon_command` — remember it, and return
+        (worked, the line to say)."""
         player = who.get("player")
         cmd = rules.skin_command(skin, player)
         if not cmd:
             return False, rules.SKIN_LINES["bad"]
+        value = rules.skin_value(skin) or skin
+        result = None
         try:
-            result = await self.call("rcon_command", {"command": cmd})
+            if self.has_service("set_skin"):
+                try:
+                    result = await self.call("set_skin", {"player": player, "skin": value})
+                except Exception as exc:  # noqa: BLE001 — an older add-on, or a refusal
+                    if not _service_missing(exc):
+                        raise
+            if result is None:
+                result = await self.call("rcon_command", {"command": cmd})
         except Exception as exc:  # noqa: BLE001 — the add-on's refusal, in its words
             _LOGGER.info("minecraft: skin for %s refused: %s", player, exc)
             return False, rules.SKIN_LINES["failed"].format(why=str(exc)[:160])
-        worked, line = rules.skin_answer(rules.skin_value(skin) or skin, player,
-                                         (result or {}).get("reply"))
+        result = result or {}
+        if "worked" in result:
+            worked = result["worked"]
+            reply = result.get("reply") or ""
+            if worked is None:
+                line = rules.SKIN_LINES["unsure"].format(skin=rules.skin_label(value))
+            elif worked is False:
+                line = rules.SKIN_LINES["failed"].format(why=str(reply)[:160])
+            else:
+                # The add-on read SkinsRestorer's answer: the line is the yes.
+                worked, line = rules.skin_answer(value, player, "ok")
+        else:
+            worked, line = rules.skin_answer(value, player, result.get("reply"))
         if worked is not False:
             await self._remember(who, "skin", skin=rules.skin_value(skin))
         return worked, line
@@ -1572,7 +1607,7 @@ class Companion:
                 "every change undoable: change blocks with edit (it saves what was there) "
                 "rather than raw setblock/fill commands. If an edit says no backup was made, "
                 "carry on and mention it.\n"
-                + caps + self._skins_note(caps))
+                + caps + self._skins_note(caps) + self._checks_note(trusted=True))
         speaker = (f"{who['person']}, a child on the family list" if child else
                    f"{who['person']}, a grown-up on the family list")
         return (
@@ -1592,7 +1627,30 @@ class Companion:
             "act, and a parent can undo it.\n"
             + ("Be warm, simple and short with a child, and never mention another child. "
                if child else "")
-            + caps + self._skins_note(caps))
+            + caps + self._skins_note(caps) + self._checks_note(trusted=False))
+
+    @staticmethod
+    def _checks_note(trusted: bool) -> str:
+        """How a block is checked without talking in chat (#761), and — on
+        the trusted scope, the one with the console and the house — how a
+        button in the game reaches the house (#777)."""
+        if not trusted:
+            return ("To check a block, use minecraft_world look (around a player or at a "
+                    "point). Never use `run say` to check anything: it talks in every "
+                    "player's chat.\n")
+        return (
+            "To check a block, use minecraft_world look (around a player or at a point), or "
+            "a bare `execute if block <x> <y> <z> <block>` through minecraft_command, which "
+            "answers Test passed or Test failed to you. Never add `run say …` to a check: it "
+            "puts the word in every player's chat.\n"
+            "A button or lever in the game that drives something real in the house (lights, a "
+            "switch): put a command block behind it whose command is "
+            "`say bruh:signal <name> [data]` (e.g. `say bruh:signal porch_lights on`) — one "
+            "name per button, and leave it an unrenamed command block (only an unrenamed "
+            "command block can fire it). Each press fires the Home Assistant event "
+            "bruh_minecraft_signal {name, data}; then make a Home Assistant automation "
+            "triggered on that event with that name to do the house part. No script is "
+            "needed.\n")
 
     @staticmethod
     def _skins_note(caps: str) -> str:
@@ -1601,14 +1659,16 @@ class Companion:
         web = "brAIn's chat has" in caps
         return (
             "A skin: minecraft_world skin (player; value: a Java Edition player's name, whose "
-            "skin they get, or a https://textures.minecraft.net/texture/… link, or clear) "
-            "changes it through SkinsRestorer and answers with what the server said — say "
-            "that, never that it worked when it did not. `memory` has each person's current "
+            "skin they get, or an https link to a skin picture — a .png file such as a "
+            "https://textures.minecraft.net/texture/… link or a picture they uploaded is fine "
+            "— or clear) changes it through SkinsRestorer, waits for its answer (up to half a "
+            "minute) and says whether it went on — say that, never that it worked when it did "
+            "not. `memory` has each person's current "
             "`skins`. Never guess a Java name: use one they gave, or one you are sure is a "
             "real player wearing that look. "
             + ("You may look a skin up on the web on this run. " if web else
                "You cannot browse the web from here, and never send anyone to a website: "
-               "ask them for the Java name or the texture link. ")
+               "ask them for the Java name or a link to the skin picture (.png). ")
             + "To let someone choose (always for a child unless they named one), answer "
             "`skins` with two or three {label: a few words, skin} — they go on the choice "
             "pads and the one picked is put on. A Bedrock player (a name starting with \".\") "
@@ -1809,7 +1869,8 @@ async def async_setup(hass, bridge, track_interval=None) -> Callable[[], None]:
     companion = Companion(
         shared_dir=hass.config.path(SHARED_DIR), call=call, run_task=run_task,
         state_of=state_of, io=hass.async_add_executor_job,
-        spawn=lambda coro: hass.async_create_background_task(coro, "brain-minecraft-turn"))
+        spawn=lambda coro: hass.async_create_background_task(coro, "brain-minecraft-turn"),
+        has_service=lambda service: hass.services.has_service(DOMAIN, service))
     hass.data.setdefault("brain_minecraft", {})["companion"] = companion
 
     def present() -> bool:

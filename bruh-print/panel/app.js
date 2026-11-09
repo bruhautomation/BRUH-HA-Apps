@@ -179,14 +179,25 @@ const stockById = (id) => S.stocks.find((s) => s.id === id) || null;
  * readout does not. It has to be measured rather than assumed, because
  * whether the chips wrapped is a function of the width and of what is in
  * them — and a value larger than the row's real height would take the tabs
- * off the top of the screen with it, which is the one failure mode here. */
-function syncBarHeight() {
-  const bar = document.querySelector('.bar-main');
-  if (!bar) return;
+ * off the top of the screen with it, which is the one failure mode here.
+ *
+ * It follows the ROW, not the window (#794). Home Assistant on some phones
+ * loads the panel into a frame with no width yet and grows it afterwards
+ * without the page ever seeing a `resize` — so a measurement taken at boot,
+ * in renderBar and on resize was taken once against nothing and kept: the
+ * status row stayed pinned over the content until the sidebar was opened
+ * and shut. A ResizeObserver fires on the first layout and on every change
+ * of the row's own size, whatever caused it — the frame growing, the chips
+ * rewrapping, a printer name changing — so it is the one place this is
+ * measured. */
+function syncBarHeight(bar) {
   document.documentElement.style.setProperty(
     '--barmain-h', Math.round(bar.getBoundingClientRect().height) + 'px');
 }
-addEventListener('resize', syncBarHeight);
+{
+  const bar = document.querySelector('.bar-main');
+  if (bar) new ResizeObserver(() => syncBarHeight(bar)).observe(bar);
+}
 
 function renderBar() {
   const dot = $('printerDot'), name = $('printerName');
@@ -221,7 +232,6 @@ function renderBar() {
     chip.hidden = roll.side === 'right' && !!S.printer && !S.printer.twin;
   }
   renderOneChip();
-  syncBarHeight();
 }
 
 /* The phone's status chip: one control, because all three were one control
@@ -3148,7 +3158,6 @@ $('clearHistory').addEventListener('click', async () => {
      * meant to shut it and a resize is not an instruction. */
     $('quickMore').open = matchMedia('(min-width: 900px)').matches;
     show(prefGet('bruhprint.view', 'quick'));
-    syncBarHeight();
     $('quickText').focus();
   } catch (error) {
     toast(`BRUH Print could not load: ${error.message}`, 'bad');

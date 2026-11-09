@@ -171,7 +171,7 @@ import card_claims
 import card_verdict
 import cases
 import changes
-from checks._util import House
+from checks._util import ANSWERED_ONCE, House
 import chat_session
 import closures
 import checks
@@ -16739,6 +16739,10 @@ async def run_checks(reason: str = "schedule") -> dict:
                 # What a row is read against just before it is shown
                 # (`findings_store.holds_now`, #722); the bus keeps it current.
                 findings_store.seed_states(snapshot.get("states") or {})
+                # And the registry, so a device gone from Home Assistant is
+                # said to be gone rather than down (#789).
+                if (snapshot.get("available") or {}).get("registry"):
+                    findings_store.seed_registry(snapshot.get("entities") or [])
             # And the other store, which nothing renders. Rows from a check
             # being trialled go here instead — a separate file rather than
             # a status, because `add_many` dedupes across every status and
@@ -21983,6 +21987,13 @@ def _for_now(finding: dict, spec: dict, note: str) -> bool:
     if not (source.startswith("check:") or source in _FOR_NOW_SOURCES):
         return False
     if corrections.is_offer(finding):
+        return False
+    if source.split(":", 1)[-1] in ANSWERED_ONCE:
+        # A standing fact about an automation (it has never fired, it has
+        # been off for months) is the same fact next pass, so there is
+        # nothing for a snooze to wait for: "don't remind me" on it is the
+        # Wrong it was pressed as, and the ledger closes the check for that
+        # automation (#768).
         return False
     return corrections.puts_off(note)
 
