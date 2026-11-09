@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.11
+
+### Fixed
+
+- The development loop's screenshot page no longer waits for ever on a question Home Assistant never answers: after 10 seconds it says Home Assistant did not answer in time, so a capture always finishes.
+
 ## 5.1.10
 
 ### Changed
