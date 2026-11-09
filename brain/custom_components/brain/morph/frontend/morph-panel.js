@@ -117,8 +117,12 @@ async function cardHelpers() {
 // every open shadow root in the card the 16px floor, once (#677).
 let _floorSheet;
 const _floored = new WeakSet();
+const _watched = new WeakSet();
+// A card's text boxes are often made after the card is on the page, in a
+// shadow root of a root of a root (Home Assistant's own fields upgrade late),
+// so the floor is handed out again whenever a root changes, not once.
 function floorFields(node, depth = 0) {
-  if (!node || depth > 4 || typeof CSSStyleSheet === 'undefined') return;
+  if (!node || depth > 10 || typeof CSSStyleSheet === 'undefined') return;
   const root = node.shadowRoot;
   if (!root || !('adoptedStyleSheets' in root)) return;
   if (!_floored.has(root)) {
@@ -127,6 +131,15 @@ function floorFields(node, depth = 0) {
       root.adoptedStyleSheets = [...root.adoptedStyleSheets, _floorSheet];
       _floored.add(root);
     } catch (e) { /* a browser without constructable sheets keeps the card's own size */ }
+  }
+  if (!_watched.has(root) && typeof MutationObserver !== 'undefined') {
+    _watched.add(root);
+    let queued = false;
+    new MutationObserver(() => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => { queued = false; root.querySelectorAll('*').forEach((n) => { if (n.shadowRoot) floorFields(n, depth + 1); }); });
+    }).observe(root, { childList: true, subtree: true });
   }
   root.querySelectorAll('*').forEach((n) => { if (n.shadowRoot) floorFields(n, depth + 1); });
 }

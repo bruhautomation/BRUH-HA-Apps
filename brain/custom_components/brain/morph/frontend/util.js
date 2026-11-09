@@ -116,6 +116,8 @@ export const ICONS = {
   garage: I('M3 21V9l9-6 9 6v12', 'M6 12h12M6 15h12M6 18h12', '', '50% 40%'),
   play: I('M5 4l14 8-14 8z', 'M5 4l14 8-14 8z', 'breathe'),
   dot: I('M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z', 'M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z'),
+  // A plain appliance: a body, its control row and a door. The picture for anything the board has no picture for.
+  appliance: I('M5 3h14v18H5zM5 8h14', 'M8.5 5.5h.01M12 5.5h.01M15.5 5.5h.01M8 12h8v6H8z', 'breathe'),
   brain: I('M12 3c.7 4.4 2.3 6.1 6.8 6.8-4.5.7-6.1 2.4-6.8 6.8-.7-4.4-2.3-6.1-6.8-6.8C9.7 9.1 11.3 7.4 12 3z', 'M19 14.5c.3 1.9 1 2.6 2.9 2.9-1.9.3-2.6 1-2.9 2.9-.3-1.9-1-2.6-2.9-2.9 1.9-.3 2.6-1 2.9-2.9z'),
 };
 

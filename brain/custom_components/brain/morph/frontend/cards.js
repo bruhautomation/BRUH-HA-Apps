@@ -73,6 +73,18 @@ const lightAccent = (st) => `color-mix(in oklab, ${lightColor(st)} 82%, var(--lp
 // the left and fades toward the thumb, the strip itself is untinted (only a
 // switch tints its strip, because a switch has no fill to show it is on), and
 // the status line is quiet text — the colour lives in the fill and the icon.
+// What a pressable word beside a state looks like: a small outlined button,
+// so it is never read as one more word of the state (#756 #765).
+const actSvg = (inner, fill) => `<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="${fill ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+const ACT_ICONS = {
+  lock: actSvg('<rect x="5" y="11" width="14" height="9" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path>'),
+  unlock: actSvg('<rect x="5" y="11" width="14" height="9" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 7.5-1.5"></path>'),
+  open: actSvg('<path d="M6 15l6-6 6 6"></path>'),
+  close: actSvg('<path d="M6 9l6 6 6-6"></path>'),
+  stop: actSvg('<rect x="7" y="7" width="10" height="10" rx="2"></rect>', true),
+  start: '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5l13 7.5-13 7.5z"></path></svg>',
+  dock: '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7M5.5 9.5V20h13V9.5M10 20v-5h4v5"></path></svg>',
+};
 export function stripFace(o) {
   const active = !!o.active;
   const accent = o.accent;
@@ -93,7 +105,7 @@ export function stripFace(o) {
   const bg = o.stripBg || (isSwitch && active ? mix(accent, 10) : 'transparent');
   return `<div class="strip" style="box-shadow:inset 0 0 0 1px ${active ? mix(accent, o.edgeMix || 30) : 'var(--line)'};background-color:${bg}">${layer}
 <div class="sline">${icon(o.icon, { color: o.iconColor || (active ? accent : 'var(--quiet)'), active, dur: o.dur, transform: o.iconTransform, partOpacity: o.partOpacity })}
-<span class="nv"><b>${esc(o.name)}</b><span style="color:${valColor}">${esc(o.val)}</span></span><span class="flex1"></span>${o.hint ? `<span class="hint">${esc(o.hint)}</span>` : ''}${o.action ? `<span class="actword${o.armed ? ' armed' : ''}" style="--ac:${o.actionColor || accent}">${esc(o.armed || o.action)}</span>` : sw}</div></div>`;
+<span class="nv"><b>${esc(o.name)}</b><span style="color:${valColor}">${esc(o.val)}</span></span><span class="flex1"></span>${o.hint ? `<span class="hint">${esc(o.hint)}</span>` : ''}${o.action ? `<span class="actword${o.armed ? ' armed' : ''}${o.actIcon && !o.armed ? ' hasicon' : ''}" style="--ac:${o.actionColor || accent}"${o.armed ? '' : ` aria-label="${esc(o.action + (o.actNoun ? ' ' + o.actNoun : ''))}"`}>${o.actIcon && !o.armed ? ACT_ICONS[o.actIcon] : ''}<span class="acttext">${esc(o.armed || o.action)}${o.actNoun && !o.armed ? `<span class="actnoun"> ${esc(o.actNoun)}</span>` : ''}</span></span>` : sw}</div></div>`;
 }
 
 function histBlock(ctx, label) {
@@ -201,7 +213,7 @@ const cover = {
       // moves. The old switch could only ever open the door.
       const moving = st && ['opening', 'closing'].includes(st.state);
       const action = off(st) ? '' : moving ? 'Stop' : open ? 'Close' : 'Open';
-      return stripFace({ kind: 'switch', icon: 'garage', accent: open ? 'var(--amber)' : 'var(--indigo)', active: open, name: ctx.name, val: stateWord(st), action, armed: ctx.confirm || '', actionColor: open ? 'var(--amber)' : 'var(--indigo)', iconTransform: open ? 'translateY(-4px)' : 'none', hint: ctx.hint });
+      return stripFace({ kind: 'switch', icon: 'garage', accent: open ? 'var(--amber)' : 'var(--indigo)', active: open, name: ctx.name, val: stateWord(st), action, armed: ctx.confirm || '', actIcon: action.toLowerCase(), actNoun: action === 'Stop' ? '' : st.attributes.device_class === 'gate' ? 'gate' : 'door', actionColor: open ? 'var(--amber)' : 'var(--indigo)', iconTransform: open ? 'translateY(-4px)' : 'none', hint: ctx.hint });
     }
     return stripFace({ kind: 'slats', icon: 'blinds', accent: ctx.accent, iconColor: 'var(--sky)', edgeMix: 28, fillA: mix(ctx.accent, 20), fillB: mix(ctx.accent, 6), active: pos > 0, pct: pos, iconTransform: `scaleY(${Math.max(0.08, (100 - pos) / 100).toFixed(2)})`, name: ctx.name, val: off(st) ? 'Unavailable' : st.state === 'opening' ? 'Opening' : st.state === 'closing' ? 'Closing' : pos >= 100 ? 'Open' : pos <= 0 ? 'Closed' : pos + '% open', hint: ctx.hint });
   },
@@ -247,7 +259,7 @@ const lock = {
   face: (ctx) => {
     const st = ctx.st; const unlocked = st && ['unlocked', 'open', 'opening', 'unlocking'].includes(st.state);
     const action = off(st) ? '' : unlocked ? 'Lock' : 'Unlock';
-    return stripFace({ kind: 'switch', icon: 'lock', accent: ctx.accent, active: unlocked || (st && st.state === 'locked'), name: ctx.name, val: stateWord(st), action, armed: ctx.confirm || '', actionColor: ctx.night && unlocked ? 'var(--rose)' : ctx.accent, iconTransform: unlocked ? 'translateY(-3px)' : 'none', hint: ctx.hint });
+    return stripFace({ kind: 'switch', icon: 'lock', accent: ctx.accent, active: unlocked || (st && st.state === 'locked'), name: ctx.name, val: stateWord(st), action, actIcon: action.toLowerCase(), armed: ctx.confirm || '', actionColor: ctx.night && unlocked ? 'var(--rose)' : ctx.accent, iconTransform: unlocked ? 'translateY(-3px)' : 'none', hint: ctx.hint });
   },
   more: (ctx) => {
     const a = (ctx.st && ctx.st.attributes) || {};
@@ -283,7 +295,11 @@ const vacuum = {
   face: (ctx) => {
     const st = ctx.st; const run = st && ['cleaning', 'returning'].includes(st.state);
     const bat = st && st.attributes.battery_level != null ? ` · ${st.attributes.battery_level}%` : '';
-    return stripFace({ kind: 'switch', icon: 'vacuum', accent: ctx.accent, active: run, name: ctx.name, val: off(st) ? stateWord(st) : stateWord(st) + bat, hint: ctx.hint });
+    // The press is a button that says what it does, as a lock's is: Start,
+    // or Dock while it cleans (the same as a tap). It was a switch with
+    // nothing written on it, which a tap could not be told apart from.
+    const action = off(st) ? '' : st.state === 'cleaning' ? 'Dock' : 'Start';
+    return stripFace({ kind: 'switch', icon: 'vacuum', accent: ctx.accent, active: run, name: ctx.name, val: off(st) ? stateWord(st) : stateWord(st) + bat, action, actIcon: action === 'Dock' ? 'dock' : 'start', armed: ctx.confirm || '', actionColor: ctx.accent, hint: ctx.hint });
   },
   more: (ctx) => words([svcBtn('Start', 'vacuum', 'start', { entity_id: ctx.card.entity }), svcBtn('Pause', 'vacuum', 'pause', { entity_id: ctx.card.entity }), svcBtn('Go home', 'vacuum', 'return_to_base', { entity_id: ctx.card.entity })]) + histBlock(ctx),
   tap: (ctx) => ({ domain: 'vacuum', service: ctx.st && ctx.st.state === 'cleaning' ? 'return_to_base' : 'start', data: { entity_id: ctx.card.entity } }),
@@ -642,12 +658,23 @@ const scenes = {
   noOpen: true,
 };
 
+// A tile for something with no card of its own (an oven, a humidifier, a
+// valve) still has a picture: by what it is called, then by its domain, and
+// never the empty ring that read as a gap where the icon should be (#767).
+const APPLIANCE = /\b(oven|stove|range|cooktop|cooker|microwave|dishwasher|washer|washing|dryer|fridge|freezer|kettle|toaster|coffee|fryer|grill|heater)\b/i;
+const DOMAIN_ICON = { water_heater: 'thermo', humidifier: 'humid', dehumidifier: 'humid', valve: 'water', fan: 'fan', camera: 'camera', media_player: 'speaker', siren: 'bolt', remote: 'tv' };
+const entityIcon = (ctx) => (APPLIANCE.test(`${ctx.name} ${ctx.card.entity}`) ? 'appliance' : DOMAIN_ICON[domainOf(ctx.card.entity)] || 'appliance');
+// "Off since 4:02 PM": what it is doing and for how long, when it is idle.
+const IDLE = ['off', 'idle', 'standby', 'closed', 'stopped', 'paused', 'docked', 'locked'];
 const entity = {
   item: { ...STRIP, dir: 'down', want: 2 },
   accent: () => 'var(--teal)',
   face: (ctx) => {
     const st = ctx.st; const unit = (st && st.attributes.unit_of_measurement) || '';
-    return stripFace({ kind: 'none', icon: 'dot', accent: ctx.accent, active: st && st.state === 'on', name: ctx.name, val: !st ? 'Missing' : minecraftStatus(ctx.hass, ctx.card.entity) || (isNaN(parseFloat(st.state)) ? st.state : fmt(st.state, unit)), valColor: 'var(--muted)', hint: ctx.hint });
+    const mc = st ? minecraftStatus(ctx.hass, ctx.card.entity) : null;
+    const idle = st && !mc && IDLE.includes(st.state) && !unit;
+    const val = !st ? 'Missing' : mc || (idle ? `${stateWord(st)} ${since(st.last_changed)}`.trim() : isNaN(parseFloat(st.state)) ? st.state : fmt(st.state, unit));
+    return stripFace({ kind: 'none', icon: entityIcon(ctx), accent: ctx.accent, active: st && st.state === 'on', name: ctx.name, val, valColor: 'var(--muted)', hint: ctx.hint });
   },
   more: (ctx) => histBlock(ctx),
   tap: () => null,
