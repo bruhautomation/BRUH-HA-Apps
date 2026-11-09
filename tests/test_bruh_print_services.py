@@ -74,7 +74,7 @@ class TestANothingPrintedAlwaysSaysWhy(BridgeCase):
               "print_test")
 
     async def test_every_print_kind_explains_a_zero(self):
-        self.assertTrue(set(self.PRINTS) <= set(self.bridge.ROUTES))
+        self.assertLessEqual(set(self.PRINTS), set(self.bridge.ROUTES))
         self.bridge._forward = lambda method, path, payload: {"ok": True}
         for kind in self.PRINTS:
             with self.subTest(kind=kind):
