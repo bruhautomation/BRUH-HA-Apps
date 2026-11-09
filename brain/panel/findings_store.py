@@ -1062,31 +1062,103 @@ def _duration_agrees(m: re.Match, secs: float) -> bool:
     return abs(said - secs) <= max(DURATION_TOLERANCE * secs, 300)
 
 
+# The state a duration is OF, by its words: a look's duration is the
+# row's fact only when both sentences say the thing was in the same state
+# ("offline for 14 hours" under "unavailable for 3 days"). "Ran for 20
+# minutes, a normal cycle" under "unavailable for 3 days" is another fact.
+_STATE_WORDS = (
+    ("away", r"unavailable|offline|unreachable|unresponsive|not responding|"
+             r"disconnected|dropped off|off the network|not reporting|"
+             r"stopped reporting|silent|gone quiet|went quiet|down"),
+    ("open", r"open(?:ed)?|left open|ajar|unlocked"),
+    ("held", r"read(?:s|ing)?|sat at|sits at|stuck|frozen|flat|unchanged|"
+             r"held at|stayed at"),
+    ("on", r"(?:stayed|been|left|was|is) on|running"),
+    ("low", r"low|below"),
+)
+_STATE_RES = tuple((name, re.compile(r"\b(?:" + words + r")\b", re.I))
+                   for name, words in _STATE_WORDS)
+# A row whose look is never rewritten by a reading of its words: a wrong
+# rewrite there costs more than two durations on one card.
+_HIGH_STAKES_RE = re.compile(
+    r"\b(?:leak|water|flood|smoke|fire|gas|carbon monoxide|co alarm|freez\w*|"
+    r"lock(?:ed|s)?|unlocked|alarm|intrusion|break-in|security)\b", re.I)
+HIGH_STAKES_SOURCES = frozenset({"safety", "security", "tripwire"})
+
+
+def high_stakes(entry: dict) -> bool:
+    """Whether a row is one no wording rule may lower or rewrite: the
+    safety and security lanes, a critical or high-stakes row, an urgent
+    one, or one about water, smoke, fire, gas, a freeze, a lock or an
+    alarm (by its words or its entity's domain)."""
+    entry = entry if isinstance(entry, dict) else {}
+    source = str(entry.get("source") or "")
+    if source in HIGH_STAKES_SOURCES or source.startswith(("safety", "security")):
+        return True
+    if entry.get("severity") == "critical" or entry.get("stakes") == "high":
+        return True
+    if str(entry.get("entity_id") or "").split(".", 1)[0] in (
+            "lock", "alarm_control_panel", "siren"):
+        return True
+    if _HIGH_STAKES_RE.search(" ".join(str(entry.get(k) or "") for k in (
+            "text", "claim", "detail", "entity_id"))):
+        return True
+    return _urgent(entry)
+
+
+def _states_of(sentence: str) -> set[str]:
+    return {name for name, rx in _STATE_RES if rx.search(sentence)}
+
+
 def with_row_durations(said: str, entry: dict) -> str:
-    """A look's ``said`` stating the row's own durations (#771). Where the
-    row states one, a look's "for <duration>" that disagrees with it says
-    the row's; where it states several and the look's agrees with none,
-    that sentence goes. Agreeing durations, and a row that states none,
-    leave the look exactly as written."""
+    """A look's ``said`` stating the row's own duration (#771).
+
+    Only where it is provably the same fact: the row states ONE duration,
+    the look's sentence says the thing was in the same state as the row's
+    sentence holding it does (`_STATE_WORDS`: "offline" for "unavailable",
+    "sat at" for "read"), and the two durations disagree. Then the look
+    says the row's — the figure read off the entity's history. Anything
+    less certain (another state, several durations on the row, none, a
+    high-stakes row) leaves the look exactly as written: a wrong rewrite
+    changes what the look meant, which is worse than a second figure."""
     if not isinstance(said, str) or not said or not _LOOK_DURATION_RE.search(said):
         return said
-    stated = _stated_durations(entry if isinstance(entry, dict) else {})
-    if not stated:
+    entry = entry if isinstance(entry, dict) else {}
+    if high_stakes(entry):
         return said
-    kept = []
+    stated = _stated_durations(entry)
+    if len(stated) != 1:
+        return said
+    secs, words = stated[0]
+    row_states: set[str] = set()
+    for key in ("detail", "claim", "text"):
+        for sentence in re.split(r"(?<=[.!?])\s+", str(entry.get(key) or "")):
+            if words in sentence:
+                row_states |= _states_of(sentence)
+    if not row_states:
+        return said
+    out = []
     for sentence in _SENTENCE_SPLIT_RE.split(said):
-        wrong = [m for m in _LOOK_DURATION_RE.finditer(sentence)
-                 if not any(_duration_agrees(m, secs) for secs, _w in stated)]
-        if not wrong:
-            kept.append(sentence)
-            continue
-        if len(stated) > 1:
-            continue
-        kept.append(_LOOK_DURATION_RE.sub(
-            lambda m: ("for " + stated[0][1]) if m in wrong or not any(
-                _duration_agrees(m, s) for s, _w in stated) else m.group(0),
-            sentence))
-    return " ".join(s for s in kept if s.strip()).strip()
+        if row_states & _states_of(sentence):
+            sentence = _LOOK_DURATION_RE.sub(
+                lambda m: m.group(0) if _duration_agrees(m, secs)
+                else "for " + words, sentence)
+        out.append(sentence)
+    return " ".join(s for s in out if s.strip()).strip()
+
+
+def stepless(entry: dict) -> bool:
+    """Whether an open model-written row asks nothing of its reader
+    (`next_step` is empty, #775): no step, no question, no stated
+    "nothing needed". A surface shows such a row held — set aside, never
+    on the open list — while the stored row is left as it is, so a look
+    or an investigation that writes a step puts it back. Never a house
+    check's row, and never a high-stakes one (`high_stakes`)."""
+    entry = entry if isinstance(entry, dict) else {}
+    return (entry.get("status") == "open"
+            and _model_written(entry.get("source"))
+            and not high_stakes(entry)
+            and next_step(entry)[0] == "")
 
 
 def shown_look(record: dict, entry: dict) -> dict:
@@ -1903,6 +1975,10 @@ def listing() -> dict:
     shaped = [s for s in (_shape(e) for e in _load())
               if s["text"] and holds_now(s)]
     for row in shaped:
+        if stepless(row):
+            # Nothing for anybody to do and no reason given (#775).
+            row["status"] = "held"
+            row["stepless"] = True
         row.update(shown_words(row))
         row["fix"] = shown_fix(row)
         if row.get("triage"):

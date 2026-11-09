@@ -9,10 +9,12 @@ counts, but only where both counted the same word, and "hours" is not
 "days".
 
 Now a look's stated duration is read against the durations in the row's
-own detail (the figure the check measured from the entity's history):
-when the detail states one, the look says that one; when it states several
-and the look's agrees with none, the look's sentence goes. Durations that
-agree, and a look that states none, are left exactly as written. The first
+own detail (the figure the check measured from the entity's history), and
+only where it is provably the same fact: the row states one duration and
+the look's sentence says the thing was in the same state ("offline" for
+"unavailable"). Then the look says the row's. Another fact ("ran for 20
+minutes"), several durations on the row, a high-stakes row, and agreeing
+durations are left exactly as written. The first
 look is told the same thing (`resident.FIRST_LOOK_SYSTEM`).
 """
 
@@ -64,8 +66,8 @@ class TestTheVacuumReplay(StoresCase):
 
 class TestShownLook(unittest.TestCase):
     def test_a_second_example_weeks_against_days(self):
-        row = {"text": "Front door lock battery is low",
-               "detail": "The front door lock's battery has read 8% for "
+        row = {"text": "Garden sensor battery is low",
+               "detail": "The garden sensor's battery has read 8% for "
                          "2 weeks."}
         out = findings_store.shown_look(
             look("The battery has sat at 8% for 10 days, so it is not "
@@ -86,13 +88,29 @@ class TestShownLook(unittest.TestCase):
                 out = findings_store.shown_look(look(reason), VACUUM)
                 self.assertEqual(out["reason"], reason)
 
-    def test_several_durations_and_none_agree_drops_that_sentence(self):
+    def test_another_fact_with_its_own_duration_is_left_alone(self):
+        # the reviewer's two counter-examples: a cycle is not the outage,
+        # and a row with several durations gives no one figure to say
+        reason = "It ran for 20 minutes, a normal cycle, before it dropped."
+        self.assertEqual(
+            findings_store.shown_look(look(reason), VACUUM)["reason"], reason)
         row = {"text": "The freezer door was left open",
                "detail": "It was open for 12 minutes on Monday and for "
                          "40 minutes on Wednesday."}
-        out = findings_store.shown_look(
-            look("It was open for 3 hours. The seal looks worn."), row)
-        self.assertEqual(out["reason"], "The seal looks worn.")
+        reason = "Door opened for 5 minutes each time. The seal looks worn."
+        # (the card itself still holds this look back under #443's rule —
+        # "5 minutes" beside a detail counting other minutes — which is not
+        # this rule's to change)
+        self.assertEqual(findings_store.with_row_durations(reason, row),
+                         reason)
+
+    def test_a_high_stakes_rows_look_is_never_rewritten(self):
+        row = {"text": "Leak sensor under the sink has been unavailable",
+               "detail": "The kitchen leak sensor has been unavailable for "
+                         "3 days.", "severity": "warning"}
+        reason = "It has been offline for about 14 hours."
+        self.assertEqual(
+            findings_store.shown_look(look(reason), row)["reason"], reason)
 
 
 class TestTheFirstLookIsTold(unittest.TestCase):

@@ -151,3 +151,18 @@ class TestTheShownRowIsPlain(StoresCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheSentenceStillReads(unittest.TestCase):
+    def test_a_code_at_the_start_keeps_the_capital(self):
+        self.assertEqual(house_words.technical("Code 0xFF failed twice.")[0],
+                         "An error code failed twice.")
+
+    def test_an_id_after_its_own_noun_just_goes(self):
+        for said, words in (
+                ("Leak sensor sensor.kitchen_leak shows wet.",
+                 "Leak sensor shows wet."),
+                ("The den speaker media_player.den_echo dropped off.",
+                 "The den speaker dropped off.")):
+            with self.subTest(said):
+                self.assertEqual(house_words.ids(said, {})[0], words)

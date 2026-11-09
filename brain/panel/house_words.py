@@ -1004,6 +1004,10 @@ def technical(text: str, files: bool = True,
         return text, []
     out = re.sub(r"\s+([,.;:!?])", r"\1", re.sub(r"[ \t]{2,}", " ", out))
     out = re.sub(r"\(\s*\)", "", out).strip()
+    # "Code 0xFF failed" became "an error code failed": a sentence that
+    # began with a capital still does.
+    if text[:1].isupper() and out[:1].islower():
+        out = out[0].upper() + out[1:]
     return out, found
 
 
@@ -1101,7 +1105,11 @@ def ids(text: str, names: Mapping | None = None) -> tuple[str, list[str]]:
                                  text[after_at:], re.I)
                 if again:
                     after_at += again.end()
-                if _DETERMINER_RE.search(before):
+                if re.search(r"\b" + re.escape(tail) + r"\s+$", before, re.I):
+                    # "Leak sensor sensor.kitchen_leak shows wet": the
+                    # sentence already said what it is.
+                    said = ""
+                elif _DETERMINER_RE.search(before):
                     said = noun
                 else:
                     said = "the " + noun

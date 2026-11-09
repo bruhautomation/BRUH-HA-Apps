@@ -26,6 +26,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
 sys.path.insert(0, str(BASE_DIR / "tests"))
 
+import cases  # noqa: E402
 import findings_store  # noqa: E402
 import resident  # noqa: E402
 from test_cases import StoresCase  # noqa: E402
@@ -139,3 +140,42 @@ class TestEveryCheckRowHasAStep(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAStoredSteplessRowIsNotOnTheOpenList(StoresCase):
+    """Rows no investigation filed — a first look's, another model
+    writer's, one stored before the rule — are read on the way out too."""
+
+    def _stored(self, ts, **fields):
+        items = findings_store._load()
+        items.append({"ts": ts, "status": "open", "severity": "warning",
+                      "source": findings_store.RESIDENT_SOURCE, **fields})
+        findings_store._write(items)
+
+    def _open_ids(self):
+        return {c["id"] for c in cases.list_cases("open")}
+
+    def test_a_stepless_model_row_is_set_aside_and_a_leak_is_not(self):
+        self._stored(1_700_000_500,
+                     text="The garage door sensor reads open at night",
+                     detail="It reported open from 02:10 to 02:40.",
+                     triage={"verdict": "elevated", "at": 1_700_000_000,
+                             "reason": "Two openings at night."})
+        self._stored(1_700_000_600,
+                     text="Water detected under the kitchen sink",
+                     detail="The leak sensor has read wet for ten minutes.")
+        self._stored(1_700_000_700,
+                     text="The dishwasher pump has failed twice",
+                     fix="Clean the filter under the bottom basket.")
+        self._stored(1_700_000_800, source="check:dev.unavailable",
+                     text="Hall plug is unavailable")
+        opened = self._open_ids()
+        self.assertNotIn(cases.case_id("findings", 1_700_000_500), opened)
+        self.assertIn(cases.case_id("findings", 1_700_000_600), opened)
+        self.assertIn(cases.case_id("findings", 1_700_000_700), opened)
+        self.assertIn(cases.case_id("findings", 1_700_000_800), opened)
+        listed = {r["ts"]: r for r in findings_store.listing()["findings"]}
+        self.assertEqual(listed[1_700_000_500]["status"], "held")
+        self.assertEqual(listed[1_700_000_600]["status"], "open")
+        # the stored row is untouched: a step written later puts it back
+        self.assertEqual(findings_store.get(1_700_000_500)["status"], "open")
