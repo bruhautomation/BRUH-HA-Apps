@@ -216,11 +216,34 @@ class AcceptCase(unittest.IsolatedAsyncioTestCase):
         # first one — otherwise the panel's own worker raises into a
         # traceback attributed to nothing.
         self.server.QUEUE = asyncio.Queue()
+        # Registered here so it runs AFTER the client closes (cleanups are
+        # last-in, first-out) and BEFORE `_restore_env`: see the method.
+        self.addAsyncCleanup(self._quiet_threads)
         self.client = TestClient(TestServer(self.server.make_app()))
         await self.client.start_server()
         self.addAsyncCleanup(self.client.close)
 
     # -- teardown helpers -------------------------------------------------
+    async def _quiet_threads(self):
+        """No thread of this test's may be inside C code that reads the
+        environment while `_restore_env` rewrites it.
+
+        `os.environ.clear()` and `update()` are glibc unsetenv/setenv, and
+        setenv reallocs the `environ` array a concurrent getenv is walking
+        — a getaddrinfo in an executor thread reads RES_OPTIONS and
+        LOCALDOMAIN that way. That is a segfault, not an exception: an
+        ordinary question queues a card, the card resolves `supervisor`
+        in a thread while the test tears down, and CI's xdist worker died
+        "while running" the ordinary-question test. The app's own cleanup
+        cancels its loops (server.py `on_cleanup`); a lookup already in a
+        thread outlives that cancellation, so the loop's executor is shut
+        down (which waits for it) and the reports thread is drained
+        behind a no-op (one worker, so FIFO).
+        """
+        await asyncio.get_running_loop().shutdown_default_executor()
+        await asyncio.wrap_future(
+            self.server._REPORT_EXECUTOR.submit(lambda: None))
+
     def _restore_env(self):
         os.environ.clear()
         os.environ.update(self._env)
@@ -805,6 +828,23 @@ class TestOneOffIntents(AcceptCase):
         self.assertEqual(status, 200, out)
         self.assertTrue(out["queued"])
         self.assertEqual(self.intents.pending(), 0)
+
+    async def test_a_closed_panel_stops_the_card_it_had_queued(self):
+        """The ordinary question queues a card, and closing the app has to
+        end the worker generating it — and every other loop the start
+        made. They outlived the app: the card went on resolving Home
+        Assistant's host in a thread while the test's teardown rewrote
+        `os.environ`, which is a glibc segfault, and CI's worker died
+        "while running" the test above."""
+        status, out = await self.ask("what is using the most power?")
+        self.assertEqual(status, 200, out)
+        self.assertTrue(out["queued"])
+        app = self.client.server.app
+        loops = {n: t for n, t in app["tasks"].items() if n != "startup"}
+        self.assertIn("worker", loops)
+        await self.client.close()
+        alive = sorted(n for n, t in loops.items() if not t.done())
+        self.assertEqual(alive, [])
 
     async def test_the_drain_turns_the_sentence_into_a_proposal(self):
         await self.ask()

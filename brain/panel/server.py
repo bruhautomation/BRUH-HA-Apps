@@ -8399,6 +8399,8 @@ def _loop_ended(name: str, task: asyncio.Task) -> None:
 # is hung: the longest passes run Claude turns behind the run queue (a
 # look and three investigations, a brief, a weekly report).
 LOOP_PASS_S = 2 * 3600
+# How long the app's cleanup waits for its cancelled loops to finish.
+LOOP_STOP_WAIT_S = 5.0
 
 
 def _stall_after(first_delay_s: float, poll_s: float) -> float:
@@ -29772,6 +29774,23 @@ def make_app() -> web.Application:
                 await task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001 — cancelled on the way out
                 pass
+        # The loops `_startup_body` started end with the app, the worker
+        # first among them. Left running, a card a request had just queued
+        # went on generating after the app was closed — collecting from
+        # Home Assistant, resolving its host in an executor thread, filing
+        # a problem report on the reports thread — while whoever closed the
+        # app went on to its next step. In the suite that next step is a
+        # test's teardown restoring `os.environ`, and glibc's setenv racing
+        # a getaddrinfo's getenv in another thread is a segfault: the
+        # xdist worker died "while running" test_proposal_accept's
+        # ordinary-question test. Bounded, because a loop that swallowed
+        # its cancellation must not hold the shutdown.
+        loops = [t for name, t in app["tasks"].items()
+                 if name != "startup" and t is not None and not t.done()]
+        for t in loops:
+            t.cancel()
+        if loops:
+            await asyncio.wait(loops, timeout=LOOP_STOP_WAIT_S)
         # The chat session is a child process of ours; leaving it running
         # after the panel goes down orphans a Claude that nothing will ever
         # read from again.
