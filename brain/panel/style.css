@@ -2698,9 +2698,9 @@ html.shell-home.shell-raised, html.shell-home.shell-raised body { background: rg
 }
 /* The list page's own message box (a new chat): only where the list is the
    page Ask opens on. Beside a transcript the transcript's box is the one. */
-.chatrail .crask { display: none; }
+.chatrail .crnewchat { display: none; }
 @media (max-width: 899px) {
-  body:not(.term-classic) .chatrail .crask { display: flex; }
+  body:not(.term-classic) .chatrail .crnewchat { display: flex; }
 }
 .chathead .btn.icon { width: 44px; height: 44px; flex: none; }
 .chathead .chtitle {
