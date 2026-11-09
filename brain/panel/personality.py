@@ -54,6 +54,7 @@ MORPH_FILE = os.environ.get(
 
 NAME_MAX = 60
 VOICE_MAX = 80
+REPLACED_MAX = 10
 # One ceiling for the persona everywhere it is stored, shown or typed.
 PERSONA_MAX = 32000
 # The ceiling before 4.0.1. A persona saved or moved over under it was cut
@@ -171,6 +172,13 @@ def normalise(data) -> dict:
         "persona": _block(data.get("persona"), PERSONA_MAX),
         "growth": clean_growth(data.get("growth")),
     }
+    # The voices a later answer replaced, oldest first: what a line of
+    # brAIn's own files may still name (`self_care.voice_conflicts`, #769).
+    replaced = [_one_line(v, VOICE_MAX) for v in data.get("replaced") or []
+                if isinstance(v, str)]
+    replaced = [v for v in dict.fromkeys(replaced) if v][-REPLACED_MAX:]
+    if replaced:
+        out["replaced"] = replaced
     # A stored voice that no longer reads as one (an older parser stored
     # "says so" off "…the persona now says so.") is re-read from the
     # household's own notes, newest first, or dropped — every prompt and
@@ -307,6 +315,16 @@ def growth_refusal(text, path: str | None = None) -> str:
     return ""
 
 
+def _set_voice(data: dict, voice: str) -> None:
+    """The stored voice, with the one it replaced remembered."""
+    before = str(data.get("voice") or "")
+    if before and before.lower() != voice.lower():
+        data["replaced"] = ([v for v in data.get("replaced") or []
+                             if v.lower() != before.lower()]
+                            + [before])[-REPLACED_MAX:]
+    data["voice"] = voice
+
+
 def save(name, persona, path: str | None = None, voice=None) -> dict:
     """Replace the name and the persona; the growth log is kept, and so is
     the voice unless ``voice`` is given.
@@ -330,7 +348,7 @@ def save(name, persona, path: str | None = None, voice=None) -> dict:
         data["name"] = _one_line(name, NAME_MAX)
         data["persona"] = _block(persona, PERSONA_MAX)
         if isinstance(voice, str):
-            data["voice"] = _one_line(voice, VOICE_MAX)
+            _set_voice(data, _one_line(voice, VOICE_MAX))
         data["updated_at"] = int(time.time())
         data["morph_import"] = False
         _write(data, target)
@@ -365,12 +383,42 @@ def add_growth(text, when: float | None = None, path: str | None = None,
         if said:
             # The note that the voice changed IS the new answer: every
             # surface quotes the store (`identity`), never the note.
-            data["voice"] = said
+            _set_voice(data, said)
         data["growth"] = data["growth"][-GROWTH_MAX:]
         data["updated_at"] = at
         data["morph_import"] = False
         _write(data, target)
     return entry
+
+
+def edit_persona_lines(edits, path: str | None = None) -> bool:
+    """Rewrite lines of the persona, ``[(line, new)]``, each the first line
+    reading exactly ``line``: the one-press Yes on brAIn's own question
+    about a line naming a replaced voice (`self_care`). Nothing else in
+    the file moves. Whether any line changed."""
+    import atomic_write  # noqa: PLC0415 — panel-local
+
+    target = path or STORE
+    if not writable(target):
+        return False
+    with atomic_write.locked(target):
+        data = load(target)
+        lines = str(data.get("persona") or "").split("\n")
+        changed = False
+        for line, new in edits or ():
+            wanted = str(line or "").strip()
+            for i, have in enumerate(lines):
+                if wanted and have.strip() == wanted:
+                    lines[i] = str(new)
+                    changed = True
+                    break
+        if not changed:
+            return False
+        data["persona"] = _block("\n".join(lines), PERSONA_MAX)
+        data["updated_at"] = int(time.time())
+        data["morph_import"] = False
+        _write(data, target)
+    return True
 
 
 def remove_growth(at, text, path: str | None = None) -> bool:

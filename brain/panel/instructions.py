@@ -341,22 +341,35 @@ def override_lines(key: str) -> list[str]:
         return []
 
 
-def drop_line(key: str, line: str) -> bool:
-    """Take one line out of an override, the first that reads exactly
-    ``line``; an override left empty is removed (the shipped text is back).
-    Whether a line was taken out. Never raises on a missing file."""
+def edit_lines(key: str, edits) -> bool:
+    """Rewrite lines of an override: ``edits`` is ``[(line, new)]``, each
+    applied to the first line that reads exactly ``line``, and a ``new`` of
+    None takes that line out. An override left empty is removed (the
+    shipped text is back). Whether any line changed. Never raises on a
+    missing file."""
     lines = override_lines(key)
-    wanted = str(line or "").strip()
-    for i, have in enumerate(lines):
-        if have.strip() == wanted and wanted:
-            rest = lines[:i] + lines[i + 1:]
-            text = "\n".join(rest) + ("\n" if rest else "")
-            if text.strip():
-                save(key, text)
-            else:
-                reset(key)
-            return True
-    return False
+    changed = False
+    for line, new in edits or ():
+        wanted = str(line or "").strip()
+        for i, have in enumerate(lines):
+            if wanted and have.strip() == wanted:
+                lines = (lines[:i] + ([] if new is None else [str(new)])
+                         + lines[i + 1:])
+                changed = True
+                break
+    if not changed:
+        return False
+    text = "\n".join(lines) + ("\n" if lines else "")
+    if text.strip():
+        save(key, text)
+    else:
+        reset(key)
+    return True
+
+
+def drop_line(key: str, line: str) -> bool:
+    """Take one line out of an override (`edit_lines`)."""
+    return edit_lines(key, [(line, None)])
 
 
 def reset(key: str) -> None:

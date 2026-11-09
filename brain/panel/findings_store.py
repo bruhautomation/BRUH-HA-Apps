@@ -1622,11 +1622,19 @@ def _shape(entry: dict) -> dict:
                        "at": int(hold.get("at") or 0)}
     out.update(_subject_fields(entry))
     # brAIn's own upkeep (`self_care`): the instruction line its Yes takes
-    # out. Absent on every other row.
+    # out, or the lines it rewrites to a settled voice. Absent on every
+    # other row.
     edit = entry.get("self_edit")
     if isinstance(edit, dict) and edit.get("key") and edit.get("line"):
         out["self_edit"] = {"key": str(edit["key"])[:48],
                             "line": str(edit["line"])[:2000]}
+    elif isinstance(edit, dict) and isinstance(edit.get("edits"), list):
+        edits = [{"key": str(e["key"])[:48], "line": str(e["line"])[:2000],
+                  "new": str(e.get("new") or "")[:2000]}
+                 for e in edit["edits"][:20]
+                 if isinstance(e, dict) and e.get("key") and e.get("line")]
+        if edits:
+            out["self_edit"] = {"edits": edits}
     # A house change asked for in Minecraft that waits for a person
     # (`minecraft_approvals`): the exact call its Yes runs, who asked, and
     # when it stops waiting. Absent on every other row.
@@ -2007,6 +2015,11 @@ def coerce(obj: dict) -> dict | None:
     ask = _clean_minecraft_approval(obj.get("minecraft_approval"))
     if ask:
         entry["minecraft_approval"] = ask
+    # brAIn's own question filed by code (`self_care.voice_questions`)
+    # carries the edit its Yes makes; `_shape` holds it to its fields.
+    if entry.get("source") == "self_care" and isinstance(
+            obj.get("self_edit"), dict):
+        entry["self_edit"] = obj["self_edit"]
     entry.update(_subject_fields(obj))
     return entry
 

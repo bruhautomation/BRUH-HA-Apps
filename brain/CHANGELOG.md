@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.23
+
+### Fixed
+
+- **Insight cards:** a card that is not all fine now carries one next step. That step is the card's own, a finding's fix, the open finding, or a suggestion. A card that only says nothing changed folds into the quiet line. A card whose body is only what brAIn could not check is shown as blind (#793).
+- **Duplicate cards:** a card whose title is about the same thing as an open finding is that finding's story, not a second item. A remark in passing no longer makes it one (#759).
+- **The house book:** when the registry, an automation or a trigger mapping already answers a question, brAIn writes the answer into the book and cites it instead of asking you (#773).
+- **New voice:** when you settle on a new voice, brAIn asks one yes/no question for each of its own instruction files that still names the old one, and a Yes makes the edit. It rewrites only a voice the store replaced, and quotes every line it would change. A conflict finding carries the same button (#769).
+- **Silent sensors and cut lines:** a sensor that has gone silent is no longer reported as a quiet card. A house-book line that is cut short says how much is left.
+
 ## 5.1.22
 
 ### Fixed
