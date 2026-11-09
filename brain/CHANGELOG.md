@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.21
+
+### Changed
+
+- The development loop no longer caps how many new reports it files a day unless you set a limit. One pass files every report that is ready. The Developer setting reads "No limit" when it is empty. A stored 10 or 20 from before this release (the old default, or what autopilot saved back) is read as no limit; a number you set from now on is kept. A held report is never blamed on a cap that isn't set (#797).
+
 ## 5.1.20
 
 ### Fixed

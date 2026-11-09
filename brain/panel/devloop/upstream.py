@@ -72,10 +72,6 @@ log = logging.getLogger("brain.devloop")
 # How often the fault list is swept into the queue. Hourly: the faults
 # change over hours, and the diagnostics payload is not free to build.
 SWEEP_INTERVAL_S = 3600
-# At most this many new issues per pass, so a house that has just broken
-# in twelve places does not file twelve issues in one second; the rest
-# go on the next pass.
-MAX_SENDS_PER_PASS = 5
 # How long a sent fingerprint has to be absent before the issue is told it
 # stopped. Two days, because a checks pass that skipped a check is not
 # the fault going away and the next pass may bring it back.
@@ -1033,11 +1029,14 @@ def _send_due(now: float) -> dict:
         _refresh_verdicts(token, repo, items, verdicts, now)
     stood = live_stood(verdicts["stood_down"], now, settings)
     sent = updated = 0
-    # The day's cap counts only issues this house CREATED: a fingerprint
-    # found again by its marker, a comment and a rewritten scorecard file
-    # nothing new and cost nobody's attention.
-    room = max(0, int(settings.get("max_issues_per_day") or 0)
-               - _issues_today(items, now))
+    # Every ready report goes in this pass (#797: "If there is an issue to
+    # send, just send it") — there is no per-pass ceiling, and no daily cap
+    # unless the owner set one (0 is none). That cap counts only issues
+    # this house CREATED: a fingerprint found again by its marker, a
+    # comment and a rewritten scorecard file nothing new.
+    limit = int(settings.get("max_issues_per_day") or 0)
+    room = (max(0, limit - _issues_today(items, now)) if limit > 0
+            else None)
     capped = 0
     # New reports go most impactful first, so the day's cap is spent on
     # what matters; the rest keep the order they were found in.
@@ -1048,7 +1047,7 @@ def _send_due(now: float) -> dict:
         if entry["state"] == "ready":
             if _stand_down(entry, stood):
                 continue
-            if sent >= min(MAX_SENDS_PER_PASS, room):
+            if room is not None and sent >= room:
                 capped += 1
                 continue
             if _file(token, repo, entry, aliases, now, verdicts):

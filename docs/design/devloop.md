@@ -70,9 +70,10 @@ owes, and `_devloop_tick` runs on `_checks_loop`.
 Every Claude stream takes the `devloop` job (Sonnet, high) through
 `server._claude`: a scheduled pass answers to `_resident_gate` and takes a
 SCHEDULED seat, a press skips the budget and takes a PRESS seat, and both
-spend one of `max_runs_per_day`. `max_issues_per_day` caps new issues, and a
-report past it waits rather than being dropped. Both caps refuse rather than
-make room.
+spend one of `max_runs_per_day`. `max_issues_per_day` is 0 by default, which
+is no limit: every ready report is filed on the next pass, with no per-pass
+ceiling (#797). A number the owner sets caps new issues, and a report past it
+waits rather than being dropped.
 
 **A rolling issue's key and body are hashed exactly** (`upstream._digest`),
 never through `fingerprint`, whose digit folding is right for a fault
