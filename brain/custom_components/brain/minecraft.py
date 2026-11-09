@@ -188,6 +188,10 @@ class Companion:
         self.points: dict[str, dict] = {}
         self.offers: dict[str, dict] = {}
         self.brain_down_until = 0.0
+        # Who has been told brAIn cannot be asked, per down window (the
+        # `brain_down_until` they were told under): a line skipped while it
+        # is down is never silence, and the same player hears it once.
+        self.told_down: dict[str, float] = {}
         self.published: tuple | None = None
         self.handed_over = False
         self.tasks: set[Any] = set()
@@ -574,10 +578,18 @@ class Companion:
                  else TALK_TOOLS)
         why = await self._turn_allowed(settings)
         if why:
-            if named:
+            # Every line is for the companion, so a line skipped because
+            # brAIn cannot be asked is said once per down window even when
+            # it did not name it: "nothing attempted, nothing said" left a
+            # player typing into silence for five minutes.
+            tell = named
+            if why == "down" and self.told_down.get(player) != self.brain_down_until:
+                self.told_down[player] = self.brain_down_until
+                tell = True
+            if tell:
                 await self.say([player], rules.CANNED[why], settings, name, roster)
             await self._log(kind="chat", person=who["person"], player=player,
-                            said=message[:300], reply=rules.CANNED[why] if named else "",
+                            said=message[:300], reply=rules.CANNED[why] if tell else "",
                             status=why)
             return
         await self._bump("turns")
@@ -599,13 +611,26 @@ class Companion:
                 tools=tools, schema=rules.TALK_SCHEMA, model=model, effort=effort,
                 timeout=rules.TALK_TIMEOUT, session_id=self._session(player, tools),
                 **self._speaker(who, tools), **self._thought_env(player, "talk", settings))
-        except asyncio.TimeoutError:
-            status = "timed_out"
-            line = rules.CANNED["timeout"] if named else ""
         except Exception as exc:  # noqa: BLE001 — a failure is a canned line, never a crash
-            status, note = "down", str(exc)[:200]
-            line = rules.CANNED["down"] if named else ""
-            self.brain_down_until = self.clock() + rules.BRAIN_RETRY
+            # The run was asked for these lines, so how it ended is said
+            # whether or not they named the companion: a run cut off with
+            # half its teleports done and nothing said is the worst ending.
+            note = str(exc)[:200]
+            if rules.run_code(exc) == "timeout":
+                # The listener stopped it at its limit: what was asked is
+                # bigger than a quick answer, so it carries on as a job
+                # (the requester's scope as it is now — never more).
+                status = "timed_out"
+                line = (await self._hand_off(who, lines, tools, settings, roster)
+                        or rules.CANNED["timeout"])
+            elif isinstance(exc, TimeoutError) and not rules.run_code(exc):
+                status, line = "timed_out", rules.CANNED["timeout"]
+            else:
+                status, line = "down", rules.CANNED["down"]
+                # Only a failure that says brAIn cannot be asked holds the
+                # desk; one run's own ending never stops the next line.
+                if rules.brain_is_down(exc):
+                    self.brain_down_until = self.clock() + rules.BRAIN_RETRY
         else:
             self._keep_session(player, tools, answer)
             data = self._data(answer)
@@ -627,6 +652,28 @@ class Companion:
                         person=who["person"], player=player, said=message[:300],
                         reply=" ".join([line] + extra)[:600], status=status, note=note,
                         model=model or "", **({"trusted": True} if tools == TRUSTED_TOOLS else {}))
+
+    async def _hand_off(self, who: dict, lines: list[dict], tools: str, settings: dict,
+                        roster: rules.Roster) -> str:
+        """A quick run the listener stopped at its limit becomes a job for
+        what was asked: the line to say, or "" when there was nothing to
+        hand on. The job takes the quick run's own `tools` (a child's stays
+        the game scope; the worker re-reads the toggle), waits at bedtime
+        and while paused like any job, and is opened once: the same words
+        timing out again while their job is active say it is still on."""
+        request = rules.handoff_request(" / ".join(i["text"] for i in lines))
+        if request is None:
+            return ""
+        same = next((j for j in await self._all_jobs()
+                     if j.get("status") in rules.JOB_ACTIVE
+                     and j.get("player") == who["player"]
+                     and j.get("brief") == request["brief"]), None)
+        if same is not None:
+            return rules.CANNED["handoff_again"].format(title=same.get("title") or "it")
+        waits = await self._open_job(who, {**request, "from_talk": True}, tools, settings,
+                                     roster)
+        return " ".join(x for x in (rules.CANNED["handoff"].format(title=request["title"]),
+                                    waits) if x)
 
     async def _think(self, player: str, text: str, state: str = "working", *,
                      key: str = "talk", title: str | None = None,
@@ -1685,9 +1732,11 @@ class Companion:
             "not for you — players talking to each other, \"lol\", \"brb\": then answer with "
             "an empty `reply` and nothing is said. `messages` is every line since your last "
             "answer, oldest first.\n"
-            "You are the desk: answer quickly. Anything that takes more than a couple of "
-            "tool calls — a build, a redecoration, a tree, a road, a big look round — is a "
-            "`job` ({title: a few words, brief: everything the worker needs, where: the room "
+            "You are the desk: answer quickly. A quick answer has well under a minute and "
+            "is cut off there, part done. Anything that takes more than a couple of tool "
+            "calls — a build, a redecoration, a tree, a road, a big look round, or a run of "
+            "actions one after another (a teleport tour along the builds, visiting several "
+            "places, a string of commands) — is a `job` ({title: a few words, brief: everything the worker needs, where: the room "
             "id, building id, place or box \"x1 y1 z1 x2 y2 z2\" from the atlas}); a worker "
             "with more time does it and reports back, and you say in `reply` that it is "
             "started. More words about a job in `jobs` → `amend` {job, message}; stop one → "
@@ -1738,6 +1787,9 @@ class Companion:
             f"and minecraft_job inbox (job \"{job['id']}\"): new words from them change the "
             "job, and `stop: true` means stop now and change nothing more. Do not ask "
             "questions; choose sensibly and say what you chose.\n"
+            "A job is not only a build: a run of actions one after another (a tour that "
+            "takes them to each build, visiting several places, a string of commands) is "
+            "carried out step by step with the tools you have, with progress after each. "
             "Every job is something to attempt. Redstone, machines, farms, doors and "
             "contraptions are blocks too: place dust, repeaters, comparators, pistons, "
             "observers, hoppers, levers and the rest with edit, their states included "
@@ -1750,6 +1802,10 @@ class Companion:
             "you could not do and why. Never say you were stopped, interrupted or cut off "
             "unless the inbox said `stop: true`.\n"
             + (self._resume_note(job) if job.get("steps") or job.get("edits") else "")
+            + ("This job began as a quick answer in chat that ran out of time, so some of "
+               "it may already have happened (a player moved, a block placed). Look at how "
+               "things stand first, then carry out the rest; do not undo what is there.\n"
+               if job.get("from_talk") else "")
             + "They can see you work: every game tool you call shows as a step in a small "
             "bubble over your allay, which everybody in the game sees. Between big steps, "
             "minecraft_world think (value: a few words — \"the roof first, then windows\") says what you are working out.\n"
