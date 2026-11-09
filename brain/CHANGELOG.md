@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.17
+
+### Fixed
+
+- When the Resident's first look decides a finding is not news (already answered, a duplicate, explained, recovered, or marked Wrong), the finding is held in History instead of shown, with the reason kept. `cosmetic` and `known` hold back only a single light, media player, weather, sun, zone or TTS entity whose name says nothing of food, water or a leak. Anything about safety, security, a protected entity or no entity at all is always shown. A look's link to a card you cannot see is dropped from its sentence and never moves the row (#790).
+- After you say a sensor is broken or to be ignored, the Resident and the overnight check stop building new reports on that sensor's readings (#788).
+
 ## 5.1.16
 
 ### Added
