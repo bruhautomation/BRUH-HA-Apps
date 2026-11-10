@@ -31,6 +31,8 @@ import { chromium } from 'playwright';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openView, controlOverlaps } from './tabs.mjs';
+import http from 'node:http';
+import fs from 'node:fs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PANEL = path.resolve(HERE, '..', '..', 'brain', 'panel');
@@ -856,6 +858,164 @@ for (const made of [true, false]) {
   if (!made && twice.sends.length) note(where, `a chat with no key was sent to anyway (${JSON.stringify(twice.sends)})`);
   if (!made && twice.rail !== said) note(where, `the message left the box although no chat was made ("${twice.rail}")`);
   await context.close();
+}
+
+// ---- the keyboard over the composer, inside HA's ingress frame ----------
+// On an iPhone in the companion app the keyboard covers the bottom of the
+// ingress iframe without resizing it: the frame's own viewport and dvh never
+// change, only the TOP page's visualViewport does. So the panel is served
+// over http (same origin, the way ingress is) inside a parent page whose
+// visualViewport is a stand-in that shrinks, and the composer has to end up
+// right above the simulated keys — and get the full height back after.
+{
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url, 'http://x');
+    if (url.pathname === '/parent.html') {
+      // Two fixed frames only, never a value taken from the request: the
+      // panel on this origin, or (?other=1) the same panel on the second port.
+      const src = url.searchParams.get('other') === '1'
+        ? `http://127.0.0.1:${otherPort}/index.html` : 'index.html';
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(`<!doctype html><html><head><meta name="viewport" content="width=device-width">
+<style>html,body{margin:0;height:100%;overflow:hidden}#bar{height:56px}
+#f{position:absolute;top:56px;left:0;width:100%;height:calc(100% - 56px);border:0}</style>
+<script>
+  const vv = new EventTarget();
+  let h = innerHeight, off = 0, n = 0;
+  const add = vv.addEventListener.bind(vv), rem = vv.removeEventListener.bind(vv);
+  vv.addEventListener = (t, f, o) => { n++; add(t, f, o); };
+  vv.removeEventListener = (t, f, o) => { n--; rem(t, f, o); };
+  Object.defineProperties(vv, {
+    height: { get: () => h }, width: { get: () => innerWidth },
+    offsetTop: { get: () => off }, offsetLeft: { get: () => 0 }, scale: { get: () => 1 } });
+  Object.defineProperty(window, 'visualViewport', { configurable: true, get: () => vv });
+  window.__kb = (px, o = 0) => { h = innerHeight - px; off = o; vv.dispatchEvent(new Event('resize')); };
+  window.__vvListeners = () => n;
+</script></head><body><div id="bar"></div><iframe id="f" src="${src}"></iframe></body></html>`);
+      return;
+    }
+    const file = path.join(PANEL, path.normalize(decodeURIComponent(url.pathname)).replace(/^[/\\]+/, ''));
+    if (!file.startsWith(PANEL) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+      res.writeHead(404); res.end(); return;
+    }
+    const type = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
+      '.svg': 'image/svg+xml' }[path.extname(file)] || 'application/octet-stream';
+    res.writeHead(200, { 'Content-Type': type });
+    fs.createReadStream(file).pipe(res);
+  });
+  // A second listener on another port is another origin, for the parent a
+  // proxy can put above the frame.
+  const other = http.createServer((req, res) => server.emit('request', req, res));
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  await new Promise((r) => other.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  const otherPort = other.address().port;
+  const H = 860, FRAME_TOP = 56, KEYS = 336;
+  const where = 'keyboard 390px';
+  const context = await browser.newContext({
+    viewport: { width: 390, height: H }, hasTouch: true, isMobile: true });
+  await context.addInitScript(STUB);
+  const page = await context.newPage();
+  page.on('pageerror', (e) => note(where, `page error: ${e.message}`));
+  const panelFrame = async () => {
+    for (let i = 0; i < 50; i++) {
+      const f = page.frames().find((x) => /\/index\.html$/.test(new URL(x.url()).pathname));
+      if (f) { await f.waitForLoadState('load'); return f; }
+      await page.waitForTimeout(100);
+    }
+    throw new Error('the panel frame never loaded');
+  };
+  const composer = (f) => f.evaluate(() => {
+    const form = document.querySelector('#chatForm').getBoundingClientRect();
+    const view = document.querySelector('#viewTerminal').getBoundingClientRect();
+    return { bottom: Math.round(form.bottom), h: Math.round(form.height),
+      viewH: Math.round(view.height), lift: document.body.classList.contains('kb-lift'),
+      overlap: document.body.style.getPropertyValue('--kb-overlap') };
+  });
+  const settle = (f, lifted) => f.waitForFunction((want) =>
+    document.body.classList.contains('kb-lift') === want, lifted, { timeout: 3000 })
+    .then(() => f.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
+
+  try {
+    await page.goto(`http://127.0.0.1:${port}/parent.html`);
+    const f = await panelFrame();
+    await openView(f, 'terminal');
+    await f.evaluate(() => askShow('chat'));
+    await f.waitForSelector('#chatInput', { state: 'visible', timeout: 5000 });
+    const before = await composer(f);
+    if (before.lift) note(where, 'the chat is lifted with no keyboard up');
+    if (FRAME_TOP + before.bottom > H + 1) note(where, `the composer ends at ${FRAME_TOP + before.bottom}, below the ${H}px screen`);
+
+    // The keyboard: the frame keeps its size, the top page's viewport shrinks.
+    await f.tap('#chatInput');
+    await page.evaluate((k) => window.__kb(k), KEYS);
+    await settle(f, true).catch(() => note(where, 'the keyboard came up and the chat was not lifted'));
+    const up = await composer(f);
+    const keysTop = H - KEYS;
+    if (FRAME_TOP + up.bottom > keysTop + 1) {
+      note(where, `the composer ends at ${FRAME_TOP + up.bottom}, under the keyboard at ${keysTop}`);
+    }
+    if (FRAME_TOP + up.bottom < keysTop - 60) {
+      note(where, `the composer ends at ${FRAME_TOP + up.bottom}, not right above the keyboard at ${keysTop}`);
+    }
+    if (up.h !== before.h) note(where, `the composer is ${up.h}px with the keyboard up, ${before.h}px without`);
+    if ((await f.evaluate(() => document.scrollingElement.scrollTop)) !== 0) note(where, 'the panel scrolled');
+
+    // iOS panned the top page down 100px to reveal the field: the keys'
+    // top is then 100px further down the page, and so is the composer.
+    const PAN = 100;
+    await page.evaluate(([k, o]) => window.__kb(k, o), [KEYS, PAN]);
+    await f.waitForFunction((want) => document.body.style.getPropertyValue('--kb-overlap') === want,
+      `${KEYS - PAN}px`, { timeout: 3000 }).catch(() => {});
+    const panned = await composer(f);
+    if (FRAME_TOP + panned.bottom > PAN + keysTop + 1 || FRAME_TOP + panned.bottom < PAN + keysTop - 60) {
+      note(where, `with the top page panned the composer ends at ${FRAME_TOP + panned.bottom}, not right above the keys at ${PAN + keysTop} (overlap ${panned.overlap})`);
+    }
+
+    // A strip under 60px is not a keyboard.
+    await page.evaluate(() => window.__kb(40));
+    await settle(f, false).catch(() => note(where, 'a 40px strip lifted the chat'));
+
+    // Closing it gives the whole height back.
+    await page.evaluate((k) => window.__kb(k), KEYS);
+    await settle(f, true).catch(() => note(where, 'the keyboard came back and the chat was not lifted'));
+    await f.evaluate(() => document.activeElement && document.activeElement.blur());
+    await page.evaluate(() => window.__kb(0));
+    await settle(f, false).catch(() => note(where, 'the keyboard closed and the chat stayed lifted'));
+    const down = await composer(f);
+    if (down.viewH !== before.viewH) note(where, `the chat is ${down.viewH}px after the keyboard, ${before.viewH}px before`);
+    if (down.overlap) note(where, `--kb-overlap is still ${down.overlap}`);
+
+    // The frame going away takes its listeners off the top page with it.
+    if (!(await page.evaluate(() => window.__vvListeners()))) note(where, 'nothing listened to the top viewport');
+    await page.evaluate(() => document.getElementById('f').remove());
+    await page.waitForFunction(() => window.__vvListeners() === 0, null, { timeout: 3000 })
+      .catch(async () => note(where, `${await page.evaluate(() => window.__vvListeners())} listener(s) left on the top viewport`));
+    await page.evaluate((k) => window.__kb(k), KEYS);
+
+    // Another origin above the frame: nothing to read, nothing done, no error.
+    await page.goto(`http://127.0.0.1:${port}/parent.html?other=1`);
+    const x = await panelFrame();
+    await openView(x, 'terminal');
+    await x.evaluate(() => askShow('chat'));
+    await x.tap('#chatInput');
+    await page.evaluate((k) => window.__kb(k), KEYS);
+    await x.waitForTimeout(500);
+    if ((await composer(x)).lift) note(where, 'a cross-origin parent lifted the chat');
+
+    // Not framed at all: nothing.
+    await page.goto(`http://127.0.0.1:${port}/index.html`);
+    await openView(page, 'terminal');
+    await page.evaluate(() => askShow('chat'));
+    await page.tap('#chatInput');
+    await page.waitForTimeout(500);
+    if ((await composer(page)).lift) note(where, 'an unframed page lifted the chat');
+  } catch (e) {
+    note(where, `the keyboard check failed: ${e.message.split('\n')[0]}`);
+  }
+  await context.close();
+  server.close();
+  other.close();
 }
 
 await browser.close();
