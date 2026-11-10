@@ -1201,14 +1201,17 @@ class Companion:
                                      by=str(by or "")[:40], name=name)
             tag = act["tag"]
             p = quote_name(found)
-            reply = self._try(f"minecraft:execute at {p} rotated ~ 0 run minecraft:summon "
-                              f"minecraft:allay ^ ^1.2 ^2 {self._body_nbt(tag, name, col)}")
-            if reply is None or not re.search(r"summoned", reply, re.I):
-                act.update(status="failed", ended_at=int(now),
-                           note=(reply or "The server did not answer.")[:200])
+            reply, there = self._summon_body(
+                f"minecraft:execute at {p} rotated ~ 0 run minecraft:summon "
+                f"minecraft:allay ^ ^1.2 ^2 {self._body_nbt(tag, name, col)}", tag)
+            if not there:
+                why = (reply.strip() if reply and reply.strip() else
+                       "The server said nothing, and no companion is there." if reply == ""
+                       else "The server did not answer.")
+                act.update(status="failed", ended_at=int(now), note=why[:200])
                 self.actions.put(act)
                 raise CompanionError(f"The server would not summon the companion: "
-                                     f"{(reply or 'no answer')[:120]}")
+                                     f"{why[:120]}")
             if pitches:
                 self._chime(found, pitches=pitches)
             self._sparkle_at_tag(tag)
@@ -1219,6 +1222,31 @@ class Companion:
             self.col.record({"kind": "companion", "player": found, "action": act["id"],
                              "text": act["text"]})
             return dict(act, undoable=undoable(act))
+
+    def _summon_body(self, cmd: str, tag: str) -> tuple[str | None, bool]:
+        """Summon a body; (the server's reply, whether the body is there).
+
+        The summon's own words are not the only proof (#809: greetings
+        failed with "The server did not answer." while RCON answered and
+        TPS was 20). `_try` reads a dropped connection — the shared session
+        reconnects only on the NEXT command — as None, and an empty reply
+        read the same. So when the reply is not "Summoned …" the server is
+        asked whether the tagged body is there; only when it is not is the
+        summon sent once more (never a second body for a lost answer), and
+        a summon that still did not take leaves nothing behind."""
+        reply = self._try(cmd)
+        if reply and re.search(r"summoned", reply, re.I):
+            return reply, True
+        probe = f"minecraft:execute if entity @e[tag={tag},limit=1]"
+        if self._test(probe):
+            return reply, True
+        if reply is not None and reply.strip():
+            return reply, False           # the server said why: that is the answer
+        again = self._try(cmd)
+        if (again and re.search(r"summoned", again, re.I)) or self._test(probe):
+            return again, True
+        self._try(f"minecraft:kill @e[tag={tag}]")
+        return (again if again is not None else reply), False
 
     def _run_live(self, now: float) -> None:
         for aid, live in list(self.live.items()):
