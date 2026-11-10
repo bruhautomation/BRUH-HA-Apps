@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.26
+
+### Fixed
+
+- On an iPhone in the Home Assistant app, opening the keyboard in brAIn's chat no longer hides the message box. Inside Home Assistant's frame, iOS doesn't shrink the page for the keyboard, so brAIn now measures how far the keyboard reaches into the frame and lifts the chat above it. Closing the keyboard gives back the full height. Desktop, Android, and the classic terminal are unchanged (#805).
+
 ## 5.1.25
 
 ### Fixed
