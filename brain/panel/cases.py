@@ -503,6 +503,8 @@ def _from_finding(row: dict, snoozes: dict[str, int]) -> dict:
     # (`answers.as_morph_question`): an older row carried the question as
     # its `fix` under an opportunity nobody could say yes to.
     row = answers_mod.as_morph_question(row)
+    # A model's words with no id, path or code name in them (#774, #791).
+    row = {**row, **findings_store.shown_words(row)}
     status = row.get("status") or "open"
     kind = "change" if status == "fixed" else (
         row["kind"] if row.get("kind") in KINDS else "problem")

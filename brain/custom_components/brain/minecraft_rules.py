@@ -88,6 +88,9 @@ POINT_TTL = 2 * 60                # a spyglass point is "this" / "that" this lon
 POINT_QUIET = 8                   # no line this long after a point: offer ideas
 OFFER_TTL = 10 * 60               # an offer's pads can be answered this long
 BRAIN_RETRY = 300
+# A failed run's line, for lines that did not name the companion: at most
+# once a player in this long (a line that named it is always answered).
+FAILED_QUIET = 120
 REPLY_LINES = 4
 REPLY_LINE_CHARS = 160
 PROMPT_CHARS = 12000              # the live view (what they look at, hold, just built) costs room
@@ -147,6 +150,10 @@ CANNED = {
     "nothing_to_continue": "There's nothing of yours left half-done.",
     "picked": "On it: {title}.",
     "which": "Which one?",
+    # A quick answer that ran out of time on something bigger than a quick
+    # answer: what was asked carries on as a job (`handoff_request`).
+    "handoff": "That's more than a quick answer, so I'm carrying on with it as a job: {title}.",
+    "handoff_again": "I'm still on that one as a job: {title}.",
 }
 # Why a job's run ended without an answer, as a short line a child can read
 # (the closed word the listener wrote — BrainRunError.code — or the time
@@ -169,6 +176,50 @@ RUN_ERROR_DEFAULT = "something went wrong on my side"
 def run_error_line(code: Any) -> str:
     """The short line for a run that failed with this closed word."""
     return RUN_ERROR_LINES.get(str(code or "").strip().lower(), RUN_ERROR_DEFAULT)
+
+
+# The closed words (BrainRunError.code) that say brAIn cannot be asked at all
+# for a while — signed out, paused, out of budget — so the quick runs wait
+# `BRAIN_RETRY` rather than ask again for every line. Every other word is
+# about the ONE run that failed (it ran out of time, a safety check, too many
+# turns): the next line is a new run and is asked. A timed-out quick run once
+# held the whole desk "down" for five minutes, and the player's next lines
+# were dropped unanswered.
+BRAIN_DOWN_CODES = frozenset({"auth", "paused", "budget", "rate_limited"})
+
+
+def run_code(exc: BaseException) -> str:
+    """The closed word a run's failure carries ("" when it carries none)."""
+    return str(getattr(exc, "code", "") or "").strip().lower()
+
+
+def brain_is_down(exc: BaseException) -> bool:
+    """Whether a quick run's failure means brAIn cannot be asked for a
+    while. A failure with no closed word is brAIn not reachable (the task
+    could not be written, the service went away); the bridge's own
+    TimeoutError (nothing came back) and a word about this one run are not."""
+    code = run_code(exc)
+    if code:
+        return code in BRAIN_DOWN_CODES
+    return not isinstance(exc, TimeoutError)
+
+
+def words_key(text: Any) -> str:
+    """Words as a person means them, for telling one request from another:
+    lower case, letters and digits only, single spaces."""
+    return " ".join(re.sub(r"[^\w ]+", " ", str(text or "").lower()).split())
+
+
+def handoff_request(message: Any) -> dict[str, str] | None:
+    """The job a quick run that ran out of time becomes: what was asked, as
+    the title (cut on a word) and the brief. The worker is told it began as
+    a quick answer (the job's `from_talk`), never through the brief, which
+    is the player's words and read as data."""
+    said = " ".join(str(message or "").split())
+    if not said:
+        return None
+    title = said if len(said) <= 60 else said[:60].rsplit(" ", 1)[0] + "…"
+    return clean_job_request({"title": title, "brief": said, "where": ""})
 
 
 # A worker's own reply that says it was stopped or interrupted, when nobody
