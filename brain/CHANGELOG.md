@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.25
+
+### Fixed
+
+- In Minecraft, a request made to the companion by name that needs many steps in a row, such as a teleport tour of the builds, is now a job rather than a quick answer that was cut off after 45 seconds. A named request that still runs out of time is carried on as a job, and the player is told so. Asking again while that job is running doesn't start a second one (#806).
+- After a run times out, the companion keeps answering the next lines. Before, it went quiet for five minutes as if brAIn were down. Only being signed out, paused, out of budget or rate limited holds it. A line that didn't name the companion is told about a failure at most once every two minutes, so chat isn't flooded (#806).
+
 ## 5.1.24
 
 ### Fixed
