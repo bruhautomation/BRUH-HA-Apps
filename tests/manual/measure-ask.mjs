@@ -871,7 +871,10 @@ for (const made of [true, false]) {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
     if (url.pathname === '/parent.html') {
-      const src = url.searchParams.get('src') || 'index.html';
+      // Two fixed frames only, never a value taken from the request: the
+      // panel on this origin, or (?other=1) the same panel on the second port.
+      const src = url.searchParams.get('other') === '1'
+        ? `http://127.0.0.1:${otherPort}/index.html` : 'index.html';
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(`<!doctype html><html><head><meta name="viewport" content="width=device-width">
 <style>html,body{margin:0;height:100%;overflow:hidden}#bar{height:56px}
@@ -991,7 +994,7 @@ for (const made of [true, false]) {
     await page.evaluate((k) => window.__kb(k), KEYS);
 
     // Another origin above the frame: nothing to read, nothing done, no error.
-    await page.goto(`http://127.0.0.1:${port}/parent.html?src=${encodeURIComponent(`http://127.0.0.1:${otherPort}/index.html`)}`);
+    await page.goto(`http://127.0.0.1:${port}/parent.html?other=1`);
     const x = await panelFrame();
     await openView(x, 'terminal');
     await x.evaluate(() => askShow('chat'));
