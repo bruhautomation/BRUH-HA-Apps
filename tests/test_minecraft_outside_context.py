@@ -195,5 +195,15 @@ class TestTheCompanionSeesIt(DeskCase):
         self.assertEqual(self.note(DAD, " "), {"ok": False})
 
 
+    def test_expired_players_are_swept_from_memory(self):
+        """Reviewer 1: a key whose notes all expired is removed, not kept."""
+        self.note(LEV, "teleported them to 9 9 9")
+        self.note(KAZ, "teleported them to 1 2 3")
+        self.clock.t += 31 * 60
+        self.note(DAD, "sent a message", TOLD)
+        self.assertEqual(set(self.c.outside), {"benmc13765"})
+        self.assertEqual(len(self.c.outside["benmc13765"]), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

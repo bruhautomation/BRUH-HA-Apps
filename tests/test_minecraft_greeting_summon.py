@@ -36,9 +36,14 @@ class LossyWorld(FakeWorld):
     def __init__(self):
         super().__init__()
         self.plan: list[str] = []
+        self.probe_drops = 0             # the next probes whose connection drops
 
     def reply(self, cmd: str) -> str:
         m = re.search(r"if entity @e\[tag=([^,\]]+),limit=1\]$", cmd)
+        if m and self.probe_drops > 0:
+            self.probe_drops -= 1
+            self.commands.append(cmd)
+            raise ConnectionResetError("connection closed by server")
         if m:
             self.commands.append(cmd)
             there = any(m.group(1) in e["tags"] for e in self.entities)
@@ -118,6 +123,36 @@ class TestAFailedSummonSaysWhatHappened(GreetingCase):
             self.hands.appear(KAZ, seconds=10, kind="greet")
         self.assertEqual(len(self.summons()), 1)
         self.assertEqual(self.hands.actions.list()[0]["note"], "Unable to summon entity")
+
+
+
+class TestAnUnanswerableProbeNeverMakesASecondBody(GreetingCase):
+    """Reviewer 2 on e064d9d: a probe that dropped is no answer, and only a
+    definite "absent" may send a second summon."""
+
+    def test_a_lost_answer_and_two_dropped_probes_send_one_summon_and_leave_nothing(self):
+        self.world.plan = ["lost"]          # the server DID summon; its answer was lost
+        self.world.probe_drops = 2
+        with self.assertRaisesRegex(companion.CompanionError, "did not answer"):
+            self.hands.appear(KAZ, seconds=10, kind="greet")
+        self.assertEqual(len(self.summons()), 1)
+        self.assertEqual(self.allays(), [])
+        self.assertIn("did not answer", self.hands.actions.list()[0]["note"])
+
+    def test_one_dropped_probe_is_asked_again(self):
+        self.world.plan = ["lost"]
+        self.world.probe_drops = 1
+        act = self.hands.appear(KAZ, seconds=10, kind="greet")
+        self.assertEqual(act["status"], "active", act)
+        self.assertEqual(len(self.summons()), 1)
+        self.assertEqual(len(self.allays()), 1)
+
+    def test_a_definite_absent_is_what_sends_the_second_summon(self):
+        self.world.plan = ["drop"]
+        act = self.hands.appear(KAZ, seconds=10, kind="greet")
+        self.assertEqual(act["status"], "active", act)
+        self.assertEqual(len(self.summons()), 2)
+        self.assertEqual(len(self.allays()), 1)
 
 
 if __name__ == "__main__":

@@ -1284,9 +1284,16 @@ class Companion:
         said = " ".join(str(data.get("text") or "").split())[:300]
         if said:
             row["said"] = said
-        rows = [r for r in self.outside.get(key, [])
-                if self.clock() - r["t"] < OUTSIDE_TTL] + [row]
-        self.outside[key] = rows[-MAX_OUTSIDE:]
+        now = self.clock()
+        # Every player's expired notes go, and a player left with none is
+        # no key: the map holds only the last half hour.
+        for k in list(self.outside):
+            kept = [r for r in self.outside[k] if now - r["t"] < OUTSIDE_TTL]
+            if kept:
+                self.outside[k] = kept
+            else:
+                del self.outside[k]
+        self.outside[key] = (self.outside.get(key, []) + [row])[-MAX_OUTSIDE:]
         return {"ok": True}
 
     def _outside_for(self, who: dict) -> list[dict]:

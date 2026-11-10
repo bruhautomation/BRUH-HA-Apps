@@ -1231,19 +1231,42 @@ class Companion:
         TPS was 20). `_try` reads a dropped connection — the shared session
         reconnects only on the NEXT command — as None, and an empty reply
         read the same. So when the reply is not "Summoned …" the server is
-        asked whether the tagged body is there; only when it is not is the
-        summon sent once more (never a second body for a lost answer), and
-        a summon that still did not take leaves nothing behind."""
-        reply = self._try(cmd)
-        if reply and re.search(r"summoned", reply, re.I):
-            return reply, True
+        asked whether the tagged body is there; only when it says it is not
+        is the summon sent once more (never a second body for a lost
+        answer). A probe that cannot be answered twice is "did not answer":
+        any body with the tag is killed and nothing is summoned again. A
+        summon that still did not take leaves nothing behind."""
         probe = f"minecraft:execute if entity @e[tag={tag},limit=1]"
-        if self._test(probe):
+
+        def there() -> bool | None:
+            # Asked twice before "unknown": a probe that dropped is no
+            # answer, and only a definite "absent" may send a second summon.
+            for _ in range(2):
+                seen = self._test(probe)
+                if seen is not None:
+                    return seen
+            return None
+
+        def summoned(text: str | None) -> bool:
+            return bool(text and re.search(r"summoned", text, re.I))
+
+        reply = self._try(cmd)
+        if summoned(reply):
+            return reply, True
+        seen = there()
+        if seen:
             return reply, True
         if reply is not None and reply.strip():
+            if seen is None:
+                self._try(f"minecraft:kill @e[tag={tag}]")
             return reply, False           # the server said why: that is the answer
+        if seen is None:
+            # Whether a body is there cannot be told: take away any that is,
+            # and say the server did not answer — never a second summon.
+            self._try(f"minecraft:kill @e[tag={tag}]")
+            return None, False
         again = self._try(cmd)
-        if (again and re.search(r"summoned", again, re.I)) or self._test(probe):
+        if summoned(again) or there():
             return again, True
         self._try(f"minecraft:kill @e[tag={tag}]")
         return (again if again is not None else reply), False
