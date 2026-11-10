@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.27
+
+### Fixed
+
+- The Minecraft companion now knows what a brAIn chat session did in the game. When a chat teleports a player or sends them a message, such as starting a map tour and saying "say next", the companion keeps a short note about it. It can then carry the tour on, or at least say what is going on, when that player answers "next". The notes are kept for 30 minutes, and each player sees only their own notes plus messages sent to everyone. A note is never permission to act, and a child's companion gains no new powers from one (#809).
+
 ## 5.1.26
 
 ### Fixed
