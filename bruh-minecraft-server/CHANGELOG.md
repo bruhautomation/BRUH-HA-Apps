@@ -5,6 +5,12 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.19.8
+
+### Fixed
+
+- A companion greeting no longer fails with "The server did not answer." when one RCON answer is lost. The add-on now checks whether the companion appeared, and summons again only when the server says it is definitely not there, so a lost answer never makes a second companion. If it can't tell, it removes any half-made companion and says the server did not answer (#809).
+
 ## 1.19.7
 
 ### Added
