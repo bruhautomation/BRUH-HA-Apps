@@ -207,9 +207,7 @@ Things that are working as intended, and are documented rather than fixed:
 - Claude Code runs as an unprivileged user (UID 1000), not root.
 - Background listeners use an explicit tool allow-list rather than
   `--dangerously-skip-permissions`.
-- CI runs secret, injection and quoting checks (`tests/test_security.py`),
-  shellcheck, hadolint, and AppArmor profile validation on every pull
-  request. CodeQL runs too, on any public clone of this repository —
-  code scanning is free on public repositories and a paid add-on on
-  private ones, so the job stands itself down while a repository is
-  private rather than reporting a billing state as a failure.
+- CI runs a small safety suite on every pull request (`tests/`: the action
+  gate, protected entities, redaction, secret and injection checks in
+  `tests/test_security.py`) and validates the AppArmor profiles. CodeQL's
+  security queries run weekly on any public clone of this repository.

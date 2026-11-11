@@ -1,19 +1,15 @@
 name: CodeQL
 
-# tests/test_security.py catches what a regex can catch — hardcoded
-# tokens, obvious injection shapes, missing quotes. CodeQL catches the
-# rest: taint from a request parameter into a subprocess call, path
+# CodeQL's dataflow analysis: taint from a request parameter into a subprocess call, path
 # traversal into a file read, and the like. Both add-ons take untrusted
 # input (voice commands, automation payloads, uploaded zips), so the
 # dataflow analysis is worth the minutes.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  # Weekly and on demand, never on a pull request: nothing here gates a
+  # merge, it reports to the Security tab.
   schedule:
-    # Weekly, so a newly-published query finds old code too.
     - cron: "27 4 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -79,7 +75,15 @@ jobs:
           # warns and falls back to autodetect, so both matrix jobs scanned
           # every language instead of one each, doing the same work twice.
           languages: ${{ matrix.language }}
-          queries: security-and-quality
+          # The default suite: security findings only. `security-and-quality`
+          # filled the Security tab with style notes (unused imports, empty
+          # excepts) that hid the handful of findings worth reading.
+          config: |
+            paths-ignore:
+              - tests
+              - bruh-cooking/tests
+              - bruh-cooking/frontend/test
+              - "**/node_modules"
           packs: ${{ matrix.suppression }}
 
       - name: Analyze

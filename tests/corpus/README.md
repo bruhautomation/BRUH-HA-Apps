@@ -1,5 +1,10 @@
 # The corpus
 
+> `tests/test_corpus.py` and `build.py` were removed with the rest of the
+> large test suite (see CLAUDE.md, *Checks and tests*). The entries, the
+> schema and `replay.py` are what remain; where this file mentions the other
+> two, read it as history.
+
 Houses, and what was true of them.
 
 BRight's `detect_hits` returned **zero** results on every real track for

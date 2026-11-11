@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import camera_policy  # noqa: E402
 import settings_store  # noqa: E402
-from test_resident_loop import LoopCase  # noqa: E402
+from loop_case import LoopCase  # noqa: E402
 
 DAY = "2026-10-04"
 NOW = 1_790_000_000.0
@@ -377,8 +377,11 @@ class TestTheInvestigationGetsTheGrant(LoopCase):
 
 class TestTheListenerLiftsOnlyTheCameraTool(unittest.TestCase):
     def flags(self, mode, cameras=""):
-        from test_task_tool_scope import lift
-        harness = lift("task_tool_flags") + f'\ntask_tool_flags "{mode}" "{cameras}"\n'
+        import re
+        src = (REPO / "brain" / "integrations" / "automation-listener.sh").read_text(encoding="utf-8")
+        fn = re.search(r"^task_tool_flags\(\) \{\n.*?^\}$", src, re.S | re.M)
+        self.assertTrue(fn, "automation-listener.sh no longer defines task_tool_flags")
+        harness = fn.group(0) + f'\ntask_tool_flags "{mode}" "{cameras}"\n'
         out = subprocess.run(["bash", "-c", harness], capture_output=True, text=True,
                              env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
                                   "BRAIN_PANEL_DIR": str(PANEL)}, check=False)
