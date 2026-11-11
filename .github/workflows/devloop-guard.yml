@@ -1,17 +1,15 @@
 name: devloop-guard
 
-# What an automated PR from the development loop may not do: touch a grader,
-# weaken or skip a test, change code without an added test that can see it,
-# or loosen the guard itself. It also prints the PR's risk tier (A/B/C/T/M).
+# What an automated PR from the development loop may not do: touch what
+# judges it (this guard, the workflows, the skill, the safety suite in
+# tests/), or change more than the version line of a manifest. It also
+# prints the PR's risk tier (A/B/C).
 #
 # Everything that judges comes from the BASE branch, so a PR can never edit
 # its own grader: `pull_request_target` runs this workflow file as base holds
 # it, and the guard script is taken from base with `git show` rather than run
-# from the PR's checkout. No code from the PR runs here, except the PR's own
-# guard on a devloop-meta/ branch, and the base guard runs that one itself,
-# in a subprocess with no secrets and a timeout, over the frozen cases in
-# tests/devloop_guard_cases/. See .github/scripts/devloop_guard.py and
-# docs/notes/devloop.md.
+# from the PR's checkout. No code from the PR runs here. See
+# .github/scripts/devloop_guard.py.
 
 on:
   pull_request_target:

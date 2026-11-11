@@ -25,7 +25,7 @@ import notify_router  # noqa: E402
 import security  # noqa: E402
 import settings_store  # noqa: E402
 
-from test_todo_list import PanelCase  # noqa: E402
+from panel_case import PanelCase  # noqa: E402
 
 MCP = BASE_DIR / "brain" / "ha-mcp-server" / "ha_mcp_server.py"
 TOKEN = "input_boolean.brain_honeytoken"

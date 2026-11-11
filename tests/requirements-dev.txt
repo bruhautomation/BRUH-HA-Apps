@@ -1,9 +1,6 @@
-aiofiles
 aiohttp
-jinja2
-numpy
 pillow
-pytest
 pyyaml
+pytest
 pytest-timeout
-pytest-xdist
+ruff

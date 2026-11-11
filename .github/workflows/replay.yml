@@ -1,34 +1,8 @@
 ---
-# The costed half of the corpus replay.
-#
-# The free half — every `checks` entry, scored against its labels with no
-# model at all — rides the ordinary `tests` job as `tests/test_corpus.py`,
-# and that is where a moved floor fails. This is the other half: the
-# analyst's own prompts, run against contributed houses with a real model
-# and graded against the endings people gave.
-#
-# Three things about how it is wired, and all three are about not being a
-# job people switch off.
-#
-# **It is never required for a pull request.** It costs money and it can
-# be red because a model had a bad night, which is not a reason to block
-# a change.
-#
-# **No secret means a no-op with a sentence, never a failure.** A fork, a
-# pull request from one, and a repository nobody has set the secret on all
-# reach this workflow; a scheduled job that goes red for want of a
-# credential is a notification people learn to ignore, and then the real
-# failure is in that same stream.
-#
-# **The budget is in the workflow, not in the script's default.** Nightly
-# spend is a decision about this repository rather than about the tool, so
-# it is written where somebody editing the schedule can see it.
-#
-# The house's other LLM jobs (the memory extractor, the consolidator,
-# reflect, the first look, Morph's learning pass, the devloop streams) are
-# graded by `evals.yml` through tests/evals/, which reuses this corpus's
-# first-look entries and scorer. That one IS a gate: a regression suite
-# under its threshold fails it, on pull requests that touch a prompt.
+# Scores brAIn's prompts against the contributed houses in tests/corpus/
+# (`python tests/corpus/replay.py`). Run by hand from the Actions tab; it
+# spends tokens (the BRAIN_REPLAY_TOKEN secret), so nothing schedules it
+# and it gates nothing.
 name: Corpus replay
 
 on:
@@ -42,10 +16,6 @@ on:
         description: "Stop asking once this much has been spent"
         required: false
         default: "200000"
-  schedule:
-    # 04:20 UTC. Off the hour on purpose: every scheduled job in the world
-    # asks for :00, and GitHub queues those.
-    - cron: "20 4 * * *"
 
 permissions:
   contents: read

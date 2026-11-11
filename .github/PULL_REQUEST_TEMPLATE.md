@@ -16,7 +16,7 @@
 - [ ] Bumped `version:` in `config.yaml` (if user-visible change)
 - [ ] Bumped `"version":` in the HA integration `manifest.json` to match
 - [ ] Added a `CHANGELOG.md` entry
-- [ ] `pytest tests/` passes locally
+- [ ] `python3 .github/scripts/check.py --base origin/main` passes
 - [ ] Documented new options in `DOCS.md`
 
 ## Test plan
