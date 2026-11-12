@@ -6335,17 +6335,26 @@ async def _generate(insight_id: str) -> None:
         obj = _answer(result)
         if not obj or not isinstance(obj.get("html"), str) or not obj.get("title"):
             raise RuntimeError("Claude returned an unparseable insight (no JSON/html)")
-        # Cards come only from analyses of the house. A reply with nothing
-        # taken from it (a chat turn's routing note, a run that fetched
-        # nothing) is not a card, however it got here.
-        if card_claims.read_nothing(obj, _entities_named_in):
-            # Not a fault of brAIn's, so no journal row; the backoff keeps a
-            # scheduled card from asking again at once.
-            log.info("insight %s: %s", insight_id, card_claims.NOT_FROM_HOUSE_WHY)
-            _note_card_failure(insight_id, card_claims.NOT_FROM_HOUSE_WHY)
-            _set_job(insight_id, state="error",
-                     error=card_claims.NOT_FROM_HOUSE_WHY)
-            return
+        # Cards come only from analyses of the house. A search run whose
+        # transcript shows it called no tool read nothing (a chat turn's
+        # routing note, "no data needed"): not a card, however it got here.
+        # The snapshot path is handed the house, so it always read it; a
+        # transcript that cannot be found proves nothing and is no reason.
+        if sent and sent.get("gather_mode") == "search":
+            sid = str((result.get("meta") or {}).get("session_id") or "")
+            reads = (await asyncio.to_thread(
+                conversations.tool_reads, engine.CLAUDE_HOME, sid)
+                if sid else None)
+            if reads is not None and card_claims.read_nothing(reads["tools"]):
+                # Not a fault of brAIn's, so no journal row (the paid run
+                # is already in the usage figures); the backoff keeps a
+                # scheduled card from asking again at once.
+                log.info("insight %s: %s", insight_id,
+                         card_claims.NOT_FROM_HOUSE_WHY)
+                _note_card_failure(insight_id, card_claims.NOT_FROM_HOUSE_WHY)
+                _set_job(insight_id, state="error",
+                         error=card_claims.NOT_FROM_HOUSE_WHY)
+                return
         # The design system is a stylesheet the card is written against,
         # injected once here rather than re-sent as hex in every prompt.
         html = inject_styles(obj["html"])
@@ -29460,21 +29469,19 @@ async def crash_middleware(request: web.Request, handler):
         return await handler(request)
     except (web.HTTPException, asyncio.CancelledError):
         raise
-    except ConnectionError as exc:
+    except Exception as exc:
         # The caller hung up (a phone locking, a tab closing): nobody is
         # left to answer and nothing of ours broke, so it is a cancel, not
         # a crash: no journal row, no fault, no report. Only when the
-        # caller's own connection is gone: a refused connection to
-        # something the handler called is a real fault.
+        # caller's own connection is gone or closing: a reset or broken
+        # pipe from something the handler called (an outbound session)
+        # while the caller is still connected is a real fault.
         tr = request.transport
-        if tr is not None and not tr.is_closing() \
-                and not isinstance(exc, ConnectionResetError | BrokenPipeError):
-            raise
-        log.info("client disconnected from %s: %s", request.method
-                 if request.method in _KNOWN_METHODS else "?",
-                 type(exc).__name__)
-        return web.Response(status=499)
-    except Exception as exc:
+        if isinstance(exc, ConnectionError) and (tr is None or tr.is_closing()):
+            log.info("client disconnected from %s: %s", request.method
+                     if request.method in _KNOWN_METHODS else "?",
+                     type(exc).__name__)
+            return web.Response(status=499)
         # What is written is the router's own canonical pattern and a
         # method from a fixed list — never the caller's path or verb, which
         # is what a log line or a journal row must not be built from

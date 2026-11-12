@@ -50,7 +50,7 @@ _GAP = re.compile(
 
 # A headline about nothing having happened.
 _NON_EVENT = re.compile(
-    r"\bno (?:[\w-]+ ){0,4}(?:cooling|heating|runs?|cycles?|openings?|"
+    r"\bno (?:cooling|heating|runs?|cycles?|openings?|"
     r"activity|events?|use|usage|motion|change|alerts?|visits?|deliveries)\b"
     r"|\bnothing (?:happened|ran|moved|changed|opened|to report)\b"
     r"|\bstayed (?:shut|closed|off|locked|dry|quiet|idle|dark|empty)\b"
@@ -99,24 +99,14 @@ NOT_FROM_HOUSE_WHY = ("the answer carried nothing read from the house, so no "
                       "card was made from it")
 
 
-def read_nothing(obj: dict, names_in=None) -> bool:
-    """Whether a reply holds nothing taken from the house: no tile with a
-    value, no finding, no suggestion, no live entity, no figure in its
-    words and no entity named. A routing note from a chat turn ("no data
-    needed") looks like this, and a card is the product of an analysis of
-    the house, never of a turn that fetched nothing. `names_in` is the
-    entity lookup (`text -> set`); without it only the other signs count."""
-    obj = obj or {}
-    if obj.get("findings") or obj.get("opportunities") or obj.get("live"):
-        return False
-    if any(isinstance(h, dict) and str(h.get("value") or "").strip()
-           and not _GAP_VALUE.fullmatch(str(h.get("value")))
-           for h in obj.get("highlights") or []):
-        return False
-    words = f"{obj.get('title') or ''} {obj.get('summary') or ''}"
-    if re.search(r"\d", words):
-        return False
-    return not (names_in and names_in(words))
+def read_nothing(tools) -> bool:
+    """Whether a run called no tool that reads the house. The names are the
+    run's own transcript (`conversations.tool_reads`); the CLI's structured
+    reply is a tool call too and is not a read. A routing note from a chat
+    turn ("no data needed") is this: it is judged by what the run did,
+    never by how the reply is worded."""
+    return not [t for t in tools or ()
+                if not str(t).lower().endswith("structuredoutput")]
 
 
 def blind_lead(obj: dict, verdict: str = "") -> str:
@@ -133,6 +123,10 @@ def blind_lead(obj: dict, verdict: str = "") -> str:
     if _GAP.search(claim) or _only_gaps(obj):
         return "a data gap"
     if _NON_EVENT.search(claim):
+        return "nothing happened"
+    # A claim that IS a "no …" phrase with no figure before it ("no aux
+    # heat or defrost cycles"), whatever words sit inside the phrase.
+    if re.match(r"\s*no\b", claim, re.I) and not re.search(r"\d", claim):
         return "nothing happened"
     if _ALL_FINE.search(claim) and (_only_absence(obj) or _NOTHING_NEWS.search(claim)):
         return "nothing happened"
