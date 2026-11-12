@@ -16,21 +16,27 @@ repository (`scripts/runs_record.py render`), not this file.
 
 - `2026-10-07-display-beats-hidden` (prose): A `display` set on a class beats the `[hidden]` attribute: when a container is toggled with `hidden`, check its class does not set `display`.
 - `2026-10-07-notes-are-the-record` (prose): Most fixes are an existing bullet in `docs/notes/` applied in a new place: search the notes for the area before writing a fix.
+- `2026-10-09-addcleanup-order` (prose): Register `addCleanup` with the original BEFORE replacing a module function, or the cleanup restores the fake and leaks into a later class.
 - `2026-10-09-producer-ignored-reads-all-time` (prose): A `[Producer …] ignored N of M` fault drops out once nobody marked the rule Wrong for 14 days (`reports.SCORE_RECENT_S`); only a Wrong count above what the fixed cause explains is new evidence.
+- `2026-10-10-local-only-failure` (prose): Check a local-only failure against `main` (and run the file alone) before chasing it: stray files under `/config/.brain` or `/data` from an earlier test break later ones.
 - `2026-10-12-pkill-kills-the-shell` (prose): Never `pkill -f <pattern>` in the same Bash command as anything else, and never kill a process you did not start.
 - `2026-10-12-severity-is-not-category` (prose): A severity is not a category: a chip that sorts rows asks the source too, never the severity alone.
 - `2026-10-13-guard-after-commit` (prose): Run `devloop_guard.py` after committing: it reads committed changes only, so a dirty tree reads as ok.
 - `2026-10-13-morph-old-static` (prose): A Morph panel serving `/morph_static/<older version>/` is Home Assistant still running the old integration: a restart is pending, not a Morph bug.
 - `2026-10-18-older-release-reports` (prose): Read the release a report was filed against (the block's `release`) before fixing: a report a later release already fixed is closed as a duplicate of the fixing issue.
 - `2026-10-18-squash-commit-message` (prose): Always pass `commit_title` and `commit_message` to `merge_pull_request`: without them the squash message carries every commit, including dropped ones.
+- `2026-10-18-tests-changed-to-pass` (guard:grader): Never make a fix pass by changing an existing test: `tests/*.py` is a grader path the guard refuses on a devloop branch; when a pinned assertion contradicts the fix, decline the issue naming the test's path:line.
 - `2026-10-20-live-image-swap` (prose): A live picture needs a second element swapped in once decoded; a measure that samples an image waits for `complete && naturalWidth > 0`.
 - `2026-10-20-read-before-the-signoff` (prose): Read the lines before a log's sign-off before naming a cause, and say in the PR when the cause is still unproven.
 - `2026-10-23-codeql-after-merge` (prose): CodeQL comments land after a PR merged: check the last merged PR's threads at the start of each batch, and grep new tests for import styles CodeQL flags.
 - `2026-10-23-fingerprint-split` (prose): Check whether one fault filed as two issues is a fingerprint split by moving wording, and say so to the house half.
 - `2026-10-23-merge-after-squash` (prose): After a squash merge, merging `main` into a follow-up branch conflicts on its own earlier changes: take the branch's side and confirm `git diff origin/main` shows only new work.
+- `2026-10-23-no-new-skip` (prose): A test that depends on optional data (zoneinfo) gets a fallback that keeps it running, never a new skip: the monitor flags a new skip marker.
 - `2026-10-24-labels-replace` (prose): `issue_write` with `labels` REPLACES every label: close by POSTing the comment, POSTing the label, then PATCHing `state=closed`.
 - `2026-10-24-manifest-dependencies` (guard:version-only): Reach an optional HA component through `power_tools._component` rather than adding it to `manifest.json`: the guard lets only the version line change, and hassfest refuses a URL in strings.
+- `2026-10-24-tool-list-conflicts` (prose): Batches that add MCP tools conflict on the `TOOLS` list in `ha_mcp_server.py` and the documented count: merge both sides, re-add a whole `TOOLS` entry, and recount by hand.
 - `2026-10-27-find-chromium` (prose): Find Chromium with `ls /opt/pw-browsers` rather than a remembered path; in a cloud session browser tests need `BRAIN_CHROMIUM` set to the headless shell.
+- `2026-10-27-wait-for-background-jobs` (prose): A test that starts a background job waits for it (an Event set in a `finally`) before tearDown removes its directory.
 - `2026-10-27-worktree-hygiene` (prose): Subagents in parallel worktrees never `git stash` (a WIP commit instead) and never kill processes they did not start.
 - `2026-10-28-read-the-refusal` (prose): Before assuming a permission gap, read the refusal's wording and the prompts: the tool may never have been missing.
 - `2026-10-28-semantic-merge` (prose): Two prepared batches that rewrote the same sentences or the same listener merge both intents (the batch's own subagent does it), then bump and add the CHANGELOG entry.
@@ -47,4 +53,4 @@ repository (`scripts/runs_record.py render`), not this file.
 - `2026-11-12-revert-after-suite-cut` (prose): Reverting a PR whose tests were later deleted: keep them deleted, and check that git diff <sha>^ HEAD over the code files is empty.
 - `2026-11-12-unattributed-canary-revert` (prose): An unattributed canary signal reverts the whole release, even a fix the owner confirmed: fix a recurring fault on its own before shipping on top of it, and say in the decline how to re-apply the reverted change.
 
-21 retired lesson(s) are kept in `lessons.json`.
+15 retired lesson(s) are kept in `lessons.json`.

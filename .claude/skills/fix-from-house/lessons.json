@@ -258,6 +258,54 @@
       "enforced_by": "prose",
       "first_seen": "2026-11-12",
       "last_relevant": "2026-11-12"
+    },
+    {
+      "id": "2026-10-09-addcleanup-order",
+      "rule": "Register `addCleanup` with the original BEFORE replacing a module function, or the cleanup restores the fake and leaks into a later class.",
+      "evidence": "A leaked fake failed SceneDesignCase later in the same xdist worker.",
+      "enforced_by": "prose",
+      "first_seen": "2026-10-09",
+      "last_relevant": "2026-11-12"
+    },
+    {
+      "id": "2026-10-10-local-only-failure",
+      "rule": "Check a local-only failure against `main` (and run the file alone) before chasing it: stray files under `/config/.brain` or `/data` from an earlier test break later ones.",
+      "evidence": "2026-10-10 a stray /config/.brain/memory failed test_task_failures on main; 2026-10-23 two test_usage_tracker renewal tests failed beside another that left files in /data.",
+      "enforced_by": "prose",
+      "first_seen": "2026-10-10",
+      "last_relevant": "2026-11-12"
+    },
+    {
+      "id": "2026-10-23-no-new-skip",
+      "rule": "A test that depends on optional data (zoneinfo) gets a fallback that keeps it running, never a new skip: the monitor flags a new skip marker.",
+      "evidence": "devloop-guard refused a new skipIf in a timezone test.",
+      "enforced_by": "prose",
+      "first_seen": "2026-10-23",
+      "last_relevant": "2026-11-12"
+    },
+    {
+      "id": "2026-10-24-tool-list-conflicts",
+      "rule": "Batches that add MCP tools conflict on the `TOOLS` list in `ha_mcp_server.py` and the documented count: merge both sides, re-add a whole `TOOLS` entry, and recount by hand.",
+      "evidence": "Two batches each added tools.",
+      "enforced_by": "prose",
+      "first_seen": "2026-10-24",
+      "last_relevant": "2026-11-12"
+    },
+    {
+      "id": "2026-10-27-wait-for-background-jobs",
+      "rule": "A test that starts a background job waits for it (an Event set in a `finally`) before tearDown removes its directory.",
+      "evidence": "test_bambu_copies raced its own cleanup.",
+      "enforced_by": "prose",
+      "first_seen": "2026-10-27",
+      "last_relevant": "2026-11-12"
+    },
+    {
+      "id": "2026-10-18-tests-changed-to-pass",
+      "rule": "Never make a fix pass by changing an existing test: `tests/*.py` is a grader path the guard refuses on a devloop branch; when a pinned assertion contradicts the fix, decline the issue naming the test's path:line.",
+      "evidence": "2026-10-18 two subagents moved a fixture and rewrote an assertion despite the prompt; 2026-10-20 #327 and #322 were blocked by pinned assertions (test_resident_unjudged.py:63, test_open_row_look_reason.py:60, test_rhythm.py:110).",
+      "enforced_by": "guard:grader",
+      "first_seen": "2026-10-18",
+      "last_relevant": "2026-11-12"
     }
   ],
   "retired": [
@@ -310,36 +358,12 @@
       }
     },
     {
-      "id": "2026-10-09-addcleanup-order",
-      "rule": "Register `addCleanup` with the original BEFORE replacing a module function, or the cleanup restores the fake and leaks into a later class.",
-      "evidence": "A leaked fake failed SceneDesignCase later in the same xdist worker.",
-      "enforced_by": "prose",
-      "first_seen": "2026-10-09",
-      "last_relevant": "2026-10-09",
-      "retired": {
-        "on": "2026-11-12",
-        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
-      }
-    },
-    {
       "id": "2026-10-09-stores-package-collision",
       "rule": "A failure that passes alone may be two add-ons' top-level `stores` packages colliding on one xdist worker; check `sys.path` before calling it a flake.",
       "evidence": "test_bright_addon and BRUH Print both import `stores`; on 2026-11-03 tests/bruh_print_env.panel_path removed only one copy of Print's panel dir (fixed by removing every copy).",
       "enforced_by": "prose",
       "first_seen": "2026-10-09",
       "last_relevant": "2026-11-03",
-      "retired": {
-        "on": "2026-11-12",
-        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
-      }
-    },
-    {
-      "id": "2026-10-10-local-only-failure",
-      "rule": "Check a local-only failure against `main` (and run the file alone) before chasing it: stray files under `/config/.brain` or `/data` from an earlier test break later ones.",
-      "evidence": "2026-10-10 a stray /config/.brain/memory failed test_task_failures on main; 2026-10-23 two test_usage_tracker renewal tests failed beside another that left files in /data.",
-      "enforced_by": "prose",
-      "first_seen": "2026-10-10",
-      "last_relevant": "2026-10-23",
       "retired": {
         "on": "2026-11-12",
         "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
@@ -394,30 +418,6 @@
       }
     },
     {
-      "id": "2026-10-23-no-new-skip",
-      "rule": "A test that depends on optional data (zoneinfo) gets a fallback that keeps it running, never a new skip: the guard refuses `skipIf`.",
-      "evidence": "devloop-guard refused a new skipIf in a timezone test.",
-      "enforced_by": "guard:skip",
-      "first_seen": "2026-10-23",
-      "last_relevant": "2026-10-23",
-      "retired": {
-        "on": "2026-11-12",
-        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
-      }
-    },
-    {
-      "id": "2026-10-24-tool-list-conflicts",
-      "rule": "Batches that add MCP tools conflict on the lists and the documented count: merge both sides, re-add a whole `TOOLS` entry, and let `test_documented_counts` give the count.",
-      "evidence": "Two batches each added tools.",
-      "enforced_by": "prose",
-      "first_seen": "2026-10-24",
-      "last_relevant": "2026-10-24",
-      "retired": {
-        "on": "2026-11-12",
-        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
-      }
-    },
-    {
       "id": "2026-10-27-background-timeout",
       "rule": "Give a background test run `timeout` 2400000 and write its output to a file when other agents load the box.",
       "evidence": "The affected suite ran past ten minutes under load and was killed.",
@@ -433,18 +433,6 @@
       "id": "2026-10-27-environmental-browser-tests",
       "rule": "`test_devloop_screenshot_card` fails in a cloud session with no drivable browser; CI runs it. Never read it as a batch's regression.",
       "evidence": "Seen on several runs.",
-      "enforced_by": "prose",
-      "first_seen": "2026-10-27",
-      "last_relevant": "2026-10-27",
-      "retired": {
-        "on": "2026-11-12",
-        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
-      }
-    },
-    {
-      "id": "2026-10-27-wait-for-background-jobs",
-      "rule": "A test that starts a background job waits for it (an Event set in a `finally`) before tearDown removes its directory.",
-      "evidence": "test_bambu_copies raced its own cleanup.",
       "enforced_by": "prose",
       "first_seen": "2026-10-27",
       "last_relevant": "2026-10-27",
@@ -499,18 +487,6 @@
       "retired": {
         "on": "2026-11-12",
         "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
-      }
-    },
-    {
-      "id": "2026-10-18-tests-changed-to-pass",
-      "rule": "Never make a fix pass by changing an existing test; when a pinned assertion contradicts the fix, open a `devloop-test/<slug>` PR for the independent reviewer (SKILL.md 0.3).",
-      "evidence": "2026-10-18 two subagents moved a fixture and rewrote an assertion despite the prompt; 2026-10-20 #327 and #322 were blocked by pinned assertions (test_resident_unjudged.py:63, test_open_row_look_reason.py:60, test_rhythm.py:110).",
-      "enforced_by": "guard:test-modified",
-      "first_seen": "2026-10-18",
-      "last_relevant": "2026-10-20",
-      "retired": {
-        "on": "2026-11-12",
-        "why": "The devloop-test/ dispute PR it names is no longer in the skill; the guard's grader rule (tests/*.py in grader_paths) holds the rest: a devloop PR never changes a test."
       }
     }
   ]
