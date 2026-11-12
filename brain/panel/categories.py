@@ -517,6 +517,8 @@ CARD_SCHEMA = {
 
 _CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The highlights ARE the product: concrete numbers with names and times. The title holds the conclusion; the summary opens with the finding itself — the reason, the comparison or the next step — never the title's figures again. "Nothing to do" only where the reader would otherwise worry, never as the opener. When all is normal, title and summary both say so in one short sentence, with at most two highlights, none with a status, and "html": "".
 
+A CARD EXISTS FOR A CHANGE OR A DECISION. If the honest conclusion is "nothing unusual", "nothing happened" or "no comparison possible", the card is not worth showing: brAIn drops it. A card worth keeping names ONE thing to do, or says everything is normal in a single sentence. Every number is given against a normal the reader can see ("62 °F, usually 68 °F"). A term only a specialist knows (aux heat, defrost, stage, setpoint, differential) is said in everyday words ("the backup heater", "the outdoor unit melting frost") or left out.
+
 OUTPUT CONTRACT (strict JSON; title, summary, highlights and html are required):
 {"title": "max 60 chars", "verdict": "all fine|worth a look|needs action", "next": "a step", "summary": "1-2 sentences, max ~220 chars, one usual-vs-now comparison",
  "highlights": [{"label": "Metric", "value": "42 kWh", "delta": "+12% vs avg (optional)", "status": "good|warning|serious|critical (optional)"}],

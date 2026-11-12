@@ -363,13 +363,15 @@ _COVER_JS = r"""
     if (r.width < 1 || r.height < 1) continue;
     const box = document.createElement("div");
     box.setAttribute("data-brain-cover", "1");
-    box.textContent = "not captured";
+    // The words only when the box can hold them: over a 32px avatar they
+    // spilled out and drew "not captured" across the name beside it.
+    box.textContent = r.width >= 96 && r.height >= 20 ? "not captured" : "";
     Object.assign(box.style, {
       position: "absolute", left: (r.left + scrollX) + "px", top: (r.top + scrollY) + "px",
       width: r.width + "px", height: r.height + "px", zIndex: 2147483647,
       background: "repeating-linear-gradient(45deg,#8a8f98,#8a8f98 8px,#9aa0a8 8px,#9aa0a8 16px)",
       color: "#fff", font: "12px system-ui", display: "flex", alignItems: "center",
-      justifyContent: "center", pointerEvents: "none" });
+      justifyContent: "center", pointerEvents: "none", overflow: "hidden", boxSizing: "border-box" });
     document.body.appendChild(box);
     n++;
   }
