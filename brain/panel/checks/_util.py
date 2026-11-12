@@ -761,6 +761,16 @@ class House:
                         return {"text": str(note), "scope": "answers"}
         return None
 
+    def acknowledged(self, entity_id: str, check_id: str) -> bool:
+        """Has the household said they know about this (an `accepted` ending:
+        To Do, "on my list") and is that answer still standing? The check
+        reads it to say a row in new words only when it got worse; the
+        row itself stays held by the ledger."""
+        answers = self.snap.get("answers")
+        row = ((answers or {}).get(entity_id) or {}).get(check_id) \
+            if isinstance(answers, dict) else None
+        return isinstance(row, dict) and bool(row.get("acked_at"))
+
     def stretch_began(self, entity_id: str):
         """When this entity's current state began, as an epoch, or None.
 

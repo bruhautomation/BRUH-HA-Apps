@@ -24815,6 +24815,36 @@ async def _scope_correction(finding: dict, note: str,
     writes nothing, because the press's rule it would scope is gone.
     """
     now = time.time()
+    if (base_ids and str(finding.get("source") or "").startswith("check:")
+            and finding.get("entity_id") and corrections.asks_cleanup(note)):
+        # "Remove it from automations", "stop caring about it": a question
+        # that lists what mentions the device, never an edit or a rule.
+        eid = str(finding.get("entity_id") or "")
+        try:
+            from checks import snapshot as _snapshot  # noqa: PLC0415
+            configs = (await asyncio.to_thread(
+                _snapshot.load_configs)).get("automations") or []
+            row = await asyncio.to_thread(
+                corrections.cleanup_offer_row, finding, note,
+                entity_name=str((_NAMES.get(eid) or {}).get("name") or ""),
+                automations=corrections.automations_referencing(
+                    configs, _finding_subjects(finding)),
+                finding_key=findings_store.normalize(
+                    finding.get("text") or ""),
+                about=str(finding.get("claim") or finding.get("text") or ""))
+            offer = (await asyncio.to_thread(findings_store.add_case, row)
+                     if row else None)
+        except Exception as exc:  # noqa: BLE001 — an ending must not fail
+            log.debug("could not ask about cleaning up: %s", exc)
+            offer = None
+        if offer:
+            CORRECTION_STATE["offered"] += 1
+            return {"plan": None, "ids": [], "offer": offer,
+                    "sentence": "Got it — brAIn will stop flagging this "
+                                "one. It has put a question on your list "
+                                "with the automations that mention it, and "
+                                "will only treat it as unused if you say "
+                                "yes."}
     if base_ids and (_is_resident_condition(finding, note)
                      or (str(finding.get("source") or "").startswith("check:")
                          and corrections.conditional(note))):

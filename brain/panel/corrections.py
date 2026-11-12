@@ -1116,6 +1116,95 @@ def condition_offer_row(finding: dict, note: str, *, entity_name: str = "",
     }
 
 
+# A reason that is an INSTRUCTION about the device's place in the house:
+# "remove it from automations", "take it out of the scenes", "stop caring
+# about it". Read only to ASK (`cleanup_offer_row`): it files a question the
+# person answers, it never stands anything down and never edits an
+# automation. A sentence is not permission (a "broken" read as retired
+# once); Yes is the only thing that writes.
+_CLEANUP_RE = re.compile(
+    r"\b(?:remove|delete|drop|take|get|pull)\b(?:\W+\w+){0,3}?\W+"
+    r"(?:from|out of|off)\b(?:\W+\w+){0,3}?\W+"
+    r"(?:automations?|scripts?|scenes?|dashboards?|everything)\b"
+    r"|\b(?:stop|quit|no need to)\s+(?:caring|worrying|checking|"
+    r"monitoring|tracking|watching)\b"
+    r"|\bclean (?:it|them|this) up\b", re.I)
+
+
+def asks_cleanup(note: str) -> bool:
+    """Whether a reason tells brAIn to remove the thing or stop caring."""
+    text = str(note or "")
+    return bool(_CLEANUP_RE.search(text)) and not temporary(text)
+
+
+def automations_referencing(configs, entity_ids) -> list[str]:
+    """The names of the automations whose config mentions any of
+    ``entity_ids`` (exact ids), in file order, without repeats."""
+    wanted = list(dict.fromkeys(str(x) for x in entity_ids or () if x))
+    if not wanted:
+        return []
+    pattern = re.compile(r"(?<![\w.])(?:" + "|".join(
+        re.escape(e) for e in wanted) + r")(?![\w])")
+    names: list[str] = []
+    for cfg in configs or ():
+        if not isinstance(cfg, dict):
+            continue
+        if pattern.search(json.dumps(cfg, default=str)):
+            name = " ".join(str(cfg.get("alias") or cfg.get("id")
+                                or "an automation").split())
+            if name not in names:
+                names.append(name)
+    return names
+
+
+def cleanup_offer_row(finding: dict, note: str, *, entity_name: str = "",
+                      automations=(), finding_key: str = "",
+                      about: str = "", now: float | None = None
+                      ) -> dict | None:
+    """The question asked when a Wrong says to remove the device or stop
+    caring about it: it lists the automations that mention the device and
+    asks whether to treat it as expected-unused, which stands every check
+    down for it (:func:`accept_offer`, scope ``entity``). Yes does not edit
+    an automation; the list is for the person to act on or to ask brAIn to
+    change through a proposal. None for a rule that is never stood down.
+    """
+    check_id = check_of(finding)
+    entity_id = str(finding.get("entity_id") or "")
+    if not check_id or not entity_id or check_id in NEVER_CHECKS:
+        return None
+    now = time.time() if now is None else float(now)
+    name = entity_name or "this device"
+    text = f"Treat {name} as no longer in use?"
+    listed = list(automations)
+    if listed:
+        shown = ", ".join(f"“{a}”" for a in listed[:8])
+        more = f" and {len(listed) - 8} more" if len(listed) > 8 else ""
+        used = f"These automations mention it: {shown}{more}. "
+    else:
+        used = "No automation mentions it. "
+    offer = {
+        "key": _offer_key(text), "scope": "entity", "check": check_id,
+        "entity_id": entity_id, "area_id": "", "expires": "", "until": "",
+        "text": note.strip()[:MAX_REASON] or "No longer in use",
+        "about": about, "finding_key": finding_key, "created": int(now),
+    }
+    _save_offer(offer, now)
+    return {
+        "text": text,
+        "claim": textclip.clip(
+            f"You asked brAIn to take {name} out or stop caring about it. "
+            + used + "Should brAIn stop raising it from every check?", 240),
+        "detail": (f"Your words: “{textclip.clip(note.strip(), MAX_REASON)}”. "
+                   + used + "Yes stops every check raising it; brAIn does "
+                   "not change any automation unless you ask it to. No "
+                   "keeps things as they are."),
+        "kind": "question", "severity": "info", "stakes": "low",
+        "source": SOURCE, "source_title": SOURCE_TITLE, "fixable": False,
+        "memory_hint": textclip.clip(note.strip(), 240),
+        "entity_id": entity_id,
+    }
+
+
 def _load_offers() -> list[dict]:
     try:
         with open(OFFERS_FILE, encoding="utf-8") as fh:
@@ -1181,6 +1270,21 @@ def accept_offer(case_text: str, *, protected=(),
         subject = f"check:{check_id}"
     elif scope == "entity_check" and offer.get("entity_id"):
         subject = str(offer["entity_id"])
+    elif scope == "entity" and offer.get("entity_id"):
+        # Expected-unused: every check stands down for it, except what
+        # nothing wide may cover (a safety device, a protected id).
+        if never_covered(str(offer["entity_id"]), check_id,
+                         protected=protected):
+            return {"ids": [], "why": "a safety device is never stood down "
+                                      "for every check"}
+        got, _ = facts_store.add(
+            str(offer.get("text") or "No longer in use"),
+            subject=str(offer["entity_id"]), source="correction",
+            predicate=facts_store.EXCEPTION_PREFIX + "*",
+            expires="", confidence=0.95, about=str(offer.get("about") or ""),
+            finding_key=str(offer.get("finding_key") or ""))
+        return ({"ids": [got["id"]], "why": ""} if got else
+                {"ids": [], "why": "the facts store could not take it"})
     else:
         return {"ids": [], "why": "that offer is not one brAIn can widen"}
     got, _ = facts_store.add(
