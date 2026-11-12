@@ -86,6 +86,10 @@ KINDS = {
     "look_ignore": "brAIn looked and let it go",
     "look_watch": "brAIn looked and decided to watch it",
     "held": "looked at, and held back from the list",
+    # A row from a rule the household has mostly marked Wrong, held with
+    # that record as its reason when no look kept it (`rule_record.holds`).
+    "record": "you marked most of this rule's reports wrong, so brAIn held "
+              "this one back until it gets worse or names something new",
     # "Don't remind me" on a check's card: held until its report changes.
     "hold": "you asked not to be reminded, so brAIn holds it until "
             "something about it changes",
