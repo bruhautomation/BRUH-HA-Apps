@@ -131,6 +131,22 @@ def shorten(text, limit: int) -> str:
 
 
 _TRAILING_MORE = re.compile(r"\band (\d+) more\.?$")
+_ABBREV = ("e.g", "i.e", "etc", "vs", "approx", "no", "dr", "mr", "mrs", "st")
+_DANGLING = (" and", " or", " but", " to", " the", " a", " an", " of", " with",
+             " then", " so", " near", " at", " in", " on", " for", " by")
+
+
+def _last_stop(body: str) -> int:
+    """Index of the last real sentence end in ``body``: a full stop,
+    "!" or "?" followed by a space and a capital or digit, and not the dot
+    of a decimal or of an abbreviation ("1.5 inch", "e.g. a")."""
+    found = -1
+    for m in re.finditer(r"[.!?](?=\s+[A-Z0-9\"“])", body):
+        word = re.search(r"([\w.]+)$", body[:m.start()])
+        if body[m.start()] == "." and word and word.group(1).lower() in _ABBREV:
+            continue
+        found = m.start()
+    return found
 
 
 def finished(text) -> str:
@@ -138,11 +154,12 @@ def finished(text) -> str:
     ending in "…" and never in "and N more.".
 
     A cut that stopped mid-sentence ("…none of these ent…") goes back to
-    the last whole sentence it holds; a single sentence with none is ended
-    at its last whole word with a full stop. A list counted as "and 6
-    more." is said "and 6 others." — the count of what is left out stays,
-    it just no longer reads as a cut. Text that ends properly comes back
-    as it was."""
+    the last whole sentence it holds (never at a decimal point or an
+    abbreviation); a single sentence with none is ended at its last whole
+    word, less any "and"/"the" left hanging, with a full stop. A list
+    counted as "and 6 more." is said "and 6 others." — the count of what
+    is left out stays, it just no longer reads as a cut. Text that ends
+    properly comes back as it was."""
     s = "" if text is None else str(text)
     out = s.rstrip()
     if out.endswith(ELLIPSIS):
@@ -151,60 +168,19 @@ def finished(text) -> str:
         if body[-1:] in ".!?":
             out = body
         else:
-            stop = max(body.rfind(e) for e in _FULL_STOPS)
+            stop = _last_stop(body)
             if stop > 0:
                 out = body[:stop + 1].rstrip()
             else:
-                out = body.rstrip(_TRAILING) + "."
+                body = body.rstrip(_TRAILING)
+                while body.lower().endswith(_DANGLING):
+                    body = body.rsplit(" ", 1)[0].rstrip(_TRAILING)
+                out = body + "." if body else ""
     m = _TRAILING_MORE.search(out)
     if m:
         n = int(m.group(1))
         out = out[:m.start()] + f"and {n} {'other' if n == 1 else 'others'}."
     return out if out != s.rstrip() else s
-
-
-# Below this budget a display copy is one line — a button's label, a chip's
-# summary, an option's description — and a second line saying how much was
-# hidden would be longer than what it describes. Above it the copy is a
-# block (a tool's input, a tool's result, a message), and the line under it
-# is what tells a reader the cut is the screen's and not the model's.
-NOTE_FROM = 400
-# How much of the budget a line break has to keep before it is preferred
-# over a plain word break. A block of JSON cut mid-line reads as broken.
-_LINE_SHARE = 0.5
-
-
-def shown(text, limit: int) -> str:
-    """``text`` shortened for the SCREEN, saying so.
-
-    The chat and the conversation replay draw a copy of what the CLI
-    already has — a tool's input, a tool's result, a message — and nothing
-    shortened here is ever sent back to Claude. "… (truncated)" cut
-    mid-word said none of that, and read as Claude cutting off its own
-    context. So a block is cut on a line break, else on a word, and the
-    line under it says how much is shown and that Claude has the full text;
-    a short one-line budget is ``clip``'s plain ellipsis. Text that fits
-    comes back unchanged.
-    """
-    s = "" if text is None else str(text)
-    if limit <= 0 or len(s) <= limit:
-        return s if limit > 0 else ""
-    if limit < NOTE_FROM:
-        return clip(s, limit)
-    head = s[:limit]
-    nl = head.rfind("\n")
-    if s[limit:limit + 1] == "\n":
-        cut = limit
-    elif nl >= int(limit * _LINE_SHARE):
-        cut = nl
-    elif s[limit:limit + 1].isspace():
-        cut = limit
-    else:
-        sp = max(head.rfind(" "), head.rfind("\t"))
-        cut = sp if sp >= int(limit * _WORD_SHARE) else limit
-    head = head[:cut].rstrip()
-    return (f"{head}\n{ELLIPSIS} display truncated: {len(head):,} of "
-            f"{len(s):,} characters shown here — Claude has the full text.")
 
 
 __all__ = ["ELLIPSIS", "NOTE_FROM", "clip", "finished", "shorten", "shown"]

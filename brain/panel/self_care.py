@@ -12,14 +12,13 @@ put in force the way ⚙ saves it); No leaves it. A line brAIn cannot find
 is not a question: the row stays a finding, its developer words scrubbed
 (`house_words.self_said`).
 
-A voice the household settles is the other half (#769): the instruction
-overrides and the persona are words a person wrote, so a line in them that
-still names the voice it replaced is not rewritten unattended. In the step
-that stores the voice, brAIn files one question per file quoting the line
-(`voice_questions`), and Yes replaces the old name with the new one
-(`correct`); a model's row about the conflict is read as that question
-too (`as_question`). The growth note that settles a voice can come from a
-conversation, which is why it is a press and not a write.
+A voice the household settles is the other half (#769, #854): once it is
+recorded, brAIn makes every line of its instruction overrides and its persona
+that still names the voice it replaced say the new one (`settle_voice`) and
+asks nothing; only the replaced voice's name in a line about a voice changes.
+A model's row about such a conflict is absorbed the same way (`as_question`
+answers `self_done`). `voice_questions` is the older one-question-per-file
+form and is no longer filed.
 
 Rows of this source are written by code, so `findings_store` leaves their
 words alone (`PLAIN_EXEMPT`): the quoted line is the instruction's own.

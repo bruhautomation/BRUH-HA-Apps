@@ -302,8 +302,9 @@ def question_row(entry: dict) -> dict:
         _reported(entry),
         (f"{product} {fixed_in} was installed here to fix it."
          if fixed_in else f"A {product} update was installed here to fix it."),
-        "" if place else (
-            f"Where to look: {_household_place(look)}." if look else ""),
+        # A place the step names is not said twice, and a title is no place.
+        f"Where to look: {product}." if not place and product != "brAIn"
+        else "",
         _checking(entry, place, product)) if p)
     return {
         # Stable per fix: the report's words and the release it was fixed

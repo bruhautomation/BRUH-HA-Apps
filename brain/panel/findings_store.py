@@ -990,16 +990,6 @@ def _plainly(text, entry: dict, files: bool = True) -> str:
         known=clean_technical((entry or {}).get("technical")))
 
 
-def _persona_name() -> str:
-    """The name the household gave the assistant ("" when it is brAIn)."""
-    try:
-        import personality  # noqa: PLC0415 — a leaf, read only here
-        name = str(personality.identity().get("name") or "")
-    except Exception:  # noqa: BLE001 — a name we cannot read is brAIn
-        return ""
-    return "" if name.casefold() == "brain" else name
-
-
 def shown_words(entry: dict) -> dict:
     """The fields of a model-written row a surface shows, in plain words
     (#774, #791): no path, line number, id, hex code, build string or
@@ -1010,7 +1000,6 @@ def shown_words(entry: dict) -> dict:
     entry = entry if isinstance(entry, dict) else {}
     model = _model_written(entry.get("source"))
     out = {}
-    persona = _persona_name() if model else ""
     for key in ("text", "claim", "detail", "fix"):
         said = entry.get(key)
         if isinstance(said, str) and said:
@@ -1022,13 +1011,13 @@ def shown_words(entry: dict) -> dict:
                     out[key] = textclip.finished(said)
                 continue
             # One name for what the household talks to (#832).
-            if key in ("detail", "fix"):
+            if key == "detail":
                 said_now = house_words.on_topic(
                     said, f"{entry.get('text') or ''} {entry.get('claim') or ''}")
             else:
                 said_now = said
             plain_said = textclip.finished(
-                _plainly(house_words.one_name(said_now, persona), entry))
+                _plainly(house_words.one_name(said_now), entry))
             if plain_said != said and (plain_said or key != "text"):
                 out[key] = plain_said
     return out
@@ -1094,7 +1083,7 @@ def shown_look(record: dict, entry: dict) -> dict:
     # no tool name, hex code or build string (#562, #563). A file name stays
     # (`tests/test_open_row_look_reason.py` holds it on screen).
     said = house_words.household(house_words.technical(said, files=False)[0])
-    said = house_words.one_name(said, _persona_name())   # one assistant, one name
+    said = house_words.one_name(said)   # one assistant, one name
     # No id, path, line number or code name — and never "an internal
     # name" — under "brAIn checked" (#774, #791): `shown_words`' pass.
     said = textclip.finished(_plainly(said, entry, files=False))
