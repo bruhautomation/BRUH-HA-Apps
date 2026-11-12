@@ -690,7 +690,9 @@ class House:
         if not isinstance(table, dict):
             if self.excepted(entity_id, check_id):
                 return {"scope": "entity_check", "text": ""}
-            if self._never_covered(entity_id, check_id):
+            # No table to read `never` off: the fixed lists answer, with
+            # the device's other classes (a leak sensor's battery).
+            if self._never_whole(entity_id, check_id):
                 return None
             facts = self.snap.get("facts")
             return self._device_rule(

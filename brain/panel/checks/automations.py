@@ -743,12 +743,10 @@ def condition_never_passes(snap: dict, now: float) -> list[dict]:
             continue
         if not house.should_report(eid, "auto.condition_never_passes"):
             continue
-        other = _wrong_on_same_wait(house, config, "auto.condition_never_passes")
-        if other:
-            house.gave_up("auto.condition_never_passes", [{"entity_id": eid}],
-                          f"you marked “{other}” wrong, and this waits on "
-                          "the same kind of thing", kind="explained")
-            continue
+        # No hold through ANOTHER automation's Wrong here: a condition that
+        # never passes is a fault in this automation's own config (a typo
+        # in a state), and the one beside it waiting on the same kind of
+        # trigger may be the leak valve's.
         which = _condition_words(house, node)
         out.append({
             "text": f"{_label_of(item)} triggers but its condition never "
@@ -1000,7 +998,10 @@ def _watches_a_fault(house: House, config: dict) -> bool:
 # What an automation waits on that the house does not control: a sensor
 # reading, the clock, the sun, a calendar, a zone. An automation that has not
 # fired yet is waiting, which is not a fault, and a Wrong on one is a Wrong on
-# every other automation waiting on the same kind of thing.
+# every other automation waiting on the same kind of thing — for
+# `never_fired` only, which never reaches an automation that answers an
+# alarm (`_guards_safety`); a condition that never passes is that
+# automation's own fault and is never held through another's Wrong.
 OUTSIDE_TRIGGERS = frozenset({"state", "numeric_state", "time", "time_pattern",
                               "sun", "calendar", "zone", "template",
                               "geo_location", "device"})

@@ -22099,7 +22099,8 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
                 corrections.accept_offer, str(finding.get("text") or ""),
                 protected=automation_writer.protected_patterns(),
                 device_classes=_device_family(
-                    str(finding.get("entity_id") or ""))[1])
+                    str(finding.get("entity_id") or ""))[1],
+                entity_id=str(finding.get("entity_id") or ""))
             if got["ids"]:
                 payload["_exception_ids"] = got["ids"]
             else:

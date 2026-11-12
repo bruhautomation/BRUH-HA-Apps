@@ -4245,8 +4245,11 @@ def lapse_settled(sources: set[str], keep_keys: set[str],
                 if entry.pop("absent_at", None):
                     touched = True
                 continue
-            if str(entry.get("source") or "") in ACKNOWLEDGED_SOURCES:
-                # "Known" / "on my list" about a battery or a link: a pass
+            if (entry.get("kind") == "accepted"
+                    and str(entry.get("source") or "") in ACKNOWLEDGED_SOURCES):
+                # "Known" / "on my list" about a battery or a link (never
+                # Done: a battery somebody fixed that reads low again is
+                # news on the first pass, as it always was): a pass
                 # that does not report it is a level crossing its line or a
                 # link between two readings, not the end of the answer. It
                 # ends after `ACK_LAPSE_S` of the check not reporting it.

@@ -1197,7 +1197,10 @@ def cleanup_offer_row(finding: dict, note: str, *, entity_name: str = "",
     else:
         used = "No automation mentions it. "
     offer = {
-        "key": _offer_key(text), "scope": "entity", "check": check_id,
+        # Keyed by the device, not the question: two devices with one name
+        # ask the same words (`find_offer` matches the case's entity).
+        "key": _offer_key(f"cleanup {entity_id}"), "question": text,
+        "scope": "entity", "check": check_id,
         "entity_id": entity_id, "area_id": "", "expires": "", "until": "",
         "text": note.strip()[:MAX_REASON] or "No longer in use",
         "about": about, "finding_key": finding_key, "created": int(now),
@@ -1252,18 +1255,32 @@ def is_offer(finding: dict) -> bool:
     return str(finding.get("source") or "") == SOURCE
 
 
-def find_offer(case_text: str, now: float | None = None) -> dict | None:
+def find_offer(case_text: str, now: float | None = None,
+               entity_id: str = "") -> dict | None:
+    """The live offer a case asked. A widening offer is keyed by its
+    question; a clean-up offer by its device (`cleanup_offer_row`), found
+    by its question AND the case's entity, so two devices with one name
+    never answer for each other."""
     now = time.time() if now is None else float(now)
     key = _offer_key(case_text)
-    for row in _load_offers():
-        if row.get("key") == key and \
-                now - float(row.get("created") or 0) < OFFER_TTL_S:
+    wanted = facts_store.normalize(case_text)
+    rows = [r for r in _load_offers()
+            if now - float(r.get("created") or 0) < OFFER_TTL_S]
+    for row in rows:
+        if row.get("key") == key:
+            return dict(row)
+    for row in reversed(rows):
+        if (row.get("question")
+                and facts_store.normalize(row["question"]) == wanted
+                and (not entity_id
+                     or str(row.get("entity_id") or "") == entity_id)):
             return dict(row)
     return None
 
 
 def accept_offer(case_text: str, *, protected=(),
-                 now: float | None = None, device_classes=()) -> dict:
+                 now: float | None = None, device_classes=(),
+                 entity_id: str = "") -> dict:
     """Yes to a wide correction: write the rule it offered.
 
     ``{"ids", "why"}``. An offer that has lapsed or names a never-covered
@@ -1271,7 +1288,7 @@ def accept_offer(case_text: str, *, protected=(),
     report's finding key, so "Let brAIn raise it again" on that report
     takes the wide rule back with the narrow one.
     """
-    offer = find_offer(case_text, now)
+    offer = find_offer(case_text, now, entity_id)
     if offer is None:
         return {"ids": [], "why": "that offer has lapsed — mark the next "
                                   "report Not a problem to ask again"}
