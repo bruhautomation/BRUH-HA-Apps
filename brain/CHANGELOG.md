@@ -10,7 +10,7 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 - Morph's coloured accents used as text on the light theme are darker, so they read at the contrast text needs. Your own theme file is left as it is (#820).
 - Every text box in Morph, including those inside cards it hosts, uses 16px text, so an iPhone no longer zooms the page when you tap one (#821).
 - Room scene buttons have more space between them (#861).
-- The pictures brAIn takes of its own screens for the development loop no longer blank ordinary words: "4 AM then walk the dog" was taken for a street address, and a sentence naming a private place was blanked whole instead of just the name. A missing photo's "not captured" label no longer spills over a person's name beside a small picture (#823, #843, #845).
+- The pictures brAIn takes of its own screens for the development loop no longer blank a sentence that only starts with a time ("4 AM then walk the dog" was taken for a street address); real addresses are blanked as before, and a sentence naming a private place is still blanked whole. A missing photo's "not captured" label no longer spills over a person's name beside a small picture (#823, #845).
 
 ## 5.1.30
 

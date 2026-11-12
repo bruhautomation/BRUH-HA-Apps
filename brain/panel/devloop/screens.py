@@ -23,10 +23,8 @@ back before the capture. `redact` removes, in this order:
   time: a calendar entity's event title, description and location, the
   occasions brAIn read off the calendar, every zone's name but Home's,
   and any state or attribute that reads as a street address (a phone's
-  geocoded location is one) — the matched words are blanked, so a message
-  that merely mentions a place still reads (the string equal to an event is
-  blanked whole, because a calendar event with one word changed is still the
-  event);
+  geocoded location is one) — blanked whole, because a calendar event
+  with one word changed is still the event;
 * credentials: `upstream.scrub`'s rules, a password field's value, and
   anything key-shaped (a long mixed-case-and-digit run, a long hex run);
 * addresses: a street address, a postcode beside a state or town, an
@@ -163,17 +161,20 @@ _STREET_WORDS = (
     "street|st|avenue|ave|road|rd|boulevard|blvd|lane|ln|drive|dr|court|ct|"
     "way|place|pl|terrace|ter|close|crescent|cres|highway|hwy|parkway|pkwy|"
     "circle|cir|square|sq|trail|trl|row|grove|gardens|mews|walk|hill")
-# A street name is not a sentence: a time ("4 AM") is not a house number, and
-# an ordinary word between the number and a street word ("4 AM then walk the
-# dog", "5 minutes to the hill") means it is prose, which used to blank a whole
-# message in a picture because it ended in "place" or "way".
-_PROSE_WORDS = (
-    "am|pm|and|then|so|to|of|in|on|at|by|is|it|for|with|than|that|this|"
-    "or|but|as|if|from|until|before|after|minutes?|hours?|mins?|hrs?|degrees|"
-    "times|days?|weeks?|more|less|out|up|down|off|about|around|over|under")
+# A time or a quantity right after the number is not a house number: "4 AM
+# then walk the dog" and "5 minutes to the hill" are prose, which used to
+# blank a whole message in a picture because it ended in "walk" or "hill".
+# Only the first word, and only these: ordinary words ("of", "the", "up",
+# "day") are in real street names ("100 Bay of Islands Drive").
+# "am"/"pm" only before a lowercase word or punctuation: "12 Am Markt Street"
+# is a street in German.
+_NOT_A_NUMBER = (r"(?:(?:am|pm)(?=[ \t]+(?-i:[a-z])|[ \t]*[,.;:!?)]|[ \t]*$)"
+                 r"|a\.m\.|p\.m\.|minutes?|mins?|hours?|hrs?|seconds?|secs?"
+                 r"|degrees?|percent|%)")
 ADDRESS_RE = re.compile(
-    r"\b\d{1,6}[A-Za-z]?(?:[ \t]+(?!(?:" + _PROSE_WORDS + r")\b)[A-Za-z0-9.'-]+){1,5}[ \t]+(?:"
-    + _STREET_WORDS + r")\b\.?(?:,?[ \t]+(?:apt|unit|suite|#)\s*[\w-]+)?", re.IGNORECASE)
+    r"\b\d{1,6}[A-Za-z]?(?![ \t]+" + _NOT_A_NUMBER + r"(?![\w.]))"
+    r"(?:[ \t]+[A-Za-z0-9.'-]+){1,5}[ \t]+(?:" + _STREET_WORDS
+    + r")\b\.?(?:,?[ \t]+(?:apt|unit|suite|#)\s*[\w-]+)?", re.IGNORECASE)
 # A postcode only counts beside something that makes it one: two capital
 # letters (a US state) or a UK/Canadian shape that nothing else has.
 POSTCODE_RE = re.compile(
@@ -223,12 +224,9 @@ def redact(text: str, *, confidential: list[str] | None = None,
         if not s.strip():
             return s
         low = s.casefold()
-        # Only the confidential words go, not the sentence round them: a
-        # message that merely mentions a place read as a wall of blocks.
         for secret in confidential or ():
             if secret and secret.casefold() in low:
-                s = re.sub(re.escape(secret), _blank, s, flags=re.IGNORECASE)
-                low = s.casefold()
+                return "".join(c if c.isspace() else BLOCK for c in s)
         from .upstream import scrub  # noqa: PLC0415 — upstream imports reports
         out = scrub(s)
         out = _SECRET_LABEL_RE.sub(lambda m: m.group(1) + m.group(2) + BLOCK * 6, out)
