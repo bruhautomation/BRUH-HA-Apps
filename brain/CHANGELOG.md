@@ -2,6 +2,18 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.33
+
+### Fixed
+
+- Findings no longer show signal strengths in dBm or raw firmware strings: a figure that is the point of a sentence is said in plain words, and a firmware version reads "its current firmware" (#855).
+- What you talk to has one name in a finding. "Chat session" reads "conversation", "quick run" reads "quick check", and a field that used both brAIn and the persona's name uses the persona's (#832).
+- A finding's detail or a look no longer ends in "…" or "and N more.": a long text is cut at the last whole sentence (#867).
+- A finding's detail and next step stay on its headline: Wi-Fi or link-quality sentences appear only when the headline is about the connection, and a low-battery finding says how fast the battery usually drains and roughly when it will run out (#829).
+- A next step that asks you to find or check which voice, device or integration is used is taken out; brAIn reads that itself (#831).
+- Once you decide which voice brAIn uses, brAIn updates its own instructions and personality to match instead of raising it as a finding (#854).
+- The "is this fixed now?" question after an update names the version that was installed to fix it, gives one thing to try and says what you will see (#830).
+
 ## 5.1.32
 
 ### Fixed
