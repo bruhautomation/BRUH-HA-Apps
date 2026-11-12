@@ -1717,12 +1717,6 @@ def call_service(domain, service, data=None, return_response=False, timeout=None
     game = _minecraft_chat_refusal(domain, service, data)
     if game:
         return game
-    # What another conversation did in the game is recorded by the
-    # dispatcher alone (`_mc_note_outside`): no run writes it into a
-    # player's context by hand.
-    if (domain, service) == OUTSIDE_SERVICE and isinstance(data, dict) \
-            and str(data.get("action") or "").strip().lower() == "outside":
-        return {"error": "brAIn records that itself; it is not a call to make."}
     # YOLO mode (the panel's opt-in switch, a file brAIn writes) stands
     # every rule down: the call goes to Home Assistant as asked.
     if not yolo_mode():
@@ -10713,18 +10707,12 @@ def _mc_thought(text, wait=False):
     if wait:
         send()
         return True
-    _mc_enqueue(send)
-    return True
-
-
-def _mc_enqueue(send):
-    """`send` on the one background sender, in order, never holding up the
-    tool call that asked for it."""
     with _THOUGHTS["lock"]:
         _THOUGHTS["queue"].append(send)
         if _THOUGHTS["worker"] is None or not _THOUGHTS["worker"].is_alive():
             _THOUGHTS["worker"] = threading.Thread(target=_thought_worker, daemon=True)
             _THOUGHTS["worker"].start()
+    return True
 
 
 # One sender, in order: step two must never land before step one and leave
@@ -10806,145 +10794,6 @@ def thought_step(name, arguments):
     return None
 
 
-# The conversations whose game acts the companion is told about (#809): a
-# person's chat, the terminal, voice and an automation's task. A game run's
-# own acts are the companion's already, and an unknown channel is nobody's.
-MC_OUTSIDE_CHANNELS = ("chat", "terminal", "voice", "task")
-OUTSIDE_SERVICE = ("brain", "minecraft_job")
-# A console command's reply that says it did nothing to anybody.
-_MC_FAILED = re.compile(r"no player was found|no entity was found|unknown or incomplete|"
-                        r"incorrect argument|expected |invalid |unknown item|"
-                        r"cannot be found|<--\[here\]", re.IGNORECASE)
-_MC_TARGET = re.compile(r"^[A-Za-z0-9_.]{1,17}$")
-_MC_TOKEN = re.compile(r"[^A-Za-z0-9_:~^.\- ]")
-
-
-def _mc_target_key(target):
-    """The player a console command's target names, "*" for @a, or None
-    (another selector: nobody in particular)."""
-    target = str(target or "").strip()
-    if target == "@a":
-        return "*"
-    return target if _MC_TARGET.fullmatch(target) else None
-
-
-def _mc_component_text(raw):
-    """The words of a tellraw/title text component, as a player reads them."""
-    try:
-        value = json.loads(raw)
-    except (TypeError, ValueError):
-        return str(raw or "")
-    out = []
-
-    def walk(v):
-        if isinstance(v, str):
-            out.append(v)
-        elif isinstance(v, list):
-            for x in v:
-                walk(x)
-        elif isinstance(v, dict):
-            if isinstance(v.get("text"), str):
-                out.append(v["text"])
-            walk(v.get("extra") or [])
-    walk(value)
-    return "".join(out)
-
-
-def _mc_command_note(command):
-    """(player, what, said) for a console command that did something to one
-    player (or to everyone), or None."""
-    words = str(command or "").strip().lstrip("/").split(" ")
-    verb = words[0].lower().removeprefix("minecraft:") if words else ""
-    if verb == "tellraw" and len(words) >= 3:
-        key = _mc_target_key(words[1])
-        said = _mc_component_text(" ".join(words[2:]))
-        return (key, "sent a message", said) if key and said.strip() else None
-    if verb in ("msg", "tell", "w") and len(words) >= 3:
-        key = _mc_target_key(words[1])
-        return (key, "sent a message", " ".join(words[2:])) if key else None
-    if verb == "title" and len(words) >= 4 and words[2].lower() in (
-            "title", "subtitle", "actionbar"):
-        key = _mc_target_key(words[1])
-        said = _mc_component_text(" ".join(words[3:]))
-        return (key, f"showed a {words[2].lower()}", said) if key and said.strip() else None
-    if verb in ("tp", "teleport") and len(words) >= 3:
-        key = _mc_target_key(words[1])
-        where = _MC_TOKEN.sub("", " ".join(words[2:]))[:80]
-        return (key, f"teleported them to {where}", "") if key else None
-    if verb == "give" and len(words) >= 3:
-        key = _mc_target_key(words[1])
-        item = _MC_TOKEN.sub("", " ".join(words[2:4]))[:60]
-        return (key, f"gave them {item}", "") if key else None
-    if verb == "gamemode" and len(words) >= 3:
-        key = _mc_target_key(words[2])
-        return (key, f"set their game mode to {_MC_TOKEN.sub('', words[1])[:16]}", "") \
-            if key else None
-    return None
-
-
-def _mc_outside_notes(name, kwargs, result):
-    """[(player, what, said)] for a minecraft_* call that did something to
-    a player, from what it was asked and what it answered."""
-    if not isinstance(result, dict) or result.get("error"):
-        return []
-    a = kwargs or {}
-    if name == "minecraft_teleport" and result.get("done"):
-        who = _mc_target_key(result.get("player"))
-        if not who:
-            return []
-        if result.get("to_player"):
-            where = f"to {_MC_TOKEN.sub('', str(result['to_player']))[:17]}"
-        else:
-            where = "to " + " ".join(_MC_TOKEN.sub("", str(result.get(k, "~")))[:12]
-                                     for k in ("x", "y", "z"))
-        return [(who, f"teleported them {where}", "")]
-    if name == "minecraft_command":
-        reply = result.get("server_reply")
-        reply = reply.get("text", "") if isinstance(reply, dict) else str(reply or "")
-        if _MC_FAILED.search(reply):
-            return []
-        note = _mc_command_note(result.get("command") or a.get("command"))
-        return [note] if note else []
-    if name == "minecraft_player":
-        who = _mc_target_key(a.get("player"))
-        act = _MC_TOKEN.sub("", str(a.get("action") or ""))[:24]
-        value = _MC_TOKEN.sub("", str(a.get("value") or ""))[:40]
-        return [(who, f"{act} {value}".strip(), "")] if who and act else []
-    if name == "minecraft_world" and str(a.get("action") or "").lower() == "say" \
-            and result.get("done"):
-        to = str(a.get("player") or "").strip()
-        key = "*" if to.lower() in ("", "family", "everyone", "everybody", "all", "@a") \
-            else to[:40]
-        return [(key, "sent a message", str(a.get("value") or ""))]
-    return []
-
-
-def _mc_note_outside(name, kwargs, result):
-    """Tell the companion what this conversation just did to a player in
-    the game, so their next line in chat is understood (#809). Only on a
-    person's own channels; never raises and never waits."""
-    if not name.startswith("minecraft_") or _channel() not in MC_OUTSIDE_CHANNELS:
-        return
-    try:
-        notes = _mc_outside_notes(name, kwargs, result)
-    except Exception:  # noqa: BLE001 — a note is never worth failing the call
-        return
-    channel = _channel()
-    for player, what, said in notes:
-        data = {"action": "outside", "player": player, "what": what, "channel": channel}
-        if said:
-            data["text"] = " ".join(str(said).split())[:300]
-
-        def send(data=data):
-            try:
-                _ws_command({"type": "call_service", "domain": OUTSIDE_SERVICE[0],
-                             "service": OUTSIDE_SERVICE[1], "return_response": True,
-                             "service_data": data}, timeout=THOUGHT_TIMEOUT_S)
-            except Exception:  # noqa: BLE001 — a missed note changes nothing in the game
-                pass
-        _mc_enqueue(send)
-
-
 def handle_tool_call(name, arguments):
     """Dispatch a tool call.
 
@@ -10973,11 +10822,9 @@ def handle_tool_call(name, arguments):
     if step:
         _mc_thought(step)
     try:
-        result = globals()[fn_name](**kwargs)
+        return globals()[fn_name](**kwargs)
     except Exception as e:
         return {"error": str(e)}
-    _mc_note_outside(name, kwargs, result)
-    return result
 
 
 def _compact(value):

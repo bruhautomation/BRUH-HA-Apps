@@ -5,6 +5,12 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.19.9
+
+### Removed
+
+- Reverted 1.19.8 (#631), together with brAIn 5.1.28: a greeting goes back to its earlier handling of a lost summon answer. The house's check after the release found an earlier problem back, so the whole change is taken back until the cause is known (#817, #809).
+
 ## 1.19.8
 
 ### Fixed

@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.28
+
+### Removed
+
+- Reverted 5.1.27 (#631): the companion's notes about what a brAIn chat did in the game are gone again. The house's check after installing 5.1.27 found a problem that had been fixed before showing up again (brAIn's own watching-the-house reports going unanswered), and a release that coincides with that is taken back whole until the cause is known (#817, #809).
+
 ## 5.1.27
 
 ### Fixed
