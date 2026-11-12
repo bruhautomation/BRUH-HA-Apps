@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.31
+
+### Fixed
+
+- Morph's tiles with a button beside the name (a garage, a lock) no longer squeeze the name to a few letters when the tile is narrow on a wide screen: the button shrinks to its icon and a long name wraps to a second line (#819).
+- Morph's coloured accents used as text on the light theme are darker, so they read at the contrast text needs. Your own theme file is left as it is.
+- Every text box in Morph, including those inside cards it hosts, uses 16px text, on every screen size, not only on phones.
+- Room scene buttons have more space between them.
+- In the pictures brAIn takes of its own screens for the development loop, a missing photo's "not captured" label no longer spills over a person's name beside a small picture (#845).
+
 ## 5.1.30
 
 ### Fixed
