@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.33
+
+### Fixed
+
+- Findings no longer show signal strengths in dBm: a reading is said in words where it stands ("has a weak signal", "with a weak signal"), and no sentence or step is dropped for holding one. A test firmware build is said as a test build of its version, never as the release itself (#855).
+- A finding names brAIn's own parts as brAIn: the in-game brAIn companion is brAIn in the game, a brAIn chat or terminal session is a conversation with brAIn in Ask, and a quick run of brAIn is simply brAIn. Words that are not about brAIn (a dishwasher's quick run, an SSH terminal session) are left as they are (#832).
+- A finding's detail or a look no longer ends in "…", on a word such as "your" or "the", or in "and N more.": a long text is cut at the last whole sentence, and a list says how many others there are (#867).
+- A finding's detail stays on its headline: Wi-Fi, link-quality or signal-strength sentences appear in the detail only when the headline is about the connection, and never come out of the step. A low-battery finding says how fast the battery usually drains and roughly when it will run out (#829).
+- The "is this fixed now?" question after an update is said in household words, with no component or internal name, names the version installed to fix it, and gives one thing to check: the report's own test, or what you asked brAIn (#830).
+
 ## 5.1.32
 
 ### Fixed
