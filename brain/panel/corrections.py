@@ -476,7 +476,8 @@ _FINISHED_RE = re.compile(
     r"\b(?:broken|faulty|defective|dead|dud)\s+(?:\w+\s+)?" + _DEVICE_NOUN
     + r"|\b" + _DEVICE_NOUN + r"\s+(?:\w+\s+)?(?:died|broke|"
     r"(?:is|was|has been)\s+dead)\b"
-    r"|\b(?:has|have|had)?\s*never\s+(?:once\s+)?worked\b"
+    r"|\b(?:it|this|that|(?:the|this|that)\s+(?:\w+\s+)?" + _DEVICE_NOUN
+    + r")\s+(?:has|have|had)\s+never\s+(?:once\s+)?worked\b"
     r"|\bunconfigured\b"
     r"|\b(?:not|never|wasn'?t|isn'?t)\s+(?:been\s+|really\s+)?"
     r"(?:configured|set\s?up)\b(?!\s+(?:to|for|with|so)\b)"
@@ -491,6 +492,29 @@ _FINISHED_RE = re.compile(
 _DEAD_RE = re.compile(r"\b(?:dead|died|broken)\b", re.I)
 _NEGATED_RE = re.compile(r"(?:\bnot|n't|\bnever|\bno longer)\s+(?:\w+\s+)?$",
                          re.I)
+# Words that make the sentence about something done, about to be done, or
+# true only some of the time — "I replaced the broken sensor yesterday",
+# "fix the broken switch soon", "not set up yet", "we ignore that one at
+# night", "never worked until the firmware update". Any of them and the
+# new readings above say nothing: a device silenced for good on a sentence
+# about its repair is the costly mistake, a phrase missed is the cheap one.
+# (`_FOR_GOOD_RE` beside them wins: "dead and I do not plan to replace it".)
+_REPAIRED_RE = re.compile(
+    r"\b(?:replaced|repaired|fixed|swapped|reset|re-?paired|re-?installed|"
+    r"rebooted|restarted|recharged|new battery|works now|working now|"
+    r"(?:fix|repair|replace|reconnect|recharge|reset)\b)", re.I)
+_NOT_ALWAYS_RE = re.compile(
+    r"\b(?:yet|tomorrow|tonight|today|soon|later|next\s+\w+|until|till|"
+    r"since|after|at night|overnight|in the (?:morning|evening|day)|"
+    r"during|on weekends?|weekdays?|sometimes|occasionally|for now|"
+    r"at the moment|right now|currently|last (?:night|week|month))\b", re.I)
+
+
+def _not_for_good(text: str) -> bool:
+    """A repair, a plan or a qualifier in the sentence (above)."""
+    if _NOT_ALWAYS_RE.search(text):
+        return True
+    return bool(_REPAIRED_RE.search(text)) and not _FOR_GOOD_RE.search(text)
 
 
 def _finished_words(text: str) -> bool:
@@ -512,8 +536,9 @@ def gone_for_good(note: str) -> bool:
         return False
     if _GONE_RE.search(text):
         return True
-    if conditional(text):
-        # "Ignore it while the heating is off" is a condition, kept as one.
+    if conditional(text) or _not_for_good(text):
+        # "Ignore it while the heating is off" is a condition, kept as one;
+        # a repair, a plan or a time of day is not "finished" (above).
         return False
     return _finished_words(text) or bool(
         _DEAD_RE.search(text) and _FOR_GOOD_RE.search(text))
