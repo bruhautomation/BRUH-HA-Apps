@@ -521,7 +521,31 @@ class House:
         rules = table.get(entity_id)
         if not rules:
             return False
-        return check_id in rules or "*" in rules
+        if check_id in rules:
+            return True
+        # The whole-entity form never stands a safety device down; this
+        # fallback has no corrections table, so the fixed lists answer.
+        if "*" in rules:
+            return not self._never_whole(entity_id, check_id)
+        return False
+
+    def _never_whole(self, entity_id: str, check_id: str) -> bool:
+        """A pair the whole-entity rule (`*`) may never cover, read off the
+        fixed lists in `corrections` where the snapshot carries none."""
+        if self._never_covered(entity_id, check_id):
+            return True
+        try:
+            import corrections  # noqa: PLC0415 — lazy: it imports the stores
+        except Exception:  # noqa: BLE001
+            return False
+        for eid in [entity_id, *self.siblings(entity_id)]:
+            attrs = (self.states.get(eid) or {}).get("attributes") or {}
+            reg = self.registry.get(eid) or {}
+            klass = (attrs.get("device_class") or reg.get("device_class")
+                     or reg.get("original_device_class") or "")
+            if corrections.never_covered(eid, check_id, device_class=klass):
+                return True
+        return False
 
     def area_id_of(self, entity_id: str) -> str:
         """The area id an entity sits in — its own, else its device's.
@@ -561,12 +585,15 @@ class House:
             return True
         classes = set(never.get("classes") or ())
         if classes:
-            attrs = (self.states.get(entity_id) or {}).get("attributes") or {}
-            reg = self.registry.get(entity_id) or {}
-            klass = (attrs.get("device_class") or reg.get("device_class")
-                     or reg.get("original_device_class") or "")
-            if klass in classes:
-                return True
+            # The entity's own class, and its device's other entities': a
+            # leak sensor's battery is the leak sensor's battery.
+            for eid in [entity_id, *self.siblings(entity_id)]:
+                attrs = (self.states.get(eid) or {}).get("attributes") or {}
+                reg = self.registry.get(eid) or {}
+                klass = (attrs.get("device_class") or reg.get("device_class")
+                         or reg.get("original_device_class") or "")
+                if klass in classes:
+                    return True
         return False
 
     def siblings(self, entity_id: str) -> list[str]:
@@ -770,6 +797,14 @@ class House:
         row = ((answers or {}).get(entity_id) or {}).get(check_id) \
             if isinstance(answers, dict) else None
         return isinstance(row, dict) and bool(row.get("acked_at"))
+
+    def acknowledged_level(self, entity_id: str, check_id: str):
+        """The level a standing acknowledgement was given at, or None."""
+        answers = self.snap.get("answers")
+        row = ((answers or {}).get(entity_id) or {}).get(check_id) \
+            if isinstance(answers, dict) else None
+        level = row.get("acked_level") if isinstance(row, dict) else None
+        return float(level) if isinstance(level, (int, float)) else None
 
     def stretch_began(self, entity_id: str):
         """When this entity's current state began, as an epoch, or None.

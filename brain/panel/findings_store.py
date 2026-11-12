@@ -4006,8 +4006,16 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
         recurrence = {"recurred": int(prior.get("recurred") or 0) + 1,
                       "previous_at": int(prior.get("ts") or 0)}
     stamp = when or int(time.time())
+    # The level a battery was acknowledged at, read off the check's own
+    # sentence ("8% as of …"): going further down than that is news
+    # (`checks/devices.battery_low`).
+    at_level = None
+    if kind == "accepted" and str(shaped.get("source") or "") == "check:dev.battery_low":
+        m = re.match(r"\s*(\d+(?:\.\d+)?)%", str(shaped.get("detail") or ""))
+        at_level = float(m.group(1)) if m else None
     ledger.append({
         **recurrence,
+        **({"at_level": at_level} if at_level is not None else {}),
         "key": key,
         "text": shaped["text"],
         "kind": kind,
@@ -4093,8 +4101,12 @@ def answered_checks() -> dict[str, dict[str, dict]]:
             row["at"] = max(int(row.get("at") or 0), int(e.get("ts") or 0))
             if e.get("kind") == "accepted" and not e.get("lapsed_at"):
                 # Known / on my list, still standing (`House.acknowledged`).
-                row["acked_at"] = max(int(row.get("acked_at") or 0),
-                                      int(e.get("ts") or 0))
+                if int(e.get("ts") or 0) >= int(row.get("acked_at") or 0):
+                    row["acked_at"] = int(e.get("ts") or 0)
+                    if e.get("at_level") is not None:
+                        row["acked_level"] = float(e["at_level"])
+                    else:
+                        row.pop("acked_level", None)
             if wrong:
                 # When it was last answered WRONG: an agreement given later
                 # is not a Wrong that holds (`House._answered_this_stretch`).

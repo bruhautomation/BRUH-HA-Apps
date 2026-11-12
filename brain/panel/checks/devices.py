@@ -1023,8 +1023,13 @@ def battery_low(snap: dict, now: float) -> list[dict]:
         dev = house.device_of(eid)
         who = house.device_name(dev) if dev else house.name(eid)
         if level is not None and level <= BATTERY_LOW_PCT:
-            worse = (level < BATTERY_ACK_REOPEN_PCT
-                     and house.acknowledged(eid, "dev.battery_low"))
+            # Acknowledged: new words only when it went further down than
+            # it was (and under the floor); one acknowledged already under
+            # the floor is not news until it drops below that level.
+            at = house.acknowledged_level(eid, "dev.battery_low")
+            worse = (house.acknowledged(eid, "dev.battery_low")
+                     and at is not None
+                     and level < min(at, BATTERY_ACK_REOPEN_PCT))
             out.append({
                 "text": (f"{who} battery is almost flat" if worse
                          else f"{who} battery is low"),

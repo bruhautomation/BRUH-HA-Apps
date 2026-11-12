@@ -11924,9 +11924,20 @@ def _sre_set_aside(now: float, states: dict | None = None) -> set[str]:
     out: set[str] = set()
     checks_ = set(SRE_SET_ASIDE_CHECKS) | {"*"}
     try:
+        protected = automation_writer.protected_patterns()
         for eid, rules in facts_store.exception_map(now).items():
-            if set(rules) & checks_:
+            if set(rules) & (checks_ - {"*"}):
                 out.add(eid)
+            elif "*" in rules:
+                # Whole-entity: never for a safety device or its battery.
+                family, classes, _dev = _device_family(eid)
+                st = (states or {}).get(eid) or {}
+                klass = str((st.get("attributes") or {}).get("device_class")
+                            or "")
+                if not corrections.never_covered(
+                        eid, "", device_class=klass, device_classes=classes,
+                        protected=protected):
+                    out.add(eid)
     except Exception as exc:  # noqa: BLE001 — could not tell holds nothing
         log.debug("sre: exceptions unread: %s", exc)
     sources = {f"check:{c}" for c in SRE_SET_ASIDE_CHECKS}
@@ -22086,7 +22097,9 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
         if spec.get("label") == "accepted":
             got = await asyncio.to_thread(
                 corrections.accept_offer, str(finding.get("text") or ""),
-                protected=automation_writer.protected_patterns())
+                protected=automation_writer.protected_patterns(),
+                device_classes=_device_family(
+                    str(finding.get("entity_id") or ""))[1])
             if got["ids"]:
                 payload["_exception_ids"] = got["ids"]
             else:
@@ -22426,6 +22439,19 @@ def _ask_about_condition(finding: dict, note: str) -> list[str]:
     except Exception as exc:  # noqa: BLE001 — `_record_exception`'s rule
         log.debug("could not ask about a condition: %s", exc)
     return ids
+
+
+def _device_family(eid: str) -> tuple[list[str], set[str], str]:
+    """``(entities on the device, their device classes, the device id)`` for
+    one entity, off the names the last checks pass noted. Just the entity
+    where it is on no device. A leak sensor's battery shares the leak
+    sensor's class, so nothing wide stands it down."""
+    device = str((_NAMES.get(eid) or {}).get("device") or "")
+    family = [eid] + ([e for e, n in _NAMES.items()
+                       if e != eid and n.get("device") == device]
+                      if device else [])
+    classes = {str((_NAMES.get(e) or {}).get("class") or "") for e in family}
+    return family, {c for c in classes if c}, device
 
 
 def _record_exception(finding: dict, note: str) -> list[str]:
@@ -24836,10 +24862,13 @@ async def _scope_correction(finding: dict, note: str,
     """
     now = time.time()
     if (base_ids and str(finding.get("source") or "").startswith("check:")
-            and finding.get("entity_id") and corrections.asks_cleanup(note)):
+            and finding.get("entity_id") and corrections.asks_cleanup(note)
+            and not corrections.conditional(note)):
         # "Remove it from automations", "stop caring about it": a question
         # that lists what mentions the device, never an edit or a rule.
         eid = str(finding.get("entity_id") or "")
+        family, classes, device = _device_family(eid)
+        offer = None
         try:
             from checks import snapshot as _snapshot  # noqa: PLC0415
             configs = (await asyncio.to_thread(
@@ -24848,15 +24877,17 @@ async def _scope_correction(finding: dict, note: str,
                 corrections.cleanup_offer_row, finding, note,
                 entity_name=str((_NAMES.get(eid) or {}).get("name") or ""),
                 automations=corrections.automations_referencing(
-                    configs, _finding_subjects(finding)),
+                    configs, [*_finding_subjects(finding), *family],
+                    [device]),
                 finding_key=findings_store.normalize(
                     finding.get("text") or ""),
-                about=str(finding.get("claim") or finding.get("text") or ""))
+                about=str(finding.get("claim") or finding.get("text") or ""),
+                device_classes=classes,
+                protected=automation_writer.protected_patterns())
             offer = (await asyncio.to_thread(findings_store.add_case, row)
                      if row else None)
         except Exception as exc:  # noqa: BLE001 — an ending must not fail
             log.debug("could not ask about cleaning up: %s", exc)
-            offer = None
         if offer:
             CORRECTION_STATE["offered"] += 1
             return {"plan": None, "ids": [], "offer": offer,

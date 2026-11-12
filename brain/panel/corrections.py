@@ -319,7 +319,7 @@ def _domain(entity_id: str) -> str:
 
 
 def never_covered(entity_id: str, check_id: str, *, device_class: str = "",
-                  protected=()) -> bool:
+                  protected=(), device_classes=()) -> bool:
     """Is this a pair no scope wider than the press may reach?
 
     The write-time half of `House._never_covered`; the read-time half is
@@ -331,6 +331,9 @@ def never_covered(entity_id: str, check_id: str, *, device_class: str = "",
     if _domain(entity_id) in NEVER_DOMAINS:
         return True
     if device_class and device_class in NEVER_CLASSES:
+        return True
+    # What else is on its device: a leak sensor's battery is its battery.
+    if any(c in NEVER_CLASSES for c in device_classes or ()):
         return True
     target = entity_id.lower()
     return any(p in (target, f"{_domain(target)}.*", "*")
@@ -1123,24 +1126,33 @@ def condition_offer_row(finding: dict, note: str, *, entity_name: str = "",
 # automation. A sentence is not permission (a "broken" read as retired
 # once); Yes is the only thing that writes.
 _CLEANUP_RE = re.compile(
-    r"\b(?:remove|delete|drop|take|get|pull)\b(?:\W+\w+){0,3}?\W+"
-    r"(?:from|out of|off)\b(?:\W+\w+){0,3}?\W+"
-    r"(?:automations?|scripts?|scenes?|dashboards?|everything)\b"
-    r"|\b(?:stop|quit|no need to)\s+(?:caring|worrying|checking|"
-    r"monitoring|tracking|watching)\b"
-    r"|\bclean (?:it|them|this) up\b", re.I)
+    r"^\W*(?:(?:please|pls|just)\s+)?(?:"
+    r"(?:remove|delete|take|pull)\s+(?:it|them|this|that)\s+"
+    r"(?:from|out of)\s+(?:all\s+|the\s+|my\s+|our\s+)*"
+    r"(?:automations?|scripts?|scenes?|dashboards?)"
+    r"|(?:stop|quit)\s+caring\s+about\s+(?:it|them|this|that)"
+    r")\W*$", re.I)
 
 
 def asks_cleanup(note: str) -> bool:
-    """Whether a reason tells brAIn to remove the thing or stop caring."""
-    text = str(note or "")
-    return bool(_CLEANUP_RE.search(text)) and not temporary(text)
+    """Whether a reason IS the instruction to remove the device from the
+    automations or to stop caring about it. Only that sentence, alone:
+    "please remove it from automations", "stop caring about it". A
+    negation, a question or a clause with more in it ("don't remove it,
+    it's needed", "we stop watching TV at 10") is a reason, not an
+    instruction, and is stored as one."""
+    text = " ".join(str(note or "").split())
+    if not text or "?" in text or conditional(text) or temporary(text):
+        return False
+    return bool(_CLEANUP_RE.match(text))
 
 
-def automations_referencing(configs, entity_ids) -> list[str]:
+def automations_referencing(configs, entity_ids, device_ids=()) -> list[str]:
     """The names of the automations whose config mentions any of
-    ``entity_ids`` (exact ids), in file order, without repeats."""
-    wanted = list(dict.fromkeys(str(x) for x in entity_ids or () if x))
+    ``entity_ids`` or ``device_ids`` (exact ids; a device trigger or action
+    names the device, not the entity), in file order, without repeats."""
+    wanted = list(dict.fromkeys(
+        str(x) for x in [*(entity_ids or ()), *(device_ids or ())] if x))
     if not wanted:
         return []
     pattern = re.compile(r"(?<![\w.])(?:" + "|".join(
@@ -1159,8 +1171,8 @@ def automations_referencing(configs, entity_ids) -> list[str]:
 
 def cleanup_offer_row(finding: dict, note: str, *, entity_name: str = "",
                       automations=(), finding_key: str = "",
-                      about: str = "", now: float | None = None
-                      ) -> dict | None:
+                      about: str = "", now: float | None = None,
+                      device_classes=(), protected=()) -> dict | None:
     """The question asked when a Wrong says to remove the device or stop
     caring about it: it lists the automations that mention the device and
     asks whether to treat it as expected-unused, which stands every check
@@ -1170,7 +1182,9 @@ def cleanup_offer_row(finding: dict, note: str, *, entity_name: str = "",
     """
     check_id = check_of(finding)
     entity_id = str(finding.get("entity_id") or "")
-    if not check_id or not entity_id or check_id in NEVER_CHECKS:
+    if not check_id or not entity_id or never_covered(
+            entity_id, check_id, device_classes=device_classes,
+            protected=protected):
         return None
     now = time.time() if now is None else float(now)
     name = entity_name or "this device"
@@ -1187,6 +1201,7 @@ def cleanup_offer_row(finding: dict, note: str, *, entity_name: str = "",
         "entity_id": entity_id, "area_id": "", "expires": "", "until": "",
         "text": note.strip()[:MAX_REASON] or "No longer in use",
         "about": about, "finding_key": finding_key, "created": int(now),
+        "classes": sorted({str(c) for c in device_classes or () if c}),
     }
     _save_offer(offer, now)
     return {
@@ -1248,7 +1263,7 @@ def find_offer(case_text: str, now: float | None = None) -> dict | None:
 
 
 def accept_offer(case_text: str, *, protected=(),
-                 now: float | None = None) -> dict:
+                 now: float | None = None, device_classes=()) -> dict:
     """Yes to a wide correction: write the rule it offered.
 
     ``{"ids", "why"}``. An offer that has lapsed or names a never-covered
@@ -1274,7 +1289,9 @@ def accept_offer(case_text: str, *, protected=(),
         # Expected-unused: every check stands down for it, except what
         # nothing wide may cover (a safety device, a protected id).
         if never_covered(str(offer["entity_id"]), check_id,
-                         protected=protected):
+                         protected=protected, device_classes=[
+                             *(offer.get("classes") or ()),
+                             *(device_classes or ())]):
             return {"ids": [], "why": "a safety device is never stood down "
                                       "for every check"}
         got, _ = facts_store.add(
