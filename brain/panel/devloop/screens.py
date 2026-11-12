@@ -161,19 +161,8 @@ _STREET_WORDS = (
     "street|st|avenue|ave|road|rd|boulevard|blvd|lane|ln|drive|dr|court|ct|"
     "way|place|pl|terrace|ter|close|crescent|cres|highway|hwy|parkway|pkwy|"
     "circle|cir|square|sq|trail|trl|row|grove|gardens|mews|walk|hill")
-# A time or a quantity right after the number is not a house number: "4 AM
-# then walk the dog" and "5 minutes to the hill" are prose, which used to
-# blank a whole message in a picture because it ended in "walk" or "hill".
-# Only the first word, and only these: ordinary words ("of", "the", "up",
-# "day") are in real street names ("100 Bay of Islands Drive").
-# "am"/"pm" only before a lowercase word or punctuation: "12 Am Markt Street"
-# is a street in German.
-_NOT_A_NUMBER = (r"(?:(?:am|pm)(?=[ \t]+(?-i:[a-z])|[ \t]*[,.;:!?)]|[ \t]*$)"
-                 r"|a\.m\.|p\.m\.|minutes?|mins?|hours?|hrs?|seconds?|secs?"
-                 r"|degrees?|percent|%)")
 ADDRESS_RE = re.compile(
-    r"\b\d{1,6}[A-Za-z]?(?![ \t]+" + _NOT_A_NUMBER + r"(?![\w.]))"
-    r"(?:[ \t]+[A-Za-z0-9.'-]+){1,5}[ \t]+(?:" + _STREET_WORDS
+    r"\b\d{1,6}[A-Za-z]?(?:[ \t]+[A-Za-z0-9.'-]+){1,5}[ \t]+(?:" + _STREET_WORDS
     + r")\b\.?(?:,?[ \t]+(?:apt|unit|suite|#)\s*[\w-]+)?", re.IGNORECASE)
 # A postcode only counts beside something that makes it one: two capital
 # letters (a US state) or a UK/Canadian shape that nothing else has.
