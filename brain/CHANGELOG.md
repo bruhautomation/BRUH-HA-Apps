@@ -2,6 +2,15 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.37
+
+### Fixed
+
+- The development loop's layout check misread blended colours (the kind Morph uses for its room labels) as near black, which reported good contrast as 1.52:1. It now reads each colour as the browser draws it (#820).
+- Morph's cards on Home Assistant dashboards use accent colours mixed toward the theme's own text colour, so they read clearly on light and dark themes (#820).
+- The 16px text floor now reaches a text box inside any card Morph hosts, so an iPhone does not zoom when you tap it (#821).
+- Morph's word buttons are at least 40px wide as well as tall, and brAIn writes the cards it builds with 40px buttons and gaps between them. A card brAIn built for you before this keeps its size until it is rewritten (#861).
+
 ## 5.1.36
 
 ### Added
