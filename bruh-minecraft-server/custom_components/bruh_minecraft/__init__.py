@@ -84,6 +84,7 @@ from .const import (
     SERVICE_COMPANION_PROGRESS,
     SERVICE_COMPANION_BAR,
     SERVICE_GIVE_SPYGLASS,
+    SERVICE_RENDER_MAPS,
     SERVICE_COMPANION_THOUGHT,
     SERVICE_GIVE_JOURNAL,
     SERVICE_LABEL_PLACE,
@@ -447,6 +448,13 @@ def _register_services(hass: HomeAssistant) -> None:
         return _strip(await _ask("companion_journal", {
             "player": call.data["player"], "name": _one_line(call.data["name"])}))
 
+    async def handle_render_maps(call: ServiceCall) -> dict[str, Any]:
+        payload = {k: call.data[k] for k in ("player", "scale", "builds", "x1", "z1", "x2", "z2",
+                                             "dimension", "name") if k in call.data}
+        if not payload.get("builds") and not all(k in payload for k in ("x1", "z1", "x2", "z2")):
+            raise HomeAssistantError("Ask for builds: true, or an area with x1, z1, x2 and z2.")
+        return _strip(await _ask("render_maps", payload, timeout=300.0))
+
     async def handle_atlas(call: ServiceCall) -> dict[str, Any]:
         return _strip(await _ask("atlas", {
             k: call.data[k] for k in ("player", "x", "y", "z", "dimension", "radius", "query")
@@ -683,6 +691,15 @@ def _register_services(hass: HomeAssistant) -> None:
         vol.Required("player"): player_name,
         vol.Required("name"): vol.All(cv.string, vol.Length(min=1, max=32)),
     })
+    render_maps_schema = vol.Schema({
+        vol.Required("player"): player_name,
+        vol.Optional("scale", default=0): vol.All(vol.Coerce(int), vol.Range(0, 4)),
+        vol.Optional("builds"): bool,
+        vol.Optional("x1"): vol.Coerce(int), vol.Optional("z1"): vol.Coerce(int),
+        vol.Optional("x2"): vol.Coerce(int), vol.Optional("z2"): vol.Coerce(int),
+        vol.Optional("dimension"): cv.string,
+        vol.Optional("name"): vol.All(cv.string, vol.Length(max=24)),
+    })
     give_spyglass_schema = vol.Schema({
         vol.Required("player"): player_name,
         vol.Required("name"): vol.All(cv.string, vol.Length(min=1, max=32)),
@@ -775,6 +792,7 @@ def _register_services(hass: HomeAssistant) -> None:
              optional)
     register(SERVICE_COMPANION_BAR, handle_companion_bar, companion_bar_schema, optional)
     register(SERVICE_GIVE_SPYGLASS, handle_give_spyglass, give_spyglass_schema, optional)
+    register(SERVICE_RENDER_MAPS, handle_render_maps, render_maps_schema, optional)
     register(SERVICE_COMPANION_THOUGHT, handle_companion_thought, companion_thought_schema,
              optional)
     register(SERVICE_GIVE_JOURNAL, handle_give_journal, give_journal_schema, optional)

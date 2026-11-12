@@ -5,6 +5,16 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.19.10
+
+### Added
+
+- Finished maps of your builds, straight into a player's inventory: the new `bruh_minecraft.render_maps` service draws filled maps from the saved world (the same colours and shading an explored map shows), at the scale you choose, for your named builds or an area, and gives them to an online player without anyone flying over it. Each map is named by its row and column (A1, A2, B1…) so they line up edge to edge in item frames, and the answer says how to hang them. At most 36 maps per call (#815).
+
+### Fixed
+
+- A companion job's progress bar no longer stays on screen after the job ends, whatever its last percent: a late progress update is dropped, a removal the server missed during a restart is retried, a bar with no update for three hours is removed, and a leftover bar saved in the world is cleared when someone next joins (#858).
+
 ## 1.19.9
 
 ### Removed
