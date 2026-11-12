@@ -1007,8 +1007,9 @@ def shown_words(entry: dict) -> dict:
                 # A check's or a person's words are theirs; only a cut that
                 # was stored ending "…" or "and N more." is said whole
                 # (#867), and never the headline.
-                if key != "text" and textclip.finished(said) != said:
-                    out[key] = textclip.finished(said)
+                done = textclip.finished(said, step=key == "fix")
+                if key != "text" and done != said and (done or key != "fix"):
+                    out[key] = done
                 continue
             # Signal diagnostics only under a headline about signal (#829),
             # never taken from the step; one name for brAIn (#832).
@@ -1018,7 +1019,8 @@ def shown_words(entry: dict) -> dict:
             else:
                 said_now = said
             plain_said = textclip.finished(
-                _plainly(house_words.one_name(said_now), entry))
+                _plainly(house_words.one_name(said_now), entry),
+                step=key == "fix")
             # Never a headline or a step said as nothing.
             if plain_said != said and (plain_said
                                        or key not in ("text", "fix")):

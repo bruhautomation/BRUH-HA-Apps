@@ -153,7 +153,7 @@ def _last_stop(body: str) -> int:
     return found
 
 
-def finished(text) -> str:
+def finished(text, step: bool = False) -> str:
     """``text`` as a sentence a person can read to its end (#867): never
     ending in "…" and never in "and N more.".
 
@@ -163,7 +163,9 @@ def finished(text) -> str:
     word, less any "and"/"the" left hanging, with a full stop. A list
     counted as "and 6 more." is said "and 6 others." — the count of what
     is left out stays, it just no longer reads as a cut. Text that ends
-    properly comes back as it was."""
+    properly comes back as it was. A ``step`` (what to do) with no whole
+    sentence is ended on a word only when two words or more are left:
+    "Check the A…" is not made the step "Check."."""
     s = "" if text is None else str(text)
     out = s.rstrip()
     if out.endswith(ELLIPSIS):
@@ -179,6 +181,8 @@ def finished(text) -> str:
                 body = body.rstrip(_TRAILING)
                 while body.lower().endswith(_DANGLING):
                     body = body.rsplit(" ", 1)[0].rstrip(_TRAILING)
+                if step and len(body.split()) < 2:
+                    return s
                 out = body + "." if body else ""
     m = _TRAILING_MORE.search(out)
     if m:

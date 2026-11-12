@@ -491,7 +491,8 @@ _BRAIN_CHAT_SESSION = re.compile(
 _BRAIN_QUICK_RUN = re.compile(
     r"(?P<ask>\bask\s+in\s+)?(?:\b(?:an?|the|one|each|every)\s+)?"
     r"\bquick[\s-]+runs?\s+(?:of|by|from|with)\s+brAIn\b"
-    r"|\bbrAIn(?:['\u2019]s)?\s+quick[\s-]+runs?\b", re.I)
+    r"|\bbrAIn(?:['\u2019]s)?\s+quick[\s-]+runs?\b(?!\s+(?:of|on|for)\b)",
+    re.I)
 
 
 def one_name(text: str) -> str:
@@ -1223,10 +1224,12 @@ _SIGNAL_SENTENCE_RE = re.compile(
     r"|(?:wi-?fi|radio|weak|poor|fair|good|strong)\s+signal|rssi|lqi"
     r"|link[\s-]+quality)\b|\d\s*dBm\b",
     re.I)
+# A headline about the connection names it with a noun ("weak" alone is
+# the battery's as often as the signal's).
 _SIGNAL_HEADLINE_RE = re.compile(
-    r"\b(?:signal|wi-?fi|rssi|lqi|link|reception|connect\w*|range|mesh|"
-    r"router|zigbee|z-?wave|offline|unreachable|unavailable|dropouts?|"
-    r"disconnect\w*|network|radio|weak)\b", re.I)
+    r"\b(?:signal|wi-?fi|rssi|lqi|dBm|link[\s-]+quality|zigbee|z-?wave|"
+    r"connection|connect(?:s|ed|ing|ivity)?|disconnect\w*|mesh|reception|"
+    r"offline|unreachable|unavailable|dropouts?)\b", re.I)
 
 
 _ACTION_RE = re.compile(
@@ -1337,10 +1340,13 @@ def dbm_words(text: str, found=None) -> str:
 
     def prep(m):
         word = _signal_word(took(m))
-        said = m.string[max(0, m.start() - 30):m.start()]
-        if (re.search(r"\b(?:weak|poor|fair|good|strong)\b", said, re.I)
-                or re.search(r"\bsignal\s*$", said, re.I)):
-            return ""   # "weak at -84 dBm": the word is already there
+        if m.string[:m.start()].strip():
+            # Mid-sentence the figure is an aside, and goes: "weak at -84
+            # dBm" already says it, and "replace the battery with a weak
+            # signal" would say something else.
+            return ""
+        # Leading the sentence it is the condition: "At -84 dBm the lock
+        # cannot be reached" is "With a weak signal the lock…".
         return _cap_at_start(m.string, m.start(), f"with a {word} signal")
 
     def subject(m):
@@ -1357,14 +1363,24 @@ def dbm_words(text: str, found=None) -> str:
                                  f"the signal is {word}")
         return _cap_at_start(m.string, m.start(), f"a {word} signal")
 
-    try:
-        out = _DBM_ASIDE_RE.sub(aside, text)
+    def one(sentence: str) -> str:
+        if not _DBM_RE.search(sentence):
+            return sentence
+        out = _DBM_ASIDE_RE.sub(aside, sentence)
         out = _DBM_SIGNAL_OF_RE.sub(signal_of, out)
         out = _DBM_READS_RE.sub(reads, out)
         out = _DBM_FELL_RE.sub(fell, out)
         out = _DBM_SUBJECT_RE.sub(subject, out)
         out = _DBM_PREP_RE.sub(prep, out)
         out = _DBM_LABEL_RE.sub(label, out)
+        # All of a sentence's figures in words, or none of them: "fair and
+        # -85 dBm" is neither.
+        return sentence if _DBM_RE.search(out) else out
+
+    try:
+        # Split keeping each gap as it was (a newline stays one).
+        parts = re.split(r"((?<=[.!?])\s+)", text)
+        out = "".join(p if i % 2 else one(p) for i, p in enumerate(parts))
     except (ValueError, re.error):
         return text
     if out == text:
