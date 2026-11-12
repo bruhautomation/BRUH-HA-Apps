@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.38
+
+### Fixed
+
+- A light group where every light is off opens as a compact grid of names, so the All control and the history are not pushed below eight identical "Off" rows; a light named only by a number keeps the group's name ("Cans 3") (#859).
+- An opened camera says "Loading the picture…" until the stream arrives, and "No picture" if it fails, instead of a black pane (#860).
+- A card brAIn built for you stays inside its own width on a phone, and brAIn writes new cards with diagrams that scale and summaries that wrap between figures (#844).
+- brAIn writes new cards so that two figures that disagree (asleep 1h 31m beside in bed 7h) say why or show a dash (#842).
+- The 16px text floor also reaches the cards brAIn builds.
+
 ## 5.1.37
 
 ### Fixed
