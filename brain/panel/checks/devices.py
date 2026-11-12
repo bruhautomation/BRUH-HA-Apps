@@ -22,6 +22,9 @@ from ._util import (SOFTWARE_DOMAINS, House, after_restart, age_days,
 
 UNAVAILABLE_DAYS = 1.0
 BATTERY_LOW_PCT = 15
+# A battery the household has said they know about reopens as a new row
+# only when it is below this: still low, and now close to gone.
+BATTERY_ACK_REOPEN_PCT = 10
 BATTERY_SILENT_DAYS = 7
 # A battery sensor that reads 0 today and has read nothing but 0 for at
 # least this many days of its recorded history is not a cell running down:
@@ -979,6 +982,35 @@ def _runs_on_mains(house: House, eid: str, now: float) -> bool:
     return False
 
 
+def _battery_outlook(snap: dict, eid: str, level: float, now: float) -> str:
+    """"It usually loses about 0.8% a day, so it should run out around 3
+    Dec." from the sixty days of daily means the snapshot keeps, or "" when
+    there are too few days or no steady fall to say it from. A low-battery
+    finding owes its reader the level, the usual drain and a rough date
+    (#829); this is the second and third, read rather than guessed."""
+    rows = (snap.get("battery_stats") or {}).get(eid)
+    points = []
+    for r in rows if isinstance(rows, list) else []:
+        if not isinstance(r, dict):
+            continue
+        start, mean = num(r.get("start")), num(r.get("mean"))
+        if start is not None and mean is not None:
+            points.append(((start - now) / 86400.0, mean))
+    if len(points) < 7 or level <= 0:
+        return ""
+    import baselines  # noqa: PLC0415 — as checks/forecasts.py does
+    fit = baselines.least_squares(points)
+    if fit is None or fit[0] > -0.05:
+        return ""
+    import datetime as dt  # noqa: PLC0415
+    days = level / -fit[0]
+    if days > 400:
+        return ""
+    date = dt.datetime.fromtimestamp(now + days * 86400.0)
+    return (f" It usually loses about {-fit[0]:.1f}% a day, so it should run "
+            f"out around {date.day} {date:%b}.")
+
+
 def battery_low(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     # A node the Z-Wave controller has declared dead is dev.zwave_dead's
@@ -1020,9 +1052,18 @@ def battery_low(snap: dict, now: float) -> list[dict]:
         dev = house.device_of(eid)
         who = house.device_name(dev) if dev else house.name(eid)
         if level is not None and level <= BATTERY_LOW_PCT:
+            # Acknowledged: new words only when it went further down than
+            # it was (and under the floor); one acknowledged already under
+            # the floor is not news until it drops below that level.
+            at = house.acknowledged_level(eid, "dev.battery_low")
+            worse = (house.acknowledged(eid, "dev.battery_low")
+                     and at is not None
+                     and level < min(at, BATTERY_ACK_REOPEN_PCT))
             out.append({
-                "text": f"{who} battery is low",
+                "text": (f"{who} battery is almost flat" if worse
+                         else f"{who} battery is low"),
                 "detail": f"{level:g}% as of {when(st.get('last_updated'))}."
+                          + _battery_outlook(snap, eid, level, now)
                           + house.placed(eid, who),
                 "fix": ("Replace the battery. If this device runs off "
                         "mains power and has no battery, disable its "

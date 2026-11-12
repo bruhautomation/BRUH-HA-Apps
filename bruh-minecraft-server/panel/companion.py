@@ -128,6 +128,14 @@ TAG = "bruh_companion"
 # A job's boss bar: the companion's namespace and a job's key, nothing else.
 BAR_ID = re.compile(r"^bruh_companion:[a-z0-9_\-]{1,24}$")
 BAR_KEY = re.compile(r"^[a-z0-9_\-]{1,24}$")
+# A job's bar is the add-on's to take away, not only the caller's: an end
+# that met a server restarting, or a last update that landed after the end
+# (both wait on one lock behind a long edit), left a bar on screen for days.
+BAR_LATE = 60                 # seconds after its end an update is a late one, not a new run
+BAR_STALE = 3 * 3600          # seconds a bar may go without an update (a job is at most 2 h)
+BAR_RETRY = 30                # seconds between sweeps for bars whose job is over
+BAR_KEEP = 7 * 86400          # seconds an ended bar is remembered
+BARS_MAX = 200
 DIR_NAME = "companion"
 DEFAULT_NAME = "Companion"
 DEFAULT_COLOUR = "light_purple"
@@ -200,6 +208,14 @@ _ITEM_COMMAND = re.compile(
     r"^(?:minecraft:)?(?:give|clear) (?P<who>\S+) (?P<item>[a-z0-9_:]+)"
     r"(?:\[(?:minecraft:)?custom_name=[^\[\]{}]*\]|\{display:\{Name:'[^{}]*'\}\})?"
     r"(?: (?P<count>\d+))?$")
+
+# A finished map (panel/maps.py) for one named player: the map's id and a
+# name, nothing else.
+_MAP_COMMAND = re.compile(
+    r"^(?:minecraft:)?give (?P<who>[^@\s]\S*) minecraft:filled_map"
+    r"(?:\[map_id=\d{1,10},custom_name=[^\[\]{}]*\]|\{map:\d{1,10},display:\{Name:'[^{}]*'\}\})"
+    r" 1$")
+MAP_NAME_MAX = 40
 
 PAD_COLOURS = (("minecraft:lime_carpet", "minecraft:lime_wool"),
                ("minecraft:red_carpet", "minecraft:red_wool"),
@@ -386,6 +402,14 @@ def named_item(item: str, name: str, syntax: str) -> str:
     return f"{item}[custom_name={snbt}]"
 
 
+def map_item(map_id: int, name: str, syntax: str) -> str:
+    """A finished map item: the map file's id and a name, in the server's syntax."""
+    item = named_item("minecraft:filled_map", name, syntax)
+    if syntax == "nbt":
+        return item.replace("{display:", f"{{map:{int(map_id)},display:", 1)
+    return item.replace("[custom_name=", f"[map_id={int(map_id)},custom_name=", 1)
+
+
 def split_reply(text: Any, width: int = REPLY_LINE_CHARS, lines: int = REPLY_LINES) -> list[str]:
     """Words as a few chat lines: plain text, wrapped, capped with "…"."""
     import textwrap
@@ -569,6 +593,8 @@ def check_command(cmd: str, placing: bool = False) -> None:
     if verb in ("title", "tellraw"):
         if len(words) < 2 or words[1].startswith("@"):
             raise GuardError("words go to one named player")
+        return
+    if verb == "give" and _MAP_COMMAND.match(cmd):
         return
     if verb in ("give", "clear"):
         tail = cmd.rsplit(" run ", 1)[-1] if " run " in cmd else cmd
@@ -914,6 +940,11 @@ class Companion:
         self.state = "idle"
         self.last_note = ""
         self._accounts: tuple[float, dict[str, Any]] | None = None
+        # Every job bar this add-on put up: key -> {player, at, ended, gone}.
+        self.bars_path = self.root / "bars.json"
+        bars = _read_json(self.bars_path, {})
+        self.bars: dict[str, dict[str, Any]] = bars if isinstance(bars, dict) else {}
+        self._bars_tried = 0.0
 
     # -- who the companion is ------------------------------------------------
     def identity(self) -> dict[str, Any]:
@@ -1040,7 +1071,10 @@ class Companion:
             self._try(f"minecraft:kill @e[tag={TAG},tag=!{self.epoch}]")
             for selector in legacy.kill_selectors():
                 self._try(f"minecraft:kill {selector}")
+            self._sweep_bars(now, saved=self._saved_bars())
             self.swept = True
+        elif now - self._bars_tried >= BAR_RETRY:
+            self._sweep_bars(now)
         self._run_live(now)
         self._run_questions(online, now)
         self.state = "asking" if self.asking else "acting" if self.live else "idle"
@@ -1123,9 +1157,19 @@ class Companion:
             if not BAR_KEY.fullmatch(key):
                 raise CompanionError("key is a job's id: letters, digits, _ and -.")
             bar_id = f"{TAG}:{key}"
+            now = self.clock()
+            seen = self.bars.get(key) or {}
             if end:
-                self._try(f"minecraft:bossbar remove {bar_id}")
-                return {"bar": bar_id, "removed": True}
+                gone = self._try(f"minecraft:bossbar remove {bar_id}") is not None
+                # Not taken (the server restarting): the beat's sweep tries again.
+                self._book_bar(key, player=seen.get("player") or str(player or ""),
+                               at=seen.get("at") or int(now), ended=int(now), gone=gone)
+                return {"bar": bar_id, "removed": gone}
+            if seen.get("ended") and now - seen["ended"] < BAR_LATE:
+                # An update that arrived after its job's end (both waited on
+                # the lock): putting it up would leave it there for good. A
+                # continued job's next update, later, puts it back.
+                return {"bar": bar_id, "ended": True}
             line = " ".join(str(text or "").split())[:REPLY_LINE_CHARS]
             if not line:
                 raise CompanionError("What does the bar say? (text is empty)")
@@ -1149,7 +1193,58 @@ class Companion:
             if pct is not None:
                 self._try(f"minecraft:bossbar set {bar_id} value {pct}")
             self._try(f"minecraft:bossbar set {bar_id} players {quote_name(found)}")
+            self._book_bar(key, player=found, at=int(now), ended=None, gone=False)
             return {"bar": bar_id, "player": found, "text": line, "percent": pct}
+
+    def _book_bar(self, key: str, **row: Any) -> None:
+        self.bars[key] = row
+        cut = self.clock() - BAR_KEEP
+        keep = {k: v for k, v in self.bars.items()
+                if not (v.get("gone") and (v.get("ended") or v.get("at") or 0) < cut)}
+        if len(keep) > BARS_MAX:
+            keep = dict(sorted(keep.items(), key=lambda kv: kv[1].get("at") or 0)[-BARS_MAX:])
+        self.bars = keep
+        try:
+            _atomic_write_json(self.bars_path, self.bars)
+        except OSError:
+            # The record is for the sweep; the bar itself is already right.
+            pass
+
+    def _saved_bars(self) -> list[str]:
+        """The companion's bars the world has saved (level.dat's
+        CustomBossEvents), so a bar an older add-on or a lost record left is
+        found too: RCON's `bossbar list` answers with names, not ids."""
+        read = getattr(self.col, "read_nbt", None)
+        if read is None:
+            return []
+        level_name = getattr(self.col, "level_name", None)
+        world = (level_name() if callable(level_name) else "") or "world"
+        try:
+            data = read(Path(self.col.server_dir) / world / "level.dat").get("Data") or {}
+            events = data.get("CustomBossEvents") or {}
+        except Exception:  # noqa: BLE001 — no save yet, or one we cannot read
+            return []
+        prefix = f"{TAG}:"
+        return [k[len(prefix):] for k in events
+                if isinstance(k, str) and k.startswith(prefix)
+                and BAR_KEY.fullmatch(k[len(prefix):])]
+
+    def _sweep_bars(self, now: float, saved: list[str] | None = None) -> None:
+        """Take away every job bar whose job is over: ended, not updated for
+        `BAR_STALE`, or (at start, `saved`) one this add-on holds no running
+        record of. A running job's next update puts its bar back."""
+        self._bars_tried = now
+        keys = set(saved or ()) | {k for k, v in self.bars.items() if not v.get("gone")}
+        for key in sorted(keys):
+            seen = self.bars.get(key) or {}
+            if seen and not seen.get("ended") and not seen.get("gone") \
+                    and now - (seen.get("at") or 0) < BAR_STALE:
+                continue                    # its job is still running
+            if self._try(f"minecraft:bossbar remove {TAG}:{key}") is None:
+                continue                    # the server did not take it: next sweep
+            self._book_bar(key, player=seen.get("player") or "",
+                           at=seen.get("at") or int(now),
+                           ended=seen.get("ended"), gone=True)
 
     def give_spyglass(self, player: Any, name: Any) -> dict[str, Any]:
         """One spyglass named `name` for a player, unless they already have
@@ -1178,6 +1273,29 @@ class Companion:
             if reply is None or not re.search(r"^Gave ", _COLOUR_CODE.sub("", reply).strip()):
                 raise CompanionError(f"The server would not give it: {(reply or 'no answer')[:120]}")
             return {"player": found, "name": label, "given": True, "had": 0}
+
+    def give_maps(self, player: Any, maps: list[tuple[int, str]]) -> dict[str, Any]:
+        """Finished maps (their files already written, panel/maps.py) into a
+        player's inventory, one `give` each; a full inventory drops them at
+        their feet, as the game does. What was given, and what was not."""
+        with self._lock:
+            found = self._online(str(player or ""))
+            if not found:
+                raise CompanionError(f"{player} is not in the game right now.")
+            syntax = self.item_syntax()
+            who = quote_name(found)
+            given, failed = [], []
+            for map_id, name in maps:
+                label = " ".join(re.sub(r"[^\w '\-.,!?#&+]", "", str(name or "")).split())
+                label = label[:MAP_NAME_MAX].strip() or f"Map #{int(map_id)}"
+                reply = self._try(f"minecraft:give {who} {map_item(map_id, label, syntax)} 1")
+                text = _COLOUR_CODE.sub("", reply or "").strip()
+                if reply is not None and text.startswith("Gave "):
+                    given.append({"id": int(map_id), "name": label})
+                else:
+                    failed.append({"id": int(map_id), "name": label,
+                                   "reply": (text or "no answer")[:160]})
+            return {"player": found, "given": given, "failed": failed}
 
     # -- a body ----------------------------------------------------------------
     def appear(self, player: Any, seconds: Any = 25, kind: str = "greet", name: Any = None,

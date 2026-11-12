@@ -123,9 +123,13 @@ const _watched = new WeakSet();
 // so the floor is handed out again whenever a root changes, not once.
 function floorFields(node, depth = 0) {
   if (!node || depth > 10 || typeof CSSStyleSheet === 'undefined') return;
-  const root = node.shadowRoot;
-  if (!root || !('adoptedStyleSheets' in root)) return;
-  if (!_floored.has(root)) {
+  // A card handed over in a wrapper with no root of its own (a stand-in
+  // `display: contents` box, a card that draws into its light DOM) still
+  // holds cards with roots: the floor goes to those, and the wrapper is
+  // watched for the ones made later. Returning here left a 15px talk box.
+  const root = node.shadowRoot || (node.nodeType === 1 ? node : null);
+  if (!root || (root === node.shadowRoot && !('adoptedStyleSheets' in root))) return;
+  if (root === node.shadowRoot && !_floored.has(root)) {
     try {
       if (!_floorSheet) { _floorSheet = new CSSStyleSheet(); _floorSheet.replaceSync(FIELD_FLOOR); }
       root.adoptedStyleSheets = [...root.adoptedStyleSheets, _floorSheet];
@@ -363,7 +367,9 @@ class MorphPanel extends HTMLElement {
     this.$('.scroll').addEventListener('scroll', (ev) => {
       this.ui.lastScroll = Date.now();
       if (!this._railF) this._railF = requestAnimationFrame(() => { this._railF = 0; this.rail.paint(); });
-      if (this._shell) this.dispatchEvent(new CustomEvent('morph-scroll', { bubbles: true, composed: true, detail: { y: ev.currentTarget.scrollTop } }));
+      // `max` is how far it can scroll, so the header can tell the bottom's
+      // bounce (and the pane growing as the header goes) from a scroll up.
+      if (this._shell) { const sc = ev.currentTarget; this.dispatchEvent(new CustomEvent('morph-scroll', { bubbles: true, composed: true, detail: { y: sc.scrollTop, max: Math.max(0, sc.scrollHeight - sc.clientHeight) } })); }
     }, { passive: true });
     this.ro = new ResizeObserver(() => { cancelAnimationFrame(this._ro); this._ro = requestAnimationFrame(() => this.engine.layout(false, true)); });
     this.ro.observe(this.$('[data-board]'));
@@ -2027,6 +2033,7 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
     return `<div class="edit" data-ctl="1">
 <label class="flab">Name<input class="fld" type="text" data-keep="card-name" data-act-change="card-name" data-v="${esc(card.id)}" value="${esc(card.name || '')}" placeholder="${esc(name)}"></label>
 <div class="flab">Size<div class="row" style="gap:0 18px">${[[0, 'Auto'], [1, 'Small'], [2, 'Medium'], [3, 'Large']].map((x) => `<button type="button" class="wd" data-act="card-span" data-v="${esc(card.id)}" data-w="${x[0]}" aria-pressed="${(card.span || 0) === x[0]}" style="font-size:15px;font-weight:600;text-transform:none;letter-spacing:0">${x[1]}</button>`).join('')}</div></div>
+${card.type === 'switch' && card.entity ? `<div class="flab">In the title row<div class="row" style="gap:0 18px"><button type="button" class="wd" data-act="card-head" data-v="${esc(card.id)}" aria-pressed="${isHeadCard(card)}" style="font-size:15px;font-weight:600;text-transform:none;letter-spacing:0">${isHeadCard(card) ? 'Shown as a button' : 'Show as a button'}</button><span class="small">beside ${esc(sec.title)}’s name, instead of a tile</span></div></div>` : ''}
 <label class="flab">Move to<select class="fld" data-act-change="card-move" data-v="${esc(card.id)}">${sections.map((s) => `<option value="${esc(s.id)}"${s.id === sec.id ? ' selected' : ''}>${esc(s.label)}</option>`).join('')}</select></label>
 <details class="payload"><summary>Card YAML (as JSON)</summary><textarea class="code-ed" data-keep="card-yaml" style="min-height:140px" spellcheck="false">${esc(yaml)}</textarea><button type="button" class="wd go" data-act="card-yaml" data-v="${esc(card.id)}">Save this card</button></details>
 <div class="row" style="gap:0 18px"><button type="button" class="go" data-act="card-remove" data-v="${esc(card.id)}" style="font-size:14px;color:var(--rose)">Remove card</button><span class="flex1"></span><span class="small">${esc(T === TYPES.lovelace ? 'Lovelace card' : card.type)}</span></div></div>`;
@@ -3057,6 +3064,7 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
       case 'sec-remove': this.s.secEdit = null; this.mutate('Removed a section', (d) => { const h = this.sectionIn(d, v); if (!h) return false; h.f.sections.splice(h.i, 1); }); return;
       case 'add-section': this.mutate('Added a section', (d) => { const f = d.floors.find((x) => x.id === v); if (!f) return false; f.sections.push({ title: 'New section', color: HUES[(f.sections.length + 3) % HUES.length], width: 2, groups: [{ cards: [] }] }); }); return;
       case 'card-name': this.mutate('Renamed a card', (d) => { const h = this.cardIn(d, v); if (!h) return false; if (el.value.trim()) h.c.name = el.value.trim(); else delete h.c.name; }); return;
+      case 'card-head': { const on = !isHeadCard(this.findCard(v) && this.findCard(v).card); this.mutate(on ? 'Moved a switch to its title row' : 'Moved a switch back to a tile', (d) => { const h = this.cardIn(d, v); if (!h || h.c.type !== 'switch') return false; const o = { ...(h.c.options || {}) }; if (on) o.header = true; else delete o.header; if (Object.keys(o).length) h.c.options = o; else delete h.c.options; }); } return;
       case 'card-span': this.mutate('Resized a card', (d) => { const h = this.cardIn(d, v); if (!h) return false; const w = Number(el.dataset.w); if (w) h.c.span = w; else delete h.c.span; }); return;
       case 'card-move': this.closeView(); this.mutate('Moved a card', (d) => { const h = this.cardIn(d, v); const to = this.sectionIn(d, el.value); if (!h || !to || h.s === to.s) return false; h.g.cards.splice(h.i, 1); to.s.groups = to.s.groups || []; if (!to.s.groups.length) to.s.groups.push({ cards: [] }); to.s.groups[to.s.groups.length - 1].cards.push(h.c); }); return;
       case 'card-remove': this.closeView(); this.mutate('Removed a card', (d) => { const h = this.cardIn(d, v); if (!h) return false; h.g.cards.splice(h.i, 1); }); return;

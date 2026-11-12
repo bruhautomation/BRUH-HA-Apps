@@ -1319,9 +1319,9 @@
     //     With nothing focused there is no software keyboard on any
     //     platform, so the height then IS the natural one and is taken
     //     as-is, down as well as up. That matters because this frame is
-    //     not the only thing that resizes it: the brAIn panel folds its
-    //     own top bar away while the keyboard is up (reportKeyboard,
-    //     below), which makes this frame TALLER. Grow-only took that
+    //     not the only thing that resizes it: the brAIn panel used to
+    //     fold its own top bar away while the keyboard was up (it no
+    //     longer does), which made this frame TALLER. Grow-only took that
     //     folded height as the baseline, so the moment the bar came back
     //     the frame read as "the WebView shrank for a keyboard" — which
     //     folded the bar, which grew the frame, which unfolded it: a
@@ -1418,24 +1418,6 @@
       return 0;
     }
 
-    // Tell the brAIn panel when the keyboard comes up, so it can fold its
-    // own top bar away and give those ~100-150px to the terminal. We are
-    // the only frame in the stack that can know: on iOS the keyboard does
-    // not resize an iframe's visual viewport, and all the awkward
-    // measurement above already had to be done for our own toolbar. Sent
-    // only on a change, and harmlessly ignored when the parent is anything
-    // else (a direct :7681 tab, a kiosk).
-    var lastKbSent = null;
-    function reportKeyboard(open) {
-      if (open === lastKbSent) return;
-      lastKbSent = open;
-      try {
-        if (window.parent && window.parent !== window) {
-          window.parent.postMessage({ type: 'brain-keyboard', open: open }, '*');
-        }
-      } catch (_e) { /* cross-origin parent — nothing to tell */ }
-    }
-
     // The bar moves on every sample, because moving it is a transform
     // and costs nothing. What does NOT happen on every sample is the
     // terminal resizing: `syncHeight` changes the body's height, which
@@ -1443,8 +1425,7 @@
     // Code redraw the whole screen — and a keyboard sliding in reports
     // a dozen intermediate heights on its way up, on top of the two
     // delayed samples focusin schedules. Each of those was a full
-    // redraw, and the panel folding its bar was one more. So the
-    // resize and the report to the panel are committed together, once,
+    // redraw. So the resize is committed once,
     // after the samples have stopped changing for SETTLE_MS: one
     // reflow for the keyboard opening and one for it closing.
     var SETTLE_MS = 180;
@@ -1456,11 +1437,6 @@
       pendingGap = gap;
       placeBar(gap);
       syncHeight(gap);
-      // A gap is proof of a keyboard; so is a WebView that shrank itself
-      // for one (that path reports gap 0 by design — the layout is already
-      // correct — so asking `gap > 0` alone would miss the HA Companion
-      // app entirely). Both need the textarea focused to count.
-      reportKeyboard(taFocused && (gap > 0 || viewportShrunkForKeyboard()));
     }
     function placeBar(gap) {
       if (gap > 0) {
@@ -1476,11 +1452,10 @@
     function syncBarToKeyboard() {
       var gap = computeGap();
       placeBar(gap);
-      var kb = taFocused && (gap > 0 || viewportShrunkForKeyboard());
-      // Nothing moved and the panel already knows: nothing to commit.
-      // (syncHeight's own resize event lands here, so this is also what
-      // stops a commit from scheduling another.)
-      if (gap === pendingGap && kb === lastKbSent && !settleTimer) return;
+      // Nothing moved: nothing to commit. (syncHeight's own resize event
+      // lands here, so this is also what stops a commit from scheduling
+      // another.)
+      if (gap === pendingGap && !settleTimer) return;
       pendingGap = gap;
       clearTimeout(settleTimer);
       settleTimer = setTimeout(commitKeyboard, SETTLE_MS);

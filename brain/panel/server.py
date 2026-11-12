@@ -6335,6 +6335,26 @@ async def _generate(insight_id: str) -> None:
         obj = _answer(result)
         if not obj or not isinstance(obj.get("html"), str) or not obj.get("title"):
             raise RuntimeError("Claude returned an unparseable insight (no JSON/html)")
+        # Cards come only from analyses of the house. A search run whose
+        # transcript shows it called no tool read nothing (a chat turn's
+        # routing note, "no data needed"): not a card, however it got here.
+        # The snapshot path is handed the house, so it always read it; a
+        # transcript that cannot be found proves nothing and is no reason.
+        if sent and sent.get("gather_mode") == "search":
+            sid = str((result.get("meta") or {}).get("session_id") or "")
+            reads = (await asyncio.to_thread(
+                conversations.tool_reads, engine.CLAUDE_HOME, sid)
+                if sid else None)
+            if reads is not None and card_claims.read_nothing(reads["tools"]):
+                # Not a fault of brAIn's, so no journal row (the paid run
+                # is already in the usage figures); the backoff keeps a
+                # scheduled card from asking again at once.
+                log.info("insight %s: %s", insight_id,
+                         card_claims.NOT_FROM_HOUSE_WHY)
+                _note_card_failure(insight_id, card_claims.NOT_FROM_HOUSE_WHY)
+                _set_job(insight_id, state="error",
+                         error=card_claims.NOT_FROM_HOUSE_WHY)
+                return
         # The design system is a stylesheet the card is written against,
         # injected once here rather than re-sent as hex in every prompt.
         html = inject_styles(obj["html"])
@@ -11904,9 +11924,20 @@ def _sre_set_aside(now: float, states: dict | None = None) -> set[str]:
     out: set[str] = set()
     checks_ = set(SRE_SET_ASIDE_CHECKS) | {"*"}
     try:
+        protected = automation_writer.protected_patterns()
         for eid, rules in facts_store.exception_map(now).items():
-            if set(rules) & checks_:
+            if set(rules) & (checks_ - {"*"}):
                 out.add(eid)
+            elif "*" in rules:
+                # Whole-entity: never for a safety device or its battery.
+                family, classes, _dev = _device_family(eid)
+                st = (states or {}).get(eid) or {}
+                klass = str((st.get("attributes") or {}).get("device_class")
+                            or "")
+                if not corrections.never_covered(
+                        eid, "", device_class=klass, device_classes=classes,
+                        protected=protected):
+                    out.add(eid)
     except Exception as exc:  # noqa: BLE001 — could not tell holds nothing
         log.debug("sre: exceptions unread: %s", exc)
     sources = {f"check:{c}" for c in SRE_SET_ASIDE_CHECKS}
@@ -20755,6 +20786,32 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
                                             "photographed")}, status=503)
     confidential = screens.confidential_strings(
         states, await asyncio.to_thread(occasions.load))
+    # brAIn as the phone's sidebar shows it: framed by the shell,
+    # under a top safe area, in the app's full screen or not, after a
+    # scroll or a focus; the header's place and any outer scroll come back.
+    shell = body.get("shell") is True
+    after = str(body.get("after") or "").strip().lower()
+    if after and after not in screens.SHELL_AFTER:
+        return web.json_response({"error": "after must be scroll or focus",
+                                  "screens": listing}, status=400)
+    if shell or after:
+        if target is not targets[0]:
+            return web.json_response({"error": (
+                "only brAIn's own screens are photographed framed by the sidebar "
+                "shell or after a scroll or a focus"), "screens": listing}, status=400)
+        if focus:
+            return web.json_response({"error": (
+                "a framed picture is of the whole screen: ask without an element"),
+                "screens": listing}, status=400)
+    if shell:
+        try:
+            inset = int(body.get("inset") if body.get("inset") is not None else (59 if width < 700 else 0))
+        except (TypeError, ValueError):
+            inset = 0
+        scr = screens.shell_screen(scr, _own_panel_url(), inset=inset,
+                                   fullscreen=body.get("fullscreen") is not False, after=after)
+    elif after:
+        scr = {**scr, "after": after, "layout": True}
     one = {**target, "screens": [{**scr, "focus": focus} if focus else scr]}
     if SCREENSHOT_LOCK is None:
         SCREENSHOT_LOCK = asyncio.Lock()
@@ -20791,7 +20848,8 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
         "addon": target["product"], "screen": scr["label"], "width": width,
         **({"element": focus["id"], "press": focus["press"]} if focus else {}),
         "scheme": scheme, "png": base64.b64encode(data).decode(),
-        "problems": result.get("problems") or [], "held": shot.get("held") or []})
+        "problems": result.get("problems") or [], "held": shot.get("held") or [],
+        **({"layout": shot["layout"]} if shot.get("layout") is not None else {})})
 
 
 def _harness_refusal(request: web.Request) -> web.Response | None:
@@ -22066,7 +22124,10 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
         if spec.get("label") == "accepted":
             got = await asyncio.to_thread(
                 corrections.accept_offer, str(finding.get("text") or ""),
-                protected=automation_writer.protected_patterns())
+                protected=automation_writer.protected_patterns(),
+                device_classes=_device_family(
+                    str(finding.get("entity_id") or ""))[1],
+                entity_id=str(finding.get("entity_id") or ""))
             if got["ids"]:
                 payload["_exception_ids"] = got["ids"]
             else:
@@ -22406,6 +22467,19 @@ def _ask_about_condition(finding: dict, note: str) -> list[str]:
     except Exception as exc:  # noqa: BLE001 — `_record_exception`'s rule
         log.debug("could not ask about a condition: %s", exc)
     return ids
+
+
+def _device_family(eid: str) -> tuple[list[str], set[str], str]:
+    """``(entities on the device, their device classes, the device id)`` for
+    one entity, off the names the last checks pass noted. Just the entity
+    where it is on no device. A leak sensor's battery shares the leak
+    sensor's class, so nothing wide stands it down."""
+    device = str((_NAMES.get(eid) or {}).get("device") or "")
+    family = [eid] + ([e for e, n in _NAMES.items()
+                       if e != eid and n.get("device") == device]
+                      if device else [])
+    classes = {str((_NAMES.get(e) or {}).get("class") or "") for e in family}
+    return family, {c for c in classes if c}, device
 
 
 def _record_exception(finding: dict, note: str) -> list[str]:
@@ -24815,6 +24889,41 @@ async def _scope_correction(finding: dict, note: str,
     writes nothing, because the press's rule it would scope is gone.
     """
     now = time.time()
+    if (base_ids and str(finding.get("source") or "").startswith("check:")
+            and finding.get("entity_id") and corrections.asks_cleanup(note)
+            and not corrections.conditional(note)):
+        # "Remove it from automations", "stop caring about it": a question
+        # that lists what mentions the device, never an edit or a rule.
+        eid = str(finding.get("entity_id") or "")
+        family, classes, device = _device_family(eid)
+        offer = None
+        try:
+            from checks import snapshot as _snapshot  # noqa: PLC0415
+            configs = (await asyncio.to_thread(
+                _snapshot.load_configs)).get("automations") or []
+            row = await asyncio.to_thread(
+                corrections.cleanup_offer_row, finding, note,
+                entity_name=str((_NAMES.get(eid) or {}).get("name") or ""),
+                automations=corrections.automations_referencing(
+                    configs, [*_finding_subjects(finding), *family],
+                    [device]),
+                finding_key=findings_store.normalize(
+                    finding.get("text") or ""),
+                about=str(finding.get("claim") or finding.get("text") or ""),
+                device_classes=classes,
+                protected=automation_writer.protected_patterns())
+            offer = (await asyncio.to_thread(findings_store.add_case, row)
+                     if row else None)
+        except Exception as exc:  # noqa: BLE001 — an ending must not fail
+            log.debug("could not ask about cleaning up: %s", exc)
+        if offer:
+            CORRECTION_STATE["offered"] += 1
+            return {"plan": None, "ids": [], "offer": offer,
+                    "sentence": "Got it — brAIn will stop flagging this "
+                                "one. It has put a question on your list "
+                                "with the automations that mention it, and "
+                                "will only treat it as unused if you say "
+                                "yes."}
     if base_ids and (_is_resident_condition(finding, note)
                      or (str(finding.get("source") or "").startswith("check:")
                          and corrections.conditional(note))):
@@ -27218,7 +27327,7 @@ Ask brAIn's own measurements before you guess: what_is_normal (is a reading unus
 
 For a NEW standing automation you can also offer brAIn's replay: describe it in one sentence to the brain.intent service (call_service, domain "brain", service "intent", data {"sentence": "..."}) and brAIn drafts it, replays it over the last month, grades it against what this household actually did and offers it as a card to accept or trial. Offer that when seeing how it would have behaved helps; when they ask you to just make it, make it.
 
-When something in another BRUH add-on is broken (GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft, BRUH Cooking, BRUH Task Manager), look first with bruh_addon_status and its log. Do what can be done here (restart it, fix its options or the house's own config) and say so. Its code is in its own image and is never patched in place: when the cause is in that code, file it with report_bug — your diagnosis, the log lines and the owner's words — and it is fixed upstream and arrives as an update, which brAIn then checks held. Do the same for a bug in brAIn itself. When the problem is how a screen looks or reads — brAIn's own, another add-on's panel, Morph's dashboard or a Lovelace card — take a picture of it with screenshot_panel and look before you answer, at a phone's width (390) and a laptop's (1200), and file what you saw with report_bug and ui: true.
+When something in another BRUH add-on is broken (GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft, BRUH Cooking, BRUH Task Manager), look first with bruh_addon_status and its log. Do what can be done here (restart it, fix its options or the house's own config) and say so. Its code is in its own image and is never patched in place: when the cause is in that code, file it with report_bug — your diagnosis, the log lines and the owner's words — and it is fixed upstream and arrives as an update, which brAIn then checks held. Do the same for a bug in brAIn itself. When the problem is how a screen looks or reads — brAIn's own, another add-on's panel, Morph's dashboard or a Lovelace card — take a picture of it with screenshot_panel and look before you answer, at a phone's width (390) and a laptop's (1200), and file what you saw with report_bug and ui: true. For brAIn's own header or scrolling on a phone, take it with shell (framed the way the sidebar shows it, in full screen and with fullscreen false) and again with after scroll or focus, and read its layout.
 
 brAIn's own surfaces are brAIn's to change without waiting for a press, whatever the other settings say (the owner's decision): the house layer over its page (/config/.brain/ui/house.css and house.js), Morph's code copies and /config/morph/LEARNED.md, removing lines from its memory, and its own personality notes. Each change is snapshotted or versioned, and a house.css or house.js that breaks the page is undone automatically the next time the page loads it, so reload and look after changing one.
 
@@ -28618,7 +28727,11 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
         # stream and the page sits blank until the turn is over.
         "X-Accel-Buffering": "no",
     })
-    await resp.prepare(request)
+    try:
+        await resp.prepare(request)
+    except ConnectionError:
+        # Hung up before the first byte; nothing was subscribed yet.
+        return resp
     # With no session, a queue nothing feeds: the stream stays open rather
     # than ending into a reconnect loop, and asks again every couple of
     # seconds (below) until there is a session to hand the panel over to.
@@ -28678,10 +28791,13 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
                 # it; its own switches reconnect it by key.
                 continue
             await send(event)
-    except (ConnectionResetError, asyncio.CancelledError):
-        # The viewer closed the tab, or the task was cancelled. Either way
-        # there is no longer anyone to send to.
-        pass
+    except (ConnectionError, asyncio.CancelledError):
+        # The viewer closed the tab, locked the phone, or the task was
+        # cancelled (ConnectionError covers a reset, a broken pipe and
+        # aiohttp's "Connection lost"). Nobody is left to send to. Only
+        # this stream's queue goes: the session and its transcript are
+        # untouched, so a reconnect gets the snapshot.
+        log.info("chat stream: viewer disconnected")
     finally:
         if session is not None:
             session.unsubscribe(queue)
@@ -29443,6 +29559,18 @@ async def crash_middleware(request: web.Request, handler):
     except (web.HTTPException, asyncio.CancelledError):
         raise
     except Exception as exc:
+        # The caller hung up (a phone locking, a tab closing): nobody is
+        # left to answer and nothing of ours broke, so it is a cancel, not
+        # a crash: no journal row, no fault, no report. Only when the
+        # caller's own connection is gone or closing: a reset or broken
+        # pipe from something the handler called (an outbound session)
+        # while the caller is still connected is a real fault.
+        tr = request.transport
+        if isinstance(exc, ConnectionError) and (tr is None or tr.is_closing()):
+            log.info("client disconnected from %s: %s", request.method
+                     if request.method in _KNOWN_METHODS else "?",
+                     type(exc).__name__)
+            return web.Response(status=499)
         # What is written is the router's own canonical pattern and a
         # method from a fixed list — never the caller's path or verb, which
         # is what a log line or a journal row must not be built from

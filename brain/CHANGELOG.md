@@ -2,6 +2,70 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.37
+
+### Fixed
+
+- The development loop's layout check misread blended colours (the kind Morph uses for its room labels) as near black, which reported good contrast as 1.52:1. It now reads each colour as the browser draws it (#820).
+- Morph's cards on Home Assistant dashboards use accent colours mixed toward the theme's own text colour, so they read clearly on light and dark themes (#820).
+- The 16px text floor now reaches a text box inside any card Morph hosts, so an iPhone does not zoom when you tap it (#821).
+- Morph's word buttons are at least 40px wide as well as tall, and brAIn writes the cards it builds with 40px buttons and gaps between them. A card brAIn built for you before this keeps its size until it is rewritten (#861).
+
+## 5.1.36
+
+### Added
+
+- In Morph's Edit, a switch card has an "In the title row" button that puts it in its section's title row as a button, and takes it out again, without asking brAIn (#833).
+
+### Fixed
+
+- Morph remembers what you kept: once you say No to removing, hiding or moving a card or section, or undo such a change, Morph does not propose it again, however it is worded. A card's keep lasts until you change that card. Morph never proposes removing or moving something only because it has not been used; a card whose device is gone or unavailable can still be proposed (#825, #851).
+- The development loop's pictures of Morph's Home tab show every card: rooms that would be folded are opened for the picture (#818).
+
+## 5.1.35
+
+### Fixed
+
+- An automation that waits on something outside (a sensor, a season, a calendar) is no longer reported as never having run because its moment has not come: one Wrong holds back the others that wait the same way, an automation that mentions a month or season needs a year of history first, and automations that guard against harm are never held (#864).
+- A condition that never let an automation through is now named, with how many days of history that covers, and nothing is said while the history is shorter than the condition's own cycle (a weekday or a season) (#865).
+- A machine that has stopped is no longer reported as waiting when the room is already as dry as it is set to be: brAIn reads the humidity it starts at and its set point first, and a Wrong on any part of the device counts for the whole device (#862).
+- A car's distance-to-service counter is no longer raised as a fault (#827).
+- A low battery you said is known or on your list stays quiet until it drops further, below 10% and below where you answered, instead of coming back the first time it is not reported. A battery you marked Done comes back as soon as it is low again (#849).
+- When you answer Wrong with "remove it from the automations" or "stop caring about it", brAIn asks whether to treat the device as no longer in use, listing the automations that use it; only Yes stops the overnight and Zigbee checks raising it, and nothing is changed in Home Assistant. Smoke, leak, gas and lock devices, and their batteries, are never offered (#828).
+
+## 5.1.34
+
+### Removed
+
+- Ask's ⤢ full-screen terminal button. Nothing folds brAIn's header away any more: not the button, not the keyboard opening, not tapping the message box (#838).
+
+### Fixed
+
+- On a phone in the Home Assistant app, brAIn's header stays put: it no longer flickers at the bottom of Home, one tap on a tab from the message box switches tabs, and the page is put back at the top once the keyboard closes (#834).
+- The header sits below the iPhone's status bar whether the Home Assistant app is in full screen or not, with no doubled gap: brAIn counts only the part of the status-bar strip that lies over its own page (#839, #838).
+- Morph's room rail on a Home Assistant dashboard no longer stops a swipe from scrolling the page, including a swipe that starts at the right edge, and no longer pulls the page back after it lands (#840).
+- Morph's entity card says a sensor's state the way Home Assistant does: Connected or Disconnected, Open or Closed, instead of On or Off (#857).
+- When brAIn ships something your own house.js already added to the header (the clock, a Settings button), the copy beside brAIn's own is hidden and ⚙ › Instructions says so once; anything less certain is only named there, never hidden (#835).
+- brAIn's screenshot tool can photograph its page the way a phone shows it: inside the sidebar, under the status bar, in full screen or not, after a scroll or with the message box focused, and it reports where the header sits (#836).
+
+## 5.1.33
+
+### Fixed
+
+- Findings no longer show signal strengths in dBm: a reading is said in words where it stands ("has a weak signal", "with a weak signal"), and no sentence or step is dropped for holding one. A test firmware build is said as a test build of its version, never as the release itself (#855).
+- A finding names brAIn's own parts as brAIn: the in-game brAIn companion is brAIn in the game, a brAIn chat or terminal session is a conversation with brAIn in Ask, and a quick run of brAIn is simply brAIn. Words that are not about brAIn (a dishwasher's quick run, an SSH terminal session) are left as they are (#832).
+- A finding's detail or a look no longer ends in "…", on a word such as "your" or "the", or in "and N more.": a long text is cut at the last whole sentence, and a list says how many others there are (#867).
+- A finding's detail stays on its headline: Wi-Fi, link-quality or signal-strength sentences appear in the detail only when the headline is about the connection, and never come out of the step. A low-battery finding says how fast the battery usually drains and roughly when it will run out (#829).
+- The "is this fixed now?" question after an update is said in household words, with no component or internal name, names the version installed to fix it, and gives one thing to check: the report's own test, or what you asked brAIn (#830).
+
+## 5.1.32
+
+### Fixed
+
+- Closing the app or locking the phone while brAIn is answering in Ask is no longer counted as brAIn crashing. The answer carries on and is there when you come back; the log says the viewer left (#850, #841).
+- An insight card is written only from a look at the house. A chat answer that read nothing, such as "no data needed", no longer appears as a card (#856).
+- A card whose only news is that nothing happened is no longer kept on its own; a kept card names one thing to do or says all is normal in one sentence, gives each number beside what is normal, and says thermostat terms such as auxiliary heat or defrost in plain words (#866).
+
 ## 5.1.31
 
 ### Fixed

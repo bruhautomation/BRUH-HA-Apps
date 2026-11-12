@@ -2421,18 +2421,28 @@ def bruh_addon_status(addon=""):
 
 
 def screenshot_panel(addon="brAIn", screen="", width=390, scheme="light",
-                     element="", press=""):
+                     element="", press="", shell=False, inset=None,
+                     fullscreen=True, after=""):
     """One screen of brAIn or another BRUH add-on, photographed now — so
     the chat can LOOK at what somebody is describing. Redacted, guarded
     against every write, and kept nowhere (the panel's
     `/api/devloop/screenshot`). With no ``screen`` it lists the screens.
     ``element`` (or ``screen#id``) is one card or section: scrolled into
     view, cropped to, and tapped or held open first with ``press``.
-    The measured layout problems ride beside the picture."""
-    answer = _panel_send("POST", "/api/devloop/screenshot", {
-        "addon": addon or "brAIn", "screen": screen or "", "width": width,
-        "scheme": scheme, "element": element or "", "press": press or ""},
-        timeout=180)
+    The measured layout problems ride beside the picture. ``shell`` frames
+    brAIn's page the way the sidebar does, under ``inset`` px of safe area,
+    with the app's ``fullscreen`` on or off; ``after`` scrolls or focuses
+    first, and where the header sits comes back as ``layout``."""
+    ask = {"addon": addon or "brAIn", "screen": screen or "", "width": width,
+           "scheme": scheme, "element": element or "", "press": press or ""}
+    if shell is True:
+        ask["shell"] = True
+        ask["fullscreen"] = fullscreen is not False
+        if inset is not None:
+            ask["inset"] = inset
+    if after:
+        ask["after"] = after
+    answer = _panel_send("POST", "/api/devloop/screenshot", ask, timeout=180)
     if not isinstance(answer, dict) or answer.get("error") or "png" not in answer:
         return answer
     raw = base64.b64decode(answer.pop("png"))
@@ -9714,7 +9724,13 @@ TOOLS = [
             "assistant's included, folded room or not), however far down the "
             "page, name its id from dashboard.yaml: screen \"morph-dashboard#<id>\" or "
             "element; the picture is cropped to it, and press open holds it "
-            "open first (tap presses it). Read-only."
+            "open first (tap presses it). To see brAIn as a phone's sidebar shows "
+            "it, set shell: the page framed by the sidebar shell, under a phone's "
+            "top safe area (inset px, 59 by default at a phone's width), with "
+            "fullscreen false for the Home Assistant app's normal mode; after "
+            "scroll or focus scrolls the page or focuses its first box first. "
+            "Where the header sits and anything left scrolled around the panel "
+            "come back as layout. Read-only."
         ),
         "inputSchema": {
             "type": "object",
@@ -9739,6 +9755,18 @@ TOOLS = [
                 "press": {"type": "string", "enum": ["tap", "open"],
                           "description": ("Press the element first: open holds it so it "
                                           "opens, tap presses it once")},
+                "shell": {"type": "boolean",
+                          "description": ("brAIn only: framed by the sidebar shell, the "
+                                          "way the sidebar shows it")},
+                "inset": {"type": "integer", "minimum": 0, "maximum": 80,
+                          "description": ("With shell: the phone's top safe area in px "
+                                          "(the status bar and island strip)")},
+                "fullscreen": {"type": "boolean",
+                               "description": ("With shell: the Home Assistant app in full "
+                                               "screen (default) or not (false)")},
+                "after": {"type": "string", "enum": ["scroll", "focus"],
+                          "description": ("brAIn only: scroll the page, or focus its "
+                                          "first box, before the picture")},
             },
         },
     },
