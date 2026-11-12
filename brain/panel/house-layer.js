@@ -52,6 +52,7 @@
   // is static, so whatever is in it afterwards that is not here was added.
   const shipped = new WeakSet(document.querySelectorAll('*'));
   let doubled = [];
+  let noted = [];
   if (js && js.state === 'ok' && !safe && !deviceOff) {
     const src = new URL(`house.js?v=${encodeURIComponent(js.v || '')}`, document.baseURI).href;
     let running = false;
@@ -100,7 +101,12 @@
     if (safe) return `${names || 'None'}. Off for this visit, because the address has nohouse=1.`;
     if (deviceOff) return `${names}. Off on this device.`;
     if (jsError) return `house.js stopped with an error: ${jsError}. The rest of the page is unaffected.`;
-    if (doubled.length) return `brAIn now ships ${both(doubled)}, which house.js also adds, so the house's copy is hidden. Take it out of house.js.`;
+    if (doubled.length || noted.length) {
+      const parts = [];
+      if (doubled.length) parts.push(`brAIn now ships ${both(doubled)}, which house.js also adds beside it, so the house's copy is hidden. Take it out of house.js.`);
+      if (noted.length) parts.push(`house.js also adds something named like brAIn's own ${both(noted)}; it is left as it is, in case it does something else.`);
+      return parts.join(' ');
+    }
     if (reverted && reverted.name) {
       const back = reverted.restored === 'previous' ? 'the last version that worked was put back' : 'it was taken away';
       return `${reverted.name} broke the page (${reverted.why || 'it failed the check'}), so ${back} automatically.`;
@@ -239,53 +245,85 @@
 
   // ---- a house copy of something brAIn now ships -----------------------
   //
-  // A control house.js added (anything in the header that was not there
-  // before it ran, or a button it put straight on the page) with the same
-  // name as one of brAIn's own that is showing — the same words, label or
-  // tooltip, or, for a clock, a time — is a second copy: it is hidden, and
-  // the Instructions row and one toast (once per house.js version) say what
-  // and where to take it out. brAIn's own copy is never touched.
-  const CLOCK = /\b\d{1,2}:\d{2}\b/;
-  const CONTROL = 'button, a[href], [role="button"], [role="tab"], input, select, time';
-  function nameOf(el) {
+  // Hidden only when it is surely a second copy: house.js added it to the
+  // header, it is the same kind of thing as one of brAIn's own in the header
+  // (a button or link with exactly the same name, or a clock: a <time> or
+  // text that is a time and nothing else — "Sunset 18:42" is not a clock),
+  // brAIn's is showing, and the two sit on the same row. Anything less sure
+  // (the same name elsewhere on the page, or on another row) is never
+  // hidden: the Instructions row names it once. brAIn's own copy is never
+  // touched, and an owner's own addition is never hidden on a guess.
+  const BARE_TIME = /^\d{1,2}:\d{2}(?::\d{2})?(?:\s?[ap]\.?m\.?)?$/i;
+  const PRESS = 'button, a[href], [role="button"], [role="tab"]';
+  function kindOf(el) {
     const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
-    if (el.localName === 'time' || (CLOCK.test(text) && text.length < 40)) return 'clock';
-    const n = el.getAttribute('aria-label') || el.dataset.tip || el.getAttribute('title') || text;
-    return String(n || '').trim().toLowerCase().slice(0, 60);
+    if (el.localName === 'time' || BARE_TIME.test(text)) return 'clock';
+    if (el.matches(PRESS)) return 'press';
+    return '';
+  }
+  function nameOf(el) {
+    if (kindOf(el) === 'clock') return 'clock';
+    const n = el.getAttribute('aria-label') || el.dataset.tip || el.getAttribute('title') || el.textContent;
+    return String(n || '').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 60);
   }
   function visible(el) {
     if (!el.isConnected || !el.getClientRects().length) return false;
     const cs = getComputedStyle(el);
     return cs.display !== 'none' && cs.visibility !== 'hidden' && parseFloat(cs.opacity || '1') >= 0.1;
   }
+  const sameRow = (a, b) => {
+    const x = a.getBoundingClientRect(); const y = b.getBoundingClientRect();
+    return Math.min(x.bottom, y.bottom) - Math.max(x.top, y.top) > Math.min(x.height, y.height) / 2;
+  };
   function findDoubles() {
     const bar = document.querySelector('header.topbar');
-    const ours = new Map();
-    document.querySelectorAll(CONTROL).forEach((el) => {
-      if (!shipped.has(el) || !visible(el)) return;
-      const n = nameOf(el);
-      if (n.length >= 2 && !ours.has(n)) ours.set(n, el);
+    // brAIn's own, showing, by kind and exact name: in the header, and on
+    // the whole page (only ever named, never a reason to hide).
+    const ours = (root) => {
+      const out = new Map();
+      (root ? root.querySelectorAll(PRESS + ', time') : []).forEach((el) => {
+        if (!shipped.has(el) || !visible(el)) return;
+        const k = kindOf(el); const n = nameOf(el);
+        if (k && n.length >= 2 && !out.has(k + ':' + n)) out.set(k + ':' + n, el);
+      });
+      return out;
+    };
+    const head = ours(bar);
+    const page = ours(document);
+    const fresh = (el) => !shipped.has(el) && !el.dataset.houseDouble && visible(el)
+      && !el.closest('#houseLayer, #toast, .tipbox, .modal, #chipPop');
+    const word = (own, n) => (n === 'clock' ? 'the clock'
+      : (own.getAttribute('aria-label') || own.dataset.tip || own.textContent || n).replace(/\s+/g, ' ').trim().slice(0, 40));
+    const hid = []; const named = [];
+    // In the header: hidden when it is the same thing beside brAIn's own.
+    [...(bar ? bar.querySelectorAll('*') : [])].filter(fresh).forEach((el) => {
+      const k = kindOf(el); if (!k) return;
+      const key = k + ':' + nameOf(el);
+      const own = head.get(key);
+      if (!own || own.contains(el) || el.contains(own)) return;
+      // A clock inside a house element that is itself a clock is hidden with it.
+      if (el.parentElement && el.parentElement.dataset.houseDouble) return;
+      if (sameRow(el, own)) {
+        el.dataset.houseDouble = '1';
+        el.style.setProperty('display', 'none', 'important');
+        hid.push(word(own, nameOf(el)));
+      } else {
+        named.push(word(own, nameOf(el)));
+      }
     });
-    // The house's own: anything new in the header, or a control new on
-    // the page's top level (a floating button house.js put on <body>).
-    const added = [
-      ...[...(bar ? bar.querySelectorAll('*') : [])].filter((el) => el.matches(CONTROL + ', div, span')),
-      ...[...document.body.children].filter((el) => el.matches(CONTROL)),
-    ].filter((el) => !shipped.has(el) && !el.closest('#houseLayer, #toast, .tipbox, .modal, #chipPop'));
-    const found = [];
-    for (const el of added) {
-      if (!visible(el) || el.dataset.houseDouble) continue;
-      const n = nameOf(el);
-      const own = ours.get(n);
-      if (!own || own === el || el.contains(own) || own.contains(el)) continue;
-      el.dataset.houseDouble = '1';
-      el.style.setProperty('display', 'none', 'important');
-      found.push(n === 'clock' ? 'the clock' : (own.getAttribute('aria-label') || own.dataset.tip || own.textContent || n).replace(/\s+/g, ' ').trim().slice(0, 40));
-    }
-    if (!found.length) return;
-    doubled = [...new Set([...doubled, ...found])];
-    console.warn('brAIn: house.js adds what brAIn now ships, so the house copy is hidden:', doubled.join(', '));
+    // Anywhere else on the page's top level: named, never hidden.
+    [...document.body.children].filter((el) => fresh(el) && kindOf(el)).forEach((el) => {
+      const own = page.get(kindOf(el) + ':' + nameOf(el));
+      if (own && own !== el) named.push(word(own, nameOf(el)));
+    });
+    const newNamed = named.filter((n) => !noted.includes(n) && !hid.includes(n));
+    if (!hid.length && !newNamed.length) return;
+    doubled = [...new Set([...doubled, ...hid])];
+    noted = [...new Set([...noted, ...newNamed])];
+    if (hid.length) console.warn('brAIn: house.js adds what brAIn now ships, so the house copy is hidden:', hid.join(', '));
+    if (newNamed.length) console.info('brAIn: house.js adds something named like brAIn\'s own, left as it is:', newNamed.join(', '));
     paint();
+    if (!hid.length) return;
     const key = `brain.house.doubled.${js && js.v}`;
     let said = false;
     try { said = localStorage.getItem(key) === doubled.join('|'); localStorage.setItem(key, doubled.join('|')); } catch (e) { /* say it this time */ }
