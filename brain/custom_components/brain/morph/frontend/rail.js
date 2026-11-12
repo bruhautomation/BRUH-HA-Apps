@@ -303,8 +303,15 @@ export class Rail {
       E.sc = null;
       const t = this.aim();
       if (t == null) { this.glide = null; return; }
-      // The page may have been moved under the glide (a layout, a scroll).
-      if (Math.abs(E.scrollY() - s.p) > 2) s.p = E.scrollY();
+      // The page was moved under the glide (a layout, a scroll). While the
+      // rail is held, follow it; after the finger has lifted it is the
+      // person scrolling, and the glide lets go rather than pull the page
+      // back to the room for the rest of its time (the page stuck or
+      // jumped after a landing).
+      if (Math.abs(E.scrollY() - s.p) > 2) {
+        if (this.mode !== 'open') { this.glide = null; return; }
+        s.p = E.scrollY();
+      }
       let dt = Math.min(DT_CAP, Math.max(0.001, (now - s.last) / 1000)); s.last = now;
       while (dt > 0) { const h = Math.min(SUB, dt); s.v += (-K * (s.p - t) - C * s.v) * h; s.p += s.v * h; dt -= h; }
       E.scrollTo(s.p);

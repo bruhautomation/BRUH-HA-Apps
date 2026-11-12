@@ -998,14 +998,32 @@ def shown_words(entry: dict) -> dict:
     touched, and a row whose words are its code's (a check, the safety
     lane, a person's correction) comes back with nothing changed."""
     entry = entry if isinstance(entry, dict) else {}
-    if not _model_written(entry.get("source")):
-        return {}
+    model = _model_written(entry.get("source"))
     out = {}
     for key in ("text", "claim", "detail", "fix"):
         said = entry.get(key)
         if isinstance(said, str) and said:
-            plain_said = _plainly(said, entry)
-            if plain_said != said and (plain_said or key != "text"):
+            if not model:
+                # A check's or a person's words are theirs; only a cut that
+                # was stored ending "…" or "and N more." is said whole
+                # (#867), and never the headline.
+                done = textclip.finished(said, step=key == "fix")
+                if key != "text" and done != said and (done or key != "fix"):
+                    out[key] = done
+                continue
+            # Signal diagnostics only under a headline about signal (#829),
+            # never taken from the step; one name for brAIn (#832).
+            if key == "detail":
+                said_now = house_words.on_topic(
+                    said, f"{entry.get('text') or ''} {entry.get('claim') or ''}")
+            else:
+                said_now = said
+            plain_said = textclip.finished(
+                _plainly(house_words.one_name(said_now), entry),
+                step=key == "fix")
+            # Never a headline or a step said as nothing.
+            if plain_said != said and (plain_said
+                                       or key not in ("text", "fix")):
                 out[key] = plain_said
     return out
 
@@ -1073,7 +1091,7 @@ def shown_look(record: dict, entry: dict) -> dict:
     said = house_words.one_name(said)   # one assistant, one name
     # No id, path, line number or code name — and never "an internal
     # name" — under "brAIn checked" (#774, #791): `shown_words`' pass.
-    said = _plainly(said, entry, files=False)
+    said = textclip.finished(_plainly(said, entry, files=False))
     if said == record["reason"]:
         return record
     return {**record, "reason": said}
