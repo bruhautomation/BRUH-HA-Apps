@@ -2817,8 +2817,6 @@ def add_many(objs: list[dict]) -> list[dict]:
                 ("claim", "detail", "fix", "todo_text")
                 if entry.get("source") in SUBJECT_FOLD_EXCLUDED
                 else ("text", "claim", "detail", "fix", "todo_text")))
-        if care and care.get("self_done"):
-            continue   # brAIn made its own files say it (#854): no card
         if entry is not None and care:
             # brAIn's own upkeep: its question, not the owner's chore.
             entry.update(care)

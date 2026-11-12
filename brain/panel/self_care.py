@@ -12,14 +12,14 @@ put in force the way ⚙ saves it); No leaves it. A line brAIn cannot find
 is not a question: the row stays a finding, its developer words scrubbed
 (`house_words.self_said`).
 
-A voice the household settles is the other half (#769, #854): once it is
-recorded, brAIn makes every line of its instruction overrides and its persona
-that names the replaced voice AS ITS VOICE SETTING ("Voice: Jarvis", "use
-the Jarvis voice") say the new one (`settle_voice`) and asks nothing. Any
-other line with that name in it ("my brother Jarvis has a loud voice") is
-words a person wrote: one question per file quotes it (`voice_questions`)
-and Yes makes the edit (`correct`). A model's row about such a conflict is
-read the same way (`as_question`).
+A voice the household settles is the other half (#769): the instruction
+overrides and the persona are words a person wrote, so a line in them that
+still names the voice it replaced is not rewritten unattended. In the step
+that stores the voice, brAIn files one question per file quoting the line
+(`voice_questions`), and Yes replaces the old name with the new one
+(`correct`); a model's row about the conflict is read as that question
+too (`as_question`). The growth note that settles a voice can come from a
+conversation, which is why it is a press and not a write.
 
 Rows of this source are written by code, so `findings_store` leaves their
 words alone (`PLAIN_EXEMPT`): the quoted line is the instruction's own.
@@ -153,62 +153,13 @@ def _voice_question(voice: str, conflicts) -> dict:
     }
 
 
-def _voice_setting(line: str, name: str) -> bool:
-    """Whether ``line`` names ``name`` as brAIn's own voice SETTING, the
-    only shape brAIn rewrites unattended (#854): "Voice: Jarvis", "speak
-    with the Jarvis voice", "your voice is Jarvis", "use the Jarvis voice
-    on the kitchen satellite". "My brother Jarvis has a loud voice" names a
-    person, and stays a question."""
-    n = r"(?:the\s+)?" + re.escape(name) + r"(?![\w])"
-    return any(re.search(p, line, re.I) for p in (
-        r"^\s*(?:[-*\u2022]\s*)?(?:(?:brAIn['\u2019]s|your|my|its|tts|"
-        r"spoken)\s+)?voice\s*[:=]\s*" + n,
-        r"\b(?:speaks?|speaking|talks?|answers?|repl(?:y|ies)|responds?|"
-        r"announces?)\s+(?:with|in|using)\s+" + n,
-        r"\b(?:your|my|its|brAIn['\u2019]s)\s+(?:spoken\s+)?voice\s+is\s+"
-        r"(?:now\s+|called\s+)?" + n,
-        r"(?<![\w])(?:the|a)\s+" + re.escape(name) + r"\s+voice\b",
-    ))
-
-
-def _split_conflicts(voice: str, old: str = "") -> tuple[list, list]:
-    """``(settings, others)``: the conflicting lines that are plainly
-    brAIn's voice setting (`_voice_setting` for every name the line
-    replaces), and the rest, which are asked about."""
-    settings, others = [], []
-    known = _replaced(str(voice or "").strip(), old) if voice else []
-    for found in voice_conflicts(voice, old):
-        names = _voices_named(found[1], known)
-        if names and all(_voice_setting(found[1], k) for k in names):
-            settings.append(found)
-        else:
-            others.append(found)
-    return settings, others
-
-
 def voice_questions(voice: str, old: str = "") -> list[dict]:
     """One question per file that still names a voice other than the one
-    just settled in a line that is NOT plainly a voice setting (those
-    `settle_voice` changes itself), each a one-press edit."""
+    just settled, each a one-press edit."""
     by_key: dict[str, list] = {}
-    for found in _split_conflicts(voice, old)[1]:
+    for found in voice_conflicts(voice, old):
         by_key.setdefault(found[0], []).append(found)
     return [_voice_question(voice, found) for found in by_key.values()]
-
-
-def settle_voice(voice: str, old: str = "") -> int:
-    """Make every line of brAIn's instructions and persona that names a
-    replaced voice AS ITS VOICE SETTING say ``voice``, and say nothing to
-    the household (#854): which voice brAIn speaks with is decided and
-    recorded, and its own setting following the decision is housekeeping.
-    Any other line naming that word (a person, a pet) is left alone and
-    asked about (`voice_questions`). How many lines were changed."""
-    done = 0
-    for key, line, new in _split_conflicts(voice, old)[0]:
-        if new != line and correct({"self_edit": {"edits": [
-                {"key": key, "line": line, "new": new}]}}):
-            done += 1
-    return done
 
 
 def as_question(obj: dict) -> dict | None:
@@ -223,14 +174,9 @@ def as_question(obj: dict) -> dict | None:
                          ("text", "claim", "detail", "fix"))
         voice = personality.identity().get("voice") or ""
         if voice and re.search(r"\bvoice\b", words, re.I):
-            settled = settle_voice(voice)
-            others = _split_conflicts(voice)[1]
-            if others:
-                # A line brAIn cannot tell is its voice setting: asked.
-                return _voice_question(voice, others)
-            if settled:
-                # The file now says the new voice: nothing is left to ask.
-                return {"self_done": True}
+            conflicts = voice_conflicts(voice)
+            if conflicts:
+                return _voice_question(voice, conflicts)
         return None
     key, line = found
     what = instructions.CATALOG[key][0]
@@ -279,4 +225,4 @@ def correct(row: dict) -> bool:
 
 
 __all__ = ["PERSONA_KEY", "SOURCE", "SOURCE_TITLE", "as_question", "correct",
-           "settle_voice", "stale_line", "voice_conflicts", "voice_questions"]
+           "stale_line", "voice_conflicts", "voice_questions"]

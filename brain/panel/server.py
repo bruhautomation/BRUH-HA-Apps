@@ -27685,23 +27685,21 @@ async def h_header_logo_delete(request: web.Request) -> web.Response:
 
 def _voice_settled(old: str) -> int:
     """In the step that stores a new voice, a line of brAIn's instruction
-    overrides or its persona that names the voice it replaced as its voice
-    setting is made to say the new one (`self_care.settle_voice`, #854);
-    any other line naming it is words a person wrote and becomes one yes/no
-    question per file whose Yes makes the edit (`voice_questions`, #769).
-    How many lines changed plus how many questions were filed."""
+    overrides or its persona that still names another voice becomes one
+    yes/no question per file, whose Yes makes the edit (`self_care.
+    voice_questions`, #769). Not an unattended write: those files are
+    words a person wrote. How many were filed."""
     voice = personality.identity().get("voice") or ""
     if not voice or voice.lower() == str(old or "").lower():
         return 0
-    done = 0
+    filed = 0
     try:
-        done = self_care.settle_voice(voice, old)
         for row in self_care.voice_questions(voice, old):
             if findings_store.add_case(row):
-                done += 1
+                filed += 1
     except Exception as exc:  # noqa: BLE001 — never the save it followed
-        log.warning("could not update brAIn's files for the new voice: %s", exc)
-    return done
+        log.warning("could not read brAIn's files for the old voice: %s", exc)
+    return filed
 
 
 async def h_personality_growth(request: web.Request) -> web.Response:
