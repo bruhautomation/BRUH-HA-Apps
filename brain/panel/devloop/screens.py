@@ -897,9 +897,24 @@ _AFTER_JS = r"""
   if (after === 'scroll') {
     for (let y = 0; y <= 600; y += 60) { w.scrollTo(0, y); await new Promise((r) => setTimeout(r, 40)); }
   } else if (after === 'focus') {
-    const box = [...d.querySelectorAll('textarea, input[type=text], input[type=search], input:not([type])')]
-      .find((n) => n.getClientRects().length && !n.disabled && w.getComputedStyle(n).visibility !== 'hidden');
-    if (box) box.focus();
+    // Where a person would type: Ask's message box (the conversation's, or
+    // the list page's on a phone), the classic terminal's own input inside
+    // its frame, else the first text field showing on the screen.
+    const FIELD = 'textarea, input[type=text], input[type=search], input:not([type])';
+    const shown = (n) => !!n && n.getClientRects().length > 0 && !n.disabled
+      && n.ownerDocument.defaultView.getComputedStyle(n).visibility !== 'hidden';
+    const term = d.getElementById('termFrame');
+    let td = null;
+    try { td = shown(term) ? term.contentDocument : null; } catch (e) { td = null; }
+    const picks = [d.getElementById('chatInput'), d.querySelector('.crnewchat textarea, .crnewchat input'),
+      td && td.querySelector('.xterm-helper-textarea'),
+      ...d.querySelectorAll(FIELD)];
+    for (const n of picks) {
+      if (!n || (n.ownerDocument === d && !shown(n))) continue;
+      if (n.ownerDocument !== d) term.focus();
+      n.focus();
+      if (n.ownerDocument.activeElement === n) break;
+    }
   }
   await new Promise((r) => setTimeout(r, 700));
   return true;
@@ -939,7 +954,18 @@ _LAYOUT_JS = r"""
     framed: !!f, safe_area_top: inset, panel_top: sh ? Math.round(sh.getBoundingClientRect().top) : 0,
     header: box(d.querySelector('.topbar')), first_row: first, tabs: box(d.querySelector('.viewtabs')),
     tabs_slid_away: d.documentElement.classList.contains('bar-hidden'),
-    focused: d.activeElement && d.activeElement !== d.body ? d.activeElement.tagName.toLowerCase() : '',
+    focused: (() => {
+      // Through any frame holding the focus (the classic terminal's), to
+      // the element typed into: "textarea", or "iframe > textarea".
+      const path = [];
+      let a = d.activeElement;
+      while (a && a !== a.ownerDocument.body) {
+        path.push(a.id ? a.tagName.toLowerCase() + '#' + a.id : a.tagName.toLowerCase());
+        if (a.localName !== 'iframe') break;
+        try { a = a.contentDocument && a.contentDocument.activeElement; } catch (e) { break; }
+      }
+      return path.join(' > ');
+    })(),
     outer_scroll: outer,
   };
 })()
@@ -1144,6 +1170,8 @@ async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
             res = await cdp.call("Runtime.evaluate", {
                 "expression": _LAYOUT_JS, "returnByValue": True}, session)
             placed = (res.get("result") or {}).get("value") or {}
+            if after == "focus" and not placed.get("focused"):
+                placed["note"] = "nothing on this screen takes typing, so nothing was focused"
         await _redact_page(cdp, session, confidential, aliases)
         if AFTER_REDACT is not None:
             await AFTER_REDACT(cdp, session)
