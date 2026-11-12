@@ -351,6 +351,7 @@ const NONE_OF = /\b(?:no|nothing|none|neither)\b/i;
 const VERB = /\b(?:is|are|was|were|isn['’]t|aren['’]t|has|have|had|remains?|stays?|left|close|shut|lock|unlock|opened|detects?|detected|found|needs?|should|must|will|can|running|playing|done)\b|['’]s\b/i;
 const CONTINUES = /^(?:it|they|this|that|which|who|so|then|should|must|needs?|is|are|was|were|has|have|had|now|still|please)\b/i;
 const DETERMINER = /^(?:the|a|an|your|my|our|every|all|nothing|no|each|both|it)\b/i;
+const POINTS_BACK = /^(?:please\s+)?(?:(?:close|shut|lock|secure|check)\s+(?:it|them|that|this)\b|(?:it|they|that)\s+(?:is|are|should|needs?)\b)/i;
 const SPLIT = /(\s*[,;]\s*(?:and|but|while|whereas|yet)?\s*|\s+(?:and|but|while|whereas|yet)\s+)/i;
 
 function claimEntities(states) {
@@ -362,6 +363,11 @@ function claimEntities(states) {
     const tokens = name.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w && !CLAIM_GENERIC.has(w));
     if (d === 'lock') {
       out.push({ kind: 'lock', classes: ['door'], tokens, safe: st.state === 'locked', bad: ['unlocked', 'unlocking', 'open', 'opening', 'jammed'].includes(st.state) });
+    } else if (d === 'binary_sensor' && !dc) {
+      // A contact sensor nobody gave a device class is still what a line
+      // means when the line NAMES it ("Binary sensor 200 is open"): it can
+      // confirm or clear that line, and is never part of "everything".
+      out.push({ kind: 'open', classes: ['door', 'window', 'garage', 'gate'], tokens, weak: true, safe: st.state === 'off', bad: st.state === 'on' });
     } else if (d === 'cover' || (d === 'binary_sensor' && ['door', 'garage_door', 'window', 'opening'].includes(dc))) {
       const text = `${dc} ${name}`; let classes = [];
       if (/garage/i.test(text)) classes = ['garage', 'door'];
@@ -416,9 +422,11 @@ function covered(c, g, ents) {
     const want = nouns.includes('garage') ? ['garage', ...nouns.filter((n) => n !== 'door')] : nouns;
     pool = pool.filter((e) => e.classes.some((k) => want.includes(k)));
   }
-  if (c.all) return pool;
   const w = new Set(g.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
   const named = pool.filter((e) => e.tokens.length && e.tokens.every((t) => w.has(t)));
+  // A sensor with no class counts only when the line names it.
+  pool = pool.filter((e) => !e.weak);
+  if (c.all) return pool;
   if (named.length) return named;
   const some = pool.filter((e) => e.tokens.some((t) => w.has(t)));
   if (some.length) return some;
@@ -461,10 +469,19 @@ export function checkDoorClaims(text, hass) {
   const ents = claimEntities(hass && hass.states);
   const sentences = String(text || '').trim().split(/(?<=[.!?])\s+/).filter(Boolean);
   const kept = [];
+  // What follows a dropped line and only points back at it ("Close it before
+  // bed.") has nothing left to point at, so it goes with it.
+  let cut = false;
   sentences.forEach((s) => {
     const m = s.match(/^([\s\S]*?)([.!?]*)$/); const body = m[1]; const end = m[2];
     const parts = clausesOf(body);
-    const keep = parts.filter((p) => claimsOf(p.text).every((c) => holds(c, p.text, ents)));
+    let gone = cut;
+    const keep = parts.filter((p) => {
+      const ok = claimsOf(p.text).every((c) => holds(c, p.text, ents)) && !(gone && POINTS_BACK.test(p.text.trim()));
+      gone = !ok;
+      return ok;
+    });
+    cut = !keep.length || keep.length < parts.length ? gone : false;
     if (keep.length === parts.length) { kept.push(s); return; }
     if (!keep.length) return;
     let out = keep.map((p, i) => (i ? p.sep : '') + p.text).join('').trim();

@@ -365,7 +365,8 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .camhead{display:flex;align-items:baseline;gap:8px;padding:0 6px 8px}
 .camhead b{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .campic{position:relative;height:104px;border-radius:12px;background:var(--sunk);overflow:hidden}
-.campic .cam{position:absolute;inset:0;width:100%;height:100%;aspect-ratio:auto;border-radius:0}
+.campic .cam{position:absolute;inset:0;width:100%;height:100%;aspect-ratio:auto;border-radius:0;background:transparent}
+/* The message behind the picture shows until the picture does: a stream that has not started is "Loading", not a black pane. */
 .campic .live{position:absolute;top:8px;left:8px;display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;letter-spacing:.1em;color:#fff;background:rgba(0,0,0,.5);padding:2px 8px;border-radius:6px}
 .campic .live i{width:5px;height:5px;border-radius:1px;background:#FF6B5B}
 .campic .live i.still{background:#9aa}
@@ -386,6 +387,8 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .bnote .wd.first{color:var(--text)}
 .bnote .fld{margin-top:6px}
 .notecard{border-radius:18px}
+/* A light group with every light off: names in a compact grid, not a column of identical Off rows. */
+.notecard.mini .strip{height:44px}.notecard.mini .nv span{display:none}
 .tell{display:flex;flex-direction:column;gap:10px;padding:12px 14px 10px;border-radius:16px;text-align:left;cursor:auto;background:linear-gradient(100deg,color-mix(in oklab,var(--violet) 13%,var(--surface)),color-mix(in oklab,var(--teal) 6%,var(--surface)) 75%);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--violet) 34%,transparent);width:100%;flex-basis:100%}
 .tellin,.fld,.code-ed{background:color-mix(in oklab,var(--bg) 55%,transparent);border:0;border-radius:12px;padding:10px 12px;width:100%;font:inherit;font-size:15px;line-height:1.45;color:var(--text);outline:none;box-shadow:inset 0 0 0 1px var(--line)}
 .tellin{resize:vertical;min-height:78px}

@@ -15,6 +15,8 @@
 // This house's own card code (/config/morph/cards/*.js) is loaded here too,
 // so a card Morph's panel could draw draws on a Home Assistant dashboard.
 
+import { floorFields } from './floor.js';
+
 export const PREFIX = 'morph-type-';
 const REG = new Map(); // slug -> type row
 const LIVE = new Map(); // slug -> Set of live copies
@@ -122,6 +124,10 @@ export class MorphTypeCard extends HTMLElement {
   get hass() { return this._hass; }
 
   connectedCallback() {
+    // A card brAIn built is held to the width it is given: a diagram's label,
+    // a long sum or a wide row cannot run out over its neighbours, and a
+    // word breaks only when it is longer than the card.
+    Object.assign(this.style, { display: 'block', minWidth: '0', maxWidth: '100%', overflow: 'hidden', overflowWrap: 'break-word' });
     if (!LIVE.has(this.slug)) LIVE.set(this.slug, new Set());
     LIVE.get(this.slug).add(this);
     if (!this._inner && !this._note) this.build();
@@ -186,6 +192,8 @@ export class MorphTypeCard extends HTMLElement {
     this._note = null;
     this._inner = el;
     this.replaceChildren(el);
+    // The 16px field floor, in the card's own shadow roots.
+    [0, 400, 1500].forEach((ms) => setTimeout(() => { if (this._inner === el) floorFields(el); }, ms));
     this.dispatchEvent(new Event('iron-resize', { bubbles: true, composed: true }));
   }
 }

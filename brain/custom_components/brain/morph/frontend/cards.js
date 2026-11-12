@@ -165,12 +165,21 @@ const lightGroup = {
   },
   more: (ctx) => {
     const members = lightGroup.members(ctx);
+    // With the room's and the group's name taken off, "Can 3" is "3": a bare
+    // number names nothing, so the word before it stays.
+    const label = (m) => {
+      const n = shortName(shortName(friendly(ctx.hass, m), ctx.sec.title), ctx.name);
+      return /^\d+$/.test(n) ? `${shortName(ctx.name, ctx.sec.title)} ${n}` : n;
+    };
+    // Every light off: eight identical "Off" rows say what the header already
+    // says, so they shrink to a grid of names (still one tap each).
+    const allOff = members.length > 2 && ctx.preview == null && !ctx.memberPreview && members.every((m) => { const ms = ctx.hass.states[m]; return ms && ms.state === 'off'; });
     const strips = members.map((m) => {
       const ms = ctx.hass.states[m]; const on = ms && ms.state === 'on'; const acc = on ? lightAccent(ms) : 'var(--amber)';
       const pv = ctx.memberPreview && ctx.memberPreview.id === m ? ctx.memberPreview.v : null;
-      return `<div class="notecard" data-member="${esc(m)}" style="position:relative;touch-action:pan-y">${stripFace({ kind: 'fill', icon: 'bulb', accent: acc, active: on || pv > 0, pct: pv != null ? pv : on ? pct(ms) : 0, name: shortName(shortName(friendly(ctx.hass, m), ctx.sec.title), ctx.name), val: !ms ? 'Missing' : pv != null ? pv + '%' : on ? pct(ms) + '%' : 'Off' })}</div>`;
+      return `<div class="notecard${allOff ? ' mini' : ''}" data-member="${esc(m)}" style="position:relative;touch-action:pan-y">${stripFace({ kind: 'fill', icon: 'bulb', accent: acc, active: on || pv > 0, pct: pv != null ? pv : on ? pct(ms) : 0, name: label(m), val: !ms ? 'Missing' : pv != null ? pv + '%' : on ? pct(ms) + '%' : 'Off' })}</div>`;
     }).join('');
-    return `${blockLabel('Each light')}<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px">${strips}</div>${lightMore(ctx, ctx.card.entity)}${histBlock(ctx)}`;
+    return `${blockLabel(allOff ? 'Each light, all off' : 'Each light')}<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(${allOff ? 120 : 150}px,1fr));gap:6px">${strips}</div>${lightMore(ctx, ctx.card.entity)}${histBlock(ctx)}`;
   },
   tap: light.tap,
   slide: (ctx) => ({ get: () => pct(ctx.st), call: (v) => (v <= 1 ? { domain: 'light', service: 'turn_off', data: { entity_id: ctx.card.entity } } : { domain: 'light', service: 'turn_on', data: { entity_id: ctx.card.entity, brightness_pct: v } }) }),
@@ -547,7 +556,7 @@ const camera = {
     // one streams, and only then says Live.
     const stream = ctx.open && a.access_token ? `/api/camera_proxy_stream/${encodeURIComponent(ctx.card.entity)}?token=${encodeURIComponent(a.access_token)}` : '';
     const pic = stream || src;
-    return `<div class="camtile" style="box-shadow:inset 0 0 0 1px ${st && st.state === 'recording' ? mix(ctx.accent, 30) : 'var(--line)'}"><div class="camhead"><b>${esc(ctx.name)}</b><span class="flex1"></span><span class="small">${esc(sub)}</span></div><div class="campic"><span class="camnone">${esc(!st || UNAVAILABLE.includes(st.state) ? 'Offline' : pic ? 'No picture yet' : 'No picture')}</span>${pic ? `<img class="cam" src="${esc(pic)}" alt="${esc(ctx.name)}" loading="lazy" onerror="this.style.visibility='hidden'">` : ''}${live ? `<span class="live"><i${stream ? '' : ' class="still"'}></i>${stream ? 'LIVE' : 'Still'}</span>` : ''}${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div></div>`;
+    return `<div class="camtile" style="box-shadow:inset 0 0 0 1px ${st && st.state === 'recording' ? mix(ctx.accent, 30) : 'var(--line)'}"><div class="camhead"><b>${esc(ctx.name)}</b><span class="flex1"></span><span class="small">${esc(sub)}</span></div><div class="campic"><span class="camnone">${esc(!st || UNAVAILABLE.includes(st.state) ? 'Offline' : pic ? (stream ? 'Loading the picture…' : 'No picture yet') : 'No picture')}</span>${pic ? `<img class="cam" src="${esc(pic)}" alt="${esc(ctx.name)}" loading="lazy" onerror="this.style.visibility='hidden';this.previousElementSibling.textContent='No picture'">` : ''}${live ? `<span class="live"><i${stream ? '' : ' class="still"'}></i>${stream ? 'LIVE' : 'Still'}</span>` : ''}${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div></div>`;
   },
   more: (ctx) => histBlock(ctx, 'Events'),
   tap: () => null,
