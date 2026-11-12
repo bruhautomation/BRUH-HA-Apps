@@ -130,6 +130,99 @@ def _similar(a: frozenset, b: frozenset) -> bool:
     return bool(a and b) and len(a & b) / len(a | b) >= SIMILAR
 
 
+# ----------------------------------------------------- what was kept
+
+# An answer to a proposal about one card or one section is remembered against
+# THAT card or section (`keeps` in the suggestions file), not only against the
+# proposal's words: the declined list stops the same sentence, and a model
+# asked again words the same removal differently. A card's keep holds while
+# the card's config is as it was when the person answered (a card they have
+# since edited is theirs to reconsider); a section's keep (its place, its
+# presence) is for good. A keep also stops a card being shown to the model as
+# dead or unused, so it is not even asked about.
+_CHANGE = re.compile(r"\b(remov\w*|delet\w*|drop\w*|hid(?:e|ing)|hidden|mov(?:e|ing)|reorder\w*|"
+                     r"re-?position\w*|re-?arrang\w*|swap\w*|demot\w*|collaps\w*|merg\w*|ungroup\w*)\b", re.I)
+
+
+def _card_sig(card: dict) -> str:
+    return _key(json.dumps({k: v for k, v in card.items() if k != "id"}, sort_keys=True, default=str))
+
+
+def _find(dash: dict, card_id: str = "", sec_id: str = ""):
+    for fl in dash.get("floors") or []:
+        for sec in fl.get("sections") or []:
+            if sec_id and sec.get("id") == sec_id:
+                return sec
+            for g in sec.get("groups") or []:
+                for c in g.get("cards") or []:
+                    if card_id and c.get("id") == card_id:
+                        return c
+    return None
+
+
+def _keep(data: dict, item: dict, dash: dict, why: str, now: float) -> None:
+    """Remember the answer against the card or section the item was about."""
+    # Only a No to taking something away or moving it is a keep: a No to
+    # "add a light card" says nothing about the section it was for.
+    if not _CHANGE.search(f"{item.get('title') or ''} {item.get('change') or ''}"):
+        return
+    keeps = data.setdefault("keeps", {})
+    cid, sid = str(item.get("card") or ""), str(item.get("section") or "")
+    card = _find(dash, card_id=cid) if cid else None
+    if card is not None:
+        keeps[f"card:{cid}"] = {"entity": card.get("entity") or "", "sig": _card_sig(card),
+                                "title": item.get("title"), "why": why, "at": now}
+    elif sid and not cid:
+        keeps[f"section:{sid}"] = {"title": item.get("title"), "why": why, "at": now}
+    if len(keeps) > 200:
+        for k in sorted(keeps, key=lambda k: keeps[k].get("at") or 0)[:len(keeps) - 200]:
+            del keeps[k]
+
+
+def kept_ids(data: dict, dash: dict) -> tuple[set, set]:
+    """(card ids, section ids) whose keep still holds."""
+    cards, secs = set(), set()
+    for k, v in (data.get("keeps") or {}).items():
+        kind, _, ident = k.partition(":")
+        if kind == "section":
+            secs.add(ident)
+        elif kind == "card":
+            card = _find(dash, card_id=ident)
+            if card is not None and v.get("sig") == _card_sig(card):
+                cards.add(ident)
+    return cards, secs
+
+
+def record_reverted(data: dict, dash: dict, now: float | None = None) -> bool:
+    """A suggestion that was done and then undone is an answer too: the
+    person put the card or order back. Returns whether anything was added."""
+    import gitrepo
+    now = now or time.time()
+    changed = False
+    for it in data["items"]:
+        if it.get("status") != "done" or not it.get("commit") or it.get("kept_noted"):
+            continue
+        if not (it.get("card") or it.get("section")) or not gitrepo.is_reverted(it["commit"]):
+            continue
+        _keep(data, it, dash, "undone", now)
+        it["kept_noted"] = True
+        changed = True
+    return changed
+
+
+def rests_on_disuse(row: dict, d: dict) -> bool:
+    """A proposal to remove, hide or move something whose only ground is
+    that nobody pressed it. A card that is unavailable is another matter."""
+    if not _CHANGE.search(f"{row.get('title') or ''} {row.get('change') or ''}"):
+        return False
+    card = str(row.get("card") or "")
+    if card:
+        return card in set(d.get("never_used") or []) and card not in set(d.get("dead") or [])
+    sec = next((s for s in d.get("sections") or [] if s.get("section") == row.get("section")), None)
+    broken = any(c.get("unavailable") for c in d.get("cards") or [] if c.get("section") == row.get("section"))
+    return bool(sec) and not sec.get("uses") and not broken
+
+
 # ------------------------------------------------------------------ the log
 
 USAGE_KINDS = ("open", "toggle", "slide", "scene", "history", "tell", "undo", "ask", "edit")
@@ -288,6 +381,7 @@ def add_suggestions(rows: list[dict], dash: dict) -> int:
     cards = {c["id"]: c.get("entity") or "" for f in dash.get("floors") or []
              for s in f.get("sections") or []
              for g in s.get("groups") or [] for c in g.get("cards") or []}
+    kept_cards, kept_secs = kept_ids(data, dash)
     open_now = sum(1 for it in data["items"] if it.get("status") == "open")
     seen_words = [_words(it["title"]) for it in live] + \
         [_words(v.get("title")) for v in data["declined"].values()]
@@ -302,6 +396,9 @@ def add_suggestions(rows: list[dict], dash: dict) -> int:
             continue
         key = _key(title)
         if key in known:
+            continue
+        if (row.get("card") in kept_cards or (row.get("section") in kept_secs and not row.get("card"))) \
+                and _CHANGE.search(f"{title} {change}"):
             continue
         words = _words(title)
         if any(_similar(words, w) for w in seen_words):
@@ -455,6 +552,7 @@ def decide(sid: str, verb: str, note: str = "") -> dict:
         item["note"] = note
         item["decided"] = time.time()
         data["declined"][item["key"]] = {"title": item["title"], "note": note, "at": time.time()}
+        _keep(data, item, store.read()[0], "declined", time.time())
         # The reason is not written down as a lesson here. "We watch it at
         # night" under "Hide the camera" is evidence, not a rule; it reaches
         # the next pass in the digest (the outcome below carries it), and
@@ -608,6 +706,7 @@ def sync_brain(start_tell=None) -> dict:
         elif how == "declined":
             it.update(status="declined", note=note, decided=now, withdrawn=now)
             data["declined"][it["key"]] = {"title": it["title"], "note": note, "at": now}
+            _keep(data, it, store.read()[0], "declined", now)
             record_outcome({"kind": "suggestion", "id": key, "verb": "no", "title": it["title"], "note": note, "at": now})
         else:
             # Dismissed, snoozed or put on To Do: not now, and filed again
@@ -829,7 +928,8 @@ def digest(dash: dict, now: float | None = None, states: dict | None = None) -> 
                     cards.append({"id": c["id"], "section": sec["id"], "type": c["type"],
                                   "entity": ent,
                                   "uses": by_card.get(c["id"], 0) + (by_entity.get(ent, 0) if ent else 0),
-                                  "unavailable": bool(st and st.get("state") in ("unavailable", "unknown"))})
+                                  "unavailable": bool(st and st.get("state") in ("unavailable", "unknown"))
+                                                  or bool(ent and states and st is None)})
     out = outcomes(now - WINDOW_S)
     tells = [o for o in out if o.get("kind") == "tell"]
     undone = {o.get("id") for o in out if o.get("kind") == "undo"}
@@ -942,7 +1042,7 @@ def fit(items: list, limit: int, noun: str, newest: bool = False) -> str:
 
 
 def build_prompt(d: dict, dash_text: str, lessons, declined: dict,
-                 items: list[dict] | None = None) -> str:
+                 items: list[dict] | None = None, keeps: dict | None = None) -> str:
     import json
     # The dashboard below already lists every card; repeating the ones nobody
     # touched (and that are not broken) is tokens spent saying nothing.
@@ -964,8 +1064,9 @@ def build_prompt(d: dict, dash_text: str, lessons, declined: dict,
         "Usage over the last 30 days (counts only):",
         json.dumps({k: d[k] for k in ("days_with_use", "events", "by_kind")}),
         *([(d.get("log") or {}).get("sentence")] if (d.get("log") or {}).get("sentence") else []),
-        *(["Do not suggest moving, hiding or removing anything because of how little it was used."]
-          if (d.get("log") or {}).get("state") in ("never", "unreadable") else []),
+        "Never suggest moving, hiding or removing a card or section only because nobody pressed it:",
+        "a control can be wanted and rarely used (a lights group, a switch). Unavailable alone is",
+        "not a reason to remove a card either, unless it has been unavailable for weeks.",
         "",
         "Sections in dashboard order, with how often each was used and when:",
         fit(d["sections"], 6000, "sections"),
@@ -988,6 +1089,10 @@ def build_prompt(d: dict, dash_text: str, lessons, declined: dict,
         "",
         "Never suggest these again — they were declined:",
         json.dumps([v.get("title") for v in declined.values()][-60:], ensure_ascii=False),
+        "",
+        "The household chose to keep these exactly as they are (a card, or a section's place and",
+        "presence). Do not propose removing, hiding, moving or reordering them, reworded or not:",
+        json.dumps(sorted({v.get("title") or k for k, v in (keeps or {}).items()})[-60:], ensure_ascii=False),
         "",
         "Already waiting for an answer, or snoozed (do not suggest them again, reworded or not):",
         json.dumps(pending[-30:], ensure_ascii=False),
@@ -1051,13 +1156,20 @@ async def run_pass(states: dict | None = None, *, pressed: bool = False) -> dict
         return {"skipped": "brain"}
     dash, _, text = store.read()
     d = digest(dash, states=states)
+    data = _load()
+    if record_reverted(data, dash):
+        _save(data)
+    kept_cards, kept_secs = kept_ids(data, dash)
+    # What the household chose to keep is not shown as dead or unused.
+    for k in ("dead", "never_used"):
+        d[k] = [c for c in d[k] if c not in kept_cards]
+    d["cards"] = [c for c in d["cards"] if c["id"] not in kept_cards]
     fp = fingerprint(d)
     st = state()
     if not pressed and fp == st.get("fingerprint"):
         _set_state(last_pass=time.time(), last_note="Nothing new to learn from since the last pass.")
         return {"skipped": "unchanged"}
-    data = _load()
-    prompt = build_prompt(d, text, read_lesson_rows(), data["declined"], data["items"])
+    prompt = build_prompt(d, text, read_lesson_rows(), data["declined"], data["items"], data.get("keeps"))
     tid = brain.new_id("morph-learn")
     # The fingerprint is recorded only by a pass that answered: one written
     # here would let a pass that failed (brAIn stopped, signed out, slow)
@@ -1097,7 +1209,7 @@ async def run_pass(states: dict | None = None, *, pressed: bool = False) -> dict
                                    rtext[:800])
             return {"error": err or "unreadable"}
         rows = [r for r in (obj.get("suggestions") or []) if isinstance(r, dict)]
-        rows = [{**r, "kind": "dashboard"} for r in rows]
+        rows = [{**r, "kind": "dashboard"} for r in rows if not rests_on_disuse(r, d)]
         added = add_suggestions(rows + code_suggestions(obj.get("code_reports")), dash)
         # Morph's own code problems go with the pass (plan 3.5).
         send_code_reports()

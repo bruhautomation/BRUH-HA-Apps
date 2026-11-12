@@ -351,18 +351,6 @@ const NONE_OF = /\b(?:no|nothing|none|neither)\b/i;
 const VERB = /\b(?:is|are|was|were|isn['’]t|aren['’]t|has|have|had|remains?|stays?|left|close|shut|lock|unlock|opened|detects?|detected|found|needs?|should|must|will|can|running|playing|done)\b|['’]s\b/i;
 const CONTINUES = /^(?:it|they|this|that|which|who|so|then|should|must|needs?|is|are|was|were|has|have|had|now|still|please)\b/i;
 const DETERMINER = /^(?:the|a|an|your|my|our|every|all|nothing|no|each|both|it)\b/i;
-// An instruction that names nothing and only points back ("Close it.", "Lock
-// them before bed."): the whole clause, so "check that the front door is
-// locked" and "close that window" name their own object and are not one.
-const POINTS_BACK = /^(?:please\s+)?(?:close|shut|lock|secure|check)\s+(?:it|them|that|this|those|these|both|all|them\s+(?:all|both)|both\s+of\s+them|all\s+of\s+them)(?:\s+(?:up|too|again|now|tonight|please|first|before\s+(?:bed|you\s+(?:go|leave))|when\s+you\s+can))*$/i;
-// A clause whose subject is "it" or "they" is about what the line before
-// named.
-// "Close them": more than one thing, so it stands while any warning before stands.
-const MANY = /\b(?:them|those|these|both|all)\b/i;
-const PRONOUN_LED = /^(?:it|its|it['’]s|they|they['’]re|their)\b/i;
-// "closed and locked": a second state after the first, with no verb of its own.
-const STATE_WORD = /^(?:not\s+)?(?:unlocked|locked|open|ajar|closed|shut|secured?)\b/i;
-const CHAIN = /^\s*(?:,\s*(?:and\s+|or\s+)?|\s+(?:and|or)\s+)(not\s+)?(unlocked|locked|open|ajar|closed|shut|secured?)\b/i;
 const SPLIT = /(\s*[,;]\s*(?:and|but|while|whereas|yet)?\s*|\s+(?:and|but|while|whereas|yet)\s+)/i;
 
 function claimEntities(states) {
@@ -374,11 +362,6 @@ function claimEntities(states) {
     const tokens = name.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w && !CLAIM_GENERIC.has(w));
     if (d === 'lock') {
       out.push({ kind: 'lock', classes: ['door'], tokens, safe: st.state === 'locked', bad: ['unlocked', 'unlocking', 'open', 'opening', 'jammed'].includes(st.state) });
-    } else if (d === 'binary_sensor' && !dc) {
-      // A contact sensor nobody gave a device class is still what a line
-      // means when the line NAMES it ("Binary sensor 200 is open"): it can
-      // confirm or clear that line, and is never part of "everything".
-      out.push({ kind: 'open', classes: ['door', 'window', 'garage', 'gate'], tokens, weak: true, safe: st.state === 'off', bad: st.state === 'on' });
     } else if (d === 'cover' || (d === 'binary_sensor' && ['door', 'garage_door', 'window', 'opening'].includes(dc))) {
       const text = `${dc} ${name}`; let classes = [];
       if (/garage/i.test(text)) classes = ['garage', 'door'];
@@ -411,9 +394,6 @@ function claimsOf(g) {
     const verb = m[0].toLowerCase();
     const neg = !!(m[1] || m[3]) || /n['’]t\b/.test(verb);
     add(m[2] || m[4], neg, m.index);
-    // "are closed and locked" asserts both.
-    let from = ASSERT.lastIndex; let k;
-    while ((k = g.slice(from).match(CHAIN))) { add(k[2], !!k[1], from + k[0].length - k[2].length); from += k[0].length; }
   }
   IMPERATIVE.lastIndex = 0;
   while ((m = IMPERATIVE.exec(g))) out.push({ kind: m[1].toLowerCase() === 'lock' ? 'lock' : 'open', unsafe: true, at: m.index });
@@ -428,33 +408,26 @@ function claimsOf(g) {
   return PAST.test(g) ? out.slice(-1) : out;
 }
 
-// What a claim could be about, among the house's entities. `strict` is for a
-// clause read with the line before it ("It has been open an hour."): it
-// counts only what that text names, never everything of the kind.
-function covered(c, g, ents, strict) {
+// What a claim could be about, among the house's entities.
+function covered(c, g, ents) {
   const nouns = CLAIM_NOUNS.filter(([, re]) => re.test(g)).map(([n]) => n);
   let pool = ents.filter((e) => e.kind === c.kind);
   if (c.kind === 'open' && nouns.length) {
     const want = nouns.includes('garage') ? ['garage', ...nouns.filter((n) => n !== 'door')] : nouns;
     pool = pool.filter((e) => e.classes.some((k) => want.includes(k)));
   }
+  if (c.all) return pool;
   const w = new Set(g.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
   const named = pool.filter((e) => e.tokens.length && e.tokens.every((t) => w.has(t)));
-  // A sensor with no class counts only when the line names it.
-  pool = pool.filter((e) => !e.weak);
-  if (c.all) return pool;
   if (named.length) return named;
   const some = pool.filter((e) => e.tokens.some((t) => w.has(t)));
   if (some.length) return some;
-  if (strict) return [];
   const about = c.kind === 'lock' ? /\b(?:doors?|locks?|deadbolts?)\b/i.test(g) : nouns.length > 0;
   return about ? pool : [];
 }
 
-function holds(c, g, ents, before) {
-  // A clause about "it" is first read with the line it points back to; when
-  // that names something, that is what it is about.
-  const of = (before && covered(c, `${before} ${g}`, ents, true).length) ? covered(c, `${before} ${g}`, ents, true) : covered(c, g, ents);
+function holds(c, g, ents) {
+  const of = covered(c, g, ents);
   if (!of.length) return true;
   return c.unsafe ? !of.every((e) => e.safe) : !of.some((e) => e.bad);
 }
@@ -470,98 +443,35 @@ function clausesOf(body) {
   const back = [];
   parts.forEach((p) => {
     const prev = back[back.length - 1];
-    const g = p.text.trim();
-    // "but it is unlocked" makes its own claim and is judged on its own,
-    // read with the clause before it, so a false "closed" beside it cannot
-    // take a true "unlocked" with it.
-    const own = PRONOUN_LED.test(g) && claimsOf(g).length;
-    // "Close it, then lock the front door": the second step names its own
-    // object, so it is not tied to the "it" before it.
-    const step = prev && POINTS_BACK.test(prev.text.trim()) && /^then\b/i.test(g);
-    if (prev && CONTINUES.test(g) && !own && !step) prev.text += p.sep + p.text;
+    if (prev && CONTINUES.test(p.text.trim())) prev.text += p.sep + p.text;
     else back.push({ ...p });
   });
   const out = [];
   for (let i = 0; i < back.length; i++) {
     const p = back[i]; const next = back[i + 1];
-    if (next && !VERB.test(p.text) && !POINTS_BACK.test(p.text.trim()) && (p.text.trim().split(/\s+/).length <= 3 || !DETERMINER.test(next.text.trim()))) {
+    if (next && !VERB.test(p.text) && (p.text.trim().split(/\s+/).length <= 3 || !DETERMINER.test(next.text.trim()))) {
       next.text = p.text + next.sep + next.text; next.sep = p.sep; continue;
     }
-    // "Close it and the garage": what follows has no verb and is part of the
-    // same instruction, so the instruction stays whole.
-    const last = out[out.length - 1];
-    if (last && POINTS_BACK.test(last.text.trim()) && !VERB.test(p.text) && !STATE_WORD.test(p.text.trim())) { last.text += p.sep + p.text; continue; }
     out.push(p);
   }
   return out;
 }
 
 export function checkDoorClaims(text, hass) {
-  return checkDoorLines([text], hass)[0];
-}
-
-// Several lines read in order as one text (a case's claim, its detail and
-// what it asks), so "Lock it?" in the last is read after the first; each
-// comes back checked, '' when nothing of it holds.
-//
-// An instruction that only points back ("Close it before bed.") goes when
-// the nearest warning before it went: the door it meant is shut now. A
-// reassurance is never what such an instruction means ("the garage is
-// closed. Close it." means the open thing before), so it does not count as
-// the warning before; a warning that stays does. Anything that names its own
-// object is judged on its own.
-export function checkDoorLines(texts, hass) {
   const ents = claimEntities(hass && hass.states);
-  const warnings = []; // every warning so far, in order: true while it holds
-  let before = '';    // the nearest line before that made a claim
-  return texts.map((text) => {
-    const sentences = String(text || '').trim().split(/(?<=[.!?])\s+/).filter(Boolean);
-    const kept = [];
-    sentences.forEach((s) => {
-      const m = s.match(/^([\s\S]*?)([.!?]*)$/); const body = m[1]; const end = m[2];
-      const parts = clausesOf(body);
-      let prevOk = true;
-      const keep = parts.filter((p, i) => {
-        const ok = judge(p, i);
-        prevOk = ok;
-        return ok;
-      });
-      function judge(p, i) {
-        let g = p.text.trim();
-        if (POINTS_BACK.test(g)) {
-          // "it" is the nearest warning; "them" is any warning so far.
-          if (!warnings.length) return true;
-          return MANY.test(g) ? warnings.some(Boolean) : warnings[warnings.length - 1];
-        }
-        // "and unlocked" after "the doors are open" is its own claim, read
-        // with the clause it finishes, and goes alone.
-        let claims; let head = '';
-        if (i && STATE_WORD.test(g) && !VERB.test(g)) {
-          head = parts[i - 1].text + p.sep;
-          g = head + p.text;
-          claims = claimsOf(g).filter((c) => c.at >= head.length);
-        } else claims = claimsOf(g);
-        if (!claims.length) return true;
-        const ok = claims.every((c) => holds(c, g, ents, PRONOUN_LED.test(g) ? before : ''));
-        if (claims.some((c) => c.unsafe)) warnings.push(ok);
-        before = g;
-        // "open and unlocked" whose "open" went says "The back door is
-        // unlocked", not "Unlocked".
-        if (ok && head && !prevOk) {
-          const said = parts[i - 1].text.replace(/(?:\bnot\s+)?\b(?:unlocked|locked|open|ajar|closed|shut|secured?)\b(?![\s\S]*\b(?:unlocked|locked|open|ajar|closed|shut|secured?)\b)/i, p.text.trim());
-          if (said !== parts[i - 1].text) { p.text = said; p.sep = ''; }
-        }
-        return ok;
-      }
-      if (keep.length === parts.length) { kept.push(s); return; }
-      if (!keep.length) return;
-      let out = keep.map((p, k) => (k ? p.sep : '') + p.text).join('').trim();
-      if (keep[0] !== parts[0]) out = out.replace(/^then\s+/i, '');
-      out = out.charAt(0).toUpperCase() + out.slice(1);
-      kept.push(out + (end || '.'));
-    });
-    return kept.join(' ');
+  const sentences = String(text || '').trim().split(/(?<=[.!?])\s+/).filter(Boolean);
+  const kept = [];
+  sentences.forEach((s) => {
+    const m = s.match(/^([\s\S]*?)([.!?]*)$/); const body = m[1]; const end = m[2];
+    const parts = clausesOf(body);
+    const keep = parts.filter((p) => claimsOf(p.text).every((c) => holds(c, p.text, ents)));
+    if (keep.length === parts.length) { kept.push(s); return; }
+    if (!keep.length) return;
+    let out = keep.map((p, i) => (i ? p.sep : '') + p.text).join('').trim();
+    out = out.charAt(0).toUpperCase() + out.slice(1);
+    kept.push(out + (end || '.'));
   });
+  return kept.join(' ');
 }
 
 // The locks that are unlocked now, as clauses, for a line that would

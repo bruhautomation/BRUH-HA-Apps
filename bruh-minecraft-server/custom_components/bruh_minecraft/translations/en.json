@@ -731,6 +731,48 @@
         }
       }
     },
+    "render_maps": {
+      "name": "Give finished maps",
+      "description": "Draws the maps of an area, or of the family's builds, from the saved world exactly as an explored map shows them, and puts them in a player's inventory, named so they hang edge to edge in item frames. The player does not move. Answers with the maps given and how to hang them; a refusal is an error.",
+      "fields": {
+        "player": {
+          "name": "Player",
+          "description": "Who gets the maps (online)."
+        },
+        "scale": {
+          "name": "Scale",
+          "description": "The map level, 0 (one block a pixel, 128 blocks a map) to 4 (2048 blocks a map)."
+        },
+        "builds": {
+          "name": "The builds",
+          "description": "Maps of every named build (labels, named places and the build log); every build the atlas has found when none is named."
+        },
+        "x1": {
+          "name": "West edge (x1)",
+          "description": "West edge (x1)."
+        },
+        "z1": {
+          "name": "North edge (z1)",
+          "description": "North edge (z1)."
+        },
+        "x2": {
+          "name": "East edge (x2)",
+          "description": "East edge (x2)."
+        },
+        "z2": {
+          "name": "South edge (z2)",
+          "description": "South edge (z2)."
+        },
+        "dimension": {
+          "name": "Dimension",
+          "description": "minecraft:overworld, minecraft:the_nether or minecraft:the_end; the player's own when left out."
+        },
+        "name": {
+          "name": "Name",
+          "description": "What an area's maps are called, at most 24 characters (the builds' maps carry the build's name)."
+        }
+      }
+    },
     "give_spyglass": {
       "name": "Give a named spyglass",
       "description": "One spyglass with this name, unless the player already has a spyglass by that name. Looking through any spyglass points at what is in the middle of it (the bruh_minecraft_point event).",

@@ -537,7 +537,28 @@ _AUDIT_JS = r"""
         add("controls_overlap", controls[i], `overlaps ${desc(controls[j])} “${label(controls[j])}”`);
     }
   }
-  const rgb = (c) => { const m = c.match(/[\d.]+/g); return m ? m.map(Number) : null; };
+  // Any CSS colour as [r, g, b, alpha 0–1], painted on a 1px canvas. A
+  // computed colour is not always rgb(): Chromium answers a color-mix() as
+  // oklab(0.85 0.02 0.09), and reading those numbers as 0–255 took every
+  // mixed label to near black (1.52:1 on Morph's medium background).
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = 1;
+  const cx = cv.getContext("2d", { willReadFrequently: true });
+  const rgb = (c) => {
+    if (!c) return null;
+    if (cx) {
+      try {
+        cx.clearRect(0, 0, 1, 1);
+        cx.fillStyle = "rgba(0, 0, 0, 0)";
+        cx.fillStyle = c;
+        cx.fillRect(0, 0, 1, 1);
+        const d = cx.getImageData(0, 0, 1, 1).data;
+        return [d[0], d[1], d[2], d[3] / 255];
+      } catch (e) { /* the plain reading below */ }
+    }
+    const m = /^rgba?\(/.test(c) && c.match(/[\d.]+/g);
+    return m ? m.map(Number) : null;
+  };
   const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
     return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
   const bgOf = (el) => {
@@ -863,6 +884,156 @@ def own_target(url: str = PANEL_URL, screens=None) -> dict:
                 for slug, label, script in (screens or SCREENS)]}
 
 
+# brAIn's page as the phone's sidebar shows it: framed by the shell
+# (`harness.shell_page`), under a phone's top safe area, in the Home
+# Assistant app's full screen or not, and after a scroll or a focus — the
+# header and scroll faults a picture of the page alone could never show.
+SHELL_INSET_MAX = 80
+SHELL_AFTER = ("", "scroll", "focus")
+# The screen's script, run in the shell's frame once brAIn's page is there.
+_SHELL_RUN_JS = r"""
+(async (script) => {
+  const until = Date.now() + 15000;
+  let w = null;
+  while (Date.now() < until) {
+    const sh = document.querySelector('brain-shell');
+    const f = sh && sh.shadowRoot && sh.shadowRoot.querySelector('iframe');
+    w = f && f.getAttribute('src') ? f.contentWindow : null;
+    if (w && typeof w.switchView === 'function' && w.document.readyState === 'complete') break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  if (!w || typeof w.switchView !== 'function') throw new Error("brAIn's page did not open in the shell");
+  await new Promise((r) => setTimeout(r, 400));
+  if (script) await w.eval(script);
+  return true;
+})
+"""
+# A scroll of the page, or the first box on it focused, as a person would.
+_AFTER_JS = r"""
+(async (after) => {
+  const sh = document.querySelector('brain-shell');
+  const f = sh && sh.shadowRoot && sh.shadowRoot.querySelector('iframe');
+  const w = (f && f.contentWindow) || window;
+  const d = w.document;
+  if (after === 'scroll') {
+    for (let y = 0; y <= 600; y += 60) { w.scrollTo(0, y); await new Promise((r) => setTimeout(r, 40)); }
+  } else if (after === 'focus') {
+    // Where a person would type: Ask's message box (the conversation's, or
+    // the list page's on a phone), the classic terminal's own input inside
+    // its frame, else the first text field showing on the screen.
+    const FIELD = 'textarea, input[type=text], input[type=search], input:not([type])';
+    const shown = (n) => !!n && n.getClientRects().length > 0 && !n.disabled
+      && n.ownerDocument.defaultView.getComputedStyle(n).visibility !== 'hidden';
+    const term = d.getElementById('termFrame');
+    let td = null;
+    try { td = shown(term) ? term.contentDocument : null; } catch (e) { td = null; }
+    const picks = [d.getElementById('chatInput'), d.querySelector('.crnewchat textarea, .crnewchat input'),
+      td && td.querySelector('.xterm-helper-textarea'),
+      ...d.querySelectorAll(FIELD)];
+    for (const n of picks) {
+      if (!n || (n.ownerDocument === d && !shown(n))) continue;
+      if (n.ownerDocument !== d) term.focus();
+      n.focus();
+      if (n.ownerDocument.activeElement === n) break;
+    }
+  }
+  await new Promise((r) => setTimeout(r, 700));
+  return true;
+})
+"""
+# Where the header is on the screen, and whether anything outside the page
+# was left scrolled: what a picture shows, said in numbers.
+_LAYOUT_JS = r"""
+(() => {
+  const sh = document.querySelector('brain-shell');
+  const f = sh && sh.shadowRoot && sh.shadowRoot.querySelector('iframe');
+  const w = (f && f.contentWindow) || window;
+  const d = w.document;
+  const off = f ? f.getBoundingClientRect().top : 0;
+  const box = (n) => {
+    if (!n || !n.getClientRects().length) return null;
+    const cs = w.getComputedStyle(n);
+    if (cs.display === 'none' || cs.visibility === 'hidden') return null;
+    const r = n.getBoundingClientRect();
+    return { top: Math.round(r.top + off), bottom: Math.round(r.bottom + off) };
+  };
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:env(safe-area-inset-top,0px);visibility:hidden';
+  document.body.appendChild(probe);
+  const inset = Math.round(probe.getBoundingClientRect().height);
+  probe.remove();
+  const row = [d.querySelector('.topbar .brandlink'), d.querySelector('#settingsBtn')].map(box).filter(Boolean);
+  const outer = [];
+  const se = document.scrollingElement;
+  if (se && se.scrollTop) outer.push('the page, ' + Math.round(se.scrollTop) + 'px');
+  const ha = document.getElementById('haouter');
+  if (ha && ha.scrollTop) outer.push("Home Assistant's scroller, " + Math.round(ha.scrollTop) + 'px');
+  const vv = window.visualViewport;
+  if (vv && vv.offsetTop > 0.5) outer.push('the visual viewport, ' + Math.round(vv.offsetTop) + 'px');
+  const first = row.length ? { top: Math.min(...row.map((r) => r.top)), bottom: Math.max(...row.map((r) => r.bottom)) } : null;
+  return {
+    framed: !!f, safe_area_top: inset, panel_top: sh ? Math.round(sh.getBoundingClientRect().top) : 0,
+    header: box(d.querySelector('.topbar')), first_row: first, tabs: box(d.querySelector('.viewtabs')),
+    tabs_slid_away: d.documentElement.classList.contains('bar-hidden'),
+    focused: (() => {
+      // Through any frame holding the focus (the classic terminal's), to
+      // the element typed into: "textarea", or "iframe > textarea".
+      const path = [];
+      let a = d.activeElement;
+      while (a && a !== a.ownerDocument.body) {
+        path.push(a.id ? a.tagName.toLowerCase() + '#' + a.id : a.tagName.toLowerCase());
+        if (a.localName !== 'iframe') break;
+        try { a = a.contentDocument && a.contentDocument.activeElement; } catch (e) { break; }
+      }
+      return path.join(' > ');
+    })(),
+    outer_scroll: outer,
+  };
+})()
+"""
+
+
+def shell_screen(scr: dict, url: str = PANEL_URL, *, inset: int = 0,
+                 fullscreen: bool = True, after: str = "") -> dict:
+    """One of brAIn's own screens, photographed inside the shell: the page
+    framed the way the sidebar frames it, the phone's top safe area
+    ``inset`` px, and with the app's full screen off a strip of that height
+    above the panel (the band the app keeps for its status bar). ``after``
+    scrolls the page or focuses its first box before the picture."""
+    inset = max(0, min(SHELL_INSET_MAX, int(inset or 0)))
+    strip = 0 if fullscreen else inset
+    base = url if url.endswith("/") else url + "/"
+    return {**scr, "url": f"{base}devloop/harness/shell?strip={strip}",
+            "script": f"({_SHELL_RUN_JS})({json.dumps(scr.get('script') or '')})",
+            "inset": inset, "after": after if after in SHELL_AFTER else "", "layout": True}
+
+
+def layout_problems(layout: dict, label: str, width: int, scheme: str) -> list[dict]:
+    """What the header's numbers say is wrong, as problems beside the
+    picture: a header not drawn, a first row under the status bar or the
+    island, and Home Assistant's page left scrolled around the panel."""
+    out = []
+    row = layout.get("first_row") or {}
+    inset = int(layout.get("safe_area_top") or 0)
+    panel_top = int(layout.get("panel_top") or 0)
+
+    def add(kind: str, detail: str) -> None:
+        out.append({"screen": label, "width": width, "scheme": scheme, "kind": kind,
+                    "el": ".topbar", "text": "", "detail": detail[:160]})
+
+    if not layout.get("header"):
+        add("header_hidden", "brAIn's header is not drawn")
+    elif row and inset and row.get("top", 0) < inset:
+        add("under_status_bar", f"the header's first row starts at {row['top']}px, "
+            f"inside the {inset}px status bar and island strip")
+    elif row and inset and panel_top >= inset and row.get("top", 0) - inset > 24:
+        add("doubled_inset", f"the panel already starts below the {inset}px strip and the "
+            f"header pads for it again (first row at {row['top']}px)")
+    for what in layout.get("outer_scroll") or []:
+        add("outer_scroll", f"left scrolled around the panel: {what}")
+    return out
+
+
 async def capture(out_dir: Path, *, confidential: list[str], aliases,
                   url: str = PANEL_URL, screens=None, views=None,
                   targets=None, own: bool = True) -> dict:
@@ -905,7 +1076,9 @@ async def capture(out_dir: Path, *, confidential: list[str], aliases,
                                     cdp, scr["url"], scr["slug"], label, scr.get("script") or "",
                                     width, height, touch, scheme, out_dir, confidential,
                                     aliases, guard=guard, focus=scr.get("focus"),
-                                    init=init, sockets=sockets)
+                                    init=init, sockets=sockets, inset=int(scr.get("inset") or 0),
+                                    after=str(scr.get("after") or ""),
+                                    layout=bool(scr.get("layout")))
                             except MissingElement as exc:
                                 errors.append({"product": tgt.get("product", "brAIn"),
                                                "missing": True, "text": str(exc)[:200]})
@@ -935,7 +1108,8 @@ async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
                width: int, height: int, touch: bool, scheme: str,
                out_dir: Path, confidential: list[str], aliases, *,
                guard: list | None = None, focus: dict | None = None,
-               init: str = "", sockets: bool = False) -> dict:
+               init: str = "", sockets: bool = False, inset: int = 0,
+               after: str = "", layout: bool = False) -> dict:
     """One screen in its own tab, so nothing a previous screen left open
     (a dialog, a scroll position) is in this picture. With ``guard`` (the
     reads it lets through) every other write is failed in the browser and
@@ -977,6 +1151,17 @@ async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
         await cdp.call("Emulation.setEmulatedMedia", {"features": [
             {"name": "prefers-color-scheme", "value": scheme},
             {"name": "prefers-reduced-motion", "value": "reduce"}]}, session)
+        if inset:
+            # A phone's top safe area, the way the app reports it to
+            # env(safe-area-inset-top). A Chromium without the override
+            # photographs the page without one, and the layout says so
+            # (`safe_area_top` 0).
+            try:
+                await cdp.call("Emulation.setSafeAreaInsetsOverride", {"insets": {
+                    "top": inset, "topMax": inset, "bottom": 34, "bottomMax": 34,
+                    "left": 0, "leftMax": 0, "right": 0, "rightMax": 0}}, session)
+            except Exception:  # noqa: BLE001 — an older browser: no inset
+                pass
         cdp.answers_left[session] = ANSWERS_MAX_S
         cdp.last_net = time.monotonic()
         await cdp.call("Page.navigate", {"url": url}, session, timeout=NAV_TIMEOUT_S)
@@ -996,7 +1181,18 @@ async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
             await _focus_press(cdp, session, focus, label, touch)
         else:
             await cdp.call("Runtime.evaluate", {"expression": "window.scrollTo(0, 0)"}, session)
+        if after in ("scroll", "focus"):
+            await cdp.call("Runtime.evaluate", {
+                "expression": f"({_AFTER_JS})({json.dumps(after)})", "awaitPromise": True},
+                session, timeout=NAV_TIMEOUT_S)
         await _answers(cdp, session)
+        placed = None
+        if layout:
+            res = await cdp.call("Runtime.evaluate", {
+                "expression": _LAYOUT_JS, "returnByValue": True}, session)
+            placed = (res.get("result") or {}).get("value") or {}
+            if after == "focus" and not placed.get("focused"):
+                placed["note"] = "nothing on this screen takes typing, so nothing was focused"
         await _redact_page(cdp, session, confidential, aliases)
         if AFTER_REDACT is not None:
             await AFTER_REDACT(cdp, session)
@@ -1019,7 +1215,7 @@ async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
             raise RuntimeError("bad screen name")
         data = base64.b64decode(pic["data"])
         (out_dir / name).write_bytes(data)
-        problems = []
+        problems = layout_problems(placed, label, width, scheme) if placed else []
         per_kind: dict[str, int] = {}
         for p in audit.get("problems") or []:
             if not isinstance(p, dict):
@@ -1044,7 +1240,8 @@ async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
         held = sorted(set(cdp.held.pop(session, [])))[:MAX_PROBLEMS_PER_KIND]
         return {"name": name, "screen": label, "width": width, "scheme": scheme,
                 "sha": hashlib.sha256(data).hexdigest(), "bytes": len(data),
-                "problems": problems, "held": held}
+                "problems": problems, "held": held,
+                **({"layout": placed} if placed is not None else {})}
     finally:
         cdp.guards.pop(session, None)
         cdp.held.pop(session, None)
@@ -1223,6 +1420,10 @@ KIND_WORDS = {
     "text_cut_off": "Text cut off with no ellipsis",
     "controls_overlap": "Controls overlap",
     "low_contrast": "Low contrast",
+    "header_hidden": "Header not drawn",
+    "under_status_bar": "Header under the status bar",
+    "doubled_inset": "Safe area padded twice",
+    "outer_scroll": "Home Assistant's page left scrolled",
 }
 
 

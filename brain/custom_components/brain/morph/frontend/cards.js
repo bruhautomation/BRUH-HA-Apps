@@ -41,11 +41,39 @@ const PRESSABLE = ['button', 'input_button', 'scene'];
 const dead = (ctx) => (PRESSABLE.includes(domainOf(ctx.card.entity)) ? !ctx.st || ctx.st.state === 'unavailable' : off(ctx.st));
 const fanLevel = (p) => ['Low', 'Low', 'Medium', 'Medium', 'High', 'High'][Math.min(5, Math.floor(p / 20))];
 
-// One wording for a state everywhere: "Armed home", "Unavailable", "Missing".
-export function stateWord(st) {
+// A binary sensor's two states in its device class's words, as Home
+// Assistant's own translations say them (on, off): a connectivity sensor is
+// Connected or Disconnected, a door Open or Closed, never "On".
+export const BINARY_WORDS = {
+  battery: ['Low', 'Normal'], battery_charging: ['Charging', 'Not charging'],
+  carbon_monoxide: ['Detected', 'Clear'], cold: ['Cold', 'Normal'],
+  connectivity: ['Connected', 'Disconnected'], door: ['Open', 'Closed'],
+  garage_door: ['Open', 'Closed'], gas: ['Detected', 'Clear'], heat: ['Hot', 'Normal'],
+  light: ['Light detected', 'No light'], lock: ['Unlocked', 'Locked'], moisture: ['Wet', 'Dry'],
+  motion: ['Detected', 'Clear'], moving: ['Moving', 'Not moving'], occupancy: ['Detected', 'Clear'],
+  opening: ['Open', 'Closed'], plug: ['Plugged in', 'Unplugged'], power: ['On', 'Off'],
+  presence: ['Home', 'Away'], problem: ['Problem', 'OK'], running: ['Running', 'Not running'],
+  safety: ['Unsafe', 'Safe'], smoke: ['Detected', 'Clear'], sound: ['Detected', 'Clear'],
+  tamper: ['Tampering detected', 'Clear'], update: ['Update available', 'Up-to-date'],
+  vibration: ['Detected', 'Clear'], window: ['Open', 'Closed'],
+};
+
+// One wording for a state everywhere: "Armed home", "Connected",
+// "Unavailable", "Missing". With `hass`, Home Assistant's own words for it
+// (`formatEntityState`: the device class's, in the person's language), so a
+// card says what Home Assistant's own says.
+export function stateWord(st, hass) {
   if (!st) return 'Missing';
   if (st.state === 'unavailable') return 'Unavailable';
   if (st.state === 'unknown') return 'Unknown';
+  if (hass && typeof hass.formatEntityState === 'function') {
+    try { const t = hass.formatEntityState(st); if (t && typeof t === 'string') return t; } catch (e) { /* its own words below */ }
+  }
+  const dc = st.attributes && st.attributes.device_class;
+  if (domainOf(st.entity_id || '') === 'binary_sensor' && (st.state === 'on' || st.state === 'off')) {
+    const w2 = BINARY_WORDS[dc] || ['On', 'Off'];
+    return st.state === 'on' ? w2[0] : w2[1];
+  }
   const w = String(st.state).replace(/_/g, ' ');
   return w ? w[0].toUpperCase() + w.slice(1) : '';
 }
@@ -197,7 +225,7 @@ const fan = {
     const speed = fanHasSpeed(st);
     const p = ctx.preview != null ? ctx.preview : (speed ? st.attributes.percentage : on ? 100 : 0);
     // 2.6 s a turn at the bottom to 1.1 s at the top: faster strobed.
-    return stripFace({ kind: speed ? 'fill' : 'switch', icon: 'fan', accent: ctx.accent, active: on || ctx.preview > 0, pct: on || ctx.preview != null ? p : 0, dur: (2.6 - (p || 0) / 100 * 1.5).toFixed(2) + 's', name: ctx.name, fillA: mix(ctx.accent, 26), fillB: mix(ctx.accent, 8), val: off(st) ? stateWord(st) : on || ctx.preview > 0 ? (speed && p ? `${fanLevel(p)} · ${p}%` : 'On') : 'Off', hint: ctx.hint });
+    return stripFace({ kind: speed ? 'fill' : 'switch', icon: 'fan', accent: ctx.accent, active: on || ctx.preview > 0, pct: on || ctx.preview != null ? p : 0, dur: (2.6 - (p || 0) / 100 * 1.5).toFixed(2) + 's', name: ctx.name, fillA: mix(ctx.accent, 26), fillB: mix(ctx.accent, 8), val: off(st) ? stateWord(st, ctx.hass) : on || ctx.preview > 0 ? (speed && p ? `${fanLevel(p)} · ${p}%` : 'On') : 'Off', hint: ctx.hint });
   },
   more: (ctx) => {
     const a = (ctx.st && ctx.st.attributes) || {}; const e = ctx.card.entity; const parts = [];
@@ -227,7 +255,7 @@ const cover = {
       // The word says what a tap will do: Open, Close, or Stop while it
       // moves. The old switch could only ever open the door.
       const { action, noun } = garageAct(st);
-      return stripFace({ kind: 'switch', icon: 'garage', accent: open ? 'var(--amber)' : 'var(--indigo)', active: open, name: ctx.name, val: stateWord(st), action, armed: ctx.confirm || '', actIcon: action.toLowerCase(), actNoun: noun, actionColor: open ? 'var(--amber)' : 'var(--indigo)', iconTransform: open ? 'translateY(-4px)' : 'none', hint: ctx.hint });
+      return stripFace({ kind: 'switch', icon: 'garage', accent: open ? 'var(--amber)' : 'var(--indigo)', active: open, name: ctx.name, val: stateWord(st, ctx.hass), action, armed: ctx.confirm || '', actIcon: action.toLowerCase(), actNoun: noun, actionColor: open ? 'var(--amber)' : 'var(--indigo)', iconTransform: open ? 'translateY(-4px)' : 'none', hint: ctx.hint });
     }
     return stripFace({ kind: 'slats', icon: 'blinds', accent: ctx.accent, iconColor: 'var(--sky)', edgeMix: 28, fillA: mix(ctx.accent, 20), fillB: mix(ctx.accent, 6), active: pos > 0, pct: pos, iconTransform: `scaleY(${Math.max(0.08, (100 - pos) / 100).toFixed(2)})`, name: ctx.name, val: off(st) ? 'Unavailable' : st.state === 'opening' ? 'Opening' : st.state === 'closing' ? 'Closing' : pos >= 100 ? 'Open' : pos <= 0 ? 'Closed' : pos + '% open', hint: ctx.hint });
   },
@@ -259,7 +287,7 @@ const sw = {
   accent: (ctx) => (GARDEN.test(ctx.card.entity + ' ' + (ctx.name || '')) ? 'var(--lime)' : SWITCH_COLOR[domainOf(ctx.card.entity)] || 'var(--amber)'),
   face: (ctx) => {
     const st = ctx.st; const on = st && st.state === 'on';
-    return stripFace({ kind: 'switch', icon: /fan/i.test(ctx.name || '') ? 'fan' : 'power', dur: '1.6s', accent: ctx.accent, active: on, name: ctx.name, val: off(st) ? stateWord(st) : on ? 'On' : 'Off', hint: ctx.hint });
+    return stripFace({ kind: 'switch', icon: /fan/i.test(ctx.name || '') ? 'fan' : 'power', dur: '1.6s', accent: ctx.accent, active: on, name: ctx.name, val: off(st) ? stateWord(st, ctx.hass) : on ? 'On' : 'Off', hint: ctx.hint });
   },
   more: (ctx) => histBlock(ctx),
   tap: (ctx) => ({ domain: 'homeassistant', service: 'toggle', data: { entity_id: ctx.card.entity } }),
@@ -274,7 +302,7 @@ const lock = {
   face: (ctx) => {
     const st = ctx.st; const unlocked = st && ['unlocked', 'open', 'opening', 'unlocking'].includes(st.state);
     const action = lock.act(ctx);
-    return stripFace({ kind: 'switch', icon: 'lock', accent: ctx.accent, active: unlocked || (st && st.state === 'locked'), name: ctx.name, val: stateWord(st), action, actIcon: action.toLowerCase(), armed: ctx.confirm || '', actionColor: ctx.night && unlocked ? 'var(--rose)' : ctx.accent, iconTransform: unlocked ? 'translateY(-3px)' : 'none', hint: ctx.hint });
+    return stripFace({ kind: 'switch', icon: 'lock', accent: ctx.accent, active: unlocked || (st && st.state === 'locked'), name: ctx.name, val: stateWord(st, ctx.hass), action, actIcon: action.toLowerCase(), armed: ctx.confirm || '', actionColor: ctx.night && unlocked ? 'var(--rose)' : ctx.accent, iconTransform: unlocked ? 'translateY(-3px)' : 'none', hint: ctx.hint });
   },
   more: (ctx) => {
     const a = (ctx.st && ctx.st.attributes) || {};
@@ -296,7 +324,7 @@ const button = {
     const st = ctx.st; const script = domainOf(ctx.card.entity) === 'script';
     const last = st && (script ? st.attributes.last_triggered : st.state);
     const w = whenWord(last);
-    const val = (script ? off(st) : !st || st.state === 'unavailable') ? stateWord(st) : script && st.state === 'on' ? 'Running' : w ? (script ? 'Ran ' : 'Pressed ') + w : script ? 'Tap to run' : 'Tap to press';
+    const val = (script ? off(st) : !st || st.state === 'unavailable') ? stateWord(st, ctx.hass) : script && st.state === 'on' ? 'Running' : w ? (script ? 'Ran ' : 'Pressed ') + w : script ? 'Tap to run' : 'Tap to press';
     return stripFace({ kind: 'none', icon: 'play', accent: ctx.accent, active: st && st.state === 'on', name: ctx.name, val, hint: ctx.hint });
   },
   more: (ctx) => histBlock(ctx),
@@ -316,7 +344,7 @@ const vacuum = {
     // or Dock while it cleans (the same as a tap). It was a switch with
     // nothing written on it, which a tap could not be told apart from.
     const action = vacuum.act(ctx);
-    return stripFace({ kind: 'switch', icon: 'vacuum', accent: ctx.accent, active: run, name: ctx.name, val: off(st) ? stateWord(st) : stateWord(st) + bat, action, actIcon: action === 'Dock' ? 'dock' : 'start', armed: ctx.confirm || '', actionColor: ctx.accent, hint: ctx.hint });
+    return stripFace({ kind: 'switch', icon: 'vacuum', accent: ctx.accent, active: run, name: ctx.name, val: off(st) ? stateWord(st, ctx.hass) : stateWord(st, ctx.hass) + bat, action, actIcon: action === 'Dock' ? 'dock' : 'start', armed: ctx.confirm || '', actionColor: ctx.accent, hint: ctx.hint });
   },
   act: (ctx) => (off(ctx.st) ? '' : ctx.st.state === 'cleaning' ? 'Dock' : 'Start'),
   more: (ctx) => words([svcBtn('Start', 'vacuum', 'start', { entity_id: ctx.card.entity }), svcBtn('Pause', 'vacuum', 'pause', { entity_id: ctx.card.entity }), svcBtn('Go home', 'vacuum', 'return_to_base', { entity_id: ctx.card.entity })]) + histBlock(ctx),
@@ -420,7 +448,7 @@ function sparkline(hass, eid, color) {
 // that shows a figure: the last figure it had (or —) greyed, the state in
 // words where the live state would be, and when it was last heard from.
 function goneBox(ctx, figure, size, ic, more) {
-  const said = more || `${stateWord(ctx.st)} · ${lastSeen(ctx.st)}`;
+  const said = more || `${stateWord(ctx.st, ctx.hass)} · ${lastSeen(ctx.st)}`;
   return `<div class="box" style="box-shadow:inset 0 0 0 1px var(--line)"><div class="row">${ic || ''}<b class="ttl">${esc(ctx.name)}</b>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div><div class="rowb gonerow"><span class="${size} gone">${esc(figure)}</span><span class="sm goneword">${esc(said)}</span></div></div>`;
 }
 
@@ -512,7 +540,7 @@ const media = {
     // attributes; it says it is unavailable and when it was last seen, not
     // what it was playing.
     const gone = off(st);
-    const title = gone ? (st ? stateWord(st) : 'Missing') : a.media_title || (st.state === 'off' ? 'Off' : st.state[0].toUpperCase() + st.state.slice(1));
+    const title = gone ? (st ? stateWord(st, ctx.hass) : 'Missing') : a.media_title || (st.state === 'off' ? 'Off' : st.state[0].toUpperCase() + st.state.slice(1));
     const sub = gone ? (st ? lastSeen(st) : '') : [a.media_artist, a.app_name || a.source].filter(Boolean).join(' · ');
     let prog = '';
     if (!gone && a.media_duration && a.media_position != null) {
@@ -577,7 +605,7 @@ const isActivity = (st) => !!(st && ACTIVITY.includes(st.attributes.device_class
 export const listWord = (st) => {
   if (!st) return ['Missing', false];
   if (UNAVAILABLE.includes(st.state)) return ['Unavailable', false];
-  const w = WORDS[st.attributes.device_class] || ['On', 'Off'];
+  const w = WORDS[st.attributes.device_class] || BINARY_WORDS[st.attributes.device_class] || ['On', 'Off'];
   const on = st.state === 'on';
   return [on ? w[0] : w[1], on];
 };
@@ -682,7 +710,7 @@ const alarm = {
   accent: (ctx) => (ctx.st && ctx.st.state === 'triggered' ? 'var(--rose)' : ctx.st && ctx.st.state.startsWith('armed') ? 'var(--indigo)' : 'var(--quiet)'),
   face: (ctx) => {
     const st = ctx.st; const a = (st && st.attributes) || {};
-    return `<div class="box" style="box-shadow:inset 0 0 0 1px var(--line)"><div class="row">${icon('shield', { color: ctx.accent, size: 18 })}<b style="font-size:14px">${esc(ctx.name)}</b><span class="flex1"></span>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}<span style="font-size:13px;font-weight:700;color:${ctx.accent}">${esc(ctx.confirm || stateWord(st))}</span></div>
+    return `<div class="box" style="box-shadow:inset 0 0 0 1px var(--line)"><div class="row">${icon('shield', { color: ctx.accent, size: 18 })}<b style="font-size:14px">${esc(ctx.name)}</b><span class="flex1"></span>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}<span style="font-size:13px;font-weight:700;color:${ctx.accent}">${esc(ctx.confirm || stateWord(st, ctx.hass))}</span></div>
 ${a.code_format ? '<p class="small">Needs a code — hold to enter it.</p>' : words(alarmModes(st).map((m) => svcBtn(m[1], 'alarm_control_panel', m[2], { entity_id: ctx.card.entity }, { pressed: st && st.state === m[0], confirm: m[0] === 'disarmed' ? 'Tap again to disarm' : '' })))}</div>`;
   },
   more: (ctx) => {
@@ -728,7 +756,7 @@ const entity = {
     const st = ctx.st; const unit = (st && st.attributes.unit_of_measurement) || '';
     const mc = st ? minecraftStatus(ctx.hass, ctx.card.entity) : null;
     const idle = st && !mc && IDLE.includes(st.state) && !unit;
-    const val = !st ? 'Missing' : mc || (off(st) ? `${stateWord(st)} · ${lastSeen(st)}` : idle ? `${stateWord(st)} ${since(st.last_changed)}`.trim() : isNaN(parseFloat(st.state)) ? st.state : fmt(st.state, unit));
+    const val = !st ? 'Missing' : mc || (off(st) ? `${stateWord(st, ctx.hass)} · ${lastSeen(st)}` : idle ? `${stateWord(st, ctx.hass)} ${since(st.last_changed)}`.trim() : isNaN(parseFloat(st.state)) ? stateWord(st, ctx.hass) : fmt(st.state, unit));
     return stripFace({ kind: 'none', icon: entityIcon(ctx), accent: ctx.accent, active: st && st.state === 'on', name: ctx.name, val, valColor: 'var(--muted)', hint: ctx.hint });
   },
   more: (ctx) => histBlock(ctx),
@@ -769,7 +797,7 @@ Object.values(TYPES).forEach((T) => {
 export function tileAria(T, ctx, name) {
   const slide = T.slide ? T.slide(ctx) : null;
   const tap = T.tap ? T.tap(ctx) : null;
-  const word = ctx.st ? stateWord(ctx.st) : '';
+  const word = ctx.st ? stateWord(ctx.st, ctx.hass) : '';
   if (slide) { const v = slide.get(); return { role: 'slider', label: name, value: `${v}%`, now: v }; }
   // A tile that shows a pressable word beside its state is a button named by
   // both: "Garage, Closed. Open door" (the word itself is hidden from readers).

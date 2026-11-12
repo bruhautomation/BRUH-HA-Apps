@@ -171,7 +171,7 @@ h1.hello{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-weight:400;
 .flex1{flex:1}
 .nm{background:none;border:0;padding:0;margin:0;font:inherit;color:inherit;cursor:pointer;text-align:left;text-decoration:underline;text-decoration-style:dotted;text-decoration-color:var(--line2);text-decoration-thickness:1.5px;text-underline-offset:.32em;transition:text-decoration-color .3s ease}
 .nm:hover,.nm[aria-expanded="true"]{text-decoration-style:solid;text-decoration-color:currentColor}
-.wd{background:none;border:0;margin:0;font:inherit;cursor:pointer;color:var(--quiet);min-height:40px;padding:0 1px;transition:color .25s ease}
+.wd{background:none;border:0;margin:0;font:inherit;cursor:pointer;color:var(--quiet);min-height:40px;min-width:40px;padding:0 1px;transition:color .25s ease}
 .wd:hover{color:var(--text)}
 .cl-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
 .cl-acts .wd{font-size:13px;min-height:40px;min-width:40px;padding:0 14px;border-radius:999px;box-shadow:inset 0 0 0 1px var(--line2);color:var(--muted);text-align:center}

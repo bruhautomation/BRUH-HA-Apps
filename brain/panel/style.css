@@ -2659,10 +2659,10 @@ body.kb-lift:not(.term-classic) #viewTerminal.active {
    rail is `display: none` below the breakpoint, so on a phone the tab is
    exactly what it was and ⋯ → Conversations is still the way in. */
 @media (min-width: 900px) {
-  body:not(.term-classic):not(.term-immersive) #viewTerminal.active {
+  body:not(.term-classic) #viewTerminal.active {
     display: flex;
   }
-  body:not(.term-classic):not(.term-immersive) #viewTerminal.active .chatrail {
+  body:not(.term-classic) #viewTerminal.active .chatrail {
     display: flex;
   }
   #viewTerminal.active .chat { flex: 1; min-width: 0; }
@@ -2680,15 +2680,15 @@ body.kb-lift:not(.term-classic) #viewTerminal.active {
     border-right: 0;
   }
   body:not(.term-classic).ask-list #viewTerminal.active .chat { display: none; }
-  /* The floating ⋯ and ⤢ sit over the list's top-right corner. */
-  body:not(.term-classic).ask-list .crhead { padding-right: 108px; }
+  /* The floating ⋯ sits over the list's top-right corner. */
+  body:not(.term-classic).ask-list .crhead { padding-right: 60px; }
   body:not(.term-classic):not(.ask-list) #viewTerminal.active .chathead {
     display: flex;
     flex: none;
     align-items: center;
     gap: 6px;
     min-height: 52px;
-    padding: 4px 108px 4px 6px;
+    padding: 4px 60px 4px 6px;
     border-bottom: 1px solid var(--hairline);
   }
   /* The head clears the floating buttons now, so the log need not. */
@@ -2698,13 +2698,11 @@ body.kb-lift:not(.term-classic) #viewTerminal.active {
 }
 /* A phone with no conversations opens on the message box (`ask-empty`):
    the list page was "No chats yet." and a press before anybody could type.
-   There is no list to go back to, ⤢ has nothing to fold for (unless the bar
-   is already folded — then it is the way back and stays), and ⋯ says what
-   it is rather than floating as a bare glyph over an empty screen. */
+   There is no list to go back to, and ⋯ says what it is rather than
+   floating as a bare glyph over an empty screen. */
 .termfabname { display: none; }
 @media (max-width: 899px) {
   body.ask-empty:not(.term-classic) #chatBack { display: none; }
-  body.ask-empty:not(.term-classic):not(.term-immersive) #termExpand { display: none; }
   body.ask-empty:not(.term-classic) #termMenu { width: auto; gap: 6px; padding: 0 12px; opacity: 1; }
   body.ask-empty:not(.term-classic) #termMenu .termfabname {
     display: inline; font-size: var(--fs-body); font-weight: 600;
@@ -2945,15 +2943,10 @@ body.kb-lift:not(.term-classic) #viewTerminal.active {
 .termstarting.hidden,
 body:not(.term-classic) .termstarting { display: none; }
 
-/* Immersive terminal — the bar folds away and the terminal takes the room.
-   Two things fold it: pressing ⤢, and the software keyboard coming up (the
-   ttyd frame is the only thing that can see that, so it says so). --bar-h
-   goes to zero with it, which is what makes the frame grow; the resize
-   propagates to ttyd, which re-fits xterm, which SIGWINCHes the PTY, so
-   the shell reflows to the new height rather than scrolling inside a box
-   the wrong size. */
-body.term-immersive .topbar { display: none; }
-body.term-immersive { --bar-h: 0px; }
+/* Nothing folds the header away: Ask's ⤢ "full-screen terminal" and the
+   fold while the keyboard was up hid every tab and ⚙ with it, and on a
+   phone left the person in a view with no way out (the owner: "completely
+   get rid of that"). */
 
 /* The terminal tab owns the whole viewport, so the page behind it must not
    scroll as well. Two scrollers stacked — the page and the chat log — is
@@ -3704,14 +3697,12 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 .chatsend.stop { background: var(--surface-2); color: var(--ink); }
 .chatsend .ico { width: 20px; height: 20px; }
 
-/* Two buttons over the terminal, because the way back from a hidden bar
-   cannot live in the bar. Dimmed until touched: they are over someone's
+/* One button over the terminal. Dimmed until touched: it is over someone's
    output, and output is what they came for.
 
    It was five, and five translucent squares stacked on top of the text was
-   precisely the clutter this view exists to avoid. ⤢ keeps its own place
-   because it is also the way back from a folded bar; everything else is one
-   ⋯ away, because those are things you do occasionally. */
+   precisely the clutter this view exists to avoid: everything is one ⋯
+   away, because those are things you do occasionally. */
 .termfabs {
   position: absolute;
   top: 8px;
@@ -3793,12 +3784,6 @@ body:not(.term-classic) .termfabs { top: 6px; right: 8px; }
 }
 .termfab:hover, .termfab:focus-visible { opacity: 1; background: rgba(26, 22, 19, 0.95); }
 .termfab .ico { width: 18px; height: 18px; }
-/* Pressed = the bar is gone, so the button is the only way back and stops
-   hiding. The glyph flips to the inward arrows of "come back out". */
-.termfab[aria-pressed="true"] { opacity: 0.9; }
-.termfab .ico-out { display: none; }
-.termfab[aria-pressed="true"] .ico-in { display: none; }
-.termfab[aria-pressed="true"] .ico-out { display: block; }
 
 /* The dark chrome of these buttons is right over the classic terminal, whose
    background is the same brown at every theme. Over the chat log they would
@@ -4014,13 +3999,11 @@ body.term-classic #termMode .ico-out { display: block; }
    * The bottom bar's height (`--tabbar-h`) includes the home indicator's
      safe area, and the page is padded by exactly that, so the last line of
      anything is never under the bar; the terminal subtracts it the way it
-     subtracts the header. A folded bar (`term-immersive`, the keyboard up)
-     folds both, and `--tabbar-h` goes to zero with it.
+     subtracts the header.
    * Every tab is a 44px target with its name under its icon — no width
      gets bare glyphs, here either. */
 @media (max-width: 640px) {
   :root { --bar-h: 56px; --tabbar-h: calc(58px + env(safe-area-inset-bottom, 0px)); }
-  body.term-immersive { --tabbar-h: 0px; }
 
   .topbar {
     flex-wrap: nowrap;
@@ -7010,8 +6993,8 @@ button.kfactsubj:hover { color: var(--accent-2);
    to the chat face IS offered: it was hidden here too, and a house running
    the terminal face could find the way to the chat nowhere on the screen. */
 @media (min-width: 900px) {
-  body.term-classic:not(.term-immersive) #viewTerminal.active { display: flex; }
-  body.term-classic:not(.term-immersive) #viewTerminal.active .chatrail { display: flex; }
+  body.term-classic #viewTerminal.active { display: flex; }
+  body.term-classic #viewTerminal.active .chatrail { display: flex; }
   body.term-classic #viewTerminal.active #termFrame { flex: 1; min-width: 0; }
 }
 @media (max-width: 899px) {
@@ -7293,12 +7276,14 @@ html.in-shell .viewtab.active {
    you're not at the top", and the shell "takes about 170px before any
    content … Make it subtle, collapsible").
 
-   * The safe area is `--safe-top`: the phone's own env(), or the one the
-     shell measured in Home Assistant's page and sent in (`--shell-inset`),
-     whichever is larger, because a framed page is not promised the
-     inset. In full screen the island strip IS the header's first row: the
-     name left of the island, the status and ⚙ right of it, on the
-     header's solid ground, the hairline under the whole header.
+   * The safe area is `--safe-top`: what the shell measured in Home
+     Assistant's page and sent in (`--shell-inset`), only the part of the
+     strip that lies over the panel, counted once; the frame's own env()
+     only until the shell has said. Nothing is drawn in that strip: the
+     header's ground fills it and its rows start below it, because the
+     page cannot tell whether the app shows its status bar there (the
+     owner: with the app's full screen off, the name and the time sat
+     "behind my Apple header bar"). The hairline is under the whole header.
    * Below the strip there is one row: the tabs. The sections of Insights
      and Memory are under their own tab (pressing the tab you are on opens
      them, `#segNav` as a menu), the version is in ⚙, and the search is an
@@ -7316,7 +7301,7 @@ html.in-shell .viewtab.active {
      rubber-bands Home Assistant's window around it. */
 :root { --safe-top: 0px; }
 html.in-shell {
-  --safe-top: max(env(safe-area-inset-top, 0px), var(--shell-inset, 0px));
+  --safe-top: var(--shell-inset, env(safe-area-inset-top, 0px));
   overscroll-behavior: none;
 }
 html.in-shell body { overscroll-behavior: none; }
@@ -7346,14 +7331,15 @@ html.in-shell.bar-hidden .topbar > .shelledit { opacity: 0; visibility: hidden; 
 
 @media (max-width: 640px) {
   html.in-shell { --tabbar-h: 0px; }
-  /* Row one sits in the island strip (its 44px targets end where the strip
-     does); without an inset it is the top 48px. The `::before` is the line
-     break that puts everything ordered after it on row two. */
+  /* Row one starts just below the safe-area strip (full screen or not, the
+     strip is the status bar's or the island's, never the header's); without
+     an inset it is the top 48px. The `::before` is the line break that puts
+     everything ordered after it on row two. */
   html.in-shell .topbar {
     flex-wrap: wrap;
     max-height: none;
     min-height: 0;
-    padding: max(2px, calc(var(--safe-top) - 48px)) 8px 0 4px;
+    padding: calc(var(--safe-top) + 2px) 8px 0 4px;
     row-gap: 4px;
     align-content: flex-start;
   }
@@ -7456,9 +7442,9 @@ html.in-shell.bar-hidden .topbar > .shelledit { opacity: 0; visibility: hidden; 
 .kfoldbody[hidden] { display: none; }
 
 /* ---------------------------------------------- Ask's list head (#553)
-   Below the rail's breakpoint ＋, ⋯ and ⤢ are one kind of control: bare
+   Below the rail's breakpoint ＋ and ⋯ are one kind of control: bare
    44px icons in the list's head row (and the transcript's), the floating
-   two sitting in the row rather than boxed squares hanging above it. */
+   ⋯ sitting in the row rather than a boxed square hanging above it. */
 @media (max-width: 899px) {
   body:not(.term-classic) .termfabs { top: 4px; right: 8px; gap: 4px; }
   body:not(.term-classic) .termfab {

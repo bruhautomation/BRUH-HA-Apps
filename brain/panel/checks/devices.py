@@ -22,6 +22,9 @@ from ._util import (SOFTWARE_DOMAINS, House, after_restart, age_days,
 
 UNAVAILABLE_DAYS = 1.0
 BATTERY_LOW_PCT = 15
+# A battery the household has said they know about reopens as a new row
+# only when it is below this: still low, and now close to gone.
+BATTERY_ACK_REOPEN_PCT = 10
 BATTERY_SILENT_DAYS = 7
 # A battery sensor that reads 0 today and has read nothing but 0 for at
 # least this many days of its recorded history is not a cell running down:
@@ -1049,8 +1052,16 @@ def battery_low(snap: dict, now: float) -> list[dict]:
         dev = house.device_of(eid)
         who = house.device_name(dev) if dev else house.name(eid)
         if level is not None and level <= BATTERY_LOW_PCT:
+            # Acknowledged: new words only when it went further down than
+            # it was (and under the floor); one acknowledged already under
+            # the floor is not news until it drops below that level.
+            at = house.acknowledged_level(eid, "dev.battery_low")
+            worse = (house.acknowledged(eid, "dev.battery_low")
+                     and at is not None
+                     and level < min(at, BATTERY_ACK_REOPEN_PCT))
             out.append({
-                "text": f"{who} battery is low",
+                "text": (f"{who} battery is almost flat" if worse
+                         else f"{who} battery is low"),
                 "detail": f"{level:g}% as of {when(st.get('last_updated'))}."
                           + _battery_outlook(snap, eid, level, now)
                           + house.placed(eid, who),

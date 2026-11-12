@@ -355,6 +355,15 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
 - **A line that names a door, window or lock is checked against its state
   now.** Read the entity's state at draw time and drop or reword the line
   once it has cleared; never "still open" beside "all closed".
+- **Every button and chip is a 40px target.** A scene chip, a mode button or
+  a word you can press is at least 40px tall and 40px wide (`min-height` and
+  `min-width`, never a fixed `height` under it), with a gap between
+  neighbours, so a finger on a phone hits the one it means. A row of chips
+  wraps rather than shrinking them.
+- **Text is 4.5:1 against what it sits on, in light and dark themes.** Take
+  colours from the theme's variables (`--primary-text-color`,
+  `--secondary-text-color`), never a fixed colour picked on one theme: an
+  accent chosen on a dark page is unreadable on a light one.
 - **Every button shows an icon or words, and has a name.** Icons are inline
   SVG you draw yourself: an `<ha-icon icon="mdi:…">` or any icon font is
   blank when its set is not loaded in the card, which leaves a round button

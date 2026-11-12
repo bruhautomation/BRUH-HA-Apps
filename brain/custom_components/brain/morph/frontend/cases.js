@@ -114,7 +114,7 @@ export function caseFace(c, ui) {
   const detail = c.detail && c.detail !== c.claim ? `<p class="casebody">${esc(named(c.detail, u.name))}</p>` : '';
   return `<div class="case" data-ctl="1" style="--cc:${color}" data-case-card="${esc(c.id)}">
 <span class="casechip" data-chip="${chip}" style="--chip:${CHIP_COLORS[chip]}"><i></i>${esc(CHIP_WORDS[chip])}</span>
-${c.claim || c.text ? `<p class="claim">${esc(named(c.claim || c.text || '', u.name))}</p>` : ''}${detail}${c.ask ? `<p class="caseask">${esc(named(c.ask, u.name))}</p>` : ''}${phase ? `<p class="small">${esc(phase)}</p>` : ''}${plan}
+<p class="claim">${esc(named(c.claim || c.text || '', u.name))}</p>${detail}${c.ask ? `<p class="caseask">${esc(named(c.ask, u.name))}</p>` : ''}${phase ? `<p class="small">${esc(phase)}</p>` : ''}${plan}
 ${thread.length ? `<div class="thread">${earlier ? `<details class="earlier"><summary>earlier</summary>${thread.slice(0, earlier).map(turnHtml).join('')}</details>` : ''}${shown.map(turnHtml).join('')}</div>` : ''}${busy}
 <div class="replyrow">${reply}<span class="casewords">${words.join('')}</span></div></div>`;
 }
