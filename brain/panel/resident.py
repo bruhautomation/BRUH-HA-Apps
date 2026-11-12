@@ -750,12 +750,15 @@ def parse_first_look(obj, count: int, rows=None,
                              str(row.get("why") or "").strip()), MAX_WHY),
                          "forced": False}
             already = str(row.get("already") or "").strip().lower()
-            if (already not in ALREADY and verdict == "watch"
+            if (already not in ALREADY and verdict in ("watch", "investigate")
                     and triage.says_nothing_to_do(said[idx]["why"])):
                 # "Nothing needs doing", kept on the list: the reason
-                # withdraws the card, so the card is set aside (#604). Only
-                # `watch` — an investigation or an act said something is
-                # worth a closer look — and the floors still run below.
+                # withdraws the card, so the card is set aside (#604, #868).
+                # `watch` and `investigate` — a look that asks for a paid
+                # investigation while its own sentence says nobody needs
+                # to do anything is a card contradicted by its look; an
+                # `act` is not read — and the floors still run below, so
+                # a leak, a lock or a protected entity stays up.
                 already = "explained"
             # No reading of the reason for `answered`: "the automation
             # already locks the door at night, so the lock motor needs

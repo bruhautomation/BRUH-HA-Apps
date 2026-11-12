@@ -473,11 +473,40 @@ _DEV_TOKEN = re.compile(
 _THE_COMPANION = re.compile(r"\bthe\s+companion\b(?!\s+app\b)", re.I)
 
 
-def one_name(text: str) -> str:
-    """``text`` with the assistant's other names turned to "brAIn"."""
+# The parts a model names in a sentence a person reads: "the chat session",
+# "a quick run" — brAIn's machinery, never the household's words (#832).
+# The conversation is the person's; a quick run is a quick check.
+_CHAT_SESSION = re.compile(r"\b(?:chat|terminal)[\s-]+session(s?)\b", re.I)
+_QUICK_RUN = re.compile(r"\bquick[\s-]+runs?\b", re.I)
+# brAIn as the add-on or a release, which is not the assistant's name.
+_BRAIN_SELF = re.compile(
+    r"\bbrAIn\b(?!['\u2019]s\s+(?:add-on|integration|panel|update|release)"
+    r"|\s+(?:add-on|integration|panel|update|release|\d))")
+
+
+def one_name(text: str, persona: str = "") -> str:
+    """``text`` with the assistant's other names turned to one (#832).
+
+    "the companion", "the in-game companion", "the brAIn engine" are
+    brAIn; a "chat session" is a conversation and a "quick run" a quick
+    check — a person has never met either. With ``persona`` (the name the
+    household gave it, Personality on) a sentence that uses both that name
+    and "brAIn" for the assistant says the persona's name throughout: one
+    thing the household talks to, one name. The add-on's own name ("the
+    brAIn add-on", "brAIn 5.1.27") stays."""
+    if not isinstance(text, str) or not text:
+        return text
     out = _THE_COMPANION.sub("brAIn", text)
-    return re.sub(r"\b(?:the\s+)?(?:in-game|minecraft)\s+companion\b|"
-                  r"\bbrAIn\s+engine\b", "brAIn", out, flags=re.I)
+    out = re.sub(r"\b(?:the\s+)?(?:in-game|minecraft)\s+companion\b|"
+                 r"\bbrAIn\s+engine\b", "brAIn", out, flags=re.I)
+    out = _CHAT_SESSION.sub(r"conversation\1", out)
+    out = _QUICK_RUN.sub("quick check", out)
+    persona = str(persona or "").strip()
+    if (persona and persona.casefold() != "brain"
+            and re.search(r"(?<![\w])" + re.escape(persona) + r"(?![\w])", out)
+            and _BRAIN_SELF.search(out)):
+        out = _BRAIN_SELF.sub(persona, out)
+    return out
 
 
 def _third_person(sentence: str) -> str:
@@ -606,7 +635,15 @@ _SELF_CHECK = re.compile(
     r"settings)\b"
     r"|\b(?:check|look at|read) (?:the )?(?:errors?|logs?)\b"
     r"|\bSettings\s*>\s*System\s*>\s*Logs\b"
-    r"|\bwatch (?:whether|if) it (?:continues|happens again)\b", re.I)
+    r"|\bwatch (?:whether|if) it (?:continues|happens again)\b"
+    # A lookup in brAIn's own reach (#831): which device, voice, integration
+    # or automation it is, whose address or version. brAIn reads those and
+    # says the answer; it never sends a person to find them.
+    r"|\b(?:find(?: out)?|look up|identify|work out|determine|confirm|check)\s+"
+    r"(?:which|what|who|whose|the (?:name|address|mac|version|model|owner|"
+    r"voice|source))\b[^.!?]{0,40}?\b(?:device|integration|add-?on|voice|"
+    r"satellite|entity|address|mac|webhook|source|automation|script|version|"
+    r"pipeline|speaker|assistant|owner|model)s?\b", re.I)
 _NETWORK_BLAME = re.compile(
     r"\b(?:router|dns|modem|internet|isp|access point|wi-?fi network|"
     r"network switch)\b", re.I)
@@ -814,6 +851,16 @@ _BARE_BUILD_RE = re.compile(
     r"\s*\(\s*(?:firmware\s+)?build\s+(?=[\w.\-]*\d)[A-Za-z0-9][\w.\-]{3,}\s*\)"
     r"|\b(firmware\s+)?build\s+(?=[\w.\-]*\d)[A-Za-z0-9][\w.\-]{2,}[A-Za-z0-9]",
     re.I)
+# A signal strength in dBm ("-84 dBm") and a raw firmware string
+# ("firmware 2.4.1-rc3"): a number a radio engineer reads and a household
+# cannot weigh (#855). "at -84 dBm" goes whole; a sentence whose point IS
+# the figure ("reads -84 dBm") is dropped by `said_plainly`.
+_DBM_RE = re.compile(
+    r"\s*\(\s*[-\u2212\u2013]?\d+(?:\.\d+)?\s*dBm\s*\)"
+    r"|(?:\s+(?:at|of|around|about|near|to|from|down to))?\s*"
+    r"[-\u2212\u2013]?\d+(?:\.\d+)?\s*dBm\b", re.I)
+_FIRMWARE_RE = re.compile(
+    r"\b(?:firmware|fw)(?:\s+version)?\s+v?\d+(?:\.\d+)+[\w.\-+]*", re.I)
 _MCP_RE = re.compile(r"`?\bmcp__\w+`?")
 # A snake_case word with no dot: an event, a service call or a setting's key
 # (`bruh_minecraft_moment`), which is what the code calls a thing and never
@@ -967,6 +1014,14 @@ def technical(text: str, files: bool = True,
         return lead + ("its current firmware" if m.group(1) else
                        "its current build")
 
+    def dbm(m: re.Match) -> str:
+        keep(m.group(0).strip(" ()"))
+        return ""
+
+    def firmware(m: re.Match) -> str:
+        keep(m.group(0))
+        return "its current firmware"
+
     def hexcode(m: re.Match) -> str:
         whole = m.group(0)
         keep(re.search(r"0x[0-9a-f]+", whole, re.I).group(0))
@@ -986,6 +1041,8 @@ def technical(text: str, files: bool = True,
     try:
         out = _BUILD_RE.sub(build, text)
         out = _BARE_BUILD_RE.sub(bare_build, out)
+        out = _FIRMWARE_RE.sub(firmware, out)
+        out = _DBM_RE.sub(dbm, out)
         out = _HEX_RE.sub(hexcode, out)
         out = _MCP_RE.sub(swap("one of brAIn's tools"), out)
         tools = _tool_re()
@@ -1147,8 +1204,8 @@ def lint(text: str, files: bool = True) -> list[str]:
         return []
     out: list[str] = []
     for pattern in ((_FILE_RE if files else _PATH_RE), _LINE_NO_RE, _HEX_RE,
-                    _BUILD_RE, _BARE_BUILD_RE, _MCP_RE, _SNAKE_RE,
-                    _LEGACY_RE):
+                    _BUILD_RE, _BARE_BUILD_RE, _FIRMWARE_RE, _DBM_RE,
+                    _MCP_RE, _SNAKE_RE, _LEGACY_RE):
         out += [m.group(0).strip() for m in pattern.finditer(text)]
     out += [m.group(0).strip("`") for m in _ID_RE.finditer(text) if _an_id(m)]
     tools = _tool_re()
@@ -1161,6 +1218,52 @@ def lint(text: str, files: bool = True) -> list[str]:
     return seen
 
 
+# Signal diagnostics ("the Wi-Fi signal is weak", "link quality 40") in a
+# finding whose headline is about something else answer a question nobody
+# asked and bury the one that was (#829).
+_SIGNAL_SENTENCE_RE = re.compile(
+    r"\b(?:signal[\s-]+(?:strength|quality|is\s+(?:weak|poor|low))"
+    r"|(?:wi-?fi|radio|weak|poor)\s+signal|rssi|lqi|link[\s-]+quality)\b",
+    re.I)
+_SIGNAL_HEADLINE_RE = re.compile(
+    r"signal|wi-?fi|rssi|lqi|link|reception|connect|range|mesh|router|"
+    r"zigbee|z-?wave|offline|unreachable|unavailable|dropout|disconnect|"
+    r"network|radio|weak", re.I)
+
+
+def on_topic(text: str, headline: str) -> str:
+    """``text`` less every signal-diagnostic sentence when ``headline`` is
+    not about connectivity — but never all of it: a detail that is only
+    signal talk is kept, and the row's checks decide what to do with it."""
+    if (not isinstance(text, str) or not text
+            or _SIGNAL_HEADLINE_RE.search(str(headline or ""))
+            or not _SIGNAL_SENTENCE_RE.search(text)):
+        return text
+    kept = [s for s in _LOG_SENTENCES.split(text)
+            if s.strip() and not _SIGNAL_SENTENCE_RE.search(s)]
+    return " ".join(kept).strip() or text
+
+
+_DBM_LEAD_RE = re.compile(
+    r"\s*\(|\s+(?:at|of|around|about|near|to|from|down to)\s", re.I)
+
+
+def _without_figure_sentences(text: str) -> str:
+    """``text`` less every sentence that IS a dBm figure ("The sensor reads
+    -84 dBm."): taking the number out would leave "The sensor reads." A
+    figure that is an aside ("weak at -84 dBm", "(-84 dBm)") is left to
+    `technical`, which takes just the aside out (#855)."""
+    if not _DBM_RE.search(text):
+        return text
+    kept = []
+    for sentence in _LOG_SENTENCES.split(text):
+        m = _DBM_RE.search(sentence)
+        if m and not _DBM_LEAD_RE.match(m.group(0)):
+            continue
+        kept.append(sentence)
+    return " ".join(kept).strip()
+
+
 def said_plainly(text: str, names: Mapping | None = None, files: bool = True,
                  known: list | tuple = ()) -> str:
     """``text`` as a surface shows it (#774, #791): developer strings out
@@ -1171,6 +1274,7 @@ def said_plainly(text: str, names: Mapping | None = None, files: bool = True,
     dropped. Text the lint finds nothing in comes back as it was."""
     if not isinstance(text, str) or not text or not lint(text, files):
         return text
+    text = _without_figure_sentences(text)
     out = technical(text, files, names)[0]
     out = ids(out, names)[0]
     if _LEGACY_RE.search(out):

@@ -990,6 +990,16 @@ def _plainly(text, entry: dict, files: bool = True) -> str:
         known=clean_technical((entry or {}).get("technical")))
 
 
+def _persona_name() -> str:
+    """The name the household gave the assistant ("" when it is brAIn)."""
+    try:
+        import personality  # noqa: PLC0415 — a leaf, read only here
+        name = str(personality.identity().get("name") or "")
+    except Exception:  # noqa: BLE001 — a name we cannot read is brAIn
+        return ""
+    return "" if name.casefold() == "brain" else name
+
+
 def shown_words(entry: dict) -> dict:
     """The fields of a model-written row a surface shows, in plain words
     (#774, #791): no path, line number, id, hex code, build string or
@@ -998,13 +1008,27 @@ def shown_words(entry: dict) -> dict:
     touched, and a row whose words are its code's (a check, the safety
     lane, a person's correction) comes back with nothing changed."""
     entry = entry if isinstance(entry, dict) else {}
-    if not _model_written(entry.get("source")):
-        return {}
+    model = _model_written(entry.get("source"))
     out = {}
+    persona = _persona_name() if model else ""
     for key in ("text", "claim", "detail", "fix"):
         said = entry.get(key)
         if isinstance(said, str) and said:
-            plain_said = _plainly(said, entry)
+            if not model:
+                # A check's or a person's words are theirs; only a cut that
+                # was stored ending "…" or "and N more." is said whole
+                # (#867), and never the headline.
+                if key != "text" and textclip.finished(said) != said:
+                    out[key] = textclip.finished(said)
+                continue
+            # One name for what the household talks to (#832).
+            if key in ("detail", "fix"):
+                said_now = house_words.on_topic(
+                    said, f"{entry.get('text') or ''} {entry.get('claim') or ''}")
+            else:
+                said_now = said
+            plain_said = textclip.finished(
+                _plainly(house_words.one_name(said_now, persona), entry))
             if plain_said != said and (plain_said or key != "text"):
                 out[key] = plain_said
     return out
@@ -1070,10 +1094,10 @@ def shown_look(record: dict, entry: dict) -> dict:
     # no tool name, hex code or build string (#562, #563). A file name stays
     # (`tests/test_open_row_look_reason.py` holds it on screen).
     said = house_words.household(house_words.technical(said, files=False)[0])
-    said = house_words.one_name(said)   # one assistant, one name
+    said = house_words.one_name(said, _persona_name())   # one assistant, one name
     # No id, path, line number or code name — and never "an internal
     # name" — under "brAIn checked" (#774, #791): `shown_words`' pass.
-    said = _plainly(said, entry, files=False)
+    said = textclip.finished(_plainly(said, entry, files=False))
     if said == record["reason"]:
         return record
     return {**record, "reason": said}
@@ -2799,6 +2823,8 @@ def add_many(objs: list[dict]) -> list[dict]:
                 ("claim", "detail", "fix", "todo_text")
                 if entry.get("source") in SUBJECT_FOLD_EXCLUDED
                 else ("text", "claim", "detail", "fix", "todo_text")))
+        if care and care.get("self_done"):
+            continue   # brAIn made its own files say it (#854): no card
         if entry is not None and care:
             # brAIn's own upkeep: its question, not the owner's chore.
             entry.update(care)

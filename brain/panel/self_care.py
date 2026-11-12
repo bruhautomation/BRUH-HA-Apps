@@ -162,6 +162,24 @@ def voice_questions(voice: str, old: str = "") -> list[dict]:
     return [_voice_question(voice, found) for found in by_key.values()]
 
 
+def settle_voice(voice: str, old: str = "") -> int:
+    """Make every line of brAIn's instructions and persona that still names
+    a replaced voice say ``voice``, and say nothing to the household (#854):
+    which voice brAIn speaks with is decided and recorded, and its own files
+    following the decision is brAIn's housekeeping, not a question. Only
+    the replaced voice's NAME in a line about a voice changes (the same
+    swap the question quoted). How many lines were changed."""
+    conflicts = voice_conflicts(voice, old)
+    if not conflicts:
+        return 0
+    done = 0
+    for key, line, new in conflicts:
+        if new != line and correct({"self_edit": {"edits": [
+                {"key": key, "line": line, "new": new}]}}):
+            done += 1
+    return done
+
+
 def as_question(obj: dict) -> dict | None:
     """The fields that make a row the question brAIn asks itself, or None
     when the row points at no line brAIn can find. A row about brAIn's
@@ -174,9 +192,10 @@ def as_question(obj: dict) -> dict | None:
                          ("text", "claim", "detail", "fix"))
         voice = personality.identity().get("voice") or ""
         if voice and re.search(r"\bvoice\b", words, re.I):
-            conflicts = voice_conflicts(voice)
-            if conflicts:
-                return _voice_question(voice, conflicts)
+            if settle_voice(voice):
+                # A row about a file that still named the old voice, and
+                # the file now says the new one: nothing is left to ask.
+                return {"self_done": True}
         return None
     key, line = found
     what = instructions.CATALOG[key][0]
@@ -225,4 +244,4 @@ def correct(row: dict) -> bool:
 
 
 __all__ = ["PERSONA_KEY", "SOURCE", "SOURCE_TITLE", "as_question", "correct",
-           "stale_line", "voice_conflicts", "voice_questions"]
+           "settle_voice", "stale_line", "voice_conflicts", "voice_questions"]

@@ -219,33 +219,44 @@ def _plain_sentences(text: str) -> str:
 def _done_when(entry: dict) -> str:
     """The report's own bar for the fix, in plain sentences, or ""."""
     said = _plain_sentences(_field(entry, "done_when", _DONE_RE))
+    said = re.sub(r"^done when:?\s*", "", said, flags=re.I)
     return clip(said.rstrip(" ."), 240) if said else ""
 
 
 def _checking(entry: dict, place: str, product: str) -> str:
-    """What brAIn could not check itself, and the one thing to try (#605).
+    """What brAIn could not check itself, and the one thing to try (#605,
+    #830), in the words of the screen: Ask, not "the chat", and no stream
+    or component name.
 
     Only the owner's own requests and the chat's unmet ones are ever asked
     (`VERIFY_STREAMS`), and neither has an error brAIn can watch for: a
     fault that stops recurring is said on its own report, never asked. So
-    the card says which it is, and what to do to tell — the report's own
-    "Done when" when it has one."""
+    the card says which it is, what to do to tell, and what the person
+    will see when it is fixed — the report's own "Done when" when it has
+    one."""
     stream = str(entry.get("stream") or "")
     bar = _done_when(entry)
+    seen = (f" You will see: {bar}." if bar else
+            " It is fixed when it does what you asked.")
     if stream == "unmet":
-        cannot = ("brAIn cannot check this one itself: it was something the "
-                  "chat could not do, and only asking again shows whether it "
-                  "can now.")
-        step = "Try this: ask the chat again" + (
-            f"; it counts as fixed when: {bar}." if bar else ".")
+        cannot = ("brAIn cannot check this one itself: it could not do "
+                  "this when you asked in Ask, and only asking again shows "
+                  "whether it can now.")
+        step = "Try this: ask the same thing in Ask again." + seen
     else:
-        where = place or ("" if product == "brAIn" else product)
+        where = _household_place(place or ("" if product == "brAIn"
+                                           else product))
         cannot = ("brAIn cannot check this one itself: it is about what you "
                   "see and use, which brAIn has no error to watch for.")
-        step = (f"Try this: open {where} and do what you reported"
-                if where else "Try this: do what you reported again") + (
-            f"; it counts as fixed when: {bar}." if bar else ".")
+        step = (f"Try this: open {where} and do what you reported again."
+                if where else
+                "Try this: do what you reported again.") + seen
     return f"{cannot} {step}"
+
+
+def _household_place(place: str) -> str:
+    """A report's place as the screen names it: the chat is Ask."""
+    return "Ask" if str(place or "").strip().casefold() == "chat" else place
 
 
 def _reported(entry: dict) -> str:
@@ -274,7 +285,7 @@ def question_row(entry: dict) -> dict:
     fixed_in = str(entry.get("fixed_in") or "")
     product = product_of(entry)
     title, place = _title_and_place(entry)
-    place = clip(place, 60).strip()
+    place = _household_place(clip(place, 60).strip())
     in_place = f" ({place})" if place else ""
     tail = f" — after the {product} {fixed_in} update"
     room = TEXT_CHARS - len(TEXT_PREFIX) - len(in_place) - len(tail)
@@ -289,8 +300,10 @@ def question_row(entry: dict) -> dict:
     detail = " ".join(p for p in (
         f"{what}." if what else "",
         _reported(entry),
-        f"The {product} update installed here was meant to fix it.",
-        f"Where to look: {look}." if look else "",
+        (f"{product} {fixed_in} was installed here to fix it."
+         if fixed_in else f"A {product} update was installed here to fix it."),
+        "" if place else (
+            f"Where to look: {_household_place(look)}." if look else ""),
         _checking(entry, place, product)) if p)
     return {
         # Stable per fix: the report's words and the release it was fixed
@@ -329,7 +342,7 @@ def group_row(entries: list[dict]) -> dict:
             titles.append(plain)
     if len(titles) == 1:
         return question_row(first)
-    place = clip(place, 60).strip()
+    place = _household_place(clip(place, 60).strip())
     in_place = f" ({place})" if place else ""
     tail = f" — after the {product} {fixed_in} update"
     more = f" and {len(titles) - 1} more"
@@ -340,9 +353,9 @@ def group_row(entries: list[dict]) -> dict:
              f"{quoted[0]}, {quoted[1]} and {len(titles) - 2} more")
     look = place or ("" if product == "brAIn" else product)
     detail = " ".join(p for p in (
-        f"The {product} update installed here was meant to fix these: "
+        f"{product} {fixed_in} was installed here to fix these: "
         f"{listed}.",
-        f"Where to look: {look}." if look else "",
+        f"Where to look: {_household_place(look)}." if look else "",
         _checking({"stream": first.get("stream")}, place, product)) if p)
     return {
         # Stable per question: the first change, how many others, the place
