@@ -2748,6 +2748,23 @@ def misread_reminder(row: dict) -> dict | None:
     return None
 
 
+_DISTANCE_UNITS = frozenset({"mi", "km"})
+
+
+def odometer_counter(row: dict) -> bool:
+    """Whether a model-written row states a distance "overdue" ("19,766 miles
+    overdue"): a service-due or odometer-style counter, which a car's
+    integration publishes as information and which counts on past its date
+    without anything being wrong in the house (#827). A reminder in days or
+    months is a real date and is not this. Wrong on one of these stands the
+    producer down for that entity as for any other row."""
+    words = " ".join(str(row.get(k) or "") for k in
+                     ("text", "claim", "detail", "fix"))
+    late = _OVERDUE_RE.search(words)
+    return bool(late and _UNIT_KEY.get(late.group(2).lower(), "")
+                in _DISTANCE_UNITS)
+
+
 def _asks_about_own_setup(row: dict) -> bool:
     """Whether ``row`` is an open question to the household about brAIn's
     own setup: `self_care`'s, or any question whose words are about it."""
@@ -2825,6 +2842,10 @@ def add_many(objs: list[dict]) -> list[dict]:
             # A figure no real reminder reads is a question about its
             # setting (#722); a code-chosen key keeps its text.
             asked = misread_reminder(entry)
+            if not asked and odometer_counter(entry):
+                # A distance counting past its date with no interval to
+                # measure it against is information, not a fault (#827).
+                continue
             if asked:
                 if entry.get("source") in SUBJECT_FOLD_EXCLUDED:
                     asked.pop("text")
@@ -4003,8 +4024,16 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
         recurrence = {"recurred": int(prior.get("recurred") or 0) + 1,
                       "previous_at": int(prior.get("ts") or 0)}
     stamp = when or int(time.time())
+    # The level a battery was acknowledged at, read off the check's own
+    # sentence ("8% as of …"): going further down than that is news
+    # (`checks/devices.battery_low`).
+    at_level = None
+    if kind == "accepted" and str(shaped.get("source") or "") == "check:dev.battery_low":
+        m = re.match(r"\s*(\d+(?:\.\d+)?)%", str(shaped.get("detail") or ""))
+        at_level = float(m.group(1)) if m else None
     ledger.append({
         **recurrence,
+        **({"at_level": at_level} if at_level is not None else {}),
         "key": key,
         "text": shaped["text"],
         "kind": kind,
@@ -4088,6 +4117,14 @@ def answered_checks() -> dict[str, dict[str, dict]]:
             # When it was last answered, for an answer that holds only
             # until the thing changes (`House.answered_since`).
             row["at"] = max(int(row.get("at") or 0), int(e.get("ts") or 0))
+            if e.get("kind") == "accepted" and not e.get("lapsed_at"):
+                # Known / on my list, still standing (`House.acknowledged`).
+                if int(e.get("ts") or 0) >= int(row.get("acked_at") or 0):
+                    row["acked_at"] = int(e.get("ts") or 0)
+                    if e.get("at_level") is not None:
+                        row["acked_level"] = float(e["at_level"])
+                    else:
+                        row.pop("acked_level", None)
             if wrong:
                 # When it was last answered WRONG: an agreement given later
                 # is not a Wrong that holds (`House._answered_this_stretch`).
@@ -4138,6 +4175,16 @@ def _wrong_at(entry: dict | None) -> int:
 # the entry a recurrence is measured from (`_remember_settled`).
 FIXED_LAPSE_DAYS = 90
 RIGHT_KINDS = ("fixed", "accepted")
+# The checks whose row is a level or a link that moves around its line: an
+# answer that the household knows (To Do, "on my list") holds through the
+# readings that cross it, and ends only when the check has left it alone
+# this long. Going worse is the check's to say in new words
+# (`checks/devices.BATTERY_ACK_REOPEN_PCT`), going offline is another
+# check's row.
+ACKNOWLEDGED_SOURCES = frozenset({
+    "check:dev.battery_low", "check:forecast.battery", "check:net.zwave_link",
+    "check:net.zigbee_weak", "check:net.bluetooth_faint"})
+ACK_LAPSE_S = 14 * 86400
 
 
 def _suppresses(entry: dict, now: float) -> bool:
@@ -4207,14 +4254,32 @@ def lapse_settled(sources: set[str], keep_keys: set[str],
     now = time.time() if now is None else float(now)
     ledger = _load_settled()
     lapsed = 0
+    touched = False
     for entry in ledger:
         if (entry.get("kind") in RIGHT_KINDS
                 and not entry.get("lapsed_at")
-                and str(entry.get("source") or "") in sources
-                and str(entry.get("key") or "") not in keep_keys):
+                and str(entry.get("source") or "") in sources):
+            if str(entry.get("key") or "") in keep_keys:
+                if entry.pop("absent_at", None):
+                    touched = True
+                continue
+            if (entry.get("kind") == "accepted"
+                    and str(entry.get("source") or "") in ACKNOWLEDGED_SOURCES):
+                # "Known" / "on my list" about a battery or a link (never
+                # Done: a battery somebody fixed that reads low again is
+                # news on the first pass, as it always was): a pass
+                # that does not report it is a level crossing its line or a
+                # link between two readings, not the end of the answer. It
+                # ends after `ACK_LAPSE_S` of the check not reporting it.
+                if not entry.get("absent_at"):
+                    entry["absent_at"] = int(now)
+                    touched = True
+                    continue
+                if now - float(entry["absent_at"]) < ACK_LAPSE_S:
+                    continue
             entry["lapsed_at"] = int(now)
             lapsed += 1
-    if lapsed:
+    if lapsed or touched:
         _write_settled(ledger)
     return lapsed
 

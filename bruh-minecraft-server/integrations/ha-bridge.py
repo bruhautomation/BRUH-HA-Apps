@@ -266,7 +266,7 @@ async def world(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
 COMPANION_KINDS = ("companion", "companion_identity", "companion_say", "companion_appear",
                    "companion_ask", "companion_build", "companion_edit", "companion_look",
                    "companion_undo", "companion_zone", "companion_progress", "companion_bar",
-                   "companion_spyglass", "companion_thought", "companion_journal", "atlas", "atlas_room", "atlas_label",
+                   "companion_spyglass", "companion_thought", "companion_journal", "render_maps", "atlas", "atlas_room", "atlas_label",
                    "companion_legacy", "companion_legacy_retire", "rename_world")
 _JOB = re.compile(r"^[A-Za-z0-9_.:\-]{1,40}$")
 
@@ -316,6 +316,10 @@ async def companion(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
     if kind == "companion_journal":
         return await asyncio.to_thread(_panel, "POST", "/api/companion/journal", _pick(
             payload, ("player", "name")), 15)
+    if kind == "render_maps":
+        return await asyncio.to_thread(_panel, "POST", "/api/maps/render", _pick(
+            payload, ("player", "scale", "builds", "x1", "z1", "x2", "z2", "dimension", "name")),
+            290)
     if kind == "atlas":
         return await asyncio.to_thread(_panel, "POST", "/api/atlas", _pick(
             payload, ("player", "x", "y", "z", "dimension", "radius", "query")), 55)

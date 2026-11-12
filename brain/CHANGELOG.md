@@ -2,6 +2,32 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.35
+
+### Fixed
+
+- An automation that waits on something outside (a sensor, a season, a calendar) is no longer reported as never having run because its moment has not come: one Wrong holds back the others that wait the same way, an automation that mentions a month or season needs a year of history first, and automations that guard against harm are never held (#864).
+- A condition that never let an automation through is now named, with how many days of history that covers, and nothing is said while the history is shorter than the condition's own cycle (a weekday or a season) (#865).
+- A machine that has stopped is no longer reported as waiting when the room is already as dry as it is set to be: brAIn reads the humidity it starts at and its set point first, and a Wrong on any part of the device counts for the whole device (#862).
+- A car's distance-to-service counter is no longer raised as a fault (#827).
+- A low battery you said is known or on your list stays quiet until it drops further, below 10% and below where you answered, instead of coming back the first time it is not reported. A battery you marked Done comes back as soon as it is low again (#849).
+- When you answer Wrong with "remove it from the automations" or "stop caring about it", brAIn asks whether to treat the device as no longer in use, listing the automations that use it; only Yes stops the overnight and Zigbee checks raising it, and nothing is changed in Home Assistant. Smoke, leak, gas and lock devices, and their batteries, are never offered (#828).
+
+## 5.1.34
+
+### Removed
+
+- Ask's ⤢ full-screen terminal button. Nothing folds brAIn's header away any more: not the button, not the keyboard opening, not tapping the message box (#838).
+
+### Fixed
+
+- On a phone in the Home Assistant app, brAIn's header stays put: it no longer flickers at the bottom of Home, one tap on a tab from the message box switches tabs, and the page is put back at the top once the keyboard closes (#834).
+- The header sits below the iPhone's status bar whether the Home Assistant app is in full screen or not, with no doubled gap: brAIn counts only the part of the status-bar strip that lies over its own page (#839, #838).
+- Morph's room rail on a Home Assistant dashboard no longer stops a swipe from scrolling the page, including a swipe that starts at the right edge, and no longer pulls the page back after it lands (#840).
+- Morph's entity card says a sensor's state the way Home Assistant does: Connected or Disconnected, Open or Closed, instead of On or Off (#857).
+- When brAIn ships something your own house.js already added to the header (the clock, a Settings button), the copy beside brAIn's own is hidden and ⚙ › Instructions says so once; anything less certain is only named there, never hidden (#835).
+- brAIn's screenshot tool can photograph its page the way a phone shows it: inside the sidebar, under the status bar, in full screen or not, after a scroll or with the message box focused, and it reports where the header sits (#836).
+
 ## 5.1.33
 
 ### Fixed

@@ -18,7 +18,8 @@ import logging
 import os
 import re
 
-from ._util import (DAY, House, age_days, evidence_for, join_names, listify,
+from ._util import (DAY, House, age_days, domain_of, evidence_for,
+                    join_names, listify,
                     target_offline_error,
                     parse_ts, walk, when)
 
@@ -669,6 +670,43 @@ def _polled_guard(config) -> bool:
             and _guard_conditions(config))
 
 
+def _condition_words(house: House, node) -> str:
+    """The condition a run stopped at, in a few plain words ("Kitchen being
+    on"), or "" where the config no longer holds it or it cannot be said."""
+    if not isinstance(node, dict):
+        return ""
+    kind = str(node.get("condition") or "").lower()
+    ids = [str(e) for e in listify(node.get("entity_id"))]
+    names = join_names([house.label(e) for e in ids], limit=3) if ids else ""
+    if kind == "state" and names:
+        want = join_names([str(x) for x in listify(node.get("state"))], limit=3)
+        return f"{names} being {want}" if want else f"the state of {names}"
+    if kind == "numeric_state" and names:
+        return f"{names} being within its range"
+    if kind == "time":
+        return "the time of day or the weekday it allows"
+    if kind in ("sun", "zone"):
+        return f"the {kind} condition"
+    if kind == "template":
+        return "its template condition"
+    return f"its {kind} condition" if kind else ""
+
+
+def _condition_cycle_days(config, node) -> float:
+    """How long a condition's own cycle is: a weekday is a week, a month
+    or a season is a year, anything else a day. A condition cannot be said
+    never to pass over less than one turn of that cycle."""
+    text = json.dumps(node if isinstance(node, dict) else
+                      (config.get("conditions") if config.get("conditions")
+                       is not None else config.get("condition")),
+                      default=str)
+    if _SEASONAL_RE.search(text):
+        return float(SEASONAL_DAYS)
+    if "weekday" in text or "now().weekday" in text or "isoweekday" in text:
+        return 7.0
+    return 1.0
+
+
 def condition_never_passes(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     configs = {str(c.get("id")): c for c in (snap.get("automations") or [])
@@ -693,14 +731,33 @@ def condition_never_passes(snap: dict, now: float) -> list[dict]:
         ran_age = age_days(last_ran, now) if last_ran else None
         if ran_age is not None and ran_age < CONDITION_PASSED_DAYS:
             continue
+        config = configs.get(item["key"].split(".", 1)[1]) or {}
+        node = _walk_step(config, rows[-1].get("last_step"))
+        # Over how many days: from the oldest run Core kept to now. Shorter
+        # than the condition's own cycle (a weekday, a season) is "has not
+        # passed yet", which every condition says until its day comes.
+        first = min((_trace_start_ts(r) for r in rows if _trace_start_ts(r)),
+                    default=0.0)
+        days = max(1, int((now - first) // DAY)) if first else 0
+        if first and (now - first) / DAY < _condition_cycle_days(config, node):
+            continue
         if not house.should_report(eid, "auto.condition_never_passes"):
             continue
+        # No hold through ANOTHER automation's Wrong here: a condition that
+        # never passes is a fault in this automation's own config (a typo
+        # in a state), and the one beside it waiting on the same kind of
+        # trigger may be the leak valve's.
+        which = _condition_words(house, node)
         out.append({
             "text": f"{_label_of(item)} triggers but its condition never "
                     "passes",
-            "detail": f"Every one of its last {len(rows)} runs (most "
-                      f"recently {when(_trace_start(rows[-1]))}) stopped at "
-                      "the condition, and "
+            "detail": f"Every one of its last {len(rows)} runs"
+                      + (f" over {days} day{'s' if days != 1 else ''}"
+                         if days else "")
+                      + f" (most recently {when(_trace_start(rows[-1]))}) "
+                      "stopped at the condition"
+                      + (f", {which}" if which else "")
+                      + ", and "
                       + (f"its actions last ran on {when(last_ran)}."
                          if last_ran else "its actions have never run.")
                       + " It is alive and cannot act.",
@@ -938,6 +995,65 @@ def _watches_a_fault(house: House, config: dict) -> bool:
                           is not None else config.get("action"))
 
 
+# What an automation waits on that the house does not control: a sensor
+# reading, the clock, the sun, a calendar, a zone. An automation that has not
+# fired yet is waiting, which is not a fault, and a Wrong on one is a Wrong on
+# every other automation waiting on the same kind of thing — for
+# `never_fired` only, which never reaches an automation that answers an
+# alarm (`_guards_safety`); a condition that never passes is that
+# automation's own fault and is never held through another's Wrong.
+OUTSIDE_TRIGGERS = frozenset({"state", "numeric_state", "time", "time_pattern",
+                              "sun", "calendar", "zone", "template",
+                              "geo_location", "device"})
+# An automation written for a season or a date needs a year of history before
+# "never fired" says anything.
+SEASONAL_DAYS = 400
+_SEASONAL_RE = re.compile(
+    r"month|season|winter|summer|spring|autumn|holiday|christmas|vacation",
+    re.I)
+
+
+def _wait_shape(config) -> frozenset:
+    """What each trigger waits on, as (kind, domain of what it watches),
+    or an empty set when any trigger is of a kind that is not outside news
+    (a button, an event, a webhook: the house's own to cause)."""
+    if not isinstance(config, dict):
+        return frozenset()
+    shape = set()
+    triggers = _triggers(config)
+    for trig in triggers:
+        kind = _trigger_kind(trig)
+        if kind not in OUTSIDE_TRIGGERS:
+            return frozenset()
+        ids = [str(e) for e in listify(trig.get("entity_id"))]
+        shape.add((kind, tuple(sorted({domain_of(e) for e in ids if "." in e}))))
+    return frozenset(shape)
+
+
+def _wrong_on_same_wait(house: House, config: dict, check_id: str) -> str:
+    """The Wrong the household gave this check about ANOTHER automation that
+    waits on the same kind of thing, or "" — the answer to one is the
+    answer to the class (an alarm for a binary sensor that has not changed,
+    a rule for a season that has not come)."""
+    shape = _wait_shape(config)
+    answers = house.snap.get("answers")
+    if not shape or not isinstance(answers, dict):
+        return ""
+    for item in _automations(house):
+        eid = item["entity_id"]
+        row = (answers.get(eid) or {}).get(check_id) if eid else None
+        if (isinstance(row, dict) and int(row.get("wrong") or 0) >= 1
+                and _wait_shape(item["config"]) == shape):
+            return item["alias"]
+    return ""
+
+
+def _needs_a_year(config) -> bool:
+    text = json.dumps(config, default=str)
+    return bool(_SEASONAL_RE.search(text)) or "calendar" in _trigger_platforms(
+        config)
+
+
 def never_fired(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     out = []
@@ -963,10 +1079,18 @@ def never_fired(snap: dict, now: float) -> list[dict]:
         age = age_days(reg.get("created_at"), now)
         if age is None or age < NEVER_FIRED_DAYS:
             continue
+        if _needs_a_year(item["config"]) and age < SEASONAL_DAYS:
+            continue
         kinds = _trigger_platforms(item["config"])
         if kinds and kinds <= RARE_TRIGGERS:
             continue
         if not house.should_report(eid, "auto.never_fired"):
+            continue
+        other = _wrong_on_same_wait(house, item["config"], "auto.never_fired")
+        if other:
+            house.gave_up("auto.never_fired", [{"entity_id": eid}],
+                          f"you marked “{other}” wrong, and this waits on the "
+                          "same kind of thing", kind="explained")
             continue
         out.append({
             "text": f"{_label('Automation', item)} has never fired",

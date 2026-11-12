@@ -59,7 +59,50 @@ PAGES: dict[str, list[tuple[str, str]]] = {
                        ("gardenrx-harvest-card", "gardenrx-cards.js"),
                        ("gardenrx-inventory-card", "gardenrx-cards.js")],
     "morph": [("morph-panel", "morph-panel.js")],
+    # brAIn's page as the sidebar shows it: framed by the shell (shell.js),
+    # its header the one header (`shell_page`).
+    "shell": [("brain-shell", "shell.js")],
 }
+
+# The shell, the way Home Assistant holds it: a scroller the height of the
+# screen, a strip above the panel when the app keeps the status bar's band
+# for itself (`?strip=` px, 0 in the app's full screen), and the panel.
+# Its `hass` answers only what the shell asks to open brAIn's page — this
+# page's own origin is brAIn's, so the frame is `/?shell=1` beside it —
+# and the dashboard is off, because Morph draws from Home Assistant's
+# live data, which this page does not have. Nothing here writes.
+_SHELL_SCRIPT = r"""
+const q = new URLSearchParams(location.search);
+const strip = Math.max(0, Math.min(80, parseInt(q.get('strip') || '0', 10) || 0));
+document.getElementById('strip').style.height = strip + 'px';
+const refuse = () => Promise.reject(new Error("brAIn's preview is read-only"));
+const dark = !!(window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+await import(__BASE__ + '/morph/shell.js');
+const el = document.querySelector('brain-shell');
+el.narrow = innerWidth < 870;
+el.hass = {
+  callWS: async (m) => {
+    if (m && m.type === 'brain/shell') return { admin: true, ingress_url: new URL('../../', location.href).pathname, features: { morph: false }, slug: '' };
+    if (m && m.type === 'supervisor/api') return { session: 'preview' };
+    return refuse();
+  },
+  callApi: refuse, callService: refuse,
+  locale: { time_format: 'language' }, themes: { darkMode: dark },
+};
+window.__harnessIdle = async () => 0;
+"""
+
+
+def shell_page() -> str:
+    """brAIn's page framed by the shell, for a picture of the phone's
+    sidebar view (`screens.shell_screen`)."""
+    return ("<!doctype html><html><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,viewport-fit=cover\">"
+            "<title>brAIn preview</title><style>html,body{margin:0;height:100%;background:#000}"
+            "#haouter{height:100vh;height:100dvh;overflow:auto}#strip{background:#000}</style></head>"
+            "<body><div id=\"haouter\"><div id=\"strip\"></div><brain-shell></brain-shell></div>"
+            f"<script type=\"module\">{_SHELL_SCRIPT.replace('__BASE__', json.dumps(BASE))}</script>"
+            "</body></html>")
 
 _SCRIPT = r"""
 const H = __BASE__, CARDS = __CARDS__, MORPH = __MORPH__;
@@ -264,6 +307,8 @@ def page(name: str) -> str | None:
     entries = PAGES.get(str(name or ""))
     if entries is None:
         return None
+    if entries == PAGES["shell"]:
+        return shell_page()
     # Nothing off the URL is written into the page: only which catalog
     # entry it named, read back from the catalog.
     morph = entries == PAGES["morph"]
@@ -277,4 +322,4 @@ def page(name: str) -> str | None:
             f"<script type=\"module\">{script}</script></body></html>")
 
 
-__all__ = ["BASE", "PAGES", "page"]
+__all__ = ["BASE", "PAGES", "page", "shell_page"]
