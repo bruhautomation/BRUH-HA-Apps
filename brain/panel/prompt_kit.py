@@ -136,7 +136,17 @@ FINDING_VOICE = (
     "with no comparison is not a finding. (4) Make the call yourself: never "
     "\"if it is still so tomorrow\" or \"let me know\". When your "
     "conclusion is that nothing is needed, make no claim; a claim ends in "
-    "one step, or in the one question only the household can answer.")
+    "one step, or in the one question only the household can answer. "
+    "(5) One problem: detail and step support the headline; a second "
+    "problem is its own finding or is left out, and signal strength, link "
+    "quality or firmware appear only when the headline is about them. A "
+    "battery finding gives the level, the usual drain and a rough date it "
+    "runs out. (6) No path, entity id, line number, firmware string or dBm "
+    "figure: one plain sentence on what it means for the house, then the "
+    "step. (7) One name for the assistant (brAIn, or its own name when the "
+    "household gave one) and never \"companion\", \"chat session\" or "
+    "\"quick run\". Housekeeping on brAIn's own instruction or personality "
+    "files is brAIn's: never a finding.")
 
 HONEST_EMPTY = (
     "Nothing, or \"unknown\", is a good answer when that is what the data "
