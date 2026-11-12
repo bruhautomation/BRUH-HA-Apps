@@ -1189,6 +1189,19 @@ CONFLICT_MIN = 2
 # the order Core happened to run them in. Anything slower in one direction
 # only is a sequence somebody built — see `conflicting`.
 RACE_S = 5.0
+# Two undos of one pair on one entity this close together are the two rules
+# answering the same moment over and over — a loop, the rules fighting —
+# rather than each answering its own trigger (`conflicting`).
+FIGHT_S = 60.0
+# Two rules that both run on a clock and contradict each other this soon
+# after one another are a schedule that disagrees with itself: "heating on
+# at 06:30" and "heating off at 06:30:30" — a fight that recurs a day apart,
+# so neither the race nor the loop window sees it. The miner reads a day
+# (`snapshot.LOGBOOK_HOURS`), which holds one run of a daily schedule, so
+# the configs are the evidence it recurs: one such undo files the pair.
+SCHEDULE_S = 300.0
+# Trigger platforms that are a clock rather than something happening.
+CLOCK_TRIGGERS = frozenset({"time", "sun", "time_pattern"})
 
 
 def _override_history() -> dict[str, list[dict]]:
@@ -1480,6 +1493,48 @@ def _conflicts(snap: dict, house: House) -> list[dict]:
         return rows
 
 
+def _clock_rules(house: House) -> set[str]:
+    """The automations every trigger of which is a clock (`CLOCK_TRIGGERS`).
+    One whose config cannot be read is not among them."""
+    out: set[str] = set()
+    for item in _automations(house):
+        eid = _automation_entity(house, item)
+        trigs = _triggers(item["config"])
+        if eid and trigs and all(_trigger_kind(t) in CLOCK_TRIGGERS
+                                 for t in trigs):
+            out.add(eid)
+    return out
+
+
+def _contradictions(conflicts, clock: set[str]) -> list[dict]:
+    """The undos that are two rules contradicting each other (`conflicting`):
+    a race, both undos of a loop, or a schedule that disagrees with itself
+    (marked `scheduled`)."""
+    rows = sorted((c for c in conflicts or ()
+                   if isinstance(c, dict) and c.get("first")
+                   and c.get("second")),
+                  key=lambda c: float(c.get("ts") or 0.0))
+    last: dict[tuple, int] = {}
+    keep: dict[int, dict] = {}
+    for i, c in enumerate(rows):
+        ts = float(c.get("ts") or 0.0)
+        after = c.get("after_s")
+        after = float(after) if after is not None else None
+        where = (tuple(sorted((c["first"], c["second"]))), c.get("entity_id"))
+        prev = last.get(where)
+        last[where] = i
+        if after is not None and after <= RACE_S:
+            keep[i] = c
+        if prev is not None and 0 <= ts - float(rows[prev].get("ts") or 0.0) \
+                <= FIGHT_S:
+            keep[i] = c
+            keep.setdefault(prev, rows[prev])  # a loop, its first undo too
+        if (c["first"] in clock and c["second"] in clock
+                and after is not None and after <= SCHEDULE_S):
+            keep[i] = {**c, "scheduled": True}
+    return [keep[i] for i in sorted(keep)]
+
+
 def conflicting(snap: dict, now: float) -> list[dict]:
     """Two automations that keep undoing each other.
 
@@ -1507,15 +1562,26 @@ def conflicting(snap: dict, now: float) -> list[dict]:
     `RACE_S` — the same trigger reaching two rules, where which one wins is
     the order Core ran them in. A one-way pair slower than that is a
     sequence somebody built and says nothing, whatever the count.
+
+    **And both directions is not a fight either** (#812, #852): "lights off
+    at eleven" and "motion turns the hall light on" undo each other in both
+    directions on most evenings, each answering its own trigger minutes
+    apart, and that was most of the Wrongs on this rule in one house. What
+    makes two rules CONTRADICT is that they answer the same moment with
+    different states: an undo inside `RACE_S` (one trigger, two rules), or
+    a loop — the pair undoing each other again on the same entity within
+    `FIGHT_S` of the last undo (the loop's first undo counts too). And a
+    schedule that disagrees with itself: two rules that both run only on a
+    clock, the second undoing the first inside `SCHEDULE_S` — filed on one,
+    because a day of logbook holds one run of a daily schedule and the
+    configs say it runs again tomorrow. Two rules answering different
+    triggers are left out at any spacing. A pair is filed on
+    `CONFLICT_MIN` contradictions, or one scheduled one.
     """
     house = House(snap)
     pairs: dict[tuple, dict] = {}
-    for c in _conflicts(snap, house):
-        first, second = c.get("first") or "", c.get("second") or ""
-        if not first or not second:
-            continue
-        after = c.get("after_s")
-        raced = after is not None and float(after) <= RACE_S
+    for c in _contradictions(_conflicts(snap, house), _clock_rules(house)):
+        first, second = c["first"], c["second"]
         # A pair is a pair whichever way round it happened this time —
         # keyed unordered, or A-undoes-B and B-undoes-A count as two
         # separate disagreements between the same two rules.
@@ -1527,20 +1593,17 @@ def conflicting(snap: dict, now: float) -> list[dict]:
                  second: _named(c.get("second_name"), second, house)}
         p = pairs.setdefault(key, {"names": names, "count": 0,
                                    "entities": [], "last": 0.0,
-                                   "ways": set(), "raced": False})
+                                   "scheduled": False})
         p["names"].update(names)
         p["count"] += 1
-        p["ways"].add((first, second))
-        p["raced"] = p["raced"] or raced
+        p["scheduled"] = p["scheduled"] or bool(c.get("scheduled"))
         if c["entity_id"] not in p["entities"]:
             p["entities"].append(c["entity_id"])
         p["last"] = max(p["last"], c.get("ts") or 0.0)
 
     out = []
     for key, p in sorted(pairs.items()):
-        if p["count"] < CONFLICT_MIN:
-            continue
-        if len(p["ways"]) < 2 and not p["raced"]:
+        if p["count"] < CONFLICT_MIN and not p["scheduled"]:
             continue
         rules = [k for k in key if k.startswith("automation.")]
         subject = rules[0] if rules else ""
@@ -1553,13 +1616,18 @@ def conflicting(snap: dict, now: float) -> list[dict]:
         a, b = (p["names"].get(k, k) for k in key)
         out.append({
             "text": f"'{a}' and '{b}' keep undoing each other",
-            "detail": (f"{p['count']} times in the last day, on "
+            "detail": (("Once" if p["count"] == 1
+                        else f"{p['count']} times") + " in the last day, on "
                        + join_names([house.label(e)
                                      for e in sorted(p["entities"])])
                        + f". The last was {when(p['last'])}. Both ran and "
-                         "neither failed — which one wins depends on the "
-                         "order their triggers happen to fire in, so the "
-                         "result is different from one day to the next."),
+                       + ("neither failed — both run on a schedule, minutes "
+                          "apart, so one undoes the other every time it "
+                          "comes round."
+                          if p["scheduled"] else
+                          "neither failed — which one wins depends on the "
+                          "order their triggers happen to fire in, so the "
+                          "result is different from one day to the next.")),
             "fix": ("Decide which one should own "
                     + join_names([house.label(e)
                                   for e in sorted(p["entities"])])

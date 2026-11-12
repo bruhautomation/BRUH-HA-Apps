@@ -50,8 +50,8 @@ _GAP = re.compile(
 
 # A headline about nothing having happened.
 _NON_EVENT = re.compile(
-    r"\bno (?:cooling|heating|runs?|cycles?|openings?|activity|events?|use|"
-    r"usage|motion|change|alerts?|visits?|deliveries)\b"
+    r"\bno (?:cooling|heating|runs?|cycles?|openings?|"
+    r"activity|events?|use|usage|motion|change|alerts?|visits?|deliveries)\b"
     r"|\bnothing (?:happened|ran|moved|changed|opened|to report)\b"
     r"|\bstayed (?:shut|closed|off|locked|dry|quiet|idle|dark|empty)\b"
     r"|\b(?:never|didn['’]t|did not|hasn['’]t|has not|haven['’]t|have not|"
@@ -95,6 +95,20 @@ def _acts(obj: dict) -> bool:
                for h in obj.get("highlights") or [] if isinstance(h, dict))
 
 
+NOT_FROM_HOUSE_WHY = ("the answer carried nothing read from the house, so no "
+                      "card was made from it")
+
+
+def read_nothing(tools) -> bool:
+    """Whether a run called no tool that reads the house. The names are the
+    run's own transcript (`conversations.tool_reads`); the CLI's structured
+    reply is a tool call too and is not a read. A routing note from a chat
+    turn ("no data needed") is this: it is judged by what the run did,
+    never by how the reply is worded."""
+    return not [t for t in tools or ()
+                if not str(t).lower().endswith("structuredoutput")]
+
+
 def blind_lead(obj: dict, verdict: str = "") -> str:
     """Why the card's main claim is not news — "a data gap", "no
     comparison" or "nothing happened" — or "" when it is."""
@@ -110,7 +124,11 @@ def blind_lead(obj: dict, verdict: str = "") -> str:
         return "a data gap"
     if _NON_EVENT.search(claim):
         return "nothing happened"
-    if _ALL_FINE.search(claim) and _only_absence(obj):
+    # A claim that IS a "no …" phrase with no figure before it ("no aux
+    # heat or defrost cycles"), whatever words sit inside the phrase.
+    if re.match(r"\s*no\b", claim, re.I) and not re.search(r"\d", claim):
+        return "nothing happened"
+    if _ALL_FINE.search(claim) and (_only_absence(obj) or _NOTHING_NEWS.search(claim)):
         return "nothing happened"
     return ""
 
@@ -125,6 +143,13 @@ _ALL_FINE = re.compile(
     r"|nothing (?:unusual|of note|to report)"
     r"|everything (?:is |was |looks )?(?:fine|normal|quiet|ok|okay)"
     r"|(?:a )?quiet (?:day|night|week|morning|evening))\b", re.I)
+
+
+# "Nothing unusual" is the whole conclusion, not a verdict with news under
+# it: tiles that compare only show the normal being normal. The contract
+# gives "all normal" in one short sentence for a card worth keeping; a
+# long card under this headline is not that one.
+_NOTHING_NEWS = re.compile(r"^\s*nothing (?:unusual|of note|to report)\b", re.I)
 
 
 def _only_absence(obj: dict) -> bool:
