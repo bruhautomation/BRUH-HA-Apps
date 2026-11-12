@@ -64,6 +64,12 @@ MAX_LINES = 6
 
 # Three Wrongs in a row, the latest answers, and the rule is held (above).
 HOLD_STREAK = 3
+# Or a record this one-sided, the latest answer a Wrong (#811, #812): a
+# streak is ended by any agreement, so a rule Wrong four times in five with
+# its one agreement among the latest answers was never held however often
+# the household went on saying Wrong.
+HOLD_WRONG = 3
+HOLD_SHARE = 0.75
 # A card somebody made is a rule they wrote (`user_categories.ID_PREFIX`).
 PERSON_RULE_PREFIX = "user-"
 
@@ -96,14 +102,21 @@ def qualifies(row: dict) -> bool:
 
 
 def holds(row: dict) -> bool:
-    """A scorecard row whose latest `HOLD_STREAK` answers were all Wrong:
-    its rule's rows are filed held (above)."""
+    """A scorecard row whose latest `HOLD_STREAK` answers were all Wrong,
+    or which is Wrong at least `HOLD_WRONG` times and `HOLD_SHARE` of its
+    answers with the latest a Wrong: its rule's rows are filed held
+    (above)."""
     if not isinstance(row, dict) or not quietable(row.get("source")):
         return False
     try:
-        return int(row.get("streak") or 0) >= HOLD_STREAK
+        if int(row.get("streak") or 0) >= HOLD_STREAK:
+            return True
+        wrong = int(row.get("wrong") or 0)
+        total = int(row.get("total") or 0)
     except (TypeError, ValueError):
         return False
+    return (wrong >= HOLD_WRONG and total > 0
+            and wrong >= HOLD_SHARE * total and row.get("last") == "wrong")
 
 
 def held_rules(scorecard) -> dict[str, dict]:
@@ -115,11 +128,18 @@ def held_rules(scorecard) -> dict[str, dict]:
 def held_reason(row: dict) -> str:
     """The verdict a held row carries: the record, in the household's words,
     and what brings it back."""
-    streak = int((row or {}).get("streak") or 0)
-    return (f"You marked this rule's last {streak} reports wrong, so brAIn "
-            "set this one aside. It comes back if it gets worse or names "
-            "something new, or once you agree with one of this rule's "
-            "reports.")
+    row = row or {}
+    streak = int(row.get("streak") or 0)
+    if streak >= HOLD_STREAK:
+        said = f"You marked this rule's last {streak} reports wrong"
+    else:
+        # Held by its share (`holds`): a streak an agreement ended.
+        said = (f"You marked {int(row.get('wrong') or 0)} of this rule's "
+                f"{int(row.get('total') or 0)} reports wrong, the latest "
+                "among them")
+    return (said + ", so brAIn set this one aside. It comes back if it "
+            "gets worse or names something new, or once you agree with one "
+            "of this rule's reports.")
 
 
 def never_held(row: dict, patterns: list[str] | None = None) -> bool:
@@ -207,8 +227,12 @@ def lines(batch, scorecard, floor=None) -> list[str]:
                 "included.")
         if holds(row):
             # Held by default (#698): only a look that keeps it shows it.
-            line += (f" The last {int(row['streak'])} in a row were wrong, "
-                     "so brAIn holds this rule's rows unless you keep one "
-                     "for fresh, specific evidence the others did not have.")
+            line += (" The last "
+                     + (f"{int(row['streak'])} in a row were wrong"
+                        if int(row.get("streak") or 0) >= HOLD_STREAK
+                        else "answer was wrong and so were most before it")
+                     + ", so brAIn holds this rule's rows unless you keep "
+                     "one for fresh, specific evidence the others did not "
+                     "have.")
         out.append(line)
     return out[:MAX_LINES]

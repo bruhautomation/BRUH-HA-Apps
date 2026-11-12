@@ -463,10 +463,60 @@ _GONE_RE = re.compile(
     r"(?:is|are|it'?s)\s+(?:completely |totally |just )?"
     r"(?:broken|faulty|defective|dead for good|junk|a dud)|"
     r"(?:sensor|device|remote|unit)\s+(?:is\s+)?(?:broken|faulty))", re.I)
+# The other ways a house says the same thing about a device (#848): "broken
+# sensor", "the probe died", "it has never worked", "never set up", "we
+# ignore that one". `dev.frozen` was answered Wrong six times out of six in
+# these words and none of them was read as finished, so the sensor was asked
+# about again under the next check. Each is about the THING (a device noun,
+# or a sentence about "it"), and a negation in front ("it's not broken, it
+# just never changes") reads as nothing.
+_DEVICE_NOUN = (r"(?:sensor|probe|device|unit|remote|thermometer|plug|"
+                r"switch|detector|meter|gauge|button|camera|bulb)s?")
+_FINISHED_RE = re.compile(
+    r"\b(?:broken|faulty|defective|dead|dud)\s+(?:\w+\s+)?" + _DEVICE_NOUN
+    + r"|\b" + _DEVICE_NOUN + r"\s+(?:\w+\s+)?(?:died|broke|"
+    r"(?:is|was|has been)\s+dead)\b"
+    r"|\b(?:has|have|had)?\s*never\s+(?:once\s+)?worked\b"
+    r"|\bunconfigured\b"
+    r"|\b(?:not|never|wasn'?t|isn'?t)\s+(?:been\s+|really\s+)?"
+    r"(?:configured|set\s?up)\b(?!\s+(?:to|for|with|so)\b)"
+    r"|\b(?:i|we)\s+(?:just\s+|always\s+|deliberately\s+)?ignore\s+"
+    r"(?:it|this|that|them|these|those)(?:\s+(?:one|ones|sensor|device))?"
+    r"(?![\w\s]*\b(?:when|while|if|unless|until)\b)"
+    r"|\b(?:deliberately|purposely|intentionally)\s+ignored?\b"
+    r"|\bignored?\s+(?:on purpose|deliberately)\b", re.I)
+# "Dead" on its own is a battery as often as a device, and is finished only
+# beside words that say it stays that way ("dead and I do not plan to
+# replace it"), `_FOR_GOOD_RE`'s.
+_DEAD_RE = re.compile(r"\b(?:dead|died|broken)\b", re.I)
+_NEGATED_RE = re.compile(r"(?:\bnot|n't|\bnever|\bno longer)\s+(?:\w+\s+)?$",
+                         re.I)
+
+
+def _finished_words(text: str) -> bool:
+    """`_FINISHED_RE`, with a match preceded by a negation read as none."""
+    for m in _FINISHED_RE.finditer(text):
+        word = m.group(0).strip().lower()
+        if word.startswith(("not", "never", "wasn", "isn", "has never",
+                            "have never", "had never")):
+            return True  # the negation is the claim ("never worked")
+        if not _NEGATED_RE.search(text[max(0, m.start() - 24):m.start()]):
+            return True
+    return False
+
+
 def gone_for_good(note: str) -> bool:
     """Whether a reason says the device is retired, unused or broken."""
     text = str(note or "")
-    return bool(_GONE_RE.search(text)) and not temporary(text)
+    if temporary(text):
+        return False
+    if _GONE_RE.search(text):
+        return True
+    if conditional(text):
+        # "Ignore it while the heating is off" is a condition, kept as one.
+        return False
+    return _finished_words(text) or bool(
+        _DEAD_RE.search(text) and _FOR_GOOD_RE.search(text))
 
 
 def known_faulty(now: float | None = None) -> dict[str, str]:

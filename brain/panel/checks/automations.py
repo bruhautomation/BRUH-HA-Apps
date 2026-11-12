@@ -1189,6 +1189,10 @@ CONFLICT_MIN = 2
 # the order Core happened to run them in. Anything slower in one direction
 # only is a sequence somebody built — see `conflicting`.
 RACE_S = 5.0
+# Two undos of one pair on one entity this close together are the two rules
+# answering the same moment over and over — a loop, the rules fighting —
+# rather than each answering its own trigger (`conflicting`).
+FIGHT_S = 60.0
 
 
 def _override_history() -> dict[str, list[dict]]:
@@ -1507,15 +1511,36 @@ def conflicting(snap: dict, now: float) -> list[dict]:
     `RACE_S` — the same trigger reaching two rules, where which one wins is
     the order Core ran them in. A one-way pair slower than that is a
     sequence somebody built and says nothing, whatever the count.
+
+    **And both directions is not a fight either** (#812, #852): "lights off
+    at eleven" and "motion turns the hall light on" undo each other in both
+    directions on most evenings, each answering its own trigger minutes
+    apart, and that was most of the Wrongs on this rule in one house. What
+    makes two rules CONTRADICT is that they answer the same moment with
+    different states: an undo inside `RACE_S` (one trigger, two rules), or
+    a loop — the pair undoing each other again on the same entity within
+    `FIGHT_S` of the last undo. Only those count, and a pair is filed on
+    `CONFLICT_MIN` of them.
     """
     house = House(snap)
     pairs: dict[tuple, dict] = {}
-    for c in _conflicts(snap, house):
+    # The last undo of each pair on each entity, for a loop (above).
+    last_undo: dict[tuple, float] = {}
+    for c in sorted(_conflicts(snap, house),
+                    key=lambda c: float(c.get("ts") or 0.0)):
         first, second = c.get("first") or "", c.get("second") or ""
         if not first or not second:
             continue
         after = c.get("after_s")
+        ts = float(c.get("ts") or 0.0)
+        where = (tuple(sorted((first, second))), c.get("entity_id"))
+        before = last_undo.get(where)
+        last_undo[where] = ts
         raced = after is not None and float(after) <= RACE_S
+        looped = before is not None and 0 <= ts - before <= FIGHT_S
+        if not (raced or looped):
+            # Each rule answering its own trigger: a sequence, not a fight.
+            continue
         # A pair is a pair whichever way round it happened this time —
         # keyed unordered, or A-undoes-B and B-undoes-A count as two
         # separate disagreements between the same two rules.
@@ -1526,12 +1551,9 @@ def conflicting(snap: dict, now: float) -> list[dict]:
         names = {first: _named(c.get("first_name"), first, house),
                  second: _named(c.get("second_name"), second, house)}
         p = pairs.setdefault(key, {"names": names, "count": 0,
-                                   "entities": [], "last": 0.0,
-                                   "ways": set(), "raced": False})
+                                   "entities": [], "last": 0.0})
         p["names"].update(names)
         p["count"] += 1
-        p["ways"].add((first, second))
-        p["raced"] = p["raced"] or raced
         if c["entity_id"] not in p["entities"]:
             p["entities"].append(c["entity_id"])
         p["last"] = max(p["last"], c.get("ts") or 0.0)
@@ -1539,8 +1561,6 @@ def conflicting(snap: dict, now: float) -> list[dict]:
     out = []
     for key, p in sorted(pairs.items()):
         if p["count"] < CONFLICT_MIN:
-            continue
-        if len(p["ways"]) < 2 and not p["raced"]:
             continue
         rules = [k for k in key if k.startswith("automation.")]
         subject = rules[0] if rules else ""
