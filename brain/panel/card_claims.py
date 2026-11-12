@@ -50,8 +50,8 @@ _GAP = re.compile(
 
 # A headline about nothing having happened.
 _NON_EVENT = re.compile(
-    r"\bno (?:cooling|heating|runs?|cycles?|openings?|activity|events?|use|"
-    r"usage|motion|change|alerts?|visits?|deliveries)\b"
+    r"\bno (?:[\w-]+ ){0,4}(?:cooling|heating|runs?|cycles?|openings?|"
+    r"activity|events?|use|usage|motion|change|alerts?|visits?|deliveries)\b"
     r"|\bnothing (?:happened|ran|moved|changed|opened|to report)\b"
     r"|\bstayed (?:shut|closed|off|locked|dry|quiet|idle|dark|empty)\b"
     r"|\b(?:never|didn['’]t|did not|hasn['’]t|has not|haven['’]t|have not|"
@@ -95,6 +95,30 @@ def _acts(obj: dict) -> bool:
                for h in obj.get("highlights") or [] if isinstance(h, dict))
 
 
+NOT_FROM_HOUSE_WHY = ("the answer carried nothing read from the house, so no "
+                      "card was made from it")
+
+
+def read_nothing(obj: dict, names_in=None) -> bool:
+    """Whether a reply holds nothing taken from the house: no tile with a
+    value, no finding, no suggestion, no live entity, no figure in its
+    words and no entity named. A routing note from a chat turn ("no data
+    needed") looks like this, and a card is the product of an analysis of
+    the house, never of a turn that fetched nothing. `names_in` is the
+    entity lookup (`text -> set`); without it only the other signs count."""
+    obj = obj or {}
+    if obj.get("findings") or obj.get("opportunities") or obj.get("live"):
+        return False
+    if any(isinstance(h, dict) and str(h.get("value") or "").strip()
+           and not _GAP_VALUE.fullmatch(str(h.get("value")))
+           for h in obj.get("highlights") or []):
+        return False
+    words = f"{obj.get('title') or ''} {obj.get('summary') or ''}"
+    if re.search(r"\d", words):
+        return False
+    return not (names_in and names_in(words))
+
+
 def blind_lead(obj: dict, verdict: str = "") -> str:
     """Why the card's main claim is not news — "a data gap", "no
     comparison" or "nothing happened" — or "" when it is."""
@@ -110,7 +134,7 @@ def blind_lead(obj: dict, verdict: str = "") -> str:
         return "a data gap"
     if _NON_EVENT.search(claim):
         return "nothing happened"
-    if _ALL_FINE.search(claim) and _only_absence(obj):
+    if _ALL_FINE.search(claim) and (_only_absence(obj) or _NOTHING_NEWS.search(claim)):
         return "nothing happened"
     return ""
 
@@ -125,6 +149,13 @@ _ALL_FINE = re.compile(
     r"|nothing (?:unusual|of note|to report)"
     r"|everything (?:is |was |looks )?(?:fine|normal|quiet|ok|okay)"
     r"|(?:a )?quiet (?:day|night|week|morning|evening))\b", re.I)
+
+
+# "Nothing unusual" is the whole conclusion, not a verdict with news under
+# it: tiles that compare only show the normal being normal. The contract
+# gives "all normal" in one short sentence for a card worth keeping; a
+# long card under this headline is not that one.
+_NOTHING_NEWS = re.compile(r"^\s*nothing (?:unusual|of note|to report)\b", re.I)
 
 
 def _only_absence(obj: dict) -> bool:

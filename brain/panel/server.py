@@ -6335,6 +6335,17 @@ async def _generate(insight_id: str) -> None:
         obj = _answer(result)
         if not obj or not isinstance(obj.get("html"), str) or not obj.get("title"):
             raise RuntimeError("Claude returned an unparseable insight (no JSON/html)")
+        # Cards come only from analyses of the house. A reply with nothing
+        # taken from it (a chat turn's routing note, a run that fetched
+        # nothing) is not a card, however it got here.
+        if card_claims.read_nothing(obj, _entities_named_in):
+            # Not a fault of brAIn's, so no journal row; the backoff keeps a
+            # scheduled card from asking again at once.
+            log.info("insight %s: %s", insight_id, card_claims.NOT_FROM_HOUSE_WHY)
+            _note_card_failure(insight_id, card_claims.NOT_FROM_HOUSE_WHY)
+            _set_job(insight_id, state="error",
+                     error=card_claims.NOT_FROM_HOUSE_WHY)
+            return
         # The design system is a stylesheet the card is written against,
         # injected once here rather than re-sent as hex in every prompt.
         html = inject_styles(obj["html"])
@@ -28618,7 +28629,11 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
         # stream and the page sits blank until the turn is over.
         "X-Accel-Buffering": "no",
     })
-    await resp.prepare(request)
+    try:
+        await resp.prepare(request)
+    except ConnectionError:
+        # Hung up before the first byte; nothing was subscribed yet.
+        return resp
     # With no session, a queue nothing feeds: the stream stays open rather
     # than ending into a reconnect loop, and asks again every couple of
     # seconds (below) until there is a session to hand the panel over to.
@@ -28678,10 +28693,13 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
                 # it; its own switches reconnect it by key.
                 continue
             await send(event)
-    except (ConnectionResetError, asyncio.CancelledError):
-        # The viewer closed the tab, or the task was cancelled. Either way
-        # there is no longer anyone to send to.
-        pass
+    except (ConnectionError, asyncio.CancelledError):
+        # The viewer closed the tab, locked the phone, or the task was
+        # cancelled (ConnectionError covers a reset, a broken pipe and
+        # aiohttp's "Connection lost"). Nobody is left to send to. Only
+        # this stream's queue goes: the session and its transcript are
+        # untouched, so a reconnect gets the snapshot.
+        log.info("chat stream: viewer disconnected")
     finally:
         if session is not None:
             session.unsubscribe(queue)
@@ -29442,6 +29460,20 @@ async def crash_middleware(request: web.Request, handler):
         return await handler(request)
     except (web.HTTPException, asyncio.CancelledError):
         raise
+    except ConnectionError as exc:
+        # The caller hung up (a phone locking, a tab closing): nobody is
+        # left to answer and nothing of ours broke, so it is a cancel, not
+        # a crash: no journal row, no fault, no report. Only when the
+        # caller's own connection is gone: a refused connection to
+        # something the handler called is a real fault.
+        tr = request.transport
+        if tr is not None and not tr.is_closing() \
+                and not isinstance(exc, ConnectionResetError | BrokenPipeError):
+            raise
+        log.info("client disconnected from %s: %s", request.method
+                 if request.method in _KNOWN_METHODS else "?",
+                 type(exc).__name__)
+        return web.Response(status=499)
     except Exception as exc:
         # What is written is the router's own canonical pattern and a
         # method from a fixed list — never the caller's path or verb, which
