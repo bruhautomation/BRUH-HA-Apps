@@ -206,6 +206,13 @@ window.loadCardHelpers = async () => ({ async createCardElement(cfg) {
 async function morphSettled(el) {
   const until = Date.now() + 7000;
   await new Promise((r) => setTimeout(r, 1500));
+  // The preview has no one at home and nothing on, so the salience list
+  // folds most rooms to a line, which draws none of their cards; a picture
+  // of the dashboard left those out (the companion's own overview card
+  // among them). Every room is unfolded, as a press on its name does, so
+  // the picture holds every card the dashboard has.
+  try { if (el.eachSection && el.unfoldRoom) el.eachSection((sec) => el.unfoldRoom(sec.id, false)); } catch (e) { /* drawn as it is */ }
+  await new Promise((r) => setTimeout(r, 800));
   while (Date.now() < until) {
     const root = el.shadowRoot;
     const slots = root ? [...root.querySelectorAll('[data-ll]')] : [];
