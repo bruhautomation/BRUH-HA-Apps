@@ -7,8 +7,7 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 ### Fixed
 
 - A house check you keep marking wrong now stands down even when you once agreed with it. A check whose latest answer was Wrong and which you marked wrong at least three times, three in four or more, has its findings set aside in History with that record as the reason, and the decision trail says so. Security checks and checks about harm are never set aside (#811, #812, #813, #826).
-- A device you said was fine to be offline, or a sensor you said was stuck, is no longer raised again under another of its entities. It comes back only if the device comes back and then goes again (#811, #863).
-- A sensor you call broken, dead, never set up or one you ignore is no longer raised as stuck on one value; a reason about a repair, a battery or something you will do later does not count. Leak, smoke and lock sensors are still always raised (#810, #848).
+- A device you said was fine to be offline, or a sensor you said was fine stuck on one value, is no longer raised again under any of its entities. Leak, smoke and lock sensors are still always raised. It comes back only if the device comes back and then goes again (#810, #811, #863).
 - Two automations are reported as fighting only when one undoes the other within seconds of the same trigger, when they keep undoing each other within a minute, or when two timed rules undo each other within five minutes of the same schedule. Two rules that each answer their own trigger on the same light, like "off at eleven" and "on with motion", are no longer reported (#812, #852).
 - A finding about leftover entities from an earlier install now says which of them still have a working replacement on the device, and asks you to reinstall only the ones with none (#863).
 
