@@ -35,7 +35,7 @@ from textclip import clip
 
 from . import data_dir
 from .upstream import (
-    _DONE_RE, _field, product_of, running_at_least, running_for, version_tuple)
+    _DONE_RE, _OWNER_RE, _field, product_of, running_at_least, running_for, version_tuple)
 
 log = logging.getLogger("brain.devloop")
 
@@ -216,14 +216,72 @@ def _plain_sentences(text: str) -> str:
     return " ".join(kept).strip()
 
 
+# A component or internal term a report's author used and a household never
+# meets on its screen (#830), with what the screen calls it. The question
+# is asked in these words; a sentence still holding one is left out.
+_HOUSEHOLD_TERMS = (
+    (re.compile(r"\s*\b(?:in|inside|within|on|through|via)\s+(?:the\s+)?"
+                r"(?:ingress\s+)?i?frame\b", re.I), ""),
+    (re.compile(r"\s*\b(?:in|inside|within|on|through|via|over)\s+(?:the\s+)?"
+                r"ingress(?:\s+(?:page|panel|view|proxy|url))?\b", re.I), ""),
+    (re.compile(r"\b(?P<v>dies|fails|stops|times\s+out|ends)\s+(?:at|on|after|"
+                r"past|against)\s+(?:the\s+)?(?:\d+\s*(?:s|sec|seconds?)\s+)?"
+                r"quick[\s-]+(?:talk[\s-]+)?run\s+(?:time\s+)?(?:limit|cap|"
+                r"timeout)\b", re.I), "is cut off before it finishes"),
+    (re.compile(r"\b(?:die|died|fail|failed|stop|stopped|time\s+out|timed\s+"
+                r"out|end|ended)\s+(?:at|on|after|past|against)\s+(?:the\s+)?"
+                r"(?:\d+\s*(?:s|sec|seconds?)\s+)?quick[\s-]+(?:talk[\s-]+)?run"
+                r"\s+(?:time\s+)?(?:limit|cap|timeout)\b", re.I),
+     "are cut off before they finish"),
+    (re.compile(r"\b(?:the\s+)?(?:\d+\s*(?:s|sec|seconds?)\s+)?quick[\s-]+"
+                r"(?:talk[\s-]+)?run\s+(?:time\s+)?(?:limit|cap|timeout)\b",
+                re.I), "the time limit"),
+    (re.compile(r"\bquick[\s-]+(?:talk[\s-]+)?runs?\b", re.I), "short reply"),
+    (re.compile(r"\b(?:the\s+)?chat\s+composer\b", re.I), "the message box in Ask"),
+    (re.compile(r"\bcomposer\b", re.I), "message box"),
+    (re.compile(r"\bchat\s+(?P<n>requests?|messages?|replies|reply|questions?)\b",
+                re.I), None),
+    (re.compile(r"\biframe\b", re.I), "page"),
+    (re.compile(r"\bingress\s+", re.I), ""),
+)
+_INTERNAL_LEFT_RE = re.compile(
+    r"\b(?:ingress|iframe|quick[\s-]+run|websocket|endpoint|subprocess|"
+    r"payload|\d+\s*s\s+(?:limit|cap|timeout))\b", re.I)
+
+
+def _household_terms(text: str) -> str:
+    """``text`` with each internal term said as the screen says it."""
+    out = str(text or "")
+    for pattern, said in _HOUSEHOLD_TERMS:
+        if said is None:
+            out = pattern.sub(lambda m: f"{m.group('n')} in Ask", out)
+        else:
+            out = pattern.sub(said, out)
+    out = re.sub(r"\s+([,.;:!?])", r"\1", re.sub(r"[ \t]{2,}", " ", out))
+    out = out.strip()
+    # "The message box…" began a title with a capital and still does.
+    if str(text or "")[:1].isupper() and out[:1].islower():
+        out = out[0].upper() + out[1:]
+    return out
+
+
+def _household_sentences(text: str) -> str:
+    """``text`` in household words, less any sentence still holding an
+    internal term."""
+    kept = [s for s in _SENTENCE_RE.split(_household_terms(text))
+            if s and not _INTERNAL_LEFT_RE.search(s)]
+    return " ".join(kept).strip()
+
+
 def _done_when(entry: dict) -> str:
     """The report's own bar for the fix, in plain sentences, or ""."""
     said = _plain_sentences(_field(entry, "done_when", _DONE_RE))
     said = re.sub(r"^done when:?\s*", "", said, flags=re.I)
+    said = _household_sentences(said)
     return clip(said.rstrip(" ."), 240) if said else ""
 
 
-def _checking(entry: dict, place: str, product: str) -> str:
+def _checking(entry: dict, place: str, product: str, what: str = "") -> str:
     """What brAIn could not check itself, and the one thing to try (#605,
     #830), in the words of the screen: Ask, not "the chat", and no stream
     or component name.
@@ -231,26 +289,38 @@ def _checking(entry: dict, place: str, product: str) -> str:
     Only the owner's own requests and the chat's unmet ones are ever asked
     (`VERIFY_STREAMS`), and neither has an error brAIn can watch for: a
     fault that stops recurring is said on its own report, never asked. So
-    the card says which it is, what to do to tell, and what the person
-    will see when it is fixed — the report's own "Done when" when it has
-    one."""
+    the card says which it is and one concrete thing to try — the report's
+    own "Done when" as what to look for, the owner's own words as what to
+    ask again — and what the person will see when it is fixed."""
     stream = str(entry.get("stream") or "")
     bar = _done_when(entry)
-    seen = (f" You will see: {bar}." if bar else
-            " It is fixed when it does what you asked.")
     if stream == "unmet":
         cannot = ("brAIn cannot check this one itself: it could not do "
                   "this when you asked in Ask, and only asking again shows "
                   "whether it can now.")
-        step = "Try this: ask the same thing in Ask again." + seen
+        asked = _household_sentences(_plain_sentences(
+            _field(entry, "owner_words", _OWNER_RE))).rstrip(" .")
+        step = (f"Try this: in Ask, ask again: “{clip(asked, 160)}”."
+                if asked else "Try this: ask the same thing in Ask again.")
+        step += (f" You will see: {bar}." if bar else
+                 " It is fixed when brAIn does what you asked.")
+        return f"{cannot} {step}"
+    where = _household_place(place or ("" if product == "brAIn"
+                                       else product))
+    cannot = ("brAIn cannot check this one itself: it is about what you "
+              "see and use, which brAIn has no error to watch for.")
+    opening = f"Try this: open {where} and " if where else "Try this: "
+    if bar:
+        one = len(_SENTENCE_RE.split(bar)) == 1
+        step = (f"{opening}check that {bar[:1].lower() + bar[1:]}." if one
+                else f"{opening}check this: {bar}.")
+    elif what:
+        step = (f"{opening}check whether this still happens: "
+                f"{what[:1].lower() + what[1:]}. It is fixed when it no "
+                "longer does.")
     else:
-        where = _household_place(place or ("" if product == "brAIn"
-                                           else product))
-        cannot = ("brAIn cannot check this one itself: it is about what you "
-                  "see and use, which brAIn has no error to watch for.")
-        step = (f"Try this: open {where} and do what you reported again."
-                if where else
-                "Try this: do what you reported again.") + seen
+        step = (f"{opening}do what you reported again. It is fixed when it "
+                "does what you asked.")
     return f"{cannot} {step}"
 
 
@@ -285,27 +355,32 @@ def question_row(entry: dict) -> dict:
     fixed_in = str(entry.get("fixed_in") or "")
     product = product_of(entry)
     title, place = _title_and_place(entry)
+    # The report's words as the screen says them (#830): "the message box
+    # in Ask", never "the chat composer in the ingress iframe".
+    title = _household_terms(title)
     place = _household_place(clip(place, 60).strip())
-    in_place = f" ({place})" if place else ""
+    in_place = (f" ({place})" if place and place.casefold()
+                not in title.casefold() else "")
     tail = f" — after the {product} {fixed_in} update"
     room = TEXT_CHARS - len(TEXT_PREFIX) - len(in_place) - len(tail)
     named = clip(title, max(room, 20))
-    what = _plain_sentences(entry.get("what") or "").rstrip(" .")
+    what = _household_sentences(
+        _plain_sentences(entry.get("what") or "")).rstrip(" .")
     if not what:
-        what = _plain_sentences(title).rstrip(" .")
+        what = _household_sentences(_plain_sentences(title)).rstrip(" .")
     look = place or (product if product != "brAIn" or not title
                      or _DEVELOPER_RE.search(title) else title)
     # "Where to look: brAIn" on brAIn's own screen names no place (#562).
     look = "" if look == "brAIn" else look
     detail = " ".join(p for p in (
-        f"{what}." if what else "",
+        f"{what[:1].upper() + what[1:]}." if what else "",
         _reported(entry),
         (f"{product} {fixed_in} was installed here to fix it."
          if fixed_in else f"A {product} update was installed here to fix it."),
         # A place the step names is not said twice, and a title is no place.
         f"Where to look: {product}." if not place and product != "brAIn"
         else "",
-        _checking(entry, place, product)) if p)
+        _checking(entry, place, product, what)) if p)
     return {
         # Stable per fix: the report's words and the release it was fixed
         # in, so the store's dedupe and the settled ledger let the same
@@ -337,6 +412,7 @@ def group_row(entries: list[dict]) -> dict:
     place = ""
     for entry in entries:
         title, where = _title_and_place(entry)
+        title = _household_terms(title)
         place = place or where
         plain = _plain_sentences(title).rstrip(" .") or title
         if plain and plain.casefold() not in {t.casefold() for t in titles}:

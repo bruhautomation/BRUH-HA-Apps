@@ -1010,7 +1010,8 @@ def shown_words(entry: dict) -> dict:
                 if key != "text" and textclip.finished(said) != said:
                     out[key] = textclip.finished(said)
                 continue
-            # One name for what the household talks to (#832).
+            # Signal diagnostics only under a headline about signal (#829),
+            # never taken from the step; one name for brAIn (#832).
             if key == "detail":
                 said_now = house_words.on_topic(
                     said, f"{entry.get('text') or ''} {entry.get('claim') or ''}")
@@ -1018,7 +1019,9 @@ def shown_words(entry: dict) -> dict:
                 said_now = said
             plain_said = textclip.finished(
                 _plainly(house_words.one_name(said_now), entry))
-            if plain_said != said and (plain_said or key != "text"):
+            # Never a headline or a step said as nothing.
+            if plain_said != said and (plain_said
+                                       or key not in ("text", "fix")):
                 out[key] = plain_said
     return out
 

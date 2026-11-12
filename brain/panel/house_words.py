@@ -473,32 +473,52 @@ _DEV_TOKEN = re.compile(
 _THE_COMPANION = re.compile(r"\bthe\s+companion\b(?!\s+app\b)", re.I)
 
 
-# brAIn's own machinery named in a sentence a person reads: "brAIn's chat
-# session", "a quick run of brAIn" (#832). Only where the text is plainly
-# about brAIn: "the dishwasher's quick run" and "an SSH terminal session"
-# are the house's own words and are left alone.
+# brAIn's own parts named in a sentence a person reads (#832), each an
+# exact phrase that names brAIn: "the in-game brAIn companion", "a brAIn
+# chat/terminal session", "a quick run of brAIn". A phrase without brAIn
+# in it is left alone: "the dishwasher finished a quick run" and "an SSH
+# terminal session" are the house's own words.
+_IN_GAME = re.compile(
+    r"\b(?:the\s+|an?\s+)?(?:in-game|minecraft)\s+(?:brAIn\s+)?companion\b",
+    re.I)
+_BRAIN_COMPANION = re.compile(r"\b(?:the\s+)?brAIn\s+companion\b|"
+                              r"\bbrAIn\s+engine\b", re.I)
 _BRAIN_CHAT_SESSION = re.compile(
-    r"(\bbrAIn(?:['\u2019]s)?\s+)(?:chat|terminal)[\s-]+session(s?)\b")
+    r"(?P<art>\b(?:an?|the|each|every|one|any|this|that|another)\s+)?"
+    r"\bbrAIn(?:['\u2019]s)?\s+(?:chat|terminal)"
+    r"(?:\s*(?:/|\bor\b|\band\b)\s*(?:chat|terminal))?[\s-]+session(?P<pl>s?)\b",
+    re.I)
 _BRAIN_QUICK_RUN = re.compile(
-    r"\bquick[\s-]+run(s?)(\s+of\s+brAIn\b)|(\bbrAIn(?:['\u2019]s)?\s+)"
-    r"quick[\s-]+run(s?)\b")
+    r"(?P<ask>\bask\s+in\s+)?(?:\b(?:an?|the|one|each|every)\s+)?"
+    r"\bquick[\s-]+runs?\s+(?:of|by|from|with)\s+brAIn\b"
+    r"|\bbrAIn(?:['\u2019]s)?\s+quick[\s-]+runs?\b", re.I)
 
 
 def one_name(text: str) -> str:
     """``text`` with the assistant's other names turned to "brAIn" (#832):
-    "the companion", "the in-game companion", "the brAIn engine"; and
-    brAIn's own "chat session" / "quick run", said as a conversation and a
-    quick check, where the sentence is plainly about brAIn."""
+    "the companion", "the in-game companion" (brAIn in the game), "the
+    brAIn engine"; a brAIn chat or terminal session is a conversation with
+    brAIn in Ask, and a quick run of brAIn is simply brAIn. Only these
+    exact phrases change; nothing that is not brAIn is renamed."""
     if not isinstance(text, str) or not text:
         return text
-    out = _THE_COMPANION.sub("brAIn", text)
-    out = re.sub(r"\b(?:the\s+)?(?:in-game|minecraft)\s+companion\b|"
-                 r"\bbrAIn\s+engine\b", "brAIn", out, flags=re.I)
-    out = _BRAIN_CHAT_SESSION.sub(r"\1conversation\2", out)
-    out = _BRAIN_QUICK_RUN.sub(
-        lambda m: (f"quick check{m.group(1)}{m.group(2)}" if m.group(2)
-                   else f"{m.group(3)}quick check{m.group(4)}"), out)
-    return out
+    out = _IN_GAME.sub("brAIn in the game", text)
+    out = _THE_COMPANION.sub("brAIn", out)
+    out = _BRAIN_COMPANION.sub("brAIn", out)
+
+    def session(m: re.Match) -> str:
+        art = m.group("art") or ""
+        if art.strip().lower() == "an":
+            art = art[0] + " "
+        said = f"conversation{m.group('pl')} with brAIn in Ask"
+        return art + said if art else _cap_at_start(m.string, m.start(), said)
+
+    def quick(m: re.Match) -> str:
+        ask = m.group("ask")
+        return f"{ask.split()[0]} brAIn" if ask else "brAIn"
+
+    out = _BRAIN_CHAT_SESSION.sub(session, out)
+    return _BRAIN_QUICK_RUN.sub(quick, out)
 
 
 def _third_person(sentence: str) -> str:
@@ -825,8 +845,12 @@ _HEX_RE = re.compile(
     r"\s*\(\s*0x[0-9a-f]{1,16}\s*\)"
     r"|\b(?:(?:an?\s+)?(?:error|fault|status|result)\s+)?(?:code\s+)?"
     r"0x[0-9a-f]{1,16}\b", re.I)
+# A pre-release marker ("-rc3") is kept as words: "2.4.1-rc3_build77" is a
+# test build OF 2.4.1, and saying "2.4.1" would name a release the device
+# is not on.
 _BUILD_RE = re.compile(
-    r"\b(v?\d+(?:\.\d+){1,3})(?:-?(?:rc|beta|alpha)\d*)?[-+_ ](?:build[.\-]?\d+[\w.]*|g?[0-9a-f]{7,}|"
+    r"\b(v?\d+(?:\.\d+){1,3})(?P<pre>-?(?:rc|beta|alpha)\d*)?[-+_]"
+    r"(?:build[.\-]?\d+[\w.]*|g?[0-9a-f]{7,}|"
     r"\d{6,}|[a-z]+\d*\.[0-9a-f]{6,})\b", re.I)
 # A build string with no version in front of it ("build 24C101", #774): the
 # word, then a token of four or more that holds a digit. "build 3 shelves"
@@ -835,13 +859,11 @@ _BARE_BUILD_RE = re.compile(
     r"\s*\(\s*(?:firmware\s+)?build\s+(?=[\w.\-]*\d)[A-Za-z0-9][\w.\-]{3,}\s*\)"
     r"|\b(firmware\s+)?build\s+(?=[\w.\-]*\d)[A-Za-z0-9][\w.\-]{2,}[A-Za-z0-9]",
     re.I)
-# A signal strength in dBm ("-84 dBm") and a raw build string: a number a radio engineer reads and a household
-# cannot weigh (#855). "at -84 dBm" goes whole; a sentence whose point IS
-# the figure ("reads -84 dBm") is dropped by `said_plainly`.
-_DBM_RE = re.compile(
-    r"\s*\(\s*[-\u2212\u2013]?\d+(?:\.\d+)?\s*dBm\s*\)"
-    r"|(?:\s+(?:at|of|around|about|near|to|from|down to))?\s*"
-    r"[-\u2212\u2013]?\d+(?:\.\d+)?\s*dBm\b", re.I)
+# A signal strength in dBm ("-84 dBm"): a number a radio engineer reads and
+# a household cannot weigh (#855). `dbm_words` says it in words IN PLACE;
+# a sentence is never dropped for holding one.
+_DBM_NUM = r"(?P<n>[-\u2212\u2013]?\d+(?:\.\d+)?)\s*dBm\b"
+_DBM_RE = re.compile(r"[-\u2212\u2013]?\d+(?:\.\d+)?\s*dBm\b", re.I)
 _MCP_RE = re.compile(r"`?\bmcp__\w+`?")
 # A snake_case word with no dot: an event, a service call or a setting's key
 # (`bruh_minecraft_moment`), which is what the code calls a thing and never
@@ -984,6 +1006,8 @@ def technical(text: str, files: bool = True,
 
     def build(m: re.Match) -> str:
         keep(m.group(0))
+        if m.group("pre"):
+            return f"{m.group(1)} (a test build)"
         return m.group(1)
 
     def bare_build(m: re.Match) -> str:
@@ -994,10 +1018,6 @@ def technical(text: str, files: bool = True,
         lead = whole[:len(whole) - len(whole.lstrip())]
         return lead + ("its current firmware" if m.group(1) else
                        "its current build")
-
-    def dbm(m: re.Match) -> str:
-        keep(m.group(0).strip(" ()"))
-        return ""
 
     def hexcode(m: re.Match) -> str:
         whole = m.group(0)
@@ -1018,7 +1038,7 @@ def technical(text: str, files: bool = True,
     try:
         out = _BUILD_RE.sub(build, text)
         out = _BARE_BUILD_RE.sub(bare_build, out)
-        out = _DBM_RE.sub(dbm, out)
+        out = dbm_words(out, keep)
         out = _HEX_RE.sub(hexcode, out)
         out = _MCP_RE.sub(swap("one of brAIn's tools"), out)
         tools = _tool_re()
@@ -1170,7 +1190,7 @@ _LEGACY_AFTER_ARTICLE_RE = re.compile(
     re.I)
 
 
-def lint(text: str, files: bool = True) -> list[str]:
+def lint(text: str, files: bool = True, figures: bool = True) -> list[str]:
     """Every fragment of ``text`` a household should not meet in a
     finding: a path (and with ``files`` a file name), a line number, an
     entity or service id, a hex code, a build string, one of brAIn's tool
@@ -1180,7 +1200,8 @@ def lint(text: str, files: bool = True) -> list[str]:
         return []
     out: list[str] = []
     for pattern in ((_FILE_RE if files else _PATH_RE), _LINE_NO_RE, _HEX_RE,
-                    _BUILD_RE, _BARE_BUILD_RE, _DBM_RE,
+                    _BUILD_RE, _BARE_BUILD_RE,
+                    *((_DBM_RE,) if figures else ()),
                     _MCP_RE, _SNAKE_RE, _LEGACY_RE):
         out += [m.group(0).strip() for m in pattern.finditer(text)]
     out += [m.group(0).strip("`") for m in _ID_RE.finditer(text) if _an_id(m)]
@@ -1198,8 +1219,9 @@ def lint(text: str, files: bool = True) -> list[str]:
 # finding whose headline is about something else answer a question nobody
 # asked and bury the one that was (#829).
 _SIGNAL_SENTENCE_RE = re.compile(
-    r"\b(?:signal[\s-]+(?:strength|quality|is\s+(?:weak|poor|low))"
-    r"|(?:wi-?fi|radio|weak|poor)\s+signal|rssi|lqi|link[\s-]+quality)\b",
+    r"\b(?:signal[\s-]+(?:strength|quality|is|was|dropped|fell|has|had)"
+    r"|(?:wi-?fi|radio|weak|poor|fair|good|strong)\s+signal|rssi|lqi"
+    r"|link[\s-]+quality)\b|\d\s*dBm\b",
     re.I)
 _SIGNAL_HEADLINE_RE = re.compile(
     r"\b(?:signal|wi-?fi|rssi|lqi|link|reception|connect\w*|range|mesh|"
@@ -1229,44 +1251,125 @@ def on_topic(text: str, headline: str) -> str:
     return " ".join(kept).strip() or text
 
 
-_DBM_LEAD_RE = re.compile(
-    r"\s*\(|\s+(?:at|of|around|about|near|to|from|down to)\s", re.I)
-_DBM_READING_RE = re.compile(
-    r"\s+(?:reads?|is|was|shows?|showed|measured|averag\w+|dropped to|"
-    r"fell to|sits at|sat at)\s+(?:(?:at|about|around)\s+)?"
-    r"([-\u2212\u2013]?\d+(?:\.\d+)?)\s*dBm\b", re.I)
-
-
 def _signal_word(value: float) -> str:
-    return ("weak" if value <= -75 else "only fair" if value <= -67
-            else "good")
+    """-75 dBm or lower is weak, to -67 fair, above that good."""
+    return "weak" if value <= -75 else "fair" if value <= -67 else "good"
 
 
-def _without_figure_sentences(text: str) -> str:
-    """``text`` with a signal figure said in words (#855): "The plug reads
-    -84 dBm" is "The plug's signal is weak" (weak at -75 or lower, only
-    fair to -67, good above). A figure that is an aside ("weak at -84
-    dBm", "(-84 dBm)") is left to `technical`, which takes it out; a
-    sentence that is a figure in any other shape is dropped."""
-    if not _DBM_RE.search(text):
+def _dbm_value(m: re.Match) -> float:
+    return float(m.group("n").replace("\u2212", "-").replace("\u2013", "-"))
+
+
+def _cap_at_start(text: str, at: int, words: str) -> str:
+    """``words`` capitalised when they begin a sentence of ``text``."""
+    before = text[:at].rstrip()
+    return (words[:1].upper() + words[1:]
+            if not before or before[-1] in ".!?" else words)
+
+
+# The shapes a figure is said in, each replaced where it stands.
+_DBM_ASIDE_RE = re.compile(r"\s*\([^()]*?" + _DBM_NUM + r"[^()]*\)", re.I)
+_DBM_SIGNAL_OF_RE = re.compile(
+    r"\b(?P<art>an?|the|its|their)\s+(?:signal|RSSI)(?:\s+strength)?\s+"
+    r"(?:of|at)\s+(?:about\s+|around\s+)?" + _DBM_NUM, re.I)
+_DBM_READS_RE = re.compile(
+    r"(?P<subj>\b[\w'\u2019-]+)\s+(?P<verb>reads?|is|was|shows?|showed|"
+    r"measured|measures|averages?|averaged|sits\s+at|sat\s+at)\s+"
+    r"(?:at\s+|about\s+|around\s+)?" + _DBM_NUM, re.I)
+_DBM_FELL_RE = re.compile(
+    r"\b(?P<verb>dropped|drops|fell|falls|went|goes|is\s+down|was\s+down)"
+    r"\s+(?:below|under|to|down\s+to)\s+" + _DBM_NUM, re.I)
+_DBM_PREP_RE = re.compile(
+    r"(?P<prep>\b(?:at|with|around|about|near|below|under|on)\s+)"
+    r"(?:(?:about|around|roughly)\s+)?" + _DBM_NUM, re.I)
+_DBM_SUBJECT_RE = re.compile(
+    r"(?:^|(?<=[;:,.!?]))\s*" + _DBM_NUM
+    + r"\s+(?P<verb>is|was)\b", re.I)
+_DBM_LABEL_RE = re.compile(
+    r"\b(?:RSSI|signal(?:\s+strength)?|reception)\s*[:=]?\s*" + _DBM_NUM,
+    re.I)
+_SIGNAL_SAID_RE = re.compile(
+    r"\b(?:weak|poor|low|fair|good|strong|signal|reception)\b", re.I)
+
+
+def dbm_words(text: str, found=None) -> str:
+    """``text`` with each signal figure said in words where it stands
+    (#855): "The plug reads -84 dBm" is "The plug has a weak signal", "At
+    -84 dBm the lock cannot be reached" is "With a weak signal the lock
+    cannot be reached", "signal dropped below -80 dBm" is "signal dropped
+    to a weak level", "Signal is weak at -84 dBm" loses the figure, and an
+    aside "(-84 dBm)" goes. Nothing else in the sentence changes, no
+    sentence is dropped, and a figure in a shape not listed stays as it
+    was: a step is never cut to say it plainly. ``found`` (a callable)
+    is handed each figure taken out."""
+    if not isinstance(text, str) or not _DBM_RE.search(text):
         return text
-    kept = []
-    for sentence in _LOG_SENTENCES.split(text):
-        m = _DBM_RE.search(sentence)
-        if m and not _DBM_LEAD_RE.match(m.group(0)):
-            r = _DBM_READING_RE.search(sentence)
-            if r and r.start() > 0:
-                try:
-                    word = _signal_word(float(r.group(1).replace(
-                        "\u2212", "-").replace("\u2013", "-")))
-                except ValueError:
-                    continue
-                sentence = (sentence[:r.start()] + "'s signal is " + word
-                            + sentence[r.end():])
-                kept.append(sentence)
-            continue
-        kept.append(sentence)
-    return " ".join(kept).strip()
+
+    def took(m: re.Match) -> float:
+        if found is not None:
+            found(m.group(0).strip(" ()"))
+        return _dbm_value(m)
+
+    def aside(m):
+        took(m)
+        return ""
+
+    def signal_of(m):
+        word = _signal_word(took(m))
+        return f"{m.group('art')} {word} signal"
+
+    def reads(m):
+        word = _signal_word(took(m))
+        subj, verb = m.group("subj"), m.group("verb").lower()
+        past = verb.startswith(("was", "showed", "measured", "averaged",
+                                "sat"))
+        if subj.lower() in ("signal", "rssi", "strength", "reception"):
+            subj = "signal" if subj.lower() == "rssi" else subj
+            return f"{subj} {'was' if past else 'is'} {word}"
+        return f"{subj} {'had' if past else 'has'} a {word} signal"
+
+    def fell(m):
+        word = _signal_word(took(m) - 1)
+        said = m.string[max(0, m.start() - 40):m.start()]
+        what = "level" if re.search(r"\bsignal\b", said, re.I) else "signal"
+        verb = re.sub(r"\s+down$", " down", m.group("verb"))
+        return f"{verb} to a {word} {what}"
+
+    def prep(m):
+        word = _signal_word(took(m))
+        said = m.string[max(0, m.start() - 30):m.start()]
+        if (re.search(r"\b(?:weak|poor|fair|good|strong)\b", said, re.I)
+                or re.search(r"\bsignal\s*$", said, re.I)):
+            return ""   # "weak at -84 dBm": the word is already there
+        return _cap_at_start(m.string, m.start(), f"with a {word} signal")
+
+    def subject(m):
+        took(m)
+        lead = m.group(0)[:len(m.group(0)) - len(m.group(0).lstrip())]
+        return lead + _cap_at_start(m.string, m.start() + len(lead),
+                                    f"the signal {m.group('verb')}")
+
+    def label(m):
+        word = _signal_word(took(m))
+        if re.match(r"\s*(?:[.!?]|$)", m.string[m.end():]):
+            # "RSSI -84 dBm." is a whole sentence, and says one.
+            return _cap_at_start(m.string, m.start(),
+                                 f"the signal is {word}")
+        return _cap_at_start(m.string, m.start(), f"a {word} signal")
+
+    try:
+        out = _DBM_ASIDE_RE.sub(aside, text)
+        out = _DBM_SIGNAL_OF_RE.sub(signal_of, out)
+        out = _DBM_READS_RE.sub(reads, out)
+        out = _DBM_FELL_RE.sub(fell, out)
+        out = _DBM_SUBJECT_RE.sub(subject, out)
+        out = _DBM_PREP_RE.sub(prep, out)
+        out = _DBM_LABEL_RE.sub(label, out)
+    except (ValueError, re.error):
+        return text
+    if out == text:
+        return text
+    return re.sub(r"\s+([,.;:!?])", r"\1", re.sub(r"[ \t]{2,}", " ", out))
 
 
 def said_plainly(text: str, names: Mapping | None = None, files: bool = True,
@@ -1279,7 +1382,6 @@ def said_plainly(text: str, names: Mapping | None = None, files: bool = True,
     dropped. Text the lint finds nothing in comes back as it was."""
     if not isinstance(text, str) or not text or not lint(text, files):
         return text
-    text = _without_figure_sentences(text)
     out = technical(text, files, names)[0]
     out = ids(out, names)[0]
     if _LEGACY_RE.search(out):
@@ -1288,10 +1390,12 @@ def said_plainly(text: str, names: Mapping | None = None, files: bool = True,
                  and _SNAKE_RE.fullmatch(t.strip())]
         if len(codes) == 1:
             out = _LEGACY_RE.sub(code_words(codes[0], names), out)
-    if not lint(out, files):
+    # A signal figure `dbm_words` could not say in words stays: a sentence
+    # is never dropped for one (it may hold the step).
+    if not lint(out, files, figures=False):
         return out
     kept = [s for s in _LOG_SENTENCES.split(out)
-            if s.strip() and not lint(s, files)]
+            if s.strip() and not lint(s, files, figures=False)]
     return " ".join(kept).strip()
 
 

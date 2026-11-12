@@ -130,10 +130,14 @@ def shorten(text, limit: int) -> str:
     return best if best else finished(clip(s, limit))
 
 
-_TRAILING_MORE = re.compile(r"\band (\d+) more\.?$")
+_TRAILING_MORE = re.compile(r"(?:\s*\u2026)?\s+and (\d+) more\.?$")
 _ABBREV = ("e.g", "i.e", "etc", "vs", "approx", "no", "dr", "mr", "mrs", "st")
+# Words a cut must not end on: a joining word, a preposition, an article
+# or a possessive ("settled by your…" is not a sentence, #867).
 _DANGLING = (" and", " or", " but", " to", " the", " a", " an", " of", " with",
-             " then", " so", " near", " at", " in", " on", " for", " by")
+             " then", " so", " near", " at", " in", " on", " for", " by",
+             " your", " its", " their", " his", " her", " my", " our",
+             " this", " that", " these", " those", " from", " into")
 
 
 def _last_stop(body: str) -> int:
@@ -179,7 +183,7 @@ def finished(text) -> str:
     m = _TRAILING_MORE.search(out)
     if m:
         n = int(m.group(1))
-        out = out[:m.start()] + f"and {n} {'other' if n == 1 else 'others'}."
+        out = out[:m.start()] + f" and {n} {'other' if n == 1 else 'others'}."
     return out if out != s.rstrip() else s
 
 
