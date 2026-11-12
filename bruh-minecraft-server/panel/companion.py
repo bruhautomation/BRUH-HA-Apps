@@ -128,6 +128,14 @@ TAG = "bruh_companion"
 # A job's boss bar: the companion's namespace and a job's key, nothing else.
 BAR_ID = re.compile(r"^bruh_companion:[a-z0-9_\-]{1,24}$")
 BAR_KEY = re.compile(r"^[a-z0-9_\-]{1,24}$")
+# A job's bar is the add-on's to take away, not only the caller's: an end
+# that met a server restarting, or a last update that landed after the end
+# (both wait on one lock behind a long edit), left a bar on screen for days.
+BAR_LATE = 60                 # seconds after its end an update is a late one, not a new run
+BAR_STALE = 3 * 3600          # seconds a bar may go without an update (a job is at most 2 h)
+BAR_RETRY = 30                # seconds between sweeps for bars whose job is over
+BAR_KEEP = 7 * 86400          # seconds an ended bar is remembered
+BARS_MAX = 200
 DIR_NAME = "companion"
 DEFAULT_NAME = "Companion"
 DEFAULT_COLOUR = "light_purple"
@@ -914,6 +922,11 @@ class Companion:
         self.state = "idle"
         self.last_note = ""
         self._accounts: tuple[float, dict[str, Any]] | None = None
+        # Every job bar this add-on put up: key -> {player, at, ended, gone}.
+        self.bars_path = self.root / "bars.json"
+        bars = _read_json(self.bars_path, {})
+        self.bars: dict[str, dict[str, Any]] = bars if isinstance(bars, dict) else {}
+        self._bars_tried = 0.0
 
     # -- who the companion is ------------------------------------------------
     def identity(self) -> dict[str, Any]:
@@ -1040,7 +1053,10 @@ class Companion:
             self._try(f"minecraft:kill @e[tag={TAG},tag=!{self.epoch}]")
             for selector in legacy.kill_selectors():
                 self._try(f"minecraft:kill {selector}")
+            self._sweep_bars(now, saved=self._saved_bars())
             self.swept = True
+        elif now - self._bars_tried >= BAR_RETRY:
+            self._sweep_bars(now)
         self._run_live(now)
         self._run_questions(online, now)
         self.state = "asking" if self.asking else "acting" if self.live else "idle"
@@ -1123,9 +1139,19 @@ class Companion:
             if not BAR_KEY.fullmatch(key):
                 raise CompanionError("key is a job's id: letters, digits, _ and -.")
             bar_id = f"{TAG}:{key}"
+            now = self.clock()
+            seen = self.bars.get(key) or {}
             if end:
-                self._try(f"minecraft:bossbar remove {bar_id}")
-                return {"bar": bar_id, "removed": True}
+                gone = self._try(f"minecraft:bossbar remove {bar_id}") is not None
+                # Not taken (the server restarting): the beat's sweep tries again.
+                self._book_bar(key, player=seen.get("player") or str(player or ""),
+                               at=seen.get("at") or int(now), ended=int(now), gone=gone)
+                return {"bar": bar_id, "removed": gone}
+            if seen.get("ended") and now - seen["ended"] < BAR_LATE:
+                # An update that arrived after its job's end (both waited on
+                # the lock): putting it up would leave it there for good. A
+                # continued job's next update, later, puts it back.
+                return {"bar": bar_id, "ended": True}
             line = " ".join(str(text or "").split())[:REPLY_LINE_CHARS]
             if not line:
                 raise CompanionError("What does the bar say? (text is empty)")
@@ -1149,7 +1175,58 @@ class Companion:
             if pct is not None:
                 self._try(f"minecraft:bossbar set {bar_id} value {pct}")
             self._try(f"minecraft:bossbar set {bar_id} players {quote_name(found)}")
+            self._book_bar(key, player=found, at=int(now), ended=None, gone=False)
             return {"bar": bar_id, "player": found, "text": line, "percent": pct}
+
+    def _book_bar(self, key: str, **row: Any) -> None:
+        self.bars[key] = row
+        cut = self.clock() - BAR_KEEP
+        keep = {k: v for k, v in self.bars.items()
+                if not (v.get("gone") and (v.get("ended") or v.get("at") or 0) < cut)}
+        if len(keep) > BARS_MAX:
+            keep = dict(sorted(keep.items(), key=lambda kv: kv[1].get("at") or 0)[-BARS_MAX:])
+        self.bars = keep
+        try:
+            _atomic_write_json(self.bars_path, self.bars)
+        except OSError:
+            # The record is for the sweep; the bar itself is already right.
+            pass
+
+    def _saved_bars(self) -> list[str]:
+        """The companion's bars the world has saved (level.dat's
+        CustomBossEvents), so a bar an older add-on or a lost record left is
+        found too: RCON's `bossbar list` answers with names, not ids."""
+        read = getattr(self.col, "read_nbt", None)
+        if read is None:
+            return []
+        level_name = getattr(self.col, "level_name", None)
+        world = (level_name() if callable(level_name) else "") or "world"
+        try:
+            data = read(Path(self.col.server_dir) / world / "level.dat").get("Data") or {}
+            events = data.get("CustomBossEvents") or {}
+        except Exception:  # noqa: BLE001 — no save yet, or one we cannot read
+            return []
+        prefix = f"{TAG}:"
+        return [k[len(prefix):] for k in events
+                if isinstance(k, str) and k.startswith(prefix)
+                and BAR_KEY.fullmatch(k[len(prefix):])]
+
+    def _sweep_bars(self, now: float, saved: list[str] | None = None) -> None:
+        """Take away every job bar whose job is over: ended, not updated for
+        `BAR_STALE`, or (at start, `saved`) one this add-on holds no running
+        record of. A running job's next update puts its bar back."""
+        self._bars_tried = now
+        keys = set(saved or ()) | {k for k, v in self.bars.items() if not v.get("gone")}
+        for key in sorted(keys):
+            seen = self.bars.get(key) or {}
+            if seen and not seen.get("ended") and not seen.get("gone") \
+                    and now - (seen.get("at") or 0) < BAR_STALE:
+                continue                    # its job is still running
+            if self._try(f"minecraft:bossbar remove {TAG}:{key}") is None:
+                continue                    # the server did not take it: next sweep
+            self._book_bar(key, player=seen.get("player") or "",
+                           at=seen.get("at") or int(now),
+                           ended=seen.get("ended"), gone=True)
 
     def give_spyglass(self, player: Any, name: Any) -> dict[str, Any]:
         """One spyglass named `name` for a player, unless they already have
