@@ -123,9 +123,13 @@ const _watched = new WeakSet();
 // so the floor is handed out again whenever a root changes, not once.
 function floorFields(node, depth = 0) {
   if (!node || depth > 10 || typeof CSSStyleSheet === 'undefined') return;
-  const root = node.shadowRoot;
-  if (!root || !('adoptedStyleSheets' in root)) return;
-  if (!_floored.has(root)) {
+  // A card handed over in a wrapper with no root of its own (a stand-in
+  // `display: contents` box, a card that draws into its light DOM) still
+  // holds cards with roots: the floor goes to those, and the wrapper is
+  // watched for the ones made later. Returning here left a 15px talk box.
+  const root = node.shadowRoot || (node.nodeType === 1 ? node : null);
+  if (!root || (root === node.shadowRoot && !('adoptedStyleSheets' in root))) return;
+  if (root === node.shadowRoot && !_floored.has(root)) {
     try {
       if (!_floorSheet) { _floorSheet = new CSSStyleSheet(); _floorSheet.replaceSync(FIELD_FLOOR); }
       root.adoptedStyleSheets = [...root.adoptedStyleSheets, _floorSheet];
