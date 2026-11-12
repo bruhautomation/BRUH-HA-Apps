@@ -209,6 +209,14 @@ _ITEM_COMMAND = re.compile(
     r"(?:\[(?:minecraft:)?custom_name=[^\[\]{}]*\]|\{display:\{Name:'[^{}]*'\}\})?"
     r"(?: (?P<count>\d+))?$")
 
+# A finished map (panel/maps.py) for one named player: the map's id and a
+# name, nothing else.
+_MAP_COMMAND = re.compile(
+    r"^(?:minecraft:)?give (?P<who>[^@\s]\S*) minecraft:filled_map"
+    r"(?:\[map_id=\d{1,10},custom_name=[^\[\]{}]*\]|\{map:\d{1,10},display:\{Name:'[^{}]*'\}\})"
+    r" 1$")
+MAP_NAME_MAX = 40
+
 PAD_COLOURS = (("minecraft:lime_carpet", "minecraft:lime_wool"),
                ("minecraft:red_carpet", "minecraft:red_wool"),
                ("minecraft:light_blue_carpet", "minecraft:light_blue_wool"))
@@ -394,6 +402,14 @@ def named_item(item: str, name: str, syntax: str) -> str:
     return f"{item}[custom_name={snbt}]"
 
 
+def map_item(map_id: int, name: str, syntax: str) -> str:
+    """A finished map item: the map file's id and a name, in the server's syntax."""
+    item = named_item("minecraft:filled_map", name, syntax)
+    if syntax == "nbt":
+        return item.replace("{display:", f"{{map:{int(map_id)},display:", 1)
+    return item.replace("[custom_name=", f"[map_id={int(map_id)},custom_name=", 1)
+
+
 def split_reply(text: Any, width: int = REPLY_LINE_CHARS, lines: int = REPLY_LINES) -> list[str]:
     """Words as a few chat lines: plain text, wrapped, capped with "…"."""
     import textwrap
@@ -577,6 +593,8 @@ def check_command(cmd: str, placing: bool = False) -> None:
     if verb in ("title", "tellraw"):
         if len(words) < 2 or words[1].startswith("@"):
             raise GuardError("words go to one named player")
+        return
+    if verb == "give" and _MAP_COMMAND.match(cmd):
         return
     if verb in ("give", "clear"):
         tail = cmd.rsplit(" run ", 1)[-1] if " run " in cmd else cmd
@@ -1255,6 +1273,29 @@ class Companion:
             if reply is None or not re.search(r"^Gave ", _COLOUR_CODE.sub("", reply).strip()):
                 raise CompanionError(f"The server would not give it: {(reply or 'no answer')[:120]}")
             return {"player": found, "name": label, "given": True, "had": 0}
+
+    def give_maps(self, player: Any, maps: list[tuple[int, str]]) -> dict[str, Any]:
+        """Finished maps (their files already written, panel/maps.py) into a
+        player's inventory, one `give` each; a full inventory drops them at
+        their feet, as the game does. What was given, and what was not."""
+        with self._lock:
+            found = self._online(str(player or ""))
+            if not found:
+                raise CompanionError(f"{player} is not in the game right now.")
+            syntax = self.item_syntax()
+            who = quote_name(found)
+            given, failed = [], []
+            for map_id, name in maps:
+                label = " ".join(re.sub(r"[^\w '\-.,!?#&+]", "", str(name or "")).split())
+                label = label[:MAP_NAME_MAX].strip() or f"Map #{int(map_id)}"
+                reply = self._try(f"minecraft:give {who} {map_item(map_id, label, syntax)} 1")
+                text = _COLOUR_CODE.sub("", reply or "").strip()
+                if reply is not None and text.startswith("Gave "):
+                    given.append({"id": int(map_id), "name": label})
+                else:
+                    failed.append({"id": int(map_id), "name": label,
+                                   "reply": (text or "no answer")[:160]})
+            return {"player": found, "given": given, "failed": failed}
 
     # -- a body ----------------------------------------------------------------
     def appear(self, player: Any, seconds: Any = 25, kind: str = "greet", name: Any = None,

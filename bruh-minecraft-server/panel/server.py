@@ -86,6 +86,7 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import zipfile
 from datetime import datetime, timezone
@@ -148,6 +149,9 @@ sight_mod = _load_beside("bruh_mc_sight", "sight.py")
 # Skript scripts and data pack functions written into the running world
 # (the `write_script` / `remove_script` services).
 worldscripts = _load_beside("bruh_mc_worldscripts", "worldscripts.py")
+# Finished maps drawn from the region files and handed to a player
+# (the `render_maps` service).
+maps_mod = _load_beside("bruh_mc_maps", "maps.py")
 
 # ---------------------------------------------------------------------------
 # Paths / constants
@@ -3912,6 +3916,165 @@ async def api_companion_spyglass(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+# Finished maps. One call may draw at most MAPS_MAX maps, and no more work
+# than MAPS_WORK level-0 maps' worth (a level-s map reads 4**s times the
+# columns), so it answers within a couple of minutes on a small machine.
+MAPS_MAX = 36
+MAPS_WORK = 256
+_MAPS_LOCK = threading.Lock()
+
+
+def _dimension_id(value: str | None) -> str:
+    ns, path = mcmap._dimension_parts(str(value or "overworld"))
+    return f"{ns}:{path}"
+
+
+def _map_boxes(body: dict, dim: str) -> list[dict]:
+    """[{name, box}] to draw: the area asked for, or the family's builds."""
+    if body.get("builds") is True:
+        col = _world()
+        boxes = []
+        for job in col.builds.list(limit=200):
+            b = job.get("bounds")
+            if b and job.get("status") in ("done", "building") \
+                    and _dimension_id(b.get("dimension")) == dim:
+                boxes.append({"name": str(job.get("title") or "a build"),
+                              "box": {k: b[k] for k in ("x1", "z1", "x2", "z2")}})
+        kept = _read_json(col.data_dir / "places.json", [])
+        kept = kept.get("places") or [] if isinstance(kept, dict) else kept
+        points = [p for p in kept if isinstance(p, dict) and p.get("name")
+                  and p.get("name") != "spawn" and "x" in p and "z" in p
+                  and _dimension_id(p.get("dimension")) == dim]
+        boxes += _atlas().builds(dim, points=points)
+        if not boxes:
+            # Nothing named yet: every building the atlas has found.
+            boxes = _atlas().builds(dim, everything=True)
+        if not boxes:
+            raise maps_mod.MapError(f"No builds are known in {dim} yet: name one (label_place) "
+                                    "or ask for an area with x1, z1, x2 and z2.")
+        return boxes
+    try:
+        x1, z1, x2, z2 = (int(round(float(body[k]))) for k in ("x1", "z1", "x2", "z2"))
+    except (KeyError, TypeError, ValueError):
+        raise maps_mod.MapError("Ask for builds: true, or an area with x1, z1, x2 and z2.") from None
+    if max(abs(x1), abs(z1), abs(x2), abs(z2)) > 30_000_000:
+        raise maps_mod.MapError("That area is outside the world.")
+    return [{"name": " ".join(str(body.get("name") or "Map").split())[:24] or "Map",
+             "box": {"x1": x1, "z1": z1, "x2": x2, "z2": z2}}]
+
+
+def render_maps(body: dict) -> dict:
+    """Draw the maps of an area or of the builds from the saved world and
+    give them to a player (panel/maps.py). Raises MapError or CompanionError
+    with the reason in words."""
+    hands = _companion()
+    player = hands._online(str(body.get("player") or ""))
+    if not player:
+        raise maps_mod.MapError(f"{body.get('player')} is not in the game right now.")
+    try:
+        scale = int(body.get("scale", 0))
+    except (TypeError, ValueError):
+        scale = -1
+    if not 0 <= scale <= maps_mod.SCALE_MAX:
+        raise maps_mod.MapError("scale is a map level from 0 (1 block a pixel) to 4.")
+    here = (_world().players.get(player) or {}).get("dimension")
+    dim = _dimension_id(body.get("dimension") or here or "overworld")
+    wanted = _map_boxes(body, dim)
+    cells = maps_mod.cells_for([(w["box"]["x1"], w["box"]["z1"], w["box"]["x2"], w["box"]["z2"])
+                                for w in wanted], scale)
+    if len(cells) > MAPS_MAX or len(cells) * 4 ** scale > MAPS_WORK:
+        most = min(MAPS_MAX, MAPS_WORK // 4 ** scale)
+        raise maps_mod.MapError(f"That is {len(cells)} level-{scale} maps; one call makes at most "
+                                f"{most}. Ask for a larger scale or a smaller area.")
+    world = world_dir()
+    region = mcmap.region_dir(world, dim)
+    if not region.is_dir():
+        raise maps_mod.MapError(f"The world has no saved region files for {dim} yet.")
+    try:
+        version = int(mcmap.read_nbt_file(world / "level.dat")["Data"]["DataVersion"])
+    except Exception:  # noqa: BLE001 — no level.dat, or one we cannot read
+        raise maps_mod.MapError("The world's level.dat could not be read, so the maps "
+                                "would not know which version to be.") from None
+    folder = maps_mod.maps_dir(world)
+    fresh_read()
+    save_world()
+    # The map rows are named by the builds in them, west to east, north first.
+    sheets = maps_mod.sheets(cells)
+    made, blank, walls = [], [], []
+    with _MAPS_LOCK:
+        state_path = _world().data_dir / "maps.json"
+        state = _read_json(state_path, {})
+        last = state.get("last_id") if isinstance(state, dict) else 0
+        folder.mkdir(parents=True, exist_ok=True)
+        ids = iter(maps_mod.next_ids(folder, len(cells), last or 0))
+        for group in sheets:
+            names = []
+            for w in wanted:
+                b = w["box"]
+                touched = maps_mod.cells_for([(b["x1"], b["z1"], b["x2"], b["z2"])], scale)
+                if any(c in group for c in touched) and w["name"] not in names:
+                    names.append(w["name"])
+            title = names[0] if names else "Map"
+            if len(names) == 2:
+                title = f"{names[0]} & {names[1]}"
+            elif len(names) > 2:
+                title = f"{names[0]} & {len(names) - 1} more"
+            wall = {"name": title[:30], "frames": [], "_cells": group, "_drawn": set()}
+            walls.append(wall)
+            for cell in group:
+                cx, cz = maps_mod.cell_centre(*cell, scale)
+                colours, drawn = maps_mod.render(
+                    region, cx, cz, scale, ceiling=dim == "minecraft:the_nether",
+                    min_y=-64 if dim == "minecraft:overworld" else 0)
+                label = maps_mod.frame_label(cell, group)
+                x1, z1, x2, z2 = maps_mod.cell_box(*cell, scale)
+                row = {"name": f"{title[:30]} {label}", "frame": label, "sheet": title,
+                       "centre": {"x": cx, "z": cz},
+                       "box": {"x1": x1, "z1": z1, "x2": x2, "z2": z2}}
+                if not drawn:
+                    blank.append(row)          # never generated: nothing to draw
+                    continue
+                map_id = next(ids)
+                maps_mod.write_new(folder / f"map_{map_id}.dat", maps_mod.map_file_bytes(
+                    colours, cx, cz, scale, dim, version))
+                made.append({**row, "id": map_id, "drawn": round(drawn / 16384, 3)})
+                wall["_drawn"].add(label)
+                last = max(int(last or 0), map_id)
+        if made:
+            mcworld.atomic_write_json(state_path, {"last_id": last})
+    if not made:
+        raise maps_mod.MapError("Nothing there has been generated or saved yet, so there is "
+                                "nothing to draw.")
+    gave = hands.give_maps(player, [(m["id"], m["name"]) for m in made])
+    if not gave["given"]:
+        raise companion.CompanionError("The server would not give the maps: "
+                                       + gave["failed"][0]["reply"])
+    given = {g["id"] for g in gave["given"]}
+    for wall in walls:
+        group = wall.pop("_cells")
+        drawn_here = wall.pop("_drawn")
+        rows = sorted({r for _, r in group})
+        cols = sorted({c for c, _ in group})
+        wall["frames"] = [" ".join(lbl if lbl in drawn_here else "--" for lbl in (
+            maps_mod.frame_label((c, r), group) for c in cols)) for r in rows]
+    walls = [w for w in walls if any(lbl != "--" for row in w["frames"] for lbl in row.split())]
+    return {"player": gave["player"], "scale": scale, "dimension": dim,
+            "blocks_per_map": maps_mod.span(scale),
+            "maps": [m for m in made if m["id"] in given],
+            "not_given": gave["failed"], "not_generated": blank, "walls": walls,
+            "how": "Hang each wall's maps in item frames as laid out in walls: rows north "
+                   "(A) to south, columns west (1) to east; they meet edge to edge."}
+
+
+async def api_render_maps(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    try:
+        result = await asyncio.to_thread(render_maps, body)
+    except (maps_mod.MapError, companion.CompanionError, atlas_mod.AtlasError) as exc:
+        return _companion_error(exc)
+    return web.json_response(result)
+
+
 async def api_companion_job_undo(request: web.Request) -> web.Response:
     try:
         result = await asyncio.to_thread(_companion().undo_job, request.match_info["job"])
@@ -4139,6 +4302,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/companion/jobs/{job}/undo", api_companion_job_undo)
     app.router.add_post("/api/companion/progress", api_companion_progress)
     app.router.add_post("/api/companion/bar", api_companion_bar)
+    app.router.add_post("/api/maps/render", api_render_maps)
     app.router.add_post("/api/companion/spyglass", api_companion_spyglass)
     app.router.add_post("/api/companion/thought", api_companion_thought)
     app.router.add_post("/api/companion/journal", api_companion_journal)
