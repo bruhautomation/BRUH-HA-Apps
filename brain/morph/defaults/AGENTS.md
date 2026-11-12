@@ -352,9 +352,6 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   a total beside a part that is far smaller) get a one-line note naming the
   likely reason ("the tracker recorded only part of the night"), or a dash
   for the doubtful one. When asleep is under about half of in-bed time, say so.
-- **A line that names a door, window or lock is checked against its state
-  now.** Read the entity's state at draw time and drop or reword the line
-  once it has cleared; never "still open" beside "all closed".
 - **Every button and chip is a 40px target.** A scene chip, a mode button or
   a word you can press is at least 40px tall and 40px wide (`min-height` and
   `min-width`, never a fixed `height` under it), with a gap between
