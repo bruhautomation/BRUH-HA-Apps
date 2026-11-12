@@ -747,6 +747,10 @@ class House:
                 if said:
                     return {"text": said, "scope": "answers",
                             "noted": bool(broken)}
+        if check_id in DEVICE_QUIET:
+            said = self._answered_this_stretch(entity_id, check_id, answers)
+            if said:
+                return said
         if not (finished and gone):
             return None
         for eid in [entity_id, *self.siblings(entity_id)]:
@@ -755,6 +759,64 @@ class House:
                 for note in (row or {}).get("notes") or ():
                     if gone(note):
                         return {"text": str(note), "scope": "answers"}
+        return None
+
+    def stretch_began(self, entity_id: str):
+        """When this entity's current state began, as an epoch, or None.
+
+        The earlier of the recorder's start of an unavailable stretch
+        (`snap["unavailable_since"]`) and the live `last_changed` — a
+        restart re-stamps the live one, so a live stamp from right after a
+        start is no change at all and, with nothing earlier, is unknown.
+        """
+        live = (self.states.get(entity_id) or {}).get("last_changed")
+        stamps = [parse_ts(((self.snap.get("unavailable_since") or {})
+                            .get(entity_id)))]
+        if after_restart(self.snap, live) is None:
+            stamps.append(parse_ts(live))
+        stamps = [s for s in stamps if s is not None]
+        return min(stamps) if stamps else None
+
+    def _answered_this_stretch(self, entity_id: str, check_id: str,
+                               answers: dict) -> dict | None:
+        """A Wrong given about this device going quiet, in the stretch it is
+        still in (#863, #848).
+
+        The rule a Wrong writes stands the device down, but a reason that
+        writes none — a condition brAIn cannot watch, kept as a question —
+        left one Wrong short of `WRONG_LIMIT`, and the answer was read only
+        under the entity the row led with, so the next pass led with a
+        sibling and asked again. An answer about any entity of the device,
+        under any check that says it has gone quiet (`DEVICE_QUIET`), holds
+        while the entity filed now is still in the state it was answered
+        in; one that came back and went again since is news. "For now" is
+        the snooze the person asked for (`corrections.temporary`) and is
+        left to it.
+        """
+        try:
+            import corrections  # noqa: PLC0415 — lazy: it imports the stores
+            temporary = corrections.temporary
+        except Exception:  # noqa: BLE001
+            def temporary(_note):
+                return False
+        since = self.stretch_began(entity_id)
+        for eid in [entity_id, *self.siblings(entity_id)]:
+            for cid in sorted(DEVICE_QUIET):
+                row = (answers.get(eid) or {}).get(cid)
+                if not isinstance(row, dict) or int(row.get("wrong") or 0) < 1:
+                    continue
+                notes = [str(n) for n in row.get("notes") or ()]
+                if notes and temporary(notes[-1]):
+                    continue
+                at = int(row.get("wrong_at") or row.get("at") or 0)
+                if since is not None and at < since:
+                    continue
+                return {"text": (notes[-1] if notes else
+                                 "you marked this wrong")
+                        + " (answered while it was in this state; brAIn "
+                          "asks again if it comes back and goes again)",
+                        "scope": "answers" if eid == entity_id
+                        else "device"}
         return None
 
     def answered_since(self, key: str, check_id: str, since) -> dict | None:

@@ -34,6 +34,20 @@ pair, so the next automation or the next forecast was news again; the
 streak is the rule's own record. A critical row is never held, and
 neither is anything `quietable` refuses.
 
+brAIn's own reports stand down the same way (#577, #824, #853). The
+Resident is not a rule and is never muted or quieted by `quietable` —
+it is the one judge — but its record is the scorecard's `resident` row,
+and nothing read it: 6 of 9 marked Wrong changed nothing about how it
+filed. So `resident_stand_down` reads that row by the same arithmetic
+(`HOLD_STREAK` Wrongs in a row, or a confirm share under
+`RESIDENT_CONFIRM_FLOOR` with the latest answer a Wrong, the latest Wrong
+recent), and while it stands the Resident files a case only when the run
+read a measurement (a baseline, a room's physics, an automation's trace;
+`resident.MEASURED_TOOLS`). Anything else is filed HELD with
+`resident_stand_down_reason` (History › Set aside by brAIn), never
+dropped. Never a signal or a case the never-ignore floors or
+`never_held` keep: a smoke, leak, CO or security report is filed as ever.
+
 Never told about: anything that is not a house check or a card a person
 made (`user-…`, the household's own rule), a security check
 (`check:sec.*`), a check about harm (`signals.SAFETY_FLAG_CHECKS`), and
@@ -64,6 +78,18 @@ MAX_LINES = 6
 
 # Three Wrongs in a row, the latest answers, and the rule is held (above).
 HOLD_STREAK = 3
+# Or a record this one-sided, the latest answer a Wrong (#811, #812): a
+# streak is ended by any agreement, so a rule Wrong four times in five with
+# its one agreement among the latest answers was never held however often
+# the household went on saying Wrong.
+HOLD_WRONG = 3
+HOLD_SHARE = 0.75
+# brAIn's own reports (above): stand down below this share confirmed, past
+# this many answers, while the latest Wrong is newer than this.
+RESIDENT_SOURCE = "resident"
+RESIDENT_CONFIRM_FLOOR = 0.4
+RESIDENT_MIN_ANSWERS = 5
+RESIDENT_RECENT_S = 14 * 86400
 # A card somebody made is a rule they wrote (`user_categories.ID_PREFIX`).
 PERSON_RULE_PREFIX = "user-"
 
@@ -96,14 +122,21 @@ def qualifies(row: dict) -> bool:
 
 
 def holds(row: dict) -> bool:
-    """A scorecard row whose latest `HOLD_STREAK` answers were all Wrong:
-    its rule's rows are filed held (above)."""
+    """A scorecard row whose latest `HOLD_STREAK` answers were all Wrong,
+    or which is Wrong at least `HOLD_WRONG` times and `HOLD_SHARE` of its
+    answers with the latest a Wrong: its rule's rows are filed held
+    (above)."""
     if not isinstance(row, dict) or not quietable(row.get("source")):
         return False
     try:
-        return int(row.get("streak") or 0) >= HOLD_STREAK
+        if int(row.get("streak") or 0) >= HOLD_STREAK:
+            return True
+        wrong = int(row.get("wrong") or 0)
+        total = int(row.get("total") or 0)
     except (TypeError, ValueError):
         return False
+    return (wrong >= HOLD_WRONG and total > 0
+            and wrong >= HOLD_SHARE * total and row.get("last") == "wrong")
 
 
 def held_rules(scorecard) -> dict[str, dict]:
@@ -115,11 +148,67 @@ def held_rules(scorecard) -> dict[str, dict]:
 def held_reason(row: dict) -> str:
     """The verdict a held row carries: the record, in the household's words,
     and what brings it back."""
+    row = row or {}
+    streak = int(row.get("streak") or 0)
+    if streak >= HOLD_STREAK:
+        said = f"You marked this rule's last {streak} reports wrong"
+    else:
+        # Held by its share (`holds`): a streak an agreement ended.
+        said = (f"You marked {int(row.get('wrong') or 0)} of this rule's "
+                f"{int(row.get('total') or 0)} reports wrong, the latest "
+                "among them")
+    return (said + ", so brAIn set this one aside. It comes back if it "
+            "gets worse or names something new, or once you agree with one "
+            "of this rule's reports.")
+
+
+def resident_stand_down(scorecard, now: float) -> dict | None:
+    """The Resident's own scorecard row while its record stands it down,
+    else None (above). Unreadable is None: a record nobody can read holds
+    nothing back."""
+    row = next((r for r in scorecard or () if isinstance(r, dict)
+                and r.get("source") == RESIDENT_SOURCE), None)
+    if row is None:
+        return None
+    try:
+        streak = int(row.get("streak") or 0)
+        wrong = int(row.get("wrong") or 0)
+        total = int(row.get("total") or 0)
+        last_wrong = float(row.get("last_wrong_ts") or 0)
+    except (TypeError, ValueError):
+        return None
+    if not last_wrong or now - last_wrong > RESIDENT_RECENT_S:
+        return None
+    if streak >= HOLD_STREAK:
+        return row
+    if (total >= RESIDENT_MIN_ANSWERS and row.get("last") == "wrong"
+            and total - wrong < RESIDENT_CONFIRM_FLOOR * total):
+        return row
+    return None
+
+
+def resident_stand_down_reason(row: dict) -> str:
+    """Why a Resident case was set aside, in the household's words."""
+    wrong = int((row or {}).get("wrong") or 0)
+    total = int((row or {}).get("total") or 0)
     streak = int((row or {}).get("streak") or 0)
-    return (f"You marked this rule's last {streak} reports wrong, so brAIn "
-            "set this one aside. It comes back if it gets worse or names "
-            "something new, or once you agree with one of this rule's "
-            "reports.")
+    record = (f"You marked brAIn's last {streak} reports wrong"
+              if streak >= HOLD_STREAK else
+              f"You marked {wrong} of the {total} brAIn reports you answered "
+              "wrong")
+    return (f"{record}, so brAIn now raises one only when a measurement "
+            "backs it (what is normal here, a room's physics or an "
+            "automation's trace). This one had none, so brAIn set it "
+            "aside. That lifts once you agree with one of brAIn's reports.")
+
+
+def resident_stand_down_words(row: dict) -> str:
+    """The same stand-down said where producer health is shown."""
+    wrong = int((row or {}).get("wrong") or 0)
+    total = int((row or {}).get("total") or 0)
+    return (f"{wrong} of {total} marked wrong, so brAIn raises its own "
+            "reports only when a measurement backs them, and sets the rest "
+            "aside in History. Safety reports are raised as always.")
 
 
 def never_held(row: dict, patterns: list[str] | None = None) -> bool:
@@ -207,8 +296,12 @@ def lines(batch, scorecard, floor=None) -> list[str]:
                 "included.")
         if holds(row):
             # Held by default (#698): only a look that keeps it shows it.
-            line += (f" The last {int(row['streak'])} in a row were wrong, "
-                     "so brAIn holds this rule's rows unless you keep one "
-                     "for fresh, specific evidence the others did not have.")
+            line += (" The last "
+                     + (f"{int(row['streak'])} in a row were wrong"
+                        if int(row.get("streak") or 0) >= HOLD_STREAK
+                        else "answer was wrong and so were most before it")
+                     + ", so brAIn holds this rule's rows unless you keep "
+                     "one for fresh, specific evidence the others did not "
+                     "have.")
         out.append(line)
     return out[:MAX_LINES]

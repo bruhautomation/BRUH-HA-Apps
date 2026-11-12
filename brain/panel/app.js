@@ -17417,13 +17417,14 @@ async function loadDiagAccuracy() {
     const v = el("div", "dv" + (doubtful ? " dbad" : ""));
     v.appendChild(el("span", "scoreverdict", scoreVerdict(r)));
     v.appendChild(document.createTextNode(" · " + scoreCount(r)));
-    if (r.source && doubtful) {
+    if (r.source && doubtful && r.mutable !== false) {
       const stop = el("button", "btn tiny", "Ignore");
       stop.setAttribute("aria-label", `Ignore: stop raising ${name}`);
       stop.addEventListener("click", () => setMute(r.source, true, stop));
       v.appendChild(document.createTextNode(" "));
       v.appendChild(stop);
     }
+    if (r.held_back) v.appendChild(el("span", "faultsay", r.held_back));
     v.insertAdjacentHTML("beforeend", techDetail(r.source));
     row.appendChild(v);
     host.appendChild(row);

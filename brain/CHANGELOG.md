@@ -2,6 +2,21 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.30
+
+### Fixed
+
+- A house check you keep marking wrong now stands down even when you once agreed with it. A check whose latest answer was Wrong and which you marked wrong at least three times, three in four or more, has its findings set aside in History with that record as the reason, and the decision trail says so. Security checks and checks about harm are never set aside (#811, #812, #813, #826).
+- A device you said was fine to be offline, or a sensor you said was fine stuck on one value, is no longer raised again under any of its entities. Leak, smoke and lock sensors are still always raised. It comes back only if the device comes back and then goes again (#810, #811, #863).
+- Two automations are reported as fighting only when one undoes the other within seconds of the same trigger, when they keep undoing each other within a minute, or when two timed rules undo each other within five minutes of the same schedule. Two rules that each answer their own trigger on the same light, like "off at eleven" and "on with motion", are no longer reported (#812, #852).
+- A finding about leftover entities from an earlier install now says which of them still have a working replacement on the device, and asks you to reinstall only the ones with none (#863).
+
+## 5.1.29
+
+### Fixed
+
+- brAIn now listens when you keep marking its own "watching the house" reports wrong. After three Wrong answers in a row, or when fewer than four in ten of its reports were right and the latest was marked Wrong, brAIn raises a report only when it measured something to back it: what is normal for that thing, a room's physics, or an automation's trace. Anything else is set aside in History › Set aside by brAIn, where one press brings it back, with the reason written on it. Something you already marked Wrong is not looked into again, and the decision trail says so. ⚙ › Diagnostics says why brAIn is holding back. Safety reports (smoke, leaks, gas, security, locks and alarms) are raised exactly as before, and the hold lifts as soon as you agree with one of brAIn's reports (#577, #824, #853).
+
 ## 5.1.28
 
 ### Removed
