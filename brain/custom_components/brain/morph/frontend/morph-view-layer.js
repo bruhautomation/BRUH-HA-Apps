@@ -19,9 +19,10 @@
 //
 // It touches HA's page only through styles and attributes on the
 // `.section` wrappers hui-sections-view draws (CSS `order`, `data-fold`,
-// `data-why`) and one adopted stylesheet in that view's shadow root, never
-// by moving or adding nodes HA's renderer owns, so a redraw by HA loses
-// nothing and the next pass puts it back. Every lookup answers null rather
+// `data-why`), one adopted stylesheet in that view's shadow root, and the
+// rail's own box at the start of that shadow root, never by moving nodes
+// HA's renderer owns, so a redraw by HA loses nothing and the next pass
+// puts it back. Every lookup answers null rather
 // than throwing: a release that moves an element turns this off, not the
 // page.
 
@@ -56,11 +57,18 @@ export const VIEW_SHEET = `
 @media (any-pointer:coarse){:host(.morph-rail) .wrapper{padding-right:30px!important}}
 `;
 
-// The rail's own box: fixed at the right edge under HA's toolbar, the same
-// strip Morph's view had (styles.js draws it only on a touch screen).
+// The rail's own box: the right edge under HA's toolbar, the same strip
+// Morph's view had (styles.js draws it only on a touch screen), held INSIDE
+// the view's scroll. It was a fixed, full-height box on
+// document.body, and on an iPhone a vertical swipe that started on it went
+// to the document, which in the Home Assistant app is not what scrolls the
+// dashboard: the page stuck. Now the box is the first thing in the view, a
+// sticky line of no height that stays at the top of the screen while the
+// view scrolls, with the rail hanging from it at the right edge, so a swipe
+// on the rail chains to the view's own scroller like a swipe anywhere else.
 const RAIL_CSS = `
-:host{all:initial}
-.morph.mrl{background:transparent;min-height:0;position:fixed;right:0;top:var(--header-height,56px);bottom:0;width:28px;z-index:5;pointer-events:none}
+:host{all:initial;display:block;position:sticky;top:calc(var(--header-height,56px) + env(safe-area-inset-top,0px));height:0;z-index:5;pointer-events:none}
+.morph.mrl{background:transparent;min-height:0;position:absolute;right:0;top:0;width:28px;height:calc(100vh - var(--header-height,56px) - env(safe-area-inset-top,0px));height:calc(100dvh - var(--header-height,56px) - env(safe-area-inset-top,0px));pointer-events:none}
 .mrl .srail{position:absolute!important;top:0;right:0;bottom:0;height:auto!important;pointer-events:auto}
 `;
 
@@ -234,6 +242,10 @@ export class ViewLayer {
 
   railOn(on) {
     if (!on) { this.railOff(); return; }
+    const root = this.view && this.view.shadowRoot;
+    if (!root) { this.railOff(); return; }
+    // HA redrew the view, or this is another one: the box goes back in.
+    if (this.railBox && this.railBox.parentNode !== root) this.railOff();
     if (!this.railBox) {
       const host = document.createElement('morph-rail-box');
       const sr = host.attachShadow({ mode: 'open' });
@@ -245,7 +257,7 @@ export class ViewLayer {
       el.className = 'srail';
       wrap.appendChild(el);
       sr.appendChild(wrap);
-      document.body.appendChild(host);
+      root.insertBefore(host, root.firstChild);
       this.railBox = host;
       try { this.rail = new Rail(el, this); } catch (e) { this.rail = null; }
     }

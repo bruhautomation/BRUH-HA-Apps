@@ -20775,6 +20775,32 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
                                             "photographed")}, status=503)
     confidential = screens.confidential_strings(
         states, await asyncio.to_thread(occasions.load))
+    # brAIn as the phone's sidebar shows it: framed by the shell,
+    # under a top safe area, in the app's full screen or not, after a
+    # scroll or a focus; the header's place and any outer scroll come back.
+    shell = body.get("shell") is True
+    after = str(body.get("after") or "").strip().lower()
+    if after and after not in screens.SHELL_AFTER:
+        return web.json_response({"error": "after must be scroll or focus",
+                                  "screens": listing}, status=400)
+    if shell or after:
+        if target is not targets[0]:
+            return web.json_response({"error": (
+                "only brAIn's own screens are photographed framed by the sidebar "
+                "shell or after a scroll or a focus"), "screens": listing}, status=400)
+        if focus:
+            return web.json_response({"error": (
+                "a framed picture is of the whole screen: ask without an element"),
+                "screens": listing}, status=400)
+    if shell:
+        try:
+            inset = int(body.get("inset") if body.get("inset") is not None else (59 if width < 700 else 0))
+        except (TypeError, ValueError):
+            inset = 0
+        scr = screens.shell_screen(scr, _own_panel_url(), inset=inset,
+                                   fullscreen=body.get("fullscreen") is not False, after=after)
+    elif after:
+        scr = {**scr, "after": after, "layout": True}
     one = {**target, "screens": [{**scr, "focus": focus} if focus else scr]}
     if SCREENSHOT_LOCK is None:
         SCREENSHOT_LOCK = asyncio.Lock()
@@ -20811,7 +20837,8 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
         "addon": target["product"], "screen": scr["label"], "width": width,
         **({"element": focus["id"], "press": focus["press"]} if focus else {}),
         "scheme": scheme, "png": base64.b64encode(data).decode(),
-        "problems": result.get("problems") or [], "held": shot.get("held") or []})
+        "problems": result.get("problems") or [], "held": shot.get("held") or [],
+        **({"layout": shot["layout"]} if shot.get("layout") is not None else {})})
 
 
 def _harness_refusal(request: web.Request) -> web.Response | None:
@@ -27238,7 +27265,7 @@ Ask brAIn's own measurements before you guess: what_is_normal (is a reading unus
 
 For a NEW standing automation you can also offer brAIn's replay: describe it in one sentence to the brain.intent service (call_service, domain "brain", service "intent", data {"sentence": "..."}) and brAIn drafts it, replays it over the last month, grades it against what this household actually did and offers it as a card to accept or trial. Offer that when seeing how it would have behaved helps; when they ask you to just make it, make it.
 
-When something in another BRUH add-on is broken (GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft, BRUH Cooking, BRUH Task Manager), look first with bruh_addon_status and its log. Do what can be done here (restart it, fix its options or the house's own config) and say so. Its code is in its own image and is never patched in place: when the cause is in that code, file it with report_bug — your diagnosis, the log lines and the owner's words — and it is fixed upstream and arrives as an update, which brAIn then checks held. Do the same for a bug in brAIn itself. When the problem is how a screen looks or reads — brAIn's own, another add-on's panel, Morph's dashboard or a Lovelace card — take a picture of it with screenshot_panel and look before you answer, at a phone's width (390) and a laptop's (1200), and file what you saw with report_bug and ui: true.
+When something in another BRUH add-on is broken (GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft, BRUH Cooking, BRUH Task Manager), look first with bruh_addon_status and its log. Do what can be done here (restart it, fix its options or the house's own config) and say so. Its code is in its own image and is never patched in place: when the cause is in that code, file it with report_bug — your diagnosis, the log lines and the owner's words — and it is fixed upstream and arrives as an update, which brAIn then checks held. Do the same for a bug in brAIn itself. When the problem is how a screen looks or reads — brAIn's own, another add-on's panel, Morph's dashboard or a Lovelace card — take a picture of it with screenshot_panel and look before you answer, at a phone's width (390) and a laptop's (1200), and file what you saw with report_bug and ui: true. For brAIn's own header or scrolling on a phone, take it with shell (framed the way the sidebar shows it, in full screen and with fullscreen false) and again with after scroll or focus, and read its layout.
 
 brAIn's own surfaces are brAIn's to change without waiting for a press, whatever the other settings say (the owner's decision): the house layer over its page (/config/.brain/ui/house.css and house.js), Morph's code copies and /config/morph/LEARNED.md, removing lines from its memory, and its own personality notes. Each change is snapshotted or versioned, and a house.css or house.js that breaks the page is undone automatically the next time the page loads it, so reload and look after changing one.
 
