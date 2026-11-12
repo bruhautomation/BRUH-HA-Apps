@@ -708,6 +708,51 @@ class Atlas:
                 "box": dict(box), "blocks": b["blocks"],
                 "rooms": named_rooms if rooms is not None else None}
 
+    def builds(self, dimension: Any = None, points: list[dict[str, Any]] | None = None,
+               everything: bool = False) -> list[dict[str, Any]]:
+        """The family's builds in a dimension, each {name, box}: every label
+        (its building, or around the point labelled) and every named point
+        handed in (`points`: {name, x, z}, the places and the build log),
+        taken as the building there when there is one. With `everything`,
+        every building the atlas has found, named as a query names them."""
+        with self._lock:
+            self._root()
+            key = dim_key(str(dimension or "minecraft:overworld"))
+            dim = dim_id(key)
+            out: list[dict[str, Any]] = []
+            if everything:
+                if self.last_scan < 0:
+                    self._scan()
+                seen: set[str] = set()
+                for name in sorted(self._index(key)["regions"]):
+                    rx, rz = (int(n) for n in name[2:].split("."))
+                    for b in self._buildings(key, rx * 32, rz * 32, rx * 32 + 31, rz * 32 + 31):
+                        if b["id"] not in seen:
+                            seen.add(b["id"])
+                            out.append({"name": self._named(key, b, None)["name"],
+                                        "box": dict(b["box"])})
+                return out
+            marks = [(lab["name"], lab["x"], lab.get("y"), lab["z"])
+                     for lab in self.labels() if lab.get("dimension") == dim]
+            marks += [(p["name"], p["x"], None, p["z"]) for p in points or []]
+            for name, x, y, z in marks:
+                try:
+                    x, z = math.floor(float(x)), math.floor(float(z))
+                except (TypeError, ValueError):
+                    continue
+                self._ensure(key, (x >> 4) - 1, (z >> 4) - 1, (x >> 4) + 1, (z >> 4) + 1)
+                hit = None
+                for b in self._buildings(key, x >> 4, z >> 4, x >> 4, z >> 4):
+                    box = b["box"]
+                    if box["x1"] <= x <= box["x2"] and box["z1"] <= z <= box["z2"] and (
+                            y is None or box["y1"] - 2 <= int(y) <= box["y2"] + 2):
+                        hit = b
+                        break
+                box = dict(hit["box"]) if hit else {"x1": x - 16, "z1": z - 16,
+                                                    "x2": x + 16, "z2": z + 16}
+                out.append({"name": str(name)[:NAME_MAX], "box": box})
+            return out
+
     # -- reading ---------------------------------------------------------------------
     def _player(self, name: Any) -> dict[str, Any]:
         want = re.sub(r"^[.*]", "", str(name or "").strip()).lower()

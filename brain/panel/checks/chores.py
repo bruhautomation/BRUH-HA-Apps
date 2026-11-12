@@ -141,6 +141,53 @@ def _door_since(house: House, eid: str, finished: float) -> str:
     return ""
 
 
+def _governed(house: House, eid: str, shape: dict) -> str:
+    """What governs a stopped machine, when something does and says it is
+    not time yet: the humidity it was measured to start at (its sensor
+    still reads under that), or the set point on a humidifier entity of
+    the same device (the room has reached it). "" for none. Read before
+    `chore.waiting` files, because a dehumidifier that stopped in a dry room
+    has finished nothing (#862)."""
+    level = shape.get("runs_from_rh")
+    rh = str(shape.get("humidity_entity") or "")
+    if isinstance(level, (int, float)) and rh:
+        try:
+            now_rh = float((house.states.get(rh) or {}).get("state"))
+        except (TypeError, ValueError):
+            now_rh = None
+        if now_rh is not None and now_rh < float(level) + DRY_MARGIN:
+            return (f"{house.label(rh)} reads {now_rh:.0f}%, under the "
+                    f"{float(level):.0f}% it starts at")
+    for other in [eid] + house.siblings(eid):
+        if domain_of(other) != "humidifier":
+            continue
+        attrs = (house.states.get(other) or {}).get("attributes") or {}
+        try:
+            target, current = float(attrs["humidity"]), float(
+                attrs["current_humidity"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if str(attrs.get("device_class") or "") == "dehumidifier" \
+                and current <= target:
+            return (f"the room is at {current:.0f}%, at or under its "
+                    f"{target:.0f}% set point")
+    return ""
+
+
+def _answered_on_device(house: House, eid: str, check_id: str) -> str:
+    """A Wrong given to this check about another entity of the same device
+    (the plug, the humidity reading, the machine's own sensor): the reason
+    was about the machine, whichever entity the row led with."""
+    answers = house.snap.get("answers")
+    if not isinstance(answers, dict):
+        return ""
+    for other in house.siblings(eid):
+        row = (answers.get(other) or {}).get(check_id)
+        if isinstance(row, dict) and int(row.get("wrong") or 0) >= 1:
+            return str((row.get("notes") or ["you marked this wrong"])[-1])
+    return ""
+
+
 def waiting(snap: dict, now: float) -> list[dict]:
     """Appliances that finished a while ago and have not run since."""
     import appliances  # noqa: PLC0415
@@ -172,6 +219,17 @@ def waiting(snap: dict, now: float) -> list[dict]:
         if ago_min < QUIET_MIN or ago_min > STALE_HOURS * 60.0:
             continue
         if _rule_waits(house, snap, eid, "chore.waiting"):
+            continue
+        governs = _governed(house, eid, shape)
+        if governs:
+            house.gave_up("chore.waiting", [{"entity_id": eid}],
+                          f"it stops by design: {governs}", kind="explained")
+            continue
+        said = _answered_on_device(house, eid, "chore.waiting")
+        if said:
+            house.gave_up("chore.waiting", [{"entity_id": eid}],
+                          f"you answered this about the same device: {said}",
+                          kind="explained")
             continue
         hits.append((finished, kind, eid, shape))
 

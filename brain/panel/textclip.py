@@ -95,7 +95,7 @@ def _listed(s: str, begin: int, limit: int) -> str:
     for keep in range(len(items) - 1, 0, -1):
         more = len(items) - keep
         out = (s[:body_at] + lead + sep.join(items[:keep]).rstrip(" ,;:")
-               + f"{sep}and {more} more.")
+               + f"{sep}and {more} {'other' if more == 1 else 'others'}.")
         if len(out) <= limit:
             return out
     return ""
@@ -127,7 +127,68 @@ def shorten(text, limit: int) -> str:
     whole = s[:stop + 1].rstrip() if stop >= 0 else ""
     listed = _listed(s, stop + 1 if stop >= 0 else 0, limit)
     best = max(whole, listed, key=len)
-    return best if best else clip(s, limit)
+    return best if best else finished(clip(s, limit))
+
+
+_TRAILING_MORE = re.compile(r"(?:\s*\u2026)?\s+and (\d+) more\.?$")
+_ABBREV = ("e.g", "i.e", "etc", "vs", "approx", "no", "dr", "mr", "mrs", "st")
+# Words a cut must not end on: a joining word, a preposition, an article
+# or a possessive ("settled by your…" is not a sentence, #867).
+_DANGLING = (" and", " or", " but", " to", " the", " a", " an", " of", " with",
+             " then", " so", " near", " at", " in", " on", " for", " by",
+             " your", " its", " their", " his", " her", " my", " our",
+             " this", " that", " these", " those", " from", " into")
+
+
+def _last_stop(body: str) -> int:
+    """Index of the last real sentence end in ``body``: a full stop,
+    "!" or "?" followed by a space and a capital or digit, and not the dot
+    of a decimal or of an abbreviation ("1.5 inch", "e.g. a")."""
+    found = -1
+    for m in re.finditer(r"[.!?](?=\s+[A-Z0-9\"“])", body):
+        word = re.search(r"([\w.]+)$", body[:m.start()])
+        if body[m.start()] == "." and word and word.group(1).lower() in _ABBREV:
+            continue
+        found = m.start()
+    return found
+
+
+def finished(text, step: bool = False) -> str:
+    """``text`` as a sentence a person can read to its end (#867): never
+    ending in "…" and never in "and N more.".
+
+    A cut that stopped mid-sentence ("…none of these ent…") goes back to
+    the last whole sentence it holds (never at a decimal point or an
+    abbreviation); a single sentence with none is ended at its last whole
+    word, less any "and"/"the" left hanging, with a full stop. A list
+    counted as "and 6 more." is said "and 6 others." — the count of what
+    is left out stays, it just no longer reads as a cut. Text that ends
+    properly comes back as it was. A ``step`` (what to do) with no whole
+    sentence is ended on a word only when two words or more are left:
+    "Check the A…" is not made the step "Check."."""
+    s = "" if text is None else str(text)
+    out = s.rstrip()
+    if out.endswith(ELLIPSIS):
+        body = out[:-len(ELLIPSIS)].rstrip()
+        # A "…" after a full stop says nothing was cut mid-sentence.
+        if body[-1:] in ".!?":
+            out = body
+        else:
+            stop = _last_stop(body)
+            if stop > 0:
+                out = body[:stop + 1].rstrip()
+            else:
+                body = body.rstrip(_TRAILING)
+                while body.lower().endswith(_DANGLING):
+                    body = body.rsplit(" ", 1)[0].rstrip(_TRAILING)
+                if step and len(body.split()) < 2:
+                    return s
+                out = body + "." if body else ""
+    m = _TRAILING_MORE.search(out)
+    if m:
+        n = int(m.group(1))
+        out = out[:m.start()] + f" and {n} {'other' if n == 1 else 'others'}."
+    return out if out != s.rstrip() else s
 
 
 # Below this budget a display copy is one line — a button's label, a chip's
@@ -174,4 +235,4 @@ def shown(text, limit: int) -> str:
             f"{len(s):,} characters shown here — Claude has the full text.")
 
 
-__all__ = ["ELLIPSIS", "NOTE_FROM", "clip", "shorten", "shown"]
+__all__ = ["ELLIPSIS", "NOTE_FROM", "clip", "finished", "shorten", "shown"]

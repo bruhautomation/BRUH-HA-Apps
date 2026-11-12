@@ -367,7 +367,9 @@ class MorphPanel extends HTMLElement {
     this.$('.scroll').addEventListener('scroll', (ev) => {
       this.ui.lastScroll = Date.now();
       if (!this._railF) this._railF = requestAnimationFrame(() => { this._railF = 0; this.rail.paint(); });
-      if (this._shell) this.dispatchEvent(new CustomEvent('morph-scroll', { bubbles: true, composed: true, detail: { y: ev.currentTarget.scrollTop } }));
+      // `max` is how far it can scroll, so the header can tell the bottom's
+      // bounce (and the pane growing as the header goes) from a scroll up.
+      if (this._shell) { const sc = ev.currentTarget; this.dispatchEvent(new CustomEvent('morph-scroll', { bubbles: true, composed: true, detail: { y: sc.scrollTop, max: Math.max(0, sc.scrollHeight - sc.clientHeight) } })); }
     }, { passive: true });
     this.ro = new ResizeObserver(() => { cancelAnimationFrame(this._ro); this._ro = requestAnimationFrame(() => this.engine.layout(false, true)); });
     this.ro.observe(this.$('[data-board]'));

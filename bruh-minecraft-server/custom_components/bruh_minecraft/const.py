@@ -99,6 +99,9 @@ SERVICE_GIVE_SPYGLASS = "give_spyglass"
 # the player it works for sees (BRUH Sight), and a book that opens the stream.
 SERVICE_COMPANION_THOUGHT = "companion_thought"
 SERVICE_GIVE_JOURNAL = "give_journal"
+# Finished maps of an area or of the builds, drawn from the saved world
+# (panel/maps.py) and put in a player's inventory.
+SERVICE_RENDER_MAPS = "render_maps"
 # The atlas (panel/atlas.py): buildings, rooms, roads and labels, indexed
 # from the region files in the background.
 SERVICE_ATLAS = "atlas"
