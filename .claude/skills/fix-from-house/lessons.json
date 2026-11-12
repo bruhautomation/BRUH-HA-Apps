@@ -197,11 +197,11 @@
     },
     {
       "id": "2026-11-03-version-is-many-places",
-      "rule": "Run `.github/scripts/check-changelog-version.sh <add-on>` and grep the old version across the add-on before pushing a bump: GardenRX and BRUH Print pin it in several files.",
+      "rule": "Run `python3 .github/scripts/check.py --base origin/main` (its bump stage) and grep the old version across the add-on before pushing a bump: GardenRX and BRUH Print pin it in several files.",
       "evidence": "GardenRX: app/package.json, the lockfile, const.py, CARD_VERSION; BRUH Print: lovelace/bruh-print-card.js.",
       "enforced_by": "prose",
       "first_seen": "2026-11-03",
-      "last_relevant": "2026-11-03"
+      "last_relevant": "2026-11-12"
     },
     {
       "id": "2026-11-03-two-addon-pr",
@@ -309,7 +309,7 @@
     },
     {
       "id": "2026-10-18-node-down",
-      "rule": "A hung or cancelled CI job is read from its log for 'node down' or a runner shutdown and re-run once before looking for a code cause.",
+      "rule": "A hung or cancelled CI job is read from its log for a runner shutdown and re-run once before looking for a code cause.",
       "evidence": "Dead xdist workers hung Python tests for 6 h (10-18), 40 min (10-24) and 45 min (10-30); every job now has timeout-minutes.",
       "enforced_by": "prose",
       "first_seen": "2026-10-18",

@@ -23,7 +23,7 @@ repository (`scripts/runs_record.py render`), not this file.
 - `2026-10-12-severity-is-not-category` (prose): A severity is not a category: a chip that sorts rows asks the source too, never the severity alone.
 - `2026-10-13-guard-after-commit` (prose): Run `devloop_guard.py` after committing: it reads committed changes only, so a dirty tree reads as ok.
 - `2026-10-13-morph-old-static` (prose): A Morph panel serving `/morph_static/<older version>/` is Home Assistant still running the old integration: a restart is pending, not a Morph bug.
-- `2026-10-18-node-down` (prose): A hung or cancelled CI job is read from its log for 'node down' or a runner shutdown and re-run once before looking for a code cause.
+- `2026-10-18-node-down` (prose): A hung or cancelled CI job is read from its log for a runner shutdown and re-run once before looking for a code cause.
 - `2026-10-18-older-release-reports` (prose): Read the release a report was filed against (the block's `release`) before fixing: a report a later release already fixed is closed as a duplicate of the fixing issue.
 - `2026-10-18-squash-commit-message` (prose): Always pass `commit_title` and `commit_message` to `merge_pull_request`: without them the squash message carries every commit, including dropped ones.
 - `2026-10-18-tests-changed-to-pass` (guard:grader): Never make a fix pass by changing an existing test: `tests/*.py` is a grader path the guard refuses on a devloop branch; when a pinned assertion contradicts the fix, decline the issue naming the test's path:line.
@@ -49,7 +49,7 @@ repository (`scripts/runs_record.py render`), not this file.
 - `2026-11-03-agent-load` (prose): With several fixer agents at once, each runs only `check.py` and the guard on its own branch; CI is the gate, and a local failure under load is checked against main first.
 - `2026-11-03-dependabot-majors` (prose): A Dependabot major bump can ride a devloop PR after it is tested (a local build; `npm update <pkg> --package-lock-only` within the parent's range), with the add-on's version bump.
 - `2026-11-03-two-addon-pr` (prose): A PR that touches two add-ons bumps both versions and keeps both CHANGELOG sections when the next batch conflicts.
-- `2026-11-03-version-is-many-places` (prose): Run `.github/scripts/check-changelog-version.sh <add-on>` and grep the old version across the add-on before pushing a bump: GardenRX and BRUH Print pin it in several files.
+- `2026-11-03-version-is-many-places` (prose): Run `python3 .github/scripts/check.py --base origin/main` (its bump stage) and grep the old version across the add-on before pushing a bump: GardenRX and BRUH Print pin it in several files.
 - `2026-11-04-hassfest-service-text` (prose): Write service help text without angle brackets or colons, and parse services.yaml with yaml.safe_load before pushing.
 - `2026-11-04-sibling-service-first` (prose): A batch that needs a sibling add-on's new service is split: the add-on's half ships first as its own PR and version, then brAIn's half, which treats the service as optional for an older add-on.
 - `2026-11-04-three-subagents-max` (prose): Run at most three subagents at a time on a 4-CPU container; read a local failure that also fails on main against main and let CI be the gate.
