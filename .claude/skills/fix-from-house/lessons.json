@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "last_retro": "2026-11-03",
+  "last_retro": "2026-11-12",
   "last_ux_audit": "2026-11-08",
   "lessons": [
     {
@@ -20,30 +20,6 @@
       "last_relevant": "2026-10-07"
     },
     {
-      "id": "2026-10-08-test-timeouts",
-      "rule": "Subagents run `tests/affected.py --base origin/main --run`; the run runs the full suite once with `-n 4 --dist loadfile` and a raised Bash timeout; always `python3 -m pytest`.",
-      "evidence": "Run 1 took 7.5 h for 10 batches; 'the tests time out' was the Bash tool's 120 s kill, the serial suite is 6m15s, and a batch ran the suite up to four times.",
-      "enforced_by": "prose",
-      "first_seen": "2026-10-08",
-      "last_relevant": "2026-10-27"
-    },
-    {
-      "id": "2026-10-09-addcleanup-order",
-      "rule": "Register `addCleanup` with the original BEFORE replacing a module function, or the cleanup restores the fake and leaks into a later class.",
-      "evidence": "A leaked fake failed SceneDesignCase later in the same xdist worker.",
-      "enforced_by": "prose",
-      "first_seen": "2026-10-09",
-      "last_relevant": "2026-10-09"
-    },
-    {
-      "id": "2026-10-09-stores-package-collision",
-      "rule": "A failure that passes alone may be two add-ons' top-level `stores` packages colliding on one xdist worker; check `sys.path` before calling it a flake.",
-      "evidence": "test_bright_addon and BRUH Print both import `stores`; on 2026-11-03 tests/bruh_print_env.panel_path removed only one copy of Print's panel dir (fixed by removing every copy).",
-      "enforced_by": "prose",
-      "first_seen": "2026-10-09",
-      "last_relevant": "2026-11-03"
-    },
-    {
       "id": "2026-10-09-producer-ignored-reads-all-time",
       "rule": "A `[Producer …] ignored N of M` fault drops out once nobody marked the rule Wrong for 14 days (`reports.SCORE_RECENT_S`); only a Wrong count above what the fixed cause explains is new evidence.",
       "evidence": "2026-10-09: the fault read the all-time scorecard and kept reporting after the rule was fixed; fixed at the source on 2026-10-19.",
@@ -52,36 +28,12 @@
       "last_relevant": "2026-10-19"
     },
     {
-      "id": "2026-10-10-local-only-failure",
-      "rule": "Check a local-only failure against `main` (and run the file alone) before chasing it: stray files under `/config/.brain` or `/data` from an earlier test break later ones.",
-      "evidence": "2026-10-10 a stray /config/.brain/memory failed test_task_failures on main; 2026-10-23 two test_usage_tracker renewal tests failed beside another that left files in /data.",
-      "enforced_by": "prose",
-      "first_seen": "2026-10-10",
-      "last_relevant": "2026-10-23"
-    },
-    {
       "id": "2026-10-12-pkill-kills-the-shell",
       "rule": "Never `pkill -f <pattern>` in the same Bash command as anything else, and never kill a process you did not start.",
       "evidence": "The pattern matched the shell running the command (exit 144): three suite runs lost. 2026-10-27: a subagent's `pkill -f pytest` could kill another worktree's run.",
       "enforced_by": "prose",
       "first_seen": "2026-10-12",
       "last_relevant": "2026-10-27"
-    },
-    {
-      "id": "2026-10-12-local-suite-stall",
-      "rule": "When the local full suite stalls with no output, ship on the batch's affected run and let CI be the gate.",
-      "evidence": "The local `-n 4` suite hung 30 minutes in the container while CI ran it in under two.",
-      "enforced_by": "prose",
-      "first_seen": "2026-10-12",
-      "last_relevant": "2026-11-03"
-    },
-    {
-      "id": "2026-10-12-chromium-cold-start",
-      "rule": "`test_devloop_screens`' real-browser test warms Chromium once, untimed; a cold start on a loaded runner exceeds `screens._launch`'s 15 s budget.",
-      "evidence": "Failed twice in CI with 'Chromium did not start' before any assertion.",
-      "enforced_by": "prose",
-      "first_seen": "2026-10-12",
-      "last_relevant": "2026-10-12"
     },
     {
       "id": "2026-10-12-severity-is-not-category",
@@ -108,28 +60,12 @@
       "last_relevant": "2026-10-13"
     },
     {
-      "id": "2026-10-18-tests-changed-to-pass",
-      "rule": "Never make a fix pass by changing an existing test; when a pinned assertion contradicts the fix, open a `devloop-test/<slug>` PR for the independent reviewer (SKILL.md 0.3).",
-      "evidence": "2026-10-18 two subagents moved a fixture and rewrote an assertion despite the prompt; 2026-10-20 #327 and #322 were blocked by pinned assertions (test_resident_unjudged.py:63, test_open_row_look_reason.py:60, test_rhythm.py:110).",
-      "enforced_by": "guard:test-modified",
-      "first_seen": "2026-10-18",
-      "last_relevant": "2026-10-20"
-    },
-    {
       "id": "2026-10-18-squash-commit-message",
       "rule": "Always pass `commit_title` and `commit_message` to `merge_pull_request`: without them the squash message carries every commit, including dropped ones.",
       "evidence": "The history-cutoff change dropped in review still landed its message on main (#437).",
       "enforced_by": "prose",
       "first_seen": "2026-10-18",
       "last_relevant": "2026-10-18"
-    },
-    {
-      "id": "2026-10-18-node-down",
-      "rule": "A hung or cancelled CI job is read from its log for 'node down' or a runner shutdown and re-run once before looking for a code cause.",
-      "evidence": "Dead xdist workers hung Python tests for 6 h (10-18), 40 min (10-24) and 45 min (10-30); every job now has timeout-minutes.",
-      "enforced_by": "test:tests/test_ci_timeouts.py",
-      "first_seen": "2026-10-18",
-      "last_relevant": "2026-11-03"
     },
     {
       "id": "2026-10-18-older-release-reports",
@@ -154,22 +90,6 @@
       "enforced_by": "prose",
       "first_seen": "2026-10-20",
       "last_relevant": "2026-10-20"
-    },
-    {
-      "id": "2026-10-20-race-test-scheduling",
-      "rule": "`test_bruh_print_atomic_write`'s race test can fail under a loaded `-n 4` run on a branch that never touches BRUH Print; it is scheduling, not a regression.",
-      "evidence": "It asserts that the OLD recipe loses a write, and the threads may not interleave on a busy machine.",
-      "enforced_by": "test:tests/test_bruh_print_atomic_write.py",
-      "first_seen": "2026-10-20",
-      "last_relevant": "2026-10-20"
-    },
-    {
-      "id": "2026-10-23-no-new-skip",
-      "rule": "A test that depends on optional data (zoneinfo) gets a fallback that keeps it running, never a new skip: the guard refuses `skipIf`.",
-      "evidence": "devloop-guard refused a new skipIf in a timezone test.",
-      "enforced_by": "guard:skip",
-      "first_seen": "2026-10-23",
-      "last_relevant": "2026-10-23"
     },
     {
       "id": "2026-10-23-codeql-after-merge",
@@ -212,14 +132,6 @@
       "last_relevant": "2026-10-24"
     },
     {
-      "id": "2026-10-24-tool-list-conflicts",
-      "rule": "Batches that add MCP tools conflict on the lists and the documented count: merge both sides, re-add a whole `TOOLS` entry, and let `test_documented_counts` give the count.",
-      "evidence": "Two batches each added tools.",
-      "enforced_by": "test:tests/test_documented_counts.py",
-      "first_seen": "2026-10-24",
-      "last_relevant": "2026-10-24"
-    },
-    {
       "id": "2026-10-27-worktree-hygiene",
       "rule": "Subagents in parallel worktrees never `git stash` (a WIP commit instead) and never kill processes they did not start.",
       "evidence": "Two batch agents shared one stash; one ran pkill -f pytest.",
@@ -236,44 +148,12 @@
       "last_relevant": "2026-10-27"
     },
     {
-      "id": "2026-10-27-background-timeout",
-      "rule": "Give a background test run `timeout` 2400000 and write its output to a file when other agents load the box.",
-      "evidence": "The affected suite ran past ten minutes under load and was killed.",
-      "enforced_by": "prose",
-      "first_seen": "2026-10-27",
-      "last_relevant": "2026-11-03"
-    },
-    {
-      "id": "2026-10-27-wait-for-background-jobs",
-      "rule": "A test that starts a background job waits for it (an Event set in a `finally`) before tearDown removes its directory.",
-      "evidence": "test_bambu_copies raced its own cleanup.",
-      "enforced_by": "prose",
-      "first_seen": "2026-10-27",
-      "last_relevant": "2026-10-27"
-    },
-    {
-      "id": "2026-10-27-environmental-browser-tests",
-      "rule": "`test_devloop_screenshot_card` fails in a cloud session with no drivable browser; CI runs it. Never read it as a batch's regression.",
-      "evidence": "Seen on several runs.",
-      "enforced_by": "prose",
-      "first_seen": "2026-10-27",
-      "last_relevant": "2026-10-27"
-    },
-    {
       "id": "2026-10-28-semantic-merge",
       "rule": "Two prepared batches that rewrote the same sentences or the same listener merge both intents (the batch's own subagent does it), then bump and add the CHANGELOG entry.",
       "evidence": "sre.py and checks/integrations.py (10-28), morph-panel.js scroll listener (10-29).",
       "enforced_by": "prose",
       "first_seen": "2026-10-28",
       "last_relevant": "2026-10-29"
-    },
-    {
-      "id": "2026-10-28-fixed-clock-tests",
-      "rule": "A test that files at a fixed time reads back at that same clock, never the real one.",
-      "evidence": "test_hypothesis_days failed on every branch once real time passed its fixed day.",
-      "enforced_by": "prose",
-      "first_seen": "2026-10-28",
-      "last_relevant": "2026-10-28"
     },
     {
       "id": "2026-10-28-read-the-refusal",
@@ -316,25 +196,9 @@
       "last_relevant": "2026-10-30"
     },
     {
-      "id": "2026-11-03-agent-load",
-      "rule": "With many fixer agents at once, each runs only its own new tests plus ruff and the guard; CI is the full-suite gate.",
-      "evidence": "11 parallel subagents pushed load past 45 and every local affected run died on xdist.",
-      "enforced_by": "prose",
-      "first_seen": "2026-11-03",
-      "last_relevant": "2026-11-03"
-    },
-    {
       "id": "2026-11-03-version-is-many-places",
       "rule": "Run `.github/scripts/check-changelog-version.sh <add-on>` and grep the old version across the add-on before pushing a bump: GardenRX and BRUH Print pin it in several files.",
       "evidence": "GardenRX: app/package.json, the lockfile, const.py, CARD_VERSION; BRUH Print: lovelace/bruh-print-card.js.",
-      "enforced_by": "prose",
-      "first_seen": "2026-11-03",
-      "last_relevant": "2026-11-03"
-    },
-    {
-      "id": "2026-11-03-overload-flakes",
-      "rule": "A subprocess test that fails with an empty prompt only under load (`test_ask_face_parity`) is re-run once and its log read before looking for a code cause.",
-      "evidence": "It passed alone and on re-run.",
       "enforced_by": "prose",
       "first_seen": "2026-11-03",
       "last_relevant": "2026-11-03"
@@ -354,14 +218,6 @@
       "enforced_by": "prose",
       "first_seen": "2026-11-03",
       "last_relevant": "2026-11-03"
-    },
-    {
-      "id": "2026-11-04-reload-restores-globals",
-      "rule": "A test that reloads a module must put back what other modules set on it; a failure that comes and goes by xdist worker is an ordering bug to find, not a re-run.",
-      "evidence": "test_discuss_safety reloaded chat_session and set PROMPT_PROVIDER = None in tearDown, so test_ask_face_parity failed on two PRs depending on worker order (2026-11-04).",
-      "enforced_by": "prose",
-      "first_seen": "2026-11-04",
-      "last_relevant": "2026-11-04"
     },
     {
       "id": "2026-11-04-hassfest-service-text",
@@ -386,6 +242,22 @@
       "enforced_by": "prose",
       "first_seen": "2026-11-04",
       "last_relevant": "2026-11-04"
+    },
+    {
+      "id": "2026-11-12-unattributed-canary-revert",
+      "rule": "An unattributed canary signal reverts the whole release, even a fix the owner confirmed: fix a recurring fault on its own before shipping on top of it, and say in the decline how to re-apply the reverted change.",
+      "evidence": "Canary #817 (brAIn 5.1.27) regressed on #577 coming back; no file of BRUH-HA-Apps #631 explained it, so #637 reverted #631 although the owner had confirmed #809 fixed on 5.1.27.",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-12",
+      "last_relevant": "2026-11-12"
+    },
+    {
+      "id": "2026-11-12-revert-after-suite-cut",
+      "rule": "Reverting a PR whose tests were later deleted: keep them deleted, and check that git diff <sha>^ HEAD over the code files is empty.",
+      "evidence": "#637 reverted #631 after 8c61f55 had deleted its two test files; the revert touched no grader.",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-12",
+      "last_relevant": "2026-11-12"
     }
   ],
   "retired": [
@@ -423,6 +295,222 @@
       "retired": {
         "on": "2026-11-04",
         "why": "No person in the loop (plan section 0): a large idea is built across batches or declined with evidence and a plan."
+      }
+    },
+    {
+      "id": "2026-10-08-test-timeouts",
+      "rule": "Subagents run `tests/affected.py --base origin/main --run`; the run runs the full suite once with `-n 4 --dist loadfile` and a raised Bash timeout; always `python3 -m pytest`.",
+      "evidence": "Run 1 took 7.5 h for 10 batches; 'the tests time out' was the Bash tool's 120 s kill, the serial suite is 6m15s, and a batch ran the suite up to four times.",
+      "enforced_by": "prose",
+      "first_seen": "2026-10-08",
+      "last_relevant": "2026-10-27",
+      "retired": {
+        "on": "2026-11-12",
+        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
+      }
+    },
+    {
+      "id": "2026-10-09-addcleanup-order",
+      "rule": "Register `addCleanup` with the original BEFORE replacing a module function, or the cleanup restores the fake and leaks into a later class.",
+      "evidence": "A leaked fake failed SceneDesignCase later in the same xdist worker.",
+      "enforced_by": "prose",
+      "first_seen": "2026-10-09",
+      "last_relevant": "2026-10-09",
+      "retired": {
+        "on": "2026-11-12",
+        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
+      }
+    },
+    {
+      "id": "2026-10-09-stores-package-collision",
+      "rule": "A failure that passes alone may be two add-ons' top-level `stores` packages colliding on one xdist worker; check `sys.path` before calling it a flake.",
+      "evidence": "test_bright_addon and BRUH Print both import `stores`; on 2026-11-03 tests/bruh_print_env.panel_path removed only one copy of Print's panel dir (fixed by removing every copy).",
+      "enforced_by": "prose",
+      "first_seen": "2026-10-09",
+      "last_relevant": "2026-11-03",
+      "retired": {
+        "on": "2026-11-12",
+        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
+      }
+    },
+    {
+      "id": "2026-10-10-local-only-failure",
+      "rule": "Check a local-only failure against `main` (and run the file alone) before chasing it: stray files under `/config/.brain` or `/data` from an earlier test break later ones.",
+      "evidence": "2026-10-10 a stray /config/.brain/memory failed test_task_failures on main; 2026-10-23 two test_usage_tracker renewal tests failed beside another that left files in /data.",
+      "enforced_by": "prose",
+      "first_seen": "2026-10-10",
+      "last_relevant": "2026-10-23",
+      "retired": {
+        "on": "2026-11-12",
+        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
+      }
+    },
+    {
+      "id": "2026-10-12-chromium-cold-start",
+      "rule": "`test_devloop_screens`' real-browser test warms Chromium once, untimed; a cold start on a loaded runner exceeds `screens._launch`'s 15 s budget.",
+      "evidence": "Failed twice in CI with 'Chromium did not start' before any assertion.",
+      "enforced_by": "prose",
+      "first_seen": "2026-10-12",
+      "last_relevant": "2026-10-12",
+      "retired": {
+        "on": "2026-11-12",
+        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
+      }
+    },
+    {
+      "id": "2026-10-12-local-suite-stall",
+      "rule": "When the local full suite stalls with no output, ship on the batch's affected run and let CI be the gate.",
+      "evidence": "The local `-n 4` suite hung 30 minutes in the container while CI ran it in under two.",
+      "enforced_by": "prose",
+      "first_seen": "2026-10-12",
+      "last_relevant": "2026-11-03",
+      "retired": {
+        "on": "2026-11-12",
+        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
+      }
+    },
+    {
+      "id": "2026-10-18-node-down",
+      "rule": "A hung or cancelled CI job is read from its log for 'node down' or a runner shutdown and re-run once before looking for a code cause.",
+      "evidence": "Dead xdist workers hung Python tests for 6 h (10-18), 40 min (10-24) and 45 min (10-30); every job now has timeout-minutes.",
+      "enforced_by": "prose",
+      "first_seen": "2026-10-18",
+      "last_relevant": "2026-11-03",
+      "retired": {
+        "on": "2026-11-12",
+        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
+      }
+    },
+    {
+      "id": "2026-10-20-race-test-scheduling",
+      "rule": "`test_bruh_print_atomic_write`'s race test can fail under a loaded `-n 4` run on a branch that never touches BRUH Print; it is scheduling, not a regression.",
+      "evidence": "It asserts that the OLD recipe loses a write, and the threads may not interleave on a busy machine.",
+      "enforced_by": "prose",
+      "first_seen": "2026-10-20",
+      "last_relevant": "2026-10-20",
+      "retired": {
+        "on": "2026-11-12",
+        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
+      }
+    },
+    {
+      "id": "2026-10-23-no-new-skip",
+      "rule": "A test that depends on optional data (zoneinfo) gets a fallback that keeps it running, never a new skip: the guard refuses `skipIf`.",
+      "evidence": "devloop-guard refused a new skipIf in a timezone test.",
+      "enforced_by": "guard:skip",
+      "first_seen": "2026-10-23",
+      "last_relevant": "2026-10-23",
+      "retired": {
+        "on": "2026-11-12",
+        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
+      }
+    },
+    {
+      "id": "2026-10-24-tool-list-conflicts",
+      "rule": "Batches that add MCP tools conflict on the lists and the documented count: merge both sides, re-add a whole `TOOLS` entry, and let `test_documented_counts` give the count.",
+      "evidence": "Two batches each added tools.",
+      "enforced_by": "prose",
+      "first_seen": "2026-10-24",
+      "last_relevant": "2026-10-24",
+      "retired": {
+        "on": "2026-11-12",
+        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
+      }
+    },
+    {
+      "id": "2026-10-27-background-timeout",
+      "rule": "Give a background test run `timeout` 2400000 and write its output to a file when other agents load the box.",
+      "evidence": "The affected suite ran past ten minutes under load and was killed.",
+      "enforced_by": "prose",
+      "first_seen": "2026-10-27",
+      "last_relevant": "2026-11-03",
+      "retired": {
+        "on": "2026-11-12",
+        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
+      }
+    },
+    {
+      "id": "2026-10-27-environmental-browser-tests",
+      "rule": "`test_devloop_screenshot_card` fails in a cloud session with no drivable browser; CI runs it. Never read it as a batch's regression.",
+      "evidence": "Seen on several runs.",
+      "enforced_by": "prose",
+      "first_seen": "2026-10-27",
+      "last_relevant": "2026-10-27",
+      "retired": {
+        "on": "2026-11-12",
+        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
+      }
+    },
+    {
+      "id": "2026-10-27-wait-for-background-jobs",
+      "rule": "A test that starts a background job waits for it (an Event set in a `finally`) before tearDown removes its directory.",
+      "evidence": "test_bambu_copies raced its own cleanup.",
+      "enforced_by": "prose",
+      "first_seen": "2026-10-27",
+      "last_relevant": "2026-10-27",
+      "retired": {
+        "on": "2026-11-12",
+        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
+      }
+    },
+    {
+      "id": "2026-10-28-fixed-clock-tests",
+      "rule": "A test that files at a fixed time reads back at that same clock, never the real one.",
+      "evidence": "test_hypothesis_days failed on every branch once real time passed its fixed day.",
+      "enforced_by": "prose",
+      "first_seen": "2026-10-28",
+      "last_relevant": "2026-10-28",
+      "retired": {
+        "on": "2026-11-12",
+        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
+      }
+    },
+    {
+      "id": "2026-11-03-agent-load",
+      "rule": "With many fixer agents at once, each runs only its own new tests plus ruff and the guard; CI is the full-suite gate.",
+      "evidence": "11 parallel subagents pushed load past 45 and every local affected run died on xdist.",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-03",
+      "last_relevant": "2026-11-03",
+      "retired": {
+        "on": "2026-11-12",
+        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
+      }
+    },
+    {
+      "id": "2026-11-03-overload-flakes",
+      "rule": "A subprocess test that fails with an empty prompt only under load (`test_ask_face_parity`) is re-run once and its log read before looking for a code cause.",
+      "evidence": "It passed alone and on re-run.",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-03",
+      "last_relevant": "2026-11-03",
+      "retired": {
+        "on": "2026-11-12",
+        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
+      }
+    },
+    {
+      "id": "2026-11-04-reload-restores-globals",
+      "rule": "A test that reloads a module must put back what other modules set on it; a failure that comes and goes by xdist worker is an ordering bug to find, not a re-run.",
+      "evidence": "test_discuss_safety reloaded chat_session and set PROMPT_PROVIDER = None in tearDown, so test_ask_face_parity failed on two PRs depending on worker order (2026-11-04).",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-04",
+      "last_relevant": "2026-11-04",
+      "retired": {
+        "on": "2026-11-12",
+        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
+      }
+    },
+    {
+      "id": "2026-10-18-tests-changed-to-pass",
+      "rule": "Never make a fix pass by changing an existing test; when a pinned assertion contradicts the fix, open a `devloop-test/<slug>` PR for the independent reviewer (SKILL.md 0.3).",
+      "evidence": "2026-10-18 two subagents moved a fixture and rewrote an assertion despite the prompt; 2026-10-20 #327 and #322 were blocked by pinned assertions (test_resident_unjudged.py:63, test_open_row_look_reason.py:60, test_rhythm.py:110).",
+      "enforced_by": "guard:test-modified",
+      "first_seen": "2026-10-18",
+      "last_relevant": "2026-10-20",
+      "retired": {
+        "on": "2026-11-12",
+        "why": "The devloop-test/ dispute PR it names is no longer in the skill; the guard's grader rule (tests/*.py in grader_paths) holds the rest: a devloop PR never changes a test."
       }
     }
   ]
