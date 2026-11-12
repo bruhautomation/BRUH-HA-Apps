@@ -162,6 +162,10 @@ def _find(dash: dict, card_id: str = "", sec_id: str = ""):
 
 def _keep(data: dict, item: dict, dash: dict, why: str, now: float) -> None:
     """Remember the answer against the card or section the item was about."""
+    # Only a No to taking something away or moving it is a keep: a No to
+    # "add a light card" says nothing about the section it was for.
+    if not _CHANGE.search(f"{item.get('title') or ''} {item.get('change') or ''}"):
+        return
     keeps = data.setdefault("keeps", {})
     cid, sid = str(item.get("card") or ""), str(item.get("section") or "")
     card = _find(dash, card_id=cid) if cid else None
@@ -215,7 +219,8 @@ def rests_on_disuse(row: dict, d: dict) -> bool:
     if card:
         return card in set(d.get("never_used") or []) and card not in set(d.get("dead") or [])
     sec = next((s for s in d.get("sections") or [] if s.get("section") == row.get("section")), None)
-    return bool(sec) and not sec.get("uses")
+    broken = any(c.get("unavailable") for c in d.get("cards") or [] if c.get("section") == row.get("section"))
+    return bool(sec) and not sec.get("uses") and not broken
 
 
 # ------------------------------------------------------------------ the log
@@ -392,7 +397,8 @@ def add_suggestions(rows: list[dict], dash: dict) -> int:
         key = _key(title)
         if key in known:
             continue
-        if row.get("card") in kept_cards or (row.get("section") in kept_secs and not row.get("card")):
+        if (row.get("card") in kept_cards or (row.get("section") in kept_secs and not row.get("card"))) \
+                and _CHANGE.search(f"{title} {change}"):
             continue
         words = _words(title)
         if any(_similar(words, w) for w in seen_words):
@@ -922,7 +928,8 @@ def digest(dash: dict, now: float | None = None, states: dict | None = None) -> 
                     cards.append({"id": c["id"], "section": sec["id"], "type": c["type"],
                                   "entity": ent,
                                   "uses": by_card.get(c["id"], 0) + (by_entity.get(ent, 0) if ent else 0),
-                                  "unavailable": bool(st and st.get("state") in ("unavailable", "unknown"))})
+                                  "unavailable": bool(st and st.get("state") in ("unavailable", "unknown"))
+                                                  or bool(ent and states and st is None)})
     out = outcomes(now - WINDOW_S)
     tells = [o for o in out if o.get("kind") == "tell"]
     undone = {o.get("id") for o in out if o.get("kind") == "undo"}
@@ -1157,7 +1164,6 @@ async def run_pass(states: dict | None = None, *, pressed: bool = False) -> dict
     for k in ("dead", "never_used"):
         d[k] = [c for c in d[k] if c not in kept_cards]
     d["cards"] = [c for c in d["cards"] if c["id"] not in kept_cards]
-    d["sections"] = [x for x in d["sections"] if x["section"] not in kept_secs]
     fp = fingerprint(d)
     st = state()
     if not pressed and fp == st.get("fingerprint"):
