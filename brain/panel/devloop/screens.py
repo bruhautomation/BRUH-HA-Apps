@@ -537,7 +537,28 @@ _AUDIT_JS = r"""
         add("controls_overlap", controls[i], `overlaps ${desc(controls[j])} “${label(controls[j])}”`);
     }
   }
-  const rgb = (c) => { const m = c.match(/[\d.]+/g); return m ? m.map(Number) : null; };
+  // Any CSS colour as [r, g, b, alpha 0–1], painted on a 1px canvas. A
+  // computed colour is not always rgb(): Chromium answers a color-mix() as
+  // oklab(0.85 0.02 0.09), and reading those numbers as 0–255 took every
+  // mixed label to near black (1.52:1 on Morph's medium background).
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = 1;
+  const cx = cv.getContext("2d", { willReadFrequently: true });
+  const rgb = (c) => {
+    if (!c) return null;
+    if (cx) {
+      try {
+        cx.clearRect(0, 0, 1, 1);
+        cx.fillStyle = "rgba(0, 0, 0, 0)";
+        cx.fillStyle = c;
+        cx.fillRect(0, 0, 1, 1);
+        const d = cx.getImageData(0, 0, 1, 1).data;
+        return [d[0], d[1], d[2], d[3] / 255];
+      } catch (e) { /* the plain reading below */ }
+    }
+    const m = /^rgba?\(/.test(c) && c.match(/[\d.]+/g);
+    return m ? m.map(Number) : null;
+  };
   const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
     return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
   const bgOf = (el) => {
