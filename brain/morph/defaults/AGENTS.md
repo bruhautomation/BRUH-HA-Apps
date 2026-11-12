@@ -339,6 +339,19 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
 - **Fields are 16px or larger.** A text box, textarea or select under 16px
   makes a phone zoom the page when it is touched. Morph raises them in a
   card's own shadow root, but write them right.
+- **A card stays inside its own width.** At 390px nothing a card draws is
+  wider than the card: a diagram is one SVG that scales with a `viewBox` and
+  its readings are drawn inside it (never positioned outside the card's box),
+  and a long row wraps. A sum or summary is built from parts that each stay
+  whole ("3h 20m" in a `white-space:nowrap` span) with a separator between
+  them, so it wraps at the separator and never in the middle of a figure.
+  Morph clips a built card at its edge as a last resort; that hides a
+  reading, it does not fix it.
+- **A figure that disagrees with its neighbour says why.** Two numbers about
+  one thing that cannot both be the whole story (asleep 1h beside in bed 7h,
+  a total beside a part that is far smaller) get a one-line note naming the
+  likely reason ("the tracker recorded only part of the night"), or a dash
+  for the doubtful one. When asleep is under about half of in-bed time, say so.
 - **Every button and chip is a 40px target.** A scene chip, a mode button or
   a word you can press is at least 40px tall and 40px wide (`min-height` and
   `min-width`, never a fixed `height` under it), with a gap between

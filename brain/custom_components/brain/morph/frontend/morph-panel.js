@@ -31,7 +31,8 @@
 // PICTURE of what it is about (snap.js), so "this" means what is on screen.
 
 import { Engine } from './engine.js';
-import { CSS as STYLES, FONTS_URL, FIELD_FLOOR } from './styles.js';
+import { CSS as STYLES, FONTS_URL } from './styles.js';
+import { floorFields } from './floor.js';
 import { TYPES, typeOf, tileAria, stateWord } from './cards.js';
 import * as history from './history.js';
 import * as snap from './snap.js';
@@ -112,41 +113,8 @@ async function cardHelpers() {
   return null;
 }
 
-// A card's own shadow root is out of reach of Morph's styles, so a field in
-// it (a text box in a house's own card) would zoom a phone on focus. Hand
-// every open shadow root in the card the 16px floor, once (#677).
-let _floorSheet;
-const _floored = new WeakSet();
-const _watched = new WeakSet();
-// A card's text boxes are often made after the card is on the page, in a
-// shadow root of a root of a root (Home Assistant's own fields upgrade late),
-// so the floor is handed out again whenever a root changes, not once.
-function floorFields(node, depth = 0) {
-  if (!node || depth > 10 || typeof CSSStyleSheet === 'undefined') return;
-  // A card handed over in a wrapper with no root of its own (a stand-in
-  // `display: contents` box, a card that draws into its light DOM) still
-  // holds cards with roots: the floor goes to those, and the wrapper is
-  // watched for the ones made later. Returning here left a 15px talk box.
-  const root = node.shadowRoot || (node.nodeType === 1 ? node : null);
-  if (!root || (root === node.shadowRoot && !('adoptedStyleSheets' in root))) return;
-  if (root === node.shadowRoot && !_floored.has(root)) {
-    try {
-      if (!_floorSheet) { _floorSheet = new CSSStyleSheet(); _floorSheet.replaceSync(FIELD_FLOOR); }
-      root.adoptedStyleSheets = [...root.adoptedStyleSheets, _floorSheet];
-      _floored.add(root);
-    } catch (e) { /* a browser without constructable sheets keeps the card's own size */ }
-  }
-  if (!_watched.has(root) && typeof MutationObserver !== 'undefined') {
-    _watched.add(root);
-    let queued = false;
-    new MutationObserver(() => {
-      if (queued) return;
-      queued = true;
-      requestAnimationFrame(() => { queued = false; root.querySelectorAll('*').forEach((n) => { if (n.shadowRoot) floorFields(n, depth + 1); }); });
-    }).observe(root, { childList: true, subtree: true });
-  }
-  root.querySelectorAll('*').forEach((n) => { if (n.shadowRoot) floorFields(n, depth + 1); });
-}
+// A card's own shadow root is out of reach of Morph's styles: floor.js hands
+// it the 16px field floor (floorFields).
 
 // A house's own custom card needs nothing from Lovelace: its element is
 // defined, so make it and hand it the config.
