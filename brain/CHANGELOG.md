@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.32
+
+### Fixed
+
+- Closing the app or locking the phone while brAIn is answering in Ask is no longer counted as brAIn crashing. The answer carries on and is there when you come back; the log says the viewer left (#850, #841).
+- An insight card is written only from a look at the house. A chat answer that read nothing, such as "no data needed", no longer appears as a card (#856).
+- A card whose only news is that nothing happened is no longer kept on its own; a kept card names one thing to do or says all is normal in one sentence, gives each number beside what is normal, and says thermostat terms such as auxiliary heat or defrost in plain words (#866).
+
 ## 5.1.31
 
 ### Fixed
