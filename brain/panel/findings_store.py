@@ -2240,6 +2240,19 @@ def _subjects_answered_wrong() -> set[tuple[str, str]]:
     return out
 
 
+def answered_wrong_about(entity_id: str, source: str) -> dict | None:
+    """The newest Wrong a person gave a ``source`` report about
+    ``entity_id``, or None — the answer `add_many` folds that producer's
+    next report about it into (`_subjects_answered_wrong`), read before a
+    run is spent on one (`server._resident_investigate`)."""
+    want = (str(entity_id or "").strip(), str(source or "").strip())
+    if not all(want):
+        return None
+    hits = [e for e in _load_settled() if e.get("kind") == "ignored"
+            and _folds_by_subject(e) == want]
+    return max(hits, key=lambda e: int(e.get("ts") or 0)) if hits else None
+
+
 def _absorb(host: dict | None, entry: dict) -> bool:
     """Fold a re-report into the live row it duplicates. True if it changed.
 
@@ -2946,7 +2959,8 @@ def case_subject(row: dict, signal_subject: str = "") -> str:
 
 
 @_mutates
-def add_case(row: dict, *, run_id: str = "", when: float | None = None) -> dict | None:
+def add_case(row: dict, *, run_id: str = "", when: float | None = None,
+             held: str = "") -> dict | None:
     """File a case an investigation wrote. Returns the row, or None.
 
     Every other producer files through `triage.gate`, which marks its rows
@@ -2978,6 +2992,11 @@ def add_case(row: dict, *, run_id: str = "", when: float | None = None) -> dict 
     are `add_many`'s, because they are the store's rules and not this
     door's. A case whose text somebody has already answered is therefore
     dropped silently, in any status, exactly as a check's re-report is.
+
+    ``held`` files the case HELD with that sentence as its verdict — the
+    household's record standing brAIn's own reports down
+    (`rule_record.resident_stand_down`): kept, deduped against, not sent,
+    and put back from History › Set aside by brAIn in one press.
     """
     if not isinstance(row, dict):
         return None
@@ -3015,6 +3034,11 @@ def add_case(row: dict, *, run_id: str = "", when: float | None = None) -> dict 
                    "wrote_fix": bool(str(row.get("fix") or "").strip())},
         "claim": claim,
     }])
+    if created and str(held or "").strip():
+        # A producer files `open` or `triaging` only (`PRE_STATUSES`), so
+        # the hold is the look's own transition, made inside this lock.
+        return hold_after_look(int(created[0]["ts"]), str(held),
+                               str(row.get("run_id") or run_id or ""), stamp)
     return created[0] if created else None
 
 

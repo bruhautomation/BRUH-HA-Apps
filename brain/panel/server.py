@@ -929,6 +929,7 @@ RESIDENT_STATE: dict = {
     "dropped": 0,            # signals the cap took, counted rather than quiet
     "duplicates": 0,         # cases the store already held
     "resolved": 0,           # filed rows looked into and set aside, unasked
+    "stood_down": 0,         # cases set aside on brAIn's own record
     "last_error": "",
     # Since when the looks themselves have been held by an allowance (the
     # ledger's, or the day's count), or 0 while they run. A gate a person
@@ -5630,6 +5631,12 @@ def _score_words(row: dict, muted: bool) -> dict:
     row["record_words"] = plain_words.record_words(wrong, confirmed + wrong)
     row["muted"] = bool(muted)
     row["verdict"] = plain_words.verdict(confirmed, wrong, muted)
+    # brAIn's own reports and the safety lane are not rules: no Ignore.
+    row["mutable"] = (row.get("source") or "") not in cases.UNMUTABLE_SOURCES
+    # The household's record standing brAIn's own reports down, said where
+    # the record is shown (`rule_record.resident_stand_down`).
+    if rule_record.resident_stand_down([row], time.time()):
+        row["held_back"] = rule_record.resident_stand_down_words(row)
     return row
 
 
@@ -15014,6 +15021,13 @@ async def _resident_investigations(queued: list[tuple[dict, str, int]],
         if ran >= MAX_INVESTIGATIONS_PER_LOOK:
             held.append(item)
             continue
+        # A subject whose last report from brAIn was marked Wrong is not
+        # looked into again (the store would fold the case away after the
+        # run was paid for), and the trail says whose answer held it.
+        if not refines and await asyncio.to_thread(
+                _resident_answered_wrong, signal, now):
+            await _outcome(signal, "duplicate", "", now, why, refines)
+            continue
         if allowance is None:
             allowance = LEDGER.allows(
                 _resident_tier(resident.JOB_INVESTIGATE, thinking), thinking,
@@ -15306,8 +15320,24 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
                        row=row, case=case, escalated=case_run != run_id)
         return True
 
+    # While the household's record stands brAIn's own reports down, a case
+    # no measurement backs is filed held, with the record as its reason.
+    stood_down = await asyncio.to_thread(
+        _resident_stand_down, signal, case, {run_id, case_run}, now)
     filed = await asyncio.to_thread(
-        findings_store.add_case, case, run_id=case_run, when=now)
+        findings_store.add_case, case, run_id=case_run, when=now,
+        held=stood_down)
+    if filed is not None and stood_down:
+        RESIDENT_STATE["stood_down"] += 1
+        log.info("the Resident set a case aside on its record: %s",
+                 filed["text"])
+        await asyncio.to_thread(decision_trail.note_many, [{
+            "kind": "held", "subject": str(filed.get("entity_id") or ""),
+            "check": findings_store.RESIDENT_SOURCE, "reason": stood_down,
+            "text": str(filed.get("claim") or filed.get("text") or "")}], now)
+        await _outcome(signal, "held", case_run, now, why, refines,
+                       row=filed, case=case, said=stood_down)
+        return False
     if filed is None:
         # The store already holds this claim, in any status or in the
         # settled ledger. Counted rather than filed twice, which is what
@@ -15323,6 +15353,62 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     await _outcome(signal, "filed", case_run, now, why, refines, row=filed,
                    case=case, escalated=case_run != run_id)
     return True
+
+
+def _resident_answered_wrong(signal: dict, now: float) -> bool:
+    """Whether the household marked brAIn's own report about this signal's
+    subject Wrong (`findings_store.answered_wrong_about`), writing the
+    decision when it did. Never a signal the never-ignore floors keep."""
+    if resident.never_ignore(signal)[0]:
+        return False
+    subject = str(signal.get("subject") or "")
+    entry = findings_store.answered_wrong_about(
+        subject, findings_store.RESIDENT_SOURCE)
+    if entry is None:
+        return False
+    RESIDENT_STATE["duplicates"] += 1
+    said = textclip.shorten(str(entry.get("text") or ""), 120)
+    decision_trail.note_many([{
+        "kind": "dedupe", "subject": subject,
+        "check": findings_store.RESIDENT_SOURCE,
+        "reason": ("You marked brAIn's report about it wrong"
+                   + (f" (“{said}”)" if said else "")
+                   + ", so brAIn did not look into it again."),
+        "text": str(signal.get("text") or "")}], now)
+    return True
+
+
+def _resident_stand_down(signal: dict, case: dict, run_ids, now: float) -> str:
+    """Why a case is set aside on brAIn's own record, or "" to file it.
+
+    `rule_record.resident_stand_down` reads the Resident's scorecard row;
+    while it stands, a case is filed only when its run read a measurement
+    (`resident.read_a_measurement` over the transcript's tool calls; one
+    that cannot be read showed none). Never a signal the never-ignore
+    floors keep, a case the not-news floor keeps (safety, security, a
+    leak, smoke or gas sensor, a lock, an alarm, high stakes, critical) or
+    one `rule_record.never_held` keeps (a protected entity). Never raises:
+    a record that cannot be read holds nothing back.
+    """
+    try:
+        if resident.never_ignore(signal)[0]:
+            return ""
+        row = {**case, "source": findings_store.RESIDENT_SOURCE}
+        if (findings_store.not_news_floor(row)
+                or rule_record.never_held(row)):
+            return ""
+        record = rule_record.resident_stand_down(
+            findings_store.scorecard(), now)
+        if record is None:
+            return ""
+        for rid in sorted(r for r in run_ids or () if r):
+            reads = conversations.tool_reads(engine.CLAUDE_HOME, rid)
+            if reads and resident.read_a_measurement(reads.get("tools")):
+                return ""
+        return rule_record.resident_stand_down_reason(record)
+    except Exception as exc:  # noqa: BLE001 — never the filing's failure
+        log.debug("could not read brAIn's own record for a case: %s", exc)
+        return ""
 
 
 def _entities_read(result: dict) -> set[str] | None:
@@ -15557,7 +15643,16 @@ def _outcome_examples(batch: list[dict], now: float, *,
                 limit_chars=outcomes.INVESTIGATE_EXAMPLES_CHARS, tz=tz)
             note = outcomes.calibration_note(facts_store.with_predicate(
                 outcomes.CALIBRATION_PREDICATE, now))
-            return ([f"Your own calibration: {note}"] if note else []) + lines
+            # The household's record standing brAIn's own reports down
+            # (`_resident_stand_down` holds what this asks for).
+            record = rule_record.resident_stand_down(
+                findings_store.scorecard(), now)
+            stand = ([f"Your own record: {rule_record.resident_stand_down_words(record)} "
+                      "Read what is normal for it, its room's physics or the "
+                      "automation's trace before you claim anything."]
+                     if record else [])
+            return (stand + ([f"Your own calibration: {note}"] if note else [])
+                    + lines)
         return outcomes.examples_for(batch, now, tz=tz,
                                      graded_items=graded_items)
     except Exception as exc:  # noqa: BLE001

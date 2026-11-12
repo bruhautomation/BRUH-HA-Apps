@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.29
+
+### Fixed
+
+- brAIn now listens when you keep marking its own "watching the house" reports wrong. After three Wrong answers in a row, or when fewer than four in ten of its reports were right and the latest was marked Wrong, brAIn raises a report only when it measured something to back it: what is normal for that thing, a room's physics, or an automation's trace. Anything else is set aside in History › Set aside by brAIn, where one press brings it back, with the reason written on it. Something you already marked Wrong is not looked into again, and the decision trail says so. ⚙ › Diagnostics says why brAIn is holding back. Safety reports (smoke, leaks, gas, security, locks and alarms) are raised exactly as before, and the hold lifts as soon as you agree with one of brAIn's reports (#577, #824, #853).
+
 ## 5.1.28
 
 ### Removed

@@ -1482,6 +1482,26 @@ def not_due(case: dict, drivers: dict, value_of, aliases=None) -> str:
                          MAX_WHY)
 
 
+# The reads that are a MEASUREMENT of this house rather than a reading of
+# it: what is normal here, a room's physics, a machine by its own
+# thresholds, the house's and a door's rhythm, a habit, an automation
+# replayed or its trace. While the household's record stands brAIn's own
+# reports down (`rule_record.resident_stand_down`), a case is filed only
+# when its run called one of these (#577, #824, #853).
+MEASURED_TOOLS = frozenset({
+    "get_baseline", "what_is_normal", "room_physics", "appliance_status",
+    "house_rhythm", "door_habits", "habits", "get_house_model",
+    "simulate_automation", "get_automation_trace"})
+
+
+def read_a_measurement(tools) -> bool:
+    """Whether a run's tool calls include a measurement (above). ``tools``
+    is `conversations.tool_reads`' names, MCP-prefixed or not; None (the
+    transcript could not be read) is no measurement shown."""
+    return any(str(name).rsplit("__", 1)[-1] in MEASURED_TOOLS
+               for name in tools or ())
+
+
 def faulty_case(case: dict, entities, faulty: dict,
                 device_class=None) -> str:
     """Why a case rests on a sensor the owner called broken, or "".
