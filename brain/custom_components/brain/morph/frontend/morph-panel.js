@@ -41,7 +41,7 @@ import * as sal from './salience.js';
 import { morph } from './morph-dom.js';
 import { caseFace, todoFace, caseColor, placeCase } from './cases.js';
 import { Rail } from './rail.js';
-import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, cardPage, guardDefine, loadCard, cardUrl, cardFailure, isDashChange, ASK_CONTEXT, own, checkDoorClaims, unlockedLocks } from './util.js';
+import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, cardPage, guardDefine, loadCard, cardUrl, cardFailure, isDashChange, ASK_CONTEXT, own, checkDoorClaims, checkDoorLines, unlockedLocks } from './util.js';
 
 const HOLD_MS = 540;
 // The card types whose entities are `entity`/`entities`; a hosted Lovelace
@@ -1080,20 +1080,21 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
   cases() {
     const b = this.brain();
     const list = Array.isArray(b.cases) ? b.cases : [];
-    // A case's sentences were written before the doors moved: the claim, its
-    // detail and what it asks are each checked against the house now. A claim
-    // that has cleared takes its detail and its instruction with it, and a
-    // case with nothing left to say (no question to answer, no thread) is not
-    // drawn.
-    const fresh = (t) => (t && this.hass ? checkDoorClaims(t, this.hass) : t);
+    // A case's sentences were written before the doors moved: its claim,
+    // its detail and what it asks are read in that order against the house
+    // now, so "Lock it?" goes with the warning it pointed at. When the claim
+    // has cleared, a warning left in the detail becomes the claim; a case
+    // with nothing left to say (no question, no thread) is not drawn.
     return list.filter((c) => c && c.id && c.kind !== 'chore').map((c) => {
+      if (!this.hass) return c;
       const said = c.claim || c.text || '';
-      const now = fresh(said);
-      const detail = c.detail === said ? now : fresh(c.detail);
-      const ask = fresh(c.ask);
-      if (now === said && detail === c.detail && ask === c.ask) return c;
-      return { ...c, claim: now, text: now, detail: now ? detail : '', ask, cleared: !!said && !now };
-    }).filter((c) => !c.cleared || c.ask || (c.thread || []).length);
+      const detail = c.detail && c.detail !== said ? c.detail : '';
+      const [now, more, ask] = checkDoorLines([said, detail, c.ask || ''], this.hass);
+      if (now === said && more === detail && ask === (c.ask || '')) return c;
+      if (now) return { ...c, claim: now, text: now, detail: more, ask };
+      if (more) return { ...c, claim: more, text: more, detail: '', ask };
+      return ask || (c.thread || []).length ? { ...c, claim: '', text: '', detail: '', ask } : null;
+    }).filter(Boolean);
   }
 
   caseById(id) { return this.cases().find((c) => c.id === id) || null; }
