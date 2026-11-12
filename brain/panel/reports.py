@@ -1032,7 +1032,22 @@ def _faults(diag) -> list[dict]:
             record = plain_words.record_words(wrong, total)
             detail = ("this rule is firing on a healthy house, which is "
                       "worse than not having it")
-            if source in UNMUTABLE_SOURCES:
+            stood_down = (source == rule_record.RESIDENT_SOURCE and stamp
+                          and rule_record.resident_stand_down([row], stamp))
+            if stood_down:
+                # brAIn's own reports, stood down by their record: only a
+                # measured case is raised, the rest are set aside (#577).
+                detail = ("brAIn's own reports are often wrong here, so it "
+                          "now raises one only when a measurement backs it; "
+                          "safety reports are raised as always")
+                sentence = _sentence(
+                    f"{record}, so brAIn now raises its own reports only "
+                    "when a measurement backs them: what is normal here, a "
+                    "room's physics or an automation's trace",
+                    "The rest are in History under Set aside by brAIn, one "
+                    "press from coming back",
+                    "This lifts once you agree with one of brAIn's reports")
+            elif source in UNMUTABLE_SOURCES:
                 # Not a rule, and never mutable: say what was marked wrong
                 # and the one thing that does teach it.
                 detail = ("these are brAIn's own reports, not a rule, so "

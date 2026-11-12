@@ -1532,21 +1532,87 @@ def restored(snap: dict, now: float) -> list[dict]:
         eids = sorted(e for e in eids if house.should_report(e, "dev.restored"))
         if not eids:
             continue
+        # Whether what each one stood for still works, said before anybody
+        # is asked to act (#863): a leftover beside its live replacement is
+        # clutter to remove, and one with nothing standing in for it is the
+        # only sign a device is no longer in Home Assistant at all.
+        still = {e: _stands_in_for(house, e) for e in eids}
+        covered = [e for e in eids if still[e]]
+        lost = [e for e in eids if not still[e]]
+        detail = (f"{len(eids)} restored entit{'y' if len(eids) == 1 else 'ies'}: "
+                  + join_names([house.label(e) for e in eids])
+                  + ". They show as unavailable and clutter every picker.")
+        remove = ("remove them in Settings > Devices & services > "
+                  "Entities: select them and press Remove selected.")
+        if covered:
+            detail += (" " + join_names([
+                f"{house.label(e)} still reports through "
+                f"{house.label(still[e])}" for e in covered])
+                + ", so " + ("that one is" if len(covered) == 1
+                             else "those are")
+                + " only a leftover.")
+        if lost:
+            detail += (" Nothing else in the house reports for "
+                       + join_names([house.label(e) for e in lost])
+                       + " now.")
+        if not lost:
+            fix = "What they stood for still works, so " + remove
+        else:
+            fix = ("If you still use "
+                   + join_names([house.label(e) for e in lost])
+                   + ", reinstall the integration that provided "
+                   + ("it" if len(lost) == 1 else "them")
+                   + ". Otherwise " + remove)
         out.append({
             "text": f"Entities from the {spell_integration(platform)} "
                     "integration are left over with nothing providing them",
-            "detail": f"{len(eids)} restored entit{'y' if len(eids) == 1 else 'ies'}: "
-                      + join_names([house.label(e) for e in eids])
-                      + ". They show as unavailable and clutter every picker.",
-            "fix": "Reinstall the integration if it was removed by mistake. "
-                   "Otherwise remove them in Settings > Devices & services > "
-                   "Entities: select them and press Remove selected.",
+            "detail": detail,
+            "fix": fix,
             "evidence": evidence_for(eids, "restored, nothing provides it"),
             "severity": "info",
             "fixable": True,
             "entity_id": eids[0],
         })
     return out
+
+
+def _stands_in_for(house: House, eid: str) -> str:
+    """The live entity that now does what a restored one did, or "".
+
+    Another entity of the same domain and the same kind (device class) on
+    the same device that reports a state, or one anywhere carrying the same
+    name: a device re-added under another integration keeps its name and
+    gets a new id beside the old. A sibling of another kind is a different
+    reading, not the same one carried on.
+    """
+    domain = domain_of(eid)
+    reg = house.registry.get(eid) or {}
+    device = reg.get("device_id")
+    name = house.name(eid).strip().lower()
+
+    def live(other: str) -> bool:
+        st = house.states.get(other) or {}
+        return (other != eid and domain_of(other) == domain
+                and st.get("state") not in (None, "unavailable", "unknown")
+                and not (st.get("attributes") or {}).get("restored"))
+
+    klass = _klass(house, eid)
+    if device and klass:
+        for other in house.siblings(eid):
+            if live(other) and _klass(house, other) == klass:
+                return other
+    if name and name != eid.lower():
+        for other in sorted(house.states):
+            if live(other) and house.name(other).strip().lower() == name:
+                return other
+    return ""
+
+
+def _klass(house: House, eid: str) -> str:
+    attrs = (house.states.get(eid) or {}).get("attributes") or {}
+    reg = house.registry.get(eid) or {}
+    return str(attrs.get("device_class") or reg.get("device_class")
+               or reg.get("original_device_class") or "")
 
 
 # ---------------------------------------------------------------------------
