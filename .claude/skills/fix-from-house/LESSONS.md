@@ -23,6 +23,7 @@ repository (`scripts/runs_record.py render`), not this file.
 - `2026-10-12-severity-is-not-category` (prose): A severity is not a category: a chip that sorts rows asks the source too, never the severity alone.
 - `2026-10-13-guard-after-commit` (prose): Run `devloop_guard.py` after committing: it reads committed changes only, so a dirty tree reads as ok.
 - `2026-10-13-morph-old-static` (prose): A Morph panel serving `/morph_static/<older version>/` is Home Assistant still running the old integration: a restart is pending, not a Morph bug.
+- `2026-10-18-node-down` (prose): A hung or cancelled CI job is read from its log for 'node down' or a runner shutdown and re-run once before looking for a code cause.
 - `2026-10-18-older-release-reports` (prose): Read the release a report was filed against (the block's `release`) before fixing: a report a later release already fixed is closed as a duplicate of the fixing issue.
 - `2026-10-18-squash-commit-message` (prose): Always pass `commit_title` and `commit_message` to `merge_pull_request`: without them the squash message carries every commit, including dropped ones.
 - `2026-10-18-tests-changed-to-pass` (guard:grader): Never make a fix pass by changing an existing test: `tests/*.py` is a grader path the guard refuses on a devloop branch; when a pinned assertion contradicts the fix, decline the issue naming the test's path:line.
@@ -38,12 +39,14 @@ repository (`scripts/runs_record.py render`), not this file.
 - `2026-10-27-find-chromium` (prose): Find Chromium with `ls /opt/pw-browsers` rather than a remembered path; in a cloud session browser tests need `BRAIN_CHROMIUM` set to the headless shell.
 - `2026-10-27-wait-for-background-jobs` (prose): A test that starts a background job waits for it (an Event set in a `finally`) before tearDown removes its directory.
 - `2026-10-27-worktree-hygiene` (prose): Subagents in parallel worktrees never `git stash` (a WIP commit instead) and never kill processes they did not start.
+- `2026-10-28-fixed-clock-tests` (prose): A test that files at a fixed time reads back at that same clock, never the real one.
 - `2026-10-28-read-the-refusal` (prose): Before assuming a permission gap, read the refusal's wording and the prompts: the tool may never have been missing.
 - `2026-10-28-semantic-merge` (prose): Two prepared batches that rewrote the same sentences or the same listener merge both intents (the batch's own subagent does it), then bump and add the CHANGELOG entry.
 - `2026-10-29-additive-layer` (prose): An owner request that asks for a permission usually has a part that needs none; the additive `/config/.brain/ui/house.css`/`house.js` layer answered 'I can't change my own header'.
 - `2026-10-29-brief-names-files-if-they-exist` (prose): A subagent's brief says 'if it exists' for a file named only in an issue: the house's own copy is not in this repository.
 - `2026-10-30-look-series` (prose): A series of owner `look` reports on one control is one spec read latest-first.
 - `2026-10-30-refusal-regex-negatives` (prose): Read every new refusal regex against everyday sentences and give it a negative test list.
+- `2026-11-03-agent-load` (prose): With several fixer agents at once, each runs only `check.py` and the guard on its own branch; CI is the gate, and a local failure under load is checked against main first.
 - `2026-11-03-dependabot-majors` (prose): A Dependabot major bump can ride a devloop PR after it is tested (a local build; `npm update <pkg> --package-lock-only` within the parent's range), with the add-on's version bump.
 - `2026-11-03-two-addon-pr` (prose): A PR that touches two add-ons bumps both versions and keeps both CHANGELOG sections when the next batch conflicts.
 - `2026-11-03-version-is-many-places` (prose): Run `.github/scripts/check-changelog-version.sh <add-on>` and grep the old version across the add-on before pushing a bump: GardenRX and BRUH Print pin it in several files.
@@ -53,4 +56,4 @@ repository (`scripts/runs_record.py render`), not this file.
 - `2026-11-12-revert-after-suite-cut` (prose): Reverting a PR whose tests were later deleted: keep them deleted, and check that git diff <sha>^ HEAD over the code files is empty.
 - `2026-11-12-unattributed-canary-revert` (prose): An unattributed canary signal reverts the whole release, even a fix the owner confirmed: fix a recurring fault on its own before shipping on top of it, and say in the decline how to re-apply the reverted change.
 
-15 retired lesson(s) are kept in `lessons.json`.
+12 retired lesson(s) are kept in `lessons.json`.

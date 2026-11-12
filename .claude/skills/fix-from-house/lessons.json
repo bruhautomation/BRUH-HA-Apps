@@ -306,6 +306,30 @@
       "enforced_by": "guard:grader",
       "first_seen": "2026-10-18",
       "last_relevant": "2026-11-12"
+    },
+    {
+      "id": "2026-10-18-node-down",
+      "rule": "A hung or cancelled CI job is read from its log for 'node down' or a runner shutdown and re-run once before looking for a code cause.",
+      "evidence": "Dead xdist workers hung Python tests for 6 h (10-18), 40 min (10-24) and 45 min (10-30); every job now has timeout-minutes.",
+      "enforced_by": "prose",
+      "first_seen": "2026-10-18",
+      "last_relevant": "2026-11-12"
+    },
+    {
+      "id": "2026-10-28-fixed-clock-tests",
+      "rule": "A test that files at a fixed time reads back at that same clock, never the real one.",
+      "evidence": "test_hypothesis_days failed on every branch once real time passed its fixed day.",
+      "enforced_by": "prose",
+      "first_seen": "2026-10-28",
+      "last_relevant": "2026-11-12"
+    },
+    {
+      "id": "2026-11-03-agent-load",
+      "rule": "With several fixer agents at once, each runs only `check.py` and the guard on its own branch; CI is the gate, and a local failure under load is checked against main first.",
+      "evidence": "11 parallel subagents pushed load past 45 and every local affected run died on xdist.",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-03",
+      "last_relevant": "2026-11-12"
     }
   ],
   "retired": [
@@ -394,18 +418,6 @@
       }
     },
     {
-      "id": "2026-10-18-node-down",
-      "rule": "A hung or cancelled CI job is read from its log for 'node down' or a runner shutdown and re-run once before looking for a code cause.",
-      "evidence": "Dead xdist workers hung Python tests for 6 h (10-18), 40 min (10-24) and 45 min (10-30); every job now has timeout-minutes.",
-      "enforced_by": "prose",
-      "first_seen": "2026-10-18",
-      "last_relevant": "2026-11-03",
-      "retired": {
-        "on": "2026-11-12",
-        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
-      }
-    },
-    {
       "id": "2026-10-20-race-test-scheduling",
       "rule": "`test_bruh_print_atomic_write`'s race test can fail under a loaded `-n 4` run on a branch that never touches BRUH Print; it is scheduling, not a regression.",
       "evidence": "It asserts that the OLD recipe loses a write, and the threads may not interleave on a busy machine.",
@@ -436,30 +448,6 @@
       "enforced_by": "prose",
       "first_seen": "2026-10-27",
       "last_relevant": "2026-10-27",
-      "retired": {
-        "on": "2026-11-12",
-        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
-      }
-    },
-    {
-      "id": "2026-10-28-fixed-clock-tests",
-      "rule": "A test that files at a fixed time reads back at that same clock, never the real one.",
-      "evidence": "test_hypothesis_days failed on every branch once real time passed its fixed day.",
-      "enforced_by": "prose",
-      "first_seen": "2026-10-28",
-      "last_relevant": "2026-10-28",
-      "retired": {
-        "on": "2026-11-12",
-        "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
-      }
-    },
-    {
-      "id": "2026-11-03-agent-load",
-      "rule": "With many fixer agents at once, each runs only its own new tests plus ruff and the guard; CI is the full-suite gate.",
-      "evidence": "11 parallel subagents pushed load past 45 and every local affected run died on xdist.",
-      "enforced_by": "prose",
-      "first_seen": "2026-11-03",
-      "last_relevant": "2026-11-03",
       "retired": {
         "on": "2026-11-12",
         "why": "The November 2026 suite cut (8c61f55) removed the test machinery it names; the loop no longer runs or writes it."
