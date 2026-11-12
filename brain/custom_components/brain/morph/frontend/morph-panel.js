@@ -1080,13 +1080,19 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
   cases() {
     const b = this.brain();
     const list = Array.isArray(b.cases) ? b.cases : [];
-    // A case's sentence was written before the doors moved: a line about a
-    // door, window or lock is checked against it now, worded as what still
-    // holds, and a case that has nothing left to say is not drawn.
+    // A case's sentences were written before the doors moved: the claim, its
+    // detail and what it asks are each checked against the house now. A claim
+    // that has cleared takes its detail and its instruction with it, and a
+    // case with nothing left to say (no question to answer, no thread) is not
+    // drawn.
+    const fresh = (t) => (t && this.hass ? checkDoorClaims(t, this.hass) : t);
     return list.filter((c) => c && c.id && c.kind !== 'chore').map((c) => {
       const said = c.claim || c.text || '';
-      const now = said && this.hass ? checkDoorClaims(said, this.hass) : said;
-      return now === said ? c : { ...c, claim: now, text: now, cleared: !now };
+      const now = fresh(said);
+      const detail = c.detail === said ? now : fresh(c.detail);
+      const ask = fresh(c.ask);
+      if (now === said && detail === c.detail && ask === c.ask) return c;
+      return { ...c, claim: now, text: now, detail: now ? detail : '', ask, cleared: !!said && !now };
     }).filter((c) => !c.cleared || c.ask || (c.thread || []).length);
   }
 

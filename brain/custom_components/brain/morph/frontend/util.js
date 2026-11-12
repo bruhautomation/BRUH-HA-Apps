@@ -351,7 +351,7 @@ const NONE_OF = /\b(?:no|nothing|none|neither)\b/i;
 const VERB = /\b(?:is|are|was|were|isn['’]t|aren['’]t|has|have|had|remains?|stays?|left|close|shut|lock|unlock|opened|detects?|detected|found|needs?|should|must|will|can|running|playing|done)\b|['’]s\b/i;
 const CONTINUES = /^(?:it|they|this|that|which|who|so|then|should|must|needs?|is|are|was|were|has|have|had|now|still|please)\b/i;
 const DETERMINER = /^(?:the|a|an|your|my|our|every|all|nothing|no|each|both|it)\b/i;
-const POINTS_BACK = /^(?:please\s+)?(?:(?:close|shut|lock|secure|check)\s+(?:it|them|that|this)\b|(?:it|they|that)\s+(?:is|are|should|needs?)\b)/i;
+const POINTS_BACK = /^(?:please\s+)?(?:close|shut|lock|secure|check)\s+(?:it|them|that|this)\b/i;
 const SPLIT = /(\s*[,;]\s*(?:and|but|while|whereas|yet)?\s*|\s+(?:and|but|while|whereas|yet)\s+)/i;
 
 function claimEntities(states) {
@@ -475,13 +475,17 @@ export function checkDoorClaims(text, hass) {
   sentences.forEach((s) => {
     const m = s.match(/^([\s\S]*?)([.!?]*)$/); const body = m[1]; const end = m[2];
     const parts = clausesOf(body);
+    // Only an instruction about "it" goes, and only when something before it
+    // was dropped (so "it" may have meant that); a clause that makes its own
+    // claim is judged on its own.
     let gone = cut;
     const keep = parts.filter((p) => {
-      const ok = claimsOf(p.text).every((c) => holds(c, p.text, ents)) && !(gone && POINTS_BACK.test(p.text.trim()));
-      gone = !ok;
+      const instr = POINTS_BACK.test(p.text.trim());
+      const ok = claimsOf(p.text).every((c) => holds(c, p.text, ents)) && !(gone && instr);
+      if (!ok) gone = true;
       return ok;
     });
-    cut = !keep.length || keep.length < parts.length ? gone : false;
+    cut = gone;
     if (keep.length === parts.length) { kept.push(s); return; }
     if (!keep.length) return;
     let out = keep.map((p, i) => (i ? p.sep : '') + p.text).join('').trim();
