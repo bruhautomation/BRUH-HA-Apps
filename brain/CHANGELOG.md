@@ -2,6 +2,33 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.32
+
+### Fixed
+
+- Closing the app or locking the phone while brAIn is answering in Ask is no longer counted as brAIn crashing. The answer carries on and is there when you come back; the log says the viewer left (#850, #841).
+- An insight card is written only from a look at the house. A chat answer that read nothing, such as "no data needed", no longer appears as a card (#856).
+- A card whose only news is that nothing happened is no longer kept on its own; a kept card names one thing to do or says all is normal in one sentence, gives each number beside what is normal, and says thermostat terms such as auxiliary heat or defrost in plain words (#866).
+
+## 5.1.31
+
+### Fixed
+
+- Morph's tiles with a button beside the name (a garage, a lock) no longer squeeze the name to a few letters when the tile is narrow on a wide screen: the button shrinks to its icon and a long name wraps to a second line (#819).
+- Morph's coloured accents used as text on the light theme are darker, so they read at the contrast text needs. Your own theme file is left as it is.
+- Every text box in Morph, including those inside cards it hosts, uses 16px text, on every screen size, not only on phones.
+- Room scene buttons have more space between them.
+- In the pictures brAIn takes of its own screens for the development loop, a missing photo's "not captured" label no longer spills over a person's name beside a small picture (#845).
+
+## 5.1.30
+
+### Fixed
+
+- A house check you keep marking wrong now stands down even when you once agreed with it. A check whose latest answer was Wrong and which you marked wrong at least three times, three in four or more, has its findings set aside in History with that record as the reason, and the decision trail says so. Security checks and checks about harm are never set aside (#811, #812, #813, #826).
+- A device you said was fine to be offline, or a sensor you said was fine stuck on one value, is no longer raised again under any of its entities. Leak, smoke and lock sensors are still always raised. It comes back only if the device comes back and then goes again (#810, #811, #863).
+- Two automations are reported as fighting only when one undoes the other within seconds of the same trigger, when they keep undoing each other within a minute, or when two timed rules undo each other within five minutes of the same schedule. Two rules that each answer their own trigger on the same light, like "off at eleven" and "on with motion", are no longer reported (#812, #852).
+- A finding about leftover entities from an earlier install now says which of them still have a working replacement on the device, and asks you to reinstall only the ones with none (#863).
+
 ## 5.1.29
 
 ### Fixed
