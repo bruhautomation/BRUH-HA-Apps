@@ -2,6 +2,21 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.34
+
+### Removed
+
+- Ask's ⤢ full-screen terminal button. Nothing folds brAIn's header away any more: not the button, not the keyboard opening, not tapping the message box (#838).
+
+### Fixed
+
+- On a phone in the Home Assistant app, brAIn's header stays put: it no longer flickers at the bottom of Home, one tap on a tab from the message box switches tabs, and the page is put back at the top once the keyboard closes (#834).
+- The header sits below the iPhone's status bar whether the Home Assistant app is in full screen or not, with no doubled gap: brAIn counts only the part of the status-bar strip that lies over its own page (#839, #838).
+- Morph's room rail on a Home Assistant dashboard no longer stops a swipe from scrolling the page, including a swipe that starts at the right edge, and no longer pulls the page back after it lands (#840).
+- Morph's entity card says a sensor's state the way Home Assistant does: Connected or Disconnected, Open or Closed, instead of On or Off (#857).
+- When brAIn ships something your own house.js already added to the header (the clock, a Settings button), the copy beside brAIn's own is hidden and ⚙ › Instructions says so once; anything less certain is only named there, never hidden (#835).
+- brAIn's screenshot tool can photograph its page the way a phone shows it: inside the sidebar, under the status bar, in full screen or not, after a scroll or with the message box focused, and it reports where the header sits (#836).
+
 ## 5.1.33
 
 ### Fixed

@@ -267,7 +267,7 @@ and ☰ in the header opens Home Assistant's sidebar.
 | --- | --- |
 | **Home** | The Morph dashboard, while it is switched on in ⚙ › Features. Experimental. |
 | **Insights** | What brAIn has to tell you, in three sections. **Insights** (where the panel opens) is your insight cards, each a headline and how long ago it was updated, with the deep review and suggested cards under them — and, above them, a line saying how many things need you. **Needs you** is the one screen for deciding: a banner only while something is urgent, the status line (**Watching · last look 9 min ago**) with **Recheck** and this morning's brief under its **⋯**, the queue — every problem, question, suggestion, name tidy and assessed update as the same card — and **To Do**. Every card leads with one press (**Plan**, **Apply**, **Add to To Do**, **Yes** or **Done**) beside **Snooze** and **Ignore**; a problem also has **Check again** and **Dismiss** for a card that is old or no longer true. **History** is everything you've already answered — snoozed, ignored, done, or set aside by brAIn — with **Restore** on every row and **Delete** (the bin) on every row but a snooze. Deleting clears the record only: your answer stands, so brAIn does not raise it again. The count on the tab is how many cards are waiting on you. |
-| **Ask** | Full Claude Code, served through the panel — no second sidebar entry, no second login. Two faces: **Chat** (the default: the same session rendered as messages) and **Classic** (ttyd + tmux). Switch with ⋯ on the tab (the choice is saved), or in ⚙ Settings. Press ⤢ to give either the whole screen. |
+| **Ask** | Full Claude Code, served through the panel — no second sidebar entry, no second login. Two faces: **Chat** (the default: the same session rendered as messages) and **Classic** (ttyd + tmux). Switch with ⋯ on the tab (the choice is saved), or in ⚙ Settings. |
 | **Memory** | What brAIn holds about the house. **Knowledge** is everything brAIn remembers: the memory document (with **Edit**, **Export** and what is waiting to be filed into it), **What brAIn brings to a run**, a box to teach brAIn something and every fact it holds, browsable by room and device (a list beside the facts on a wide screen, a picker on a phone), searchable, filterable by kind and by who taught it, with a bin on every fact. **Timeline** opens on what the house is doing now, then what happened and what caused it — searchable by device and narrowed by room, kind of thing, cause and window (6 hours to 2 days), each filter counted under the others with **Clear all**, fetched fresh every visit and never cached. **House book** is how this house works, chapter by chapter, with **Add info**, an Edit and Delete on every line, and sharing behind ⋯. |
 
 This guide is ⚙ → Guide. Older links that name a pane that has moved — the
@@ -2238,8 +2238,8 @@ same \`/config\`, with the same permissions — what differs is only how you see
   the top of a conversation returns to it. It holds every conversation you started,
   here or in the classic terminal; picking one replays it and carries on.
 - **⋯ holds the rest** — **New chat**, **Your chats** (on a phone), **Session details**,
-  **Model**, and the switch to Classic. Two buttons float over the terminal, *Chat
-  options** and **Full-screen terminal*, not a column of them.
+  **Model**, and the switch to Classic. One button floats over the terminal, *Chat
+  options*, not a column of them. Nothing on the page hides brAIn's header.
 - **A conversation about a card is called by the card.** **Ask** on a card in Needs you
   opens a conversation about it: the card's title is above the box, and pressing it
   takes you back to the card. The card's own verbs sit under it — **Plan**, **Done**,

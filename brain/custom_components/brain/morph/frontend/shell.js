@@ -75,7 +75,12 @@ class BrainShell extends HTMLElement {
     this._onChrome = (ev) => { this.chrome = ev.detail || null; this.sync(); };
     // Morph's scroll, passed to brAIn's page: the one header hides while
     // the dashboard scrolls down and comes back as it scrolls up.
-    this._onScroll = (ev) => { if (this.view === 'home') this.post({ scroll: Math.max(0, Number(ev.detail && ev.detail.y) || 0) }); };
+    this._onScroll = (ev) => {
+      if (this.view !== 'home') return;
+      const d = ev.detail || {};
+      const max = Number(d.max);
+      this.post({ scroll: Math.max(0, Number(d.y) || 0), ...(Number.isFinite(max) ? { max: Math.max(0, max) } : {}) });
+    };
     this._onResize = () => { this.fit(); if (this.info) this.sync(); };
     // Home Assistant's own page never scrolls under this panel (#689): a
     // scroll of the window or of anything holding the panel goes straight
@@ -86,6 +91,13 @@ class BrainShell extends HTMLElement {
       if (t === window) { const se = document.scrollingElement; if (se && se.scrollTop) se.scrollTop = 0; return; }
       if (t.scrollTop) t.scrollTop = 0;
     };
+    // The keyboard is the other way Home Assistant's page moves: iOS
+    // shifts the whole page up to show a focused field and, closing the
+    // keyboard, does not always shift it back — a shift of the visual
+    // viewport that is no element's scroll, so the guard above never hears
+    // it, and the header stays under the island with no way back. Once the
+    // screen has its height again, the page goes back to the top.
+    this._onViewport = () => { clearTimeout(this._vvT); this._vvT = setTimeout(() => this.settleOuter(), 250); };
   }
 
   // The panel is as tall as the space Home Assistant gives it: the screen
@@ -121,6 +133,8 @@ class BrainShell extends HTMLElement {
     this.releaseOuter();
     this._held = [window, ...this.ancestors()];
     for (const t of this._held) t.addEventListener('scroll', this._onOuterScroll, { passive: true });
+    const vv = window.visualViewport;
+    if (vv) { vv.addEventListener('resize', this._onViewport); vv.addEventListener('scroll', this._onViewport); }
     this._onOuterScroll({ currentTarget: window });
     for (const t of this._held) if (t !== window && t.scrollTop) t.scrollTop = 0;
   }
@@ -128,6 +142,21 @@ class BrainShell extends HTMLElement {
   releaseOuter() {
     for (const t of this._held) t.removeEventListener('scroll', this._onOuterScroll);
     this._held = [];
+    const vv = window.visualViewport;
+    if (vv) { vv.removeEventListener('resize', this._onViewport); vv.removeEventListener('scroll', this._onViewport); }
+    clearTimeout(this._vvT);
+  }
+
+  // Home Assistant's page back at the top once no keyboard is up: the
+  // window, every element holding the panel, and the visual viewport.
+  settleOuter() {
+    if (!this.isConnected) return;
+    const vv = window.visualViewport;
+    if (vv && vv.height < window.innerHeight - 40) return; // a keyboard is still up
+    const se = document.scrollingElement;
+    if ((se && se.scrollTop) || window.scrollY || (vv && vv.offsetTop > 0.5)) window.scrollTo(0, 0);
+    for (const t of this._held) if (t !== window && t.scrollTop) t.scrollTop = 0;
+    this.fit();
   }
 
   // The theme the one header is drawn in: Morph's, as it renders; the one
@@ -187,12 +216,22 @@ iframe[hidden]{display:none}
     this.insetEl = this.shadowRoot.querySelector('.inset');
   }
 
-  // The phone's top safe area (the Dynamic Island's strip), as Home
-  // Assistant's page has it: a framed page is not promised env() values,
-  // so brAIn's page is told (`state.inset`) and draws its header's first
-  // row in that strip.
+  // How much of the phone's top safe area (the status bar's and the
+  // island's strip) this panel actually lies under, as Home Assistant's
+  // page has it: a framed page is not promised env() values, so brAIn's
+  // page is told (`state.inset`) and starts its header's rows below it.
+  // Only the part over the panel counts: when Home Assistant's own layout
+  // already starts the panel below the strip (its toolbar, or the app not
+  // in full screen), the strip is above the panel and padding for it again
+  // was a doubled gap; when the panel starts at the top of the screen, the
+  // whole strip is over it, whether the app shows its status bar there or
+  // not, and nothing may be drawn in it (the owner: the name and the time
+  // were "behind my Apple header bar").
   inset() {
-    return this.insetEl ? Math.round(this.insetEl.getBoundingClientRect().height) : 0;
+    if (!this.insetEl) return 0;
+    const env = this.insetEl.getBoundingClientRect().height;
+    const top = this.getBoundingClientRect().top;
+    return Math.max(0, Math.round(env - Math.max(0, top)));
   }
 
   say(html) {
