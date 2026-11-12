@@ -3345,6 +3345,7 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
     stamp = int(when if when is not None else time.time())
     items = _load()
     changed: list[dict] = []
+    record_rows: list[dict] = []
     wrote = False
     for entry in items:
         ts = int(entry.get("ts") or 0)
@@ -3357,6 +3358,15 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
             # wrong three times in a row: it is held with that record,
             # not shown unjudged (#698, `rule_record.holds`).
             verdict, reason = "held", str(entry["record_hold"])
+        if (verdict == "held" and not late and entry.get("record_hold")
+                and reason == str(entry["record_hold"])):
+            # Held by the record and not by a look: said on the decision
+            # trail, so "why did brAIn not tell me" finds it (#826).
+            record_rows.append({
+                "kind": "record", "subject": str(entry.get("entity_id") or ""),
+                "check": str(entry.get("source") or "").removeprefix(
+                    "check:"),
+                "reason": reason, "text": str(entry.get("text") or "")})
         if verdict != "untriaged" or late:
             entry.pop("record_hold", None)
         not_news = len(verdicts[ts]) > 2 and verdicts[ts][2] is True
@@ -3428,6 +3438,12 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
             changed.append(_shape(entry))
     if wrote:
         _write(items)
+    if record_rows:
+        try:
+            import decision_trail  # noqa: PLC0415 — a leaf, read lazily
+            decision_trail.note_many(record_rows, stamp)
+        except Exception as exc:  # noqa: BLE001 — the trail never costs a move
+            log.debug("could not note the record holds: %s", exc)
     return changed
 
 
@@ -4054,6 +4070,11 @@ def answered_checks() -> dict[str, dict[str, dict]]:
             # When it was last answered, for an answer that holds only
             # until the thing changes (`House.answered_since`).
             row["at"] = max(int(row.get("at") or 0), int(e.get("ts") or 0))
+            if wrong:
+                # When it was last answered WRONG: an agreement given later
+                # is not a Wrong that holds (`House._answered_this_stretch`).
+                row["wrong_at"] = max(int(row.get("wrong_at") or 0),
+                                      int(e.get("ts") or 0))
             if note and note not in row["notes"]:
                 row["notes"].append(note)
     return out
