@@ -17,7 +17,10 @@
 //     the header, the tabs and the main pane are drawn and visible. Passed,
 //     the server keeps it as the last good copy; failed, the server puts the
 //     last good copy back (or takes the file away) and the page reloads
-//     once, so nobody has to notice, find the file or press anything.
+//     once, so nobody has to notice, find the file or press anything;
+//   * hides a control house.js added that brAIn's page now ships itself, and
+//     says so once: an update that brings what the house had already
+//     added (a clock, a button) showed both until somebody complained.
 // It does nothing at all on a page with no meta (the page opened as a file).
 (function () {
   'use strict';
@@ -30,6 +33,7 @@
   let deviceOff = false;
   try { deviceOff = localStorage.getItem(KEY) === '1'; } catch (e) { /* storage refused */ }
   const safe = !!facts.off;
+  const both = (xs) => (xs.length > 1 ? `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}` : xs[0] || '');
   const kb = (n) => (n < 1024 ? `${n} bytes` : `${Math.round(n / 1024)} KB`);
   const cap = kb(facts.max || 0);
   let jsError = '';
@@ -44,6 +48,10 @@
   }
 
   const js = files.find((f) => f.name === 'house.js');
+  // Everything on the page before house.js runs is brAIn's own: the header
+  // is static, so whatever is in it afterwards that is not here was added.
+  const shipped = new WeakSet(document.querySelectorAll('*'));
+  let doubled = [];
   if (js && js.state === 'ok' && !safe && !deviceOff) {
     const src = new URL(`house.js?v=${encodeURIComponent(js.v || '')}`, document.baseURI).href;
     let running = false;
@@ -92,6 +100,7 @@
     if (safe) return `${names || 'None'}. Off for this visit, because the address has nohouse=1.`;
     if (deviceOff) return `${names}. Off on this device.`;
     if (jsError) return `house.js stopped with an error: ${jsError}. The rest of the page is unaffected.`;
+    if (doubled.length) return `brAIn now ships ${both(doubled)}, which house.js also adds, so the house's copy is hidden. Take it out of house.js.`;
     if (reverted && reverted.name) {
       const back = reverted.restored === 'previous' ? 'the last version that worked was put back' : 'it was taken away';
       return `${reverted.name} broke the page (${reverted.why || 'it failed the check'}), so ${back} automatically.`;
@@ -163,10 +172,9 @@
     const bodyStyle = getComputedStyle(document.body);
     if (bodyStyle.display === 'none' || bodyStyle.visibility === 'hidden'
       || parseFloat(bodyStyle.opacity || '1') < 0.1) return 'the page is hidden';
-    // The terminal's immersive mode hides the header on purpose.
-    const immersive = document.body.classList.contains('term-immersive');
-    const needed = immersive ? ['main.wrap'] : ['header.topbar', 'nav.viewtabs', 'main.wrap'];
-    for (const sel of needed) {
+    // Nothing on the page hides the header on purpose (the terminal's fold
+    // is gone), so a house change that hides it has broken the page.
+    for (const sel of ['header.topbar', 'nav.viewtabs', 'main.wrap']) {
       const why = shown(sel);
       if (why) return why;
     }
@@ -227,6 +235,69 @@
       judge('');
     };
     setTimeout(go, SETTLE_MS);
+  }
+
+  // ---- a house copy of something brAIn now ships -----------------------
+  //
+  // A control house.js added (anything in the header that was not there
+  // before it ran, or a button it put straight on the page) with the same
+  // name as one of brAIn's own that is showing — the same words, label or
+  // tooltip, or, for a clock, a time — is a second copy: it is hidden, and
+  // the Instructions row and one toast (once per house.js version) say what
+  // and where to take it out. brAIn's own copy is never touched.
+  const CLOCK = /\b\d{1,2}:\d{2}\b/;
+  const CONTROL = 'button, a[href], [role="button"], [role="tab"], input, select, time';
+  function nameOf(el) {
+    const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+    if (el.localName === 'time' || (CLOCK.test(text) && text.length < 40)) return 'clock';
+    const n = el.getAttribute('aria-label') || el.dataset.tip || el.getAttribute('title') || text;
+    return String(n || '').trim().toLowerCase().slice(0, 60);
+  }
+  function visible(el) {
+    if (!el.isConnected || !el.getClientRects().length) return false;
+    const cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && parseFloat(cs.opacity || '1') >= 0.1;
+  }
+  function findDoubles() {
+    const bar = document.querySelector('header.topbar');
+    const ours = new Map();
+    document.querySelectorAll(CONTROL).forEach((el) => {
+      if (!shipped.has(el) || !visible(el)) return;
+      const n = nameOf(el);
+      if (n.length >= 2 && !ours.has(n)) ours.set(n, el);
+    });
+    // The house's own: anything new in the header, or a control new on
+    // the page's top level (a floating button house.js put on <body>).
+    const added = [
+      ...[...(bar ? bar.querySelectorAll('*') : [])].filter((el) => el.matches(CONTROL + ', div, span')),
+      ...[...document.body.children].filter((el) => el.matches(CONTROL)),
+    ].filter((el) => !shipped.has(el) && !el.closest('#houseLayer, #toast, .tipbox, .modal, #chipPop'));
+    const found = [];
+    for (const el of added) {
+      if (!visible(el) || el.dataset.houseDouble) continue;
+      const n = nameOf(el);
+      const own = ours.get(n);
+      if (!own || own === el || el.contains(own) || own.contains(el)) continue;
+      el.dataset.houseDouble = '1';
+      el.style.setProperty('display', 'none', 'important');
+      found.push(n === 'clock' ? 'the clock' : (own.getAttribute('aria-label') || own.dataset.tip || own.textContent || n).replace(/\s+/g, ' ').trim().slice(0, 40));
+    }
+    if (!found.length) return;
+    doubled = [...new Set([...doubled, ...found])];
+    console.warn('brAIn: house.js adds what brAIn now ships, so the house copy is hidden:', doubled.join(', '));
+    paint();
+    const key = `brain.house.doubled.${js && js.v}`;
+    let said = false;
+    try { said = localStorage.getItem(key) === doubled.join('|'); localStorage.setItem(key, doubled.join('|')); } catch (e) { /* say it this time */ }
+    if (!said && typeof window.toast === 'function') {
+      try { window.toast(`brAIn now has ${both(doubled)} itself, so the copy from this house's own changes is hidden.`); } catch (e) { /* the row says it */ }
+    }
+  }
+  if (js && js.state === 'ok' && !safe && !deviceOff) {
+    const look = () => { try { findDoubles(); } catch (e) { /* never the page's problem */ } };
+    const later = () => { setTimeout(look, SETTLE_MS); setTimeout(look, SETTLE_MS * 4); };
+    if (document.readyState === 'complete') later();
+    else window.addEventListener('load', later, { once: true });
   }
 
   if (!safe && !deviceOff && fresh.length) {

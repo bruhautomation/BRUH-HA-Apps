@@ -12534,14 +12534,10 @@ function switchView(name) {
       askShow("list");
     }
   } else {
-    // Leaving the tab: whatever the keyboard was doing over there, the bar
-    // belongs to whichever tab is in front now. The chat stream goes too —
-    // an open SSE for a tab nobody is looking at holds a connection and a
-    // subscriber for nothing.
-    termChrome.keyboard = false;
+    // Leaving the tab: the chat stream goes — an open SSE for a tab nobody
+    // is looking at holds a connection and a subscriber for nothing.
     chatDisconnect();
   }
-  applyTermChrome();
   // Same shape: draw what we have, then again once the fetch lands, so
   // opening the tab is never a blank frame. And pick the poll back up if
   // a pass started before you navigated away — a run outlives the page.
@@ -12681,16 +12677,13 @@ function syncBarHeight() {
   // Measure against the STYLESHEET's value for this layout, never against
   // the one we last wrote. `.topbar`'s height *is* --bar-h, so an inline
   // override on <html> feeds the previous measurement back into the thing
-  // being measured. Leaving the immersive terminal is where that bites:
-  // immersive writes 0px, and on the way back out the bar is visible again
-  // but pinned to height 0 by our own inline value, so it renders clipped —
-  // and the next measurement latches the clipped height for good.
+  // being measured: a bar measured while it was not drawn would be pinned
+  // to height 0 by our own inline value when it came back, render clipped,
+  // and the next measurement would latch the clipped height for good.
   root.style.removeProperty("--bar-h");
   const h = Math.round(bar.getBoundingClientRect().height);
-  // Hidden means zero, and getBoundingClientRect on a display:none element
-  // already says so — but that is the one case we must NOT write, because
-  // `body.term-immersive { --bar-h: 0px }` is already saying it in CSS and
-  // an inline 0 would outlive the class that justified it.
+  // A bar not drawn (the page not laid out yet) measures 0: never write
+  // that, it would outlive the moment that produced it.
   if (h > 0) root.style.setProperty("--bar-h", h + "px");
 }
 
@@ -12874,8 +12867,9 @@ function syncShellClock() {
 // those menu buttons up there all the time; maybe collapsible and goes away
 // when you're not at the top", and then "the collapsing menu was supposed
 // to be just for the home insights ask memory buttons". So inside the
-// shell on a phone: the header's first row sits in the island strip
-// (style.css, `--safe-top`) and always stays — the name, the clock, ⚙;
+// shell on a phone: the header's first row sits just below the safe-area
+// strip (style.css, `--safe-top`; never in it, full screen or not) and
+// always stays — the name, the clock, ⚙;
 // the tabs are the second row, and scrolling down slides only that row
 // away while scrolling up or reaching the top brings it back
 // (`shellScrolled`), for this page's scroll and for Morph's on Home, which
@@ -12908,7 +12902,7 @@ function shellRowCut() {
   const row1 = [gear, document.querySelector(".topbar .brandlink")]
     .filter((n) => n && n.getClientRects().length)
     .reduce((m, n) => Math.max(m, n.getBoundingClientRect().bottom - top), 0);
-  // Never above the island strip's foot: the first row lives in it.
+  // Never above the safe-area strip's foot: the first row is below it.
   const keep = Math.max(row1 + 2, shellInset());
   return Math.max(0, Math.round(bar.getBoundingClientRect().height - keep));
 }
@@ -12926,9 +12920,15 @@ function setBarHidden(hidden) {
 
 // A scroll position, from this page or from Morph's: down past the header
 // hides it, up shows it, and near the top it is always there. A few pixels
-// either way are a thumb resting, not a direction.
+// either way are a thumb resting, not a direction. Near the bottom (`max`,
+// how far the pane can scroll) a move up is not a direction either: the
+// bounce at the end of a scroll comes back up by itself, and on Home the
+// pane grows by the tab row as it hides, so the furthest it can scroll
+// shrinks by as much and the position is pulled up with it — each read as
+// "scrolling up" brought the row back, which shrank the pane again: the
+// tab row flickered at the bottom of the dashboard.
 const BAR_SLACK = 8;
-function shellScrolled(y) {
+function shellScrolled(y, max) {
   if (!SHELL) return;
   if (!shellTwoRows()) { setBarHidden(false); return; }
   const bar = document.querySelector(".topbar");
@@ -12937,9 +12937,11 @@ function shellScrolled(y) {
   const dy = y - shellBar.y;
   const busy = document.documentElement.classList.contains("searching")
     || (bar && bar.contains(document.activeElement) && document.activeElement.tagName === "INPUT");
+  const band = (shellBar.cut || full) + BAR_SLACK * 2;
+  const atEnd = typeof max === "number" && max > full && y >= max - band;
   if (y <= full) setBarHidden(false);
   else if (dy > BAR_SLACK && !busy) setBarHidden(true);
-  else if (dy < -BAR_SLACK) setBarHidden(false);
+  else if (dy < -BAR_SLACK && !atEnd) setBarHidden(false);
   if (Math.abs(dy) > BAR_SLACK || y <= full) shellBar.y = y;
 }
 
@@ -12983,7 +12985,10 @@ function setSearchOpen(open) {
 if (SHELL) {
   document.documentElement.classList.add("in-shell");
   window.addEventListener("scroll", () => {
-    if (currentView !== "home") shellScrolled(window.scrollY);
+    if (currentView !== "home") {
+      const se = document.scrollingElement || document.documentElement;
+      shellScrolled(window.scrollY, se.scrollHeight - window.innerHeight);
+    }
   }, { passive: true });
   // A drag that starts on the header is never a scroll: there is nothing in
   // it to scroll, and passed on it moved Home Assistant's window around
@@ -13010,12 +13015,13 @@ if (SHELL) {
     const d = ev.data;
     if (!d || d.type !== "brain-shell") return;
     if (typeof d.scroll === "number") {
-      if (currentView === "home") shellScrolled(d.scroll);
+      if (currentView === "home") shellScrolled(d.scroll, typeof d.max === "number" ? d.max : undefined);
       return;
     }
     if (d.state) {
-      // The safe area as Home Assistant's page has it, which a framed page
-      // is not promised (`--shell-inset`, style.css takes the larger).
+      // The part of the safe area over the panel, as Home Assistant's page
+      // has it, which a framed page is not promised (`--shell-inset`; once
+      // said, style.css takes it over this frame's own env()).
       if (typeof d.state.inset === "number") {
         document.documentElement.style.setProperty("--shell-inset", Math.max(0, Math.round(d.state.inset)) + "px");
       }
@@ -14308,53 +14314,7 @@ $("#chatInput").addEventListener("keydown", (ev) => {
   chatSend($("#chatInput").value);
 });
 
-// The panel cannot see an iOS keyboard open inside the ingress iframe, but
-// it knows when its own composer took focus — which on a touchscreen is the
-// same moment. Same fold as the classic terminal's, same way back.
-$("#chatInput").addEventListener("focus", () => {
-  if (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) {
-    termChrome.keyboard = true;
-    applyTermChrome();
-  }
-});
-$("#chatInput").addEventListener("blur", () => releaseChatKeyboard());
-
-// Blur is not reliable enough to be the only way out of this state. On iOS,
-// dismissing the keyboard with its own control leaves the textarea focused,
-// so blur never fires — and the flag stayed true for the rest of the
-// session, holding the bar folded. Anything that means "the composer is not
-// being typed into any more" clears it, and it is re-checked rather than
-// trusted.
-// No "is the composer still focused?" guard, deliberately: on iOS it still
-// is, which is the whole problem. Unfolding the bar a moment early costs a
-// row of screen; getting this wrong the other way costs every control on
-// the page, permanently.
-function releaseChatKeyboard() {
-  if (!termChrome.keyboard) return;
-  termChrome.keyboard = false;
-  applyTermChrome();
-}
-
-// Every route back to the page: switching app, rotating, coming back to the
-// tab, or touching anything that is not the composer.
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") releaseChatKeyboard();
-});
-window.addEventListener("pageshow", () => releaseChatKeyboard());
-document.addEventListener("touchend", (ev) => {
-  if (!ev.target.closest(".chatbar")) releaseChatKeyboard();
-}, true);
-if (window.visualViewport) {
-  // The keyboard closing gives the viewport its height back. On the
-  // platforms where this fires it is the most direct signal there is.
-  window.visualViewport.addEventListener("resize", () => {
-    if (window.visualViewport.height >= window.innerHeight - 40) {
-      releaseChatKeyboard();
-    }
-  });
-}
-
-// Folding the bar was not enough: on an iPhone in the companion app the
+// On an iPhone in the companion app the
 // keyboard covers the bottom of HA's ingress frame without resizing it, so
 // our own viewport and `dvh` never change and the composer stayed under the
 // keys. The frame is same-origin, though, so the page that holds it can be
@@ -15782,12 +15742,8 @@ $("#chatCmds").addEventListener("click", (ev) => {
   if (btn) chatPickCmd(btn.dataset.name);
 });
 
-// ------------------------------------------------- immersive terminal
+// ------------------------------------------------- remembered preferences
 
-// Two independent reasons the bar folds away, and they must not clobber one
-// another: `pinned` is the ⤢ press and survives a reload; `keyboard` is the
-// software keyboard being up right now. Closing the keyboard restores the
-// bar unless ⤢ is holding it down.
 // The panel runs inside Home Assistant's ingress iframe, and a browser is
 // allowed to refuse an iframe its storage (Safari does, under some privacy
 // settings). Reading it must therefore never throw: an unremembered
@@ -15800,39 +15756,13 @@ function prefSet(key, value) {
   try { localStorage.setItem(key, value); } catch (e) { /* not remembered */ }
 }
 
-const termChrome = {
-  pinned: prefGet("brain.termFull") === "1",
-  keyboard: false,
-};
-
-function applyTermChrome() {
-  const onTerminal = currentView === "terminal";
-  const pinned = onTerminal && termChrome.pinned;
-  const kb = onTerminal && termChrome.keyboard;
-  document.body.classList.toggle("term-immersive", pinned || kb);
-  document.body.classList.toggle("term-kb", kb);
-  const btn = $("#termExpand");
-  if (btn) {
-    btn.setAttribute("aria-pressed", pinned ? "true" : "false");
-    const label = pinned ? "Show the brAIn bar" : "Full-screen terminal";
-    btn.setAttribute("aria-label", label);
-    btn.dataset.tip = label;
-  }
-  syncBarHeight();
-}
-
-$("#termExpand").addEventListener("click", () => {
-  termChrome.pinned = !termChrome.pinned;
-  prefSet("brain.termFull", termChrome.pinned ? "1" : "0");
-  applyTermChrome();
-});
-
 // ----------------------------------------------------------- the ⋯ menu
 //
 // Five floating buttons over someone's output was five translucent squares
-// on top of the text they came to read. ⤢ earns its own because it is also
-// the way back from a folded bar; the rest are occasional, so they are a
-// menu — one button, and no decision about which glyph means what.
+// on top of the text they came to read. They are occasional, so they are a
+// menu — one button, and no decision about which glyph means what. (There
+// was a second, ⤢, that folded the header away; it is gone with the fold:
+// nothing on this page hides the header.)
 
 function closeTermMenu() {
   $("#termMenuPop").classList.add("hidden");
@@ -15988,19 +15918,6 @@ function syncTermMode() {
 
 $("#termMode").addEventListener("click", () => {
   switchTermMode(chatState.session === "classic" ? "chat" : "classic");
-});
-
-// The ttyd frame is the only thing in the stack that can tell whether the
-// software keyboard is up: on iOS the keyboard doesn't resize an iframe's
-// visual viewport, and the frame already does the awkward work of finding
-// out (it has to, to keep its own toolbar above the keys). It reports the
-// answer here rather than us guessing it a second time, worse.
-window.addEventListener("message", (ev) => {
-  const d = ev.data;
-  if (!d || d.type !== "brain-keyboard") return;
-  if (ev.source !== $("#termFrame").contentWindow) return;
-  termChrome.keyboard = !!d.open;
-  applyTermChrome();
 });
 
 // -------------------------------------------------- dashboard card modal

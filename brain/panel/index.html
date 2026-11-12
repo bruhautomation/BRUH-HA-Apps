@@ -655,15 +655,10 @@
      this panel at /terminal/ so it lives behind one ingress port. The frame
      is only pointed at it on first activation — no session is started for
      someone who never opens the tab. -->
-<!-- The terminal is the one tab whose content wants the whole screen, and on
-     a phone with the keyboard up it was getting about a third of it: the HA
-     header, then our two-row bar, then the tab strip, then a keyboard. The
-     bar folds away here — automatically while the keyboard is up (the ttyd
-     frame already knows, and tells us), or for good if you press ⤢.
-
-     The control floats over the terminal rather than sitting in the top bar
-     because a button in the bar cannot be the way back to a bar that is
-     gone. It is the same button both ways round. -->
+<!-- The terminal is the one tab whose content wants the whole screen, but
+     the header stays: the bar used to fold away here (while the keyboard was
+     up, or for good with ⤢), and on a phone that took every tab and ⚙ with
+     it, leaving no way out of the view. -->
 <div id="viewTerminal" class="view">
   <!-- Two faces on the same Claude Code, and the same credential, working
        directory and permissions behind both. Chat renders the CLI's
@@ -798,12 +793,11 @@
        backoff rather than left on a proxy's 502 page. -->
   <p id="termStarting" class="termstarting hidden" role="status">The terminal is starting…</p>
 
-  <!-- Two buttons, not five. These float over somebody's output, and a
+  <!-- One button, not five. These floated over somebody's output, and a
        column of five translucent squares sitting on top of the text is
-       exactly the clutter the chat view exists to get away from. ⤢ stays on
-       its own because it is also the way back from a folded bar; everything
-       else is a menu, because those are things you do occasionally and
-       decide about once. -->
+       exactly the clutter the chat view exists to get away from; they are
+       things you do occasionally and decide about once, so they are a menu.
+       (⤢, which folded the header away, is gone: nothing hides the header.) -->
   <div class="termfabs">
     <button id="termMenu" class="termfab" data-tip="Chat options"
             aria-label="Chat options" aria-expanded="false">
@@ -811,11 +805,6 @@
       <!-- Shown only over a phone's first, empty chat (body.ask-empty),
            where a bare ⋯ is the one control on the screen nobody can read. -->
       <span class="termfabname">Options</span>
-    </button>
-    <button id="termExpand" class="termfab" data-tip="Full-screen terminal"
-            aria-label="Full-screen terminal" aria-pressed="false">
-      <svg viewBox="0 0 24 24" class="ico ico-in" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/></svg>
-      <svg viewBox="0 0 24 24" class="ico ico-out" aria-hidden="true"><path d="M4 9h5V4M20 9h-5V4M4 15h5v5M20 15h-5v5"/></svg>
     </button>
   </div>
 
