@@ -9,7 +9,7 @@ export const CSS = `
 :host{display:block;height:100%}
 .t-dark{--lpull:#FFFFFF;--indigo:#9DAAF5;--peach:#F2B590;--bg:#0A0C0E;--surface:#15181B;--sunk:#0F1114;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.2);--text:#EDEFF1;--muted:#A0A9B3;--quiet:#808994;--chip:rgba(255,255,255,.06);--hover:rgba(255,255,255,.035);--amber:#F4B969;--sand:#E9D3A6;--sky:#9CC2F5;--violet:#BBA6F2;--teal:#63CCC2;--lime:#BCD873;--rose:#F2907F;--ink:#15120D;color-scheme:dark}
 .t-medium{--lpull:#FFFFFF;--indigo:#A9B4F2;--peach:#F0BC9C;--bg:#2A2D31;--surface:#34383D;--sunk:#25282C;--line:rgba(255,255,255,.1);--line2:rgba(255,255,255,.22);--text:#F1F2F3;--muted:#B5BCC4;--quiet:#9DA5AF;--chip:rgba(255,255,255,.07);--hover:rgba(255,255,255,.04);--amber:#F5C27F;--sand:#E6D3AC;--sky:#A7C8F2;--violet:#C3B1F0;--teal:#72CFC6;--lime:#C3DB86;--rose:#F29C8C;--ink:#15120D;color-scheme:dark}
-.t-light{--lpull:#3A2E1A;--indigo:#4F5FC4;--peach:#B8622F;--bg:#ECEBE6;--surface:#FFFFFF;--sunk:#E4E3DD;--line:rgba(22,24,27,.1);--line2:rgba(22,24,27,.24);--text:#16181B;--muted:#535A63;--quiet:#5B636C;--chip:rgba(22,24,27,.06);--hover:rgba(22,24,27,.03);--amber:#C27A1A;--sand:#9C7F3C;--sky:#3B78C9;--violet:#7A5FD0;--teal:#178A80;--lime:#5E8416;--rose:#C9503F;--ink:#FFFFFF;color-scheme:light}
+.t-light{--lpull:#3A2E1A;--indigo:#4F5FC4;--peach:#9E5428;--bg:#ECEBE6;--surface:#FFFFFF;--sunk:#E4E3DD;--line:rgba(22,24,27,.1);--line2:rgba(22,24,27,.24);--text:#16181B;--muted:#535A63;--quiet:#5B636C;--chip:rgba(22,24,27,.06);--hover:rgba(22,24,27,.03);--amber:#935C14;--sand:#7D6630;--sky:#3168B2;--violet:#7053CD;--teal:#13746C;--lime:#527313;--rose:#B44333;--ink:#FFFFFF;color-scheme:light}
 .morph{--ease:cubic-bezier(.2,.8,.2,1);--ease-io:cubic-bezier(.65,0,.35,1);min-height:100%;background:var(--bg);color:var(--text);font-family:'Manrope',system-ui,sans-serif;font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased;overflow-anchor:none;box-sizing:border-box}
 .morph *{box-sizing:border-box}
 .morph h1,.morph h2,.morph h3,.morph p,.morph pre{margin:0}
@@ -93,7 +93,7 @@ section.sec.nowband .secbg{background:transparent!important}
 .sechead.nohead{min-height:0;padding:0}
 .sectitle{flex:1;min-width:0;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;position:relative}
 .roomname{background:none;border:0;padding:0;margin:0;font:inherit;color:inherit;cursor:pointer;text-align:left}
-.secscenes{display:inline-flex;gap:4px 8px;flex-wrap:wrap}
+.secscenes{display:inline-flex;gap:6px 10px;flex-wrap:wrap}
 .secscenes .wd{font-size:15px;color:var(--muted)}
 .needs{font-size:13px;color:var(--rose);white-space:nowrap}
 .trace{background:none;border:0;padding:0;margin:0;font:inherit;font-size:13px;cursor:pointer;min-height:28px;white-space:nowrap}
@@ -147,8 +147,8 @@ section.sec[data-state="asleep"] .mtile{opacity:1}
 .actword{flex:none;display:inline-flex;align-items:center;gap:6px;box-sizing:border-box;min-height:36px;padding:0 12px;border:1px solid color-mix(in oklab,var(--ac) 65%,transparent);border-radius:999px;font-size:13px;font-weight:700;color:color-mix(in oklab,var(--ac) 75%,var(--text));white-space:nowrap}
 .actword.armed{color:var(--ink);background:var(--ac);border-color:var(--ac)}
 @media (pointer:coarse){.actword{min-height:40px}}
-/* A tile on a phone is half the screen: the noun goes, and a button that has an icon is only the icon (its name is its aria-label), so the state beside it keeps its words whole. */
-@media (max-width:520px){.actnoun{display:none}.actword{padding:0 6px;font-size:12px}.actword.hasicon{width:40px;padding:0;justify-content:center}.actword.hasicon .acttext{display:none}}
+/* A narrow TILE (not a narrow window: a five-column room at 1200 has them too) gives the button's words up: the noun goes, and a button that has an icon is only the icon (its name is its aria-label), so the state beside it keeps its words whole. */
+@container (max-width:260px){.actnoun{display:none}.actword{padding:0 6px;font-size:12px}.actword.hasicon{width:40px;padding:0;justify-content:center}.actword.hasicon .acttext{display:none}}
 .keeprow .wd{font-size:14px}
 .mprog{will-change:width}
 @keyframes mprog{from{width:var(--p0)}to{width:100%}}
@@ -272,12 +272,14 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .lanes{position:absolute;inset:0;display:flex;flex-direction:column;gap:1px;pointer-events:none}
 .lane{flex:1;position:relative;transition:background-color .5s ease}
 .lane>span{position:absolute;left:0;top:0;bottom:0;transition:width .7s cubic-bezier(.2,.8,.2,1)}
-.sline{position:relative;height:100%;display:flex;align-items:center;gap:10px;padding:0 14px}
+.sline{container-type:inline-size;position:relative;height:100%;display:flex;align-items:center;gap:10px;padding:0 14px}
 .sline svg{flex:none;overflow:visible;transition:color .4s ease}
 .nv{display:flex;flex-direction:column;min-width:0;flex:0 1 auto;line-height:1.25}
 .nv b{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .nv span{font-size:12px;font-variant-numeric:tabular-nums;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow-wrap:anywhere;transition:color .4s ease}
 @media (max-width:520px){.sline{gap:8px;padding:0 11px}.nv b{font-size:13px}}
+/* In a narrow tile a name wraps to a second line before it is cut to dots: the tile is two lines tall, the name is what says which door it is. */
+@container (max-width:260px){.sline{gap:8px}.nv b{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow-wrap:anywhere;font-size:13px;line-height:1.15}}
 .track{position:relative;width:30px;height:18px;border-radius:6px;flex-shrink:0;transition:background-color .35s ease}
 .knob{position:absolute;top:3px;width:12px;height:12px;border-radius:4px;transition:left .35s cubic-bezier(.25,1,.3,1),background-color .35s ease}
 .hint{position:absolute;right:12px;bottom:6px;z-index:2;font-size:11px;font-weight:600;color:var(--muted);white-space:nowrap;padding:2px 8px;border-radius:6px;background:color-mix(in oklab,var(--surface) 88%,transparent);opacity:0;transform:translateY(3px);transition:opacity .2s ease,transform .2s ease;pointer-events:none}
@@ -474,7 +476,7 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 @media (prefers-reduced-motion:reduce){.srpanel,.morph.railing section.sec[data-sec],.morph section.sec .sechead h2,.secbg{transition:none!important}.rise,.holdbar,.nowdot,.w,.spin,.breathe,.wave,.bob,.pulse,.mprog{animation:none}.mtile,.cu-track.glide,.cu-dot,.cu-lens,.cu-bar,.todorow{transition:none}.form-night section.sec,.form-night .flh{transition:none}}
 /* A row of chips (rooms, a chart's legend, a note's words) is a row of targets on touch: 40px, like every other chip (#786). */
 @media (pointer:coarse){.morph .roomw,.morph .legend .wd,.morph .bnote .wd{min-height:40px}}
-@media (pointer:coarse),(max-width:700px){.morph input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=color]),.morph textarea,.morph select{font-size:16px}}
+.morph input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=color]),.morph textarea,.morph select{font-size:16px}
 `;
-/* The 16px text floor: below it iOS zooms the page when a field takes focus (#677). Every field Morph draws, and the same floor handed to a card's own shadow root by morph-panel.js (FIELD_FLOOR). */
-export const FIELD_FLOOR = '@media (pointer:coarse),(max-width:700px){input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=color]),textarea,select{font-size:16px!important}}';
+/* The 16px text floor, on every screen (a phone with a desktop-width page or a pointer that says it is fine still zooms): below it iOS zooms the page when a field takes focus (#677). Every field Morph draws, and the same floor handed to a card's own shadow root by morph-panel.js (FIELD_FLOOR). */
+export const FIELD_FLOOR = 'input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=color]),textarea,select{font-size:16px!important}';

@@ -2,6 +2,34 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.33
+
+### Fixed
+
+- Findings no longer show signal strengths in dBm: a reading is said in words where it stands ("has a weak signal", "with a weak signal"), and no sentence or step is dropped for holding one. A test firmware build is said as a test build of its version, never as the release itself (#855).
+- A finding names brAIn's own parts as brAIn: the in-game brAIn companion is brAIn in the game, a brAIn chat or terminal session is a conversation with brAIn in Ask, and a quick run of brAIn is simply brAIn. Words that are not about brAIn (a dishwasher's quick run, an SSH terminal session) are left as they are (#832).
+- A finding's detail or a look no longer ends in "…", on a word such as "your" or "the", or in "and N more.": a long text is cut at the last whole sentence, and a list says how many others there are (#867).
+- A finding's detail stays on its headline: Wi-Fi, link-quality or signal-strength sentences appear in the detail only when the headline is about the connection, and never come out of the step. A low-battery finding says how fast the battery usually drains and roughly when it will run out (#829).
+- The "is this fixed now?" question after an update is said in household words, with no component or internal name, names the version installed to fix it, and gives one thing to check: the report's own test, or what you asked brAIn (#830).
+
+## 5.1.32
+
+### Fixed
+
+- Closing the app or locking the phone while brAIn is answering in Ask is no longer counted as brAIn crashing. The answer carries on and is there when you come back; the log says the viewer left (#850, #841).
+- An insight card is written only from a look at the house. A chat answer that read nothing, such as "no data needed", no longer appears as a card (#856).
+- A card whose only news is that nothing happened is no longer kept on its own; a kept card names one thing to do or says all is normal in one sentence, gives each number beside what is normal, and says thermostat terms such as auxiliary heat or defrost in plain words (#866).
+
+## 5.1.31
+
+### Fixed
+
+- Morph's tiles with a button beside the name (a garage, a lock) no longer squeeze the name to a few letters when the tile is narrow on a wide screen: the button shrinks to its icon and a long name wraps to a second line (#819).
+- Morph's coloured accents used as text on the light theme are darker, so they read at the contrast text needs. Your own theme file is left as it is.
+- Every text box in Morph, including those inside cards it hosts, uses 16px text, on every screen size, not only on phones.
+- Room scene buttons have more space between them.
+- In the pictures brAIn takes of its own screens for the development loop, a missing photo's "not captured" label no longer spills over a person's name beside a small picture (#845).
+
 ## 5.1.30
 
 ### Fixed
