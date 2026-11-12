@@ -168,7 +168,7 @@ _STREET_WORDS = (
 # dog", "5 minutes to the hill") means it is prose, which used to blank a whole
 # message in a picture because it ended in "place" or "way".
 _PROSE_WORDS = (
-    "am|pm|the|and|then|so|to|a|an|of|in|on|at|by|is|it|for|with|than|that|this|"
+    "am|pm|and|then|so|to|of|in|on|at|by|is|it|for|with|than|that|this|"
     "or|but|as|if|from|until|before|after|minutes?|hours?|mins?|hrs?|degrees|"
     "times|days?|weeks?|more|less|out|up|down|off|about|around|over|under")
 ADDRESS_RE = re.compile(
