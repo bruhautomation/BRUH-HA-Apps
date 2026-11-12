@@ -2,6 +2,17 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.1.36
+
+### Added
+
+- In Morph's Edit, a switch card has an "In the title row" button that puts it in its section's title row as a button, and takes it out again, without asking brAIn (#833).
+
+### Fixed
+
+- Morph remembers what you kept: once you say No to removing, hiding or moving a card or section, or undo such a change, Morph does not propose it again, however it is worded. A card's keep lasts until you change that card. Morph never proposes removing or moving something only because it has not been used; a card whose device is gone or unavailable can still be proposed (#825, #851).
+- The development loop's pictures of Morph's Home tab show every card: rooms that would be folded are opened for the picture (#818).
+
 ## 5.1.35
 
 ### Fixed
