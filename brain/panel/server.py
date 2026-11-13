@@ -22975,7 +22975,8 @@ async def _move_finding_to_todo(finding: dict, note: str = "",
             source=finding.get("source") or "",
             source_title=finding.get("source_title") or "",
             finding_key=key,
-            run_id=finding.get("run_id") or "")
+            run_id=finding.get("run_id") or "",
+            about=findings_store.about_names(finding))
 
     item = await asyncio.to_thread(place)
     if item is None:

@@ -297,9 +297,12 @@ _OPENER_TITLES = (
     ("I want to talk with you about who you are in this house",
      "Talking about the personality"),
 )
-_SHOUTING_RE = re.compile(r"\b[A-Z]{4,}\b[\s:,-]+\b[A-Z]{3,}\b")
-_MODEL_VOICE = ("You are ", "Your job", "You answer ", "You will ", "Your task")
-MACHINE_TITLE = "A conversation brAIn started"
+# Sources whose runs are opened by a prompt brAIn built, never by a person:
+# an opener we do not recognise under one of these is still a machine's, and
+# is named by what the source is, not by its text.
+MACHINE_SOURCES = frozenset((
+    "memory", "study", "doctor", "curiosity", "triage", "resident", "gate",
+    "followup", "replay", "maintenance", "morph", "automation"))
 
 
 def _clip_title(text: str) -> str:
@@ -332,13 +335,14 @@ def _ask_about_title(raw: str) -> str:
     return _clip_title("About " + first) if first else "Something on the page"
 
 
-def readable_title(raw: str) -> str:
-    """The title a person should read for a conversation whose first message
-    is ``raw`` (newlines kept). A person's own message is itself, folded to
-    one line; anything brAIn wrote is a summary of what it was for."""
+def known_title(raw: str) -> str | None:
+    """The title for a first message that is EXACTLY one of the openers
+    brAIn itself writes, or None. Nothing here guesses from how a text
+    reads: a person's capitals, acronyms, "You are right" and "Please …"
+    are their own words and are never matched."""
     raw = str(raw or "").strip()
     if not raw:
-        return ""
+        return None
     folded = " ".join(raw.split())
     if _ASK_ABOUT_RE.match(raw):
         return _ask_about_title(raw)
@@ -360,14 +364,33 @@ def readable_title(raw: str) -> str:
         return _clip_title(f"Talking about the instruction \u201c{m.group('name')}\u201d")
     if folded.startswith(MORPH_OPENERS):
         return "A request from the dashboard"
-    if folded.startswith(_MODEL_VOICE) or _SHOUTING_RE.search(folded[:200]):
-        return MACHINE_TITLE
-    return _clip_title(folded)
+    return None
 
 
-def display_title(path: Path) -> str:
-    """The title a person should read for a conversation in the list."""
-    return readable_title(_first_prompt(path, fold=False))
+def readable_title(raw: str) -> str:
+    """The title a person should read for a conversation whose first message
+    is ``raw`` (newlines kept): a summary for an opener brAIn wrote, else the
+    person's own words folded to one line. Always the words, never a guess."""
+    raw = str(raw or "").strip()
+    if not raw:
+        return ""
+    known = known_title(raw)
+    return known if known is not None else _clip_title(" ".join(raw.split()))
+
+
+def display_title(path: Path, source: str = "") -> str:
+    """The title a person should read for a conversation in the list.
+    ``source`` is the claimed source the registry records for it: only a
+    run KNOWN to be a machine's, whose opener is not one we recognise, is
+    named by what its source is instead of by the prompt text."""
+    raw = _first_prompt(path, fold=False)
+    known = known_title(raw)
+    if known is not None:
+        return known
+    if raw and source in MACHINE_SOURCES:
+        meta = run_sources.SOURCES.get(source) or {}
+        return f"{meta.get('label', 'A background run')}: {meta.get('blurb', 'a background run')}"
+    return _clip_title(" ".join(raw.split()))
 
 
 def _first_prompt(path: Path, fold: bool = True) -> str:
@@ -456,7 +479,7 @@ def listing(cwd: str, limit: int = 30,
             continue
         out.append({
             "id": row["id"],
-            "title": display_title(row["path"]) or "(no opening message)",
+            "title": display_title(row["path"], source) or "(no opening message)",
             "modified": row["modified"],
             "age": _age(row["modified"]),
             "source": source,

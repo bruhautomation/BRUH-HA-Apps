@@ -1385,19 +1385,43 @@ def _clip_line(text: str) -> str:
     return cut.rsplit(" ", 1)[0].rstrip(" ,;:—-") + "…"
 
 
-def _things_name(row: dict, name: str, names: dict | None = None) -> str:
-    """What a To Do is about: the thing's name, or for a row filed on no one
-    entity (a check that lists several devices in `items`) the first two
-    names and a count, so the headline still names what to go and do it to."""
-    if name:
-        return name
+# How the connectivity check words a device in its detail: "Hall sensor
+# (Zigbee), quiet since Tue". A To Do filed before it kept the names is still
+# about those devices, and its detail is where they are.
+_DEVICE_IN_DETAIL_RE = re.compile(
+    r"(?:^|[:;]\s+)([^;:()]{2,60}?) \((?:Zigbee|Z-Wave|Wi-Fi)\)")
+MAX_ABOUT = 6
+
+
+def item_names(row: dict, names: dict | None = None) -> list[str]:
+    """The names of the things a row (a finding, or a To Do item) is about,
+    best source first: the names kept when it was filed (`about`), the
+    friendly names of its `items` (a check that lists several devices), and
+    the devices its detail lists. Empty only when nothing names them."""
+    kept = [str(n).strip() for n in (row.get("about") or ()) if str(n).strip()]
+    if kept:
+        return kept[:MAX_ABOUT]
     items = [str(e) for e in (row.get("items") or ()) if e]
     named = [n for n in (_display_name(e, names) for e in items) if n]
+    if named:
+        return named[:MAX_ABOUT]
+    found = _DEVICE_IN_DETAIL_RE.findall(" ".join(str(row.get("detail") or "").split()))
+    return [f.strip() for f in found][:MAX_ABOUT]
+
+
+def _things_name(row: dict, name: str, names: dict | None = None) -> str:
+    """What a To Do is about: the thing's name, or for a row filed on no one
+    entity the first two names and a count, so the headline still names what
+    to go and do it to."""
+    if name:
+        return name
+    named = item_names(row, names)
     if not named:
         return ""
-    if len(named) == 1 and len(items) == 1:
+    total = max(len(named), len([e for e in (row.get("items") or ()) if e]))
+    if total == 1:
         return named[0]
-    more = len(items) - 2
+    more = total - 2
     if more > 0:
         return f"{', '.join(named[:2])} and {more} more"
     return " and ".join(named[:2])
@@ -1443,6 +1467,9 @@ def derive_todo_text(row: dict, name: str = "") -> str:
         first = _short_errand(first)
         if plural:
             first = _ITS_RE.sub("their", _IT_RE.sub("them", first))
+        elif not name and (_IT_RE.search(first) or _ITS_RE.search(first)):
+            # Nothing names the thing: a pronoun would point at nothing.
+            first = _ITS_RE.sub("the device's", _IT_RE.sub("the device", first))
         # A short statement rides along to say what "it" is ("The battery
         # is low. Replace it."); a long one is the check's explanation, which
         # the line under the headline carries if it carries anything.
@@ -1516,7 +1543,8 @@ def _tightened_todo_text(item: dict, text: str, names: dict | None) -> str:
     eid = str(item.get("entity_id") or "")
     better = derive_todo_text(
         {"fix": item.get("fix") or text, "entity_id": eid,
-         "claim": item.get("claim") or text}, _display_name(eid, names))
+         "claim": item.get("claim") or text, "about": item.get("about"),
+         "detail": item.get("detail")}, _display_name(eid, names))
     return better if better and len(better) < len(text) else text
 
 
@@ -1560,6 +1588,14 @@ def todo_text_of(row: dict, names: dict | None = None) -> str:
         return stored
     return derive_todo_text(
         row, _display_name(str(row.get("entity_id") or ""), names))
+
+
+def about_names(finding: dict, names: dict | None = None) -> list[str]:
+    """What a finding becoming a To Do keeps of what it is about: the names
+    (never the ids) of its entity, or of the several things it lists."""
+    eid = str(finding.get("entity_id") or "")
+    one = _display_name(eid, names) if eid else ""
+    return [one] if one else item_names(finding, names)
 
 
 def clean_morph_key(value) -> str:

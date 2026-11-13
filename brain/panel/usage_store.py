@@ -37,6 +37,7 @@ import os
 import time
 
 import atomic_write
+import categories
 
 USAGE_FILE = os.environ.get("BRAIN_USAGE_FILE", "/data/usage.json")
 
@@ -199,9 +200,8 @@ _SPEND_PREFIX = (("fix-", "fixes"), ("plan-", "fixes"), ("followup-", "checks"),
 
 
 def spend_group(run_id: str) -> str:
-    """Which of the household's names a run's id is spent under. An id nobody
-    named is a card (an insight card's id is the one kind of id that is open
-    ended), which is the dashboard's; a blank one is everything else."""
+    """Which of the household's names a run's id is spent under. A source or
+    card the grouping does not know is "other", never mislabelled."""
     rid = str(run_id or "")
     if not rid:
         return "other"
@@ -210,7 +210,15 @@ def spend_group(run_id: str) -> str:
     for prefix, group in _SPEND_PREFIX:
         if rid.startswith(prefix):
             return group
-    return "dashboard"
+    # An insight card's id is the one open-ended kind of id: a built-in
+    # category, a card somebody made, a question somebody asked.
+    if rid.startswith(("user-", "custom-")) or rid in _CARD_IDS():
+        return "dashboard"
+    return "other"
+
+
+def _CARD_IDS() -> set:
+    return {c.get("id") for c in categories.CATEGORIES}
 
 
 def _breakdown(runs: list[dict], limit: int = 0) -> list[dict]:

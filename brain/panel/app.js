@@ -3916,8 +3916,15 @@ function renderDiagnostics(d) {
   const lead = faults.length || !healthOk
     ? `Something needs a look${faults.length ? `: ${faults.length} thing${faults.length > 1 ? "s" : ""} below` : ""}. `
     : "Everything works. ";
+  // When the checks behind the verdict last ran (`checks.finished_at`), not
+  // when this page was asked for: the payload's own clock is always "now".
+  const ranAt = (d.checks || {}).finished_at;
+  const when = ranAt ? checkedWords(ranAt, 1).replace(/^Checked/, "The house checks last ran")
+    : "No house check has finished a pass yet.";
+  const leadWords = !ranAt && !faults.length && healthOk
+    ? "Nothing is reported wrong. " : lead;
   const leadHtml = `<p class="testssum${faults.length || !healthOk ? " bad" : ""}">`
-    + esc(lead + checkedWords(d.generated_at, 1)) + `</p>`;
+    + esc(leadWords + when) + `</p>`;
   // The verdict first, because it is the one line somebody who is not
   // debugging should have to read. Everything below it is the evidence.
   const h = d.health || {};

@@ -172,6 +172,12 @@ def _shape(entry: dict) -> dict:
         # ever touches the ledger.
         "finding_key": _clean(entry.get("finding_key"), 240),
         "run_id": _clean(entry.get("run_id"), 120),
+        # What the chore is about by name, kept when a finding on no one
+        # entity became it (`findings_store.about_names`), because the item
+        # keeps no `items` and its headline has to name the devices.
+        **({"about": [_clean(n, 80) for n in (entry.get("about") or [])
+                      if _clean(n, 80)][:6]}
+           if isinstance(entry.get("about"), list) and entry.get("about") else {}),
         "status": status,
         "added_at": int(entry.get("added_at") or 0),
         "done_at": int(entry.get("done_at") or 0),
@@ -305,7 +311,7 @@ def add(text: str, *, detail: str = "", fix: str = "", entity_id: str = "",
         severity: str = "warning", origin: str = "hand", source: str = "",
         source_title: str = "", finding_key: str = "", run_id: str = "",
         now: float | None = None, claim: str = "",
-        from_case: str = "") -> dict | None:
+        from_case: str = "", about: list | None = None) -> dict | None:
     """Put something on the list. Returns the item, or None if it is not one.
 
     A blank line is not a chore, and neither is one past the cap: the add
@@ -334,6 +340,7 @@ def add(text: str, *, detail: str = "", fix: str = "", entity_id: str = "",
         "added_at": int(now if now is not None else time.time()),
         "claim": claim if claim and claim != text else "",
         "from_case": from_case,
+        "about": about or [],
     })
     items.append(entry)
     _write(_pruned(items))
