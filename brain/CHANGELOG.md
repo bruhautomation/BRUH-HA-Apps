@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.2.2
+
+### Changed
+
+- The test screens in ⚙ › Diagnostics and ⚙ › Developer open with one sentence on whether everything works and when it was last checked, and say when that is old. Rows have plain names, and the technical values sit in a Details fold (#881).
+- Memory › Knowledge opens on the facts search and list. Suggested reports appears once, and the maintenance rows are one Tools fold in plain words (#883).
+
+### Fixed
+
+- With Personality on, the message boxes on Ask, Knowledge and the dashboard say your assistant's name, like the rest of the page. What you typed is never rewritten (#884).
 ## 5.2.1
 
 ### Added

@@ -7,6 +7,35 @@
 
 export const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const attr = esc;
+
+// The household's name for the assistant, as every Morph surface says it
+// (`features.name` from morph/load: "brAIn" while Personality is off or before
+// the first load). A page that has it calls `setHouseName`; `speakHtml` says
+// it over the product's name in what a surface draws.
+let HOUSE_NAME = 'brAIn';
+export const houseName = () => HOUSE_NAME;
+export function setHouseName(load) {
+  const n = load && load.features && typeof load.features.name === 'string' ? load.features.name.trim() : '';
+  HOUSE_NAME = n || 'brAIn';
+  return HOUSE_NAME;
+}
+
+export const speakText = (t, name = HOUSE_NAME) => (!t || !name || name === 'brAIn' ? t : String(t).replace(/\bbrAIn\b/g, () => name));
+
+// "brAIn" (that spelling, as a word: `brain` is a path or a command) becomes
+// the name in drawn markup, attributes such as a placeholder or aria-label
+// included. What is typed in a textarea (its content) is never touched; its
+// own opening tag, where the placeholder lives, is spoken like any other.
+export function speakHtml(html, name = HOUSE_NAME) {
+  if (!html || !name || name === 'brAIn' || String(html).indexOf('brAIn') < 0) return html;
+  const safe = esc(name);
+  const say = (t) => t.replace(/\bbrAIn\b/g, safe);
+  return String(html).split(/(<textarea[^>]*>[\s\S]*?<\/textarea>)/).map((part, i) => {
+    if (!(i % 2)) return say(part);
+    const open = part.indexOf('>') + 1;
+    return say(part.slice(0, open)) + part.slice(open);
+  }).join('');
+}
 export const mix = (c, p, base) => `color-mix(in oklab, ${c} ${p}%, ${base || 'transparent'})`;
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 export const HUES = ['amber', 'sand', 'sky', 'violet', 'teal', 'lime', 'rose', 'peach', 'indigo'];
