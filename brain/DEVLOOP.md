@@ -33,11 +33,27 @@ schedule and its own **Run** button:
 | **Gaps** | Where brAIn falls short on this house, found by a read-only Claude run that reads the fault list, the scorecard and the reasons you typed when you marked a finding Wrong | no | one run |
 | **Ideas** | Features this house would use, from a read-only Claude run | no | one run |
 | **Design review** | What brAIn actually showed you (cards, findings as worded, what a look concluded), judged as a product: repeated, generic, developer-only or not worth reading. One Claude run reads the words; the Screens issue carries the pictures | no | one run |
-| **Screens** | Pictures of brAIn's own panel and of every other BRUH add-on's — GardenRX, BRUH Bambu Studio, BRUH Print, BRight and BRUH Minecraft's panels, Morph's dashboard and the add-ons' Lovelace cards, drawn on your house's real data — taken on your box and redacted (see below), at a phone's width in light and dark and at a laptop's, with the layout faults a script can measure: a page that scrolls sideways, something off the edge, a control too small to tap, a field iOS zooms into, text cut off, controls on top of each other, low contrast. One issue per add-on per release, rewritten in place, with the pictures attached and labelled for that add-on | no, weekly | nothing |
+| **Screens** | Pictures of brAIn's own panel and of every other BRUH add-on's — GardenRX, BRUH Bambu Studio, BRUH Print, BRight and BRUH Minecraft's panels, Morph's dashboard and the add-ons' Lovelace cards, drawn on your house's real data — taken on your box and redacted (see below), at a phone's width in light and dark and at a laptop's, with the layout faults a script can measure: a page that scrolls sideways, something off the edge, a control too small to tap, a field iOS zooms into, text cut off, controls on top of each other, low contrast. One issue per add-on per release, rewritten in place, with the pictures attached and labelled for that add-on. A pass that could not look (no browser, a capture that failed) is filed by **Faults** as *could not photograph*, and said under the stream in ⚙, until one succeeds | no; once for each new release (at most one capture every 6 hours) and weekly | nothing |
 | **Morph** | Problems the Morph dashboard (brAIn's Home tab) found in its own code: a card that failed to draw, sections that overlapped, a request brAIn could not carry out. Morph publishes them; this stream files them labelled `devloop:morph`, and the cloud half fixes them in `brain/morph/` and `brain/custom_components/brain/morph/`. Nothing is sent unless the Morph dashboard and the Development loop are both switched on in ⚙ › Features | yes, hourly | nothing |
 | **Other BRUH add-ons** | GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft, BRUH Cooking and BRUH Task Manager, read from outside through the Supervisor: an add-on stopped although set to start at boot, each distinct error in its log (with the lines around it), and what Home Assistant logged about its integration. Each report starts with the add-on's name and is labelled `devloop:<slug>`, which is where the cloud half fixes it, and is checked against that add-on's own version when it comes back fixed. An add-on may also publish its own faults to `/config/.bruh/devloop/<slug>.json` in Morph's row shape | yes, hourly | nothing |
+| **Walkthrough** | brAIn using what it can reach the way a person does, one app at a time: its own screens (as a phone's sidebar shows them and at a laptop's width, light and dark), Morph's cards and rooms, and each other BRUH app you switch on under **Apps brAIn looks at**. It opens every screen through the same read-only capture as Screens, judges it as somebody living here would (clear, calm, in the assistant's own voice, or a monitoring console), and files what it finds for that app | no, daily | one run per app |
+| **Liked** | What this household agreed with, thanked and kept, as counts: findings ended Done or moved to To Do by the rule or card that raised them, the assistant's check-ins answered Thanks or switched off by kind, suggestions accepted or declined by kind, fixes kept or undone, Morph changes carried out and things you said to keep, and how many conversations were opened from a finding. One issue per release, rewritten in place. It is the only stream that says what to protect: without it every report is a complaint, and every fix makes brAIn quieter | no, daily | nothing |
 
-**What do you want to fix?** is the thirteenth: say it the way you would to a
+**Apps brAIn looks at** (under the streams) is one switch per app for the
+Walkthrough: brAIn and Morph are on, and GardenRX, BRUH Bambu Studio, BRUH
+Print, BRight, BRUH Minecraft, BRUH Cooking and BRUH Task Manager are off
+until you switch them on. A look is one Claude run from the daily limit, so
+an app you do not use costs nothing. An app is looked at when its version
+is one brAIn has not looked at, the app looked at longest ago first, and
+what the day's limit does not cover is first the next day. **Look now**
+beside each app looks once, switch on or off, and says so when the day's
+runs are spent. An app that is not installed cannot be switched on.
+**Report everything without asking does not switch these on**: which apps
+are worth a run is yours to say. The free streams about the other apps
+(their faults, the canary, Screens pictures) are not changed by these
+switches.
+
+**What do you want to fix?** is the last: say it the way you would to a
 person ("the settings page is too crowded", "the brief never mentions the
 boiler") and press **Send**. One read-only Claude run works out what is
 really wrong behind it, and files **one** issue (two if you named two
@@ -71,7 +87,8 @@ fix?* run can use it too.
 **Autopilot** (the switch at the top of the section) is the one choice
 for somebody handing brAIn's development to the loop: every stream on, on
 its own schedule, nothing waiting for you to press Send, and at least 8
-Claude runs a day. Switching it off puts back exactly the
+Claude runs a day. It leaves **Apps brAIn looks at** as you set it.
+Switching it off puts back exactly the
 switches you had. It changes what the HOUSE sends; what the cloud may
 change is `.claude/devloop.json`'s.
 
@@ -182,6 +199,13 @@ The same controls are in the terminal as `brain devloop status`,
 - for **Unmet requests**, the sentence brAIn answered with when it could
   not do something, and how many times and in how many conversations it
   said it. What you typed is not sent;
+- for **Liked**, numbers beside brAIn's own names for its rules, cards and
+  kinds (`check:battery_low`, `arrival`, `automation`). No finding's text,
+  nothing you typed, no person and no entity: a rule keyed on one device
+  is counted under its family, and a check-in is counted by kind, never
+  by who it was for;
+- for the **Walkthrough**, what the Claude run wrote about the screens it
+  opened, and which app it was looking at;
 - for **Gaps** and **Ideas**, what the Claude run wrote; for *What do you
   want to fix?*, your words and what the run wrote;
 - brAIn's version and health verdict;

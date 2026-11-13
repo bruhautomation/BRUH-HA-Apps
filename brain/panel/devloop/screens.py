@@ -82,6 +82,20 @@ SCREENS: list[tuple[str, str, str]] = [
     ("settings-diagnostics", "Settings › Diagnostics",
      "openSettings().then(() => showSettingsSection('diagnostics'))"),
 ]
+# More of ⚙, photographed when asked for (the chat's screenshot tool, the
+# Walkthrough) and not on every Screens pass: each screen there is three
+# pictures under one time limit, and these are the sections a person
+# opens to change who brAIn is and what it may do.
+ASKED_SCREENS: list[tuple[str, str, str]] = [
+    ("settings-features", "Settings › Features",
+     "openSettings().then(() => showSettingsSection('features'))"),
+    ("settings-permissions", "Settings › Permissions",
+     "openSettings().then(() => showSettingsSection('permissions'))"),
+    ("settings-personality", "Settings › Personality",
+     "openSettings().then(() => showSettingsSection('personality'))"),
+    ("settings-developer", "Settings › Developer",
+     "openSettings().then(() => showSettingsSection('developer'))"),
+]
 # (width, height, touch, colour scheme). A phone in both schemes, because a
 # phone is where most people read brAIn and where dark mode is commonest,
 # and a laptop with Home Assistant's sidebar open.

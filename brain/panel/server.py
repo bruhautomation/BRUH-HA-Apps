@@ -20407,6 +20407,10 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
             else:
                 log_text = await asyncio.to_thread(reports.fetch_addon_log)
                 rows = dl_streams.faults(payload, log_text)
+                # A stream that could not look (Screens with no browser, a
+                # capture that failed) is a fault of the loop itself, and
+                # this is the stream that files faults and clears them.
+                rows += await asyncio.to_thread(up.blind_rows)
             return await asyncio.to_thread(up.ingest, "faults", rows, payload, names)
         if stream in ("scorecard", "wrongs"):
             score = await asyncio.to_thread(findings_store.scorecard)
@@ -20436,7 +20440,27 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
             rows = dl_streams.snapshot(names, payload, version)
             return await asyncio.to_thread(up.ingest, stream, rows, payload, names)
         if stream == "screens":
-            return await _devloop_screens(payload, names, version)
+            # Whatever happens to the pass, it is recorded: a pass that
+            # could not look says so (`blind`, a reason class), one that
+            # photographed brAIn's own panel says on which release.
+            try:
+                out = await _devloop_screens(payload, names, version)
+            except Exception as exc:  # noqa: BLE001 — recorded, then said
+                log.warning("devloop: the screens stream failed: %s", exc)
+                await asyncio.to_thread(up.mark_run, "screens")
+                out = {"error": f"the screens could not be captured: {exc}"[:200],
+                       "blind": "capture"}
+            if out.get("blind"):
+                await asyncio.to_thread(
+                    up.note_blind, "screens", out["blind"],
+                    str(out.get("error") or out.get("skipped") or ""))
+            elif not out.get("error"):
+                await asyncio.to_thread(up.note_photographed, version)
+            return out
+        if stream == "liked":
+            return await asyncio.to_thread(
+                up.ingest, stream,
+                await asyncio.to_thread(_devloop_liked, version), payload, names)
         if stream == "morph":
             return await _devloop_morph(payload, names)
         if stream == "siblings":
@@ -20452,6 +20476,9 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
             rows = devloop.corpus.rows(
                 await asyncio.to_thread(capture.first_looks) if on else [], on)
             return await asyncio.to_thread(up.ingest, stream, rows, payload, names)
+        if stream == "walkthrough":
+            # One run per app that is owed a look, each from the day's cap.
+            return await _devloop_walks(payload, names, pressed=pressed)
         # The Claude-run streams. A scheduled one answers to the three gates
         # every unattended run answers to; a press needs only a credential.
         # Both spend from the day's cap, which refuses rather than queues.
@@ -20488,18 +20515,6 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
                 lambda: dl_streams.design_context(
                     load_insights(),
                     (findings_store.listing() or {}).get("findings") or []))
-        if stream == "walkthrough":
-            # The ids Vesper is sent through, read off the dashboard the
-            # house runs; a missing file is said, not guessed.
-            def _targets() -> str:
-                try:
-                    text = (Path(os.environ.get("BRAIN_MORPH_DASHBOARD",
-                                                "/config/morph/dashboard.yaml"))
-                            .read_text(encoding="utf-8", errors="replace"))
-                except OSError:
-                    text = ""
-                return dl_streams.morph_targets(text)
-            topic = await asyncio.to_thread(_targets)
         result = await _claude(
             engine.run_analyst,
             dl_streams.analyst_prompt(
@@ -20539,6 +20554,222 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
     except Exception as exc:  # noqa: BLE001 — one stream, not the loop
         log.warning("devloop: the %s stream failed: %s", stream, exc)
         return {"error": str(exc)[:200]}
+
+
+# How long the list of apps the Walkthrough may look at is reused. ⚙ ›
+# Developer asks for it on every paint, and the answer is a Supervisor
+# call per BRUH add-on.
+WALK_APPS_TTL_S = 120
+_WALK_APPS: dict = {"at": 0.0, "rows": []}
+
+
+def _devloop_walk_apps(fresh: bool = False) -> list[dict]:
+    """Every app the Walkthrough may look at (`devloop.WALK_APPS`), as this
+    house has it: ``[{"key", "name", "installed", "version", "why",
+    "screens": [(slug, label)]}]``. brAIn is always here; Morph while its
+    switch is on; another BRUH add-on when the Supervisor lists it. The
+    screens are the ones the Screens stream photographs (its panel's tabs,
+    its Lovelace cards), so a look is sent through names `screenshot_panel`
+    takes. Blocking (the Supervisor); never raises."""
+    now = time.time()
+    if not fresh and _WALK_APPS["rows"] and now - _WALK_APPS["at"] < WALK_APPS_TTL_S:
+        return _WALK_APPS["rows"]
+    st = devloop.screen_targets
+    try:
+        located = st.locate(devloop.siblings._get)
+        targets = located["targets"] + st.harness_targets(
+            _own_panel_url(), located["versions"])
+    except Exception as exc:  # noqa: BLE001 — brAIn's own row still stands
+        log.info("devloop: could not list the BRUH apps: %s", exc)
+        located, targets = {"versions": {}, "unreached": {}}, []
+    own = os.environ.get("ADDON_VERSION", "dev")[:40]
+    rows = []
+    for key, spec in devloop.WALK_APPS.items():
+        name = spec["name"]
+        if key == "brain":
+            row = {"installed": True, "version": own, "why": "",
+                   "screens": [(slug, label) for slug, label, _s in
+                               devloop.screens.SCREENS + devloop.screens.ASKED_SCREENS]}
+        elif key == "morph":
+            on = st.morph_on()
+            row = {"installed": on, "version": own if on else "",
+                   "why": "" if on else "the Morph dashboard is switched off in Features",
+                   "screens": []}
+        else:
+            installed = name in located["versions"]
+            why = str(located["unreached"].get(name) or "")
+            row = {"installed": installed,
+                   "version": str(located["versions"].get(name) or ""),
+                   "why": why if installed else "not installed",
+                   "screens": [(scr["slug"], scr["label"]) for t in targets
+                               if t.get("key") == key for scr in t["screens"]]}
+        rows.append({"key": key, "name": name, **row})
+    _WALK_APPS.update(at=now, rows=rows)
+    return rows
+
+
+def _devloop_walk_rows() -> list[dict]:
+    """The apps as ⚙ › Developer lists them: each with its switch, when it
+    was last looked at, on which version, and what came of it."""
+    switched = devloop.load_settings().get("walks") or {}
+    state = devloop.upstream.walk_state()
+    out = []
+    for app in _devloop_walk_apps():
+        last = state.get(app["key"]) or {}
+        out.append({"key": app["key"], "name": app["name"],
+                    "installed": app["installed"], "version": app["version"],
+                    "why": app["why"], "screens": len(app["screens"]),
+                    "on": bool(switched.get(app["key"])),
+                    "looked_at": float(last.get("at") or 0),
+                    "looked_version": str(last.get("version") or ""),
+                    "rows": int(last.get("rows") or 0),
+                    "error": str(last.get("error") or "")})
+    return out
+
+
+def _devloop_walk_topic(app: dict) -> str:
+    """What one look is sent through: Morph's card and section ids off the
+    dashboard the house runs (a missing file is said, not guessed), any
+    other app's screens by the names the screenshot tool takes."""
+    if app["key"] != "morph":
+        return devloop.streams.screen_targets(app["name"], app["screens"])
+    try:
+        text = (Path(os.environ.get("BRAIN_MORPH_DASHBOARD",
+                                    "/config/morph/dashboard.yaml"))
+                .read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        text = ""
+    return devloop.streams.morph_targets(text)
+
+
+async def _devloop_walks(payload: dict, names: dict, *, pressed: bool = False,
+                         only: str = "") -> dict:
+    """The Walkthrough: one read-only Claude run per app, each counted
+    against the day's run cap.
+
+    A scheduled pass looks at the apps switched on in ⚙ › Developer whose
+    version has not been looked at, oldest-looked first, and stops when
+    the cap is spent: the apps left over lead the next pass
+    (`upstream.walks_due`). The stream's Run looks at every switched-on
+    app whatever its version. ``only`` is one app's "Look now": that app,
+    switch on or off, and still from the cap. Every row is filed for the
+    app the run was shown, through the review hold, the caps and the
+    redaction every stream's rows go through."""
+    dl_streams, up = devloop.streams, devloop.upstream
+    if await asyncio.to_thread(up.runs_left) <= 0:
+        # Asked first: a pass still owed is retried every tick until the
+        # cap has room, and this costs it nothing.
+        return {"skipped": "today's Claude run limit is spent"}
+    apps = await asyncio.to_thread(_devloop_walk_apps, pressed or bool(only))
+    by_key = {a["key"]: a for a in apps}
+    if only:
+        app = by_key.get(only)
+        if app is None:
+            return {"error": f"unknown app: {only}"}
+        if not app["installed"]:
+            return {"skipped": f"{app['name']} cannot be looked at: {app['why']}"}
+        due = [only]
+    else:
+        settings = await asyncio.to_thread(devloop.load_settings)
+        due = await asyncio.to_thread(
+            up.walks_due, apps, settings.get("walks") or {}, None, pressed)
+    if not due:
+        await asyncio.to_thread(up.mark_run, "walkthrough")
+        return {"skipped": "every app switched on for looking was already "
+                           "looked at on the version it runs"}
+    if not engine.get_auth():
+        return {"skipped": "there is no Claude credential"}
+    if not pressed:
+        held = _resident_gate(await asyncio.to_thread(settings_store.load))
+        if held:
+            return {"skipped": held}
+    score = await asyncio.to_thread(findings_store.scorecard)
+    unmet = await asyncio.to_thread(
+        dl_streams.unmet, Path(chat_session.TRANSCRIPT_DIR))
+    context = dl_streams.context_block(
+        payload, score, unmet,
+        await asyncio.to_thread(findings_store._load_settled))
+    products = {a["name"]: a["version"] for a in apps
+                if a["installed"] and a["name"] in devloop.siblings.PRODUCTS}
+    looked, waiting, total, added, failed = [], [], 0, 0, ""
+    for position, key in enumerate(due):
+        app = by_key[key]
+        if not await asyncio.to_thread(up.spend_run):
+            # The cap refuses rather than queues: what is left waits, and
+            # is first next time because it was looked at longest ago.
+            waiting = [by_key[k]["name"] for k in due[position:]]
+            break
+        topic = await asyncio.to_thread(_devloop_walk_topic, app)
+        result = await _claude(
+            engine.run_analyst,
+            dl_streams.analyst_prompt(
+                "walkthrough", context, topic,
+                dl_streams.reported_block(await asyncio.to_thread(up.listing)),
+                dl_streams.rejected_block(await asyncio.to_thread(up.rejected)),
+                app=("brAIn's own screens" if key == "brain"
+                     else "Morph, brAIn's dashboard" if key == "morph"
+                     else app["name"])),
+            dl_streams.walk_system(key, app["name"], bool(app["screens"]) or key == "morph"),
+            eff_model(), TIMEOUT_S, ANALYST_MAX_TURNS, "maintenance", job="devloop",
+            schema=dl_streams.reply_schema("walkthrough"),
+            priority=run_queue.PRESS if pressed else run_queue.SCHEDULED)
+        _record_usage(result, "devloop")
+        ok = bool(result and result.get("ok"))
+        rows, unreadable = dl_streams.reply_rows(
+            result, "walkthrough", topic, app["name"]) if ok else ([], "")
+        if unreadable:
+            log.warning("devloop: the look at %s could not be read (%s): %.200s",
+                        app["name"], unreadable, (result or {}).get("text") or "")
+            await asyncio.to_thread(up.note_unreadable, "walkthrough", unreadable)
+        error = ("" if ok and not unreadable else unreadable
+                 or str((result or {}).get("error") or "the run failed"))
+        if rows:
+            out = await asyncio.to_thread(up.ingest, "walkthrough", rows, payload,
+                                          names, products=products)
+            added += int(out.get("added") or 0)
+            total += len(rows)
+        await asyncio.to_thread(up.note_walk, key, app["version"], len(rows), error)
+        looked.append(app["name"])
+        failed = failed or (f"{app['name']}: {error}" if error else "")
+    if not looked:
+        return {"skipped": "today's Claude run limit is spent", "waiting": waiting}
+    out = {"stream": "walkthrough", "rows": total, "added": added,
+           "looked": looked, "waiting": waiting}
+    if waiting:
+        # Not stamped as run: the pass is still owed, and is taken up when
+        # the cap has room again, with these first.
+        out["note"] = ("today's Claude run limit is spent, so "
+                       + ", ".join(waiting) + " will be looked at next")
+    elif not only:
+        await asyncio.to_thread(up.mark_run, "walkthrough")
+    if failed and not total:
+        out["error"] = failed[:200]
+    return out
+
+
+def _devloop_liked(version: str) -> list[dict]:
+    """The Liked stream's rows: what the household agreed with, thanked and
+    kept, read from stores brAIn already has and counted by
+    `streams.liked`. Each store is its own try: one that cannot be read
+    leaves its section out and the others standing. Blocking."""
+    signals: dict = {}
+    readers = {
+        "settled": findings_store._load_settled,
+        "presence": presence.load,
+        "proposals": proposals.listing,
+        "fixes": lambda: interventions.read().get("rows") or [],
+        # Morph's suggestions file, in brAIn's own container since 4.0.
+        "morph": lambda: json.loads(Path(os.environ.get(
+            "MORPH_DATA", "/data/morph"), "suggestions.json").read_text(encoding="utf-8")),
+        "discussions": lambda: devloop.streams.discussions(
+            Path(chat_session.TRANSCRIPT_DIR)),
+    }
+    for name, read in readers.items():
+        try:
+            signals[name] = read()
+        except Exception as exc:  # noqa: BLE001 — one section, not the stream
+            log.debug("devloop liked: could not read %s: %s", name, exc)
+    return devloop.streams.liked(signals, version)
 
 
 MORPH_SHARED = Path(os.environ.get("BRAIN_MORPH_SHARED", "/config/.morph"))
@@ -20608,7 +20839,11 @@ async def _devloop_screens(payload: dict, names: dict, version: str) -> dict:
     be looked up is one that could not be blanked."""
     screens = devloop.screens
     if not screens.find_browser():
-        return {"skipped": "Chromium is not installed on this box"}
+        # Stamped as run, so a box with no browser is asked again on the
+        # stream's schedule and not on every tick.
+        await asyncio.to_thread(devloop.upstream.mark_run, "screens")
+        return {"skipped": "Chromium is not installed on this box",
+                "blind": "browser"}
     try:
         import aiohttp
 
@@ -20621,7 +20856,8 @@ async def _devloop_screens(payload: dict, names: dict, version: str) -> dict:
     if not isinstance(states, list):
         await asyncio.to_thread(devloop.upstream.mark_run, "screens")
         return {"error": ("could not read the house's calendars and addresses "
-                          "to blank them, so nothing was photographed")}
+                          "to blank them, so nothing was photographed"),
+                "blind": "states"}
     confidential = screens.confidential_strings(
         states, await asyncio.to_thread(occasions.load))
     aliases = devloop.upstream.Aliases.load()
@@ -20637,18 +20873,27 @@ async def _devloop_screens(payload: dict, names: dict, version: str) -> dict:
     except Exception as exc:  # noqa: BLE001 — a capture that failed sends nothing
         shutil.rmtree(out_dir, ignore_errors=True)
         await asyncio.to_thread(devloop.upstream.mark_run, "screens")
-        return {"error": f"the screens could not be captured: {exc}"[:200]}
+        return {"error": "the screens could not be captured: "
+                         f"{exc or type(exc).__name__}"[:200],
+                "blind": "capture"}
     await asyncio.to_thread(screens.prune, base, out_dir.name)
     rows = screens.rows(result, version, out_dir.name,
                         versions=located["versions"], unreached=located["unreached"])
     if not rows:
         await asyncio.to_thread(devloop.upstream.mark_run, "screens")
         return {"error": "no screen could be captured and redacted: "
-                         + "; ".join(_error_text(e) for e in result.get("errors") or [])[:160]}
+                         + "; ".join(_error_text(e) for e in result.get("errors") or [])[:160],
+                "blind": "redaction"}
     out = await asyncio.to_thread(devloop.upstream.ingest, "screens", rows,
                                   payload, names, products=located["versions"])
-    return {**out, "shots": len(result.get("shots") or []),
-            "problems": len(result.get("problems") or [])}
+    out = {**out, "shots": len(result.get("shots") or []),
+           "problems": len(result.get("problems") or [])}
+    if not any((s.get("product") or "brAIn") == "brAIn"
+               for s in result.get("shots") or [] if isinstance(s, dict)):
+        # The other add-ons' issues are filed, and this release's own
+        # panel is still not photographed: said, and tried again.
+        out["blind"] = "own-panel"
+    return out
 
 
 def _own_panel_url() -> str:
@@ -20714,7 +20959,8 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
         return web.json_response({"error": "Chromium is not installed on this box"},
                                  status=503)
     located = await _screen_catalog()
-    targets = [screens.own_target(_own_panel_url())] + located["targets"]
+    targets = [screens.own_target(_own_panel_url(),
+                                  screens.SCREENS + screens.ASKED_SCREENS)] + located["targets"]
     want_addon = str(body.get("addon") or "brAIn").strip().lower()
     # Home Assistant's own dashboards, a tab each: listed whenever the
     # screens are listed, and signed in for only when one is photographed.
@@ -20983,15 +21229,19 @@ def _devloop_payload() -> dict:
         "looks": {"running": DEVLOOP_LOOKS["running"],
                   "last": _devloop_last_look(queue)},
         "token_set": devloop.token_set(),
+        # The apps the Walkthrough may look at, one switch each.
+        "walks": _devloop_walk_rows(),
         "status": devloop.upstream.status(),
         # Each row says whether it is archived, and why: the panel's own
         # note (`devloop_archive`), never a change to the loop's files.
         "queue": devloop_archive.decorate(queue, settings),
         "held": _devloop_held(),
-        # A line under a stream that cannot do its job on this box.
-        "notes": ({} if devloop.screens.find_browser() else
-                  {"screens": "Chromium is not on this box, so nothing can "
-                              "be photographed."}),
+        # A line under a stream that could not look on its last try
+        # (`upstream.note_blind`), or cannot do its job on this box at all.
+        "notes": {**devloop.upstream.blind_notes(),
+                  **({} if devloop.screens.find_browser() else
+                     {"screens": "Chromium is not on this box, so nothing can "
+                                 "be photographed."})},
     }
 
 
@@ -21059,8 +21309,19 @@ async def h_devloop_put(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "expected an object"}, status=400)
     changes = {k: body[k] for k in (
-        "enabled", "autopilot", "repo", "review", "streams", "schedule",
+        "enabled", "autopilot", "repo", "review", "streams", "schedule", "walks",
         *devloop.CAP_LIMITS, *devloop.NUMBER_LIMITS, "house_login") if k in body}
+    if isinstance(changes.get("walks"), dict) and any(
+            on is True for on in changes["walks"].values()):
+        # An app that is not here cannot be switched on for looking: the
+        # switch would say brAIn looks at something it never can.
+        apps = {a["key"]: a for a in await asyncio.to_thread(_devloop_walk_apps, True)}
+        for key, on in changes["walks"].items():
+            app = apps.get(key)
+            if on is True and app is not None and not app["installed"]:
+                return web.json_response(
+                    {"error": f"{app['name']} cannot be looked at: {app['why']}"},
+                    status=400)
     try:
         await asyncio.to_thread(devloop.save_settings, changes)
     except ValueError as exc:
@@ -21127,6 +21388,36 @@ async def h_devloop_run(request: web.Request) -> web.Response:
     else:
         out = await _devloop_tick(force=True)
     return web.json_response({**out, **await asyncio.to_thread(_devloop_payload)})
+
+
+async def h_devloop_walk(request: web.Request) -> web.Response:
+    """Look now: one walkthrough of one app, ``{"app": key}``, whether or
+    not its switch is on — the press for a week with tokens to spare. It
+    still spends one of the day's Claude runs, and says so when there is
+    none left."""
+    if not await asyncio.to_thread(devloop.enabled):
+        return web.json_response({"error": "the development loop is off"},
+                                 status=409)
+    body = await _json_body(request)
+    # The key is taken from the catalog, never the caller's string.
+    app = next((k for k in devloop.WALK_APPS if k == str(body.get("app") or "")), "")
+    if not app:
+        return web.json_response({"error": "unknown app"}, status=400)
+    if devloop.upstream.STATE["running"]:
+        return web.json_response({"error": "a pass is already running"}, status=409)
+    devloop.upstream.STATE["running"] = True
+    try:
+        payload = await asyncio.to_thread(_diagnostics_payload)
+        try:
+            walked = await _devloop_walks(payload, dict(_NAMES), pressed=True, only=app)
+        except Exception as exc:  # noqa: BLE001 — said on the row, never a 500
+            log.warning("devloop: the look at %s failed: %s", app, exc)
+            walked = {"error": str(exc)[:200]}
+        sent = await asyncio.to_thread(devloop.upstream.send_due)
+    finally:
+        devloop.upstream.STATE["running"] = False
+    return web.json_response({"walked": walked, "sent": sent,
+                              **await asyncio.to_thread(_devloop_payload)})
 
 
 async def h_devloop_look(request: web.Request) -> web.Response:
@@ -29670,6 +29961,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/devloop/report", h_devloop_report)
     app.router.add_get("/api/bruh_addons", h_bruh_addons)
     app.router.add_post("/api/devloop/look", h_devloop_look)
+    app.router.add_post("/api/devloop/walk", h_devloop_walk)
     app.router.add_post("/api/devloop/stream/{name}/unslow", h_devloop_unslow)
     app.router.add_get("/api/devloop/item/{fp}", h_devloop_item)
     app.router.add_get("/api/devloop/screen/{capture}/{name}", h_devloop_screen)
