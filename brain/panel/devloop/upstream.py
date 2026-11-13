@@ -59,7 +59,7 @@ import time
 
 import atomic_write
 import reports
-from textclip import clip
+from textclip import clip, said
 
 from . import (STREAMS, WALK_APPS, data_dir, enabled, load_settings, read_token,
                stream_on)
@@ -455,7 +455,7 @@ def ingest(stream: str, rows: list[dict], diagnostics: dict | None = None,
                            now or time.time(), products or {}, tuple(unread or ()))
     except Exception as exc:  # noqa: BLE001 — see the module docstring
         log.warning("devloop %s pass failed: %s", stream, exc)
-        STATE["error"] = f"{stream} pass failed: {exc}"[:300]
+        STATE["error"] = f"{stream} pass failed: {said(exc)}"[:300]
         return {"error": STATE["error"]}
 
 
@@ -681,9 +681,10 @@ def due_streams(now: float | None = None) -> list[str]:
         if since >= hours * 3600:
             out.append(name)
         elif (name == "screens" and since >= SCREENS_RELEASE_GAP_H * 3600
-              and unphotographed(data)):
-            # A release nobody has looked at is owed now, not next week. A
-            # schedule of "only when asked" is still only when asked.
+              and (unphotographed(data) or screens_left(data))):
+            # A release nobody has looked at is owed now, not next week, and
+            # so are the screens a pass ran out of time for. A schedule of
+            # "only when asked" is still only when asked.
             out.append(name)
     return out
 
@@ -699,6 +700,33 @@ def unphotographed(data: dict | None = None) -> bool:
         return False
     shot = data.get("photographed") if isinstance(data.get("photographed"), dict) else {}
     return str(shot.get("version") or "") != running
+
+
+def screens_left(data: dict | None = None) -> list[str]:
+    """The capture targets (`screen_targets` keys) the last Screens pass
+    did not finish, for the next pass to take first (#890)."""
+    data = _load() if data is None else data
+    left = data.get("screens_left")
+    return [str(k) for k in left if isinstance(k, str)] if isinstance(left, list) else []
+
+
+def note_screens_left(keys) -> None:
+    """Record what a Screens pass did not finish; an empty list clears it.
+    While anything is left, the stream is owed another pass after
+    `SCREENS_RELEASE_GAP_H` hours (`due_streams`). Never raises."""
+    keys = [str(k)[:80] for k in keys or () if k][:100]
+    try:
+        with _LOCK:
+            data = _load()
+            if keys:
+                data["screens_left"] = keys
+            elif "screens_left" in data:
+                data.pop("screens_left", None)
+            else:
+                return
+            _save(data)
+    except Exception as exc:  # noqa: BLE001 — accounting must not fail a pass
+        log.warning("devloop: could not record the screens left: %s", said(exc))
 
 
 def note_photographed(version: str, now: float | None = None) -> None:
@@ -1201,7 +1229,7 @@ def send_due(now: float | None = None) -> dict:
             return _send_due(now or time.time())
     except Exception as exc:  # noqa: BLE001 — see the module docstring
         log.warning("devloop send failed: %s", exc)
-        STATE["error"] = f"send failed: {exc}"[:300]
+        STATE["error"] = f"send failed: {said(exc)}"[:300]
         return {"error": STATE["error"]}
 
 

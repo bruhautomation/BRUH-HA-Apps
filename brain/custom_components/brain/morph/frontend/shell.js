@@ -199,6 +199,7 @@ class BrainShell extends HTMLElement {
     this.shadowRoot.innerHTML = `<style>
 :host{display:block;position:relative;height:calc(100vh - var(--brain-shell-top,0px));height:calc(100dvh - var(--brain-shell-top,0px));overflow:hidden;overscroll-behavior:none;background:var(--brain-ground,var(--primary-background-color,#0A0C0E))}
 .inset{position:absolute;top:0;left:0;width:0;height:env(safe-area-inset-top,0px);visibility:hidden;pointer-events:none}
+.inset.foot{height:env(safe-area-inset-bottom,0px)}
 iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:block;background:transparent;z-index:1}
 iframe[hidden]{display:none}
 .home{position:absolute;left:0;right:0;top:var(--brain-top,0px);bottom:var(--brain-bottom,0px);z-index:2;overflow:hidden;overscroll-behavior:none;--morph-h:calc(100vh - var(--brain-shell-top,0px) - var(--brain-top,0px) - var(--brain-bottom,0px));--morph-h:calc(100dvh - var(--brain-shell-top,0px) - var(--brain-top,0px) - var(--brain-bottom,0px));--morph-rail-h:calc(100dvh - var(--brain-shell-top,0px) - var(--brain-shown-top,0px) - var(--brain-bottom,0px));--morph-rail-top:calc(var(--brain-shown-top,0px) - var(--brain-top,0px));--morph-rail-ease:none}
@@ -209,11 +210,12 @@ iframe[hidden]{display:none}
 .say{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;font:16px/1.5 system-ui,sans-serif;color:var(--primary-text-color,#e6e6e6)}
 .say[hidden]{display:none}
 .say a{color:var(--primary-color,#4fb3ff)}
-</style><iframe title="brAIn" allow="clipboard-read; clipboard-write; microphone; fullscreen" hidden></iframe><div class="home" hidden></div><div class="say" role="status">Opening brAIn…</div><div class="inset" aria-hidden="true"></div>`;
+</style><iframe title="brAIn" allow="clipboard-read; clipboard-write; microphone; fullscreen" hidden></iframe><div class="home" hidden></div><div class="say" role="status">Opening brAIn…</div><div class="inset" aria-hidden="true"></div><div class="inset foot" aria-hidden="true"></div>`;
     this.frame = this.shadowRoot.querySelector('iframe');
     this.homeEl = this.shadowRoot.querySelector('.home');
     this.sayEl = this.shadowRoot.querySelector('.say');
     this.insetEl = this.shadowRoot.querySelector('.inset');
+    this.footEl = this.shadowRoot.querySelector('.inset.foot');
   }
 
   // How much of the phone's top safe area (the status bar's and the
@@ -232,6 +234,17 @@ iframe[hidden]{display:none}
     const env = this.insetEl.getBoundingClientRect().height;
     const top = this.getBoundingClientRect().top;
     return Math.max(0, Math.round(env - Math.max(0, top)));
+  }
+
+  // The same for the bottom safe area (the home indicator's strip), for
+  // Ask's message boxes (`state.insetBottom`, #876): only the part of it
+  // the panel's foot lies over, so an app that already stops its page
+  // above the indicator is not padded for it twice.
+  insetBottom() {
+    if (!this.footEl) return 0;
+    const env = this.footEl.getBoundingClientRect().height;
+    const below = window.innerHeight - this.getBoundingClientRect().bottom;
+    return Math.max(0, Math.round(env - Math.max(0, below)));
   }
 
   say(html) {
@@ -346,7 +359,7 @@ iframe[hidden]{display:none}
     // Morph's Edit belongs in the header while Morph is mounted and the
     // person may edit it (or is editing it).
     const edit = !!(morph && this.morph && (c.admin || c.edit));
-    this.post({ state: { narrow: !!this._v.narrow, morph, view: home ? 'home' : 'panel', theme, inset: this.inset(),
+    this.post({ state: { narrow: !!this._v.narrow, morph, view: home ? 'home' : 'panel', theme, inset: this.inset(), insetBottom: this.insetBottom(),
                          clock: this.clock(), home: { edit, editing: !!c.edit, yaml: !!c.yaml } } });
   }
 

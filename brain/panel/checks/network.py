@@ -49,8 +49,9 @@ import re
 from numfmt import count
 
 from ._registry_facts import SELF_PLATFORMS, entry_not_loaded, is_node_status
-from ._util import (DAY, SOFTWARE_DOMAINS, CouldNotLook, House,
-                    after_restart, domain_of, num, without_mac, parse_ts, when)
+from ._util import (DAY, RESTART_WINDOW_S, SOFTWARE_DOMAINS, CouldNotLook,
+                    House, after_restart, domain_of, ha_starts, num,
+                    without_mac, parse_ts, when)
 
 # The integration whose trackers are the Wi-Fi clients.
 UNIFI_PLATFORMS = frozenset({"unifi"})
@@ -1009,6 +1010,26 @@ MATTER_EMPTY_TEXT = "Matter is set up with nothing on it"
 # Below this a BLE advertisement is barely heard: one wall more, or a
 # fridge door, and the device drops out between readings.
 BLUETOOTH_FAINT_DBM = -90
+# A signal is a level that moves around its line, and one reading under it
+# is not a device with a problem (#877: a device filed on one pass and
+# cleared on the next). A device is faint once it has read at or under the
+# floor on passes spanning `BLUETOOTH_PERSIST_S`, and stays faint until it
+# reads more than `BLUETOOTH_RECOVER_DB` above it (`stamp_faint`).
+BLUETOOTH_PERSIST_S = 2 * 3600
+BLUETOOTH_RECOVER_DB = 5
+# And a faint number is not a fault on its own: a device heard at -95 dBm
+# that reports at its usual pace is fine (#877: well over a thousand
+# readings a day, filed as "late or not at all"). The evidence is Home
+# Assistant's own verdict that its readings stopped arriving: the device
+# went unavailable at least `BLUETOOTH_MIN_DROPS` times in the past
+# `BLUETOOTH_HISTORY_HOURS`, or it is unavailable now.
+BLUETOOTH_HISTORY_HOURS = 48
+BLUETOOTH_MIN_DROPS = 2
+BLUETOOTH_FETCH_MAX = 80
+BLUETOOTH_ENTITIES_PER_DEVICE = 4
+# A device the household answered Done or To Do about is filed again, in
+# new words, only when it is this much fainter than when they answered.
+BLUETOOTH_WORSE_DB = 8
 
 
 def _loaded(snap: dict, domain: str) -> list[dict]:
@@ -1100,10 +1121,115 @@ def _proxies_said(proxies: list[dict]) -> str:
     return (f" This house's Bluetooth proxies: {listed}.")
 
 
-def bluetooth_faint(snap: dict, now: float) -> list[dict]:
-    house = House(snap)
+def stamp_faint(heard: dict, addresses: set[str], ledger: dict | None,
+                now: float) -> dict:
+    """``{address: first read faint}`` for the registered Bluetooth devices
+    (``addresses``) heard faintly on this pass, carried across passes by
+    the collector (`snapshot._stamp_bluetooth`). A device already faint
+    stays faint until it reads more than `BLUETOOTH_RECOVER_DB` above the
+    floor; one that has not been heard, or reads above that, drops out.
+    A new one is stamped now — including on the first pass after an
+    update, so one reading is never persistence."""
+    ledger = ledger or {}
+    out: dict = {}
+    for addr, rssi in (heard or {}).items():
+        addr = str(addr).lower()
+        if addr not in addresses or not isinstance(rssi, (int, float)):
+            continue
+        line = BLUETOOTH_FAINT_DBM + (BLUETOOTH_RECOVER_DB if addr in ledger else 0)
+        if rssi <= line:
+            since = ledger.get(addr)
+            out[addr] = float(since) if isinstance(since, (int, float)) else float(now)
+    return out
+
+
+def _bt_registered(snap: dict) -> set[str]:
+    return {m for d in snap.get("devices") or () if isinstance(d, dict)
+            for m in _bt_macs(d)}
+
+
+def _bt_candidates(snap: dict, house: House) -> list[tuple[str, dict, list[str]]]:
+    """``[(device_id, device, [entity_id])]`` for every registered Bluetooth
+    device that is not a proxy and is heard near or under the floor: what
+    the collector fetches history for and what the check judges, so the
+    two agree (`bluetooth_history_candidates`)."""
     heard = {str(a).lower(): r for a, r in
              ((snap.get("bluetooth") or {}).get("rssi") or {}).items()}
+    proxy_ids = {p["device"] for p in bluetooth_proxies(snap, house)}
+    out = []
+    for dev_id, dev in sorted(house.devices.items()):
+        if dev_id in proxy_ids:
+            continue
+        rssi = [heard[m] for m in _bt_macs(dev)
+                if isinstance(heard.get(m), (int, float))]
+        if not rssi or max(rssi) > BLUETOOTH_FAINT_DBM + BLUETOOTH_RECOVER_DB:
+            continue
+        ents = [str(r.get("entity_id")) for r in house.entities
+                if r.get("device_id") == dev_id and r.get("entity_id")
+                and not r.get("disabled_by")]
+        if ents:
+            out.append((dev_id, dev, ents[:BLUETOOTH_ENTITIES_PER_DEVICE]))
+    return out
+
+
+def bluetooth_history_candidates(snap: dict) -> list[str]:
+    """The entities whose recent history says whether a faint Bluetooth
+    device's readings arrive: what the collector fetches and
+    `bluetooth_faint` reads."""
+    out: list[str] = []
+    for _id, _dev, ents in _bt_candidates(snap, House(snap)):
+        out.extend(ents)
+    return out[:BLUETOOTH_FETCH_MAX]
+
+
+def _bt_drops(hist: dict, ents: list[str]) -> list[float]:
+    """The moments a device went unavailable: any of its entities, one
+    moment for entities that went together."""
+    out: list[float] = []
+    for t in sorted(t for e in ents for t in _went_down(_rows(hist, e))):
+        if not out or t - out[-1] > MASS_WINDOW_S:
+            out.append(t)
+    return out
+
+
+def _bt_missed(snap: dict, ents: list[str], now: float,
+               mass: list[float]) -> dict | None:
+    """When a device's readings stopped arriving in the window: ``{drops:
+    [ts], down: bool}`` — the moments it went unavailable, less any at a
+    moment many devices went together or round a restart of Home Assistant
+    (neither is this device's signal), and whether its newest reading is
+    unavailable. None when the recorder had none of its entities: no
+    evidence either way."""
+    hist = (snap.get("bluetooth_history") or {}).get("entities") or {}
+    have = [e for e in ents if e in hist]
+    if not have:
+        return None
+    start = now - BLUETOOTH_HISTORY_HOURS * 3600
+    starts = ha_starts(snap)
+    drops = [t for t in _bt_drops(hist, have)
+             if t >= start and not _near(t, mass)
+             and not any(abs(t - s) <= RESTART_WINDOW_S for s in starts)]
+    down = any((_rows(hist, e) or [(0, "")])[-1][1] == "unavailable"
+               for e in have)
+    return {"drops": drops, "down": down}
+
+
+def bluetooth_faint(snap: dict, now: float) -> list[dict]:
+    house = House(snap)
+    bt = snap.get("bluetooth") or {}
+    heard = {str(a).lower(): r for a, r in (bt.get("rssi") or {}).items()}
+    # Read faint on passes spanning `BLUETOOTH_PERSIST_S` (`stamp_faint`).
+    # A snapshot nothing stamped cannot say a reading persisted, and one
+    # reading is not a finding.
+    since = {str(a).lower(): v for a, v in (bt.get("faint_since") or {}).items()
+             if isinstance(v, (int, float))}
+    candidates = _bt_candidates(snap, house)
+    # Many devices dropping out at one moment is a restart or the adapter,
+    # never each device's own signal.
+    hist = (snap.get("bluetooth_history") or {}).get("entities") or {}
+    every = {dev_id: _bt_drops(hist, ents) for dev_id, _d, ents in candidates}
+    mass = _mass_moments(every, max(3, len(every) // 2)) if every else []
+    ents_of = {dev_id: ents for dev_id, _d, ents in candidates}
     # What already relays Bluetooth here, and whether it answers — read
     # before any step suggests new hardware (#770).
     proxies = bluetooth_proxies(snap, house)
@@ -1113,29 +1239,32 @@ def bluetooth_faint(snap: dict, now: float) -> list[dict]:
     listed = _proxies_said(proxies)
     faint = []
     for dev_id, dev in sorted(house.devices.items()):
-        if dev_id in proxy_ids:
+        if dev_id in proxy_ids or dev_id not in ents_of:
             continue
-        rssi = [heard[m] for m in _bt_macs(dev)
-                if isinstance(heard.get(m), (int, float))]
-        if not rssi or max(rssi) > BLUETOOTH_FAINT_DBM:
+        macs = _bt_macs(dev)
+        rssi = [heard[m] for m in macs if isinstance(heard.get(m), (int, float))]
+        stamps = [since[m] for m in macs if m in since]
+        if not rssi or not stamps or now - min(stamps) < BLUETOOTH_PERSIST_S:
             continue
-        entity = next((str(r.get("entity_id")) for r in house.entities
-                       if r.get("device_id") == dev_id and r.get("entity_id")),
-                      "")
-        if not entity or not house.should_report(entity, "net.bluetooth_faint"):
+        entity = ents_of[dev_id][0]
+        if not house.should_report(entity, "net.bluetooth_faint"):
             continue
-        faint.append((max(rssi), dev, entity))
+        missed = _bt_missed(snap, ents_of[dev_id], now, mass)
+        if missed is None or not (missed["down"]
+                                  or len(missed["drops"]) >= BLUETOOTH_MIN_DROPS):
+            continue
+        faint.append((max(rssi), dev, entity, missed))
     rows = []
     # One cause, one row: every device heard faintly in the room of a
     # proxy that is offline is that proxy's to fix.
     near: dict[str, list] = {}
     alone = []
-    for rssi, dev, entity in faint:
+    for rssi, dev, entity, missed in faint:
         proxy = by_room.get(house.area_id_of(entity))
         if proxy:
             near.setdefault(proxy["device"], []).append((rssi, dev, entity))
         else:
-            alone.append((rssi, dev, entity))
+            alone.append((rssi, dev, entity, missed))
     for proxy in offline:
         group = near.get(proxy["device"])
         if not group:
@@ -1168,16 +1297,31 @@ def bluetooth_faint(snap: dict, now: float) -> list[dict]:
              "it is a Bluetooth proxy this house already has, and it is "
              "offline. If it is still faint after that, "
              if offline else "")
-    for rssi, dev, entity in alone:
+    for rssi, dev, entity, missed in alone:
         step = ("move the Bluetooth adapter or an ESPHome Bluetooth proxy "
                 "closer to it, or add a proxy in that room; a USB adapter "
                 "on an extension cable away from USB 3 ports helps too.")
+        name = house.device_name(dev)
+        # Answered Done or To Do and still faint is the answer holding
+        # (`findings_store.HELD_THROUGH_DONE`); much fainter than it was
+        # then is news, said in new words so the answer does not swallow it.
+        at = house.acknowledged_level(entity, "net.bluetooth_faint")
+        worse = (house.acknowledged(entity, "net.bluetooth_faint")
+                 and at is not None and rssi <= at - BLUETOOTH_WORSE_DB)
+        drops = missed["drops"]
+        lost = (f"it went unavailable {count(len(drops), 'time')} in the past "
+                f"{BLUETOOTH_HISTORY_HOURS} hours, last {when(drops[-1])}"
+                if drops else "")
+        if missed["down"]:
+            lost = (lost + ", and is unavailable now") if lost else \
+                "it is unavailable now"
         rows.append({
-            "text": f"{house.device_name(dev)} is barely heard over Bluetooth",
+            "text": (f"{name} is heard ever more faintly over Bluetooth"
+                     if worse else f"{name} is barely heard over Bluetooth"),
             "detail": (f"The strongest receiver hears it at {rssi:g} dBm "
-                       f"(at or under {BLUETOOTH_FAINT_DBM} is faint), so its "
-                       "readings arrive late or not at all."
-                       + house.placed(entity, house.device_name(dev))
+                       f"(at or under {BLUETOOTH_FAINT_DBM} is faint), and its "
+                       f"readings are not all arriving: {lost}."
+                       + house.placed(entity, name)
                        + listed),
             "fix": first + step if first else step[:1].upper() + step[1:],
             "severity": "info",
@@ -1227,6 +1371,7 @@ CHECKS = [
     {"id": "net.bluetooth_faint", "area": "networks",
      "title": "Bluetooth devices heard only faintly",
      "source_title": BLUETOOTH,
-     "needs": ("registry", "config_entries", "bluetooth"),
+     "needs": ("registry", "config_entries", "bluetooth", "bluetooth_history"),
+     "reads_history": True,
      "absent": bluetooth_absent, "run": bluetooth_faint},
 ]

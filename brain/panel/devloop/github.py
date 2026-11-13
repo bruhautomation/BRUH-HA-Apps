@@ -19,6 +19,8 @@ import re
 import urllib.error
 import urllib.request
 
+from textclip import said
+
 from . import REPO_RE
 
 API = os.environ.get("BRAIN_GITHUB_API", "https://api.github.com").rstrip("/")
@@ -51,7 +53,7 @@ def _call(token: str, method: str, path: str, payload: dict | None = None,
         raw = exc.read(200_000) if exc.fp else b""
         status = exc.code
     except (urllib.error.URLError, OSError, ValueError) as exc:
-        return 0, {"message": f"could not reach GitHub: {exc}"}
+        return 0, {"message": f"could not reach GitHub: {said(exc)}"}
     try:
         body = json.loads(raw.decode("utf-8", "replace")) if raw else {}
     except ValueError:
