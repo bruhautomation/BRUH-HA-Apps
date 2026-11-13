@@ -2,6 +2,23 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.2.0
+
+### Added
+
+- brAIn keeps one paragraph about how it has learned to be in your house, and revises it overnight from how you talk with it in Ask and how you answer it. It is in ⚙ › Personality under "How brAIn is growing", with Undo, Edit and Clear. Your own name and personality text are never rewritten.
+- The morning brief, the weekly report, reports on things brAIn looked into and notifications that can wait are written in the personality you gave it. Facts, numbers and what to do are unchanged, and anything urgent stays plain.
+- Memory › Knowledge › "What brAIn brings to a run" lists two more kinds of run: what brAIn tells you unprompted, and the nightly reflection, including the Ask exchanges it reads.
+
+### Changed
+
+- The nightly reflection reads your recent exchanges with brAIn in Ask (your messages and its replies, cut short), not only conversation titles, and runs on a stronger model. Switch off the Learning loop in ⚙ › Features and it does not run.
+- Ask and voice carry the whole learned paragraph, where they used to get one clipped note.
+
+### Fixed
+
+- brAIn's personality could not really change: its nightly reflection saw only conversation titles and its notes barely reached any prompt.
+
 ## 5.1.38
 
 ### Fixed
