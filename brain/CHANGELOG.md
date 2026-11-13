@@ -2,6 +2,20 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.2.1
+
+### Changed
+
+- ⚙ › Model & usage says where the session went in household words (Chats, House checks, Dashboard and insight cards, Voice…) with each one's share, and no run ids or token counts; the per-run rows stay in ⚙ › Developer. The model and thinking choices are rows that show their whole text on a phone, where a closed menu cut them off (#880).
+- The test screens in ⚙ › Diagnostics and ⚙ › Developer open with one sentence on whether everything works and when it was last checked, and say when that is old. Rows have plain names, and the technical values sit in a Details fold (#881).
+- Memory › Knowledge opens on the facts search and list. Suggested reports appears once, and the maintenance rows are one Tools fold in plain words (#883).
+
+### Fixed
+
+- A To Do item made from a finding has a short headline that names the device and the job, one line under it, and says nothing twice (#879).
+- Chats that brAIn opened for you (an Ask about something, Personality's and Instructions' Ask, Talk it through, a request from the dashboard) are titled by what they are about, never by the prompt text behind them (#882).
+- With Personality on, the message boxes on Ask, Knowledge and the dashboard say your assistant's name, like the rest of the page. What you typed is never rewritten (#884).
+
 ## 5.2.0
 
 ### Added
