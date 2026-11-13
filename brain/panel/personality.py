@@ -12,7 +12,18 @@ voice prompt, and served at `GET /api/personality` for Morph to read.
     {"name": "…", "voice": "…", "persona": "…",
      "growth": [{"date": "YYYY-MM-DD", "at": 1700000000, "text": "…",
                  "by": "self"}],
+     "learned": {"text": "…", "updated_at": 1700000000, "by": "self",
+                 "history": [{"at": 1690000000, "text": "…", "by": "self"}]},
      "updated_at": 1700000000, "morph_import": 1700000000 | false}
+
+`learned` is "how I have learned to be in this house": ONE paragraph the
+assistant keeps up itself (the presence loop's nightly reflection proposes
+the whole of it, `presence.write_learned`), the current state where the
+growth notes are the dated trail. `by` says who wrote the version: "self",
+or "household" when somebody corrected it in ⚙ › Personality. `history` is
+the versions it replaced, oldest first, which is what Undo steps back
+through. The name and the persona are the household's and nothing the
+assistant writes ever touches them.
 
 `by` is on a note the assistant wrote itself (the presence loop), and
 `morph_import` is the `updated_at` of the import from Morph's copy while the
@@ -65,8 +76,16 @@ PERSONA_MAX = 32000
 OLD_PERSONA_MAX = 4000
 GROWTH_TEXT_MAX = 500
 GROWTH_MAX = 200
-# What a file may be before it is not read at all: a persona and two hundred
-# entries are well under this, and a file past it is not one we wrote.
+# The learned paragraph: one paragraph, so a cap a paragraph fits in (it is
+# carried whole by every chat turn, every voice request and every writer
+# prompt), and the versions Undo can step back through.
+LEARNED_MAX = 1200
+LEARNED_HISTORY = 10
+# Who wrote a version of it that was not the assistant: somebody in ⚙.
+HOUSEHOLD = "household"
+# What a file may be before it is not read at all: a persona, two hundred
+# entries and eleven paragraphs are well under this, and a file past it is
+# not one we wrote.
 READ_MAX_BYTES = 256 * 1024
 MORPH_READ_MAX_BYTES = 512 * 1024
 
@@ -78,6 +97,14 @@ PROMPT_GROWTH_ENTRIES = 3
 # …and of the assistant's own notes, apart from those: one.
 PROMPT_SELF_ENTRIES = 1
 PROMPT_GROWTH_CHARS = 200
+# What a WRITER prompt carries of the persona (`voice_block`): its opening,
+# not the whole. The chat reads the persona once per conversation; the
+# brief, an investigation and the lock-screen wording are runs that happen
+# many times a day on small prompts, and a 32,000-character persona on each
+# would be most of what they are handed. An outline leads with who it is
+# and how it speaks, which is what tone needs; the learned paragraph rides
+# whole beside it.
+VOICE_PERSONA_CHARS = 1500
 
 # Who wrote a growth entry when it was not the household: the assistant
 # itself, in the presence loop's nightly reflection (`presence.py`).
@@ -160,6 +187,38 @@ def clean_growth(rows) -> list[dict]:
     return out[-GROWTH_MAX:]
 
 
+def _stamp(value) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return 0
+    return int(value / 1000 if value > 1e12 else value)
+
+
+def _author(value) -> str:
+    return HOUSEHOLD if value == HOUSEHOLD else SELF
+
+
+def clean_learned(raw) -> dict:
+    """The learned paragraph as stored: `{text, updated_at, by, history}`,
+    every part capped, whatever was in the file. Absent (every file from
+    before it existed) or malformed is the empty one."""
+    raw = raw if isinstance(raw, dict) else {}
+    text = _block(raw.get("text") if isinstance(raw.get("text"), str) else "",
+                  LEARNED_MAX)
+    history = []
+    for row in raw.get("history") if isinstance(raw.get("history"), list) else []:
+        if not isinstance(row, dict) or not isinstance(row.get("text"), str):
+            continue
+        was = _block(row["text"], LEARNED_MAX)
+        if was:
+            history.append({"at": _stamp(row.get("at")), "text": was,
+                            "by": _author(row.get("by"))})
+    out = {"text": text, "updated_at": _stamp(raw.get("updated_at")),
+           "history": history[-LEARNED_HISTORY:]}
+    if text:
+        out["by"] = _author(raw.get("by"))
+    return out
+
+
 def normalise(data) -> dict:
     """Any parsed shape as the stored one, every field capped."""
     data = data if isinstance(data, dict) else {}
@@ -171,6 +230,7 @@ def normalise(data) -> dict:
         "voice": _one_line(data.get("voice"), VOICE_MAX),
         "persona": _block(data.get("persona"), PERSONA_MAX),
         "growth": clean_growth(data.get("growth")),
+        "learned": clean_learned(data.get("learned")),
     }
     # The voices a later answer replaced, oldest first: what a line of
     # brAIn's own files may still name (`self_care.voice_conflicts`, #769).
@@ -450,6 +510,97 @@ def remove_growth(at, text, path: str | None = None) -> bool:
     return True
 
 
+def learned_refusal(text, path: str | None = None) -> str:
+    """Why `set_learned` would refuse this, as the sentence a person reads,
+    or ""."""
+    if not isinstance(text, str) or not text.strip():
+        return "write the paragraph, or use Clear"
+    if len(text.strip()) > LEARNED_MAX:
+        return f"the paragraph is at most {LEARNED_MAX} characters"
+    if not writable(path or STORE):
+        return "brAIn's config folder is not there to save into"
+    return ""
+
+
+def _replace_learned(data: dict, text: str, by: str, at: int) -> None:
+    """Put a new version in place; the one it replaces joins the history."""
+    was = data.get("learned") or clean_learned(None)
+    history = list(was.get("history") or [])
+    if was.get("text"):
+        history.append({"at": int(was.get("updated_at") or 0),
+                        "text": was["text"], "by": _author(was.get("by"))})
+    data["learned"] = clean_learned({"text": text, "updated_at": at, "by": by,
+                                     "history": history})
+    data["updated_at"] = at
+    data["morph_import"] = False
+
+
+def set_learned(text, by: str = SELF, when: float | None = None,
+                path: str | None = None) -> dict:
+    """Replace the learned paragraph with a whole new version, keeping the
+    one it replaces for Undo. Returns the stored `learned`. Raises
+    ValueError on nothing to say, a paragraph past the cap (refused, never
+    shortened: a clipped paragraph is not the one that was written) or
+    nowhere to write. The same words again are not a new version. Nothing
+    here touches the name, the persona, the voice or the growth log."""
+    import atomic_write  # noqa: PLC0415 — panel-local
+
+    target = path or STORE
+    refusal = learned_refusal(text, target)
+    if refusal:
+        raise ValueError(refusal)
+    words = _block(text, LEARNED_MAX)
+    at = int(when if when is not None else time.time())
+    with atomic_write.locked(target):
+        data = load(target)
+        if data["learned"]["text"] == words:
+            return data["learned"]
+        _replace_learned(data, words, _author(by), at)
+        _write(data, target)
+    return data["learned"]
+
+
+def clear_learned(path: str | None = None) -> bool:
+    """Empty the learned paragraph. The version cleared is kept, so Undo
+    brings it back. Whether there was one to clear."""
+    import atomic_write  # noqa: PLC0415 — panel-local
+
+    target = path or STORE
+    if not writable(target):
+        return False
+    with atomic_write.locked(target):
+        data = load(target)
+        if not data["learned"]["text"]:
+            return False
+        _replace_learned(data, "", HOUSEHOLD, int(time.time()))
+        _write(data, target)
+    return True
+
+
+def undo_learned(path: str | None = None) -> bool:
+    """Step the learned paragraph back to the version before it, in one
+    press. The version stepped away from is dropped: Undo again goes one
+    further back. Whether there was one to go back to."""
+    import atomic_write  # noqa: PLC0415 — panel-local
+
+    target = path or STORE
+    if not writable(target):
+        return False
+    with atomic_write.locked(target):
+        data = load(target)
+        history = list(data["learned"].get("history") or [])
+        if not history:
+            return False
+        back = history.pop()
+        data["learned"] = clean_learned({
+            "text": back["text"], "updated_at": back.get("at") or 0,
+            "by": back.get("by"), "history": history})
+        data["updated_at"] = int(time.time())
+        data["morph_import"] = False
+        _write(data, target)
+    return True
+
+
 # A growth note saying which voice brAIn now speaks with, said outright:
 # "the spoken voice changed from A to B", "my voice is now B", "switched the
 # voice to B", "speaks with the B voice". Anything looser took ordinary
@@ -559,12 +710,19 @@ def payload(path: str | None = None) -> dict:
         "persona": data["persona"],
         "voice": data.get("voice") or "",
         "growth": list(reversed(data["growth"])),
+        # The paragraph it keeps about how to be here, without its older
+        # versions: the page needs only whether there is one to go back to.
+        "learned": {"text": data["learned"]["text"],
+                    "updated_at": data["learned"]["updated_at"],
+                    "by": data["learned"].get("by") or "",
+                    "can_undo": bool(data["learned"]["history"])},
         "updated_at": data.get("updated_at") or 0,
         "summary": summary(data),
         "cut_at_old_limit": looks_cut(data["persona"]),
         "path": path or STORE,
         "limits": {"name": NAME_MAX, "persona": PERSONA_MAX,
-                   "growth": GROWTH_TEXT_MAX, "voice": VOICE_MAX},
+                   "growth": GROWTH_TEXT_MAX, "voice": VOICE_MAX,
+                   "learned": LEARNED_MAX},
     }
 
 
@@ -660,6 +818,12 @@ def prompt_block(data: dict | None = None) -> str:
         parts.append(f"Your spoken voice is {data['voice']}; where any other "
                      "instruction names a different voice, this one stands.")
     text = " ".join(parts)
+    # The paragraph it keeps itself, whole: the current state of how it has
+    # learned to be here. The growth notes under it are the dated trail.
+    learned = _learned_text(data)
+    if learned:
+        text += ("\nHow you have learned to be in this house (your own "
+                 "paragraph, which you revise as you learn):\n" + learned)
     growth = prompt_growth(data.get("growth") or [])
     if growth:
         lines = [f"- {g.get('date') or 'undated'}"
@@ -668,6 +832,61 @@ def prompt_block(data: dict | None = None) -> str:
                  for g in growth]
         text += "\nHow you have grown, most recent last:\n" + "\n".join(lines)
     return text
+
+
+def _learned_text(data: dict | None) -> str:
+    learned = (data or {}).get("learned")
+    text = learned.get("text") if isinstance(learned, dict) else ""
+    return _block(text if isinstance(text, str) else "", LEARNED_MAX)
+
+
+# The rule every writer prompt carries with the voice, fixed here so no
+# prompt words its own: the persona may change how a sentence sounds and
+# nothing about what it says.
+VOICE_RULE = (
+    "This shapes TONE AND WORD CHOICE ONLY. Every fact, number, name and "
+    "recommendation stays exactly what the data supports, and every rule "
+    "above still holds: the length, the format, no greeting or sign-off "
+    "where none is allowed, privacy. Never invent warmth, humour or "
+    "reassurance about a problem. Short stays short: the voice never adds "
+    "a sentence, and where there is no room for it, write plainly. "
+    "Anything about safety (smoke, gas, water, a lock, an alarm, a door "
+    "left open) is said plainly and first, with none of the personality.")
+
+
+def voice_block(data: dict | None = None) -> str:
+    """What a WRITER prompt carries so that what brAIn says unprompted (the
+    morning brief, a report on something it looked into, a lock-screen
+    message, the weekly report) sounds like the assistant the household
+    named: the name, the opening of the persona, the learned paragraph
+    whole, and `VOICE_RULE`. "" when Personality is switched off or none
+    is set. Never raises: an unreadable file is no voice, and the prompt
+    is the plain one it always was."""
+    try:
+        if not enabled():
+            return ""
+        data = load() if data is None else data
+        if not is_set(data):
+            return ""
+        lines = ["THE VOICE TO WRITE IN. The household gave brAIn a name "
+                 "and a personality (⚙ › Personality), and what you write "
+                 "is read as coming from it."]
+        if data.get("name"):
+            lines.append(f"Its name here is {data['name']}. Keep writing "
+                         "\"brAIn\" where the rules above say to: it is "
+                         "shown under that name.")
+        persona = _clip(data.get("persona") or "", VOICE_PERSONA_CHARS)
+        if persona:
+            lines.append("Its personality, in the household's words:\n"
+                         + persona)
+        learned = _learned_text(data)
+        if learned:
+            lines.append("How it has learned to be in this house (its own "
+                         "paragraph):\n" + learned)
+        lines.append(VOICE_RULE)
+        return "\n".join(lines)
+    except Exception:  # noqa: BLE001 — a voice is a nicety, never a failure
+        return ""
 
 
 # ---- the one-time read of Morph's copy ---------------------------------------

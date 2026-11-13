@@ -1633,6 +1633,9 @@ body.modal-open {
 .devstreamwhen {
   grid-column: 1 / -1; min-width: 0; font-size: var(--fs-meta); color: var(--ink-3);
 }
+/* An app the Walkthrough looks at: the same card, its foot holding the
+   version it runs beside Look now. */
+.devwalkver { min-width: 0; font-size: var(--fs-meta); color: var(--ink-3); }
 #setModal .devstreamfoot .sel { width: 100%; min-width: 0; }
 #setModal .devstream .devslow { margin: 0; }
 #setModal #devloopBody > .row { margin-top: var(--sp-3); }
@@ -7117,8 +7120,40 @@ body.term-classic #chatModelPick { display: none; }
 .presline { font-size: var(--fs-body); color: var(--ink); overflow-wrap: anywhere; }
 .pressub { font-size: var(--fs-meta); color: var(--ink-3); overflow-wrap: anywhere; }
 .presacts { flex: none; display: flex; gap: 8px; margin-left: auto; }
+/* The paragraph it keeps about how to be here: read as prose, its presses
+   under it. One box like a row, so it sits with the rows it leads. */
+.learnedbox {
+  display: grid; gap: 6px; max-width: 600px; margin-bottom: var(--sp-2);
+}
+.learnedbox .preshead { margin-top: 0; }
+.learnedtext {
+  margin: 0; padding: 10px 12px; background: var(--plane);
+  border: 1px solid var(--hairline); border-radius: 10px;
+  font-size: var(--fs-body); line-height: 1.5; color: var(--ink);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.learnedtext.none { color: var(--ink-3); }
+.learnedbox .pressub { margin: 0; }
+.learnedacts { margin-top: 0; flex-wrap: wrap; }
+/* Shape <name>: the assistant asking. One question as its own words in
+   one box, its answers under it; the rows after it are `.presrow`s. */
+.tunebody { display: grid; gap: 6px; max-width: 600px; margin-bottom: var(--sp-3); }
+.tuneq {
+  display: grid; gap: 10px; padding: 14px; background: var(--plane);
+  border: 1px solid var(--hairline); border-radius: 12px;
+}
+.tuneqtext { margin: 0; font-size: 17px; line-height: 1.4; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.tuneq .pressub, .tunesay { margin: 0; }
+.tunesay { font-size: var(--fs-body); color: var(--ink-2); overflow-wrap: anywhere; }
+.tunechips, .tuneacts { display: flex; flex-wrap: wrap; gap: 8px; }
+.tuneown { display: flex; gap: 8px; }
+.tuneown input { flex: 1 1 auto; min-width: 0; margin: 0; }
+.tunerow { align-items: flex-start; }
+.tunerow .presacts { flex-wrap: wrap; margin-left: 0; flex: 1 1 100%; }
+.tunerow .tuneown { flex: 1 1 100%; }
 @media (pointer: coarse) {
-  .presrow .btn { min-height: 44px; }
+  .presrow .btn, .learnedacts .btn, .tunebody .btn { min-height: 44px; }
+  .tuneown input { min-height: 44px; }
 }
 /* The persona as sections (`personaSections`): a plain title over its words,
    hairlines between, the whole outline readable without opening a box. */

@@ -63,5 +63,60 @@ class TestEveryRedactor(unittest.TestCase):
             self.assertNotIn(token, upstream.scrub(f"push failed with {token}"))
 
 
+class TestLikedCarriesCountsOnly(unittest.TestCase):
+    """The Liked stream reads stores full of names and typed words, and
+    files counts and brAIn's own names for its rules and kinds."""
+
+    def test_no_name_no_typed_word_and_no_entity_leaves(self):
+        from devloop import streams
+        private = ("Marguerite", "person.marguerite", "sensor.nursery_door",
+                   "the nursery door was left open", "because the baby sleeps",
+                   "Welcome home, Marguerite", "Lock the nursery at night")
+        signals = {
+            "settled": [
+                {"source": "check:battery_low", "kind": "fixed", "release": "9.9.9",
+                 "text": "the nursery door was left open",
+                 "note": "because the baby sleeps", "source_title": "Marguerite's rule"},
+                {"source": "check:battery_low", "kind": "accepted"},
+                # A producer keyed on an entity is counted under its family.
+                {"source": "baseline:sensor.nursery_door", "kind": "fixed"},
+                {"source": "baseline:sensor.nursery_door", "kind": "fixed"},
+                # A source that is a sentence is not printed at all.
+                {"source": "Marguerite", "kind": "fixed"},
+                {"source": "Marguerite", "kind": "fixed"},
+            ],
+            "presence": {
+                "people": {"person.marguerite": {"name": "Marguerite",
+                                                  "retired": {"morning": 1}}},
+                "touches": [{"id": "a1", "person": "person.marguerite",
+                             "name": "Marguerite", "kind": "arrival",
+                             "text": "Welcome home, Marguerite",
+                             "reason": "because the baby sleeps",
+                             "reaction": "thanks"}]},
+            "proposals": [{"kind": "automation", "status": "accepted",
+                           "title": "Lock the nursery at night",
+                           "note": "because the baby sleeps"}],
+            "fixes": [{"status": "held", "text": "the nursery door was left open"}],
+            "morph": {"items": [{"status": "done", "title": "Marguerite"}],
+                      "keeps": {"card:c1": {"entity": "sensor.nursery_door",
+                                            "why": "because the baby sleeps"}}},
+            "discussions": 2,
+        }
+        rows = streams.liked(signals, "9.9.9")
+        self.assertEqual(len(rows), 1)
+        sent = " ".join(str(rows[0].get(k) or "")
+                        for k in ("where", "what", "detail", "body"))
+        for secret in private:
+            self.assertNotIn(secret.lower(), sent.lower())
+        # And what it is for did arrive: the rule, the family, the counts.
+        self.assertIn("| `check:battery_low` | 1 | 1 | 0 | 1 |", sent)
+        self.assertIn("| `baseline` | 2 | 0 | 0 | 0 |", sent)
+        self.assertIn("| `arrival` | 1 | 1 | 0 | 0 | 0 |", sent)
+
+    def test_a_house_with_nothing_counted_files_nothing(self):
+        from devloop import streams
+        self.assertEqual(streams.liked({"settled": [], "presence": {}}, "9.9.9"), [])
+
+
 if __name__ == "__main__":
     unittest.main()

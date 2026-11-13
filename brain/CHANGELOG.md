@@ -2,6 +2,37 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.2.0
+
+### Added
+
+- brAIn keeps one paragraph about how it has learned to be in your house, and revises it overnight from how you talk with it in Ask and how you answer it. It is in ⚙ › Personality under "How brAIn is growing", with Undo, Edit and Clear. Your own name and personality text are never rewritten.
+- The morning brief, the weekly report, reports on things brAIn looked into and notifications that can wait are written in the personality you gave it. Facts, numbers and what to do are unchanged, and anything urgent stays plain.
+- ⚙ › Personality has a new section, "Shape brAIn" (it carries your assistant's name), where it asks you how it should be: one question at a time, with a few answers to press or a box to say it your way. Skip passes; "Don't ask this" stops that kind of question.
+- Under its question it shows a few things it really said lately (the morning brief, a notification, a message to one of you) with More like this, Less like this and Say it differently.
+- "Talk it through" opens a conversation in Ask that it leads: it interviews you, tells you what it will change, and records each answer.
+- "Take this in now" revises what it has learned from your answers straight away, not overnight, and says why when it cannot.
+- Everything you told it is listed with Remove. The Settings list says when it has questions waiting; it never sends a notification about them.
+- A new conversation in Ask knows the last few things brAIn told you without being asked, so you can ask "what did you mean this morning?".
+- `brain tune "<asked>" "<answer>"` records how you want it to be from the terminal.
+- **Apps brAIn looks at** in ⚙ › Developer: one switch for each BRUH app, and a **Look now** button beside it. The Walkthrough uses each switched-on app the way a person does and files what it finds, one Claude run per app from your daily limit. brAIn and Morph are on; the other apps are off until you switch them on, and *Report everything without asking* leaves them as you set them.
+- The Walkthrough looks at brAIn's own screens, as your phone shows them and on a laptop, in light and dark, and says when a page reads like a monitoring console rather than an assistant.
+- A **Liked** stream for the development loop: what this household agreed with, thanked and kept, as counts only, so a fix does not take away what you value. Off until you switch it on.
+- Memory › Knowledge › "What brAIn brings to a run" lists two more kinds of run: what brAIn tells you unprompted, and the nightly reflection, including the Ask exchanges it reads.
+
+### Changed
+
+- The nightly reflection reads your recent exchanges with brAIn in Ask (your messages and its replies, cut short), not only conversation titles, and runs on a stronger model. Switch off the Learning loop in ⚙ › Features and it does not run.
+- Ask and voice carry the whole learned paragraph, where they used to get one clipped note.
+- The Learning loop's weekly count includes revisions of the paragraph brAIn keeps about how to be in your house.
+- Screens photographs each new release once (at most one capture every 6 hours), not only weekly.
+- The screenshot tool can also photograph ⚙ › Features, Permissions, Personality and Developer.
+
+### Fixed
+
+- When Screens could not photograph anything, nothing said so. It now says why under the stream in ⚙ › Developer and reports it as a fault until a capture works.
+- brAIn's personality could not really change: its nightly reflection saw only conversation titles and its notes barely reached any prompt.
+
 ## 5.1.38
 
 ### Fixed

@@ -1507,6 +1507,15 @@
           <p class="hint tight">Ask opens a conversation with brAIn about who it is; what you settle there is added below.</p>
           <h4 class="sethead">How it has grown</h4>
           <ul id="persGrowth" class="persgrowth" aria-label="How brAIn's personality has grown"></ul>
+          <!-- Shape <name> (presence.py `tuning`): the assistant leads. ONE
+               question at a time in its own words, a few lines it really
+               said for a verdict, a conversation it leads in Ask, and
+               below them what the household has told it, each removable.
+               Built by `renderTuning`; off (Personality or the Learning
+               loop), one line says so and nothing else is drawn. -->
+          <h4 class="sethead" id="tuneHead">Shape brAIn</h4>
+          <p id="tuneOff" class="hint tight" hidden></p>
+          <div id="tuneBody" class="tunebody" aria-labelledby="tuneHead"></div>
           <!-- The presence loop (panel/presence.py): what the assistant
                noted about itself overnight, the small touches it has in
                mind for each person, and the ones it sent with their
@@ -1515,6 +1524,26 @@
                list above, so nothing is shown twice. -->
           <h4 class="sethead" id="presHead">How brAIn is growing</h4>
           <p id="presWhat" class="hint tight"></p>
+          <!-- The paragraph it keeps itself about how to be in this house
+               (`personality.py` `learned`): the current state, where the
+               notes under it are the dated trail. Undo is one press back
+               to the version before; Edit saves the household's own
+               correction; Clear empties it (and Undo brings it back). -->
+          <div id="learnedBox" class="learnedbox">
+            <p class="preshead" id="learnedHead">What it has learned about being here</p>
+            <p id="learnedText" class="learnedtext"></p>
+            <textarea id="learnedEdit" class="perstext" rows="7" maxlength="1200" hidden
+              aria-labelledby="learnedHead"
+              placeholder="How it should be in this house, in your own words…"></textarea>
+            <p id="learnedMeta" class="pressub"></p>
+            <div class="row persacts learnedacts">
+              <button type="button" id="learnedUndo" class="btn" hidden>Undo</button>
+              <button type="button" id="learnedEditBtn" class="btn">Edit</button>
+              <button type="button" id="learnedSave" class="btn primary" hidden>Save</button>
+              <button type="button" id="learnedCancel" class="btn" hidden>Cancel</button>
+              <button type="button" id="learnedClear" class="btn" hidden>Clear</button>
+            </div>
+          </div>
           <div id="presBody" class="presbody" aria-labelledby="presHead"></div>
         </div>
       </section>
@@ -1715,6 +1744,17 @@
 
             <h5 class="setsubhead">What it sends</h5>
             <div id="devStreams" class="devstreams"></div>
+
+            <!-- The Walkthrough's apps, one switch each (`devloop.WALK_APPS`):
+                 a look is one Claude run, so an app nobody uses is off, and
+                 Look now is the press for a week with runs to spare. -->
+            <h5 class="setsubhead">Apps brAIn looks at</h5>
+            <p class="hint tight">brAIn uses each app switched on here the way a person does
+              and files what it finds: one Claude run per app when the app has a new
+              version, from the daily limit below, and Look now looks once whatever the
+              switch says. Faults, the canary and Screens pictures cost no run and are not
+              changed by these switches.</p>
+            <div id="devWalks" class="devstreams"></div>
 
             <h5 class="setsubhead">Daily limits</h5>
             <div class="row devcaps">

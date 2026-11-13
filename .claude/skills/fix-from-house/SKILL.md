@@ -190,6 +190,28 @@ was never touched. So, for every `devloop:look` issue:
   its reviewer. An issue without one (a fault's `done_when` may be empty)
   gets one from you, in the pull request.
 
+### What the household likes is evidence, and a fix keeps it
+
+Every other issue is something that went wrong, so fixing only from them
+makes brAIn quieter with each run. The open `[Liked] brAIn <version>` issue
+(label `devloop:liked`, rolling, one per release) is the other half: counts
+of what this household agreed with, thanked, accepted and kept, by rule,
+card and kind. It is evidence, not work: never fix, decline or close it.
+
+- Read the newest one before triage (step 4), every run it is there.
+- Never remove, mute, shorten or slow something it lists as valued without
+  saying so in the pull request, with the count you are overriding and why.
+- Between two fixes for the same issue, prefer the one that makes more of
+  what is liked (the rule they keep agreeing with, the check-in they
+  thank) over the one that only takes the complaint away.
+- A producer with many agreed endings and a few Wrongs wants its rule made
+  more exact, not switched off.
+
+The Walkthrough's issues (`devloop:walkthrough`) may also carry
+`devloop:<slug>` for another BRUH add-on the house looked at: the fix goes
+in that add-on's directory, as for any issue with that label. A house with
+no `[Liked]` issue has the stream off: nothing follows from its absence.
+
 ## 1. The house's verdict on what already shipped
 
 This comes first in every run, before any new work: a release that broke a
@@ -489,9 +511,10 @@ From the reports repository, list **every** open issue labelled
 `from-house` or `from-cloud`, and every open issue whose body carries the
 house's marker (`<!-- brain-devloop-fp:`) whatever its labels: GitHub drops
 a label silently when the house's token may not set it, which is why the
-house finds its own issues by that marker and never by label. Leave out the lock issue, the canary issues and the two rolling
-issues (`[Scorecard]` and `[House shape]`, labels `devloop:scorecard` and
-`devloop:snapshot`): those are evidence, not work. On a run without the
+house finds its own issues by that marker and never by label. Leave out the lock issue, the canary issues and the three rolling
+issues (`[Scorecard]`, `[House shape]` and `[Liked]`, labels
+`devloop:scorecard`, `devloop:snapshot` and `devloop:liked`): those are
+evidence, not work. On a run without the
 UX audit, leave out the `Screens` issues too (step 3).
 
 ### Triage every issue first
