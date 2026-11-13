@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.6
+
+### Security
+
+- Updated a bundled web library (hono, used by the MCP SDK) to 4.13.18, which closes several advisories in its request validation, body limit, mounting and static-file handling.
+
 ## 0.1.5
 
 ### Fixed
