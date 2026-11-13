@@ -1089,6 +1089,9 @@ class ChatSession:
         # — a "Paused to make room" that reads as plain "Paused" after a
         # restart is a pill that changes its story overnight.
         self.meta: dict = {}
+        # The title its opener gave it, when one did (`server._ask_in_chat`,
+        # also on the ledger as `run_sources.record_title`).
+        self.named = ""
         self._load()
 
     # -- transcript ------------------------------------------------------
@@ -1141,9 +1144,14 @@ class ChatSession:
         places that only have the live session — the toast that says which
         background conversation is asking for an approval.
         """
+        if self.named:
+            return textclip.clip(self.named, 60)
         for event in self.events:
             if event.get("type") == "user" and event.get("text"):
-                return " ".join(str(event["text"]).split())[:60]
+                # The list's rule: an opener brAIn wrote is named by what it
+                # is about, and a person's words are the title as they typed.
+                return textclip.clip(
+                    conversations.title_for(str(event["text"])), 60)
         return ""
 
     # -- what the registry watches ---------------------------------------

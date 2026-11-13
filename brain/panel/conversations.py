@@ -278,24 +278,194 @@ _FIXED_TITLES = (
 )
 
 
-def display_title(path: Path) -> str:
-    """The title a person should read for a conversation in the list."""
-    text = _first_prompt(path)
-    m = _CARD_TITLE_RE.match(text)
-    if m:
-        return m.group(1).strip()[:MAX_TITLE_CHARS]
-    if text.startswith("The user asked this question"):
-        m = _QUESTION_RE.search(text)
+# The openers brAIn itself writes when IT starts a conversation, matched
+# exactly, each with the title a person reads for it (#882). Nothing here
+# guesses from how a text reads: a first message that is none of these is
+# the person's own words, and their words are their chat's title, folded
+# to one line and clipped for length, nothing else (`clip_title`). An
+# opener that knows its title at the moment it opens records it
+# (`run_sources.record_title`: the panel's Ask, a discussion, Morph's Ask
+# line and Tell), and that wins; these name the conversations that already
+# existed, and the classic terminal's, whose session id is not known.
+# The openers the PANEL writes under the person's own source ("you"): an
+# ask-about, Personality's and Instructions' Ask, Talk it through. A person
+# could start a message the same way, so each is matched WHOLE — its fixed
+# head and its fixed closing words, the variable middle (what was pointed
+# at, what is set) in between — never by a prefix; and since #882 each
+# records its title as it opens, so these only name older ones.
+_ASK_ABOUT_RE = re.compile(r"^I'm in the brAIn panel \([^)\n]*\) and pointed at this:\n")
+_ASK_DEFAULT_WORDS = ("Talk with me about it: what it is, what it means for "
+                      "the house, and what could be done.")
+_ASK_TAIL = "If I ask you to do something with it, do it,"
+_ASK_TAIL_WHOLE = (
+    "If I ask you to do something with it, do it, whether or not the panel "
+    "has a button for it. If brAIn cannot do it, say whether that is a gap "
+    "in brAIn itself (and offer to file it with report_bug) or something "
+    "outside what brAIn can reach.")
+_ON_PAGE_RE = re.compile(r"^\(on the page: .*\)$")
+_INSTRUCTION_RE = re.compile(
+    r"^I want to talk about one of brAIn's instructions: \"(?P<name>[^\"\n]+)\"\.")
+_INSTRUCTION_TAIL = "Read it, tell me what it makes brAIn do, and help me change it."
+_TUNE_WHOLE = (
+    "Lead this conversation: interview me about how you should be in this "
+    "house. I will answer; you ask. How to run it: - Your first message is "
+    "your opening question, with no preamble. - One question at a time, "
+    "short. Ask about how you should BE (how long your messages are, your "
+    "humour, how blunt, when to speak up, how to take a correction), never "
+    "about a person, and never what the list below already answers. - Where "
+    "you can, offer two contrasting ways you could say the same real thing "
+    "and ask which is closer. Use something you actually said lately when "
+    "you have it. - After five or six questions, or when I say enough, say "
+    "back in a few lines what you will change. - Then record each thing you "
+    "learned, one call each, in the shell: brain tune \"<what you asked>\" "
+    "\"<what I answered, in my words>\". Do not edit any file for this and "
+    "do not use note_personality_change.")
+_PERSONALITY_HEAD = ("I want to talk with you about who you are in this "
+                     "house: your personality.")
+_PERSONALITY_TAIL = (
+    "When we settle a change to how you speak or behave, record it with "
+    "note_personality_change in one sentence, and if the persona itself "
+    "should change, tell me what to put in \u2699 \u203a Personality.")
+# The machine sources' openers: matched ONLY on a conversation the
+# registry recorded as that source's, because a person can type anything.
+_MORPH_LEARNING = "MORPH · learning pass."
+# What `automation-listener.sh` puts in front of a task that asked for
+# memory (`task_memory_block`): the opener follows it. Only on the
+# listener's own runs: a person who types the same words typed them.
+_MEMORY_LEAD = "Known about this home:\n"
+_MEMORY_SOURCES = ("morph", "automation")
+_MORPH_ASK = "Someone typed this into the Ask line of Morph,"
+_MORPH_ASK_WORDS = "\nThey wrote:\n"
+_MORPH_TELL = "MORPH · a change request for this house's dashboard"
+_MORPH_TELL_ASKED_RE = re.compile(r"^Asked: \u201c(.*?)\u201d\nTarget: ", re.M | re.S)
+# The voice faces: the person's words are the last line of the first
+# message, after the local time and any context (`assist-worker-pool.py`).
+_VOICE_OPENERS = ("(Local time: ", "Previous conversation:")
+
+
+def clip_title(text: str) -> str:
+    """A title as a person reads it: one line, at most `MAX_TITLE_CHARS`,
+    cut on a word with "…". Nothing else is taken off — a person's ":)",
+    "> why" and "- add milk" are what they typed."""
+    return textclip.clip(" ".join(str(text or "").split()), MAX_TITLE_CHARS)
+
+
+def _ask_about_title(raw: str) -> str:
+    """The person's own words typed after the quote, else "About <the
+    first quoted line>". The quote is the lines that start with "> "."""
+    words, quote = [], []
+    for line in raw.splitlines()[1:]:
+        if line.startswith("> ") or line == ">":
+            quote.append(line[2:].strip())
+            continue
+        line = line.strip()
+        if line.startswith(_ASK_TAIL):
+            break
+        if not line or _ON_PAGE_RE.match(line) or line == _ASK_DEFAULT_WORDS:
+            continue
+        words.append(line)
+    if words:
+        return clip_title(" ".join(words))
+    first = next((q for q in quote if q), "")
+    return clip_title(f"About {first}") if first else "Something on the page"
+
+
+def known_title(raw: str, source: str = "you") -> str | None:
+    """The title for a first message that is one of brAIn's own openers,
+    or None for anything else. ``raw`` keeps its lines; ``source`` is what
+    the registry recorded for the conversation, and each machine's opener
+    is recognised only under that machine's source: a conversation that is
+    the person's own ("you") is never retitled by how it starts, except by
+    the panel's own openers matched whole."""
+    raw = str(raw or "").strip()
+    if not raw:
+        return None
+    folded = " ".join(raw.split())
+    if source in ("you", ""):
+        if _ASK_ABOUT_RE.match(raw) and folded.endswith(_ASK_TAIL_WHOLE):
+            return _ask_about_title(raw)
+        if folded.startswith(_TUNE_WHOLE):
+            return "How brAIn should be in this house"
+        if folded.startswith(_PERSONALITY_HEAD) and folded.endswith(_PERSONALITY_TAIL):
+            return "brAIn's personality"
+        m = _INSTRUCTION_RE.match(folded)
+        if m and folded.endswith(_INSTRUCTION_TAIL):
+            return clip_title(f"brAIn's instruction \u201c{m.group('name')}\u201d")
+        return None
+    if source in _MEMORY_SOURCES and raw.startswith(_MEMORY_LEAD):
+        at = [raw.find(o) for o in (_MORPH_ASK, _MORPH_TELL, *MORPH_OPENERS)]
+        at = [i for i in at if i > 0]
+        if not at:
+            return None
+        raw = raw[min(at):]
+        folded = " ".join(raw.split())
+    if source == "voice" and raw.startswith(_VOICE_OPENERS):
+        last = raw.splitlines()[-1].strip()
+        if last.startswith("USER: "):
+            last = last[len("USER: "):]
+        return clip_title(last) or None
+    if source == "memory" and raw.startswith(MACHINE_OPENERS[0][0]):
+        return "Remembering what was said to Assist"
+    if source == "morph":
+        if raw.startswith(_MORPH_ASK) or (
+                folded.startswith(MORPH_OPENERS[3]) and _MORPH_ASK in raw):
+            # The card's context comes first and the person's words last,
+            # after Morph's own frame (`converse.prompt_for`).
+            words = raw[raw.find(_MORPH_ASK):].split(_MORPH_ASK_WORDS, 1)
+            return clip_title(words[1]) if len(words) == 2 and words[1].strip() \
+                else "A question from the dashboard"
+        if raw.startswith(_MORPH_TELL):
+            m = _MORPH_TELL_ASKED_RE.search(raw)
+            return clip_title(m.group(1)) if m and m.group(1).strip() \
+                else "A change to the dashboard"
+        if folded.startswith(_MORPH_LEARNING):
+            return "The dashboard learning from how it is used"
+    if source == "card":
+        m = _CARD_TITLE_RE.match(folded)
         if m:
-            return m.group(1).strip()[:MAX_TITLE_CHARS]
-    for prefix, title in _FIXED_TITLES:
-        if text.startswith(prefix):
-            return title
-    return text[:MAX_TITLE_CHARS]
+            return clip_title(m.group(1))
+        if folded.startswith("The user asked this question"):
+            m = _QUESTION_RE.search(folded)
+            if m:
+                return clip_title(m.group(1))
+        for prefix, title in _FIXED_TITLES:
+            if folded.startswith(prefix):
+                return title
+    return None
 
 
-def _first_prompt(path: Path) -> str:
-    """The first genuine user message, whitespace folded, uncut."""
+def title_for(raw: str, source: str = "you", recorded: str = "") -> str:
+    """The title a person reads for a conversation: the one its opener
+    recorded, else the title of an opener brAIn wrote, else — for a run a
+    machine claimed whose opener is none of those — what that machine is,
+    else the person's own words, clipped."""
+    if recorded:
+        return clip_title(recorded)
+    known = known_title(raw, source)
+    if known is not None:
+        return known
+    if source in _MEMORY_SOURCES and str(raw or "").lstrip().startswith(_MEMORY_LEAD):
+        # A task an automation sent with memory in front: what follows the
+        # block is the automation's prompt, and where the block ends is not
+        # marked, so the title is what it is rather than a guess at it.
+        return ("An automation ran a task" if source == "automation"
+                else "A conversation an automation started")
+    if source not in ("you", "", "morph", "voice", "automation"):
+        meta = run_sources.SOURCES.get(source) or {}
+        blurb = str(meta.get("blurb") or "")
+        if blurb:
+            return blurb[0].upper() + blurb[1:]
+    return clip_title(raw)
+
+
+def display_title(path: Path, source: str = "you", recorded: str = "") -> str:
+    """The title a person should read for a conversation in the list."""
+    return title_for(_first_prompt(path, fold=False), source, recorded)
+
+
+def _first_prompt(path: Path, fold: bool = True) -> str:
+    """The first genuine user message, uncut: whitespace folded, or with its
+    lines kept when ``fold`` is False (`known_title` reads lines)."""
     try:
         with path.open("r", encoding="utf-8", errors="replace") as fh:
             for count, line in enumerate(fh):
@@ -309,7 +479,8 @@ def _first_prompt(path: Path) -> str:
                 except ValueError:
                     continue
                 if _is_prompt(entry):
-                    return " ".join(_message_text(entry).split())
+                    text = _message_text(entry)
+                    return " ".join(text.split()) if fold else text.strip()
     except OSError:
         # A transcript that cannot be read has no title to offer.
         pass
@@ -371,6 +542,7 @@ def listing(cwd: str, limit: int = 30,
             break
     rows.sort(key=lambda r: r["modified"], reverse=True)
     claimed = run_sources.lookup(row["id"] for row in rows)   # one read, not one per row
+    named = run_sources.titles(row["id"] for row in rows)
     out = []
     for row in rows:
         source = claimed.get(row["id"], default_source)
@@ -378,7 +550,8 @@ def listing(cwd: str, limit: int = 30,
             continue
         out.append({
             "id": row["id"],
-            "title": display_title(row["path"]) or "(no opening message)",
+            "title": display_title(row["path"], source,
+                                   named.get(row["id"], "")) or "(no opening message)",
             "modified": row["modified"],
             "age": _age(row["modified"]),
             "source": source,

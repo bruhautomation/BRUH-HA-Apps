@@ -8,6 +8,18 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 - When a BRUH Browser errand stops to ask something (which oat milk, whether to take a substitute), brAIn reads you the question and its choices and passes your answer back so the errand carries on. By voice it answers only choices that don't change what you spend.
 - brAIn asks which browser to use when more than one Chrome with the Claude extension is connected to your account, remembers your answer when you want it to, and says which browser it used.
+## 5.2.4
+
+### Changed
+
+- ⚙ › Model & usage says where brAIn's own work went in household words (Watching the house, Insight cards and reports, Dashboard requests, Voice, Automations, Memory and learning, Fixes…) with each one's share, and no run ids or token counts. Your chats in Ask and the terminal are not in that list; they are in the session percentage above it, and the note says so (#880).
+- The model and thinking choices in ⚙ › Model & usage are rows that show their whole text on a phone, where a closed menu cut them off (#880).
+- What the dashboard asks brAIn to do is counted under Dashboard requests, apart from your automations' tasks (#880).
+
+### Fixed
+
+- A To Do item made from a finding has a short headline that names the device and the job ("Wake the hall sensor."), one line under it, and says nothing twice. Items already on your list are reworded the same way, and one that names several devices says so (#879).
+- Chats that brAIn opened for you (an Ask about something, Personality's and Instructions' Ask, Talk it through, a request from the dashboard) are titled by what you asked or what they are about, never by the prompt text behind them. A chat you typed is always titled with your own words, exactly as typed (#882).
 
 ## 5.2.3
 

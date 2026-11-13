@@ -161,45 +161,105 @@ def window_tokens(hours: float = SESSION_HOURS, now: float | None = None) -> int
     return sum(r["tokens"] for r in _load_runs() if r["ts"] >= cutoff)
 
 
-# How many spenders the breakdown names before folding the tail into one
-# row. The list is capped and the window total is not, so a long tail says
-# what it is not showing rather than quietly disagreeing with the pill.
-MAX_BREAKDOWN = 6
+# Where the session went, in the household's words (#880). The ledger keeps
+# one id per run — a card's, a job's, a shell run's journal source — and an
+# id is nothing a person reads, so the list is the sum under these names,
+# with each one's share. ONE table: every id a writer records is named here,
+# exactly or by its prefix, and `python3 usage_store.py` greps the tree for
+# every writer and fails on one that is not (the `__main__` below). Chats
+# are not in it: a chat turn is never booked into this ledger, and the
+# note under the list says so rather than showing a row that cannot fill.
+SPEND_GROUPS = {
+    "checks": "Watching the house",
+    "cards": "Insight cards and reports",
+    "dashboard": "Dashboard requests",
+    "voice": "Voice",
+    "automations": "Automations",
+    "memory": "Memory and learning",
+    "fixes": "Fixes",
+    "setup": "Setup and self-tests",
+    "other": "Other brAIn work",
+}
+SPEND_IDS = {
+    # The Resident and what it reads the house with.
+    "resident-look": "checks", "resident-investigate": "checks",
+    "resident-escalate": "checks", "resident-reflect": "checks",
+    "world-model": "checks", "situation": "checks", "occasions": "checks",
+    # Cards, and what is said about them.
+    "ideas": "cards", "deep-review": "cards",
+    # Shell runs, by their journal source (`journal.record_shell`,
+    # `brain_run_journal.py record`, booked by `server._book_shell_usage`).
+    "voice": "voice",
+    "task": "automations",
+    "morph": "dashboard",
+    "memory": "memory", "memory_extract": "memory", "study": "memory",
+    # The assistant's nightly reflection on how it should be.
+    "presence-reflect": "memory",
+    # Setting up, and brAIn testing itself.
+    "onboarding": "setup", "eval-first-look": "setup", "devloop": "setup",
+    "doctor-snapshot": "setup", "doctor-analyst": "setup",
+    "doctor-fixer": "setup", "doctor-rehearsal": "setup",
+    # `_book_shell_usage`'s name for a shell row that carried no source.
+    "shell": "other",
+}
+SPEND_PREFIXES = (
+    ("followup-", "checks"),
+    ("milestone-", "cards"),
+    # A card somebody made (`user_categories.ID_PREFIX`) or asked for.
+    ("user-", "cards"), ("custom-", "cards"),
+    ("fix-", "fixes"), ("plan-", "fixes"),
+)
 
 
-def _breakdown(runs: list[dict], limit: int = MAX_BREAKDOWN) -> list[dict]:
-    """Per-card token totals out of already-loaded runs, biggest first.
+def _card_ids() -> frozenset:
+    try:
+        import categories  # noqa: PLC0415 — the shipped cards, read lazily
+        return frozenset(c.get("id") for c in categories.CATEGORIES)
+    except Exception:  # noqa: BLE001 — without the catalogue a card is other
+        return frozenset()
 
-    "Why is my session gone?" is a question about *what spent it*, and the
-    run ledger has always known — it records an id per run and nothing ever
-    read it back. Rows are ``{"id", "tokens", "runs"}``; the tail past
-    ``limit`` collapses into one row flagged ``rest`` rather than being
-    dropped, because a breakdown that silently omits a third of the window
-    is worse than no breakdown at all.
+
+def spend_group(run_id: str) -> str:
+    """Which household name a run's id is spent under: exactly, by prefix,
+    or a shipped card's own id; "other" for an id no writer records today
+    (one left in the ledger by an older release)."""
+    rid = str(run_id or "")
+    if rid in SPEND_IDS:
+        return SPEND_IDS[rid]
+    for prefix, group in SPEND_PREFIXES:
+        if rid.startswith(prefix):
+            return group
+    return "cards" if rid in _card_ids() else "other"
+
+
+def _breakdown(runs: list[dict]) -> list[dict]:
+    """Where the window's tokens went, by household name, biggest first.
+
+    Rows are ``{"id", "label", "tokens", "runs", "share"}``: ``id`` is the
+    group's key, never a run's, and ``share`` the whole percent of what the
+    list adds up to (one total, so the shares are of the same thing). Every
+    run lands in a group, so nothing is folded away.
     """
     totals: dict[str, dict] = {}
     for run in runs:
-        key = str(run.get("id") or "")
-        row = totals.setdefault(key, {"id": key, "tokens": 0, "runs": 0})
+        key = spend_group(run.get("id"))
+        row = totals.setdefault(key, {"id": key, "label": SPEND_GROUPS[key],
+                                      "tokens": 0, "runs": 0})
         row["tokens"] += run["tokens"]
         row["runs"] += 1
     ranked = sorted(totals.values(), key=lambda r: -r["tokens"])
-    if limit and len(ranked) > limit:
-        tail = ranked[limit:]
-        ranked = ranked[:limit] + [{
-            "id": "", "rest": True,
-            "tokens": sum(r["tokens"] for r in tail),
-            "runs": sum(r["runs"] for r in tail),
-        }]
+    whole = sum(r["tokens"] for r in ranked) or 1
+    for row in ranked:
+        row["share"] = round(100 * row["tokens"] / whole)
     return ranked
 
 
-def window_breakdown(hours: float = SESSION_HOURS, now: float | None = None,
-                     limit: int = MAX_BREAKDOWN) -> list[dict]:
+def window_breakdown(hours: float = SESSION_HOURS,
+                     now: float | None = None) -> list[dict]:
     """What spent the trailing window, biggest first."""
     now = time.time() if now is None else now
     cutoff = now - hours * 3600
-    return _breakdown([r for r in _load_runs() if r["ts"] >= cutoff], limit)
+    return _breakdown([r for r in _load_runs() if r["ts"] >= cutoff])
 
 
 def _parse_iso_epoch(value) -> int | None:
@@ -541,3 +601,136 @@ def budget_state(settings: dict, now: float | None = None) -> dict:
         # it stops telling a signed-in person to sign in.
         **({} if source == "account" else {"limits": limits_problem()}),
     }
+
+
+# ---------------------------------------------------------------------------
+# The self-check: every writer in the tree, and the group each id lands in
+# ---------------------------------------------------------------------------
+#
+# `python3 brain/panel/usage_store.py` (from anywhere). It reads the source,
+# never the ledger: each `_record_usage` call however it is made (directly,
+# through `asyncio.to_thread`, or as doctor's `record_usage` hook), each id a
+# variable carries (the functions below, which name what the variable holds),
+# and each journal source a shell run is booked under (`journal.record_shell`,
+# `brain_journal_record`, `brain_run_journal.py record`, the pool's
+# `record_run`). It prints every id or prefix with its group and exits 1 on
+# one this table does not place, or on a variable writer it does not know.
+
+# A writer whose id is a variable: the function it is in, and what it holds.
+_VARIABLE_WRITERS = {
+    "_search_run": ("a card's id", ("energy", "user-", "custom-")),
+    "_snapshot_run": ("a card's id", ("energy", "user-", "custom-")),
+    "_run_plan": ("PLAN_JOB_PREFIX", ("plan-",)),
+    "_run_fix": ("FIX_JOB_PREFIX", ("fix-",)),
+    "_run_typed_fix": ("FIX_JOB_PREFIX", ("fix-",)),
+    "_run_milestone": ("_milestone_job_id", ("milestone-",)),
+}
+
+
+def _self_check() -> int:
+    import re as _re
+    from pathlib import Path as _Path
+
+    root = _Path(__file__).resolve().parent.parent       # brain/
+    found: list[tuple[str, str, str]] = []                 # (id, where, how)
+    unknown: list[str] = []
+    call = _re.compile(
+        r"(?:_record_usage|record_usage)\s*(?:\(|,)\s*[^,()]*(?:\([^()]*\))?[^,()]*,"
+        r"\s*(f?\"[^\"]*\"|[A-Za-z_][\w.]*)\s*\)")
+    for path in sorted((root / "panel").rglob("*.py")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if path.name == "usage_store.py":
+            continue
+        for m in call.finditer(text):
+            line = text.count("\n", 0, m.start()) + 1
+            where = f"{path.relative_to(root)}:{line}"
+            arg = m.group(1)
+            if arg.startswith(("\"", "f\"")):
+                lit = arg[2:-1] if arg.startswith("f") else arg[1:-1]
+                if "{" in lit:
+                    lit = lit.split("{", 1)[0]
+                found.append((lit, where, "literal" if "{" not in arg else "prefix"))
+                continue
+            head = text[:m.start()]
+            fn = _re.findall(r"^(?:async )?def (\w+)", head, _re.M)
+            fn = fn[-1] if fn else "?"
+            if fn not in _VARIABLE_WRITERS:
+                unknown.append(f"{where}: `{arg}` in {fn}() — a variable this check cannot place")
+                continue
+            what, examples = _VARIABLE_WRITERS[fn]
+            for ex in examples:
+                found.append((ex, where, f"{arg} in {fn}() = {what}"))
+    # The journal sources a shell run is booked under.
+    shell = [
+        (_re.compile(r"brain_journal_record\s+([\w-]+)\s"), ("scripts", "integrations")),
+        (_re.compile(r"(?:brain_run_journal\.py|journal_py\")\s+record\s+(\"\$\{\w+:-\w+\}\"|[\w-]+)\s"),
+         ("scripts", "integrations")),
+        (_re.compile(r"(?:^|[^\w.]|\)\.)record_run\(\s*\"([\w-]+)\"", _re.M), ("integrations", "scripts")),
+        (_re.compile(r"record_shell\(\s*(\"[\w-]+\"|[A-Z_]+)"), ("scripts", "integrations", "panel")),
+        (_re.compile(r"_book_shell_usage[\s\S]{0,400}?or \"([\w-]+)\""), ("panel",)),
+    ]
+    for rx, dirs in shell:
+        for d in dirs:
+            for path in sorted((root / d).rglob("*")):
+                if not path.is_file() or path.suffix not in (".py", ".sh", ""):
+                    continue
+                if path.name in ("journal.py", "brain_run_journal.py", "usage_store.py") \
+                        and "record_shell(" not in rx.pattern and "_book" not in rx.pattern:
+                    continue
+                text = path.read_text(encoding="utf-8", errors="replace")
+                for m in rx.finditer(text):
+                    line = text.count("\n", 0, m.start()) + 1
+                    if text[:m.start()].rsplit("\n", 1)[-1].lstrip().startswith("#"):
+                        continue
+                    where = f"{path.relative_to(root)}:{line}"
+                    arg = m.group(1)
+                    if path.name == "journal.py" and arg in ("source",):
+                        continue
+                    if arg.startswith("\"${"):
+                        var, default = _re.match(r"\"\$\{(\w+):-(\w+)\}\"", arg).groups()
+                        found.append((default, where, f"journal source ({var} unset)"))
+                        for v in _re.findall(rf"{var}=\$\(.*?then \"(\w+)\"", text):
+                            found.append((v, where, f"journal source ({var})"))
+                        continue
+                    if _re.fullmatch(r"[A-Z_]+", arg):
+                        c = _re.search(rf"^{arg}\s*=\s*\"([\w-]+)\"", text, _re.M)
+                        if not c:
+                            unknown.append(f"{where}: {arg} has no literal value")
+                            continue
+                        arg = c.group(1)
+                    found.append((arg.strip("\""), where, "journal source"))
+    seen = set()
+    width = max((len(i) for i, _w, _h in found), default=10)
+    for rid, where, how in sorted(found, key=lambda r: (spend_group(r[0]), r[0], r[1])):
+        group = spend_group(rid)
+        placed = (rid in SPEND_IDS or any(rid.startswith(p) for p, _g in SPEND_PREFIXES)
+                  or rid in _card_ids())
+        mark = "" if placed else "   <-- NOT IN THE TABLE"
+        if not placed:
+            unknown.append(f"{where}: `{rid}` is not in SPEND_IDS or SPEND_PREFIXES")
+        key = (rid, where)
+        if key in seen:
+            continue
+        seen.add(key)
+        print(f"{rid:<{width}}  {SPEND_GROUPS[group]:<26}  {where}  ({how})"
+              + mark)
+    for rid in sorted(set(SPEND_IDS) & _card_ids()):
+        unknown.append(f"`{rid}` is a shipped card's id AND a run's: one of them "
+                       "is always counted in the wrong place")
+    written = {spend_group(r) for r, _w, _h in found}
+    idle = [g for g in SPEND_GROUPS if g not in written]
+    for g in idle:
+        unknown.append(f"group `{g}` ({SPEND_GROUPS[g]}): no writer records an id under it")
+    print(f"\n{len(found)} writer ids, {len(written)} groups written.")
+    if unknown:
+        print("\nFAILED:")
+        for u in unknown:
+            print("  " + u)
+        return 1
+    print("Every writer's id is placed, and every group has a writer.")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys as _sys
+    _sys.exit(_self_check())

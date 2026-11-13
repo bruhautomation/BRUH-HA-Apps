@@ -914,52 +914,31 @@ function limitsNote(u) {
   }
 }
 
-// A run id, as the name of the thing that spent the tokens.
-//
-// The card usually still exists, so its own title is the best answer; a
-// deleted one falls back to the id it was recorded under rather than
-// disappearing from the list, because a row that vanishes takes its tokens
-// off a total that did not shrink.
-function spendLabel(id) {
-  if (!id) return "Everything else";
-  if (id === "onboarding") return "First-run setup";
-  if (id.startsWith("fix-")) return "A plan for a finding";
-  const insight = insightFor(id);
-  if (insight && insight.title) return insight.title;
-  const cat = (state.status && state.status.categories || []).find((c) => c.id === id);
-  if (cat && cat.title) return cat.title;
-  return id;
-}
-
 // Where the session went — the half of "you are at 41%" that the pill has
 // never been able to answer.
 //
-// The ledger has recorded a card id per run since the budget existed and
-// nothing ever read it back, so the only way to attribute a jump was to
-// remember what you had pressed. Deliberately scoped: these are brAIn's own
-// runs and the note says so, because when the figure above is the account's
-// (which covers the terminal, the chat and voice too) a breakdown read as
-// exhaustive is how you conclude a terminal session is free.
+// Grouped under the household's names by the server (`usage_store.
+// spend_group`, one table), each with its share of what the list adds up to:
+// never a run's id, never a token count. Deliberately scoped, and the note
+// says what is NOT in it: chats in Ask and the terminal are never booked
+// into this ledger, so a list read as exhaustive is how somebody concludes a
+// long chat was free.
 function spendRows(u) {
   const rows = u && u.breakdown;
   if (!rows || !rows.length) return "";
-  const out = [`<div class="psub">What brAIn spent, this session</div>`];
+  const out = [`<div class="psub">What brAIn's own work used, this session</div>`];
   rows.forEach((r) => {
-    const runs = r.runs > 1 ? `${r.runs} runs` : "1 run";
-    out.push(`<div class="prow"><span class="pname">`
-      + `${esc(r.rest ? "Everything else" : spendLabel(r.id))}`
-      + `<span class="pwhen">${esc(runs)}</span></span>`
-      + `<span class="pval">${esc(fmtTokens(r.tokens))}</span></div>`);
+    const share = Number(r.share) || 0;
+    out.push(`<div class="prow"><span class="pname">${esc(r.label || "Other brAIn work")}</span>`
+      + `<span class="pval">${share < 1 ? "under 1%" : `${share}%`}</span></div>`);
   });
   out.push(`<p class="pnote">`
+    + `Shares of brAIn's own work only. Your chats in Ask and the terminal are not in this list`
     + (u.source === "account"
-      ? `Insight, fix and setup runs only — the percentage above is your whole `
-        + `Anthropic account, so the terminal, the chat and voice are in that `
-        + `number and not in this list.`
-      : `Insight, fix and setup runs in the last 5 hours, against a rough `
-        + `<b>${esc(u.plan_label || "plan")}</b> allowance — which is what the `
-        + `percentage above is measured from while your account's own usage `
-        + `is unavailable.`)
+      ? `; they are in the percentage above, which is your whole Anthropic account.`
+      : `. The percentage above is brAIn's own work in the last 5 hours against a rough `
+        + `<b>${esc(u.plan_label || "plan")}</b> allowance, while your account's own `
+        + `usage is unavailable.`)
     + `</p>`);
   return out.join("");
 }
@@ -3192,6 +3171,53 @@ const OPTION_FIELDS = {
   setKeepDays: "history_keep_days",
 };
 
+// A closed <select> shows one line and cuts a longer option off with an
+// ellipsis on a phone, and nothing makes it wrap (#880). The two ⚙ menus
+// whose options are sentences (the model with its hint, how hard brAIn
+// thinks) are drawn as wrapping radio rows instead — the card menus' short
+// options fit a phone's select, and as rows they cost the section a screen;
+// the <select> stays, hidden, as the one place the value, the disabled state
+// and the `change` live, so every handler bound to it is unchanged.
+function paintChoices(id) {
+  const sel = $("#" + id);
+  if (!sel) return;
+  sel.classList.add("choicesrc");
+  let list = sel.nextElementSibling;
+  if (!list || !list.classList.contains("choicelist")) {
+    list = el("div", "choicelist");
+    list.setAttribute("role", "radiogroup");
+    sel.after(list);
+  }
+  const lab = document.querySelector(`label[for="${id}"]`);
+  if (lab) list.setAttribute("aria-label", lab.textContent.trim());
+  list.textContent = "";
+  list.classList.toggle("off", sel.disabled);
+  const add = (opt) => {
+    const row = el("label", "choice");
+    const input = el("input");
+    input.type = "radio";
+    input.name = "choice-" + id;
+    input.checked = opt.value === sel.value;
+    input.disabled = sel.disabled;
+    input.addEventListener("change", () => {
+      if (!input.checked) return;
+      sel.value = opt.value;
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+      paintChoices(id);
+    });
+    row.appendChild(input);
+    row.appendChild(el("span", "choicetext", opt.textContent));
+    list.appendChild(row);
+  };
+  [...sel.children].forEach((c) => {
+    if (c.tagName === "OPTGROUP") {
+      list.appendChild(el("div", "choicegroup", c.label));
+      [...c.children].forEach(add);
+    } else add(c);
+  });
+}
+const CHOICE_SELECTS = ["setModel", "setThinking"];
+
 // sentinel option value; no real model id can collide with it
 const CUSTOM_MODEL = "__custom__";
 
@@ -3247,7 +3273,7 @@ function syncThinking(model) {
   const sel = $("#setThinking");
   const note = $("#setThinkingNote");
   const fixed = Boolean(model) && model !== CUSTOM_MODEL;
-  if (sel) sel.disabled = fixed;
+  if (sel) { sel.disabled = fixed; paintChoices("setThinking"); }
   if (note) {
     note.textContent = fixed
       ? "Not used while a model is chosen above: every run uses that model. "
@@ -3289,6 +3315,7 @@ function renderSettingsForm(data) {
     $("#" + id).value = val == null ? "" : String(val);
   });
   renderModelField(data);
+  CHOICE_SELECTS.forEach(paintChoices);
   renderNotifyPolicy(data.settings || {});
   renderSetSummaries(data);
   $("#setSyncNote").textContent = data.options_synced
@@ -5871,7 +5898,8 @@ function askAboutReport(id, catInfo, insight, btn) {
     insight && insight.summary ? String(insight.summary) : ""]
     .filter(Boolean).join("\n").slice(0, ASK_TEXT_MAX);
   askAbout(askPrompt(
-    { where: "Insights › Reports", text, ids: [`insight=${id}`] }, ""), btn);
+    { where: "Insights › Reports", text, ids: [`insight=${id}`] }, ""), btn,
+  `About ${name}`);
 }
 
 // Ask brAIn about something: ONE rule for every ask-about (a report's Ask,
@@ -5883,7 +5911,10 @@ function askAboutReport(id, catInfo, insight, btn) {
 // status refresh, which put people on an empty "New chat" while their
 // question ran in a hidden terminal. The button is held while the POST is
 // in flight, so a double tap is one conversation.
-async function askAbout(prompt, btn) {
+// `title` names the conversation in the chat list as it opens (the
+// person's own words, or what was asked about): the prompt is for the
+// model and never a title (#882).
+async function askAbout(prompt, btn, title) {
   if (btn) {
     if (btn.disabled) return;
     btn.disabled = true;
@@ -5893,7 +5924,7 @@ async function askAbout(prompt, btn) {
     if (chatState.session === "classic") showTerminalFrame();
     else askShow("chat");
     const out = await chatSwitching(() => api("api/ask", {
-      method: "POST", body: JSON.stringify({ prompt, ...chatWho() }) }));
+      method: "POST", body: JSON.stringify({ prompt, title: title || "", ...chatWho() }) }));
     if (out && out.face === "terminal") {
       if (chatState.session !== "classic") {
         // The server's saved face is the terminal and this page had not
@@ -8425,7 +8456,11 @@ function makeTodo(item) {
   const row = el("div", "todorow");
   row.dataset.todoId = item.id;
   const text = el("div", "todotext");
-  text.appendChild(el("span", "todotitle", prettyText(item.text)));
+  // One headline and one short line, worded by the server
+  // (`findings_store.todo_item_parts`): the item's fix under its text said
+  // the same advice twice.
+  text.appendChild(el("span", "todotitle", prettyText(item.headline || item.text)));
+  if (item.line) text.appendChild(el("span", "todofix", prettyText(item.line)));
   const meta = [item.origin === "finding" ? (sourceName(item) || "From a finding") : "Added by you"];
   if (item.added_at) meta.push("added " + timeAgo(new Date(item.added_at * 1000).toISOString()));
   // The house reported this chore's problem again while it waited, and the
@@ -8434,7 +8469,6 @@ function makeTodo(item) {
   const metaLine = el("span", "item-state", meta.join(" · "));
   if (item.seen_again_text) metaLine.title = "Last reported as: " + prettyText(item.seen_again_text);
   text.appendChild(metaLine);
-  if (item.fix) text.appendChild(el("span", "todofix", prettyText(item.fix)));
   row.appendChild(text);
   const actions = el("div", "todoactions");
   const btns = [];
@@ -18368,10 +18402,11 @@ function openAskAbout(el, x, y) {
   go.textContent = "Ask";
   const send = () => {
     if (go.disabled) return;
-    const prompt = askPrompt(ctx, input.value.trim());
+    const words = input.value.trim();
+    const prompt = askPrompt(ctx, words);
     go.disabled = true;
     closeAskAbout();
-    askAbout(prompt);
+    askAbout(prompt, null, words || `About ${snippet.textContent}`);
   };
   go.addEventListener("click", send);
   cancel.addEventListener("click", closeAskAbout);
@@ -18881,7 +18916,7 @@ function renderTuning(d, name) {
     });
   }
   const talk = presButton("Talk it through", `Talk it through with ${name}`, (ev) => {
-    askAbout(tuneTalkPrompt(name), ev.currentTarget);
+    askAbout(tuneTalkPrompt(name), ev.currentTarget, "How brAIn should be in this house");
   });
   body.appendChild(presRow("Or we talk it through.",
     "I ask, you answer, and I tell you what I will change.", [talk]));
@@ -19065,7 +19100,7 @@ $("#persAsk").addEventListener("click", () => {
     + "When we settle a change to how you speak or behave, record it with "
     + "note_personality_change in one sentence, and if the persona itself should "
     + "change, tell me what to put in ⚙ › Personality.");
-  askAbout(lines.join("\n"), $("#persAsk"));
+  askAbout(lines.join("\n"), $("#persAsk"), "brAIn's personality");
 });
 
 // ------------------------------------------------- ⚙ › Instructions
@@ -19196,7 +19231,7 @@ $("#instrAsk").addEventListener("click", () => {
   }
   lines.push("", "Read it, tell me what it makes brAIn do, and help me change it.");
   leaveSettings();
-  askAbout(lines.join("\n"), $("#instrAsk"));
+  askAbout(lines.join("\n"), $("#instrAsk"), `brAIn's instruction “${it.title}”`);
 });
 
 // -------------------------------------------------------- ⚙ › Features

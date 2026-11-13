@@ -87,6 +87,8 @@ MAX_TEXT = 200
 MAX_DETAIL = 600
 MAX_FIX = 600
 MAX_NOTE = 400
+# The one line of detail under a moved finding's headline.
+MAX_LINE = 160
 
 STATUSES = ("open", "done")
 SEVERITIES = ("info", "warning", "serious", "critical")
@@ -195,6 +197,12 @@ def _shape(entry: dict) -> dict:
            if entry.get("claim") else {}),
         **({"from_case": _clean(entry.get("from_case"), 40)}
            if entry.get("from_case") else {}),
+        # The one line under the headline, composed with it when a finding
+        # moved here (`findings_store.todo_parts`). Present, even empty, on
+        # every item moved since, which is how a reader tells an item worded
+        # once from one filed before (`findings_store.todo_item_parts`).
+        **({"line": _clean(entry.get("line"), MAX_LINE)}
+           if "line" in entry else {}),
     }
 
 
@@ -305,7 +313,7 @@ def add(text: str, *, detail: str = "", fix: str = "", entity_id: str = "",
         severity: str = "warning", origin: str = "hand", source: str = "",
         source_title: str = "", finding_key: str = "", run_id: str = "",
         now: float | None = None, claim: str = "",
-        from_case: str = "") -> dict | None:
+        from_case: str = "", line: str | None = None) -> dict | None:
     """Put something on the list. Returns the item, or None if it is not one.
 
     A blank line is not a chore, and neither is one past the cap: the add
@@ -334,6 +342,7 @@ def add(text: str, *, detail: str = "", fix: str = "", entity_id: str = "",
         "added_at": int(now if now is not None else time.time()),
         "claim": claim if claim and claim != text else "",
         "from_case": from_case,
+        **({"line": line} if line is not None else {}),
     })
     items.append(entry)
     _write(_pruned(items))
@@ -538,6 +547,24 @@ def shown(now: float | None = None) -> dict:
             "next_wake": min(asleep.values()) if asleep else None}
 
 
+# What an item's headline is (`findings_store.todo_item_text`), set by the
+# server; the stored text when it is not set or fails.
+HEADLINE = None
+
+
+def _headlined(item: dict) -> dict:
+    """An item as the mirror lists it: under the headline the panel's card
+    shows, so the phone's To-do list and the panel say the same thing."""
+    hook = HEADLINE
+    if hook is None:
+        return item
+    try:
+        text = hook(item)
+    except Exception:  # noqa: BLE001 — the stored text stands in
+        return item
+    return {**item, "text": text} if text else item
+
+
 def publish_state(only_if_changed: bool = False) -> bool:
     """Republish the shared-volume copy the integration reads.
 
@@ -557,7 +584,7 @@ def publish_state(only_if_changed: bool = False) -> bool:
     try:
         view = shown()
         body = {"open": view["open"], "snoozed": view["snoozed"],
-                "items": view["items"]}
+                "items": [_headlined(i) for i in view["items"]]}
         digest = json.dumps(body, sort_keys=True, default=str)
         if (only_if_changed and digest == _LAST_PUBLISHED
                 and STATE_FILE.exists()):
