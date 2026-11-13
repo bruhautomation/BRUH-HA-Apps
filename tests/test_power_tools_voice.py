@@ -105,7 +105,39 @@ class TestVoiceMayShopButNeverBuy(unittest.TestCase):
     def test_voice_is_not_shown_the_buying_tools(self):
         names = {t["name"] for t in ha_mcp_server.tools_for_channel()}
         self.assertIn("browser_task", names)
+        self.assertIn("browser_answer", names)
         self.assertEqual({"browser_purchase", "browser_stop"} & names, set())
+
+    def paused_on(self, question):
+        def record(method, path, body=None, timeout=20):
+            self.calls.append((method, path, body))
+            return {"task": {"id": "abc123", "state": "needs_you", "question": question}}
+        ha_mcp_server._browser_request = record
+
+    def test_voice_answers_a_plain_choice(self):
+        self.paused_on({"kind": "choice", "text": "Which oat milk?",
+                        "options": ["Use Oatly 1L", "Use Alpro 1L"]})
+        ha_mcp_server.handle_tool_call("browser_answer", {"task": "abc123",
+                                                          "answer": "Use Oatly 1L"})
+        self.assertEqual(self.calls[-1][:2], ("POST", "/api/tasks/abc123/answer"))
+
+    def test_voice_never_answers_about_money_or_what_is_done_in_the_browser(self):
+        for question, words in (
+                ({"kind": "confirm", "text": "Milk is out. Get the dearer one?",
+                  "options": ["Yes", "No"], "money": True}, "yes"),
+                ({"kind": "choice", "text": "Which delivery slot?",
+                  "options": ["Sat £4.50", "Sun £2"]}, "Sat £4.50"),
+                ({"kind": "confirm", "text": "Place the order now?", "options": ["Yes", "No"]},
+                 "yes"),
+                ({"kind": "sign_in", "text": "Sign in to Tesco", "options": []}, "done"),
+                ({"kind": "other", "text": "What should it do?", "options": []}, "skip it")):
+            with self.subTest(question=question["text"]):
+                self.calls.clear()
+                self.paused_on(question)
+                answer = ha_mcp_server.handle_tool_call("browser_answer",
+                                                        {"task": "abc123", "answer": words})
+                self.assertIn("error", answer)
+                self.assertFalse([c for c in self.calls if c[0] == "POST"])
 
 
 if __name__ == "__main__":

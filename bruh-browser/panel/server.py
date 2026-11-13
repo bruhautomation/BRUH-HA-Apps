@@ -5,7 +5,8 @@
   on loopback, and this serves noVNC and bridges its websocket (`vnc_bridge`)
   — with the setup steps and the errand in progress above it.
 * It is brAIn's ERRAND API: `POST /api/tasks`, `GET /api/tasks/<id>`,
-  `POST /api/tasks/<id>/stop`, with the bearer token run.sh writes to
+  `POST /api/tasks/<id>/stop`, `POST /api/tasks/<id>/answer`,
+  `GET /api/browsers`, `POST /api/browsers/default`, with the bearer token run.sh writes to
   `/config/.bruh_browser/api_token`. Errands run one at a time
   (`tasks.Errands`) through the runner seam (`runner.run_task`).
 * It KEEPS CHROME RUNNING (`browser.Chrome`) and opens the sign-in window.
@@ -14,9 +15,12 @@
 add-on can reach it, so nothing here trusts the network: a request from the
 Supervisor's ingress proxy (172.30.32.2, which Home Assistant authenticated,
 admin-only) or loopback reaches everything; any other peer reaches only the
-errand routes, only with the token, and never Continue (a person handled
-the login, so a person presses it). The screen and its websocket are
-ingress-only: the live browser is signed in to the household's shops.
+errand and browser routes, only with the token, and never Continue (a person
+handled the login, so a person presses it), never "I've done it" on an
+answer, never Buy this or Don't buy (a person with the cart in front of them
+presses those), and never says which Chrome is this add-on's own. The screen
+and its websocket are ingress-only: the live browser is signed in to the
+household's shops.
 """
 from __future__ import annotations
 
@@ -33,6 +37,7 @@ from aiohttp.abc import AbstractAccessLogger
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import browsers as browser_choice  # noqa: E402
 import runner  # noqa: E402
 import setup_state  # noqa: E402
 import tasks as errands  # noqa: E402
@@ -52,7 +57,9 @@ TICK_S = 3
 INGRESS_PEERS = frozenset(
     p.strip() for p in os.environ.get(
         "BROWSER_INGRESS_PEERS", "172.30.32.2,127.0.0.1,::1").split(",") if p.strip())
-TOKEN_ROUTES = ("/api/tasks",)
+TOKEN_ROUTES = ("/api/tasks", "/api/browsers")
+# What only a person on the panel's page may press, token or no token.
+PANEL_ONLY = ("/continue", "/buy", "/decline", "/api/browsers/own")
 
 # Debian bookworm's aiohttp (3.8) has no web.AppKey; a newer one warns
 # about a plain string key. BRUH Bambu Studio's answer, copied.
@@ -121,11 +128,13 @@ async def guard(request, handler):
     if request.remote in INGRESS_PEERS:
         return await handler(request)
     header = request.headers.get("Authorization", "")
-    if (path.startswith(TOKEN_ROUTES) and not path.endswith("/continue")
+    if (path.startswith(TOKEN_ROUTES) and not path.endswith(PANEL_ONLY)
             and token_ok(header)):
         return await handler(request)
     if header and not token_ok(header):
         return _err("That is not BRUH Browser's token.", 401)
+    if header and path.endswith(PANEL_ONLY):
+        return _err("A person presses that on BRUH Browser's page in the sidebar.", 403)
     if header:
         return _err("The token reaches the errand routes only; the rest is the sidebar's.", 403)
     return _err("BRUH Browser answers Home Assistant's sidebar and brAIn only.", 403)
@@ -172,11 +181,22 @@ def _chrome(request) -> Chrome:
     return request.app[STATE_KEY]["chrome"]
 
 
+def _browsers(request):
+    return _errands(request).browsers
+
+
+def _by_person(request) -> bool:
+    return request.remote in INGRESS_PEERS
+
+
 async def h_state(request):
     errs = _errands(request)
     chrome = _chrome(request)
-    steps = await asyncio.to_thread(setup_state.steps, errs.last_test())
+    steps = await asyncio.to_thread(setup_state.steps, errs.last_test(),
+                                    errs.last_blocked())
+    picks = errs.browsers.view() if errs.browsers is not None else None
     return web.json_response({
+        "browsers": picks,
         "version": os.environ.get("ADDON_VERSION", "dev"),
         "chrome": chrome.state(),
         "setup": steps,
@@ -199,10 +219,21 @@ async def _body(request) -> dict:
 async def h_task_create(request):
     body = await _body(request)
     purchase = body.get("purchase") is True
-    source = str(body.get("source") or ("panel" if request.remote in INGRESS_PEERS else "brain"))
+    source = str(body.get("source") or ("panel" if _by_person(request) else "brain"))
+    target = None
+    picks = _browsers(request)
+    wanted = str(body.get("browser") or "").strip()
+    if wanted and not purchase and picks is not None:
+        if not picks.view()["browsers"]:
+            await asyncio.to_thread(picks.refresh)
+        target, why = picks.resolve(wanted)
+        if target is None:
+            return _err(why, 409)
+        if body.get("make_default") is True:
+            picks.set_default(target)
     task, why = _errands(request).create(
         str(body.get("prompt") or ""), purchase=purchase, source=source,
-        approval=body.get("approval"))
+        approval=body.get("approval"), browser=target)
     if not task:
         return _err(why, 409)
     return web.json_response({"task": task}, status=201)
@@ -235,6 +266,73 @@ async def h_task_continue(request):
     if not task:
         return _err(why, 409)
     return web.json_response({"task": task})
+
+
+async def h_task_answer(request):
+    """The answer to a paused errand's question. Words come from the page or
+    from brAIn; "I've done it" (carry_on) only from the page, because only a
+    person at the live browser has done it."""
+    body = await _body(request)
+    carry_on = body.get("carry_on") is True
+    if carry_on and not _by_person(request):
+        return _err("A person presses that on BRUH Browser's page, after doing it "
+                    "in the live browser.", 403)
+    task, why = _errands(request).answer(
+        request.match_info["id"], str(body.get("answer") or ""), carry_on=carry_on,
+        by="panel" if _by_person(request) else "brain")
+    if not task:
+        return _err(why, 409)
+    return web.json_response({"task": task})
+
+
+async def h_task_buy(request):
+    """Buy this, from the page (PANEL_ONLY): the same approval check as
+    brAIn's purchase — this add-on's finished cart, under the window, never
+    bought or declined, and the total the person was shown."""
+    body = await _body(request)
+    task, why = _errands(request).create(
+        "", purchase=True, source="panel",
+        approval={"cart_task": request.match_info["id"], "total": body.get("total")})
+    if not task:
+        return _err(why, 409)
+    return web.json_response({"task": task}, status=201)
+
+
+async def h_task_decline(request):
+    task, why = _errands(request).decline(request.match_info["id"])
+    if not task:
+        return _err(why, 409)
+    return web.json_response({"task": task})
+
+
+async def h_browsers(request):
+    picks = _browsers(request)
+    if picks is None:
+        return _err("Browser choice is not available.", 503)
+    if request.query.get("refresh") == "1":
+        if _errands(request).busy():
+            return web.json_response({**picks.view(), "busy": True})
+        return web.json_response(await asyncio.to_thread(picks.refresh))
+    return web.json_response(await asyncio.to_thread(
+        picks.view if _errands(request).busy() else picks.fresh))
+
+
+async def h_browsers_default(request):
+    picks = _browsers(request)
+    if picks is None:
+        return _err("Browser choice is not available.", 503)
+    body = await _body(request)
+    view, why = picks.set_default(str(body.get("browser") or ""))
+    return _err(why, 409) if why else web.json_response(view)
+
+
+async def h_browsers_own(request):
+    picks = _browsers(request)
+    if picks is None:
+        return _err("Browser choice is not available.", 503)
+    body = await _body(request)
+    view, why = picks.set_own(str(body.get("browser") or ""))
+    return _err(why, 409) if why else web.json_response(view)
 
 
 async def h_setup_open(request):
@@ -307,8 +405,13 @@ def make_errands(chrome: Chrome, store: Path | None = None, run=None) -> errands
     def default_run(task, progress, stop):
         return runner.run_task(task, run_config(), progress, stop)
 
+    def claude_env():
+        return {k: v for k, v in os.environ.items() if k not in runner.STRIPPED_ENV}
+
+    picks = browser_choice.Browsers(
+        DATA / "browsers.json", os.environ.get("BROWSER_CLAUDE_BIN", "claude"), claude_env)
     return errands.Errands(store or DATA / "tasks.json", run or default_run,
-                           options, before_run=before_run)
+                           options, before_run=before_run, browsers=picks)
 
 
 def build_app(chrome: Chrome | None = None, errs: errands.Errands | None = None, *,
@@ -336,6 +439,12 @@ def build_app(chrome: Chrome | None = None, errs: errands.Errands | None = None,
     r.add_get("/api/tasks/{id}", h_task_get)
     r.add_post("/api/tasks/{id}/stop", h_task_stop)
     r.add_post("/api/tasks/{id}/continue", h_task_continue)
+    r.add_post("/api/tasks/{id}/answer", h_task_answer)
+    r.add_post("/api/tasks/{id}/buy", h_task_buy)
+    r.add_post("/api/tasks/{id}/decline", h_task_decline)
+    r.add_get("/api/browsers", h_browsers)
+    r.add_post("/api/browsers/default", h_browsers_default)
+    r.add_post("/api/browsers/own", h_browsers_own)
     if ticker:
         app.cleanup_ctx.append(_ticker)
     return app

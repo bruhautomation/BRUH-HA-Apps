@@ -16,6 +16,18 @@ caller's words are not used for it), names the approved items and the most
 it may cost (the tolerance option), and only that errand runs with the
 spending guard stood down (`purchase_approved`).
 
+**A pause can always be answered** (`answer`): an errand waiting for a
+person carries a question with a kind (`runner.KINDS`). Words answer a
+choice, a confirm or an `other`, and the run resumes with them as the
+person's answer; "I've done it" answers the kinds done in the browser
+(sign-in, CAPTCHA, verification, dialog, the extension's own prompt), which
+only the panel's page may press (`server.guard`). A question about WHICH
+browser re-queues the errand on the one picked.
+
+**A cart can be declined** (`decline`): it is then never approved, from the
+panel or from brAIn. A cart built in another computer's Chrome is never
+approved at all: purchases happen only in this add-on's own Chrome.
+
 The store is `/data/tasks.json`, the last `KEEP` errands. An errand that was
 queued or running when the add-on stopped is failed on the next start with
 a sentence: re-running it unasked after a restart would be a surprise.
@@ -29,6 +41,7 @@ import time
 from pathlib import Path
 
 import browser_atomic
+import runner
 
 log = logging.getLogger("bruh_browser.tasks")
 
@@ -36,6 +49,7 @@ MAX_WAITING = 3
 KEEP = 40
 APPROVAL_WINDOW_S = 30 * 60
 MAX_PROMPT = 4000
+MAX_ANSWER = 500
 ACTIVE = ("queued", "running")
 FINAL = ("done", "failed", "stopped", "needs_you")
 
@@ -114,6 +128,12 @@ def check_approval(tasks: dict, approval, now: float,
         return None, "That cart errand is not one this add-on ran."
     if cart_task.get("purchase") or cart_task.get("kind") != "errand":
         return None, "Only a cart errand can be approved for a purchase."
+    if cart_task.get("declined"):
+        return None, ("The household declined that cart, so it cannot be bought. "
+                      "Build the cart again if they change their mind.")
+    if cart_task.get("browser_own") is False:
+        return None, ("That cart was built in a Chrome on another computer. BRUH "
+                      "Browser buys only in its own Chrome: build the cart there.")
     if cart_task.get("state") != "done":
         return None, (f"That cart errand is {cart_task.get('state')}, not done; a "
                       "purchase is approved only against a finished cart.")
@@ -141,15 +161,18 @@ def check_approval(tasks: dict, approval, now: float,
 
 
 class Errands:
-    def __init__(self, store: Path, run, settings, *, before_run=None, now=time.time):
+    def __init__(self, store: Path, run, settings, *, before_run=None, browsers=None,
+                 now=time.time):
         """`run(task, on_progress, stop_event) -> outcome` is the runner seam;
         `settings()` answers {tolerance_percent}; `before_run()` readies the
         screen (closes the sign-in window) and may answer a sentence that
-        fails the errand."""
+        fails the errand; `browsers` (a `browsers.Browsers`, or None in a
+        test) chooses the browser each errand drives."""
         self.store = Path(store)
         self.run = run
         self.settings = settings
         self.before_run = before_run
+        self.browsers = browsers
         self.now = now
         self.lock = threading.Lock()
         self.wake = threading.Event()
@@ -188,7 +211,7 @@ class Errands:
     def public(task: dict | None) -> dict | None:
         if not task:
             return None
-        hidden = ("message", "resume_session")
+        hidden = ("message", "resume_session", "browser_device")
         return {k: v for k, v in task.items() if k not in hidden}
 
     def get(self, task_id: str) -> dict | None:
@@ -210,6 +233,17 @@ class Errands:
                 return self.public((running or queued)[0])
             return self.public(rows[-1]) if rows else None
 
+    def busy(self) -> bool:
+        with self.lock:
+            return any(t["state"] == "running" for t in self.tasks.values())
+
+    def last_blocked(self) -> dict | None:
+        """The latest errand the extension stopped with its own prompt."""
+        with self.lock:
+            rows = [t for t in self.tasks.values() if t.get("setup_step") == 4]
+            rows.sort(key=lambda t: t.get("finished_at") or 0)
+            return self.public(rows[-1]) if rows else None
+
     def last_test(self) -> dict | None:
         with self.lock:
             tests = sorted((t for t in self.tasks.values() if t.get("kind") == "test"),
@@ -219,7 +253,8 @@ class Errands:
     # ------------------------------------------------------------ changes
 
     def create(self, prompt: str, *, purchase: bool = False, source: str = "",
-               approval=None, kind: str = "errand") -> tuple[dict | None, str]:
+               approval=None, kind: str = "errand",
+               browser: str | None = None) -> tuple[dict | None, str]:
         """(the new errand, "") or (None, the sentence that refuses it)."""
         words = str(prompt or "").strip()
         if kind == "errand" and not purchase:
@@ -240,7 +275,10 @@ class Errands:
                     "answer": "", "needs_you": "", "error": "", "setup_step": None,
                     "cart": None, "order_placed": False, "order_number": "",
                     "approved_from": None, "approved_total": None, "turns": None,
-                    "cost_usd": None, "prompt": words[:MAX_PROMPT]}
+                    "cost_usd": None, "prompt": words[:MAX_PROMPT], "question": None,
+                    "reply": "", "answers": [], "declined": False,
+                    "browser": browser or None, "browser_own": None,
+                    "browser_label": ""}
             if kind == "test":
                 task["prompt"] = "Setup test: open example.com and read its heading"
                 task["message"] = TEST_MESSAGE
@@ -251,7 +289,7 @@ class Errands:
                 tolerance = float(self.settings().get("tolerance_percent") or 0)
                 cart = cart_task["cart"]
                 task.update(purchase_approved=True, approved_from=cart_task["id"],
-                            approved_total=cart["total"],
+                            approved_total=cart["total"], browser="own",
                             prompt=f"Place the order for the cart in errand {cart_task['id']}",
                             message=purchase_message(task_id, cart_task, tolerance))
             else:
@@ -277,9 +315,91 @@ class Errands:
                     event.set()
             elif task["state"] == "needs_you":
                 task.update(state="stopped", error="Stopped while it waited for a person.",
-                            progress="Stopped")
+                            progress="Stopped", finished_at=self.now())
                 self._save()
             return self.public(task), ""
+
+    def decline(self, task_id: str) -> tuple[dict | None, str]:
+        """The household says no to a finished cart: it is never bought."""
+        with self.lock:
+            task = self.tasks.get(str(task_id))
+            if not task:
+                return None, "There is no such errand."
+            if task.get("purchase") or task.get("kind") != "errand" or \
+                    task.get("state") != "done" or not task.get("cart"):
+                return None, "Only a finished cart can be declined."
+            if any(t.get("approved_from") == task["id"] for t in self.tasks.values()):
+                return None, "That cart was already approved for a purchase."
+            task.update(declined=True, declined_at=self.now())
+            self._save()
+            return self.public(task), ""
+
+    def answer(self, task_id: str, words: str = "", *, carry_on: bool = False,
+               by: str = "panel") -> tuple[dict | None, str]:
+        """Answer the question a paused errand asked, and let it carry on.
+        `carry_on` is "I've done it" (the kinds done in the browser, and
+        `other`); `words` answer a choice, a confirm or an `other`."""
+        words = " ".join(str(words or "").split())[:MAX_ANSWER]
+        with self.lock:
+            task = self.tasks.get(str(task_id))
+            if not task:
+                return None, "There is no such errand."
+            if task["state"] != "needs_you":
+                return None, "That errand is not waiting for an answer."
+            question = task.get("question") or {}
+            kind = question.get("kind") or "other"
+            if question.get("pick_browser") or question.get("browsers"):
+                return self._pick_browser(task, question, words)
+            if question.get("ran_out") and words.lower() in ("stop here", "stop"):
+                task.update(state="stopped", error="Stopped after it ran out of steps.",
+                            progress="Stopped", finished_at=self.now())
+                self._save()
+                return self.public(task), ""
+            if carry_on:
+                if kind not in runner.PERSON_ONLY + ("other",):
+                    return None, "This question needs an answer, not Carry on."
+                words = ""
+            elif not words:
+                return None, "Say what it should do."
+            elif kind in runner.PERSON_ONLY:
+                return None, ("This is done in the live browser, not answered in words: "
+                              "do it there, then press I've done it, carry on.")
+            elif kind in ("choice", "confirm") and question.get("options"):
+                match = [o for o in question["options"] if o.lower() == words.lower()]
+                words = match[0] if match else words
+            if not task.get("resume_session"):
+                return None, "That errand cannot be continued; ask for it again."
+            waiting = [t for t in self.tasks.values() if t["state"] == "queued"]
+            if len(waiting) >= MAX_WAITING:
+                return None, "Too many errands are waiting; try again shortly."
+            task["answers"] = (list(task.get("answers") or []) + [{
+                "question": question.get("text") or task.get("needs_you") or "",
+                "answer": words or "Done it", "by": str(by)[:20], "at": self.now()}])[-10:]
+            task.update(state="queued", progress="Waiting to carry on", needs_you="",
+                        question=None, reply=words,
+                        continued=int(task.get("continued") or 0) + 1)
+            self._save()
+        self.wake.set()
+        return self.public(task), ""
+
+    def _pick_browser(self, task: dict, question: dict, words: str):
+        """The answer to "which browser?": the errand starts again there."""
+        choices = question.get("browsers") or []
+        pick = next((c for c in choices if c.get("label", "").lower() == words.lower()), None)
+        if pick is None:
+            return None, ("Pick one of the browsers offered: "
+                          + "; ".join(c.get("label", "") for c in choices) + ".")
+        if task.get("purchase") and pick.get("browser") != "own":
+            return None, "A purchase is made only in BRUH Browser's own Chrome."
+        task["answers"] = (list(task.get("answers") or []) + [{
+            "question": question.get("text") or "", "answer": pick["label"],
+            "at": self.now()}])[-10:]
+        task.update(state="queued", progress="Waiting to start", needs_you="",
+                    question=None, reply="", browser=pick.get("browser") or "own")
+        task.pop("resume_session", None)
+        self._save()
+        self.wake.set()
+        return self.public(task), ""
 
     def resume(self, task_id: str) -> tuple[dict | None, str]:
         with self.lock:
@@ -294,6 +414,7 @@ class Errands:
             if len(waiting) >= MAX_WAITING:
                 return None, "Too many errands are waiting; try again shortly."
             task.update(state="queued", progress="Waiting to carry on", needs_you="",
+                        question=None, reply="",
                         continued=int(task.get("continued") or 0) + 1)
             self._save()
         self.wake.set()
@@ -330,8 +451,47 @@ class Errands:
                 if live and live["state"] == "running":
                     live["progress"] = str(line)[:200]
 
+        pick = None
+        if not problem and self.browsers is not None and not task.get("resume_session"):
+            try:
+                pick = self.browsers.preflight(task.get("browser"))
+            except Exception as exc:  # noqa: BLE001 — choosing must not crash the worker
+                log.exception("Choosing a browser failed")
+                pick = {"device": None, "own": True, "name": "", "note": str(exc)}
+        elif self.browsers is not None:
+            # A resumed errand stays on the browser it started on.
+            pick = {"device": task.get("browser_device"),
+                    "own": task.get("browser_own") is not False,
+                    "name": task.get("browser_label") or ""}
+        if pick and pick.get("question"):
+            question = pick["question"]
+            if task.get("purchase"):
+                problem = ("BRUH Browser's own Chrome is not connected to Claude right now, "
+                           "and a purchase is made only there. Check setup step 1, then "
+                           "approve the cart again.")
+            else:
+                outcome = {"state": "needs_you", "needs_you": question["text"],
+                           "question": question}
+        elif pick:
+            if task.get("purchase") and not pick.get("own"):
+                problem = "A purchase is made only in BRUH Browser's own Chrome."
+            task.update(browser_device=pick.get("device"), browser_own=bool(pick.get("own")),
+                        browser_label=pick.get("name") or "")
+            with self.lock:
+                live = self.tasks.get(task["id"])
+                if live is not None:
+                    live.update(browser_device=task["browser_device"],
+                                browser_own=task["browser_own"],
+                                browser_label=task["browser_label"])
+            if pick.get("device") and not problem:
+                try:
+                    self.browsers.pin(task["browser_device"], task["browser_label"])
+                except OSError as exc:
+                    log.warning("Could not pin the browser: %s", exc)
         if problem:
             outcome = {"state": "failed", "error": problem}
+        elif pick and pick.get("question"):
+            pass
         else:
             try:
                 outcome = self.run(task, progress, stop)
@@ -346,9 +506,21 @@ class Errands:
                              if k in ("state", "answer", "needs_you", "error",
                                       "setup_step", "cart", "order_placed",
                                       "order_number", "turns", "cost_usd",
-                                      "steps")})
+                                      "steps", "question")})
+                live["reply"] = ""
+                if live["state"] != "needs_you":
+                    live["question"] = None
+                question = live.get("question") or {}
+                if question.get("pick_browser") and not question.get("browsers") \
+                        and self.browsers is not None:
+                    try:
+                        live["question"] = self.browsers.question_for(question["text"])
+                    except Exception:  # noqa: BLE001
+                        log.exception("Could not list the browsers for a question")
                 if outcome.get("session_id"):
                     live["resume_session"] = outcome["session_id"]
+                elif "session_id" in outcome and question.get("pick_browser"):
+                    live.pop("resume_session", None)
                 if live.get("cart") is None and keep_cart:
                     live["cart"] = keep_cart
                 live["finished_at"] = self.now()
