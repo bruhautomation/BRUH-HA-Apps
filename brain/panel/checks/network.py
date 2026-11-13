@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import re
 
+import textclip
 from numfmt import count
 
 from ._registry_facts import SELF_PLATFORMS, entry_not_loaded, is_node_status
@@ -917,6 +918,209 @@ _FIXES = {
 }
 
 
+# What To Do says for a device that dropped off, by the same kinds as
+# `_FIXES`: the job the headline names, the line under it for one device,
+# and the line for several. Composed from these parts ONCE, with the names
+# in hand (`todo_words`), because a fix is a paragraph with a label and a
+# pronoun in every clause, and a headline cut out of it dangled (#879).
+_JOBS = {
+    "hung": ("Reconnect {thing}",
+             "Block and unblock it in the UniFi Network app, or power-cycle it.",
+             "Block and unblock each one in the UniFi Network app, or "
+             "power-cycle it."),
+    "flapping": ("Move {thing} nearer the access point",
+                 "Check its signal in the UniFi Network app; if it still "
+                 "drops, give it a 2.4 GHz network of its own.",
+                 "Check each one's signal in the UniFi Network app; give any "
+                 "that still drop a 2.4 GHz network of their own."),
+    "zwave": ("Wake {thing}",
+              "Check its battery; if it does not answer, re-interview it "
+              "from its device page.",
+              "Check each one's battery; re-interview any that do not "
+              "answer from their device pages."),
+    "zigbee_mains": ("Check the power to {thing}",
+                     "A socket or a wall switch turned off is the usual cause.",
+                     "A socket or a wall switch turned off is the usual cause."),
+    "zigbee": ("Wake {thing}",
+               "Press its button and check its battery; if it stays quiet, "
+               "re-pair it near the coordinator.",
+               "Press each one's button and check its battery; re-pair any "
+               "that stay quiet near the coordinator."),
+}
+# What a device of each kind is called when no name for it survives.
+_KIND_NOUN = {"hung": "Wi-Fi device", "flapping": "Wi-Fi device",
+              "zwave": "Z-Wave device", "zigbee_mains": "Zigbee device",
+              "zigbee": "Zigbee device"}
+UNIFI_TODO = ("Keep the UniFi Network application reachable",
+              "Every UniFi tracker drops at once when Home Assistant loses "
+              "the controller.")
+TODO_HEADLINE_MAX = 80
+TODO_LINE_MAX = 140
+
+
+# The longest a device's name may be inside a headline: past it the name
+# is shortened on a word, so the headline keeps its job and its length.
+TODO_NAME_MAX = 40
+
+
+def _the(name: str) -> str:
+    """A device's name as the object of a sentence: "the Hall sensor",
+    but never "the the porch light", "The Reading lamp" mid-sentence, "the
+    A Zigbee device" or "the Sam's phone"."""
+    name = textclip.clip(" ".join(str(name or "").split()), TODO_NAME_MAX) \
+        or "a device"
+    m = re.match(r"(?i)^(the|a|an)\s+", name)
+    if m:
+        return m.group(1).lower() + name[m.end(1):]
+    if re.match(r"^[\w-]+['’]s\b", name):
+        return name
+    return f"the {name}"
+
+
+def _thing(names: list[str], total: int, noun: str, cap: int) -> str:
+    """The devices a headline names: one, two, or the first two and how
+    many more; the kind and count when no name survived. Fitted to ``cap``
+    characters by naming fewer, never by cutting a name."""
+    total = max(total, len(names))
+    # Two devices with one name are one name and a count, never "the Porch
+    # sensor and the Porch sensor".
+    names = list(dict.fromkeys(n for n in names if str(n or "").strip()))
+    if not names:
+        return (f"the quiet {noun}" if total <= 1
+                else f"the {count(total, noun)}")
+    if total == 1:
+        return _the(names[0])
+    options = []
+    if total == 2 and len(names) >= 2:
+        options.append(f"{_the(names[0])} and {_the(names[1])}")
+    if len(names) >= 2 and total > 2:
+        options.append(f"{_the(names[0])}, {_the(names[1])} and "
+                       f"{total - 2} more")
+    options.append(f"{_the(names[0])} and {total - 1} more")
+    for option in options:
+        if len(option) <= cap:
+            return option
+    # Names too long for a headline: the kind and the count, which the
+    # card's own detail then names.
+    return f"the {count(total, noun)}"
+
+
+def todo_words(kinds: list[str], names_by_kind: dict[str, list[str]],
+               totals: dict[str, int] | None = None) -> tuple[str, str]:
+    """`(headline, line)` for a To Do about devices that dropped off.
+
+    The headline names the devices and the job ("Wake the Hall sensor");
+    the line says how, and what to do if that fails, in one sentence; a
+    pronoun in the line is singular only under a headline naming one
+    device. Several kinds at once are one errand, "Bring back …", with each
+    kind's job on the line. `unifi` is the controller, which has no device.
+    """
+    totals = totals or {}
+    kinds = [k for k in kinds if k in _JOBS or k == "unifi"]
+    devices = [k for k in kinds if k in _JOBS]
+    if not devices:
+        return UNIFI_TODO if "unifi" in kinds else ("", "")
+    n_of = {k: max(int(totals.get(k) or 0), len(names_by_kind.get(k) or []))
+            for k in devices}
+    if len(devices) == 1:
+        kind = devices[0]
+        job, one, many = _JOBS[kind]
+        room = TODO_HEADLINE_MAX - len(job.format(thing=""))
+        thing = _thing(names_by_kind.get(kind) or [], n_of[kind],
+                       _KIND_NOUN[kind], room)
+        line = one if max(n_of[kind], 1) == 1 else many
+        if "unifi" in kinds:
+            line = f"{line} {UNIFI_TODO[1]}"
+        return _cap(job.format(thing=thing)), _line(line)
+    every = [n for k in devices for n in (names_by_kind.get(k) or [])]
+    total = sum(max(n_of[k], 1) for k in devices)
+    head = "Bring back {thing}"
+    thing = _thing(every, total, "device",
+                   TODO_HEADLINE_MAX - len(head.format(thing="")))
+    jobs = []
+    for kind in devices:
+        job = _JOBS[kind][0]
+        named = names_by_kind.get(kind) or []
+        jobs.append(job.format(thing=_thing(named, n_of[kind],
+                                            _KIND_NOUN[kind], 60)))
+    line = "; ".join(j[0].lower() + j[1:] for j in jobs)
+    return _cap(head.format(thing=thing)), _line(line[0].upper() + line[1:] + ".")
+
+
+def _cap(text: str) -> str:
+    return text if len(text) <= TODO_HEADLINE_MAX else \
+        text[:TODO_HEADLINE_MAX - 1].rsplit(" ", 1)[0] + "…"
+
+
+def _line(text: str) -> str:
+    """The line, whole clauses first: past the budget it ends at the last
+    "; " that fits, never mid-word."""
+    if len(text) <= TODO_LINE_MAX:
+        return text
+    cut = text[:TODO_LINE_MAX].rfind("; ")
+    if cut > 40:
+        return text[:cut] + "."
+    return text[:TODO_LINE_MAX - 1].rsplit(" ", 1)[0] + "…"
+
+
+# How the connectivity row's detail lists a device (`connectivity`'s
+# `phrases`), and how it counts them, for a To Do filed before the row
+# carried its own words: the names survive only there.
+_DETAIL_DEVICE_RE = re.compile(r"(?:: |; )([^;]+?) \((Wi-Fi|Z-Wave|Zigbee)\), ")
+_DETAIL_COUNT_RE = re.compile(r"^(\d+) devices are|^One device is")
+_DETAIL_MORE_RE = re.compile(r"; and (\d+) more\.")
+
+
+def todo_words_stored(source: str, fix: str, detail: str) -> tuple[str, str] | None:
+    """`(headline, line)` for a To Do item a quiet-device check filed before
+    it wrote its own, from what the item kept: the kinds are the `_FIXES`
+    sentences its fix is made of (matched exactly), the names are the ones
+    its detail lists. None for an item this cannot read, which then takes
+    the generic wording."""
+    fix = " ".join(str(fix or "").split())
+    detail = " ".join(str(detail or "").split())
+    if source == f"check:{CONNECTIVITY}":
+        kinds = [k for k, said in _FIXES.items() if said in fix]
+        if "UniFi: check the UniFi Network application" in fix:
+            kinds.append("unifi")
+        if not kinds:
+            return None
+        network_kinds = {"Wi-Fi": [k for k in kinds if k in ("hung", "flapping")],
+                         "Z-Wave": ["zwave"] if "zwave" in kinds else [],
+                         "Zigbee": [k for k in kinds
+                                    if k in ("zigbee", "zigbee_mains")]}
+        names: dict[str, list[str]] = {}
+        named = 0
+        for name, network in _DETAIL_DEVICE_RE.findall(detail):
+            options = network_kinds.get(network) or []
+            if len(options) == 1:
+                names.setdefault(options[0], []).append(name.strip())
+                named += 1
+        m = _DETAIL_COUNT_RE.search(detail)
+        listed = int(m.group(1) or 1) if m and m.group(1) else (1 if m else 0)
+        devices = [k for k in kinds if k in _JOBS]
+        totals = {}
+        if len(devices) == 1:
+            more = _DETAIL_MORE_RE.search(detail)
+            totals[devices[0]] = max(listed, named + int(more.group(1) if more else 0))
+        elif named < listed:
+            # Which kind the unnamed ones are is not on the item: the
+            # headline counts them all and the line names only who it can.
+            names = {}
+        return todo_words(kinds, names, totals)
+    if source == "check:dev.zha_unseen":
+        m = re.match(r"^(?:(\d+): (.*?)|([^.]+?))\. The quietest is ", detail)
+        names, total = [], 1
+        if m and m.group(1):
+            total = int(m.group(1))
+            listed = re.sub(r" and \d+ more$", "", m.group(2))
+            names = [n.strip() for n in listed.split(", ") if n.strip()]
+        elif m:
+            names = [m.group(3).strip()]
+        return todo_words(["zigbee"], {"zigbee": names}, {"zigbee": total})
+    return None
+
+
 def _house_has(house: House, platforms) -> bool:
     return any(str(r.get("platform") or "") in platforms for r in house.entities)
 
@@ -979,6 +1183,11 @@ def connectivity(snap: dict, now: float) -> list[dict]:
         if e["fix"] not in kinds:
             kinds.append(e["fix"])
     fix = " ".join(_FIXES[k] for k in kinds)
+    names_by_kind: dict[str, list[str]] = {}
+    for e in listed:
+        names_by_kind.setdefault(e["fix"], []).append(e["name"])
+    todo_text, todo_line = todo_words(kinds + (["unifi"] if unifi_line else []),
+                                      names_by_kind)
     if unifi_line:
         fix = (fix + " UniFi: check the UniFi Network application stays up "
                "and reachable from Home Assistant.").strip()
@@ -986,6 +1195,10 @@ def connectivity(snap: dict, now: float) -> list[dict]:
         "text": CONNECTIVITY_TEXT,
         "detail": " ".join(detail.split()),
         "fix": fix,
+        # What To Do says when this becomes one: composed once from the
+        # devices and their kinds (`todo_words`), never cut out of `fix`.
+        "todo_text": todo_text,
+        "todo_line": todo_line,
         "severity": ("serious" if any(e.get("serious") for e in listed)
                      else "warning"),
         "fixable": False,

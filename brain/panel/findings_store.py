@@ -1260,8 +1260,6 @@ _IMPERATIVE_RE = re.compile(
     r"remove|rename|replace|reset|restart|run|set|swap|take|tell|test|"
     r"tighten|top|try|turn|unlock|unplug|update|water|wipe|refill|reboot|"
     r"recharge|re-?add|re-?seat|reseat|tidy|top up|book|order|buy)\b", re.I)
-_IT_RE = re.compile(r"\bit\b", re.I)
-_ITS_RE = re.compile(r"\bits\b", re.I)
 _NOTHING_RE = re.compile(r"^(?:nothing|no action|none)\b", re.I)
 
 
@@ -1303,122 +1301,316 @@ def is_statement(text: str) -> bool:
     return bool(_STATEMENT_RE.match(text))
 
 
-def _with_name(sentence: str, name: str) -> str:
-    """The sentence with its first "it"/"its" turned into the thing's name,
-    or the name put in front when the sentence names nothing."""
-    if not name or name.casefold() in sentence.casefold():
-        return sentence
-    # A label that already reads "the scene “before movie”" takes no second
-    # "the" — "the the scene" was the garble on the house's list.
-    the = "" if re.match(r"(?i)^the\b", name) else "the "
-    if _ITS_RE.search(sentence):
-        return _ITS_RE.sub(f"{the}{name}'s", sentence, count=1)
-    if _IT_RE.search(sentence):
-        return _IT_RE.sub(f"{the}{name}", sentence, count=1)
-    body = sentence.rstrip(" .!")
-    if len(body) > 1 and body[1:2].islower():
-        body = body[0].lower() + body[1:]
+# The longest headline and line a To Do card carries, and the longest a
+# device's name may be inside a headline before it is shortened.
+TODO_HEADLINE_MAX = 80
+MAX_TODO_LINE = 160
+TODO_NAME_MAX = 40
+# A clause of a fix: sentences, then "; " — "press its button and check its
+# battery; re-pair it near the coordinator" is two instructions.
+_CLAUSE_RE = re.compile(r"\s*;\s+")
+# The kind of thing a fix's clause is about, before its instruction:
+# "Zigbee, on a battery: press its button" — the check's label, not the
+# errand's words.
+_LABEL_RE = re.compile(r"^[A-Z][\w/-]*(?:,? [\w/.-]+){0,3}: (?=[a-z])")
+# A clause that says what to do if something else fails is never a
+# headline: it reads backwards ("If it does not come back, re-pair it").
+_CONDITIONAL_RE = re.compile(r"^(?:if|when|otherwise|unless|once|then)\b", re.I)
+_PRONOUN_RE = re.compile(r"\b(?:it|its|it's|they|them|their)\b", re.I)
+_TODO_STOP = frozenset("a an the it its is are to of in on at and or for with "
+                       "then that this if be as by up".split())
+# An entity id in prose: the names map's name for it, else said as words.
+_TODO_ID_RE = re.compile(r"`?\b([a-z_]+)\.([a-z0-9_]+)\b`?")
+_MASK = "\u2063"   # stands in for the device's name while pronouns are looked for
+
+
+def clean_todo_line(value) -> str:
+    """A To Do's one line of detail as stored, or ""."""
+    if not isinstance(value, str):
+        return ""
+    return textclip.clip(" ".join(value.split()), MAX_TODO_LINE)
+
+
+def _no_ids(text: str, names: dict) -> str:
+    """``text`` with every entity id said as a name: the house's name for
+    it, else its id in words (`spoken_id`), never `light.hall_lamp`."""
+    if not text:
+        return text
+    from checks._util import _CORE_DOMAINS, spoken_id  # noqa: PLC0415 — leaf, lazy
+
+    def swap(m: re.Match) -> str:
+        if m.group(1) not in _CORE_DOMAINS:
+            return m.group(0)
+        eid = f"{m.group(1)}.{m.group(2)}"
+        return _display_name(eid, names) or spoken_id(eid)
+    return _TODO_ID_RE.sub(swap, text)
+
+
+def _device_name(entity_id: str, names: dict) -> str:
+    """What a To Do calls its device: the friendly name, else the id in
+    words; shortened on a word past `TODO_NAME_MAX`. "" for no entity."""
+    eid = str(entity_id or "").strip()
+    if not eid:
+        return ""
+    name = " ".join(_display_name(eid, names).split())
+    if not name:
+        from checks._util import spoken_id  # noqa: PLC0415 — leaf, lazy
+        name = spoken_id(eid) if "." in eid else eid
+    return textclip.clip(name, TODO_NAME_MAX)
+
+
+def _the(name: str) -> str:
+    """A name as the object of a sentence: "the Hall sensor"; a name that
+    starts with an article keeps it, lower-cased ("the Reading lamp", never
+    "The Reading lamp" mid-sentence or "the the"), and "Sam's phone" takes
+    none."""
+    m = re.match(r"(?i)^(the|a|an)\s+", name)
+    if m:
+        return m.group(1).lower() + name[len(m.group(1)):]
+    if re.match(r"^[\w-]+['’]s\b", name):
+        return name
+    return f"the {name}"
+
+
+def _has_pronoun(text: str, name: str = "") -> bool:
+    """Whether ``text`` holds a pronoun, the device's own name (which may be
+    "Its a Trap sensor") taken out first."""
+    if name:
+        text = text.replace(name, _MASK)
+    return bool(_PRONOUN_RE.search(text))
+
+
+def _clauses(text: str) -> list[str]:
+    """A fix as its separate instructions, in order, each without its label."""
+    out = []
+    flat = " ".join(str(text or "").split())
+    for sentence in _TODO_SENTENCE_RE.split(flat):
+        for part in _CLAUSE_RE.split(sentence):
+            part = _LABEL_RE.sub("", part.strip()).strip(" .!")
+            if part:
+                out.append(part[0].upper() + part[1:])
+    return out
+
+
+def _errand(clause: str, name: str) -> bool:
+    """Whether a clause can be a headline as it stands: an instruction, not
+    a statement, a question, a fallback or "nothing to do", and with no
+    pronoun whose referent is outside it — a pronoun is never certain once
+    the clause is lifted out of its paragraph ("The battery is low. Replace
+    it."), so one is kept only after the device's name in the same clause,
+    as its author wrote it. Nothing is ever substituted for a pronoun."""
+    if (_NOTHING_RE.match(clause) or _CONDITIONAL_RE.match(clause)
+            or is_statement(clause) or clause.endswith("?")):
+        return False
+    if not _has_pronoun(clause, name):
+        return True
+    masked = clause.replace(name, _MASK) if name else clause
+    first = _PRONOUN_RE.search(masked)
+    return bool(name) and 0 <= masked.find(_MASK) < first.start()
+
+
+def _named(head: str, name: str) -> str:
+    """A headline that names the device: as it is when it does, else the
+    name put in front ("Hall sensor: replace the battery")."""
+    if not name or name.casefold() in head.casefold():
+        return head
+    body = head[0].lower() + head[1:] if head[1:2].islower() else head
     return f"{name}: {body}"
 
 
-def derive_todo_text(row: dict, name: str = "") -> str:
-    """The To Do sentence for a row that was filed without one.
+def _todo_words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9']+", str(text or "").lower())
+            if w not in _TODO_STOP}
 
-    Deterministic and cheap, because it runs on every read of a row a
-    producer could not word: the first sentence of `fix` that is an errand
-    rather than a statement, with the first "it"/"its" turned into the
-    thing's name ("Re-pair it" under the hall sensor is "Re-pair the Hall
-    sensor."), and the name put in front when the sentence names nothing
-    ("Garage node: reset the Z-Wave node."). A fix that says only what is
-    wrong becomes "Look at <name>: <what is wrong>"; one that says nothing
-    is needed, or none at all, is "Look at <friendly name>." — the one
-    errand that is always true — and a row about no entity says what to
-    look into in the row's own words.
-    """
-    if not isinstance(row, dict):
-        return ""
-    name = str(name or "").strip()
-    eid = str(row.get("entity_id") or "").strip()
-    fix = " ".join(str(row.get("fix") or "").split())
-    sentences = [x.strip() for x in _TODO_SENTENCE_RE.split(fix) if x.strip()] \
-        if fix else []
-    statement = ""
-    for first in sentences:
-        if first.endswith("?"):
+
+def _todo_said(clause: str, said: list[str]) -> bool:
+    mine = _todo_words(clause)
+    return not mine or any(len(mine & _todo_words(t)) >= 0.7 * len(mine)
+                           for t in said)
+
+
+def _todo_line(clauses: list[str], used: str, said: list[str],
+               pronouns: bool) -> str:
+    """The one line under a headline: the fix's other instructions, in
+    order, then its explanation, as many whole clauses as fit, never one
+    already said. A clause with a pronoun only when the headline names what
+    it stands for (``pronouns``)."""
+    steps = [c for c in clauses if c != used and not is_statement(c)]
+    why = [c for c in clauses if c != used and is_statement(c)]
+    kept: list[str] = []
+    for clause in steps + why:
+        if _todo_said(clause, said + kept):
             continue
-        if _NOTHING_RE.match(first):
+        if not pronouns and _has_pronoun(clause):
+            continue
+        if kept and len("; ".join(kept + [clause])) + 1 > MAX_TODO_LINE:
             break
-        if is_statement(first):
-            statement = statement or first
-            continue
-        if statement and _IT_RE.search(first):
-            # "The battery is low. Replace it." — the "it" is the battery,
-            # not the thing, so the statement rides along to say what.
-            body = statement.rstrip(" .!")
-            body = body[0].lower() + body[1:] if body[1:2].islower() else body
-            act = first.rstrip(" .!")
-            if name and act[1:2].islower():
-                act = act[0].lower() + act[1:]
-            lead = f"{name}: " if name else ""
-            cleaned = clean_todo_text(f"{lead}{act} — {body}")
-        else:
-            cleaned = clean_todo_text(_with_name(first, name))
-        if cleaned:
-            return cleaned
-    what = name or eid
-    if statement and what:
-        body = statement.rstrip(" .!")
-        if len(body) > 1 and body[1:2].islower():
-            body = body[0].lower() + body[1:]
-        return clean_todo_text(f"Look at {what}: {body}")
-    if what:
-        return clean_todo_text(f"Look at {what}")
-    about = str(row.get("claim") or row.get("text") or "").strip()
-    return clean_todo_text(f"Look into: {about}") if about else ""
-
-
-def todo_item_text(item: dict, names: dict | None = None) -> str:
-    """What To Do shows for an item already on the list.
-
-    Items moved before findings carried a To Do sentence were filed under
-    the finding's claim ("Hall battery is low"), which is a statement, not
-    an errand; those are reworded on read from the item's own fix and the
-    thing's name, and the stored text is never touched.
-    """
-    if not isinstance(item, dict):
+        kept.append(clause)
+        if clause in why:
+            break
+    if not kept:
         return ""
-    text = " ".join(str(item.get("text") or "").split())
-    if not text or not is_statement(text) or item.get("origin") == "hand":
-        return text
-    eid = str(item.get("entity_id") or "")
-    better = derive_todo_text(
-        {"fix": item.get("fix") or "", "entity_id": eid,
-         "claim": item.get("claim") or text},
-        _display_name(eid, names))
-    if better and not better.startswith("Look at"):
-        return better
-    name = _display_name(eid, names)
+    line = "; ".join(c if i == 0 else c[0].lower() + c[1:]
+                     for i, c in enumerate(kept))
+    return clean_todo_line(line + ".")
+
+
+def _lower_first(text: str) -> str:
+    return text[0].lower() + text[1:] if text[1:2].islower() else text
+
+
+def _compose(fix: str, claim: str, name: str) -> tuple[str, str]:
+    """`(headline, line)` from free text, always correct even when plain.
+
+    The headline is the first clause of the fix that is an errand standing
+    on its own (no pronoun, see `_errand`), naming the device; else "Look
+    at <the device>: <what is wrong>"; else "Look into: <what is wrong>".
+    Every path is held to `TODO_HEADLINE_MAX`: a headline over it is the
+    plain form, and the plain form drops what is wrong before it overruns.
+    The line's pronouns stand for what the headline names, so they are
+    kept only under a plain headline that says it.
+    """
+    clauses = [] if any(_NOTHING_RE.match(c) for c in _clauses(fix)) \
+        else _clauses(fix)
+    for clause in clauses:
+        if not _errand(clause, name):
+            continue
+        head = clean_todo_text(_named(clause, name))
+        if head and len(head) <= TODO_HEADLINE_MAX:
+            return head, _todo_line(clauses, clause, [head], False)
+    claim = " ".join(str(claim or "").split()).rstrip(" .!")
+    if name and claim.casefold().startswith(name.casefold() + " "):
+        # "Porch sensor is unavailable" under "Look at the Porch sensor":
+        # the name once, and "it" right after it.
+        claim = "it " + claim[len(name):].strip()
+    statement = next((c for c in clauses if is_statement(c)), "")
+    what = claim or statement
     if name:
-        body = text.rstrip(" .!")
-        if body.casefold().startswith(name.casefold()):
-            rest = body[len(name):].strip(" :-—,")
-            return clean_todo_text(f"Look at {name}: it {rest}" if rest else f"Look at {name}") or text
-        if len(body) > 1 and body[1:2].islower():
-            body = body[0].lower() + body[1:]
-        return clean_todo_text(f"Look at {name}: {body}") or text
-    return text
+        bare = f"Look at {_the(name)}"
+        head = clean_todo_text(f"{bare}: {_lower_first(what)}") if what else ""
+        if not head or len(head) > TODO_HEADLINE_MAX:
+            head = clean_todo_text(bare)
+            what = ""
+        # "it" under "Look at the X: the battery is low" is the battery,
+        # and under "Look at the X" the X: either way the headline says.
+        return head, _todo_line(clauses, statement if statement == what else "",
+                                [head], True)
+    if what:
+        head = clean_todo_text(f"Look into: {_lower_first(what)}")
+        if len(head) > TODO_HEADLINE_MAX:
+            head = textclip.clip(head, TODO_HEADLINE_MAX)
+        return head, _todo_line(clauses, "", [head, what], False)
+    return "", ""
 
 
-def todo_text_of(row: dict, names: dict | None = None) -> str:
-    """What To Do shows for this row: the producer's sentence, or one
-    derived from its fix and the thing's friendly name."""
+def derive_todo_text(row: dict, name: str) -> str:
+    """The To Do sentence a producer files for a row that has none, with
+    the device's name it has in hand (`_compose`'s headline)."""
     if not isinstance(row, dict):
         return ""
-    stored = clean_todo_text(row.get("todo_text"))
-    if stored:
-        return stored
-    return derive_todo_text(
-        row, _display_name(str(row.get("entity_id") or ""), names))
+    name = textclip.clip(" ".join(str(name or "").split()), TODO_NAME_MAX)
+    return _compose(row.get("fix") or "", row.get("claim") or row.get("text") or "",
+                    name)[0]
+
+
+def _derived_from(text: str, fix: str, name: str) -> bool:
+    """Whether a stored headline is one the old wording cut out of ``fix``
+    by turning its first "it"/"its" into the device's name — the rewrite
+    that bound "it" to the wrong thing ("Replace it with a CR2032" under
+    "The battery is low" became "Replace the Hall sensor with a CR2032")."""
+    def norm(t: str) -> str:
+        return " ".join(re.findall(r"[a-z0-9']+", str(t or "").lower()))
+    want = norm(text)
+    if not want or not name:
+        return False
+    for clause in _clauses(fix):
+        for m in _PRONOUN_RE.finditer(clause):
+            for word in (name, f"the {name}", f"{name}'s", f"the {name}'s"):
+                if norm(clause[:m.start()] + word + clause[m.end():]) == want:
+                    return True
+    return False
+
+
+def _stands(text: str, fix: str, name: str) -> bool:
+    """Whether a stored headline can be shown as it is: an errand with no
+    pronoun outside the name, within the length, and not one the old
+    wording made by binding a pronoun to the name."""
+    text = " ".join(str(text or "").split()).rstrip(" .!")
+    if not text or len(text) >= TODO_HEADLINE_MAX or _LABEL_RE.match(text):
+        return False
+    if _CONDITIONAL_RE.match(text) or is_statement(text) or text.endswith("?"):
+        return False
+    return not _has_pronoun(text, name) and not _derived_from(text, fix, name)
+
+
+def todo_parts(row: dict) -> tuple[str, str]:
+    """`(headline, line)` a finding becomes on To Do: ONE composition for
+    every surface (the panel's list, the case card, Morph's To Do, the Home
+    Assistant To-do mirror), so it takes no names — it reads the panel's
+    own (`_names_now`), and an id never reaches what it returns.
+
+    The producer's own words where it wrote them and they stand
+    (`todo_text`, `todo_line`: the quiet-device checks), the device named
+    when they do not; else composed from the fix (`_compose`)."""
+    if not isinstance(row, dict):
+        return "", ""
+    names = _names_now()
+    name = _device_name(row.get("entity_id"), names)
+    fix = _no_ids(" ".join(str(row.get("fix") or "").split()), names)
+    claim = _no_ids(str(row.get("claim") or row.get("text") or ""), names)
+    stored = clean_todo_text(_no_ids(str(row.get("todo_text") or ""), names))
+    if stored and _stands(stored, fix, name):
+        head = clean_todo_text(_named(stored.rstrip("."), name))
+        if len(head) <= TODO_HEADLINE_MAX:
+            line = clean_todo_line(_no_ids(str(row.get("todo_line") or ""), names))
+            return head, line or _todo_line(_clauses(fix), "", [head], False)
+    return _compose(fix, claim, name)
+
+
+def todo_item_parts(item: dict) -> tuple[str, str]:
+    """`(headline, line)` To Do shows for an item on the list (`todo_parts`'
+    composition, the only one).
+
+    An item moved since the words were composed once (`line` stored) shows
+    them; an item a person typed shows their words. One moved before is
+    worded again: a quiet-device check's from the kinds and names it kept
+    (`checks.network.todo_words_stored`), any other from its own fix and
+    the device's name, its stored headline kept only when it stands. The
+    stored text is never touched."""
+    if not isinstance(item, dict):
+        return "", ""
+    text = " ".join(str(item.get("text") or "").split())
+    if item.get("origin") == "hand" or not text:
+        return text, ""
+    if "line" in item:
+        names = _names_now()
+        return (clean_todo_text(_no_ids(text, names)),
+                clean_todo_line(_no_ids(str(item.get("line") or ""), names)))
+    try:
+        from checks import network  # noqa: PLC0415 — the check's own words, lazily
+        words = network.todo_words_stored(str(item.get("source") or ""),
+                                          item.get("fix") or "",
+                                          item.get("detail") or "")
+    except Exception:  # noqa: BLE001 — the generic wording below stands in
+        words = None
+    if words and words[0]:
+        return clean_todo_text(words[0]), clean_todo_line(words[1])
+    claim = str(item.get("claim") or "")
+    return todo_parts({"fix": item.get("fix") or "",
+                       "entity_id": item.get("entity_id") or "",
+                       "claim": claim or text,
+                       "todo_text": "" if text == claim else text})
+
+
+def todo_item_text(item: dict) -> str:
+    """The headline To Do shows for an item (`todo_item_parts`)."""
+    return todo_item_parts(item)[0]
+
+
+def todo_text_of(row: dict) -> str:
+    """What To Do will say for this row (`todo_parts`' headline): the one
+    composition, so Morph's case and the item it becomes read the same."""
+    return todo_parts(row)[0]
 
 
 def clean_morph_key(value) -> str:
@@ -1580,6 +1772,9 @@ def _case_fields(entry: dict) -> dict:
     todo = clean_todo_text(entry.get("todo_text"))
     if todo:
         out["todo_text"] = todo
+    line = clean_todo_line(entry.get("todo_line"))
+    if line:
+        out["todo_line"] = line
     return out
 
 
@@ -4879,6 +5074,14 @@ def refresh_details(objs: list[dict]) -> int:
                 and cur.get("fix") != new_fix):
             cur["fix"] = new_fix
             changed += 1
+        # And so do its To Do words, which name the devices it lists now
+        # (`checks.network.todo_words`): a chore filed from this row names
+        # what is still quiet, not what was quiet when it was first filed.
+        if not cur.get("fix_by") and str(cur.get("source") or "").startswith("check:"):
+            for key in ("todo_text", "todo_line"):
+                if entry.get(key) and cur.get(key) != entry[key]:
+                    cur[key] = entry[key]
+                    changed += 1
     if changed:
         _write(items)
     return changed

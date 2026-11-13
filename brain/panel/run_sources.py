@@ -174,6 +174,47 @@ def record(session_id: str, source: str) -> bool:
     return True
 
 
+# A conversation's title, when whoever opened it knew one: an ask-about's
+# subject or the person's own words, a discussion's card, what somebody
+# typed into Morph's Ask line. Written on the same ledger, as a line with a
+# `title` and no `source` (a person's own chat has no source), so it costs
+# no second file and `lookup` never reads it as a claim.
+MAX_TITLE = 120
+
+
+def record_title(session_id: str, title: str) -> bool:
+    """Name a conversation as it opens. Never raises."""
+    title = " ".join(str(title or "").split())[:MAX_TITLE]
+    if not session_id or not _ID_RE.fullmatch(session_id) or not title:
+        return False
+    line = json.dumps({"id": session_id, "title": title, "ts": int(time.time())},
+                      separators=(",", ":"), ensure_ascii=False)
+    try:
+        LEDGER.parent.mkdir(parents=True, exist_ok=True)
+        with LEDGER.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except OSError:
+        return False
+    _maybe_prune()
+    return True
+
+
+def titles(session_ids) -> dict[str, str]:
+    """``{session id: title}`` for the ids whose opener named them; the
+    first title recorded for an id is its title, so a resumed conversation
+    keeps the name it opened with."""
+    wanted = {sid for sid in session_ids if sid}
+    found: dict[str, str] = {}
+    if not wanted:
+        return found
+    for entry in _read():
+        sid = entry.get("id")
+        title = entry.get("title")
+        if sid in wanted and sid not in found and isinstance(title, str) and title.strip():
+            found[sid] = " ".join(title.split())[:MAX_TITLE]
+    return found
+
+
 def _read() -> list[dict]:
     try:
         text = LEDGER.read_text(encoding="utf-8", errors="replace")
