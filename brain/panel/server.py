@@ -20461,7 +20461,7 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
             except Exception as exc:  # noqa: BLE001 — recorded, then said
                 log.warning("devloop: the screens stream failed: %s", exc)
                 await asyncio.to_thread(up.mark_run, "screens")
-                out = {"error": f"the screens could not be captured: {exc}"[:200],
+                out = {"error": f"the screens could not be captured: {textclip.said(exc)}"[:200],
                        "blind": "capture"}
             if out.get("blind"):
                 await asyncio.to_thread(
@@ -20566,7 +20566,7 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
         return out
     except Exception as exc:  # noqa: BLE001 — one stream, not the loop
         log.warning("devloop: the %s stream failed: %s", stream, exc)
-        return {"error": str(exc)[:200]}
+        return {"error": textclip.said(exc)[:200]}
 
 
 # How long the list of apps the Walkthrough may look at is reused. ⚙ ›
@@ -20841,7 +20841,10 @@ async def _devloop_siblings(payload: dict, names: dict) -> dict:
         unread=tuple(collected.get("unread") or ()))
 
 
-DEVLOOP_SCREENS_TIMEOUT_S = 900
+# The Screens pass's own time is `screens.pass_budget` (what it has to
+# photograph); this is only the margin past it before a browser that has
+# stopped answering altogether is given up on.
+DEVLOOP_SCREENS_GRACE_S = 120
 
 
 async def _devloop_screens(payload: dict, names: dict, version: str) -> dict:
@@ -20878,29 +20881,53 @@ async def _devloop_screens(payload: dict, names: dict, version: str) -> dict:
     base = devloop.data_dir()
     out_dir = screens.new_capture_dir(base)
     located = await _screen_catalog()
+    # The screens a previous pass ran out of time for go first after
+    # brAIn's own, and the pass's time is what it has to photograph (#890).
+    targets = screens.order_targets(
+        located["targets"], await asyncio.to_thread(devloop.upstream.screens_left))
+    budget = screens.pass_budget(targets)
+    progress: dict = {"planned": screens.planned(targets), "done": 0, "captured": 0}
     try:
+        # The capture stops itself at the deadline with what it has; the
+        # outer limit is only for a browser that stopped answering at all.
         result = await asyncio.wait_for(
             screens.capture(out_dir, confidential=confidential, aliases=aliases,
-                            url=_own_panel_url(), targets=located["targets"]),
-            DEVLOOP_SCREENS_TIMEOUT_S)
+                            url=_own_panel_url(), targets=targets,
+                            deadline=time.monotonic() + budget, progress=progress),
+            budget + DEVLOOP_SCREENS_GRACE_S)
     except Exception as exc:  # noqa: BLE001 — a capture that failed sends nothing
         shutil.rmtree(out_dir, ignore_errors=True)
         await asyncio.to_thread(devloop.upstream.mark_run, "screens")
-        return {"error": "the screens could not be captured: "
-                         f"{exc or type(exc).__name__}"[:200],
+        why = (f"timed out after {budget + DEVLOOP_SCREENS_GRACE_S:.0f} s, "
+               f"{progress.get('captured', 0)} of {progress.get('planned', 0)} screens captured"
+               if isinstance(exc, asyncio.TimeoutError) else textclip.said(exc))
+        return {"error": f"the screens could not be captured: {why}"[:200],
                 "blind": "capture"}
     await asyncio.to_thread(screens.prune, base, out_dir.name)
+    await asyncio.to_thread(devloop.upstream.note_screens_left, result.get("left") or [])
     rows = screens.rows(result, version, out_dir.name,
                         versions=located["versions"], unreached=located["unreached"])
+    taken = len(result.get("shots") or [])
+    late = (f"timed out after {budget:.0f} s, {taken} of "
+            f"{result.get('planned') or progress.get('planned', 0)} screens captured"
+            if result.get("timed_out") else "")
     if not rows:
         await asyncio.to_thread(devloop.upstream.mark_run, "screens")
+        if late:
+            return {"error": f"the screens could not be captured: {late}"[:200],
+                    "blind": "capture"}
         return {"error": "no screen could be captured and redacted: "
                          + "; ".join(_error_text(e) for e in result.get("errors") or [])[:160],
                 "blind": "redaction"}
+    # What this pass did not finish keeps its reports as they are (not
+    # "not seen since"), and is taken first next time.
     out = await asyncio.to_thread(devloop.upstream.ingest, "screens", rows,
-                                  payload, names, products=located["versions"])
-    out = {**out, "shots": len(result.get("shots") or []),
-           "problems": len(result.get("problems") or [])}
+                                  payload, names, products=located["versions"],
+                                  unread=[p for p in result.get("unfinished") or []
+                                          if p != "brAIn"])
+    out = {**out, "shots": taken, "problems": len(result.get("problems") or [])}
+    if late:
+        out["note"] = late + "; the rest are taken first on the next pass"
     if not any((s.get("product") or "brAIn") == "brAIn"
                for s in result.get("shots") or [] if isinstance(s, dict)):
         # The other add-ons' issues are filed, and this release's own
@@ -21099,7 +21126,7 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
         shot = shots[0]
         data = (tmp / shot["name"]).read_bytes()
     except Exception as exc:  # noqa: BLE001 — a sentence, never a 500
-        return web.json_response({"error": f"the screen could not be photographed: {exc}"[:300]},
+        return web.json_response({"error": f"the screen could not be photographed: {textclip.said(exc)}"[:300]},
                                  status=502)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -21195,7 +21222,7 @@ async def h_harness_ws(request: web.Request) -> web.Response:
         return web.json_response({"error": "Home Assistant did not answer in time"},
                                  status=504)
     except Exception as exc:  # noqa: BLE001
-        return web.json_response({"error": f"Home Assistant did not answer: {exc}"[:200]},
+        return web.json_response({"error": f"Home Assistant did not answer: {textclip.said(exc)}"[:200]},
                                  status=502)
     first = calls[0] if calls else {}
     if not first.get("ok"):
@@ -21338,7 +21365,7 @@ async def h_devloop_put(request: web.Request) -> web.Response:
     try:
         await asyncio.to_thread(devloop.save_settings, changes)
     except ValueError as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+        return web.json_response({"error": textclip.said(exc)}, status=400)
     # The development loop is a switch in ⚙ › Features too.
     await asyncio.to_thread(features.publish)
     # Development mode is part of what a new terminal window is told.
@@ -21357,7 +21384,7 @@ async def h_devloop_token(request: web.Request) -> web.Response:
     try:
         await asyncio.to_thread(devloop.save_token, (body or {}).get("token"))
     except ValueError as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+        return web.json_response({"error": textclip.said(exc)}, status=400)
     return web.json_response(await asyncio.to_thread(_devloop_payload))
 
 
@@ -21425,7 +21452,7 @@ async def h_devloop_walk(request: web.Request) -> web.Response:
             walked = await _devloop_walks(payload, dict(_NAMES), pressed=True, only=app)
         except Exception as exc:  # noqa: BLE001 — said on the row, never a 500
             log.warning("devloop: the look at %s failed: %s", app, exc)
-            walked = {"error": str(exc)[:200]}
+            walked = {"error": textclip.said(exc)[:200]}
         sent = await asyncio.to_thread(devloop.upstream.send_due)
     finally:
         devloop.upstream.STATE["running"] = False

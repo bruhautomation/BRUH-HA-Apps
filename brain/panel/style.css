@@ -2651,6 +2651,17 @@ html.shell-home.shell-raised, html.shell-home.shell-raised body { background: rg
    that holds the frame and the chat view gives exactly that much up, which
    puts the composer right above the keys. The classic terminal's frame
    keeps its own toolbar above them (`inject.html`), so it is left alone. */
+/* The home indicator under Ask's two message boxes (#876), applied once,
+   on `.chat` and `.chatrail`. Inside Home Assistant's frame env() reads 0
+   on an iPhone, so in the shell it is what the shell measured over the
+   panel's foot (`--shell-inset-bottom`, `shell.js` `insetBottom()`), the
+   frame's own env() only until the shell has said. Where the bottom tab
+   bar is drawn it already clears the indicator, and with the keyboard up
+   the keys cover it: neither pads it again. */
+:root { --safe-bottom: env(safe-area-inset-bottom, 0px); }
+@media (max-width: 640px) { :root { --safe-bottom: 0px; } }
+html.in-shell { --safe-bottom: var(--shell-inset-bottom, env(safe-area-inset-bottom, 0px)); }
+body.kb-lift { --safe-bottom: 0px; }
 body.kb-lift:not(.term-classic) #viewTerminal.active {
   height: calc(100vh - var(--bar-h) - var(--tabbar-h, 0px) - var(--kb-overlap, 0px));
   height: calc(100dvh - var(--bar-h) - var(--tabbar-h, 0px) - var(--kb-overlap, 0px));
@@ -2741,6 +2752,10 @@ body.kb-lift:not(.term-classic) #viewTerminal.active {
   width: 248px;
   flex-direction: column;
   min-height: 0;
+  box-sizing: border-box;
+  /* The list page's message box is its last child: the same clearance as
+     the transcript's (`--safe-bottom`). */
+  padding-bottom: var(--safe-bottom);
   border-right: 1px solid var(--hairline);
   background: var(--plane);
 }
@@ -2975,7 +2990,7 @@ body.term-open .wrap { padding-bottom: 0; }
   /* On the container, not on the composer: the meta line sits below the
      composer, so the element that must clear an iPhone's home indicator
      depends on whether it is showing. The container is always last. */
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: var(--safe-bottom);
   background: var(--plane);
 }
 body:not(.term-classic) #viewTerminal.active .chat { display: flex; }

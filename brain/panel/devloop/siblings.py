@@ -40,7 +40,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from textclip import clip
+from textclip import clip, said
 
 log = logging.getLogger("brain.devloop.siblings")
 
@@ -191,7 +191,7 @@ def collect(system_log: list | None = None, outbox_root: Path | None = None,
         listing = get("/addons")
     except (urllib.error.URLError, OSError, ValueError) as exc:
         return {"addons": [], "unread": list(PRODUCTS),
-                "error": f"could not list the add-ons: {exc}"}
+                "error": f"could not list the add-ons: {said(exc)}"}
     addons = (listing or {}).get("addons") if isinstance(listing, dict) else listing
     seen: dict[str, dict] = {}
     for row in addons or []:
@@ -216,7 +216,7 @@ def collect(system_log: list | None = None, outbox_root: Path | None = None,
         try:
             text = get(f"/addons/{slug}/logs", text=True)
         except (urllib.error.URLError, OSError, ValueError) as exc:
-            log_error = f"could not read the log: {exc}"
+            log_error = f"could not read the log: {said(exc)}"
         out.append({"spec": found["spec"], "slug": slug, "info": info,
                     "log": text if isinstance(text, str) else "",
                     "log_error": log_error,

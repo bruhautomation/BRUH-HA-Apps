@@ -4173,6 +4173,13 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
     if kind == "accepted" and str(shaped.get("source") or "") == "check:dev.battery_low":
         m = re.match(r"\s*(\d+(?:\.\d+)?)%", str(shaped.get("detail") or ""))
         at_level = float(m.group(1)) if m else None
+    # And the signal a faint Bluetooth device was answered at ("hears it at
+    # -95 dBm"): much fainter than that is news.
+    if (kind in RIGHT_KINDS
+            and str(shaped.get("source") or "") == "check:net.bluetooth_faint"):
+        m = re.search(r"hears it at (-?\d+(?:\.\d+)?) dBm",
+                      str(shaped.get("detail") or ""))
+        at_level = float(m.group(1)) if m else None
     ledger.append({
         **recurrence,
         **({"at_level": at_level} if at_level is not None else {}),
@@ -4259,8 +4266,11 @@ def answered_checks() -> dict[str, dict[str, dict]]:
             # When it was last answered, for an answer that holds only
             # until the thing changes (`House.answered_since`).
             row["at"] = max(int(row.get("at") or 0), int(e.get("ts") or 0))
-            if e.get("kind") == "accepted" and not e.get("lapsed_at"):
-                # Known / on my list, still standing (`House.acknowledged`).
+            if not e.get("lapsed_at") and (
+                    e.get("kind") == "accepted"
+                    or (e.get("kind") == "fixed" and source in HELD_THROUGH_DONE)):
+                # Known / on my list, or Done about a link, still standing
+                # (`House.acknowledged`).
                 if int(e.get("ts") or 0) >= int(row.get("acked_at") or 0):
                     row["acked_at"] = int(e.get("ts") or 0)
                     if e.get("at_level") is not None:
@@ -4327,6 +4337,16 @@ ACKNOWLEDGED_SOURCES = frozenset({
     "check:dev.battery_low", "check:forecast.battery", "check:net.zwave_link",
     "check:net.zigbee_weak", "check:net.bluetooth_faint"})
 ACK_LAPSE_S = 14 * 86400
+# The link checks, where Done holds the same way (#877). A battery
+# somebody changed that reads low again is news; a link somebody said
+# Done about is a number moving around its line, and the same number on
+# the next pass is the answer still standing, not a fix that did not hold
+# (`_hand_fixes_came_back` leaves it) — nor is one pass above the line the
+# end of it (`lapse_settled`). Worse than when they answered is the
+# check's to say in new words (`checks/network.BLUETOOTH_WORSE_DB`).
+HELD_THROUGH_DONE = frozenset({
+    "check:net.zwave_link", "check:net.zigbee_weak",
+    "check:net.bluetooth_faint"})
 
 
 def _suppresses(entry: dict, now: float) -> bool:
@@ -4405,8 +4425,9 @@ def lapse_settled(sources: set[str], keep_keys: set[str],
                 if entry.pop("absent_at", None):
                     touched = True
                 continue
-            if (entry.get("kind") == "accepted"
-                    and str(entry.get("source") or "") in ACKNOWLEDGED_SOURCES):
+            src = str(entry.get("source") or "")
+            if ((entry.get("kind") == "accepted" and src in ACKNOWLEDGED_SOURCES)
+                    or (entry.get("kind") == "fixed" and src in HELD_THROUGH_DONE)):
                 # "Known" / "on my list" about a battery or a link (never
                 # Done: a battery somebody fixed that reads low again is
                 # news on the first pass, as it always was): a pass
@@ -5578,6 +5599,7 @@ def _hand_fixes_came_back(sources: set[str], keep_keys: set[str],
         if (entry.get("kind") == "fixed"
                 and not entry.get("lapsed_at")
                 and source.startswith("check:") and source in sources
+                and source not in HELD_THROUGH_DONE
                 and str(entry.get("key") or "") in keep_keys
                 and now - float(entry.get("ts") or now)
                 >= todo_store.CHORE_SETTLE_S):

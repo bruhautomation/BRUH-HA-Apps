@@ -394,7 +394,7 @@ async def _connect(session: aiohttp.ClientSession) -> tuple[Connection | None, d
                          f"{exc.details}")
         except Exception as exc:  # noqa: BLE001
             tried.append(f"{target['url']} ({_via_words(target['via'])}): "
-                         f"{exc or type(exc).__name__}")
+                         f"{str(exc) or type(exc).__name__}")
         await conn.close()
     if not targets and not tried:
         tried.append("Home Assistant has no Music Assistant integration and "

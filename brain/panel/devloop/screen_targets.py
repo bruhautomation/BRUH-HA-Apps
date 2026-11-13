@@ -51,6 +51,8 @@ import json
 import os
 import re
 
+from textclip import said
+
 from . import siblings
 
 # The host, seen from this container, for an add-on on the host network.
@@ -248,7 +250,7 @@ def locate(get) -> dict:
         listing = get("/addons")
     except Exception as exc:  # noqa: BLE001 — one sentence for all of them
         for s in siblings.CATALOG:
-            out["unreached"][s["name"]] = f"could not list the add-ons: {exc}"[:160]
+            out["unreached"][s["name"]] = f"could not list the add-ons: {said(exc)}"[:160]
         return out
     rows = (listing or {}).get("addons") if isinstance(listing, dict) else listing
     seen: dict[str, str] = {}
@@ -265,7 +267,7 @@ def locate(get) -> dict:
         try:
             info = get(f"/addons/{seen[key]}/info")
         except Exception as exc:  # noqa: BLE001
-            out["unreached"][name] = f"could not read its info: {exc}"[:160]
+            out["unreached"][name] = f"could not read its info: {said(exc)}"[:160]
             continue
         if not isinstance(info, dict):
             out["unreached"][name] = "its info could not be read"
