@@ -1707,11 +1707,14 @@ def zha_unseen(snap: dict, now: float) -> list[dict]:
     from . import network  # noqa: PLC0415 — network imports this module
     house = House(snap)
     rows = []
-    for dev, reg, _entity in network.zigbee_devices(house):
+    entities = []
+    for dev, reg, entity in network.zigbee_devices(house):
         if network.zigbee_quiet(dev, now) != "dropped":
             continue
         age = age_days(dev.get("last_seen"), now) or 0.0
         rows.append((age, network.zigbee_name(dev, reg, house)))
+        if entity:
+            entities.append(entity)
     if not rows:
         return []
     rows.sort(reverse=True)
@@ -1729,6 +1732,9 @@ def zha_unseen(snap: dict, now: float) -> list[dict]:
         "severity": "warning",
         "fixable": False,
         "entity_id": "",
+        # Filed on no one entity, so a To Do made from it can still name the
+        # devices it is about (`findings_store._things_name`).
+        **({"items": entities} if entities else {}),
     }]
 
 

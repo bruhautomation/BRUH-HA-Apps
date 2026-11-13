@@ -161,41 +161,85 @@ def window_tokens(hours: float = SESSION_HOURS, now: float | None = None) -> int
     return sum(r["tokens"] for r in _load_runs() if r["ts"] >= cutoff)
 
 
-# How many spenders the breakdown names before folding the tail into one
-# row. The list is capped and the window total is not, so a long tail says
-# what it is not showing rather than quietly disagreeing with the pill.
-MAX_BREAKDOWN = 6
+# The household's words for where the session went. The ledger records an id
+# per run — a card's, a job's, a shell run's source — and an id is nothing a
+# person reads, so the breakdown is the sum under these few names, never the
+# ids (⚙ › Developer holds the runs themselves).
+SPEND_GROUPS = (
+    ("chats", "Chats"),
+    ("checks", "House checks"),
+    ("dashboard", "Dashboard and insight cards"),
+    ("voice", "Voice"),
+    ("automations", "Automations"),
+    ("memory", "Memory and learning"),
+    ("fixes", "Fixes"),
+    ("setup", "Setup and tests"),
+    ("other", "Everything else"),
+)
+SPEND_LABELS = dict(SPEND_GROUPS)
+_SPEND_OF = {
+    "chat": "chats", "terminal": "chats", "reply": "chats", "ask": "chats",
+    "resident": "checks", "triage": "checks", "checks": "checks",
+    "gate": "checks", "baselines": "checks", "sre": "checks",
+    "healing": "checks", "followup": "checks", "intent": "checks",
+    "proposal": "checks", "maintenance": "checks", "curiosity": "checks",
+    "morph": "dashboard", "card": "dashboard", "insight": "dashboard",
+    "brief": "dashboard", "weekly": "dashboard", "weekly_pick": "dashboard",
+    "ideas": "dashboard",
+    "voice": "voice", "assist": "voice",
+    "automation": "automations",
+    "memory": "memory", "study": "memory", "extract": "memory",
+    "fix": "fixes", "plan": "fixes",
+    "onboarding": "setup", "doctor": "setup", "doctor-rehearsal": "setup",
+    "eval-first-look": "setup", "replay": "setup", "devloop": "setup",
+    "deep-review": "setup",
+}
+_SPEND_PREFIX = (("fix-", "fixes"), ("plan-", "fixes"), ("followup-", "checks"),
+                 ("doctor", "setup"), ("eval-", "setup"), ("chat-", "chats"))
 
 
-def _breakdown(runs: list[dict], limit: int = MAX_BREAKDOWN) -> list[dict]:
-    """Per-card token totals out of already-loaded runs, biggest first.
+def spend_group(run_id: str) -> str:
+    """Which of the household's names a run's id is spent under. An id nobody
+    named is a card (an insight card's id is the one kind of id that is open
+    ended), which is the dashboard's; a blank one is everything else."""
+    rid = str(run_id or "")
+    if not rid:
+        return "other"
+    if rid in _SPEND_OF:
+        return _SPEND_OF[rid]
+    for prefix, group in _SPEND_PREFIX:
+        if rid.startswith(prefix):
+            return group
+    return "dashboard"
+
+
+def _breakdown(runs: list[dict], limit: int = 0) -> list[dict]:
+    """Where the window's tokens went, by household name, biggest first.
 
     "Why is my session gone?" is a question about *what spent it*, and the
-    run ledger has always known — it records an id per run and nothing ever
-    read it back. Rows are ``{"id", "tokens", "runs"}``; the tail past
-    ``limit`` collapses into one row flagged ``rest`` rather than being
-    dropped, because a breakdown that silently omits a third of the window
-    is worse than no breakdown at all.
+    run ledger has always known. Rows are ``{"id", "label", "tokens",
+    "runs", "share"}`` — the id is the group's key ("chats"), never a run's,
+    and ``share`` is the part of what brAIn spent (0-100) so the panel can
+    say "Chats 42%" instead of a token count. Every run lands in a group, so
+    the rows sum to the window and nothing is folded away; ``limit`` is kept
+    for the callers that passed one and is not needed.
     """
     totals: dict[str, dict] = {}
     for run in runs:
-        key = str(run.get("id") or "")
-        row = totals.setdefault(key, {"id": key, "tokens": 0, "runs": 0})
+        key = spend_group(run.get("id"))
+        row = totals.setdefault(key, {"id": key, "label": SPEND_LABELS[key],
+                                      "tokens": 0, "runs": 0})
         row["tokens"] += run["tokens"]
         row["runs"] += 1
     ranked = sorted(totals.values(), key=lambda r: -r["tokens"])
-    if limit and len(ranked) > limit:
-        tail = ranked[limit:]
-        ranked = ranked[:limit] + [{
-            "id": "", "rest": True,
-            "tokens": sum(r["tokens"] for r in tail),
-            "runs": sum(r["runs"] for r in tail),
-        }]
+    whole = sum(r["tokens"] for r in ranked) or 1
+    for row in ranked:
+        row["share"] = round(100 * row["tokens"] / whole)
     return ranked
 
 
 def window_breakdown(hours: float = SESSION_HOURS, now: float | None = None,
-                     limit: int = MAX_BREAKDOWN) -> list[dict]:
+                     limit: int = 0) -> list[dict]:
     """What spent the trailing window, biggest first."""
     now = time.time() if now is None else now
     cutoff = now - hours * 3600

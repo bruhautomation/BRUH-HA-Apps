@@ -19,6 +19,7 @@ import { HA_THEME } from './morph-cards.js';
 import { caseFace, placeCase } from './cases.js';
 import { Rail } from './rail.js';
 import { findPanel, urlPathOf } from './brain-layer.js';
+import { setHouseName, houseName, speakText } from './util.js';
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const HUE = ['sky', 'amber', 'teal', 'violet', 'lime', 'peach', 'sand', 'indigo', 'rose'];
@@ -285,6 +286,7 @@ async function startFeed(hass) {
   FEED.started = true;
   const load = async () => {
     try { FEED.data = await hass.callWS({ type: 'morph/load' }); } catch (e) { FEED.data = FEED.data || { error: String((e && e.message) || e) }; }
+    setHouseName(FEED.data);
     FEED.cards.forEach((c) => c.render());
   };
   await load();
@@ -313,7 +315,7 @@ export class MorphCasesCard extends HTMLElement {
   static getConfigForm() {
     return { schema: [{ name: 'title', selector: { text: {} } }, { name: 'area', selector: { area: {} } }, { name: 'entities', selector: { entity: { multiple: true } } }],
       computeLabel: (s) => ({ title: 'Title', area: 'Only cases about this area', entities: 'Or only cases about these' }[s.name]),
-      computeHelper: (s) => (s.name === 'area' ? 'Leave both empty for every case brAIn has.' : undefined) };
+      computeHelper: (s) => (s.name === 'area' ? speakText('Leave both empty for every case brAIn has.') : undefined) };
   }
 
   static getStubConfig() { return { title: 'brAIn' }; }
@@ -348,7 +350,7 @@ export class MorphCasesCard extends HTMLElement {
 
   render() {
     if (!this._config) return;
-    const who = (FEED.data && FEED.data.features && FEED.data.features.name) || 'brAIn';
+    const who = houseName();
     const admin = !!(this._hass && this._hass.user && this._hass.user.is_admin);
     const name = (eid) => { const st = this._hass && this._hass.states[eid]; return st && st.attributes.friendly_name; };
     const list = this.cases();
@@ -370,7 +372,7 @@ export class MorphCasesCard extends HTMLElement {
   }
 
   async send(id, action, text) {
-    this.pending[id] = 'Sent. brAIn answers here.';
+    this.pending[id] = speakText('Sent. brAIn answers here.');
     this.render();
     let r;
     try { r = await this._hass.callWS({ type: 'morph/case', case: id, action, text: text || '' }); } catch (err) { r = { ok: false, error: String((err && err.message) || err) }; }
@@ -399,7 +401,7 @@ export class MorphAskCard extends HTMLElement {
     const card = document.createElement('ha-card');
     this.body = document.createElement('div');
     this.body.className = 'morph ma t-ha';
-    this.body.innerHTML = '<form><input type="text" aria-label="Ask or tell brAIn" autocomplete="off"><button type="submit">Ask</button></form><p class="ans quiet" aria-live="polite"></p>';
+    this.body.innerHTML = '<form><input type="text" aria-label="Ask or tell the house" autocomplete="off"><button type="submit">Ask</button></form><p class="ans quiet" aria-live="polite"></p>';
     card.appendChild(this.body);
     this.shadowRoot.appendChild(card);
     this.body.querySelector('form').addEventListener('submit', (e) => { e.preventDefault(); this.ask(); });
@@ -414,7 +416,14 @@ export class MorphAskCard extends HTMLElement {
     this.body.querySelector('input').placeholder = this._config.placeholder || 'Ask or tell the house…';
   }
 
-  set hass(h) { this._hass = h; }
+  // The box's label names the assistant the way the household does.
+  render() { this.body.querySelector('input').setAttribute('aria-label', speakText('Ask or tell brAIn')); }
+
+  connectedCallback() { FEED.cards.add(this); this.render(); }
+
+  disconnectedCallback() { FEED.cards.delete(this); }
+
+  set hass(h) { const first = !this._hass; this._hass = h; if (first) startFeed(h); }
 
   getCardSize() { return 2; }
 
@@ -443,9 +452,9 @@ export class MorphAskCard extends HTMLElement {
     if (r.do === 'done') { this.say(r.say || 'Done.'); return; }
     if (r.do === 'tell_dashboard' || r.do === 'tell_code') {
       const d = await this.dashboard();
-      if (!d) { this.say('That is a change to a dashboard: open the brAIn button on a dashboard brAIn keeps and tell it there.', true); return; }
+      if (!d) { this.say(speakText('That is a change to a dashboard: open the brAIn button on a dashboard brAIn keeps and tell it there.'), true); return; }
       const out = await this._hass.callWS({ type: 'morph/request', kind: 'tell', payload: { target: { kind: 'lovelace', dashboard: d.key, at: '[]', label: 'the dashboard', path: d.title }, text: r.tell_text || text } });
-      if (!out.ok) { this.say(out.error || 'brAIn could not take that.', true); return; }
+      if (!out.ok) { this.say(speakText(out.error || 'brAIn could not take that.'), true); return; }
       this.follow(out.id);
       return;
     }
@@ -469,7 +478,7 @@ export class MorphAskCard extends HTMLElement {
       try { st = await this._hass.callWS({ type: 'morph/tell_status', tell: id }); } catch (e) { /* asked again */ }
       if (st && (st.phase === 'done' || st.phase === 'failed')) { this.say(st.say || 'Done.'); return; }
       const steps = (st && st.steps) || [];
-      this.say(steps.length ? steps[steps.length - 1].t : 'brAIn is on it…', true);
+      this.say(speakText(steps.length ? steps[steps.length - 1].t : 'brAIn is on it…'), true);
       await new Promise((r) => setTimeout(r, 1000));
     }
   }

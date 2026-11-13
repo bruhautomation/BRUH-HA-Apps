@@ -22867,6 +22867,10 @@ def _todo_payload() -> dict:
     for item in payload.get("items") or []:
         until = int(asleep.get(f"t:{item.get('id')}", 0) or 0)
         item["snoozed_until"] = until if until > now else 0
+        # The card reads one headline and one short line, never the stored
+        # paragraph and the fix beside it.
+        item["headline"] = findings_store.todo_item_text(item) or item.get("text") or ""
+        item["line"] = findings_store.todo_item_line(item)
     return payload
 
 

@@ -20,6 +20,7 @@
 // release that moves an element turns one thing here off, never the page.
 
 import * as snap from './snap.js';
+import { setHouseName, speakHtml } from './util.js';
 
 const POLL_MS = 1000;
 const LIST_TTL = 8000;
@@ -191,6 +192,7 @@ export class BrainLayer extends HTMLElement {
       // Whether there is a Morph dashboard of the old kind to bring over.
       try {
         const m = await hass.callWS({ type: 'morph/load' });
+        setHouseName(m);
         const d = m && m.mirror && m.mirror.dashboard;
         this.s.hasMorph = !!(d && (d.floors || []).some((f) => (f.sections || []).length));
       } catch (e) { this.s.hasMorph = false; }
@@ -473,7 +475,7 @@ ${sw('fold', 'Fold quiet rooms', 'A room with nothing on and nothing recent is o
     if (this.s.open) sheet = `<div class="sheet" role="dialog" aria-label="brAIn">${this.sheetHtml(row)}${this.s.err ? `<p class="sm" style="color:var(--error-color,#c62828)">${esc(this.s.err)}</p>` : ''}</div>`;
     const pick = this.s.picking ? '<div class="pick" role="status">Tap the card you mean<button type="button" data-a="cancel">Cancel</button></div>' : '';
     const ring = this.shadowRoot.querySelector('.ring');
-    this.shadowRoot.innerHTML = `<style>${CSS}</style>${pick}${sheet}<button type="button" class="fab" data-a="fab" aria-label="brAIn" aria-expanded="${this.s.open}">${MARK}</button>`;
+    this.shadowRoot.innerHTML = `<style>${CSS}</style>${speakHtml(`${pick}${sheet}<button type="button" class="fab" data-a="fab" aria-label="brAIn" aria-expanded="${this.s.open}">${MARK}</button>`)}`;
     if (ring) this.shadowRoot.appendChild(ring);
     const ta = this.shadowRoot.querySelector('textarea');
     if (ta && draft) ta.value = draft;

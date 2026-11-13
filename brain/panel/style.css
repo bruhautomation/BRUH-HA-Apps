@@ -1133,7 +1133,7 @@ body.modal-open {
 .kcleanhead { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: baseline; min-width: 0; }
 .kcleantext { overflow-wrap: anywhere; color: var(--ink); }
 .kclean .card-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
-.kadd { display: flex; gap: 7px; margin: 4px 0 8px; }
+.kadd { display: flex; gap: 7px; margin: var(--sp-3) 0 var(--sp-3); }
 .kadd input {
   flex: 1;
   min-width: 0;
@@ -7507,3 +7507,35 @@ html.in-shell.bar-hidden .topbar > .shelledit { opacity: 0; visibility: hidden; 
 .mcperson legend { padding: 0 4px; font-weight: 600; }
 .mcacts { list-style: none; padding: 0; margin: 0 0 12px; }
 .mcacts li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line, rgba(127,127,127,.2)); overflow-wrap: anywhere; }
+
+/* A dropdown whose options are sentences is a list of choices that wrap, not
+   a closed select that cuts them off (`paintChoices` in app.js). The select
+   stays in the page, hidden, as the one place the value lives. */
+#setModal select.choicesrc, select.choicesrc { display: none; }
+.choicelist { display: flex; flex-direction: column; max-width: 520px;
+  border: 1px solid var(--hairline); border-radius: var(--card-radius); background: var(--surface); }
+#setModal .setsecbody .choicelist .choice, .choicelist .choice { display: flex; align-items: flex-start; gap: var(--sp-3);
+  min-height: 44px; padding: 10px var(--sp-3); cursor: pointer; box-sizing: border-box;
+  font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink);
+  border-top: 1px solid var(--hairline); margin: 0; font-weight: 400; align-items: center; }
+.choicelist .choice:first-child, .choicelist .choicegroup + .choice { border-top: 0; }
+.choicelist .choice input { flex: none; margin: 3px 0 0; width: 18px; height: 18px; }
+.choicelist .choicetext { min-width: 0; overflow-wrap: anywhere; }
+.choicelist .choicegroup { padding: 8px var(--sp-3) 0; font-size: 12px; color: var(--ink-2);
+  border-top: 1px solid var(--hairline); }
+.choicelist .choicegroup:first-child { border-top: 0; }
+.choicelist.off { opacity: 0.55; }
+.choicelist.off .choice { cursor: not-allowed; }
+
+/* One Details fold on a test screen: the numbers and the housekeeping a
+   person did not come for (`detailsFold`). Read-only, so it is the closed
+   "technical part" ⚙ allows, never a section's controls. */
+.detailsfold { margin: 8px 0 0; }
+.detailsfold > summary { display: inline-flex; align-items: center; cursor: pointer; font-size: var(--fs-meta); color: var(--ink-3); }
+.detailsfold .detailsbody { margin-top: 4px; }
+
+/* Knowledge's upkeep: one Tools fold holding the three folds it used to
+   show as rows of their own, so the facts are the first thing on the page. */
+.ktools { margin-top: var(--sp-4); }
+.kfoldnest { padding-left: var(--sp-3); border-left: 2px solid var(--hairline); margin-bottom: var(--sp-3); }
+.kfoldnest .kfold:last-child { border-bottom: 0; }
