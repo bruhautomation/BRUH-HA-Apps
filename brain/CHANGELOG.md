@@ -6,7 +6,6 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ### Changed
 
-- ⚙ › Model & usage says where the session went in household words (Chats, House checks, Dashboard and insight cards, Voice…) with each one's share, and no run ids or token counts; the per-run rows stay in ⚙ › Developer. The model and thinking choices are rows that show their whole text on a phone, where a closed menu cut them off (#880).
 - The test screens in ⚙ › Diagnostics and ⚙ › Developer open with one sentence on whether everything works and when it was last checked, and say when that is old. Rows have plain names, and the technical values sit in a Details fold (#881).
 - Memory › Knowledge opens on the facts search and list. Suggested reports appears once, and the maintenance rows are one Tools fold in plain words (#883).
 
