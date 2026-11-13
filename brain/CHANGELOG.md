@@ -2,6 +2,19 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.2.3
+
+### Changed
+
+- The faint-Bluetooth check needs evidence before it speaks: a device has to stay faint for two hours across passes and to have dropped out at least twice in two days (or be unavailable now). A weak signal on a device that reports as usual raises nothing, and a single dip is not filed and then cleared. After this update the earliest it can file is the second pass (#877).
+- Done on a weak-link finding (Bluetooth, Zigbee, Z-Wave) holds while the device reads the same. It is raised again, in new words, only when the signal gets clearly worse (#877).
+- The development loop's Screens pass takes the time its screens need (20 seconds a picture, between 15 and 75 minutes), photographs brAIn's own panel first, gives each screen its own limit, files what it finished and takes the rest first next time (#890).
+
+### Fixed
+
+- On an iPhone in the Home Assistant app, the message box on Ask (the chat list's and an open chat's) sits fully above the home indicator, with the app's full screen on or off. The gap under the box with full screen off is gone too: the header's height is measured again when the top safe area arrives (#876).
+- A Screens pass that ran out of time said "the screens could not be captured: " and nothing else. It now says "timed out after N s, X of Y screens captured", and every error line in the development loop names the error when it has no text of its own (#890).
+
 ## 5.2.2
 
 ### Changed
