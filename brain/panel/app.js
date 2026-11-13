@@ -12745,7 +12745,11 @@ function syncBarHeight() {
 (function trackBarHeight() {
   const bar = document.querySelector(".topbar");
   if (!bar || typeof ResizeObserver === "undefined") return;
-  new ResizeObserver(() => { syncBarHeight(); shellBars(); }).observe(bar);
+  // The border box: the shell's top inset is the bar's padding, so a
+  // change of it (`--shell-inset` arriving after the first measure) leaves
+  // the content box as it was, and a content-box observer kept the old
+  // height — Ask's message box sat that much above the foot (#876).
+  new ResizeObserver(() => { syncBarHeight(); shellBars(); }).observe(bar, { box: "border-box" });
   const tabs = document.querySelector(".viewtabs");
   if (tabs) new ResizeObserver(shellBars).observe(tabs);
 })();
@@ -13079,6 +13083,11 @@ if (SHELL) {
       // said, style.css takes it over this frame's own env()).
       if (typeof d.state.inset === "number") {
         document.documentElement.style.setProperty("--shell-inset", Math.max(0, Math.round(d.state.inset)) + "px");
+      }
+      // And the bottom one, the home indicator's strip under Ask's message
+      // boxes (`--shell-inset-bottom`, style.css's `--safe-bottom`, #876).
+      if (typeof d.state.insetBottom === "number") {
+        document.documentElement.style.setProperty("--shell-inset-bottom", Math.max(0, Math.round(d.state.insetBottom)) + "px");
       }
       shellState.morph = !!d.state.morph;
       shellState.narrow = !!d.state.narrow;
