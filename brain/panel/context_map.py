@@ -112,7 +112,7 @@ _GROUPS: tuple[tuple[str, re.Pattern], ...] = (
         r"assign_\w+|enable_\w+|disable_\w+|restore_\w+|apply_\w+|undo_\w+)$")),
     ("Other add-ons and devices", re.compile(
         r"^(esphome_\w+|music_assistant_\w+|minecraft_\w+|label_printer_\w+|"
-        r"print_label|bright_\w+|bambu_\w+|garden_\w+|cooking_\w+|"
+        r"print_label|bright_\w+|bambu_\w+|garden_\w+|cooking_\w+|browser_\w+|"
         r"bruh_addon_status)$")),
     ("What brAIn has measured", re.compile(
         r"^(get_baseline|get_house_model|what_is_normal|room_physics|"

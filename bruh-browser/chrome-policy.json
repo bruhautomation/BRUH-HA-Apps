@@ -1,0 +1,12 @@
+{
+  "ExtensionInstallForcelist": [
+    "fcoeoabgfenejglbffodgkkbkcdhcgfn;https://clients2.google.com/service/update2/crx"
+  ],
+  "RemoteDebuggingAllowed": false,
+  "SyncDisabled": true,
+  "BrowserSignin": 0,
+  "DefaultBrowserSettingEnabled": false,
+  "MetricsReportingEnabled": false,
+  "PromptForDownloadLocation": false,
+  "BackgroundModeEnabled": false
+}

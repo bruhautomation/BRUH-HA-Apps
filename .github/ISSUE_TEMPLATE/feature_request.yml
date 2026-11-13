@@ -14,6 +14,7 @@ body:
         - BRUH Bambu Studio
         - GardenRX
         - BRUH Cooking
+        - BRUH Browser
         - Other / unsure
     validations:
       required: true

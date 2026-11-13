@@ -107,6 +107,7 @@ UNTRUSTED_SOURCES = frozenset({
     "addon", "assistant", "share", "external", "unknown", "gardenrx",
     "minecraft", "bambu", "bruh_bambu", "print", "bruh_print", "bright",
     "cooking", "bruh_cooking", "task_manager", "bruh_task_manager",
+    "browser", "bruh_browser",
 })
 UNTRUSTED_PREFIXES = ("addon:", "tool:", "web:", "file:", "mcp:", "share:")
 UNTRUSTED_VIA = frozenset({"tool", "web", "file", "addon", "assistant"})
