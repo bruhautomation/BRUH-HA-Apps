@@ -57,6 +57,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from textclip import said
+
 log = logging.getLogger("brain.devloop.screens")
 
 # Where the panel answers inside the container. Loopback, because this is
@@ -81,6 +83,20 @@ SCREENS: list[tuple[str, str, str]] = [
      "openSettings().then(() => showSettingsSection('notifications'))"),
     ("settings-diagnostics", "Settings › Diagnostics",
      "openSettings().then(() => showSettingsSection('diagnostics'))"),
+]
+# More of ⚙, photographed when asked for (the chat's screenshot tool, the
+# Walkthrough) and not on every Screens pass: each screen there is three
+# pictures under one time limit, and these are the sections a person
+# opens to change who brAIn is and what it may do.
+ASKED_SCREENS: list[tuple[str, str, str]] = [
+    ("settings-features", "Settings › Features",
+     "openSettings().then(() => showSettingsSection('features'))"),
+    ("settings-permissions", "Settings › Permissions",
+     "openSettings().then(() => showSettingsSection('permissions'))"),
+    ("settings-personality", "Settings › Personality",
+     "openSettings().then(() => showSettingsSection('personality'))"),
+    ("settings-developer", "Settings › Developer",
+     "openSettings().then(() => showSettingsSection('developer'))"),
 ]
 # (width, height, touch, colour scheme). A phone in both schemes, because a
 # phone is where most people read brAIn and where dark mode is commonest,
@@ -1034,14 +1050,62 @@ def layout_problems(layout: dict, label: str, width: int, scheme: str) -> list[d
     return out
 
 
+# A pass is bounded by what it has to photograph, not by one fixed limit
+# (#890: about seventy screens at three views each hit fifteen minutes and
+# filed nothing). Each screen gets at most `SCREEN_MAX_S`, each target
+# (one add-on's screens at every view) at most `TARGET_MAX_S`, and the pass
+# as a whole `pass_budget` — what finished is kept and filed whatever
+# happens after it.
+SCREEN_MAX_S = 75
+TARGET_MAX_S = 8 * 60
+SCREEN_BUDGET_S = 20
+PASS_MIN_S = 15 * 60
+PASS_MAX_S = 75 * 60
+
+
+def planned(targets, views=None, screens=None) -> int:
+    """How many pictures a pass over brAIn's own panel and ``targets``
+    would take."""
+    own = len(screens or SCREENS)
+    return (own + sum(len(t.get("screens") or []) for t in targets or [])) \
+        * len(views or VIEWS)
+
+
+def pass_budget(targets, views=None, screens=None) -> float:
+    """Seconds a pass may run: `SCREEN_BUDGET_S` a picture, never under
+    `PASS_MIN_S` (the old fixed limit, plenty for brAIn alone) or over
+    `PASS_MAX_S`."""
+    return float(min(PASS_MAX_S, max(PASS_MIN_S,
+                                     planned(targets, views, screens) * SCREEN_BUDGET_S)))
+
+
+def order_targets(targets, first=()) -> list:
+    """The targets a previous pass did not finish first (``first``, their
+    keys), then the rest as they came: one slow add-on does not keep the
+    same others from ever being photographed."""
+    first = [str(k) for k in first or ()]
+    rank = {k: i for i, k in enumerate(first)}
+    return sorted(list(targets or []),
+                  key=lambda t: rank.get(str(t.get("key") or ""), len(rank)))
+
+
 async def capture(out_dir: Path, *, confidential: list[str], aliases,
                   url: str = PANEL_URL, screens=None, views=None,
-                  targets=None, own: bool = True) -> dict:
+                  targets=None, own: bool = True, deadline: float | None = None,
+                  progress: dict | None = None) -> dict:
     """Photograph every screen of every target at every view into
     ``out_dir``. Answers ``{"shots": [...], "problems": [...], "errors":
-    [...]}``; a screen that could not be redacted is in ``errors`` and has
-    no picture. brAIn's own panel is the first target unless ``own`` is
-    false; ``targets`` are the others (`screen_targets.py`)."""
+    [...], "planned", "done", "left": [target keys], "unfinished":
+    [products], "timed_out"}``; a screen that could not be redacted is in
+    ``errors`` and has no picture. brAIn's own panel is the first target
+    unless ``own`` is false, and each target is photographed at every view
+    before the next begins, so brAIn's own panel is whole before any other
+    add-on is started; ``targets`` are the others (`screen_targets.py`).
+
+    ``deadline`` (`time.monotonic()`) ends the pass with what it has: the
+    targets not finished are ``left``. ``progress`` is kept up to date as
+    it goes (``planned``, ``done``), for a caller that has to say how far
+    a pass got even if it is cancelled."""
     import aiohttp  # noqa: PLC0415
 
     binary = find_browser()
@@ -1050,7 +1114,11 @@ async def capture(out_dir: Path, *, confidential: list[str], aliases,
     out_dir.mkdir(parents=True, exist_ok=True)
     shots: list[dict] = []
     problems: list[dict] = []
-    errors: list[str] = []
+    errors: list = []
+    progress = progress if progress is not None else {}
+    left: list[str] = []
+    unfinished: list[str] = []
+    timed_out = False
     # The profile is removed by hand, after the browser has gone: its helper
     # processes go on writing to it for a moment after the browser is told
     # to stop, and a TemporaryDirectory that raised on "directory not
@@ -1064,34 +1132,76 @@ async def capture(out_dir: Path, *, confidential: list[str], aliases,
                                        max_msg_size=64 * 1024 * 1024) as ws:
                 cdp = CDP(ws)
                 work = ([own_target(url, screens)] if own else []) + list(targets or [])
-                for width, height, touch, scheme in (views or VIEWS):
-                    for tgt in work:
-                        guard = list(tgt.get("reads") or []) if tgt.get("guard") else None
-                        init = str(tgt.get("init") or "")
-                        sockets = bool(tgt.get("sockets"))
-                        for scr in tgt.get("screens") or []:
-                            label = scr["label"]
-                            try:
-                                shot = await _one(
-                                    cdp, scr["url"], scr["slug"], label, scr.get("script") or "",
-                                    width, height, touch, scheme, out_dir, confidential,
-                                    aliases, guard=guard, focus=scr.get("focus"),
-                                    init=init, sockets=sockets, inset=int(scr.get("inset") or 0),
-                                    after=str(scr.get("after") or ""),
-                                    layout=bool(scr.get("layout")))
-                            except MissingElement as exc:
-                                errors.append({"product": tgt.get("product", "brAIn"),
-                                               "missing": True, "text": str(exc)[:200]})
-                                continue
-                            except Exception as exc:  # noqa: BLE001 — one screen
-                                errors.append({"product": tgt.get("product", "brAIn"), "text":
-                                               f"{label} at {width}px {scheme}: {exc}"[:200]})
-                                continue
-                            shot["product"] = tgt.get("product", "brAIn")
-                            for p in shot["problems"]:
-                                p["product"] = shot["product"]
-                            problems += shot.pop("problems")
-                            shots.append(shot)
+                all_views = list(views or VIEWS)
+                progress["planned"] = sum(len(t.get("screens") or []) for t in work) \
+                    * len(all_views)
+                progress["done"] = progress["captured"] = 0
+                for tgt in work:
+                    product = tgt.get("product", "brAIn")
+                    guard = list(tgt.get("reads") or []) if tgt.get("guard") else None
+                    init = str(tgt.get("init") or "")
+                    sockets = bool(tgt.get("sockets"))
+                    todo = [(v, scr) for v in all_views for scr in tgt.get("screens") or []]
+                    started = time.monotonic()
+                    finished = 0
+                    cut = False
+                    for (width, height, touch, scheme), scr in todo:
+                        now = time.monotonic()
+                        if cut or (deadline is not None and now >= deadline):
+                            timed_out = True
+                            break
+                        # brAIn's own panel is what a pass is for: only
+                        # the pass's end stops it.
+                        if (now - started >= TARGET_MAX_S
+                                and not (own and tgt is work[0])):
+                            errors.append({"product": product, "text": (
+                                f"{product}: stopped after {TARGET_MAX_S} s, "
+                                f"{finished} of {len(todo)} pictures taken; the "
+                                "rest are taken first on the next pass")[:200]})
+                            break
+                        limit = SCREEN_MAX_S if deadline is None \
+                            else max(1.0, min(SCREEN_MAX_S, deadline - now))
+                        label = scr["label"]
+                        cut = False
+                        try:
+                            shot = await asyncio.wait_for(_one(
+                                cdp, scr["url"], scr["slug"], label, scr.get("script") or "",
+                                width, height, touch, scheme, out_dir, confidential,
+                                aliases, guard=guard, focus=scr.get("focus"),
+                                init=init, sockets=sockets, inset=int(scr.get("inset") or 0),
+                                after=str(scr.get("after") or ""),
+                                layout=bool(scr.get("layout"))), limit)
+                        except MissingElement as exc:
+                            errors.append({"product": product,
+                                           "missing": True, "text": said(exc)[:200]})
+                            continue
+                        except asyncio.TimeoutError:
+                            # Cut short by the pass's own end, the screen is
+                            # not done: its target is left for the next pass.
+                            cut = limit < SCREEN_MAX_S
+                            if not cut:
+                                errors.append({"product": product, "text": (
+                                    f"{label} at {width}px {scheme}: timed out after "
+                                    f"{limit:.0f} s")[:200]})
+                            continue
+                        except Exception as exc:  # noqa: BLE001 — one screen
+                            errors.append({"product": product, "text":
+                                           f"{label} at {width}px {scheme}: {said(exc)}"[:200]})
+                            continue
+                        finally:
+                            if not cut:
+                                finished += 1
+                                progress["done"] += 1
+                        shot["product"] = product
+                        for p in shot["problems"]:
+                            p["product"] = shot["product"]
+                        problems += shot.pop("problems")
+                        shots.append(shot)
+                        progress["captured"] = len(shots)
+                    if finished < len(todo):
+                        left.append(str(tgt.get("key") or product))
+                        if product not in unfinished:
+                            unfinished.append(product)
                 try:
                     await cdp.call("Browser.close", timeout=5)
                 except Exception:  # noqa: BLE001 — it is killed below if it did not go
@@ -1101,7 +1211,10 @@ async def capture(out_dir: Path, *, confidential: list[str], aliases,
         if proc is not None:
             await _stop(proc)
         shutil.rmtree(profile, ignore_errors=True)
-    return {"shots": shots, "problems": problems, "errors": errors}
+    return {"shots": shots, "problems": problems, "errors": errors,
+            "planned": int(progress.get("planned") or 0),
+            "done": int(progress.get("done") or 0), "left": left,
+            "unfinished": unfinished, "timed_out": timed_out}
 
 
 async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,

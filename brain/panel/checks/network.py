@@ -46,11 +46,13 @@ from __future__ import annotations
 
 import re
 
+import textclip
 from numfmt import count
 
 from ._registry_facts import SELF_PLATFORMS, entry_not_loaded, is_node_status
-from ._util import (DAY, SOFTWARE_DOMAINS, CouldNotLook, House,
-                    after_restart, domain_of, num, without_mac, parse_ts, when)
+from ._util import (DAY, RESTART_WINDOW_S, SOFTWARE_DOMAINS, CouldNotLook,
+                    House, after_restart, domain_of, ha_starts, num,
+                    without_mac, parse_ts, when)
 
 # The integration whose trackers are the Wi-Fi clients.
 UNIFI_PLATFORMS = frozenset({"unifi"})
@@ -916,6 +918,209 @@ _FIXES = {
 }
 
 
+# What To Do says for a device that dropped off, by the same kinds as
+# `_FIXES`: the job the headline names, the line under it for one device,
+# and the line for several. Composed from these parts ONCE, with the names
+# in hand (`todo_words`), because a fix is a paragraph with a label and a
+# pronoun in every clause, and a headline cut out of it dangled (#879).
+_JOBS = {
+    "hung": ("Reconnect {thing}",
+             "Block and unblock it in the UniFi Network app, or power-cycle it.",
+             "Block and unblock each one in the UniFi Network app, or "
+             "power-cycle it."),
+    "flapping": ("Move {thing} nearer the access point",
+                 "Check its signal in the UniFi Network app; if it still "
+                 "drops, give it a 2.4 GHz network of its own.",
+                 "Check each one's signal in the UniFi Network app; give any "
+                 "that still drop a 2.4 GHz network of their own."),
+    "zwave": ("Wake {thing}",
+              "Check its battery; if it does not answer, re-interview it "
+              "from its device page.",
+              "Check each one's battery; re-interview any that do not "
+              "answer from their device pages."),
+    "zigbee_mains": ("Check the power to {thing}",
+                     "A socket or a wall switch turned off is the usual cause.",
+                     "A socket or a wall switch turned off is the usual cause."),
+    "zigbee": ("Wake {thing}",
+               "Press its button and check its battery; if it stays quiet, "
+               "re-pair it near the coordinator.",
+               "Press each one's button and check its battery; re-pair any "
+               "that stay quiet near the coordinator."),
+}
+# What a device of each kind is called when no name for it survives.
+_KIND_NOUN = {"hung": "Wi-Fi device", "flapping": "Wi-Fi device",
+              "zwave": "Z-Wave device", "zigbee_mains": "Zigbee device",
+              "zigbee": "Zigbee device"}
+UNIFI_TODO = ("Keep the UniFi Network application reachable",
+              "Every UniFi tracker drops at once when Home Assistant loses "
+              "the controller.")
+TODO_HEADLINE_MAX = 80
+TODO_LINE_MAX = 140
+
+
+# The longest a device's name may be inside a headline: past it the name
+# is shortened on a word, so the headline keeps its job and its length.
+TODO_NAME_MAX = 40
+
+
+def _the(name: str) -> str:
+    """A device's name as the object of a sentence: "the Hall sensor",
+    but never "the the porch light", "The Reading lamp" mid-sentence, "the
+    A Zigbee device" or "the Sam's phone"."""
+    name = textclip.clip(" ".join(str(name or "").split()), TODO_NAME_MAX) \
+        or "a device"
+    m = re.match(r"(?i)^(the|a|an)\s+", name)
+    if m:
+        return m.group(1).lower() + name[m.end(1):]
+    if re.match(r"^[\w-]+['’]s\b", name):
+        return name
+    return f"the {name}"
+
+
+def _thing(names: list[str], total: int, noun: str, cap: int) -> str:
+    """The devices a headline names: one, two, or the first two and how
+    many more; the kind and count when no name survived. Fitted to ``cap``
+    characters by naming fewer, never by cutting a name."""
+    total = max(total, len(names))
+    # Two devices with one name are one name and a count, never "the Porch
+    # sensor and the Porch sensor".
+    names = list(dict.fromkeys(n for n in names if str(n or "").strip()))
+    if not names:
+        return (f"the quiet {noun}" if total <= 1
+                else f"the {count(total, noun)}")
+    if total == 1:
+        return _the(names[0])
+    options = []
+    if total == 2 and len(names) >= 2:
+        options.append(f"{_the(names[0])} and {_the(names[1])}")
+    if len(names) >= 2 and total > 2:
+        options.append(f"{_the(names[0])}, {_the(names[1])} and "
+                       f"{total - 2} more")
+    options.append(f"{_the(names[0])} and {total - 1} more")
+    for option in options:
+        if len(option) <= cap:
+            return option
+    # Names too long for a headline: the kind and the count, which the
+    # card's own detail then names.
+    return f"the {count(total, noun)}"
+
+
+def todo_words(kinds: list[str], names_by_kind: dict[str, list[str]],
+               totals: dict[str, int] | None = None) -> tuple[str, str]:
+    """`(headline, line)` for a To Do about devices that dropped off.
+
+    The headline names the devices and the job ("Wake the Hall sensor");
+    the line says how, and what to do if that fails, in one sentence; a
+    pronoun in the line is singular only under a headline naming one
+    device. Several kinds at once are one errand, "Bring back …", with each
+    kind's job on the line. `unifi` is the controller, which has no device.
+    """
+    totals = totals or {}
+    kinds = [k for k in kinds if k in _JOBS or k == "unifi"]
+    devices = [k for k in kinds if k in _JOBS]
+    if not devices:
+        return UNIFI_TODO if "unifi" in kinds else ("", "")
+    n_of = {k: max(int(totals.get(k) or 0), len(names_by_kind.get(k) or []))
+            for k in devices}
+    if len(devices) == 1:
+        kind = devices[0]
+        job, one, many = _JOBS[kind]
+        room = TODO_HEADLINE_MAX - len(job.format(thing=""))
+        thing = _thing(names_by_kind.get(kind) or [], n_of[kind],
+                       _KIND_NOUN[kind], room)
+        line = one if max(n_of[kind], 1) == 1 else many
+        if "unifi" in kinds:
+            line = f"{line} {UNIFI_TODO[1]}"
+        return _cap(job.format(thing=thing)), _line(line)
+    every = [n for k in devices for n in (names_by_kind.get(k) or [])]
+    total = sum(max(n_of[k], 1) for k in devices)
+    head = "Bring back {thing}"
+    thing = _thing(every, total, "device",
+                   TODO_HEADLINE_MAX - len(head.format(thing="")))
+    jobs = []
+    for kind in devices:
+        job = _JOBS[kind][0]
+        named = names_by_kind.get(kind) or []
+        jobs.append(job.format(thing=_thing(named, n_of[kind],
+                                            _KIND_NOUN[kind], 60)))
+    line = "; ".join(j[0].lower() + j[1:] for j in jobs)
+    return _cap(head.format(thing=thing)), _line(line[0].upper() + line[1:] + ".")
+
+
+def _cap(text: str) -> str:
+    return text if len(text) <= TODO_HEADLINE_MAX else \
+        text[:TODO_HEADLINE_MAX - 1].rsplit(" ", 1)[0] + "…"
+
+
+def _line(text: str) -> str:
+    """The line, whole clauses first: past the budget it ends at the last
+    "; " that fits, never mid-word."""
+    if len(text) <= TODO_LINE_MAX:
+        return text
+    cut = text[:TODO_LINE_MAX].rfind("; ")
+    if cut > 40:
+        return text[:cut] + "."
+    return text[:TODO_LINE_MAX - 1].rsplit(" ", 1)[0] + "…"
+
+
+# How the connectivity row's detail lists a device (`connectivity`'s
+# `phrases`), and how it counts them, for a To Do filed before the row
+# carried its own words: the names survive only there.
+_DETAIL_DEVICE_RE = re.compile(r"(?:: |; )([^;]+?) \((Wi-Fi|Z-Wave|Zigbee)\), ")
+_DETAIL_COUNT_RE = re.compile(r"^(\d+) devices are|^One device is")
+_DETAIL_MORE_RE = re.compile(r"; and (\d+) more\.")
+
+
+def todo_words_stored(source: str, fix: str, detail: str) -> tuple[str, str] | None:
+    """`(headline, line)` for a To Do item a quiet-device check filed before
+    it wrote its own, from what the item kept: the kinds are the `_FIXES`
+    sentences its fix is made of (matched exactly), the names are the ones
+    its detail lists. None for an item this cannot read, which then takes
+    the generic wording."""
+    fix = " ".join(str(fix or "").split())
+    detail = " ".join(str(detail or "").split())
+    if source == f"check:{CONNECTIVITY}":
+        kinds = [k for k, said in _FIXES.items() if said in fix]
+        if "UniFi: check the UniFi Network application" in fix:
+            kinds.append("unifi")
+        if not kinds:
+            return None
+        network_kinds = {"Wi-Fi": [k for k in kinds if k in ("hung", "flapping")],
+                         "Z-Wave": ["zwave"] if "zwave" in kinds else [],
+                         "Zigbee": [k for k in kinds
+                                    if k in ("zigbee", "zigbee_mains")]}
+        names: dict[str, list[str]] = {}
+        named = 0
+        for name, network in _DETAIL_DEVICE_RE.findall(detail):
+            options = network_kinds.get(network) or []
+            if len(options) == 1:
+                names.setdefault(options[0], []).append(name.strip())
+                named += 1
+        m = _DETAIL_COUNT_RE.search(detail)
+        listed = int(m.group(1) or 1) if m and m.group(1) else (1 if m else 0)
+        devices = [k for k in kinds if k in _JOBS]
+        totals = {}
+        if len(devices) == 1:
+            more = _DETAIL_MORE_RE.search(detail)
+            totals[devices[0]] = max(listed, named + int(more.group(1) if more else 0))
+        elif named < listed:
+            # Which kind the unnamed ones are is not on the item: the
+            # headline counts them all and the line names only who it can.
+            names = {}
+        return todo_words(kinds, names, totals)
+    if source == "check:dev.zha_unseen":
+        m = re.match(r"^(?:(\d+): (.*?)|([^.]+?))\. The quietest is ", detail)
+        names, total = [], 1
+        if m and m.group(1):
+            total = int(m.group(1))
+            listed = re.sub(r" and \d+ more$", "", m.group(2))
+            names = [n.strip() for n in listed.split(", ") if n.strip()]
+        elif m:
+            names = [m.group(3).strip()]
+        return todo_words(["zigbee"], {"zigbee": names}, {"zigbee": total})
+    return None
+
+
 def _house_has(house: House, platforms) -> bool:
     return any(str(r.get("platform") or "") in platforms for r in house.entities)
 
@@ -978,6 +1183,11 @@ def connectivity(snap: dict, now: float) -> list[dict]:
         if e["fix"] not in kinds:
             kinds.append(e["fix"])
     fix = " ".join(_FIXES[k] for k in kinds)
+    names_by_kind: dict[str, list[str]] = {}
+    for e in listed:
+        names_by_kind.setdefault(e["fix"], []).append(e["name"])
+    todo_text, todo_line = todo_words(kinds + (["unifi"] if unifi_line else []),
+                                      names_by_kind)
     if unifi_line:
         fix = (fix + " UniFi: check the UniFi Network application stays up "
                "and reachable from Home Assistant.").strip()
@@ -985,6 +1195,10 @@ def connectivity(snap: dict, now: float) -> list[dict]:
         "text": CONNECTIVITY_TEXT,
         "detail": " ".join(detail.split()),
         "fix": fix,
+        # What To Do says when this becomes one: composed once from the
+        # devices and their kinds (`todo_words`), never cut out of `fix`.
+        "todo_text": todo_text,
+        "todo_line": todo_line,
         "severity": ("serious" if any(e.get("serious") for e in listed)
                      else "warning"),
         "fixable": False,
@@ -1009,6 +1223,26 @@ MATTER_EMPTY_TEXT = "Matter is set up with nothing on it"
 # Below this a BLE advertisement is barely heard: one wall more, or a
 # fridge door, and the device drops out between readings.
 BLUETOOTH_FAINT_DBM = -90
+# A signal is a level that moves around its line, and one reading under it
+# is not a device with a problem (#877: a device filed on one pass and
+# cleared on the next). A device is faint once it has read at or under the
+# floor on passes spanning `BLUETOOTH_PERSIST_S`, and stays faint until it
+# reads more than `BLUETOOTH_RECOVER_DB` above it (`stamp_faint`).
+BLUETOOTH_PERSIST_S = 2 * 3600
+BLUETOOTH_RECOVER_DB = 5
+# And a faint number is not a fault on its own: a device heard at -95 dBm
+# that reports at its usual pace is fine (#877: well over a thousand
+# readings a day, filed as "late or not at all"). The evidence is Home
+# Assistant's own verdict that its readings stopped arriving: the device
+# went unavailable at least `BLUETOOTH_MIN_DROPS` times in the past
+# `BLUETOOTH_HISTORY_HOURS`, or it is unavailable now.
+BLUETOOTH_HISTORY_HOURS = 48
+BLUETOOTH_MIN_DROPS = 2
+BLUETOOTH_FETCH_MAX = 80
+BLUETOOTH_ENTITIES_PER_DEVICE = 4
+# A device the household answered Done or To Do about is filed again, in
+# new words, only when it is this much fainter than when they answered.
+BLUETOOTH_WORSE_DB = 8
 
 
 def _loaded(snap: dict, domain: str) -> list[dict]:
@@ -1100,10 +1334,115 @@ def _proxies_said(proxies: list[dict]) -> str:
     return (f" This house's Bluetooth proxies: {listed}.")
 
 
-def bluetooth_faint(snap: dict, now: float) -> list[dict]:
-    house = House(snap)
+def stamp_faint(heard: dict, addresses: set[str], ledger: dict | None,
+                now: float) -> dict:
+    """``{address: first read faint}`` for the registered Bluetooth devices
+    (``addresses``) heard faintly on this pass, carried across passes by
+    the collector (`snapshot._stamp_bluetooth`). A device already faint
+    stays faint until it reads more than `BLUETOOTH_RECOVER_DB` above the
+    floor; one that has not been heard, or reads above that, drops out.
+    A new one is stamped now — including on the first pass after an
+    update, so one reading is never persistence."""
+    ledger = ledger or {}
+    out: dict = {}
+    for addr, rssi in (heard or {}).items():
+        addr = str(addr).lower()
+        if addr not in addresses or not isinstance(rssi, (int, float)):
+            continue
+        line = BLUETOOTH_FAINT_DBM + (BLUETOOTH_RECOVER_DB if addr in ledger else 0)
+        if rssi <= line:
+            since = ledger.get(addr)
+            out[addr] = float(since) if isinstance(since, (int, float)) else float(now)
+    return out
+
+
+def _bt_registered(snap: dict) -> set[str]:
+    return {m for d in snap.get("devices") or () if isinstance(d, dict)
+            for m in _bt_macs(d)}
+
+
+def _bt_candidates(snap: dict, house: House) -> list[tuple[str, dict, list[str]]]:
+    """``[(device_id, device, [entity_id])]`` for every registered Bluetooth
+    device that is not a proxy and is heard near or under the floor: what
+    the collector fetches history for and what the check judges, so the
+    two agree (`bluetooth_history_candidates`)."""
     heard = {str(a).lower(): r for a, r in
              ((snap.get("bluetooth") or {}).get("rssi") or {}).items()}
+    proxy_ids = {p["device"] for p in bluetooth_proxies(snap, house)}
+    out = []
+    for dev_id, dev in sorted(house.devices.items()):
+        if dev_id in proxy_ids:
+            continue
+        rssi = [heard[m] for m in _bt_macs(dev)
+                if isinstance(heard.get(m), (int, float))]
+        if not rssi or max(rssi) > BLUETOOTH_FAINT_DBM + BLUETOOTH_RECOVER_DB:
+            continue
+        ents = [str(r.get("entity_id")) for r in house.entities
+                if r.get("device_id") == dev_id and r.get("entity_id")
+                and not r.get("disabled_by")]
+        if ents:
+            out.append((dev_id, dev, ents[:BLUETOOTH_ENTITIES_PER_DEVICE]))
+    return out
+
+
+def bluetooth_history_candidates(snap: dict) -> list[str]:
+    """The entities whose recent history says whether a faint Bluetooth
+    device's readings arrive: what the collector fetches and
+    `bluetooth_faint` reads."""
+    out: list[str] = []
+    for _id, _dev, ents in _bt_candidates(snap, House(snap)):
+        out.extend(ents)
+    return out[:BLUETOOTH_FETCH_MAX]
+
+
+def _bt_drops(hist: dict, ents: list[str]) -> list[float]:
+    """The moments a device went unavailable: any of its entities, one
+    moment for entities that went together."""
+    out: list[float] = []
+    for t in sorted(t for e in ents for t in _went_down(_rows(hist, e))):
+        if not out or t - out[-1] > MASS_WINDOW_S:
+            out.append(t)
+    return out
+
+
+def _bt_missed(snap: dict, ents: list[str], now: float,
+               mass: list[float]) -> dict | None:
+    """When a device's readings stopped arriving in the window: ``{drops:
+    [ts], down: bool}`` — the moments it went unavailable, less any at a
+    moment many devices went together or round a restart of Home Assistant
+    (neither is this device's signal), and whether its newest reading is
+    unavailable. None when the recorder had none of its entities: no
+    evidence either way."""
+    hist = (snap.get("bluetooth_history") or {}).get("entities") or {}
+    have = [e for e in ents if e in hist]
+    if not have:
+        return None
+    start = now - BLUETOOTH_HISTORY_HOURS * 3600
+    starts = ha_starts(snap)
+    drops = [t for t in _bt_drops(hist, have)
+             if t >= start and not _near(t, mass)
+             and not any(abs(t - s) <= RESTART_WINDOW_S for s in starts)]
+    down = any((_rows(hist, e) or [(0, "")])[-1][1] == "unavailable"
+               for e in have)
+    return {"drops": drops, "down": down}
+
+
+def bluetooth_faint(snap: dict, now: float) -> list[dict]:
+    house = House(snap)
+    bt = snap.get("bluetooth") or {}
+    heard = {str(a).lower(): r for a, r in (bt.get("rssi") or {}).items()}
+    # Read faint on passes spanning `BLUETOOTH_PERSIST_S` (`stamp_faint`).
+    # A snapshot nothing stamped cannot say a reading persisted, and one
+    # reading is not a finding.
+    since = {str(a).lower(): v for a, v in (bt.get("faint_since") or {}).items()
+             if isinstance(v, (int, float))}
+    candidates = _bt_candidates(snap, house)
+    # Many devices dropping out at one moment is a restart or the adapter,
+    # never each device's own signal.
+    hist = (snap.get("bluetooth_history") or {}).get("entities") or {}
+    every = {dev_id: _bt_drops(hist, ents) for dev_id, _d, ents in candidates}
+    mass = _mass_moments(every, max(3, len(every) // 2)) if every else []
+    ents_of = {dev_id: ents for dev_id, _d, ents in candidates}
     # What already relays Bluetooth here, and whether it answers — read
     # before any step suggests new hardware (#770).
     proxies = bluetooth_proxies(snap, house)
@@ -1113,29 +1452,32 @@ def bluetooth_faint(snap: dict, now: float) -> list[dict]:
     listed = _proxies_said(proxies)
     faint = []
     for dev_id, dev in sorted(house.devices.items()):
-        if dev_id in proxy_ids:
+        if dev_id in proxy_ids or dev_id not in ents_of:
             continue
-        rssi = [heard[m] for m in _bt_macs(dev)
-                if isinstance(heard.get(m), (int, float))]
-        if not rssi or max(rssi) > BLUETOOTH_FAINT_DBM:
+        macs = _bt_macs(dev)
+        rssi = [heard[m] for m in macs if isinstance(heard.get(m), (int, float))]
+        stamps = [since[m] for m in macs if m in since]
+        if not rssi or not stamps or now - min(stamps) < BLUETOOTH_PERSIST_S:
             continue
-        entity = next((str(r.get("entity_id")) for r in house.entities
-                       if r.get("device_id") == dev_id and r.get("entity_id")),
-                      "")
-        if not entity or not house.should_report(entity, "net.bluetooth_faint"):
+        entity = ents_of[dev_id][0]
+        if not house.should_report(entity, "net.bluetooth_faint"):
             continue
-        faint.append((max(rssi), dev, entity))
+        missed = _bt_missed(snap, ents_of[dev_id], now, mass)
+        if missed is None or not (missed["down"]
+                                  or len(missed["drops"]) >= BLUETOOTH_MIN_DROPS):
+            continue
+        faint.append((max(rssi), dev, entity, missed))
     rows = []
     # One cause, one row: every device heard faintly in the room of a
     # proxy that is offline is that proxy's to fix.
     near: dict[str, list] = {}
     alone = []
-    for rssi, dev, entity in faint:
+    for rssi, dev, entity, missed in faint:
         proxy = by_room.get(house.area_id_of(entity))
         if proxy:
             near.setdefault(proxy["device"], []).append((rssi, dev, entity))
         else:
-            alone.append((rssi, dev, entity))
+            alone.append((rssi, dev, entity, missed))
     for proxy in offline:
         group = near.get(proxy["device"])
         if not group:
@@ -1168,16 +1510,31 @@ def bluetooth_faint(snap: dict, now: float) -> list[dict]:
              "it is a Bluetooth proxy this house already has, and it is "
              "offline. If it is still faint after that, "
              if offline else "")
-    for rssi, dev, entity in alone:
+    for rssi, dev, entity, missed in alone:
         step = ("move the Bluetooth adapter or an ESPHome Bluetooth proxy "
                 "closer to it, or add a proxy in that room; a USB adapter "
                 "on an extension cable away from USB 3 ports helps too.")
+        name = house.device_name(dev)
+        # Answered Done or To Do and still faint is the answer holding
+        # (`findings_store.HELD_THROUGH_DONE`); much fainter than it was
+        # then is news, said in new words so the answer does not swallow it.
+        at = house.acknowledged_level(entity, "net.bluetooth_faint")
+        worse = (house.acknowledged(entity, "net.bluetooth_faint")
+                 and at is not None and rssi <= at - BLUETOOTH_WORSE_DB)
+        drops = missed["drops"]
+        lost = (f"it went unavailable {count(len(drops), 'time')} in the past "
+                f"{BLUETOOTH_HISTORY_HOURS} hours, last {when(drops[-1])}"
+                if drops else "")
+        if missed["down"]:
+            lost = (lost + ", and is unavailable now") if lost else \
+                "it is unavailable now"
         rows.append({
-            "text": f"{house.device_name(dev)} is barely heard over Bluetooth",
+            "text": (f"{name} is heard ever more faintly over Bluetooth"
+                     if worse else f"{name} is barely heard over Bluetooth"),
             "detail": (f"The strongest receiver hears it at {rssi:g} dBm "
-                       f"(at or under {BLUETOOTH_FAINT_DBM} is faint), so its "
-                       "readings arrive late or not at all."
-                       + house.placed(entity, house.device_name(dev))
+                       f"(at or under {BLUETOOTH_FAINT_DBM} is faint), and its "
+                       f"readings are not all arriving: {lost}."
+                       + house.placed(entity, name)
                        + listed),
             "fix": first + step if first else step[:1].upper() + step[1:],
             "severity": "info",
@@ -1227,6 +1584,7 @@ CHECKS = [
     {"id": "net.bluetooth_faint", "area": "networks",
      "title": "Bluetooth devices heard only faintly",
      "source_title": BLUETOOTH,
-     "needs": ("registry", "config_entries", "bluetooth"),
+     "needs": ("registry", "config_entries", "bluetooth", "bluetooth_history"),
+     "reads_history": True,
      "absent": bluetooth_absent, "run": bluetooth_faint},
 ]

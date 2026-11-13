@@ -68,10 +68,6 @@ JOBS: dict[str, tuple[str, str, bool, bool]] = {
     "entity_model":    ("haiku",  "low",    False, False),
     "situation":       ("haiku",  "low",    False, False),
     "occasions":       ("haiku",  "low",    False, False),
-    # The presence loop's one nightly reflection: a growth note or two and
-    # a few small touches, every field checked in code. The cheapest tier
-    # and never stepped up — a stronger model on a greeting is spend.
-    "presence":        ("haiku",  "low",    False, False),
     # Who hears what, when, in what words — one tool-less call over a batch
     # of notify-tier findings and the household's own sentence. A timing
     # and wording decision with a closed vocabulary, checked in code, and
@@ -104,6 +100,14 @@ JOBS: dict[str, tuple[str, str, bool, bool]] = {
     "brief":           ("sonnet", "medium", True,  False),
     "weekly":          ("sonnet", "medium", True,  True),
     "curiosity":       ("sonnet", "medium", True,  False),
+    # The presence loop's one nightly reflection: the paragraph brAIn
+    # keeps about how to be in this house, a growth note or two and a few
+    # small touches, every field checked in code. It reads how the
+    # household talks to brAIn and how its answers landed, which is a
+    # judgement about people's words, not a closed vocabulary: on the
+    # cheapest tier at low effort the personality did not change. One run
+    # a night, so it may step down with a lighter plan and never steps up.
+    "presence":        ("sonnet", "medium", True,  False),
     # "Why did that happen / why didn't you tell me": reading tools and
     # the decision trail, answered for a person who asked.
     "explain":         ("sonnet", "medium", True,  True),

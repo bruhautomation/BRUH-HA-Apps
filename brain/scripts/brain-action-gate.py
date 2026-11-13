@@ -35,6 +35,10 @@ Their own turns only: a `tool_result` block, a system reminder, a command's
 output and the assistant's text are all excluded, because those are where
 text somebody else wrote arrives.
 
+**Spending money is always asked** (`ALWAYS_ASK`): a person approves every
+purchase with the cart in front of them, in every mode, YOLO included, and
+where nobody can be asked it is refused.
+
 Every path exits 0 with a JSON decision or nothing; a crash here must not
 wedge every acting tool, so an exception is treated as unreachable.
 """
@@ -71,9 +75,17 @@ GATED_MCP = frozenset({
     "garden_log_harvest", "garden_log_spray", "garden_queue_spray",
     "garden_adjust_inventory", "garden_add_crop", "garden_log_note",
     "cooking_control",
+    "browser_task", "browser_answer", "browser_stop", "browser_purchase",
     "report_bug", "timed_action", "note_personality_change",
     "set_assistant_exposure", "edit_dashboard",
 })
+# Tools a person is ALWAYS asked about, whatever the switch, the gate's
+# model, YOLO mode or the person's words say: spending the household's money
+# (BRUH Browser placing an order). Decided here, without the panel, so it
+# holds when the panel is down: `ask` where somebody is watching (the chat's
+# approval card, the terminal's prompt, both showing the cart and total the
+# call carries), `deny` everywhere else. The one rule YOLO does not lift.
+ALWAYS_ASK = frozenset({"browser_purchase"})
 # A gated tool's actions that only read: asking which add-ons exist,
 # searching Modrinth or asking how a designed part is doing changes nothing, and a gate in front of a search is a
 # model call per question.
@@ -228,10 +240,12 @@ def yolo_mode() -> bool:
         return False
 
 
+def always_ask(tool: str) -> bool:
+    return tool.startswith(MCP_PREFIX) and tool[len(MCP_PREFIX):] in ALWAYS_ASK
+
+
 def main(stdin=None) -> int:
     chan = channel()
-    if yolo_mode():
-        return 0      # YOLO mode: nothing is gated
     try:
         payload = json.load(stdin or sys.stdin)
     except (ValueError, OSError):
@@ -239,6 +253,12 @@ def main(stdin=None) -> int:
     if not isinstance(payload, dict):
         return 0
     tool = str(payload.get("tool_name") or "")
+    if always_ask(tool):
+        return emit("ask", "buying something always needs a person's yes — check "
+                           "the store, items and total in this request before "
+                           "you approve", chan)
+    if yolo_mode():
+        return 0      # YOLO mode: nothing else is gated
     agreed = contract()
     if not gated(tool, agreed is not None):
         return 0

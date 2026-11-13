@@ -3462,6 +3462,42 @@ had: the Morph dashboard on if the Morph app was installed, Personality on if
 a personality was set, the learning loop on, and the development loop as it
 was.
 
+### Shaping who it is
+
+**⚙ › Personality** holds the name and personality you wrote, and two
+sections that are the assistant's own while Personality and the Learning
+loop are both on.
+
+**Shape *name*.** It asks, you answer. One question at a time about how it
+should be — how long its messages are, whether it jokes, how blunt it is,
+when it speaks up — with a line on why it is asking, a few answers to press
+and a box to say it your way; **Skip** passes, **Don't ask this** stops that
+kind of question. Under it are a few things it really said lately (the
+morning brief's opening, a notification it worded, a message to one of you),
+each with **More like this**, **Less like this** and **Say it differently**.
+**Talk it through** opens a conversation in Ask that it leads: it interviews
+you, says back what it will change, and records each answer. Everything you
+told it is listed under **What you have told *name***, each with **Remove**.
+The Settings list says when it has questions waiting; it never sends a
+notification about them.
+
+**How *name* is growing.** First, **what it has learned about being here**:
+one paragraph it keeps itself and revises overnight from how you talk with
+it in Ask, how you answer its messages and what you told it above.
+**Undo** steps back a version, **Edit** saves your own correction, **Clear**
+empties it. **Take this in now** (shown while there is an answer it has not
+read yet) makes that revision now instead of overnight, and says why when
+it cannot. The name and the personality you wrote are never rewritten. Then
+its dated notes, the small messages it has in mind for each person, and the
+ones it sent.
+
+What it writes without being asked — the morning brief, the weekly report,
+a report on something it looked into, a notification that can wait — is
+written in that personality: the tone only, never the facts, and anything
+urgent stays plain. The nightly reflection reads your recent exchanges with
+it in Ask (your messages and its replies, cut short) on this machine;
+switching off the Learning loop stops it.
+
 ## The Morph dashboard
 
 > ### ⚠️ Experimental — still being actively developed
@@ -3987,12 +4023,14 @@ last filing, written in once a day or sooner when the list gets long. A link
 to the old ⚙ › Memory opens it here.
 
 **What brAIn brings to a run.** For each kind of run — a conversation in Ask,
-an insight card, a voice request, a first look, an investigation and the
-overnight check — what it is handed when it starts, with its size right now,
+an insight card, a voice request, a first look, an investigation, the
+overnight check, what brAIn tells you unprompted and its nightly reflection
+— what it is handed when it starts, with its size right now,
 what it is handed with each message, and what it can look up while it works.
 It is read from the code that builds each run, so it is never out of date.
-In short: a conversation starts with brAIn's rules, your personality, a line
-on how the house stands and the house summary file (which carries the memory
+In short: a conversation starts with brAIn's rules, your personality, the
+last few things it told you without being asked (so you can ask what it
+meant), a line on how the house stands and the house summary file (which carries the memory
 document); the chat face is also handed the facts that match each message.
 A card, a first look and an investigation are handed the facts about what
 they are about instead of the whole document. Voice gets a short summary of
@@ -4377,6 +4415,7 @@ brain doctor --rehearse            # plant defects here, score the checks, clean
 brain eval outcomes                # what the Resident decided, and what you did next
 brain eval first_look              # replay captured first looks against today's prompt (spends runs)
 brain weekly [send]                # the week's report: what it holds, or send one
+brain tune "<asked>" "<answer>"    # record how you want brAIn to be (⚙ › Personality)
 brain report                       # redacted diagnostics bundle for a bug report
 
 ha log                             # tail the Home Assistant log

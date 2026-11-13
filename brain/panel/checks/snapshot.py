@@ -88,10 +88,18 @@ and so cannot clear anything):
                     after_dependencies}], referenced: [domain]} — the
                     manifests in /config/custom_components and which
                     domains a YAML file mentions (`load_custom_components`)
-    bluetooth      {rssi: {address: dBm}} — what Core's Bluetooth stack
-                    hears, off `bluetooth/subscribe_advertisements`; `{}`
-                    and available with no Bluetooth set up, unavailable
-                    on a Core that will not share it
+    bluetooth      {rssi: {address: dBm}, faint_since: {address: ts}} —
+                    what Core's Bluetooth stack hears, off
+                    `bluetooth/subscribe_advertisements`, and since when
+                    each registered device has been heard faintly
+                    (`network.stamp_faint`, kept across passes in
+                    `BLUETOOTH_FAINT_FILE`); `{}` and available with no
+                    Bluetooth set up, unavailable on a Core that will not
+                    share it
+    bluetooth_history {hours, entities: {entity_id: [history rows]}} — two
+                    days of the Bluetooth devices heard near or under the
+                    floor, for `net.bluetooth_faint`; unavailable when the
+                    recorder would not answer
     labels         label registry rows (label_id, name) — best effort, an
                     empty list when Core would not list them
     config_entries [{entry_id, domain, title, state, source, disabled_by,
@@ -190,6 +198,10 @@ HISTORY_PROBE_HOURS = 96
 # restarts (Core records no such time).
 ENTRY_FAILING_FILE = os.environ.get("BRAIN_ENTRY_FAILING_FILE",
                                     "/data/entry-failing.json")
+# When each registered Bluetooth device was first heard faintly, across
+# passes and restarts (`network.stamp_faint`).
+BLUETOOTH_FAINT_FILE = os.environ.get("BRAIN_BLUETOOTH_FAINT_FILE",
+                                      "/data/bluetooth-faint.json")
 # Z-Wave nodes asked about in one pass, at most.
 ZWAVE_NODES_MAX = 120
 HISTORY_PROBE_MAX = 12
@@ -726,6 +738,8 @@ async def collect(now: float | None = None) -> dict:
             else:
                 heard = {}
             snap["bluetooth"] = {"rssi": heard or {}}
+            if heard is not None:
+                snap["bluetooth"]["faint_since"] = _stamp_bluetooth(snap, heard, now)
             _mark("bluetooth", heard is not None,
                   "" if heard is not None else
                   "Home Assistant did not share what its Bluetooth "
@@ -733,6 +747,20 @@ async def collect(now: float | None = None) -> dict:
         except Exception as exc:  # noqa: BLE001
             snap["bluetooth"] = {"rssi": {}}
             _mark("bluetooth", False, str(exc))
+
+        # Two days of the faint Bluetooth devices, for `net.bluetooth_faint`:
+        # a faint number on a device whose readings all arrive is not a card.
+        try:
+            if not snap["available"].get("registry"):
+                raise RuntimeError("the registry was not read")
+            bh = await _bluetooth_history(session, snap, now)
+            snap["bluetooth_history"] = bh or {}
+            _mark("bluetooth_history", bh is not None,
+                  "" if bh is not None else
+                  "the recorder did not answer for the Bluetooth history")
+        except Exception as exc:  # noqa: BLE001
+            snap["bluetooth_history"] = {}
+            _mark("bluetooth_history", False, str(exc))
 
         # The Z-Wave mesh as Z-Wave JS sees it: each node's status and
         # statistics, which carry a "last seen" a restart does not reset.
@@ -1369,6 +1397,61 @@ async def _wifi_history(session, snap: dict, now: float) -> dict | None:
     got = ha_data.series_by_entity(raw)
     return {"days": network.FLAP_DAYS,
             "entities": {eid: got.get(eid) or [] for eid in ids}}
+
+
+async def _bluetooth_history(session, snap: dict, now: float) -> dict | None:
+    """`BLUETOOTH_HISTORY_HOURS` of the Bluetooth devices heard near or
+    under the floor (`network.bluetooth_history_candidates`), or None when
+    the recorder would not answer. Nothing to ask costs nothing."""
+    import ha_data
+
+    from . import network
+    ids = sorted(set(network.bluetooth_history_candidates(snap)))
+    hours = network.BLUETOOTH_HISTORY_HOURS
+    if not ids:
+        return {"hours": hours, "entities": {}}
+    end = dt.datetime.fromtimestamp(now, tz=dt.timezone.utc)
+    start = end - dt.timedelta(hours=hours)
+    raw = await ha_data._rest_get(
+        session, ha_data.history_path(start), timeout=60,
+        params=ha_data.history_params(ids, end, minimal=True,
+                                      no_attributes=True))
+    if not isinstance(raw, list):
+        return None
+    got = ha_data.series_by_entity(raw)
+    return {"hours": hours, "entities": {eid: got.get(eid) or [] for eid in ids}}
+
+
+def _stamp_bluetooth(snap: dict, heard: dict, now: float,
+                     path: str | None = None) -> dict:
+    """`network.stamp_faint` off the ledger on disk, written back; the
+    ledger is returned for the check. Never raises: a ledger that cannot be
+    read is no ledger (every faint device starts now, so nothing is filed
+    off one reading), one that cannot be written leaves the pass going on."""
+    import json
+
+    from . import network
+    path = path or BLUETOOTH_FAINT_FILE
+    ledger = None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw = json.load(fh)
+        if isinstance(raw, dict):
+            ledger = {str(k): float(v) for k, v in raw.items()
+                      if isinstance(v, (int, float))}
+    except FileNotFoundError:
+        ledger = None
+    except Exception as exc:  # noqa: BLE001
+        log.debug("bluetooth ledger unread: %s", exc)
+        ledger = None
+    new = network.stamp_faint(heard, network._bt_registered(snap), ledger, now)
+    if new != ledger and os.path.isdir(os.path.dirname(path) or "."):
+        try:
+            import atomic_write
+            atomic_write.write_json(path, new)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("bluetooth ledger unwritten: %s", exc)
+    return new
 
 
 async def _zigbee_history(session, snap: dict, now: float) -> dict | None:

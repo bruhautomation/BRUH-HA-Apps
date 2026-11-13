@@ -2189,7 +2189,8 @@ async def _send_brief(now: float) -> str:
         _memory_block, entities=subjects, query=_subject_names(subjects))
 
     result = await _claude(
-        engine.run_analyst, brief.frame(reasons, state), brief.SYSTEM,
+        engine.run_analyst, brief.frame(reasons, state),
+        await asyncio.to_thread(_voiced, brief.SYSTEM),
         eff_model(), brief.TIMEOUT_S, brief.MAX_TURNS,
         "brief", job="brief")
     if not result.get("ok"):
@@ -2534,7 +2535,8 @@ async def _send_weekly(now: float, *, pressed: bool = False) -> str:
     state["one_thing_why"] = picked["why"]
 
     result = await _claude(
-        engine.run_analyst, weekly.frame(state), weekly.SYSTEM,
+        engine.run_analyst, weekly.frame(state),
+        await asyncio.to_thread(_voiced, weekly.SYSTEM),
         eff_model(), weekly.TIMEOUT_S, weekly.MAX_TURNS, "weekly",
         job="weekly",
         priority=run_queue.PRESS if pressed else run_queue.SCHEDULED)
@@ -3824,7 +3826,6 @@ def _morph_cases_payload(now: float | None = None) -> dict:
     rows = [c for c in cases.list_cases(None, now=now, stores=cases.STORES)
             if cases.on_feed(c)]
     side = morph_bridge.threads()
-    names = dict(_NAMES)
     assistant = personality.assistant_name()
     out = []
     for case in rows:
@@ -3839,7 +3840,7 @@ def _morph_cases_payload(now: float | None = None) -> dict:
         case_answers = cases.answers(case)
         out.append(morph_bridge.case_row(
             case,
-            todo_text=(findings_store.todo_text_of(row, names)
+            todo_text=(findings_store.todo_text_of(row)
                        if row is not None else ""),
             thread=(row or {}).get("thread") or side.get(case["id"]) or [],
             ask=morph_bridge.ask_line(case, situation),
@@ -3867,7 +3868,7 @@ def _morph_cases_payload(now: float | None = None) -> dict:
             "cases": out,
             "todo": morph_bridge.todo_rows(
                 items, cases.snoozes(), _morph_area_of,
-                lambda item: findings_store.todo_item_text(item, names)),
+                findings_store.todo_item_text),
             "ended_morph": morph_bridge.ended(),
             "said": sorted(said, key=lambda t: t.get("at") or 0)[-20:]}
 
@@ -5294,7 +5295,10 @@ async def _dispatch_notify_tier(rows: list[dict], now: float) -> list[dict]:
         # The wait includes the queue's: a dispatcher that cannot get a
         # seat in time falls back to the fixed path like any failure.
         result = await asyncio.wait_for(_claude(
-            engine.run_claude, prompt, dispatch.SYSTEM, eff_model(),
+            engine.run_claude, prompt,
+            # The lock-screen words are brAIn's own voice; an escalating
+            # row never reaches this run, so nothing here is the safety lane.
+            await asyncio.to_thread(_voiced, dispatch.SYSTEM), eff_model(),
             dispatch.TIMEOUT_S, 2, "dispatch", job=dispatch.JOB,
             schema=dispatch.SCHEMA, priority=run_queue.SCHEDULED),
             dispatch.TIMEOUT_S + 30)
@@ -9853,6 +9857,8 @@ hypotheses.KNOWN_ANSWER = _hypothesis_known_answer
 # are the cases' sidecar, and `cases` reads `todo_store`, so the store is
 # handed the reader rather than importing it.
 todo_store.SNOOZED = lambda: cases.snoozes()
+# The mirror's summary is the card's headline (`findings_store.todo_item_text`).
+todo_store.HEADLINE = findings_store.todo_item_text
 # Every write to either store marks Morph's `cases.json` as owed, and the
 # Morph loop rewrites it within a second (`_morph_loop`).
 findings_store.ON_WRITE = _morph_dirty
@@ -15157,7 +15163,11 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
         camera_line=camera_policy.prompt_line(grant, trip))
     result = await _claude(
         engine.run_analyst, prompt,
-        resident.investigate_system(refining), eff_model(),
+        # The report's words are read on Today and on a phone: the voice,
+        # except on the safety lane, where the report is plain.
+        await asyncio.to_thread(_voiced, resident.investigate_system(refining),
+                                plain=bool(signal.get("hot"))),
+        eff_model(),
         resident.INVESTIGATE_TIMEOUT_S, resident.INVESTIGATE_MAX_TURNS,
         "resident", job=resident.JOB_INVESTIGATE, schema=resident.CASE_SCHEMA,
         camera_grant=tuple(grant),
@@ -15509,7 +15519,9 @@ async def _resident_escalate(case: dict, signal: dict, now: float,
             examples=await asyncio.to_thread(_outcome_examples, [signal], now,
                                              investigating=True),
             situation_line=await asyncio.to_thread(_situation_line, now)),
-        resident.investigate_system(refining), eff_model(),
+        await asyncio.to_thread(_voiced, resident.investigate_system(refining),
+                                plain=bool(signal.get("hot"))),
+        eff_model(),
         resident.INVESTIGATE_TIMEOUT_S, resident.INVESTIGATE_MAX_TURNS,
         "resident", job=ESCALATE_JOB, schema=resident.CASE_SCHEMA,
         priority=(run_queue.SAFETY if signal.get("hot")
@@ -20407,6 +20419,10 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
             else:
                 log_text = await asyncio.to_thread(reports.fetch_addon_log)
                 rows = dl_streams.faults(payload, log_text)
+                # A stream that could not look (Screens with no browser, a
+                # capture that failed) is a fault of the loop itself, and
+                # this is the stream that files faults and clears them.
+                rows += await asyncio.to_thread(up.blind_rows)
             return await asyncio.to_thread(up.ingest, "faults", rows, payload, names)
         if stream in ("scorecard", "wrongs"):
             score = await asyncio.to_thread(findings_store.scorecard)
@@ -20436,7 +20452,27 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
             rows = dl_streams.snapshot(names, payload, version)
             return await asyncio.to_thread(up.ingest, stream, rows, payload, names)
         if stream == "screens":
-            return await _devloop_screens(payload, names, version)
+            # Whatever happens to the pass, it is recorded: a pass that
+            # could not look says so (`blind`, a reason class), one that
+            # photographed brAIn's own panel says on which release.
+            try:
+                out = await _devloop_screens(payload, names, version)
+            except Exception as exc:  # noqa: BLE001 — recorded, then said
+                log.warning("devloop: the screens stream failed: %s", exc)
+                await asyncio.to_thread(up.mark_run, "screens")
+                out = {"error": f"the screens could not be captured: {textclip.said(exc)}"[:200],
+                       "blind": "capture"}
+            if out.get("blind"):
+                await asyncio.to_thread(
+                    up.note_blind, "screens", out["blind"],
+                    str(out.get("error") or out.get("skipped") or ""))
+            elif not out.get("error"):
+                await asyncio.to_thread(up.note_photographed, version)
+            return out
+        if stream == "liked":
+            return await asyncio.to_thread(
+                up.ingest, stream,
+                await asyncio.to_thread(_devloop_liked, version), payload, names)
         if stream == "morph":
             return await _devloop_morph(payload, names)
         if stream == "siblings":
@@ -20452,6 +20488,9 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
             rows = devloop.corpus.rows(
                 await asyncio.to_thread(capture.first_looks) if on else [], on)
             return await asyncio.to_thread(up.ingest, stream, rows, payload, names)
+        if stream == "walkthrough":
+            # One run per app that is owed a look, each from the day's cap.
+            return await _devloop_walks(payload, names, pressed=pressed)
         # The Claude-run streams. A scheduled one answers to the three gates
         # every unattended run answers to; a press needs only a credential.
         # Both spend from the day's cap, which refuses rather than queues.
@@ -20488,18 +20527,6 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
                 lambda: dl_streams.design_context(
                     load_insights(),
                     (findings_store.listing() or {}).get("findings") or []))
-        if stream == "walkthrough":
-            # The ids Vesper is sent through, read off the dashboard the
-            # house runs; a missing file is said, not guessed.
-            def _targets() -> str:
-                try:
-                    text = (Path(os.environ.get("BRAIN_MORPH_DASHBOARD",
-                                                "/config/morph/dashboard.yaml"))
-                            .read_text(encoding="utf-8", errors="replace"))
-                except OSError:
-                    text = ""
-                return dl_streams.morph_targets(text)
-            topic = await asyncio.to_thread(_targets)
         result = await _claude(
             engine.run_analyst,
             dl_streams.analyst_prompt(
@@ -20538,7 +20565,223 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
         return out
     except Exception as exc:  # noqa: BLE001 — one stream, not the loop
         log.warning("devloop: the %s stream failed: %s", stream, exc)
-        return {"error": str(exc)[:200]}
+        return {"error": textclip.said(exc)[:200]}
+
+
+# How long the list of apps the Walkthrough may look at is reused. ⚙ ›
+# Developer asks for it on every paint, and the answer is a Supervisor
+# call per BRUH add-on.
+WALK_APPS_TTL_S = 120
+_WALK_APPS: dict = {"at": 0.0, "rows": []}
+
+
+def _devloop_walk_apps(fresh: bool = False) -> list[dict]:
+    """Every app the Walkthrough may look at (`devloop.WALK_APPS`), as this
+    house has it: ``[{"key", "name", "installed", "version", "why",
+    "screens": [(slug, label)]}]``. brAIn is always here; Morph while its
+    switch is on; another BRUH add-on when the Supervisor lists it. The
+    screens are the ones the Screens stream photographs (its panel's tabs,
+    its Lovelace cards), so a look is sent through names `screenshot_panel`
+    takes. Blocking (the Supervisor); never raises."""
+    now = time.time()
+    if not fresh and _WALK_APPS["rows"] and now - _WALK_APPS["at"] < WALK_APPS_TTL_S:
+        return _WALK_APPS["rows"]
+    st = devloop.screen_targets
+    try:
+        located = st.locate(devloop.siblings._get)
+        targets = located["targets"] + st.harness_targets(
+            _own_panel_url(), located["versions"])
+    except Exception as exc:  # noqa: BLE001 — brAIn's own row still stands
+        log.info("devloop: could not list the BRUH apps: %s", exc)
+        located, targets = {"versions": {}, "unreached": {}}, []
+    own = os.environ.get("ADDON_VERSION", "dev")[:40]
+    rows = []
+    for key, spec in devloop.WALK_APPS.items():
+        name = spec["name"]
+        if key == "brain":
+            row = {"installed": True, "version": own, "why": "",
+                   "screens": [(slug, label) for slug, label, _s in
+                               devloop.screens.SCREENS + devloop.screens.ASKED_SCREENS]}
+        elif key == "morph":
+            on = st.morph_on()
+            row = {"installed": on, "version": own if on else "",
+                   "why": "" if on else "the Morph dashboard is switched off in Features",
+                   "screens": []}
+        else:
+            installed = name in located["versions"]
+            why = str(located["unreached"].get(name) or "")
+            row = {"installed": installed,
+                   "version": str(located["versions"].get(name) or ""),
+                   "why": why if installed else "not installed",
+                   "screens": [(scr["slug"], scr["label"]) for t in targets
+                               if t.get("key") == key for scr in t["screens"]]}
+        rows.append({"key": key, "name": name, **row})
+    _WALK_APPS.update(at=now, rows=rows)
+    return rows
+
+
+def _devloop_walk_rows() -> list[dict]:
+    """The apps as ⚙ › Developer lists them: each with its switch, when it
+    was last looked at, on which version, and what came of it."""
+    switched = devloop.load_settings().get("walks") or {}
+    state = devloop.upstream.walk_state()
+    out = []
+    for app in _devloop_walk_apps():
+        last = state.get(app["key"]) or {}
+        out.append({"key": app["key"], "name": app["name"],
+                    "installed": app["installed"], "version": app["version"],
+                    "why": app["why"], "screens": len(app["screens"]),
+                    "on": bool(switched.get(app["key"])),
+                    "looked_at": float(last.get("at") or 0),
+                    "looked_version": str(last.get("version") or ""),
+                    "rows": int(last.get("rows") or 0),
+                    "error": str(last.get("error") or "")})
+    return out
+
+
+def _devloop_walk_topic(app: dict) -> str:
+    """What one look is sent through: Morph's card and section ids off the
+    dashboard the house runs (a missing file is said, not guessed), any
+    other app's screens by the names the screenshot tool takes."""
+    if app["key"] != "morph":
+        return devloop.streams.screen_targets(app["name"], app["screens"])
+    try:
+        text = (Path(os.environ.get("BRAIN_MORPH_DASHBOARD",
+                                    "/config/morph/dashboard.yaml"))
+                .read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        text = ""
+    return devloop.streams.morph_targets(text)
+
+
+async def _devloop_walks(payload: dict, names: dict, *, pressed: bool = False,
+                         only: str = "") -> dict:
+    """The Walkthrough: one read-only Claude run per app, each counted
+    against the day's run cap.
+
+    A scheduled pass looks at the apps switched on in ⚙ › Developer whose
+    version has not been looked at, oldest-looked first, and stops when
+    the cap is spent: the apps left over lead the next pass
+    (`upstream.walks_due`). The stream's Run looks at every switched-on
+    app whatever its version. ``only`` is one app's "Look now": that app,
+    switch on or off, and still from the cap. Every row is filed for the
+    app the run was shown, through the review hold, the caps and the
+    redaction every stream's rows go through."""
+    dl_streams, up = devloop.streams, devloop.upstream
+    if await asyncio.to_thread(up.runs_left) <= 0:
+        # Asked first: a pass still owed is retried every tick until the
+        # cap has room, and this costs it nothing.
+        return {"skipped": "today's Claude run limit is spent"}
+    apps = await asyncio.to_thread(_devloop_walk_apps, pressed or bool(only))
+    by_key = {a["key"]: a for a in apps}
+    if only:
+        app = by_key.get(only)
+        if app is None:
+            return {"error": f"unknown app: {only}"}
+        if not app["installed"]:
+            return {"skipped": f"{app['name']} cannot be looked at: {app['why']}"}
+        due = [only]
+    else:
+        settings = await asyncio.to_thread(devloop.load_settings)
+        due = await asyncio.to_thread(
+            up.walks_due, apps, settings.get("walks") or {}, None, pressed)
+    if not due:
+        await asyncio.to_thread(up.mark_run, "walkthrough")
+        return {"skipped": "every app switched on for looking was already "
+                           "looked at on the version it runs"}
+    if not engine.get_auth():
+        return {"skipped": "there is no Claude credential"}
+    if not pressed:
+        held = _resident_gate(await asyncio.to_thread(settings_store.load))
+        if held:
+            return {"skipped": held}
+    score = await asyncio.to_thread(findings_store.scorecard)
+    unmet = await asyncio.to_thread(
+        dl_streams.unmet, Path(chat_session.TRANSCRIPT_DIR))
+    context = dl_streams.context_block(
+        payload, score, unmet,
+        await asyncio.to_thread(findings_store._load_settled))
+    products = {a["name"]: a["version"] for a in apps
+                if a["installed"] and a["name"] in devloop.siblings.PRODUCTS}
+    looked, waiting, total, added, failed = [], [], 0, 0, ""
+    for position, key in enumerate(due):
+        app = by_key[key]
+        if not await asyncio.to_thread(up.spend_run):
+            # The cap refuses rather than queues: what is left waits, and
+            # is first next time because it was looked at longest ago.
+            waiting = [by_key[k]["name"] for k in due[position:]]
+            break
+        topic = await asyncio.to_thread(_devloop_walk_topic, app)
+        result = await _claude(
+            engine.run_analyst,
+            dl_streams.analyst_prompt(
+                "walkthrough", context, topic,
+                dl_streams.reported_block(await asyncio.to_thread(up.listing)),
+                dl_streams.rejected_block(await asyncio.to_thread(up.rejected)),
+                app=("brAIn's own screens" if key == "brain"
+                     else "Morph, brAIn's dashboard" if key == "morph"
+                     else app["name"])),
+            dl_streams.walk_system(key, app["name"], bool(app["screens"]) or key == "morph"),
+            eff_model(), TIMEOUT_S, ANALYST_MAX_TURNS, "maintenance", job="devloop",
+            schema=dl_streams.reply_schema("walkthrough"),
+            priority=run_queue.PRESS if pressed else run_queue.SCHEDULED)
+        _record_usage(result, "devloop")
+        ok = bool(result and result.get("ok"))
+        rows, unreadable = dl_streams.reply_rows(
+            result, "walkthrough", topic, app["name"]) if ok else ([], "")
+        if unreadable:
+            log.warning("devloop: the look at %s could not be read (%s): %.200s",
+                        app["name"], unreadable, (result or {}).get("text") or "")
+            await asyncio.to_thread(up.note_unreadable, "walkthrough", unreadable)
+        error = ("" if ok and not unreadable else unreadable
+                 or str((result or {}).get("error") or "the run failed"))
+        if rows:
+            out = await asyncio.to_thread(up.ingest, "walkthrough", rows, payload,
+                                          names, products=products)
+            added += int(out.get("added") or 0)
+            total += len(rows)
+        await asyncio.to_thread(up.note_walk, key, app["version"], len(rows), error)
+        looked.append(app["name"])
+        failed = failed or (f"{app['name']}: {error}" if error else "")
+    if not looked:
+        return {"skipped": "today's Claude run limit is spent", "waiting": waiting}
+    out = {"stream": "walkthrough", "rows": total, "added": added,
+           "looked": looked, "waiting": waiting}
+    if waiting:
+        # Not stamped as run: the pass is still owed, and is taken up when
+        # the cap has room again, with these first.
+        out["note"] = ("today's Claude run limit is spent, so "
+                       + ", ".join(waiting) + " will be looked at next")
+    elif not only:
+        await asyncio.to_thread(up.mark_run, "walkthrough")
+    if failed and not total:
+        out["error"] = failed[:200]
+    return out
+
+
+def _devloop_liked(version: str) -> list[dict]:
+    """The Liked stream's rows: what the household agreed with, thanked and
+    kept, read from stores brAIn already has and counted by
+    `streams.liked`. Each store is its own try: one that cannot be read
+    leaves its section out and the others standing. Blocking."""
+    signals: dict = {}
+    readers = {
+        "settled": findings_store._load_settled,
+        "presence": presence.load,
+        "proposals": proposals.listing,
+        "fixes": lambda: interventions.read().get("rows") or [],
+        # Morph's suggestions file, in brAIn's own container since 4.0.
+        "morph": lambda: json.loads(Path(os.environ.get(
+            "MORPH_DATA", "/data/morph"), "suggestions.json").read_text(encoding="utf-8")),
+        "discussions": lambda: devloop.streams.discussions(
+            Path(chat_session.TRANSCRIPT_DIR)),
+    }
+    for name, read in readers.items():
+        try:
+            signals[name] = read()
+        except Exception as exc:  # noqa: BLE001 — one section, not the stream
+            log.debug("devloop liked: could not read %s: %s", name, exc)
+    return devloop.streams.liked(signals, version)
 
 
 MORPH_SHARED = Path(os.environ.get("BRAIN_MORPH_SHARED", "/config/.morph"))
@@ -20597,7 +20840,10 @@ async def _devloop_siblings(payload: dict, names: dict) -> dict:
         unread=tuple(collected.get("unread") or ()))
 
 
-DEVLOOP_SCREENS_TIMEOUT_S = 900
+# The Screens pass's own time is `screens.pass_budget` (what it has to
+# photograph); this is only the margin past it before a browser that has
+# stopped answering altogether is given up on.
+DEVLOOP_SCREENS_GRACE_S = 120
 
 
 async def _devloop_screens(payload: dict, names: dict, version: str) -> dict:
@@ -20608,7 +20854,11 @@ async def _devloop_screens(payload: dict, names: dict, version: str) -> dict:
     be looked up is one that could not be blanked."""
     screens = devloop.screens
     if not screens.find_browser():
-        return {"skipped": "Chromium is not installed on this box"}
+        # Stamped as run, so a box with no browser is asked again on the
+        # stream's schedule and not on every tick.
+        await asyncio.to_thread(devloop.upstream.mark_run, "screens")
+        return {"skipped": "Chromium is not installed on this box",
+                "blind": "browser"}
     try:
         import aiohttp
 
@@ -20621,7 +20871,8 @@ async def _devloop_screens(payload: dict, names: dict, version: str) -> dict:
     if not isinstance(states, list):
         await asyncio.to_thread(devloop.upstream.mark_run, "screens")
         return {"error": ("could not read the house's calendars and addresses "
-                          "to blank them, so nothing was photographed")}
+                          "to blank them, so nothing was photographed"),
+                "blind": "states"}
     confidential = screens.confidential_strings(
         states, await asyncio.to_thread(occasions.load))
     aliases = devloop.upstream.Aliases.load()
@@ -20629,26 +20880,59 @@ async def _devloop_screens(payload: dict, names: dict, version: str) -> dict:
     base = devloop.data_dir()
     out_dir = screens.new_capture_dir(base)
     located = await _screen_catalog()
+    # The screens a previous pass ran out of time for go first after
+    # brAIn's own, and the pass's time is what it has to photograph (#890).
+    targets = screens.order_targets(
+        located["targets"], await asyncio.to_thread(devloop.upstream.screens_left))
+    budget = screens.pass_budget(targets)
+    progress: dict = {"planned": screens.planned(targets), "done": 0, "captured": 0}
     try:
+        # The capture stops itself at the deadline with what it has; the
+        # outer limit is only for a browser that stopped answering at all.
         result = await asyncio.wait_for(
             screens.capture(out_dir, confidential=confidential, aliases=aliases,
-                            url=_own_panel_url(), targets=located["targets"]),
-            DEVLOOP_SCREENS_TIMEOUT_S)
+                            url=_own_panel_url(), targets=targets,
+                            deadline=time.monotonic() + budget, progress=progress),
+            budget + DEVLOOP_SCREENS_GRACE_S)
     except Exception as exc:  # noqa: BLE001 — a capture that failed sends nothing
         shutil.rmtree(out_dir, ignore_errors=True)
         await asyncio.to_thread(devloop.upstream.mark_run, "screens")
-        return {"error": f"the screens could not be captured: {exc}"[:200]}
+        why = (f"timed out after {budget + DEVLOOP_SCREENS_GRACE_S:.0f} s, "
+               f"{progress.get('captured', 0)} of {progress.get('planned', 0)} screens captured"
+               if isinstance(exc, asyncio.TimeoutError) else textclip.said(exc))
+        return {"error": f"the screens could not be captured: {why}"[:200],
+                "blind": "capture"}
     await asyncio.to_thread(screens.prune, base, out_dir.name)
+    await asyncio.to_thread(devloop.upstream.note_screens_left, result.get("left") or [])
     rows = screens.rows(result, version, out_dir.name,
                         versions=located["versions"], unreached=located["unreached"])
+    taken = len(result.get("shots") or [])
+    late = (f"timed out after {budget:.0f} s, {taken} of "
+            f"{result.get('planned') or progress.get('planned', 0)} screens captured"
+            if result.get("timed_out") else "")
     if not rows:
         await asyncio.to_thread(devloop.upstream.mark_run, "screens")
+        if late:
+            return {"error": f"the screens could not be captured: {late}"[:200],
+                    "blind": "capture"}
         return {"error": "no screen could be captured and redacted: "
-                         + "; ".join(_error_text(e) for e in result.get("errors") or [])[:160]}
+                         + "; ".join(_error_text(e) for e in result.get("errors") or [])[:160],
+                "blind": "redaction"}
+    # What this pass did not finish keeps its reports as they are (not
+    # "not seen since"), and is taken first next time.
     out = await asyncio.to_thread(devloop.upstream.ingest, "screens", rows,
-                                  payload, names, products=located["versions"])
-    return {**out, "shots": len(result.get("shots") or []),
-            "problems": len(result.get("problems") or [])}
+                                  payload, names, products=located["versions"],
+                                  unread=[p for p in result.get("unfinished") or []
+                                          if p != "brAIn"])
+    out = {**out, "shots": taken, "problems": len(result.get("problems") or [])}
+    if late:
+        out["note"] = late + "; the rest are taken first on the next pass"
+    if not any((s.get("product") or "brAIn") == "brAIn"
+               for s in result.get("shots") or [] if isinstance(s, dict)):
+        # The other add-ons' issues are filed, and this release's own
+        # panel is still not photographed: said, and tried again.
+        out["blind"] = "own-panel"
+    return out
 
 
 def _own_panel_url() -> str:
@@ -20714,7 +20998,8 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
         return web.json_response({"error": "Chromium is not installed on this box"},
                                  status=503)
     located = await _screen_catalog()
-    targets = [screens.own_target(_own_panel_url())] + located["targets"]
+    targets = [screens.own_target(_own_panel_url(),
+                                  screens.SCREENS + screens.ASKED_SCREENS)] + located["targets"]
     want_addon = str(body.get("addon") or "brAIn").strip().lower()
     # Home Assistant's own dashboards, a tab each: listed whenever the
     # screens are listed, and signed in for only when one is photographed.
@@ -20840,7 +21125,7 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
         shot = shots[0]
         data = (tmp / shot["name"]).read_bytes()
     except Exception as exc:  # noqa: BLE001 — a sentence, never a 500
-        return web.json_response({"error": f"the screen could not be photographed: {exc}"[:300]},
+        return web.json_response({"error": f"the screen could not be photographed: {textclip.said(exc)}"[:300]},
                                  status=502)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -20936,7 +21221,7 @@ async def h_harness_ws(request: web.Request) -> web.Response:
         return web.json_response({"error": "Home Assistant did not answer in time"},
                                  status=504)
     except Exception as exc:  # noqa: BLE001
-        return web.json_response({"error": f"Home Assistant did not answer: {exc}"[:200]},
+        return web.json_response({"error": f"Home Assistant did not answer: {textclip.said(exc)}"[:200]},
                                  status=502)
     first = calls[0] if calls else {}
     if not first.get("ok"):
@@ -20983,15 +21268,19 @@ def _devloop_payload() -> dict:
         "looks": {"running": DEVLOOP_LOOKS["running"],
                   "last": _devloop_last_look(queue)},
         "token_set": devloop.token_set(),
+        # The apps the Walkthrough may look at, one switch each.
+        "walks": _devloop_walk_rows(),
         "status": devloop.upstream.status(),
         # Each row says whether it is archived, and why: the panel's own
         # note (`devloop_archive`), never a change to the loop's files.
         "queue": devloop_archive.decorate(queue, settings),
         "held": _devloop_held(),
-        # A line under a stream that cannot do its job on this box.
-        "notes": ({} if devloop.screens.find_browser() else
-                  {"screens": "Chromium is not on this box, so nothing can "
-                              "be photographed."}),
+        # A line under a stream that could not look on its last try
+        # (`upstream.note_blind`), or cannot do its job on this box at all.
+        "notes": {**devloop.upstream.blind_notes(),
+                  **({} if devloop.screens.find_browser() else
+                     {"screens": "Chromium is not on this box, so nothing can "
+                                 "be photographed."})},
     }
 
 
@@ -21059,12 +21348,23 @@ async def h_devloop_put(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "expected an object"}, status=400)
     changes = {k: body[k] for k in (
-        "enabled", "autopilot", "repo", "review", "streams", "schedule",
+        "enabled", "autopilot", "repo", "review", "streams", "schedule", "walks",
         *devloop.CAP_LIMITS, *devloop.NUMBER_LIMITS, "house_login") if k in body}
+    if isinstance(changes.get("walks"), dict) and any(
+            on is True for on in changes["walks"].values()):
+        # An app that is not here cannot be switched on for looking: the
+        # switch would say brAIn looks at something it never can.
+        apps = {a["key"]: a for a in await asyncio.to_thread(_devloop_walk_apps, True)}
+        for key, on in changes["walks"].items():
+            app = apps.get(key)
+            if on is True and app is not None and not app["installed"]:
+                return web.json_response(
+                    {"error": f"{app['name']} cannot be looked at: {app['why']}"},
+                    status=400)
     try:
         await asyncio.to_thread(devloop.save_settings, changes)
     except ValueError as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+        return web.json_response({"error": textclip.said(exc)}, status=400)
     # The development loop is a switch in ⚙ › Features too.
     await asyncio.to_thread(features.publish)
     # Development mode is part of what a new terminal window is told.
@@ -21083,7 +21383,7 @@ async def h_devloop_token(request: web.Request) -> web.Response:
     try:
         await asyncio.to_thread(devloop.save_token, (body or {}).get("token"))
     except ValueError as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+        return web.json_response({"error": textclip.said(exc)}, status=400)
     return web.json_response(await asyncio.to_thread(_devloop_payload))
 
 
@@ -21127,6 +21427,36 @@ async def h_devloop_run(request: web.Request) -> web.Response:
     else:
         out = await _devloop_tick(force=True)
     return web.json_response({**out, **await asyncio.to_thread(_devloop_payload)})
+
+
+async def h_devloop_walk(request: web.Request) -> web.Response:
+    """Look now: one walkthrough of one app, ``{"app": key}``, whether or
+    not its switch is on — the press for a week with tokens to spare. It
+    still spends one of the day's Claude runs, and says so when there is
+    none left."""
+    if not await asyncio.to_thread(devloop.enabled):
+        return web.json_response({"error": "the development loop is off"},
+                                 status=409)
+    body = await _json_body(request)
+    # The key is taken from the catalog, never the caller's string.
+    app = next((k for k in devloop.WALK_APPS if k == str(body.get("app") or "")), "")
+    if not app:
+        return web.json_response({"error": "unknown app"}, status=400)
+    if devloop.upstream.STATE["running"]:
+        return web.json_response({"error": "a pass is already running"}, status=409)
+    devloop.upstream.STATE["running"] = True
+    try:
+        payload = await asyncio.to_thread(_diagnostics_payload)
+        try:
+            walked = await _devloop_walks(payload, dict(_NAMES), pressed=True, only=app)
+        except Exception as exc:  # noqa: BLE001 — said on the row, never a 500
+            log.warning("devloop: the look at %s failed: %s", app, exc)
+            walked = {"error": textclip.said(exc)[:200]}
+        sent = await asyncio.to_thread(devloop.upstream.send_due)
+    finally:
+        devloop.upstream.STATE["running"] = False
+    return web.json_response({"walked": walked, "sent": sent,
+                              **await asyncio.to_thread(_devloop_payload)})
 
 
 async def h_devloop_look(request: web.Request) -> web.Response:
@@ -22565,6 +22895,9 @@ def _todo_payload() -> dict:
     for item in payload.get("items") or []:
         until = int(asleep.get(f"t:{item.get('id')}", 0) or 0)
         item["snoozed_until"] = until if until > now else 0
+        # What the card shows: one headline and one line, nothing said
+        # twice (`findings_store.todo_item_parts`, #879).
+        item["headline"], item["line"] = findings_store.todo_item_parts(item)
     return payload
 
 
@@ -22652,13 +22985,18 @@ async def _move_finding_to_todo(finding: dict, note: str = "",
     # hallway motion sensor."), never the finding's claim (contract B,
     # `todo_text`); the claim rides as `claim`, which is what the settled
     # ledger's entry is still called when the chore is done.
-    sentence = findings_store.todo_text_of(
-        {**finding, "fix": fix, "todo_text": ""} if fix else finding) \
-        or finding["text"]
+    # Headline and line composed once, here, from the finding's own To Do
+    # words or its fix and the thing's name (`findings_store.todo_parts`),
+    # and stored, so the card never has to cut them out of free text again.
+    sentence, line = findings_store.todo_parts(
+        {**finding, "fix": fix, "todo_text": "", "todo_line": ""}
+        if fix else finding)
+    sentence = sentence or finding["text"]
 
     def place() -> dict | None:
         return todo_store.add(
             sentence,
+            line=line,
             claim=finding["text"],
             from_case=f"f:{int(finding['ts'])}",
             detail=finding.get("detail") or "",
@@ -25095,11 +25433,20 @@ async def h_finding_discuss(request: web.Request) -> web.Response:
                                   "face": "terminal"})
     prompt = await asyncio.to_thread(_discuss_prompt, finding)
     out = await _ask_in_chat(prompt, await _json_body(request),
-                             finding_ts=int(finding["ts"]))
+                             finding_ts=int(finding["ts"]),
+                             title=str(finding.get("text") or ""))
     return web.json_response({**out, "finding": finding})
 
 
-async def _ask_in_chat(prompt: str, body: dict, finding_ts: int = 0) -> dict:
+def _ask_title(body: dict) -> str:
+    """The title the asking page gave its conversation (an ask-about's
+    subject or the person's own words): one line, capped, or ""."""
+    return " ".join(str((body or {}).get("title") or "").split())[
+        :run_sources.MAX_TITLE]
+
+
+async def _ask_in_chat(prompt: str, body: dict, finding_ts: int = 0,
+                       title: str = "") -> dict:
     """A NEW chat conversation that starts with ``prompt``, answered at once.
 
     The one path every ask-about takes on the chat face (Discuss, Ask on a
@@ -25120,7 +25467,14 @@ async def _ask_in_chat(prompt: str, body: dict, finding_ts: int = 0) -> dict:
             raise RuntimeError("the new conversation could not be opened")
         session.model = eff_chat_model()
         session.skip_permissions = registry.skip_permissions
+        # Named as it opens, by whoever opened it, so the list never has to
+        # read a title out of the prompt (#882).
+        title = title or _ask_title(body)
+        session.named = title
         sent = await _send_promptly(session, prompt)
+        if title and session.session_id:
+            await asyncio.to_thread(run_sources.record_title,
+                                    session.session_id, title)
     except ValueError as exc:
         raise web.HTTPBadRequest(reason=_refusal(exc))
     except RuntimeError as exc:
@@ -26960,7 +27314,7 @@ def _settings_payload(settings: dict) -> dict:
     return {
         "settings": {**settings, **options},
         "model_label": chat_session.pretty_model(options["model"]),
-        "personality_summary": personality.summary(personality.load()),
+        "personality_summary": _personality_row(),
         "usage": _usage_for_panel(settings),
         "addon_defaults": addon_defaults(),
         "options_synced": addon_options.snapshot() is not None,
@@ -27327,7 +27681,7 @@ Ask brAIn's own measurements before you guess: what_is_normal (is a reading unus
 
 For a NEW standing automation you can also offer brAIn's replay: describe it in one sentence to the brain.intent service (call_service, domain "brain", service "intent", data {"sentence": "..."}) and brAIn drafts it, replays it over the last month, grades it against what this household actually did and offers it as a card to accept or trial. Offer that when seeing how it would have behaved helps; when they ask you to just make it, make it.
 
-When something in another BRUH add-on is broken (GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft, BRUH Cooking, BRUH Task Manager), look first with bruh_addon_status and its log. Do what can be done here (restart it, fix its options or the house's own config) and say so. Its code is in its own image and is never patched in place: when the cause is in that code, file it with report_bug — your diagnosis, the log lines and the owner's words — and it is fixed upstream and arrives as an update, which brAIn then checks held. Do the same for a bug in brAIn itself. When the problem is how a screen looks or reads — brAIn's own, another add-on's panel, Morph's dashboard or a Lovelace card — take a picture of it with screenshot_panel and look before you answer, at a phone's width (390) and a laptop's (1200), and file what you saw with report_bug and ui: true. For brAIn's own header or scrolling on a phone, take it with shell (framed the way the sidebar shows it, in full screen and with fullscreen false) and again with after scroll or focus, and read its layout.
+When something in another BRUH add-on is broken (GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft, BRUH Cooking, BRUH Task Manager, BRUH Browser), look first with bruh_addon_status and its log. Do what can be done here (restart it, fix its options or the house's own config) and say so. Its code is in its own image and is never patched in place: when the cause is in that code, file it with report_bug — your diagnosis, the log lines and the owner's words — and it is fixed upstream and arrives as an update, which brAIn then checks held. Do the same for a bug in brAIn itself. When the problem is how a screen looks or reads — brAIn's own, another add-on's panel, Morph's dashboard or a Lovelace card — take a picture of it with screenshot_panel and look before you answer, at a phone's width (390) and a laptop's (1200), and file what you saw with report_bug and ui: true. For brAIn's own header or scrolling on a phone, take it with shell (framed the way the sidebar shows it, in full screen and with fullscreen false) and again with after scroll or focus, and read its layout.
 
 brAIn's own surfaces are brAIn's to change without waiting for a press, whatever the other settings say (the owner's decision): the house layer over its page (/config/.brain/ui/house.css and house.js), Morph's code copies and /config/morph/LEARNED.md, removing lines from its memory, and its own personality notes. Each change is snapshotted or versioned, and a house.css or house.js that breaks the page is undone automatically the next time the page loads it, so reload and look after changing one.
 
@@ -27402,6 +27756,21 @@ def development_mode() -> bool:
         return False
 
 
+def _personality_row() -> str:
+    """⚙'s Personality row: who it is, and — because it leads — that it has
+    something to ask when it does. Never raises."""
+    row = personality.summary(personality.load())
+    try:
+        if presence.active()[0]:
+            waiting = presence.waiting_line(
+                presence.load(), time.time(), personality.assistant_name())
+            if waiting:
+                row = f"{row} · {waiting}"
+    except Exception as exc:  # noqa: BLE001 — a row is never a failure
+        log.debug("could not count the questions waiting: %s", exc)
+    return row
+
+
 def _personality_lines() -> str:
     """The household's chosen personality for brAIn, as prompt lines, or ""
     when none is set (`personality.prompt_block`). Never raises: a file
@@ -27416,6 +27785,23 @@ def _personality_lines() -> str:
             "speak as it.\n" + block)
 
 
+def _voiced(system: str, *, plain: bool = False) -> str:
+    """A writer run's system prompt with the household's voice after it
+    (`personality.voice_block`): what brAIn says unprompted — the morning
+    brief, the weekly report, a report on something it looked into, a
+    lock-screen message — is written by the assistant the household named,
+    not by an analyst with its name pasted on. Last, after the run's own
+    rules, because it changes how a sentence sounds and nothing about
+    what it may say. ``plain`` is a run about something that cannot wait
+    (the safety lane): it gets no voice at all, in code rather than by a
+    sentence asking for restraint. No personality, or Personality off, is
+    the prompt as it was. Adds no run: only runs that already happen."""
+    if plain:
+        return system
+    block = personality.voice_block()
+    return system + "\n\n" + block if block else system
+
+
 def _chat_system_prompt(session) -> str:
     """The appended system prompt for one chat spawn (see CHAT_IDENTITY)."""
     lines = _chat_house_lines()
@@ -27426,11 +27812,36 @@ def _chat_system_prompt(session) -> str:
         base += "\n\n" + persona
     if yolo_mode():
         base += "\n\n" + YOLO_MODE_ON
+    said = _chat_said_lines()
+    if said:
+        base += "\n\n" + said
     if not lines:
         return base
     return (base + "\n\nWhen this conversation started: "
             + "; ".join(lines) + ". That is a snapshot — ask get_findings "
             "and get_health for how things stand now.")
+
+
+def _chat_said_lines() -> str:
+    """What brAIn said to the household lately without being asked — the
+    morning brief's opening, the notifications whose words it wrote, its
+    touches — so a conversation that opens with "what did you mean this
+    morning?" does not land on a blank. The same reader ⚙ › Personality's
+    feedback rows use (`presence.said_lately`), the newest few inside a
+    byte cap. Never raises: a source that cannot be read is lines left
+    out, and nothing said is no block at all."""
+    try:
+        now = time.time()
+        block = presence.chat_said_block(presence.said_lately(
+            presence.load(), deliveries.fold(now), now, tz=_presence_tz()))
+    except Exception as exc:  # noqa: BLE001 — continuity is a nicety
+        log.debug("could not read what brAIn said lately: %s", exc)
+        return ""
+    if not block:
+        return ""
+    return ("What you have said to the household lately, unprompted (newest "
+            "first, with how each was answered where that is known; they "
+            "may ask about any of it):\n" + block)
 
 
 chat_session.PROMPT_PROVIDER = _chat_system_prompt
@@ -27814,13 +28225,65 @@ async def h_personality_growth(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "entry": entry})
 
 
+async def _learned_changed() -> web.Response:
+    """After any change to the learned paragraph: the next terminal window
+    and /config/CLAUDE.md carry it, and the page gets the personality."""
+    await asyncio.to_thread(_write_terminal_prompt)
+    _refresh_claude_md()
+    return web.json_response(await asyncio.to_thread(personality.payload))
+
+
+async def h_personality_learned_put(request: web.Request) -> web.Response:
+    """PUT {text}: the household corrects the paragraph brAIn keeps about
+    how it has learned to be here. Saved as theirs (`by: household`), the
+    version it replaces kept for Undo. Their words are theirs: only the
+    length is checked, not what the nightly run's own are held to."""
+    body = await _personality_body(request)
+    text = body.get("text")
+    refusal = await asyncio.to_thread(personality.learned_refusal, text)
+    if refusal:
+        raise web.HTTPBadRequest(text=refusal)
+    try:
+        await asyncio.to_thread(personality.set_learned, text,
+                                personality.HOUSEHOLD)
+    except (ValueError, OSError):
+        log.exception("could not save the learned paragraph")
+        raise web.HTTPInternalServerError(
+            text="brAIn could not save that; the add-on log says why.")
+    return await _learned_changed()
+
+
+async def h_personality_learned_undo(request: web.Request) -> web.Response:
+    """POST: back to the version before this one, in one press."""
+    try:
+        back = await asyncio.to_thread(personality.undo_learned)
+    except OSError:
+        log.exception("could not undo the learned paragraph")
+        raise web.HTTPInternalServerError(
+            text="brAIn could not save that; the add-on log says why.")
+    if not back:
+        raise web.HTTPNotFound(text="there is no earlier version to go back to")
+    return await _learned_changed()
+
+
+async def h_personality_learned_delete(request: web.Request) -> web.Response:
+    """DELETE: clear the paragraph. The version cleared is kept for Undo."""
+    try:
+        await asyncio.to_thread(personality.clear_learned)
+    except OSError:
+        log.exception("could not clear the learned paragraph")
+        raise web.HTTPInternalServerError(
+            text="brAIn could not save that; the add-on log says why.")
+    return await _learned_changed()
+
+
 # ---------------------------------------------------------------------------
 # The presence loop — how the assistant grows, and how it keeps in touch
 # ---------------------------------------------------------------------------
 #
 # `presence.py` holds the budget, the store and the strict reading of the
 # nightly answer; this is where it meets the house: the bus (an arrival,
-# a phone's button), one cheap run a night through the run queue, and
+# a phone's button), one run a night through the run queue, and
 # delivery through the household's own notify target and, when Speak first
 # is on, its own voice satellites. Off — Personality or the Learning loop
 # switched off in Features — every entry point returns before it reads
@@ -28075,6 +28538,11 @@ def _presence_inputs(now: float, people: dict[str, str]) -> str:
                 titles.append(str(row.get("title") or ""))
     except Exception as exc:  # noqa: BLE001
         log.debug("presence could not list conversations: %s", exc)
+    try:
+        exchanges = _presence_exchanges(now)
+    except Exception as exc:  # noqa: BLE001 — no exchanges is a thinner night
+        log.debug("presence could not read the conversations: %s", exc)
+        exchanges = []
     answered = presence.answer_counts(deliveries.fold(now), now)
     try:
         upcoming = occasions.lines(occasions.load(), _house_date(now))
@@ -28083,18 +28551,54 @@ def _presence_inputs(now: float, people: dict[str, str]) -> str:
     return presence.prompt(
         state, people, now, tz=tz, name=personality.assistant_name(pers),
         persona_line=personality.tagline(pers.get("persona")),
+        persona=textclip.clip(pers.get("persona") or "",
+                              personality.VOICE_PERSONA_CHARS),
+        learned=pers["learned"]["text"],
+        learned_by=pers["learned"].get("by") or "",
         growth=growth, titles=titles, answered=answered,
+        exchanges=exchanges, tuning=presence.tuning_answers(state),
         occasions=upcoming, now_line=_now_line(now))
 
 
-async def _presence_reflect(now: float, people: dict[str, str]) -> dict:
-    """The one cheap run a night: growth notes and tomorrow's ideas."""
+def _presence_exchanges(now: float) -> list[dict]:
+    """What the household said to brAIn in Ask lately and what it answered,
+    oldest first, inside the reflection's budget (`presence.budget_
+    exchanges`). Only conversations a person started ("you": the chat and
+    the terminal), read from the CLI's own transcripts on this machine;
+    nothing brAIn ran by itself, and no tool traffic."""
+    rows: list[dict] = []
+    listed = conversations.listing(chat_session.WORK_DIR, 12, ("you",))
+    # Oldest conversation first, so the newest exchange is last.
+    for conv in reversed(listed):
+        if now - float(conv.get("modified") or 0) > presence.EXCHANGE_DAYS * 86400:
+            continue
+        events = conversations.transcript(
+            chat_session.WORK_DIR, str(conv.get("id") or ""),
+            presence.PROMPT_EXCHANGES * 12)
+        rows += presence.exchanges_from(events)
+    return presence.budget_exchanges(rows)
+
+
+async def _presence_reflect(now: float, people: dict[str, str], *,
+                            pressed: bool = False) -> dict:
+    """The one run a night: the learned paragraph, growth notes, tomorrow's
+    ideas and the questions it would like to ask.
+
+    ``pressed`` is "Take this in now" (⚙ › Personality): the same run, the
+    same prompt and the same reading of its answer, made because somebody
+    asked, and only the paragraph is taken from it — the night's ideas,
+    notes and questions stay the night's, so a press never spends a touch
+    or stacks the queue."""
     prompt = await asyncio.to_thread(_presence_inputs, now, people)
     result = await _claude(
         engine.run_claude, prompt, presence.SYSTEM, eff_model(),
         presence.REFLECT_TIMEOUT_S, presence.REFLECT_MAX_TURNS, "presence",
-        job="presence", schema=presence.SCHEMA)
-    cost = await asyncio.to_thread(_record_usage, result, "presence")
+        job="presence", schema=presence.SCHEMA,
+        priority=run_queue.PRESS if pressed else run_queue.SCHEDULED)
+    # Its own id in the usage ledger: "presence" is also a shipped card's,
+    # and an id that names two things puts one of them in the wrong place
+    # on ⚙ › Model & usage (`usage_store.SPEND_IDS`).
+    cost = await asyncio.to_thread(_record_usage, result, "presence-reflect")
     LEDGER.record("presence", int(cost.get("total") or 0), now,
                   tier=_ran_tier(result, "presence"))
     if not result.get("ok"):
@@ -28102,27 +28606,55 @@ async def _presence_reflect(now: float, people: dict[str, str]) -> dict:
                 "error": str(result.get("error") or "no answer")[:200]}
 
     def write() -> dict:
+        pers = personality.load()
         recent = [g.get("text") or "" for g in
-                  (personality.load().get("growth") or [])[-20:]]
+                  (pers.get("growth") or [])[-20:]]
+        name = personality.assistant_name(pers)
 
         def apply(state: dict) -> dict:
             parsed = presence.parse_reflection(
-                _answer(result), people, state, recent_growth=recent)
+                _answer(result), people, state, recent_growth=recent,
+                name="" if name == personality.DEFAULT_NAME else name,
+                learned_now=pers["learned"]["text"])
+            # Every answer the household gave was in this run's prompt.
+            presence.note_absorbed(state, now)
+            if pressed:
+                return {"parsed": parsed, "ideas": 0, "notes": 0,
+                        "questions": 0}
             ideas = presence.add_ideas(state, parsed["ideas"], people, now)
             notes = presence.add_notes(state, parsed["notes"], people, now)
-            return {"parsed": parsed, "ideas": ideas, "notes": notes}
+            asked = presence.add_questions(state, parsed["questions"], now)
+            return {"parsed": parsed, "ideas": ideas, "notes": notes,
+                    "questions": asked}
 
         got = _presence_update(apply)
         grown = presence.write_growth(got["parsed"]["growth"], now) \
-            if personality.writable() else 0
+            if personality.writable() and not pressed else 0
+        # The paragraph: written whole or not at all, and a refusal — here
+        # or in the reading above — is the night's result, said in ⚙.
+        revised, why = False, got["parsed"]["learned_refused"]
+        if got["parsed"]["learned"] and personality.writable():
+            revised, why = presence.write_learned(
+                got["parsed"]["learned"], now, people.values())
         return {"ok": True, "growth": grown, "ideas": got["ideas"],
-                "notes": got["notes"], "refused": got["parsed"]["refused"]}
+                "notes": got["notes"], "refused": got["parsed"]["refused"],
+                "questions": got["questions"],
+                "learned": revised, "learned_refused": why}
 
     out = await asyncio.to_thread(write)
-    if out.get("growth"):
+    if out.get("growth") or out.get("learned"):
         await asyncio.to_thread(_write_terminal_prompt)
-    log.info("presence: reflected — %d growth note(s), %d idea(s), %d "
-             "refused", out["growth"], out["ideas"], out["refused"])
+    if out.get("learned"):
+        # The paragraph is in /config/CLAUDE.md's personality section too.
+        _refresh_claude_md()
+    if out.get("learned_refused"):
+        log.info("presence: the revised paragraph was not kept (%s); the "
+                 "stored one stands", out["learned_refused"])
+    log.info("presence: reflected%s — %s, %d growth note(s), %d idea(s), %d "
+             "question(s), %d refused", " on a press" if pressed else "",
+             "the paragraph revised" if out["learned"]
+             else "the paragraph as it was", out["growth"], out["ideas"],
+             out["questions"], out["refused"])
     return out
 
 
@@ -28188,11 +28720,115 @@ async def _presence_loop() -> None:
 async def h_presence_get(request: web.Request) -> web.Response:
     """⚙ › Personality's "How it is growing": its own notes are in the
     personality payload; this is the people, the queue and the history."""
-    def build() -> dict:
-        out = presence.payload_now(tz=_presence_tz())
-        out["name"] = personality.assistant_name()
-        return out
-    return web.json_response(await asyncio.to_thread(build))
+    return web.json_response(await asyncio.to_thread(_presence_payload))
+
+
+def _presence_said(state: dict, now: float) -> list[dict]:
+    """What brAIn really said lately (`presence.said_lately`): its touches
+    and, off the delivery ledger, the brief, the weekly report and the
+    notifications whose words it wrote. An unreadable ledger is those
+    lines left out."""
+    try:
+        folded = deliveries.fold(now)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("presence could not read the delivery ledger: %s", exc)
+        folded = None
+    return presence.said_lately(state, folded, now, tz=_presence_tz())
+
+
+def _presence_payload(ack: str = "") -> dict:
+    """⚙ › Personality's two sections the presence loop owns: "Shape
+    <name>" (`tuning`, only while the loop is on: off, the page says so in
+    one line and shows nothing else) and "How <name> is growing"."""
+    tz = _presence_tz()
+    now = time.time()
+    on, why = presence.active()
+    state = presence.load()
+    out = presence.payload(state, now, tz=tz, on=on, why=why)
+    out["name"] = name = personality.assistant_name()
+    if on:
+        out["tuning"] = presence.tuning_payload(
+            state, _presence_said(state, now), now, tz=tz)
+        out["tuning"]["ack"] = personality.speak(ack)
+        out["tuning"]["taking"] = bool(PRESENCE_STATE.get("taking"))
+    out["row"] = presence.waiting_line(state, now, name) if on else ""
+    return out
+
+
+PRESENCE_TUNING_OFF = ("That is switched off: it needs Personality and the "
+                       "Learning loop on in Features.")
+
+
+async def h_presence_tune(request: web.Request) -> web.Response:
+    """POST {question, answer}: one thing the household settled about how
+    brAIn should be, recorded from a conversation brAIn led (`brain tune`,
+    which the "Talk it through" conversation is told to run). Kept with
+    the answers given on the page, and read by the next reflection."""
+    body = await _personality_body(request)
+    question, answer = body.get("question"), body.get("answer")
+    if not isinstance(question, str) or not isinstance(answer, str) \
+            or not question.strip() or not answer.strip():
+        raise web.HTTPBadRequest(text="send {question, answer} as text")
+    if not (await asyncio.to_thread(presence.active))[0]:
+        raise web.HTTPConflict(text=PRESENCE_TUNING_OFF)
+    now = time.time()
+    row = await asyncio.to_thread(_presence_update, lambda s: presence.add_answer(
+        s, question, answer, now, "ask"))
+    if row is None:
+        raise web.HTTPBadRequest(text="send {question, answer} as text")
+    return web.json_response({"ok": True, "answer": row})
+
+
+async def h_presence_take_in(request: web.Request) -> web.Response:
+    """POST: "Take this in now". The reflection's paragraph revision, made
+    because somebody pressed: the same job through the run queue and the
+    same refusals. A press needs only a credential, as every pressed run
+    does (`_maint_pressed_refusal`): the budget and the pause on automatic
+    runs are for runs nobody asked for. When no run can be made the answer
+    says why, in a sentence, and nothing changed."""
+    def held(why: str) -> web.Response:
+        return web.json_response({"ok": False, "why": why})
+
+    on, why = await asyncio.to_thread(presence.active)
+    if not on:
+        return held(why[:1].upper() + why[1:] + ".")
+    if PRESENCE_STATE.get("taking"):
+        return held("I am already taking them in.")
+    if not engine.get_auth():
+        return held("I cannot make a run right now: there is no Claude "
+                    "sign-in yet. Sign in under ⚙ and press again.")
+    house = await _presence_read_house()
+    people = {pid: p["name"] for pid, p in
+              _presence_people(house.get("states") or []).items()}
+    if not people:
+        return held("I could not read Home Assistant just now, so I "
+                    "cannot tell who lives here. Nothing changed.")
+    PRESENCE_STATE["taking"] = True
+    try:
+        result = await _presence_reflect(time.time(), people, pressed=True)
+    except Exception as exc:  # noqa: BLE001 — said, never a 500
+        log.warning("presence: taking the answers in failed: %s", exc)
+        result = {"ok": False, "error": str(exc)[:200]}
+    finally:
+        PRESENCE_STATE["taking"] = False
+    if not result.get("ok"):
+        log.info("presence: the pressed run did not answer: %s",
+                 result.get("error"))
+        return held("The run did not come back with an answer. Nothing "
+                    "changed; the add-on log says why.")
+    if result.get("learned"):
+        said = "Taken in. The paragraph below is my new one; Undo steps back."
+    elif result.get("learned_refused"):
+        said = ("I read them, but my revision was not kept, because "
+                f"{result['learned_refused']}. Nothing changed.")
+    else:
+        said = ("I read them and my paragraph already says it. Nothing "
+                "changed.")
+    return web.json_response({
+        "ok": True, "said": personality.speak(said),
+        "changed": bool(result.get("learned")),
+        "personality": await asyncio.to_thread(personality.payload),
+        "presence": await asyncio.to_thread(_presence_payload)})
 
 
 async def h_presence_post(request: web.Request) -> web.Response:
@@ -28213,6 +28849,35 @@ async def h_presence_post(request: web.Request) -> web.Response:
         return web.json_response({"ok": True,
                                   "personality": await asyncio.to_thread(
                                       personality.payload)})
+    # "Shape <name>": an answer to its question, Skip, Don't ask this, a
+    # verdict on a line it said, and Remove on an answer already given.
+    said = await asyncio.to_thread(
+        lambda: _presence_said(presence.load(), now)) \
+        if do == "tune_feedback" else []
+    verdict = str(body.get("verdict") or "")
+    tune = {
+        "tune_answer": (lambda s: presence.answer_question(
+            s, str(body.get("id") or ""), str(body.get("answer") or ""), now),
+            presence.ACK_ANSWER),
+        "tune_skip": (lambda s: presence.pass_question(
+            s, str(body.get("id") or ""), False, now), presence.ACK_SKIP),
+        "tune_retire": (lambda s: presence.pass_question(
+            s, str(body.get("id") or ""), True, now), presence.ACK_RETIRE),
+        "tune_feedback": (lambda s: presence.give_feedback(
+            s, said, str(body.get("key") or ""), verdict,
+            str(body.get("text") or ""), now),
+            presence.ACK_FEEDBACK.get(verdict, "")),
+        "tune_remove": (lambda s: presence.remove_answer(
+            s, str(body.get("id") or "")), ""),
+    }
+    if isinstance(do, str) and do in tune:
+        if not (await asyncio.to_thread(presence.active))[0]:
+            raise web.HTTPConflict(text=PRESENCE_TUNING_OFF)
+        change, ack = tune[do]
+        if not await asyncio.to_thread(_presence_update, change):
+            raise web.HTTPNotFound(text="that is not there any more")
+        return web.json_response(
+            await asyncio.to_thread(_presence_payload, ack))
     actions = {
         "skip": lambda s: presence.skip_idea(s, pid, str(body.get("id") or "")),
         "never": lambda s: (presence.retire(s, pid, str(body.get("kind") or ""),
@@ -28467,6 +29132,7 @@ def _context_sources() -> dict:
         DEVELOPMENT_MODE_ON if development_mode() else DEVELOPMENT_MODE_OFF) + (
         "\n\n" + YOLO_MODE_ON if yolo_mode() else "")
     src["personality"] = _personality_lines()
+    src["said_lately"] = _chat_said_lines()
     # Off is not "none set": the page says which (⚙ › Features).
     src["personality_on"] = read(personality.enabled, True)
     src["house_now"] = "; ".join(read(_chat_house_lines, []))
@@ -28493,6 +29159,20 @@ def _context_sources() -> dict:
     src["first_look_rules"] = resident.FIRST_LOOK_SYSTEM
     src["investigate_rules"] = read(resident.investigate_system)
     src["overnight_rules"] = sre.SYSTEM
+    # What a writer run is handed for its wording (`_voiced`), and the
+    # nightly reflection's own inputs, by the caps its builder holds.
+    src["voice_block"] = read(personality.voice_block)
+    src["said_rules"] = "\n\n".join(
+        (brief.SYSTEM, weekly.SYSTEM, dispatch.SYSTEM))
+    src["reflection_rules"] = presence.SYSTEM
+    src["voice_persona_chars"] = personality.VOICE_PERSONA_CHARS
+    src["learned_chars"] = personality.LEARNED_MAX
+    src["exchange_bytes"] = presence.EXCHANGES_BYTES
+    src["reflection_person_chars"] = presence.PROMPT_TOUCHES * (
+        presence.TEXT_CHARS + 60)
+    src["reflection_occasion_chars"] = 6 * 120
+    src["tuning_chars"] = presence.PROMPT_TUNING * (
+        2 * presence.TUNING_CHARS + 40)
     src["document_bytes"] = context_map.size(_read_shared_memory())
     src["facts"] = read(facts_store.count, 0)
     src["waiting"] = read(_inbox_pending, 0)
@@ -29670,6 +30350,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/devloop/report", h_devloop_report)
     app.router.add_get("/api/bruh_addons", h_bruh_addons)
     app.router.add_post("/api/devloop/look", h_devloop_look)
+    app.router.add_post("/api/devloop/walk", h_devloop_walk)
     app.router.add_post("/api/devloop/stream/{name}/unslow", h_devloop_unslow)
     app.router.add_get("/api/devloop/item/{fp}", h_devloop_item)
     app.router.add_get("/api/devloop/screen/{capture}/{name}", h_devloop_screen)
@@ -29849,8 +30530,15 @@ def make_app() -> web.Application:
     app.router.add_get("/api/personality", h_personality_get)
     app.router.add_put("/api/personality", h_personality_put)
     app.router.add_post("/api/personality/growth", h_personality_growth)
+    app.router.add_put("/api/personality/learned", h_personality_learned_put)
+    app.router.add_delete("/api/personality/learned",
+                          h_personality_learned_delete)
+    app.router.add_post("/api/personality/learned/undo",
+                        h_personality_learned_undo)
     app.router.add_get("/api/presence", h_presence_get)
     app.router.add_post("/api/presence", h_presence_post)
+    app.router.add_post("/api/presence/tuning", h_presence_tune)
+    app.router.add_post("/api/presence/tuning/take-in", h_presence_take_in)
     app.router.add_get("/header-logo", h_header_logo_get)
     app.router.add_put("/api/header/logo", h_header_logo_put)
     app.router.add_delete("/api/header/logo", h_header_logo_delete)

@@ -743,6 +743,30 @@ asked.
   food is in or out). A sous vide must be in water before it starts; the oven
   waits for Start on its own panel — say so. Never start a cook nobody asked
   for. Listed only when BRUH Cooking's integration is in Home Assistant.
+- BRUH Browser is how brAIn does things on websites for the household (a
+  grocery order first, then errands like it): a real Chrome signed in to the
+  household's shops, driven by Claude in Chrome. \`browser_task\` starts an
+  errand in the person's words and NEVER buys: it builds the cart and stops on
+  the review page. \`browser_status\` reads it (minutes later): progress, the
+  cart (items, prices, fees, delivery, total), the browser it ran in, or the
+  question it paused on. A \`choice\`, \`confirm\` or \`other\` question:
+  read the person the question and its options and pass their answer with
+  \`browser_answer\`. A sign-in, CAPTCHA, code, dialog or the extension's own
+  prompt is done by a person in the live browser on BRUH Browser's page, then
+  "I've done it, carry on" there.
+  **Which browser**: errands use BRUH Browser's own Chrome unless the person
+  picks another. \`browser_status\` with \`browsers: true\` lists every Claude
+  in Chrome on the account; when more than one is connected and the person
+  has not said which to use, ask them before starting, in plain words ("the
+  BRUH Browser on your Home Assistant box" or "Chrome on <name>"), pass it as
+  \`browser\`, and \`make_default\` when they want it remembered. Say which
+  browser it used when you report back. Nothing is ever bought in another
+  computer's Chrome.
+  **A purchase is always cart first, then approval**: read the person the
+  cart, and only when they say to buy it call \`browser_purchase\` with that
+  cart's id, total and items as given — they are asked to approve it. They
+  can also press Buy this (or Don't buy) on BRUH Browser's page.
+  \`browser_stop\` stops one. Listed only when BRUH Browser is installed.
 
 ## Registry Management — BRUH Power Tools
 

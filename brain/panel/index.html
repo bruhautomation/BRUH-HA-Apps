@@ -879,12 +879,71 @@
       <button id="kCleanup" class="btn small" type="button"
               data-tip="brAIn reads its memory and lists what looks wrong, useless or mistaken. Nothing is removed until you tick it.">Clean up</button>
     </header>
-    <!-- Two reports about the house as a whole, each one folded line —
-         name, when it last ran or how many it holds, and Run — opened by
-         its name. They were rows under the insight cards (the owner: "I
-         have no idea why deep review and suggested reports are on
-         insights… those seem more like memory items to me"). -->
+    <!-- Clean up: what brAIn proposes to remove from its own memory, one
+         tick per line, with the reason. Filled by renderCleanup. -->
+    <div id="kCleanupBox" class="kclean" hidden></div>
+    <div class="kbrowse">
+      <!-- Browse by what a fact is about: every room and device with facts,
+           with how many. A rail beside the list on a wide screen, a select
+           above it on a phone. -->
+      <aside class="ksubjects" aria-label="Browse by subject">
+        <input id="kSubjectFind" class="ksubfind" type="search" autocomplete="off"
+               spellcheck="false" placeholder="Find a room or device" aria-label="Find a room or device">
+        <div id="kSubjects" class="ksublist"></div>
+      </aside>
+      <div class="kmain">
+        <div class="kfbar">
+          <input id="kKnownSearch" type="search" autocomplete="off" spellcheck="false"
+                 placeholder="Search facts" aria-label="Search facts">
+          <select id="kSubjectSel" class="sel ksubsel" aria-label="About"></select>
+          <div id="kKnownKinds" class="kfchips pillseg" role="group" aria-label="What the fact is about"></div>
+          <select id="kKnownSource" class="sel" aria-label="Who taught it"></select>
+          <select id="kKnownSort" class="sel" aria-label="Sort">
+            <option value="newest">Newest</option>
+            <option value="subject">By room or device</option>
+            <option value="oldest">Oldest</option>
+            <option value="certain">Most certain</option>
+          </select>
+        </div>
+        <div id="kActive" class="kactive" hidden></div>
+        <div id="kKnown" class="klist"></div>
+        <div class="kfmore">
+          <button id="kKnownMore" class="btn small hidden" type="button">Show more</button>
+        </div>
+      </div>
+    </div>
+    <form id="kAddForm" class="kadd">
+      <input id="kAddInput" type="text" maxlength="500" autocomplete="off"
+             placeholder="Tell brAIn about the house…" aria-label="Tell brAIn something">
+      <button class="btn small primary" type="submit">Teach</button>
+    </form>
+    <!-- Suggested: reports brAIn thinks this house is missing. An idea
+         costs nothing until it is saved. -->
     <div class="kfolds">
+      <div class="kfold" id="ideasRow">
+        <div class="kfoldhead">
+          <button type="button" class="kfoldname" aria-expanded="false" aria-controls="ideasBody">
+            <span class="kfoldtitle">Suggested reports</span><span id="ideasMeta" class="kfoldmeta"></span></button>
+          <span class="kfoldrun"><button id="ideasRun" class="btn small" type="button">Run</button></span>
+        </div>
+        <div id="ideasBody" class="kfoldbody" hidden>
+          <p class="reportrowhint">brAIn suggests reports this house doesn't have yet.</p>
+          <div id="ideasNote" class="ideasnote" hidden></div>
+          <div id="ideasList" class="findlist"></div>
+        </div>
+      </div>
+    </div>
+    <!-- Upkeep: the memory document, what each job is handed and the deep
+         review, under one fold so the facts above are the first thing here
+         (what they were: four folded rows of the machine's parts before
+         a single fact). -->
+    <div class="kfolds ktools">
+      <div class="kfold" id="kToolsFold">
+        <div class="kfoldhead">
+          <button type="button" class="kfoldname" aria-expanded="false" aria-controls="kToolsBody">
+            <span class="kfoldtitle">Tools</span><span class="kfoldmeta">The notes brAIn keeps, what it is told, a full review</span></button>
+        </div>
+        <div id="kToolsBody" class="kfoldbody kfoldnest" hidden>
       <!-- The memory document and what is waiting to be filed into it. They
            were ⚙ › Memory, a second place for what brAIn remembers beside
            this one (the owner: "no idea what the difference is"); one home
@@ -893,7 +952,7 @@
       <div class="kfold" id="kDocFold">
         <div class="kfoldhead">
           <button type="button" class="kfoldname" aria-expanded="false" aria-controls="kDocBody">
-            <span class="kfoldtitle">Memory document</span><span id="kDocMeta" class="kfoldmeta"></span></button>
+            <span class="kfoldtitle">What brAIn has written down</span><span id="kDocMeta" class="kfoldmeta"></span></button>
         </div>
         <div id="kDocBody" class="kfoldbody" hidden>
           <p class="reportrowhint">brAIn's own notes about this house. What it learns waits
@@ -923,11 +982,10 @@
       <div class="kfold" id="kCtxFold">
         <div class="kfoldhead">
           <button type="button" class="kfoldname" aria-expanded="false" aria-controls="kCtxBody">
-            <span class="kfoldtitle">What brAIn brings to a run</span><span id="kCtxMeta" class="kfoldmeta">A conversation, a card, voice, its checks</span></button>
+            <span class="kfoldtitle">What brAIn is told before it works</span><span id="kCtxMeta" class="kfoldmeta">Chats, cards, voice and checks</span></button>
         </div>
         <div id="kCtxBody" class="kfoldbody" hidden>
-          <p class="reportrowhint">What Claude is handed when each kind of run starts, how big
-            it is right now, and what it can look up while it works.</p>
+          <p class="reportrowhint">What Claude is handed when each kind of job starts, and what it can look up while it works.</p>
           <div id="kCtxKinds" class="kctxkinds pillseg" role="tablist" aria-label="Kind of run"></div>
           <div id="kCtxRun" class="kctxrun"></div>
           <p id="kCtxFacts" class="hint kctxfacts"></p>
@@ -936,61 +994,11 @@
       <div class="kfold" id="kReviewFold">
         <div class="kfoldhead">
           <button type="button" class="kfoldname" aria-expanded="false" aria-controls="kReview">
-            <span class="kfoldtitle">Deep review</span><span id="kReviewMeta" class="kfoldmeta"></span></button>
+            <span class="kfoldtitle">Review the whole house</span><span id="kReviewMeta" class="kfoldmeta"></span></button>
           <span id="kReviewRun" class="kfoldrun"></span>
         </div>
         <div id="kReview" class="kreview kfoldbody" hidden></div>
       </div>
-      <!-- Suggested: reports brAIn thinks this house is missing. An idea
-           costs nothing until it is saved. -->
-      <div class="kfold" id="ideasRow">
-        <div class="kfoldhead">
-          <button type="button" class="kfoldname" aria-expanded="false" aria-controls="ideasBody">
-            <span class="kfoldtitle">Suggested reports</span><span id="ideasMeta" class="kfoldmeta"></span></button>
-          <span class="kfoldrun"><button id="ideasRun" class="btn small" type="button">Run</button></span>
-        </div>
-        <div id="ideasBody" class="kfoldbody" hidden>
-          <p class="reportrowhint">brAIn suggests reports this house doesn't have yet.</p>
-          <div id="ideasNote" class="ideasnote" hidden></div>
-          <div id="ideasList" class="findlist"></div>
-        </div>
-      </div>
-    </div>
-    <!-- Clean up: what brAIn proposes to remove from its own memory, one
-         tick per line, with the reason. Filled by renderCleanup. -->
-    <div id="kCleanupBox" class="kclean" hidden></div>
-    <form id="kAddForm" class="kadd">
-      <input id="kAddInput" type="text" maxlength="500" autocomplete="off"
-             placeholder="Tell brAIn about the house…" aria-label="Tell brAIn something">
-      <button class="btn small primary" type="submit">Teach</button>
-    </form>
-    <div class="kbrowse">
-      <!-- Browse by what a fact is about: every room and device with facts,
-           with how many. A rail beside the list on a wide screen, a select
-           above it on a phone. -->
-      <aside class="ksubjects" aria-label="Browse by subject">
-        <input id="kSubjectFind" class="ksubfind" type="search" autocomplete="off"
-               spellcheck="false" placeholder="Find a room or device" aria-label="Find a room or device">
-        <div id="kSubjects" class="ksublist"></div>
-      </aside>
-      <div class="kmain">
-        <div class="kfbar">
-          <input id="kKnownSearch" type="search" autocomplete="off" spellcheck="false"
-                 placeholder="Search facts" aria-label="Search facts">
-          <select id="kSubjectSel" class="sel ksubsel" aria-label="About"></select>
-          <div id="kKnownKinds" class="kfchips pillseg" role="group" aria-label="What the fact is about"></div>
-          <select id="kKnownSource" class="sel" aria-label="Who taught it"></select>
-          <select id="kKnownSort" class="sel" aria-label="Sort">
-            <option value="newest">Newest</option>
-            <option value="subject">By room or device</option>
-            <option value="oldest">Oldest</option>
-            <option value="certain">Most certain</option>
-          </select>
-        </div>
-        <div id="kActive" class="kactive" hidden></div>
-        <div id="kKnown" class="klist"></div>
-        <div class="kfmore">
-          <button id="kKnownMore" class="btn small hidden" type="button">Show more</button>
         </div>
       </div>
     </div>
@@ -1481,7 +1489,7 @@
           <div class="row persacts"><button type="button" id="hdrSave" class="btn primary">Save</button></div>
           <label for="persName">Name</label>
           <input id="persName" class="persname" type="text" maxlength="60" autocomplete="off"
-            placeholder="brAIn">
+            placeholder="brAIn" data-product>
           <label for="persVoice">Spoken voice</label>
           <input id="persVoice" class="persname" type="text" maxlength="80" autocomplete="off"
             placeholder="Not recorded">
@@ -1507,6 +1515,15 @@
           <p class="hint tight">Ask opens a conversation with brAIn about who it is; what you settle there is added below.</p>
           <h4 class="sethead">How it has grown</h4>
           <ul id="persGrowth" class="persgrowth" aria-label="How brAIn's personality has grown"></ul>
+          <!-- Shape <name> (presence.py `tuning`): the assistant leads. ONE
+               question at a time in its own words, a few lines it really
+               said for a verdict, a conversation it leads in Ask, and
+               below them what the household has told it, each removable.
+               Built by `renderTuning`; off (Personality or the Learning
+               loop), one line says so and nothing else is drawn. -->
+          <h4 class="sethead" id="tuneHead">Shape brAIn</h4>
+          <p id="tuneOff" class="hint tight" hidden></p>
+          <div id="tuneBody" class="tunebody" aria-labelledby="tuneHead"></div>
           <!-- The presence loop (panel/presence.py): what the assistant
                noted about itself overnight, the small touches it has in
                mind for each person, and the ones it sent with their
@@ -1515,6 +1532,26 @@
                list above, so nothing is shown twice. -->
           <h4 class="sethead" id="presHead">How brAIn is growing</h4>
           <p id="presWhat" class="hint tight"></p>
+          <!-- The paragraph it keeps itself about how to be in this house
+               (`personality.py` `learned`): the current state, where the
+               notes under it are the dated trail. Undo is one press back
+               to the version before; Edit saves the household's own
+               correction; Clear empties it (and Undo brings it back). -->
+          <div id="learnedBox" class="learnedbox">
+            <p class="preshead" id="learnedHead">What it has learned about being here</p>
+            <p id="learnedText" class="learnedtext"></p>
+            <textarea id="learnedEdit" class="perstext" rows="7" maxlength="1200" hidden
+              aria-labelledby="learnedHead"
+              placeholder="How it should be in this house, in your own words…"></textarea>
+            <p id="learnedMeta" class="pressub"></p>
+            <div class="row persacts learnedacts">
+              <button type="button" id="learnedUndo" class="btn" hidden>Undo</button>
+              <button type="button" id="learnedEditBtn" class="btn">Edit</button>
+              <button type="button" id="learnedSave" class="btn primary" hidden>Save</button>
+              <button type="button" id="learnedCancel" class="btn" hidden>Cancel</button>
+              <button type="button" id="learnedClear" class="btn" hidden>Clear</button>
+            </div>
+          </div>
           <div id="presBody" class="presbody" aria-labelledby="presHead"></div>
         </div>
       </section>
@@ -1642,6 +1679,7 @@
               aria-label="Delete what the last rehearsal left behind">Delete</button>
             <span id="rehearseLast" class="hint tight"></span>
           </div>
+          <p id="rehearseSum" class="testssum" hidden></p>
           <div id="rehearseBody" class="diag" hidden></div>
 
           <h4 class="sethead">Why somebody did something</h4>
@@ -1715,6 +1753,17 @@
 
             <h5 class="setsubhead">What it sends</h5>
             <div id="devStreams" class="devstreams"></div>
+
+            <!-- The Walkthrough's apps, one switch each (`devloop.WALK_APPS`):
+                 a look is one Claude run, so an app nobody uses is off, and
+                 Look now is the press for a week with runs to spare. -->
+            <h5 class="setsubhead">Apps brAIn looks at</h5>
+            <p class="hint tight">brAIn uses each app switched on here the way a person does
+              and files what it finds: one Claude run per app when the app has a new
+              version, from the daily limit below, and Look now looks once whatever the
+              switch says. Faults, the canary and Screens pictures cost no run and are not
+              changed by these switches.</p>
+            <div id="devWalks" class="devstreams"></div>
 
             <h5 class="setsubhead">Daily limits</h5>
             <div class="row devcaps">

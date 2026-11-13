@@ -59,9 +59,10 @@ import time
 
 import atomic_write
 import reports
-from textclip import clip
+from textclip import clip, said
 
-from . import STREAMS, data_dir, enabled, load_settings, read_token, stream_on
+from . import (STREAMS, WALK_APPS, data_dir, enabled, load_settings, read_token,
+               stream_on)
 from . import blocks, github
 from .aliases import Aliases
 from .plaintext import plain
@@ -143,6 +144,29 @@ MAX_HELD = 400
 # installed it (plan 1.3): the pass^k of the loop, measured on the house.
 HELD_DAYS = 7
 MAX_DAYS = 60
+# Screens also runs when the release this house runs has not been
+# photographed yet (`due_streams`), because a weekly schedule against
+# several releases a day meant most releases were never looked at. This is
+# the floor between two full captures however they came due: twenty
+# releases in a day are four captures, not twenty, and a capture that
+# failed is tried again after this long rather than next week.
+SCREENS_RELEASE_GAP_H = 6
+# What a stream that could not look is filed as, by the Faults stream: one
+# row per stream and reason CLASS (never the exception's own words, which
+# would be a new issue per wording), and the plain sentence ⚙ › Developer
+# shows under the stream. A class not listed here is refused, so a caller
+# cannot mint a fingerprint.
+BLIND_REASONS = {
+    "screens": {
+        "browser": "Chromium is not installed on this box",
+        "states": "the house's calendars and addresses could not be read to blank them",
+        "capture": "the capture failed before any picture was kept",
+        "redaction": "no screen could be captured and redacted",
+        "own-panel": "brAIn's own panel gave no picture, though other screens did",
+    },
+}
+BLIND_WHERE = {"screens": "Screens"}
+BLIND_WHAT = {"screens": "could not photograph: {reason}"}
 # What a row may say about its own impact, all counts.
 IMPACT_KEYS = ("count", "conversations", "days", "rows", "runs",
                "wrong", "confirmed", "endings")
@@ -431,7 +455,7 @@ def ingest(stream: str, rows: list[dict], diagnostics: dict | None = None,
                            now or time.time(), products or {}, tuple(unread or ()))
     except Exception as exc:  # noqa: BLE001 — see the module docstring
         log.warning("devloop %s pass failed: %s", stream, exc)
-        STATE["error"] = f"{stream} pass failed: {exc}"[:300]
+        STATE["error"] = f"{stream} pass failed: {said(exc)}"[:300]
         return {"error": STATE["error"]}
 
 
@@ -644,7 +668,8 @@ def due_streams(now: float | None = None) -> list[str]:
     settings = load_settings()
     if not settings.get("enabled"):
         return []
-    last = _load().get("last_run") or {}
+    data = _load()
+    last = data.get("last_run") or {}
     slowed = _vload()["slowed"]
     out = []
     for name in STREAMS:
@@ -652,9 +677,213 @@ def due_streams(now: float | None = None) -> list[str]:
                                 name in slowed)
         if not hours or not (settings.get("streams") or {}).get(name):
             continue
-        if now - float(last.get(name) or 0) >= hours * 3600:
+        since = now - float(last.get(name) or 0)
+        if since >= hours * 3600:
+            out.append(name)
+        elif (name == "screens" and since >= SCREENS_RELEASE_GAP_H * 3600
+              and (unphotographed(data) or screens_left(data))):
+            # A release nobody has looked at is owed now, not next week, and
+            # so are the screens a pass ran out of time for. A schedule of
+            # "only when asked" is still only when asked.
             out.append(name)
     return out
+
+
+def unphotographed(data: dict | None = None) -> bool:
+    """Whether the release this house runs has no Screens capture of
+    brAIn's own panel yet. The release is the queue's `version`, stamped by
+    every sweep; one that is not a version (a dev build, a queue never
+    swept) is never "new", so it cannot drive a capture."""
+    data = _load() if data is None else data
+    running = str(data.get("version") or "")
+    if not version_tuple(running):
+        return False
+    shot = data.get("photographed") if isinstance(data.get("photographed"), dict) else {}
+    return str(shot.get("version") or "") != running
+
+
+def screens_left(data: dict | None = None) -> list[str]:
+    """The capture targets (`screen_targets` keys) the last Screens pass
+    did not finish, for the next pass to take first (#890)."""
+    data = _load() if data is None else data
+    left = data.get("screens_left")
+    return [str(k) for k in left if isinstance(k, str)] if isinstance(left, list) else []
+
+
+def note_screens_left(keys) -> None:
+    """Record what a Screens pass did not finish; an empty list clears it.
+    While anything is left, the stream is owed another pass after
+    `SCREENS_RELEASE_GAP_H` hours (`due_streams`). Never raises."""
+    keys = [str(k)[:80] for k in keys or () if k][:100]
+    try:
+        with _LOCK:
+            data = _load()
+            if keys:
+                data["screens_left"] = keys
+            elif "screens_left" in data:
+                data.pop("screens_left", None)
+            else:
+                return
+            _save(data)
+    except Exception as exc:  # noqa: BLE001 — accounting must not fail a pass
+        log.warning("devloop: could not record the screens left: %s", said(exc))
+
+
+def note_photographed(version: str, now: float | None = None) -> None:
+    """Record that Screens photographed brAIn's own panel on ``version``,
+    which is also the stream seeing again: `note_blind`'s record goes, and
+    the Faults stream's row with it. Never raises."""
+    try:
+        with _LOCK:
+            data = _load()
+            data["photographed"] = {"version": str(version or "")[:40],
+                                    "at": now or time.time()}
+            if isinstance(data.get("blind"), dict):
+                data["blind"].pop("screens", None)
+            _save(data)
+    except Exception as exc:  # noqa: BLE001 — accounting must not fail a pass
+        log.warning("devloop: could not record the screens capture: %s", exc)
+
+
+def note_blind(stream: str, reason: str, why: str = "",
+               now: float | None = None) -> None:
+    """Record that a stream could not look, and why.
+
+    A Screens pass that was skipped or failed used to answer only the press
+    that asked for it: a scheduled one filed nothing and said nothing, so a
+    month with no panel audit read, on the house and in the cloud, as a
+    month with nothing to report. This record is what `blind_rows` hands
+    the Faults stream and what ⚙ › Developer says under the stream
+    (`blind_notes`). One record per stream: a new reason class replaces
+    the old one, the same one counts up. Never raises."""
+    if reason not in BLIND_REASONS.get(stream, {}):
+        return
+    now = now or time.time()
+    try:
+        with _LOCK:
+            data = _load()
+            seen = data.setdefault("blind", {})
+            row = seen.get(stream) if isinstance(seen.get(stream), dict) else {}
+            same = row.get("reason") == reason
+            seen[stream] = {
+                "reason": reason, "why": str(why or "")[:200],
+                "since": float(row.get("since") or now) if same else now,
+                "at": now,
+                "count": (int(row.get("count") or 0) if same else 0) + 1,
+                "version": str(data.get("version") or "")[:40]}
+            _save(data)
+    except Exception as exc:  # noqa: BLE001 — accounting must not fail a pass
+        log.warning("devloop: could not record that %s could not look: %s",
+                    stream, exc)
+
+
+def _blind(data: dict | None = None) -> dict:
+    data = _load() if data is None else data
+    seen = data.get("blind") if isinstance(data.get("blind"), dict) else {}
+    return {k: v for k, v in seen.items()
+            if isinstance(v, dict) and v.get("reason") in BLIND_REASONS.get(k, {})}
+
+
+def blind_rows(data: dict | None = None) -> list[dict]:
+    """The streams that could not look, as fault rows. `where|what` is the
+    stream and the reason class, so it is one issue for as long as it
+    lasts, and Faults (which clears) tells it "not seen since" once the
+    stream sees again. Only while the stream is on: a switched-off stream
+    is not failing to look."""
+    out = []
+    for stream, row in _blind(data).items():
+        if not stream_on(stream):
+            continue
+        count = int(row.get("count") or 1)
+        detail = (f"{count} {'try' if count == 1 else 'tries'} since "
+                  f"{_date(row.get('since'))}, the last on {_date(row.get('at'))}"
+                  + (f" on brAIn {row['version']}" if row.get("version") else "")
+                  + ". This stream filed nothing meanwhile, so its silence is "
+                    "not a clean result."
+                  + (f" It said: {row['why']}" if row.get("why") else ""))
+        out.append({"where": BLIND_WHERE[stream],
+                    "what": BLIND_WHAT[stream].format(
+                        reason=BLIND_REASONS[stream][row["reason"]]),
+                    "detail": detail, "seen_at": float(row.get("at") or 0)})
+    return out
+
+
+def blind_notes(data: dict | None = None) -> dict:
+    """``{stream: sentence}`` for ⚙ › Developer: the same fact in plain
+    words, under the stream's own row."""
+    out = {}
+    for stream, row in _blind(data).items():
+        count = int(row.get("count") or 1)
+        out[stream] = (
+            "Could not look on the last try: "
+            + BLIND_REASONS[stream][row["reason"]]
+            + (f" ({count} tries since {_date(row.get('since'))})" if count > 1 else "")
+            + ". Nothing was sent for it. It tries again within "
+            + f"{SCREENS_RELEASE_GAP_H} hours, and while the Faults stream "
+              "is on it is reported there.")
+    return out
+
+
+# ---------------------------------------------------------------------------
+# The Walkthrough's looks, one app at a time
+# ---------------------------------------------------------------------------
+
+def walk_state(data: dict | None = None) -> dict:
+    """``{app: {"at", "version", "rows", "error"}}``: when each app was
+    last looked at, on which of its versions, and what came of it."""
+    data = _load() if data is None else data
+    seen = data.get("walks") if isinstance(data.get("walks"), dict) else {}
+    return {k: dict(v) for k, v in seen.items()
+            if k in WALK_APPS and isinstance(v, dict)}
+
+
+def note_walk(app: str, version: str, rows: int = 0, error: str = "",
+              now: float | None = None) -> None:
+    """Record one look at one app. A look that failed keeps the version
+    the last GOOD look saw, so the app is still owed one, and moves `at`,
+    so it goes to the back of the queue rather than taking every pass's
+    first run. Never raises."""
+    if app not in WALK_APPS:
+        return
+    try:
+        with _LOCK:
+            data = _load()
+            seen = data.setdefault("walks", {})
+            row = seen.get(app) if isinstance(seen.get(app), dict) else {}
+            seen[app] = {"at": now or time.time(),
+                         "version": str(row.get("version") or "")[:40] if error
+                         else str(version or "")[:40],
+                         "rows": 0 if error else max(0, int(rows or 0)),
+                         "error": str(error or "")[:200]}
+            _save(data)
+    except Exception as exc:  # noqa: BLE001 — accounting must not fail a pass
+        log.warning("devloop: could not record the look at %s: %s", app, exc)
+
+
+def walks_due(apps: list[dict], switched: dict, state: dict | None = None,
+              everything: bool = False) -> list[str]:
+    """Which apps a Walkthrough pass looks at, in order.
+
+    ``apps`` is ``[{"key", "installed", "version"}]`` as the panel found
+    them; ``switched`` is the settings' `walks`. An app is owed a look when
+    it is installed, switched on, and its version is not the one last
+    looked at: looking again at a release already looked at files the same
+    reports and spends a run on it. ``everything`` (the stream's own Run
+    button) drops the version rule. Oldest-looked first, never-looked
+    before all, so when the day's run cap covers two apps of five, the
+    next pass starts with the three that waited."""
+    state = walk_state() if state is None else state
+    due = []
+    for position, app in enumerate(apps or []):
+        key = str(app.get("key") or "")
+        if key not in WALK_APPS or not app.get("installed") or not (switched or {}).get(key):
+            continue
+        last = state.get(key) or {}
+        if not everything and last.get("version") \
+                and str(last.get("version")) == str(app.get("version") or ""):
+            continue
+        due.append((float(last.get("at") or 0), position, key))
+    return [key for _at, _position, key in sorted(due)]
 
 
 def runs_left(now: float | None = None) -> int:
@@ -1000,7 +1229,7 @@ def send_due(now: float | None = None) -> dict:
             return _send_due(now or time.time())
     except Exception as exc:  # noqa: BLE001 — see the module docstring
         log.warning("devloop send failed: %s", exc)
-        STATE["error"] = f"send failed: {exc}"[:300]
+        STATE["error"] = f"send failed: {said(exc)}"[:300]
         return {"error": STATE["error"]}
 
 
@@ -1874,6 +2103,10 @@ def status() -> dict:
         # Claude replies that could not be read, per stream: count, when the
         # last one was, and why (`note_unreadable`).
         "unreadable": data.get("unreadable") or {},
+        # Streams that could not look on their last try (`note_blind`), and
+        # the release Screens last photographed brAIn's own panel on.
+        "blind": _blind(data),
+        "photographed": data.get("photographed") or {},
         # Whether the fixes held, counted on this house (plan 1.4).
         "efficacy": efficacy(data, v),
     }

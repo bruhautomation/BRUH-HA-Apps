@@ -34,6 +34,7 @@ on:
       - "gardenrx/**"
       - "bruh-task-manager/**"
       - "bruh-cooking/**"
+      - "bruh-browser/**"
       - ".github/workflows/build.yml"
   workflow_dispatch:
     inputs:
@@ -56,13 +57,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        addon: [brain, bruh-minecraft-server, bright, bruh-print, bruh-bambu-studio, gardenrx, bruh-task-manager, bruh-cooking]
+        addon: [brain, bruh-minecraft-server, bright, bruh-print, bruh-bambu-studio, gardenrx, bruh-task-manager, bruh-cooking, bruh-browser]
         arch: [aarch64, amd64]
         # Bambu Lab publishes Bambu Studio for Linux on x86-64 only, so the
         # add-on's config.yaml lists amd64 alone and there is no aarch64
         # image to build.
         exclude:
           - addon: bruh-bambu-studio
+            arch: aarch64
+          # Google publishes Chrome for Linux on x86-64 only.
+          - addon: bruh-browser
             arch: aarch64
 
     steps:

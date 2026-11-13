@@ -222,6 +222,13 @@ BRUH-HA-Apps/
 │   │                            #   committed under custom_components/bruh_cooking/frontend/)
 │   ├── tests/                   # the integration's own suite, against a real Home Assistant
 │   └── docs/api.md              # the Breville cloud protocol
+├── bruh-browser/                # brAIn's hands on the web: Chrome + Claude in Chrome; requires brAIn
+│   ├── Dockerfile               # Debian, amd64: Google Chrome .deb, Claude Code (npm), Xvfb/x11vnc/noVNC
+│   ├── chrome-policy.json       # managed policy: force-install the extension, no remote debugging
+│   ├── run.sh                   # require brAIn, /data, the API token, the screen, the panel
+│   └── panel/                   # server (routes, ingress/token guard), tasks (queue, approval),
+│                                #   runner (the one-errand seam), purchase_hook (spending guard),
+│                                #   browser (Chrome + the sign-in xterm), browsers (which Claude in Chrome), setup_state, system_prompt.md
 ├── tests/
 │   ├── corpus/                  # Houses and what was true of them — the frozen entries,
 │   │                            #   the schema, the one scorer's corpus shape, and replay.py

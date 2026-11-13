@@ -1133,7 +1133,7 @@ body.modal-open {
 .kcleanhead { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: baseline; min-width: 0; }
 .kcleantext { overflow-wrap: anywhere; color: var(--ink); }
 .kclean .card-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
-.kadd { display: flex; gap: 7px; margin: 4px 0 8px; }
+.kadd { display: flex; gap: 7px; margin: var(--sp-3) 0 var(--sp-3); }
 .kadd input {
   flex: 1;
   min-width: 0;
@@ -1633,6 +1633,9 @@ body.modal-open {
 .devstreamwhen {
   grid-column: 1 / -1; min-width: 0; font-size: var(--fs-meta); color: var(--ink-3);
 }
+/* An app the Walkthrough looks at: the same card, its foot holding the
+   version it runs beside Look now. */
+.devwalkver { min-width: 0; font-size: var(--fs-meta); color: var(--ink-3); }
 #setModal .devstreamfoot .sel { width: 100%; min-width: 0; }
 #setModal .devstream .devslow { margin: 0; }
 #setModal #devloopBody > .row { margin-top: var(--sp-3); }
@@ -2648,6 +2651,17 @@ html.shell-home.shell-raised, html.shell-home.shell-raised body { background: rg
    that holds the frame and the chat view gives exactly that much up, which
    puts the composer right above the keys. The classic terminal's frame
    keeps its own toolbar above them (`inject.html`), so it is left alone. */
+/* The home indicator under Ask's two message boxes (#876), applied once,
+   on `.chat` and `.chatrail`. Inside Home Assistant's frame env() reads 0
+   on an iPhone, so in the shell it is what the shell measured over the
+   panel's foot (`--shell-inset-bottom`, `shell.js` `insetBottom()`), the
+   frame's own env() only until the shell has said. Where the bottom tab
+   bar is drawn it already clears the indicator, and with the keyboard up
+   the keys cover it: neither pads it again. */
+:root { --safe-bottom: env(safe-area-inset-bottom, 0px); }
+@media (max-width: 640px) { :root { --safe-bottom: 0px; } }
+html.in-shell { --safe-bottom: var(--shell-inset-bottom, env(safe-area-inset-bottom, 0px)); }
+body.kb-lift { --safe-bottom: 0px; }
 body.kb-lift:not(.term-classic) #viewTerminal.active {
   height: calc(100vh - var(--bar-h) - var(--tabbar-h, 0px) - var(--kb-overlap, 0px));
   height: calc(100dvh - var(--bar-h) - var(--tabbar-h, 0px) - var(--kb-overlap, 0px));
@@ -2738,6 +2752,10 @@ body.kb-lift:not(.term-classic) #viewTerminal.active {
   width: 248px;
   flex-direction: column;
   min-height: 0;
+  box-sizing: border-box;
+  /* The list page's message box is its last child: the same clearance as
+     the transcript's (`--safe-bottom`). */
+  padding-bottom: var(--safe-bottom);
   border-right: 1px solid var(--hairline);
   background: var(--plane);
 }
@@ -2972,7 +2990,7 @@ body.term-open .wrap { padding-bottom: 0; }
   /* On the container, not on the composer: the meta line sits below the
      composer, so the element that must clear an iPhone's home indicator
      depends on whether it is showing. The container is always last. */
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: var(--safe-bottom);
   background: var(--plane);
 }
 body:not(.term-classic) #viewTerminal.active .chat { display: flex; }
@@ -7117,8 +7135,40 @@ body.term-classic #chatModelPick { display: none; }
 .presline { font-size: var(--fs-body); color: var(--ink); overflow-wrap: anywhere; }
 .pressub { font-size: var(--fs-meta); color: var(--ink-3); overflow-wrap: anywhere; }
 .presacts { flex: none; display: flex; gap: 8px; margin-left: auto; }
+/* The paragraph it keeps about how to be here: read as prose, its presses
+   under it. One box like a row, so it sits with the rows it leads. */
+.learnedbox {
+  display: grid; gap: 6px; max-width: 600px; margin-bottom: var(--sp-2);
+}
+.learnedbox .preshead { margin-top: 0; }
+.learnedtext {
+  margin: 0; padding: 10px 12px; background: var(--plane);
+  border: 1px solid var(--hairline); border-radius: 10px;
+  font-size: var(--fs-body); line-height: 1.5; color: var(--ink);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.learnedtext.none { color: var(--ink-3); }
+.learnedbox .pressub { margin: 0; }
+.learnedacts { margin-top: 0; flex-wrap: wrap; }
+/* Shape <name>: the assistant asking. One question as its own words in
+   one box, its answers under it; the rows after it are `.presrow`s. */
+.tunebody { display: grid; gap: 6px; max-width: 600px; margin-bottom: var(--sp-3); }
+.tuneq {
+  display: grid; gap: 10px; padding: 14px; background: var(--plane);
+  border: 1px solid var(--hairline); border-radius: 12px;
+}
+.tuneqtext { margin: 0; font-size: 17px; line-height: 1.4; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.tuneq .pressub, .tunesay { margin: 0; }
+.tunesay { font-size: var(--fs-body); color: var(--ink-2); overflow-wrap: anywhere; }
+.tunechips, .tuneacts { display: flex; flex-wrap: wrap; gap: 8px; }
+.tuneown { display: flex; gap: 8px; }
+.tuneown input { flex: 1 1 auto; min-width: 0; margin: 0; }
+.tunerow { align-items: flex-start; }
+.tunerow .presacts { flex-wrap: wrap; margin-left: 0; flex: 1 1 100%; }
+.tunerow .tuneown { flex: 1 1 100%; }
 @media (pointer: coarse) {
-  .presrow .btn { min-height: 44px; }
+  .presrow .btn, .learnedacts .btn, .tunebody .btn { min-height: 44px; }
+  .tuneown input { min-height: 44px; }
 }
 /* The persona as sections (`personaSections`): a plain title over its words,
    hairlines between, the whole outline readable without opening a box. */
@@ -7472,3 +7522,37 @@ html.in-shell.bar-hidden .topbar > .shelledit { opacity: 0; visibility: hidden; 
 .mcperson legend { padding: 0 4px; font-weight: 600; }
 .mcacts { list-style: none; padding: 0; margin: 0 0 12px; }
 .mcacts li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line, rgba(127,127,127,.2)); overflow-wrap: anywhere; }
+
+
+/* One Details fold on a test screen: the numbers and the housekeeping a
+   person did not come for (`detailsFold`). Read-only, so it is the closed
+   "technical part" ⚙ allows, never a section's controls. */
+.detailsfold { margin: 8px 0 0; }
+.detailsfold > summary { display: inline-flex; align-items: center; cursor: pointer; font-size: var(--fs-meta); color: var(--ink-3); }
+.detailsfold .detailsbody { margin-top: 4px; }
+
+/* Knowledge's upkeep: one Tools fold holding the three folds it used to
+   show as rows of their own, so the facts are the first thing on the page. */
+.ktools { margin-top: var(--sp-4); }
+.kfoldnest { padding-left: var(--sp-3); border-left: 2px solid var(--hairline); margin-bottom: var(--sp-3); }
+.kfoldnest .kfold:last-child { border-bottom: 0; }
+
+/* A ⚙ menu whose options are sentences is a list of wrapping radio rows,
+   not a closed select that cuts them off (`paintChoices` in app.js, #880).
+   The select stays in the page, hidden, as the one place the value lives.
+   Each row is at the touch floor and no taller than its text needs. */
+select.choicesrc { display: none; }
+.choicelist { display: flex; flex-direction: column; max-width: 520px; margin: 2px 0 var(--sp-2);
+  border: 1px solid var(--hairline); border-radius: var(--card-radius); background: var(--surface); }
+#setModal .setsecbody .choicelist label.choice, .choicelist .choice { display: flex; align-items: center;
+  gap: var(--sp-3); min-height: 44px; padding: 8px var(--sp-3); margin: 0; box-sizing: border-box;
+  cursor: pointer; font-size: var(--fs-body); line-height: var(--lh-body); font-weight: 400;
+  color: var(--ink); border-top: 1px solid var(--hairline); }
+.choicelist .choice:first-child, .choicelist .choicegroup + .choice { border-top: 0; }
+.choicelist .choice input { flex: none; margin: 0; width: 18px; height: 18px; }
+.choicelist .choicetext { min-width: 0; overflow-wrap: anywhere; }
+.choicelist .choicegroup { padding: 8px var(--sp-3) 0; font-size: var(--fs-meta);
+  line-height: var(--lh-meta); color: var(--ink-2); border-top: 1px solid var(--hairline); }
+.choicelist .choicegroup:first-child { border-top: 0; }
+.choicelist.off { opacity: 0.55; }
+.choicelist.off .choice { cursor: not-allowed; }

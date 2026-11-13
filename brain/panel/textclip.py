@@ -235,4 +235,12 @@ def shown(text, limit: int) -> str:
             f"{len(s):,} characters shown here — Claude has the full text.")
 
 
-__all__ = ["ELLIPSIS", "NOTE_FROM", "clip", "finished", "shorten", "shown"]
+def said(exc: BaseException) -> str:
+    """An exception as words for an error line: its own text, or its type's
+    name when it has none. A timeout's text is empty, and "could not be
+    captured: " with nothing after the colon told the owner nothing (#890).
+    ``f"{exc or …}"`` is not this: an exception is always truthy."""
+    return str(exc) or type(exc).__name__
+
+
+__all__ = ["ELLIPSIS", "NOTE_FROM", "clip", "finished", "said", "shorten", "shown"]

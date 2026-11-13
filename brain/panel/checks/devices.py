@@ -1711,14 +1711,21 @@ def zha_unseen(snap: dict, now: float) -> list[dict]:
         if network.zigbee_quiet(dev, now) != "dropped":
             continue
         age = age_days(dev.get("last_seen"), now) or 0.0
-        rows.append((age, network.zigbee_name(dev, reg, house)))
+        kind = "zigbee_mains" if network._zha_mains(dev) else "zigbee"
+        rows.append((age, network.zigbee_name(dev, reg, house), kind))
     if not rows:
         return []
     rows.sort(reverse=True)
-    longest, first = rows[0]
+    longest, first = rows[0][:2]
+    by_kind: dict[str, list[str]] = {}
+    for _age, name, kind in rows:
+        by_kind.setdefault(kind, []).append(name)
+    # To Do's words for it, from the devices and the job, never cut out of
+    # the fix below (`network.todo_words`, #879).
+    todo_text, todo_line = network.todo_words(list(by_kind), by_kind)
     return [{
         "text": "Zigbee devices have stopped checking in",
-        "detail": counted_names([n for _, n in rows])
+        "detail": counted_names([r[1] for r in rows])
                   + f". The quietest is {first}, last seen "
                     f"{when(max(0.0, now - longest * 86400))} "
                     f"({numfmt.count(int(longest), 'day')} ago).",
@@ -1726,6 +1733,8 @@ def zha_unseen(snap: dict, now: float) -> list[dict]:
                "down or dropped off the mesh — press its button to wake "
                "it. If it does not come back, re-pair it near the "
                "coordinator, then move it back.",
+        "todo_text": todo_text,
+        "todo_line": todo_line,
         "severity": "warning",
         "fixable": False,
         "entity_id": "",

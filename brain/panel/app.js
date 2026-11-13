@@ -914,52 +914,31 @@ function limitsNote(u) {
   }
 }
 
-// A run id, as the name of the thing that spent the tokens.
-//
-// The card usually still exists, so its own title is the best answer; a
-// deleted one falls back to the id it was recorded under rather than
-// disappearing from the list, because a row that vanishes takes its tokens
-// off a total that did not shrink.
-function spendLabel(id) {
-  if (!id) return "Everything else";
-  if (id === "onboarding") return "First-run setup";
-  if (id.startsWith("fix-")) return "A plan for a finding";
-  const insight = insightFor(id);
-  if (insight && insight.title) return insight.title;
-  const cat = (state.status && state.status.categories || []).find((c) => c.id === id);
-  if (cat && cat.title) return cat.title;
-  return id;
-}
-
 // Where the session went — the half of "you are at 41%" that the pill has
 // never been able to answer.
 //
-// The ledger has recorded a card id per run since the budget existed and
-// nothing ever read it back, so the only way to attribute a jump was to
-// remember what you had pressed. Deliberately scoped: these are brAIn's own
-// runs and the note says so, because when the figure above is the account's
-// (which covers the terminal, the chat and voice too) a breakdown read as
-// exhaustive is how you conclude a terminal session is free.
+// Grouped under the household's names by the server (`usage_store.
+// spend_group`, one table), each with its share of what the list adds up to:
+// never a run's id, never a token count. Deliberately scoped, and the note
+// says what is NOT in it: chats in Ask and the terminal are never booked
+// into this ledger, so a list read as exhaustive is how somebody concludes a
+// long chat was free.
 function spendRows(u) {
   const rows = u && u.breakdown;
   if (!rows || !rows.length) return "";
-  const out = [`<div class="psub">What brAIn spent, this session</div>`];
+  const out = [`<div class="psub">What brAIn's own work used, this session</div>`];
   rows.forEach((r) => {
-    const runs = r.runs > 1 ? `${r.runs} runs` : "1 run";
-    out.push(`<div class="prow"><span class="pname">`
-      + `${esc(r.rest ? "Everything else" : spendLabel(r.id))}`
-      + `<span class="pwhen">${esc(runs)}</span></span>`
-      + `<span class="pval">${esc(fmtTokens(r.tokens))}</span></div>`);
+    const share = Number(r.share) || 0;
+    out.push(`<div class="prow"><span class="pname">${esc(r.label || "Other brAIn work")}</span>`
+      + `<span class="pval">${share < 1 ? "under 1%" : `${share}%`}</span></div>`);
   });
   out.push(`<p class="pnote">`
+    + `Shares of brAIn's own work only. Your chats in Ask and the terminal are not in this list`
     + (u.source === "account"
-      ? `Insight, fix and setup runs only — the percentage above is your whole `
-        + `Anthropic account, so the terminal, the chat and voice are in that `
-        + `number and not in this list.`
-      : `Insight, fix and setup runs in the last 5 hours, against a rough `
-        + `<b>${esc(u.plan_label || "plan")}</b> allowance — which is what the `
-        + `percentage above is measured from while your account's own usage `
-        + `is unavailable.`)
+      ? `; they are in the percentage above, which is your whole Anthropic account.`
+      : `. The percentage above is brAIn's own work in the last 5 hours against a rough `
+        + `<b>${esc(u.plan_label || "plan")}</b> allowance, while your account's own `
+        + `usage is unavailable.`)
     + `</p>`);
   return out.join("");
 }
@@ -3192,6 +3171,53 @@ const OPTION_FIELDS = {
   setKeepDays: "history_keep_days",
 };
 
+// A closed <select> shows one line and cuts a longer option off with an
+// ellipsis on a phone, and nothing makes it wrap (#880). The two ⚙ menus
+// whose options are sentences (the model with its hint, how hard brAIn
+// thinks) are drawn as wrapping radio rows instead — the card menus' short
+// options fit a phone's select, and as rows they cost the section a screen;
+// the <select> stays, hidden, as the one place the value, the disabled state
+// and the `change` live, so every handler bound to it is unchanged.
+function paintChoices(id) {
+  const sel = $("#" + id);
+  if (!sel) return;
+  sel.classList.add("choicesrc");
+  let list = sel.nextElementSibling;
+  if (!list || !list.classList.contains("choicelist")) {
+    list = el("div", "choicelist");
+    list.setAttribute("role", "radiogroup");
+    sel.after(list);
+  }
+  const lab = document.querySelector(`label[for="${id}"]`);
+  if (lab) list.setAttribute("aria-label", lab.textContent.trim());
+  list.textContent = "";
+  list.classList.toggle("off", sel.disabled);
+  const add = (opt) => {
+    const row = el("label", "choice");
+    const input = el("input");
+    input.type = "radio";
+    input.name = "choice-" + id;
+    input.checked = opt.value === sel.value;
+    input.disabled = sel.disabled;
+    input.addEventListener("change", () => {
+      if (!input.checked) return;
+      sel.value = opt.value;
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+      paintChoices(id);
+    });
+    row.appendChild(input);
+    row.appendChild(el("span", "choicetext", opt.textContent));
+    list.appendChild(row);
+  };
+  [...sel.children].forEach((c) => {
+    if (c.tagName === "OPTGROUP") {
+      list.appendChild(el("div", "choicegroup", c.label));
+      [...c.children].forEach(add);
+    } else add(c);
+  });
+}
+const CHOICE_SELECTS = ["setModel", "setThinking"];
+
 // sentinel option value; no real model id can collide with it
 const CUSTOM_MODEL = "__custom__";
 
@@ -3247,7 +3273,7 @@ function syncThinking(model) {
   const sel = $("#setThinking");
   const note = $("#setThinkingNote");
   const fixed = Boolean(model) && model !== CUSTOM_MODEL;
-  if (sel) sel.disabled = fixed;
+  if (sel) { sel.disabled = fixed; paintChoices("setThinking"); }
   if (note) {
     note.textContent = fixed
       ? "Not used while a model is chosen above: every run uses that model. "
@@ -3289,6 +3315,7 @@ function renderSettingsForm(data) {
     $("#" + id).value = val == null ? "" : String(val);
   });
   renderModelField(data);
+  CHOICE_SELECTS.forEach(paintChoices);
   renderNotifyPolicy(data.settings || {});
   renderSetSummaries(data);
   $("#setSyncNote").textContent = data.options_synced
@@ -3841,6 +3868,25 @@ function faultValue(r) {
     + techDetail(r.technical);
 }
 
+// When a result was made, in the words a person says, and whether it is old
+// enough that it should be run again ("Checked 2 hours ago." / "Checked 5
+// days ago, so it may be out of date."). `staleDays` is how old is old.
+function checkedWords(stamp, staleDays) {
+  if (!stamp) return "Not checked yet.";
+  const when = timeAgo(new Date(stamp * 1000).toISOString());
+  const days = (Date.now() / 1000 - stamp) / 86400;
+  return days >= staleDays
+    ? `Checked ${when}, so it may be out of date.` : `Checked ${when}.`;
+}
+
+// Technical values behind one closed fold, the form ⚙ allows (read-only text,
+// no control inside; see `techDetail`).
+function detailsFold(innerHtml, label) {
+  if (!innerHtml) return "";
+  return `<details class="techdetails detailsfold"><summary>${esc(label || "Details")}</summary>`
+    + `<div class="detailsbody">${innerHtml}</div></details>`;
+}
+
 function techDetail(text) {
   if (!text) return "";
   return `<details class="techdetails"><summary>Technical detail</summary>`
@@ -3853,18 +3899,37 @@ function renderDiagnostics(d) {
   const c = d.checks || {};
   const ok = (j.by_outcome || {}).ok || 0;
   const failures = j.failures || [];
-  const rows = faultRows(d);
+  const faults = (d && d.faults) || [];
+  // The first row says how many; the lead sentence below says it already.
+  const rows = faults.length ? faultRows(d).slice(1) : [];
+  const healthOk = !((d.health || {}).state && d.health.state !== "ok");
+  // The screen opens with one sentence: does everything work, and when was
+  // that looked at. Everything under it is the evidence, in one fold.
+  const lead = faults.length || !healthOk
+    ? `Something needs a look${faults.length ? `: ${faults.length} thing${faults.length > 1 ? "s" : ""} below` : ""}. `
+    : "Everything works. ";
+  // When the checks behind the verdict last ran (`checks.finished_at`), not
+  // when this page was asked for: the payload's own clock is always "now".
+  const ranAt = (d.checks || {}).finished_at;
+  const when = ranAt ? checkedWords(ranAt, 1).replace(/^Checked/, "The house checks last ran")
+    : "No house check has finished a pass yet.";
+  const leadWords = !ranAt && !faults.length && healthOk
+    ? "Nothing is reported wrong. " : lead;
+  const leadHtml = `<p class="testssum${faults.length || !healthOk ? " bad" : ""}">`
+    + esc(leadWords + when) + `</p>`;
   // The verdict first, because it is the one line somebody who is not
   // debugging should have to read. Everything below it is the evidence.
   const h = d.health || {};
-  rows.push(diagRow("brAIn", esc(h.reason || h.state || "unknown"),
-    h.state && h.state !== "ok"));
+  if (!healthOk) {
+    rows.push(diagRow("brAIn", esc(h.reason || h.state || "unknown"), true));
+  }
   if (h.fix) rows.push(diagRow("What to do", esc(h.fix), true));
   if ((h.problems || []).length > 1) {
     const more = h.problems.slice(1, 5).map(
       (p) => `<li>${esc(p.what)} &mdash; ${esc(p.fix)}</li>`);
     rows.push(diagRow("Also", `<ul>${more.join("")}</ul>`, true));
   }
+  const upTop = rows.length;
   rows.push(diagRow("Add-on version",
     esc((d.versions || {}).addon || "unknown")));
   // `claude --version` answers "2.1.290 (Claude Code)", which under a row
@@ -4145,7 +4210,8 @@ function renderDiagnostics(d) {
       + (f.error ? ` — ${esc(String(f.error).slice(0, 160))}` : "") + "</li>");
     rows.push(diagRow("Recent failures", `<ul>${items.join("")}</ul>`, true));
   }
-  $("#diagBody").innerHTML = rows.join("");
+  $("#diagBody").innerHTML = leadHtml + rows.slice(0, upTop).join("")
+    + detailsFold(rows.slice(upTop).join(""), "Details");
 }
 
 async function loadDiagnostics() {
@@ -4755,6 +4821,7 @@ function paintDevloop(data) {
         + (notes[st.name] ? `<div class="hint tight">${esc(notes[st.name])}</div>` : "")
         + `</div>`;
     }).join("");
+  $("#devWalks").innerHTML = (data.walks || []).map(devWalkRow).join("");
   const looks = data.looks || {};
   // Where the last request went: each report it became, its issue, and
   // what the cloud said when it closed it. "Sent" alone could not tell a
@@ -4771,6 +4838,60 @@ function paintDevloop(data) {
     $("#devCapRuns").value = s.max_runs_per_day ?? 4;
   }
 }
+
+// One app the Walkthrough may look at (`_devloop_walk_rows`): its switch,
+// what brAIn can open of it, when it was last looked at and what came of
+// that, and Look now. Autopilot does not hold these switches: they are the
+// owner's, because a look at an app nobody uses is a run spent on nothing.
+// An app that is not installed says so and can be neither switched on nor
+// looked at.
+const devCap = (s) => String(s || "").replace(/^./, (c) => c.toUpperCase());
+
+function devWalkRow(w) {
+  const about = !w.installed ? (w.why === "not installed" ? "Not installed" : devCap(w.why || "Not here"))
+    : w.key === "morph" ? "Every card and room of the dashboard"
+    : w.screens ? `${w.screens} screen${w.screens === 1 ? "" : "s"} brAIn can open`
+    : "No screen brAIn can open: it reads what the app reports instead";
+  let when = "Not looked at yet";
+  if (w.looked_at) {
+    const ago = timeAgo(new Date(w.looked_at * 1000).toISOString());
+    when = w.error ? `Tried ${ago}: ${w.error}`
+      : `Looked ${ago}${w.looked_version ? " on " + w.looked_version : ""}: `
+        + (w.rows ? `${w.rows} report${w.rows === 1 ? "" : "s"}` : "nothing to report");
+  }
+  const off = w.installed ? "" : " disabled";
+  return `<div class="setrow top devstream"><label class="check bigcheck">`
+    + `<input class="tog" type="checkbox" data-dev-walk="${esc(w.key)}"`
+    + `${w.on ? " checked" : ""}${off}><span><b>${esc(w.name)}</b>`
+    + `<span class="subtext">${esc(about)}</span></span></label>`
+    + `<div class="devstreamfoot"><span class="devstreamwhen">${esc(when)}</span>`
+    + `<span class="devwalkver">${esc(w.installed && w.version ? "Runs " + w.version : "")}</span>`
+    + `<button class="btn tiny" data-dev-walk-now="${esc(w.key)}"${off}`
+    + ` aria-label="Look at ${esc(w.name)} now">Look now</button></div></div>`;
+}
+
+$("#devWalks").addEventListener("change", (ev) => {
+  const box = ev.target.closest("[data-dev-walk]");
+  if (!box) return;
+  devloopCall("api/devloop", { method: "PUT", body: JSON.stringify(
+    { walks: { [box.getAttribute("data-dev-walk")]: box.checked } }) })
+    .then((out) => { if (!out) box.checked = !box.checked; });
+});
+$("#devWalks").addEventListener("click", async (ev) => {
+  const now = ev.target.closest("[data-dev-walk-now]");
+  if (!now) return;
+  const key = now.getAttribute("data-dev-walk-now");
+  // A look is a Claude run and takes minutes: the button says so while it
+  // runs, and the row says what came of it when the list is painted again.
+  now.disabled = true;
+  now.textContent = "Looking…";
+  const out = await devloopCall("api/devloop/walk", { method: "POST",
+    body: JSON.stringify({ app: key }) });
+  if (!out) { now.disabled = false; now.textContent = "Look now"; return; }
+  const r = out.walked || {};
+  toast(r.error || r.skipped ? devCap(r.error || r.skipped)
+    : r.rows ? `${r.rows} report${r.rows === 1 ? "" : "s"} filed` : "Nothing to report");
+});
 
 // Whether the cloud's fixes held on this house, as the server counted them
 // (`upstream.efficacy`): the share still silent seven days after install,
@@ -5085,11 +5206,24 @@ function deepTime(stamp) {
   return new Date(stamp * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+// What each test is called to a person; the stage's own title is its
+// engineering name ("Claude, no tools", "Analyst tools").
+const DEEP_TITLES = {
+  snapshot_claude: "Asking Claude a plain question",
+  analyst_tools: "Reading the house",
+  chat: "The chat in Ask",
+  automation_task: "Tasks from automations",
+  assist: "Voice answers",
+  memory: "Remembering things",
+  findings_undo: "Ending a problem, and taking it back",
+  fixer_dry: "Making a change, and putting it back",
+};
+
 function deepRow(state, word, title, reason, detail, time) {
   return `<div class="testrow ${state}"><span class="testword">${esc(word)}</span>`
     + `<div class="testmain"><div class="testtitle">${esc(title)}</div>`
     + (reason ? `<div class="testreason">${esc(reason)}</div>` : "")
-    + (detail ? `<div class="hint tight">${esc(detail)}</div>` : "")
+    + (detail ? detailsFold(`<div class="hint tight">${esc(detail)}</div>`) : "")
     + `</div>`
     + (time ? `<span class="testtime">${esc(time)}</span>` : "")
     + `</div>`;
@@ -5114,7 +5248,7 @@ function renderDeep(d) {
   const rows = stages.map((s) => deepRow(
     s.state || "",
     DEEP_WORD[s.state] || "—",
-    s.title || s.name,
+    DEEP_TITLES[s.name] || s.title || s.name,
     s.sentence || "",
     s.detail || "",
     deepTime(s.at || (d.running ? 0 : last.finished_at))));
@@ -5124,25 +5258,39 @@ function renderDeep(d) {
     // that is stuck on whatever it is doing.
     (d.stage_catalog || []).slice(stages.length).forEach((s, i) =>
       rows.push(deepRow("waiting", i === 0 ? "Running" : "Waiting",
-                        s.title, s.proves, "", "")));
+                        DEEP_TITLES[s.name] || s.title, s.proves, "", "")));
   }
-  body.innerHTML = rows.join("");
+  let deepCounts = "";
   const sum = $("#deepSummary");
   if (sum) {
     if (stages.length && (d.running || last.finished_at)) {
       const c = deepCountLine(stages);
-      sum.textContent = d.running ? `${c.line} so far` : c.line;
+      const failedNames = stages.filter((x) => x.state === "failed")
+        .map((x) => DEEP_TITLES[x.name] || x.title || x.name);
+      const skipped = stages.filter((x) => x.state === "skipped").length;
+      // One plain sentence, then when it was looked at; the count is for
+      // whoever wants the numbers, and sits in the fold under the rows.
+      let said;
+      if (d.running) said = "Running the tests…";
+      else if (failedNames.length) said = `Something does not work (${failedNames.join(", ")}).`;
+      else if (skipped) said = `Everything that could be tried works; ${skipped} part${skipped > 1 ? "s were" : " was"} left out.`;
+      else said = "Everything works.";
+      sum.textContent = d.running ? said : `${said} ${checkedWords(last.finished_at, 3)}`;
       sum.classList.toggle("bad", c.failed > 0);
       sum.hidden = false;
+      deepCounts = c.line;
     } else {
       sum.hidden = true;
     }
   }
+  body.innerHTML = rows.join("")
+    + (deepCounts ? detailsFold(`<p class="hint tight">${esc(deepCounts)}</p>`) : "");
+  // The summary already says when it last ran; this line is for a run in
+  // flight and for an install that has never run one.
   $("#deepLast").textContent = d.running
-    ? "Running — this takes a few minutes."
-    : (last.finished_at
-      ? `Last run ${timeAgo(new Date(last.finished_at * 1000).toISOString())}.`
-      : "Not run on this install yet.");
+    ? "This takes a few minutes."
+    : (last.finished_at ? "" : "Not run on this install yet.");
+  $("#deepLast").hidden = !$("#deepLast").textContent;
   $("#deepRun").disabled = !!d.running;
 }
 
@@ -5196,22 +5344,27 @@ const REHEARSAL_WORDS = {
 function renderRehearsal(d) {
   const last = d.last || {};
   const body = $("#rehearseBody");
+  const sum = $("#rehearseSum");
   const c = last.checks || {};
   const a = last.analyst || {};
   const clean = last.cleanup || {};
-  const rows = [];
+  const rows = [];   // what a person reads: each planted thing, and any problem
+  const tech = [];   // the numbers and the housekeeping, behind the fold
   if (last.finished_at) {
-    rows.push(diagRow("Checks",
-      `${c.found || 0} of ${c.planted || 0} planted defects found`
+    const planted = c.planted || 0;
+    const missed = planted - (c.found || 0);
+    const leftBehind = last.cleared && last.cleared.at ? !last.cleared.ok : !clean.ok;
+    tech.push(diagRow("Checks",
+      `${c.found || 0} of ${planted} planted defects found`
       + (c.extra ? `, ${c.extra} reported that were not planted` : ""),
-      (c.found || 0) < (c.planted || 0) || !!c.extra));
+      missed > 0 || !!c.extra));
     // Each planted thing by what it is, and the verdict in words: the
     // planted ids and the check ids are the record's, not the reader's.
     (c.rows || []).forEach((r) => rows.push(diagRow(
       r.name || "A planted test",
       esc(REHEARSAL_WORDS[r.verdict] || r.verdict || ""),
-      r.verdict === "missed" || r.verdict === "false positive", true)));
-    rows.push(diagRow("Analyst", a.ran
+      r.verdict === "missed" || r.verdict === "false positive")));
+    tech.push(diagRow("Analyst", a.ran
       ? `found ${a.found || 0} of ${a.planted || 0}`
         + ` — recall ${Math.round((a.recall || 0) * 100)}%,`
         + ` precision ${Math.round((a.precision || 0) * 100)}%`
@@ -5232,9 +5385,11 @@ function renderRehearsal(d) {
     // a previous rehearsal failed to clean up.
     const swept = last.swept || {};
     if (swept.sentence) {
-      rows.push(diagRow("Before starting", esc(swept.sentence), !swept.ran));
+      tech.push(diagRow("Before starting", esc(swept.sentence), !swept.ran));
     }
-    rows.push(diagRow("Cleanup", esc(clean.sentence || "?"), !clean.ok));
+    // A cleanup that failed is for the reader, in the open; one that worked
+    // is housekeeping.
+    (leftBehind ? rows : tech).push(diagRow("Cleanup", esc(clean.sentence || "?"), !clean.ok));
     // A sweep that ran afterwards is the newer claim about the house, and
     // it goes UNDER the cleanup rather than over it: the run's own failure
     // is the evidence a cleanup failed, and deleting it would leave the
@@ -5244,25 +5399,33 @@ function renderRehearsal(d) {
       const took = (cleared.removed || []).length
         ? ` <span class="hint">took out ${esc((cleared.removed || []).join(", "))}</span>`
         : "";
-      rows.push(diagRow("Cleared up since",
+      (cleared.ok ? tech : rows).push(diagRow("Cleared up since",
         (cleared.ok ? "nothing the rehearsal planted is left"
           : "could not finish — " + esc((cleared.left || []).join(", ") || "?"))
         + took,
         !cleared.ok));
     }
     if (last.error) rows.push(diagRow("Error", esc(last.error), true));
+    // One plain sentence first: did the checks do their job, and when.
+    const bad = missed > 0 || !!c.extra || leftBehind || !!last.error;
+    const said = last.error ? "The rehearsal could not finish."
+      : missed > 0 ? `The checks missed ${missed} of ${planted} problems that were planted.`
+      : c.extra ? "The checks reported something that was not there."
+      : leftBehind ? "The checks caught every planted problem, but something it planted is still in the house."
+      : "The checks caught every problem that was planted, and it cleaned up after itself.";
+    sum.textContent = `${said} ${checkedWords(last.finished_at, 30)}`;
+    sum.classList.toggle("bad", bad);
   }
-  body.innerHTML = rows.join("");
-  body.hidden = !rows.length;
+  sum.hidden = !last.finished_at;
+  body.innerHTML = rows.join("") + detailsFold(tech.join(""), "Details");
+  body.hidden = !rows.length && !tech.length;
   const step = (d.progress || {}).step;
   const busy = !!(d.running || d.sweeping);
   $("#rehearseLast").textContent = d.sweeping
     ? "Clearing up…"
     : (d.running
       ? `Rehearsing — ${step || "starting"}…`
-      : (last.finished_at
-        ? `Last rehearsal ${timeAgo(new Date(last.finished_at * 1000).toISOString())}`
-        : "Not rehearsed on this install yet."));
+      : (last.finished_at ? "" : "Not rehearsed on this install yet."));
   $("#rehearseRun").disabled = busy;
   // The button exists only while there is something for it to take out —
   // `leftovers` is the server's derivation, so this and the fault row in
@@ -5735,7 +5898,8 @@ function askAboutReport(id, catInfo, insight, btn) {
     insight && insight.summary ? String(insight.summary) : ""]
     .filter(Boolean).join("\n").slice(0, ASK_TEXT_MAX);
   askAbout(askPrompt(
-    { where: "Insights › Reports", text, ids: [`insight=${id}`] }, ""), btn);
+    { where: "Insights › Reports", text, ids: [`insight=${id}`] }, ""), btn,
+  `About ${name}`);
 }
 
 // Ask brAIn about something: ONE rule for every ask-about (a report's Ask,
@@ -5747,7 +5911,10 @@ function askAboutReport(id, catInfo, insight, btn) {
 // status refresh, which put people on an empty "New chat" while their
 // question ran in a hidden terminal. The button is held while the POST is
 // in flight, so a double tap is one conversation.
-async function askAbout(prompt, btn) {
+// `title` names the conversation in the chat list as it opens (the
+// person's own words, or what was asked about): the prompt is for the
+// model and never a title (#882).
+async function askAbout(prompt, btn, title) {
   if (btn) {
     if (btn.disabled) return;
     btn.disabled = true;
@@ -5757,7 +5924,7 @@ async function askAbout(prompt, btn) {
     if (chatState.session === "classic") showTerminalFrame();
     else askShow("chat");
     const out = await chatSwitching(() => api("api/ask", {
-      method: "POST", body: JSON.stringify({ prompt, ...chatWho() }) }));
+      method: "POST", body: JSON.stringify({ prompt, title: title || "", ...chatWho() }) }));
     if (out && out.face === "terminal") {
       if (chatState.session !== "classic") {
         // The server's saved face is the terminal and this page had not
@@ -8289,7 +8456,11 @@ function makeTodo(item) {
   const row = el("div", "todorow");
   row.dataset.todoId = item.id;
   const text = el("div", "todotext");
-  text.appendChild(el("span", "todotitle", prettyText(item.text)));
+  // One headline and one short line, worded by the server
+  // (`findings_store.todo_item_parts`): the item's fix under its text said
+  // the same advice twice.
+  text.appendChild(el("span", "todotitle", prettyText(item.headline || item.text)));
+  if (item.line) text.appendChild(el("span", "todofix", prettyText(item.line)));
   const meta = [item.origin === "finding" ? (sourceName(item) || "From a finding") : "Added by you"];
   if (item.added_at) meta.push("added " + timeAgo(new Date(item.added_at * 1000).toISOString()));
   // The house reported this chore's problem again while it waited, and the
@@ -8298,7 +8469,6 @@ function makeTodo(item) {
   const metaLine = el("span", "item-state", meta.join(" · "));
   if (item.seen_again_text) metaLine.title = "Last reported as: " + prettyText(item.seen_again_text);
   text.appendChild(metaLine);
-  if (item.fix) text.appendChild(el("span", "todofix", prettyText(item.fix)));
   row.appendChild(text);
   const actions = el("div", "todoactions");
   const btns = [];
@@ -9203,7 +9373,7 @@ function paintFacts() {
   if (!rows.length) {
     host.appendChild(el("div", "kempty", filtered
       ? "No facts match."
-      : "Tell brAIn something above — a habit, why a device is set up the "
+      : "Tell brAIn something below — a habit, why a device is set up the "
         + "way it is, who uses which room. It remembers that, and what it "
         + "learns watching the house."));
     if (more) more.classList.add("hidden");
@@ -12690,7 +12860,11 @@ function syncBarHeight() {
 (function trackBarHeight() {
   const bar = document.querySelector(".topbar");
   if (!bar || typeof ResizeObserver === "undefined") return;
-  new ResizeObserver(() => { syncBarHeight(); shellBars(); }).observe(bar);
+  // The border box: the shell's top inset is the bar's padding, so a
+  // change of it (`--shell-inset` arriving after the first measure) leaves
+  // the content box as it was, and a content-box observer kept the old
+  // height — Ask's message box sat that much above the foot (#876).
+  new ResizeObserver(() => { syncBarHeight(); shellBars(); }).observe(bar, { box: "border-box" });
   const tabs = document.querySelector(".viewtabs");
   if (tabs) new ResizeObserver(shellBars).observe(tabs);
 })();
@@ -13025,6 +13199,11 @@ if (SHELL) {
       if (typeof d.state.inset === "number") {
         document.documentElement.style.setProperty("--shell-inset", Math.max(0, Math.round(d.state.inset)) + "px");
       }
+      // And the bottom one, the home indicator's strip under Ask's message
+      // boxes (`--shell-inset-bottom`, style.css's `--safe-bottom`, #876).
+      if (typeof d.state.insetBottom === "number") {
+        document.documentElement.style.setProperty("--shell-inset-bottom", Math.max(0, Math.round(d.state.insetBottom)) + "px");
+      }
       shellState.morph = !!d.state.morph;
       shellState.narrow = !!d.state.narrow;
       shellState.home = d.state.home || {};
@@ -13160,9 +13339,13 @@ function speakAll(root) {
   if (!root) return;
   const walk = (node) => {
     if (node.nodeType === 3) { speakNode(node); return; }
-    if (node.nodeType !== 1 || SPEAK_SKIP.has(node.tagName) || node.isContentEditable) return;
-    if (node.closest && node.closest(".wordmark, .brandlink")) return;
+    if (node.nodeType !== 1) return;
+    if (node.closest && node.closest(".wordmark, .brandlink, [data-product]")) return;
+    // A box's placeholder, label and tooltip are the page's words even though
+    // what is typed in it (its value and its text) never is: the attributes
+    // are spoken for every element, the children only where they are page text.
     for (const a of SPEAK_ATTRS) speakAttr(node, a);
+    if (SPEAK_SKIP.has(node.tagName) || node.isContentEditable) return;
     for (const c of node.childNodes) walk(c);
   };
   walk(root);
@@ -13178,7 +13361,7 @@ function speakAll(root) {
         const p = n.parentElement;
         if (p && !SPEAK_SKIP.has(p.tagName) && !p.closest("code, pre, textarea, .brandlink")) speakNode(n);
       } else if (rec.type === "attributes") {
-        if (!rec.target.closest(".wordmark")) speakAttr(rec.target, rec.attributeName);
+        if (!rec.target.closest(".wordmark, [data-product]")) speakAttr(rec.target, rec.attributeName);
       } else {
         rec.addedNodes.forEach((n) => {
           const p = n.parentElement;
@@ -17606,10 +17789,9 @@ function paintContextMap() {
   const meta = $("#kDocMeta");
   if (d && d.memory && meta) {
     const m = d.memory;
-    const kb = `${(m.document_bytes / 1024).toFixed(1)} KB`;
-    meta.textContent = m.document_bytes
-      ? `${kb} · ${m.waiting} waiting to be filed`
-      : `Empty · ${m.waiting} waiting to be filed`;
+    meta.textContent = m.waiting
+      ? `${m.waiting} fact${m.waiting === 1 ? "" : "s"} waiting to be written in`
+      : (m.document_bytes ? "Up to date" : "Nothing yet");
   }
   const box = $("#kCtxRun");
   const kinds = $("#kCtxKinds");
@@ -17700,6 +17882,9 @@ function openKnowledgeFold(id, run) {
   const fold = document.getElementById(id);
   const name = fold && fold.querySelector(".kfoldname");
   if (!name) return;
+  // The upkeep folds sit inside Tools: it opens first so the one asked for shows.
+  const tools = fold.closest("#kToolsBody");
+  if (tools && tools.hidden) document.querySelector("#kToolsFold .kfoldname").click();
   if (name.getAttribute("aria-expanded") !== "true") name.click();
   if (id === "kCtxFold") paintContextMap();
   fold.scrollIntoView({ block: "start" });
@@ -18217,10 +18402,11 @@ function openAskAbout(el, x, y) {
   go.textContent = "Ask";
   const send = () => {
     if (go.disabled) return;
-    const prompt = askPrompt(ctx, input.value.trim());
+    const words = input.value.trim();
+    const prompt = askPrompt(ctx, words);
     go.disabled = true;
     closeAskAbout();
-    askAbout(prompt);
+    askAbout(prompt, null, words || `About ${snippet.textContent}`);
   };
   go.addEventListener("click", send);
   cancel.addEventListener("click", closeAskAbout);
@@ -18445,8 +18631,86 @@ function renderPersonality() {
     li.appendChild(el("span", "persline", g.text || ""));
     list.appendChild(li);
   });
+  renderLearned();
   loadPresence();
 }
+
+// ---- ⚙ › Personality › What it has learned about being here ---------------
+//
+// The one paragraph the assistant keeps itself (`personality.py` `learned`,
+// /api/personality/learned): the nightly reflection revises it whole, and the
+// household may step it back (Undo), correct it (Edit, saved as theirs) or
+// empty it (Clear). The notes under it are the dated trail of the same thing,
+// so the paragraph is shown once, here.
+function learnedWhen(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0)) / 86400000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
+}
+
+function setLearnedEditing(on) {
+  persState.learnedEditing = !!on;
+  const l = (persState.data || {}).learned || {};
+  $("#learnedEdit").hidden = !on;
+  $("#learnedText").hidden = !!on;
+  $("#learnedEditBtn").hidden = !!on;
+  $("#learnedSave").hidden = !on;
+  $("#learnedCancel").hidden = !on;
+  $("#learnedUndo").hidden = !!on || !l.can_undo;
+  $("#learnedClear").hidden = !!on || !l.text;
+  if (on) $("#learnedEdit").focus();
+}
+
+function renderLearned() {
+  if (!$("#learnedBox")) return;
+  const d = persState.data || {};
+  const l = d.learned || {};
+  const name = (presState.data || {}).name || d.name || "brAIn";
+  $("#learnedHead").textContent = `What ${name} has learned about being here`;
+  const text = $("#learnedText");
+  text.textContent = l.text
+    || "Nothing yet. It writes this overnight, from how you talk with it and how you answer it.";
+  text.classList.toggle("none", !l.text);
+  $("#learnedEdit").value = l.text || "";
+  $("#learnedEdit").maxLength = (d.limits || {}).learned || 1200;
+  // When it last changed and whose words it is, then the night's result
+  // when last night's revision was refused: said, never dropped quietly.
+  const meta = [];
+  if (l.text && l.updated_at) {
+    meta.push(`${l.by === "household" ? "You corrected it" : "It wrote this"} ${learnedWhen(l.updated_at)}.`);
+  }
+  const result = (presState.data || {}).learned_result || "";
+  if (result && !/^Revised/.test(result)) meta.push(result);
+  $("#learnedMeta").textContent = meta.join(" ");
+  $("#learnedMeta").hidden = !meta.length;
+  $("#learnedEditBtn").textContent = l.text ? "Edit" : "Write it";
+  setLearnedEditing(false);
+}
+
+async function learnedSend(path, method, body, said) {
+  try {
+    persState.data = await api(path, { method, body: body ? JSON.stringify(body) : undefined });
+    renderLearned();
+    toast(said);
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+$("#learnedEditBtn").addEventListener("click", () => setLearnedEditing(true));
+$("#learnedCancel").addEventListener("click", () => renderLearned());
+$("#learnedSave").addEventListener("click", () => {
+  const text = $("#learnedEdit").value.trim();
+  if (!text) { toast("Write the paragraph, or use Clear."); return; }
+  learnedSend("api/personality/learned", "PUT", { text }, "Saved as yours.");
+});
+$("#learnedUndo").addEventListener("click", () => learnedSend(
+  "api/personality/learned/undo", "POST", {}, "Back to the version before."));
+$("#learnedClear").addEventListener("click", () => learnedSend(
+  "api/personality/learned", "DELETE", null, "Cleared. Undo brings it back."));
 
 // ---- ⚙ › Personality › How … is growing ------------------------------------
 //
@@ -18513,11 +18777,186 @@ function presCount(n, word) {
   return `${words[n] || n} ${word}${n === 1 ? "" : "s"}`;
 }
 
+// ---- ⚙ › Personality › Shape … ---------------------------------------------
+//
+// The assistant leads (presence.py `tuning`): ONE question at a time in its
+// own words, a few lines it really said for a verdict, and a conversation it
+// leads in Ask. Every answer lands in one list ("What you have told …"),
+// each removable, and the next reflection revises the learned paragraph
+// from them — tonight, or now with Take this in now. Never a list of
+// questions: answering shows the next one.
+const tuneState = { result: "", differently: "" };
+
+function tuneOwnRow(placeholder, aria, onSend) {
+  const row = el("div", "tuneown");
+  const input = el("input", "persname");
+  input.type = "text";
+  input.maxLength = ((presState.data || {}).tuning || {}).limits?.answer || 400;
+  input.placeholder = placeholder;
+  input.setAttribute("aria-label", aria);
+  input.autocomplete = "off";
+  const send = presButton("Send", aria, () => {
+    const text = input.value.trim();
+    if (text) onSend(text);
+    else input.focus();
+  });
+  input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); send.click(); } });
+  row.appendChild(input);
+  row.appendChild(send);
+  return row;
+}
+
+function tunePost(payload) {
+  tuneState.differently = "";
+  return presencePost(payload);
+}
+
+async function tuneTakeIn(btn) {
+  btn.disabled = true;
+  btn.textContent = "Taking it in…";
+  tuneState.result = "";
+  try {
+    const out = await api("api/presence/tuning/take-in", { method: "POST", body: "{}" });
+    tuneState.result = out.ok ? out.said : out.why;
+    if (out.personality) { persState.data = out.personality; renderLearned(); }
+    if (out.presence) presState.data = out.presence;
+  } catch (e) {
+    tuneState.result = e.message;
+  }
+  renderPresence();
+}
+
+function tuneTalkPrompt(name) {
+  const p = persState.data || {};
+  const t = (presState.data || {}).tuning || {};
+  const lines = [
+    "Lead this conversation: interview me about how you should be in this house. I will answer; you ask.",
+    "",
+    "How to run it:",
+    "- Your first message is your opening question, with no preamble.",
+    "- One question at a time, short. Ask about how you should BE (how long your messages are, your humour, "
+    + "how blunt, when to speak up, how to take a correction), never about a person, and never what the "
+    + "list below already answers.",
+    "- Where you can, offer two contrasting ways you could say the same real thing and ask which is closer. "
+    + "Use something you actually said lately when you have it.",
+    "- After five or six questions, or when I say enough, say back in a few lines what you will change.",
+    "- Then record each thing you learned, one call each, in the shell: "
+    + "brain tune \"<what you asked>\" \"<what I answered, in my words>\". "
+    + "Do not edit any file for this and do not use note_personality_change.",
+  ];
+  if ((p.learned || {}).text) lines.push("", "How you have learned to be here so far:", p.learned.text);
+  const told = (t.answers || []).slice(0, 8);
+  if (told.length) {
+    lines.push("", "What I have already told you:");
+    told.forEach((a) => lines.push(`- ${a.question} -> ${a.answer}`));
+  }
+  return lines.join("\n");
+}
+
+function renderTuning(d, name) {
+  const body = $("#tuneBody");
+  if (!body) return;
+  const t = d.tuning;
+  $("#tuneHead").textContent = `Shape ${name}`;
+  body.textContent = "";
+  $("#tuneOff").hidden = !!t;
+  if (!t) {
+    // One line, and nothing else: it asks nothing while it is switched off.
+    $("#tuneOff").textContent = "Off: it needs Personality and the Learning loop on in Features.";
+    return;
+  }
+  if (t.ack) body.appendChild(el("p", "tunesay", t.ack));
+  const q = t.question;
+  if (q) {
+    const box = el("div", "tuneq");
+    box.appendChild(el("p", "tuneqtext", q.text));
+    if (q.why) box.appendChild(el("p", "pressub", q.why));
+    if ((q.options || []).length) {
+      const chips = el("div", "tunechips");
+      q.options.forEach((o) => chips.appendChild(presButton(o, `Answer: ${o}`,
+        () => tunePost({ do: "tune_answer", id: q.id, answer: o }))));
+      box.appendChild(chips);
+    }
+    box.appendChild(tuneOwnRow((q.options || []).length ? "Or say it your way…" : "Say it your way…",
+      "Answer in your own words", (text) => tunePost({ do: "tune_answer", id: q.id, answer: text })));
+    const acts = el("div", "tuneacts");
+    acts.appendChild(presButton("Skip", "Skip this question",
+      () => tunePost({ do: "tune_skip", id: q.id })));
+    acts.appendChild(presButton("Don\u2019t ask this", "Do not ask this kind of question",
+      () => tunePost({ do: "tune_retire", id: q.id })));
+    box.appendChild(acts);
+    body.appendChild(box);
+  } else {
+    body.appendChild(el("p", "tunesay", "I have nothing to ask right now."));
+  }
+  const said = t.feedback || [];
+  if (said.length) {
+    body.appendChild(el("p", "preshead", "Things I said lately. Was that right?"));
+    said.forEach((r) => {
+      const meta = [r.label, r.name ? `to ${r.name}` : "", r.when].filter(Boolean).join(" · ");
+      const btns = [
+        presButton("More like this", `More like this: ${r.text}`,
+          () => tunePost({ do: "tune_feedback", key: r.key, verdict: "more" })),
+        presButton("Less like this", `Less like this: ${r.text}`,
+          () => tunePost({ do: "tune_feedback", key: r.key, verdict: "less" })),
+      ];
+      if (tuneState.differently !== r.key) {
+        btns.push(presButton("Say it differently", `Say it differently: ${r.text}`,
+          () => { tuneState.differently = r.key; renderPresence(); }));
+      }
+      const row = presRow(r.text, meta, btns);
+      row.classList.add("tunerow");
+      if (tuneState.differently === r.key) {
+        const own = tuneOwnRow("How should I have said it?", "How it should have been said",
+          (text) => tunePost({ do: "tune_feedback", key: r.key, verdict: "differently", text }));
+        row.appendChild(own);
+        setTimeout(() => own.querySelector("input").focus(), 0);
+      }
+      body.appendChild(row);
+    });
+  }
+  const talk = presButton("Talk it through", `Talk it through with ${name}`, (ev) => {
+    askAbout(tuneTalkPrompt(name), ev.currentTarget, "How brAIn should be in this house");
+  });
+  body.appendChild(presRow("Or we talk it through.",
+    "I ask, you answer, and I tell you what I will change.", [talk]));
+  const answers = t.answers || [];
+  if (t.pending || tuneState.result) {
+    const btns = t.pending ? [presButton("Take this in now", "Take these answers in now",
+      (ev) => tuneTakeIn(ev.currentTarget))] : [];
+    if (t.taking && btns.length) { btns[0].disabled = true; btns[0].textContent = "Taking it in…"; }
+    body.appendChild(presRow(
+      tuneState.result || (t.pending === 1
+        ? "One answer I have not taken in yet."
+        : `${t.pending} answers I have not taken in yet.`),
+      tuneState.result ? "" : "I do that overnight, or now if you would rather not wait.", btns));
+  }
+  if (answers.length) {
+    body.appendChild(el("p", "preshead", `What you have told ${name}`));
+    answers.forEach((a) => body.appendChild(presRow(a.answer, `${a.question} · ${a.when}`, [
+      presButton("Remove", `Remove: ${a.answer}`, () => tunePost({ do: "tune_remove", id: a.id })),
+    ])));
+  }
+}
+
+// ⚙'s Personality row: who it is, and that it has something to ask.
+function paintPersRow() {
+  const base = (persState.data || {}).summary;
+  if (!base) return;
+  const row = (presState.data || {}).row;
+  setSummary("setSumPersonality", row ? `${base} · ${row}` : base);
+}
+
 function renderPresence() {
   const d = presState.data || {};
   const p = persState.data || {};
   const name = d.name || p.name || "brAIn";
+  renderTuning(d, name);
+  paintPersRow();
   $("#presHead").textContent = `How ${name} is growing`;
+  // The paragraph's heading carries the name, and its line the night's
+  // result: both are this payload's.
+  if (!persState.learnedEditing) renderLearned();
   const b = d.budget || {};
   $("#presWhat").textContent = d.on
     ? `Once a night ${name} notes how it is doing and thinks of small ways to keep in touch. `
@@ -18637,6 +19076,7 @@ $("#persSave").addEventListener("click", async () => {
     renderPersonality();
     setSummary("setSumPersonality", persState.data.summary
       || (persState.data.set ? persState.data.name || "Set" : "None set"));
+    paintPersRow();
     toast("Saved. The next conversation speaks as it.");
   } catch (e) {
     toast(e.message);
@@ -18660,7 +19100,7 @@ $("#persAsk").addEventListener("click", () => {
     + "When we settle a change to how you speak or behave, record it with "
     + "note_personality_change in one sentence, and if the persona itself should "
     + "change, tell me what to put in ⚙ › Personality.");
-  askAbout(lines.join("\n"), $("#persAsk"));
+  askAbout(lines.join("\n"), $("#persAsk"), "brAIn's personality");
 });
 
 // ------------------------------------------------- ⚙ › Instructions
@@ -18791,7 +19231,7 @@ $("#instrAsk").addEventListener("click", () => {
   }
   lines.push("", "Read it, tell me what it makes brAIn do, and help me change it.");
   leaveSettings();
-  askAbout(lines.join("\n"), $("#instrAsk"));
+  askAbout(lines.join("\n"), $("#instrAsk"), `brAIn's instruction “${it.title}”`);
 });
 
 // -------------------------------------------------------- ⚙ › Features
@@ -18830,7 +19270,7 @@ function learnedWords(learned) {
       const by = Object.entries(r.by_source || {}).map(([k, n]) => `${n} ${k}`).join(", ");
       return `memory ${r.count}${by ? ` (${by})` : ""}`;
     }
-    if (r.key === "presence") return `presence ${r.count} (${r.growth || 0} about itself, ${r.notes || 0} about people)`;
+    if (r.key === "presence") return `presence ${r.count} (${(r.growth || 0) + (r.revisions || 0)} about itself, ${r.notes || 0} about people)`;
     if (r.key === "morph") return `Morph learning ${r.count} change${r.count === 1 ? "" : "s"} (${r.learned_md || 0} to LEARNED.md)`;
     return `${String(r.label || r.key).toLowerCase()} ${r.count}`;
   });

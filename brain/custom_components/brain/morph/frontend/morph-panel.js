@@ -41,7 +41,7 @@ import * as sal from './salience.js';
 import { morph } from './morph-dom.js';
 import { caseFace, todoFace, caseColor, placeCase } from './cases.js';
 import { Rail } from './rail.js';
-import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, cardPage, guardDefine, loadCard, cardUrl, cardFailure, isDashChange, ASK_CONTEXT, own, checkDoorClaims, unlockedLocks } from './util.js';
+import { speakHtml, esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, cardPage, guardDefine, loadCard, cardUrl, cardFailure, isDashChange, ASK_CONTEXT, own, checkDoorClaims, unlockedLocks } from './util.js';
 
 const HOLD_MS = 540;
 // The card types whose entities are `entity`/`entities`; a hosted Lovelace
@@ -3289,12 +3289,7 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
   // name, in exactly that spelling, is the household's name for it. Never
   // inside a box somebody types in (a textarea's text is what they save),
   // and `brain` in lower case is a path or a command and is left alone.
-  speak(html) {
-    const name = this.who();
-    if (!html || name === 'brAIn' || html.indexOf('brAIn') < 0) return html;
-    const safe = esc(name);
-    return html.split(/(<textarea[\s\S]*?<\/textarea>)/).map((part, i) => (i % 2 ? part : part.replace(/\bbrAIn\b/g, safe))).join('');
-  }
+  speak(html) { return speakHtml(html, this.who()); }
 
   // Ask brAIn's shell to show brAIn's own page: a view, or a Settings
   // section. Outside the shell (a test page) there is nothing to open.

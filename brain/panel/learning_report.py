@@ -130,6 +130,16 @@ def presence(since: int) -> dict:
         if isinstance(entry, dict) and entry.get("by") == SELF \
                 and _ts(entry.get("at")) >= since:
             growth += 1
+    # A revision of the paragraph it keeps about how to be here: the
+    # current version and the ones it replaced, each stamped when written.
+    learned = data.get("learned") if isinstance(data, dict) else None
+    learned = learned if isinstance(learned, dict) else {}
+    versions = [(learned.get("by"), learned.get("updated_at"))
+                if learned.get("text") else (None, None)]
+    versions += [(v.get("by"), v.get("at"))
+                 for v in learned.get("history") or [] if isinstance(v, dict)]
+    revisions = sum(1 for by, at in versions
+                    if by == SELF and _ts(at) >= since)
     notes = 0
     store = _json(PRESENCE_FILE)
     people = store.get("people") if isinstance(store, dict) else None
@@ -137,7 +147,8 @@ def presence(since: int) -> dict:
         for note in (rec.get("notes") if isinstance(rec, dict) else None) or []:
             if isinstance(note, dict) and _ts(note.get("at")) >= since:
                 notes += 1
-    return {"count": growth + notes, "growth": growth, "notes": notes}
+    return {"count": growth + notes + revisions, "growth": growth,
+            "notes": notes, "revisions": revisions}
 
 
 def morph(since: int) -> dict:

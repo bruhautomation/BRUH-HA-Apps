@@ -905,6 +905,8 @@ ANALYST_TOOLS = [
     f"{MCP}garden_harvests",
     # BRUH Cooking, the reading half: what the cooking appliances are doing.
     f"{MCP}cooking_status",
+    # BRUH Browser, the reading half: how an errand on the web went.
+    f"{MCP}browser_status",
 ]
 # The upgrade advisor's reading tools (`upgrades`, `server._advise_run`): the
 # device an update is for, its entities, what the house says about them,
@@ -975,6 +977,11 @@ ANALYST_DENIED = [
     # The cooking appliances: starting heats an oven or a water bath with
     # nobody there to have asked for it, and a stop ends somebody's dinner.
     f"{MCP}cooking_control",
+    # Errands on the web: each one spends the household's Claude plan in a
+    # browser signed in to its shops, and a purchase spends money. A person
+    # asks for one; an unattended card never does.
+    f"{MCP}browser_task", f"{MCP}browser_answer", f"{MCP}browser_stop",
+    f"{MCP}browser_purchase",
     # Filing a bug upstream sends text off the box: a person asks for it.
     f"{MCP}report_bug",
     # A timed action calls services on a timer: a person asks for one.

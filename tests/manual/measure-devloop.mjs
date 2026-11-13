@@ -66,6 +66,20 @@ const PAYLOAD = {
             what: 'archived fault', state: 'sent', seen: 1, archived: true,
             archived_why: 'you', last_seen: NOW - 9000 }],
   held: { limit: 10, today: 10, full: true, frees_at: NOW + 3 * 3600 },
+  // The apps the Walkthrough looks at: looked at with reports, with
+  // nothing to report, a failed try, never looked at, and not installed.
+  walks: [
+    { key: 'brain', name: 'brAIn', installed: true, version: '5.2.0', why: '', screens: 11,
+      on: true, looked_at: NOW - 7200, looked_version: '5.2.0', rows: 3, error: '' },
+    { key: 'morph', name: 'Morph', installed: true, version: '5.2.0', why: '', screens: 0,
+      on: true, looked_at: NOW - 90000, looked_version: '5.1.38', rows: 0, error: '' },
+    { key: 'gardenrx', name: 'GardenRX', installed: true, version: '1.4.2', why: '', screens: 9,
+      on: false, looked_at: NOW - 3600, looked_version: '', rows: 0, error: 'the run failed' },
+    { key: 'bruh-cooking', name: 'BRUH Cooking', installed: true, version: '0.3.1', why: '',
+      screens: 0, on: false, looked_at: 0, looked_version: '', rows: 0, error: '' },
+    { key: 'bright', name: 'BRight', installed: false, version: '', why: 'not installed',
+      screens: 0, on: false, looked_at: 0, looked_version: '', rows: 0, error: '' },
+  ],
 };
 
 const STUB = `
@@ -146,6 +160,31 @@ for (const [width, touch, scheme] of [[390, true, 'light'], [390, true, 'dark'],
       sideways: document.documentElement.scrollWidth > window.innerWidth + 1,
     };
   });
+  // The apps the Walkthrough looks at: every row says what it is set to,
+  // when it was looked at and what came of it, and has Look now; an app
+  // that is not installed can be neither switched on nor looked at.
+  const walks = await page.evaluate(() => [...document.querySelectorAll('#devWalks .devstream')]
+    .map((r) => ({ key: r.querySelector('[data-dev-walk]')?.getAttribute('data-dev-walk'),
+                   off: r.querySelector('[data-dev-walk]')?.disabled,
+                   nowOff: r.querySelector('[data-dev-walk-now]')?.disabled,
+                   when: r.querySelector('.devstreamwhen')?.textContent || '',
+                   metaPx: parseFloat(getComputedStyle(r.querySelector('.devstreamwhen')).fontSize),
+                   text: r.textContent })));
+  if (walks.length !== 5) note(where, `${walks.length} app rows, expected 5`);
+  const walk = (key) => walks.find((w) => w.key === key) || { when: '', text: '' };
+  if (!/3 reports/.test(walk('brain').when)) note(where, `brAIn's row reads "${walk('brain').when}"`);
+  if (!/nothing to report/.test(walk('morph').when)) note(where, `Morph's row reads "${walk('morph').when}"`);
+  if (!/the run failed/.test(walk('gardenrx').when)) note(where, `a failed look reads "${walk('gardenrx').when}"`);
+  if (!/Not looked at yet/.test(walk('bruh-cooking').when)) note(where, 'a never-looked app does not say so');
+  if (!walk('bright').off || !walk('bright').nowOff || !/Not installed/.test(walk('bright').text)) {
+    note(where, 'an app that is not installed can be switched on or looked at');
+  }
+  if (walk('brain').off || walk('brain').nowOff) note(where, "brAIn's row is disabled");
+  if (process.env.SHOT_DIR) {
+    await page.evaluate(() => document.querySelector('#devWalks').previousElementSibling
+      .previousElementSibling.scrollIntoView());
+    await page.screenshot({ path: path.join(process.env.SHOT_DIR, `devloop-apps-${width}-${scheme}.png`) });
+  }
   // A held report says why and what ends the wait; "will be sent" read
   // as brAIn stalling.
   const queue = await page.evaluate(() => [...document.querySelectorAll('#devQueue .drow')]

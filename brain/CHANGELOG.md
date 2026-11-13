@@ -2,6 +2,91 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.2.5
+
+### Added
+
+- When a BRUH Browser errand stops to ask something (which oat milk, whether to take a substitute), brAIn reads you the question and its choices and passes your answer back so the errand carries on. By voice it answers only choices that don't change what you spend.
+- brAIn asks which browser to use when more than one Chrome with the Claude extension is connected to your account, remembers your answer when you want it to, and says which browser it used.
+## 5.2.4
+
+### Changed
+
+- ⚙ › Model & usage says where brAIn's own work went in household words (Watching the house, Insight cards and reports, Dashboard requests, Voice, Automations, Memory and learning, Fixes…) with each one's share, and no run ids or token counts. Your chats in Ask and the terminal are not in that list; they are in the session percentage above it, and the note says so (#880).
+- The model and thinking choices in ⚙ › Model & usage are rows that show their whole text on a phone, where a closed menu cut them off (#880).
+- What the dashboard asks brAIn to do is counted under Dashboard requests, apart from your automations' tasks (#880).
+
+### Fixed
+
+- A To Do item made from a finding has a short headline that names the device and the job ("Wake the hall sensor."), one line under it, and says nothing twice. Items already on your list are reworded the same way, and one that names several devices says so (#879).
+- Chats that brAIn opened for you (an Ask about something, Personality's and Instructions' Ask, Talk it through, a request from the dashboard) are titled by what you asked or what they are about, never by the prompt text behind them. A chat you typed is always titled with your own words, exactly as typed (#882).
+
+## 5.2.3
+
+### Changed
+
+- The faint-Bluetooth check needs evidence before it speaks: a device has to stay faint for two hours across passes and to have dropped out at least twice in two days (or be unavailable now). A weak signal on a device that reports as usual raises nothing, and a single dip is not filed and then cleared. After this update the earliest it can file is the second pass (#877).
+- Done on a weak-link finding (Bluetooth, Zigbee, Z-Wave) holds while the device reads the same. It is raised again, in new words, only when the signal gets clearly worse (#877).
+- The development loop's Screens pass takes the time its screens need (20 seconds a picture, between 15 and 75 minutes), photographs brAIn's own panel first, gives each screen its own limit, files what it finished and takes the rest first next time (#890).
+
+### Fixed
+
+- On an iPhone in the Home Assistant app, the message box on Ask (the chat list's and an open chat's) sits fully above the home indicator, with the app's full screen on or off. The gap under the box with full screen off is gone too: the header's height is measured again when the top safe area arrives (#876).
+- A Screens pass that ran out of time said "the screens could not be captured: " and nothing else. It now says "timed out after N s, X of Y screens captured", and every error line in the development loop names the error when it has no text of its own (#890).
+
+## 5.2.2
+
+### Changed
+
+- The test screens in ⚙ › Diagnostics and ⚙ › Developer open with one sentence on whether everything works and when it was last checked, and say when that is old. Rows have plain names, and the technical values sit in a Details fold (#881).
+- Memory › Knowledge opens on the facts search and list. Suggested reports appears once, and the maintenance rows are one Tools fold in plain words (#883).
+
+### Fixed
+
+- With Personality on, the message boxes on Ask, Knowledge and the dashboard say your assistant's name, like the rest of the page. What you typed is never rewritten (#884).
+## 5.2.1
+
+### Added
+
+- brAIn can do things on websites for you through the new BRUH Browser app (experimental, amd64): `browser_task` starts an errand in your words and builds the cart without buying, `browser_status` says how it went (the cart with every item, fee and the total, or what it needs from you), `browser_stop` stops one, and `browser_purchase` buys a cart you have heard and approved. The tools are listed only when BRUH Browser is installed.
+- By voice you can start a shopping errand and ask how it went; buying and stopping are left to the chat.
+- BRUH Browser joins the development loop's other add-ons (its state and log, no integration).
+
+### Security
+
+- A purchase always needs a person: the action gate asks before every `browser_purchase` in the chat and the terminal, with "Let brAIn act without asking" on and in YOLO mode too, and refuses it in any run nobody is watching. The tool also refuses a call whose items or total are not the cart as it stands, so what you approved is what is bought.
+
+## 5.2.0
+
+### Added
+
+- brAIn keeps one paragraph about how it has learned to be in your house, and revises it overnight from how you talk with it in Ask and how you answer it. It is in ⚙ › Personality under "How brAIn is growing", with Undo, Edit and Clear. Your own name and personality text are never rewritten.
+- The morning brief, the weekly report, reports on things brAIn looked into and notifications that can wait are written in the personality you gave it. Facts, numbers and what to do are unchanged, and anything urgent stays plain.
+- ⚙ › Personality has a new section, "Shape brAIn" (it carries your assistant's name), where it asks you how it should be: one question at a time, with a few answers to press or a box to say it your way. Skip passes; "Don't ask this" stops that kind of question.
+- Under its question it shows a few things it really said lately (the morning brief, a notification, a message to one of you) with More like this, Less like this and Say it differently.
+- "Talk it through" opens a conversation in Ask that it leads: it interviews you, tells you what it will change, and records each answer.
+- "Take this in now" revises what it has learned from your answers straight away, not overnight, and says why when it cannot.
+- Everything you told it is listed with Remove. The Settings list says when it has questions waiting; it never sends a notification about them.
+- A new conversation in Ask knows the last few things brAIn told you without being asked, so you can ask "what did you mean this morning?".
+- `brain tune "<asked>" "<answer>"` records how you want it to be from the terminal.
+- **Apps brAIn looks at** in ⚙ › Developer: one switch for each BRUH app, and a **Look now** button beside it. The Walkthrough uses each switched-on app the way a person does and files what it finds, one Claude run per app from your daily limit. brAIn and Morph are on; the other apps are off until you switch them on, and *Report everything without asking* leaves them as you set them.
+- The Walkthrough looks at brAIn's own screens, as your phone shows them and on a laptop, in light and dark, and says when a page reads like a monitoring console rather than an assistant.
+- A **Liked** stream for the development loop: what this household agreed with, thanked and kept, as counts only, so a fix does not take away what you value. Off until you switch it on.
+- Memory › Knowledge › "What brAIn brings to a run" lists two more kinds of run: what brAIn tells you unprompted, and the nightly reflection, including the Ask exchanges it reads.
+
+### Changed
+
+- The nightly reflection reads your recent exchanges with brAIn in Ask (your messages and its replies, cut short), not only conversation titles, and runs on a stronger model. Switch off the Learning loop in ⚙ › Features and it does not run.
+- Ask and voice carry the whole learned paragraph, where they used to get one clipped note.
+- The Learning loop's weekly count includes revisions of the paragraph brAIn keeps about how to be in your house.
+- Screens photographs each new release once (at most one capture every 6 hours), not only weekly.
+- The screenshot tool can also photograph ⚙ › Features, Permissions, Personality and Developer.
+
+### Fixed
+
+- When Screens could not photograph anything, nothing said so. It now says why under the stream in ⚙ › Developer and reports it as a fault until a capture works.
+- brAIn's personality could not really change: its nightly reflection saw only conversation titles and its notes barely reached any prompt.
+
 ## 5.1.38
 
 ### Fixed

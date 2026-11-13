@@ -46,6 +46,20 @@ brain_claim_session() {
     return 0
 }
 
+# Name a conversation by what a person said to open it (Morph's Ask line
+# and Tell carry it as `person_words`), so the Chats rail titles it by
+# their words and never by the prompt the caller wrapped round them. A
+# line with a `title` and no `source`: run_sources.titles reads it.
+brain_title_session() {
+    local sid="$1" title="$2"
+    [ -n "$sid" ] && [ -n "$title" ] || return 0
+    command -v jq > /dev/null 2>&1 || return 0
+    { jq -nc --arg id "$sid" --arg t "$title" --argjson ts "$(date +%s)" \
+        '{id: $id, title: ($t | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" ") | .[0:120]), ts: $ts}' \
+        >> "$BRAIN_RUN_SOURCES"; } 2>/dev/null || return 0
+    return 0
+}
+
 # Mint one and claim it. Prints the id, or nothing when the kernel's uuid
 # source isn't readable — callers treat "" as "run without --session-id".
 brain_new_session() {

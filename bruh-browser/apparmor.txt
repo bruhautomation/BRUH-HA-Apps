@@ -1,0 +1,96 @@
+#include <tunables/global>
+
+# AppArmor profile for the BRUH Browser add-on.
+#
+# A desktop browser on a virtual screen (Xvfb), a VNC server bound to
+# loopback, Claude Code, and a panel that runs one errand at a time. Chrome
+# JITs JavaScript (V8) and renders in software (SwiftShader), so it maps
+# executable memory; it reaches the open web over HTTPS. None of that needs
+# a device node, a raw socket or host networking.
+#
+# Chrome's own sandbox is NOT available here. It needs user namespaces (or a
+# setuid helper), and an add-on container has neither: Docker's default
+# seccomp profile refuses the namespace calls, and sys_admin is denied below.
+# The panel tries the sandbox first and falls back to --no-sandbox when
+# Chrome says it has no usable sandbox (panel/browser.py). What stands
+# between a hostile page and the rest of the house is therefore this
+# profile, the unprivileged user, the container and the bridged network:
+# the add-on can reach the web and the add-ons' network, and nothing of the
+# host. A page that broke out of a renderer would hold what this add-on
+# holds — the household's shop sessions and the Claude sign-ins.
+
+profile bruh-browser flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # ------------------------------------------------------------------
+  # Host-escape primitives — denied outright
+  # ------------------------------------------------------------------
+  deny /proc/sys/** wklx,
+  deny /sys/kernel/** wklx,
+  deny @{PROC}/sysrq-trigger rwklx,
+
+  deny /sys/module/** wklx,
+  deny /dev/mem rwklx,
+  deny /dev/kmem rwklx,
+  deny /dev/port rwklx,
+  deny /dev/kmsg rwklx,
+
+  deny /sys/firmware/** rwklx,
+  deny /boot/** rwklx,
+
+  # A writable docker.sock is root on the host by another name.
+  deny /var/run/docker.sock rwklx,
+  deny /run/docker.sock rwklx,
+
+  # ------------------------------------------------------------------
+  # Capabilities: run.sh lays /data out as root and drops to the `browser`
+  # user with setpriv, so setuid/setgid and chown are genuinely needed.
+  # ------------------------------------------------------------------
+  capability chown,
+  capability dac_override,
+  capability fowner,
+  capability fsetid,
+  capability kill,
+  capability setgid,
+  capability setuid,
+  capability setpcap,
+  capability audit_write,
+
+  deny capability sys_admin,
+  deny capability sys_module,
+  deny capability sys_rawio,
+  deny capability sys_ptrace,
+  deny capability sys_boot,
+  deny capability net_admin,
+  deny capability net_raw,
+  deny capability mac_admin,
+  deny capability mac_override,
+  deny capability dac_read_search,
+
+  deny mount,
+  deny umount,
+  deny pivot_root,
+
+  # ------------------------------------------------------------------
+  # What the add-on legitimately does
+  # ------------------------------------------------------------------
+  file,
+
+  signal (send,receive) set=(kill,term,int,hup,cont,usr1,usr2,winch),
+  # Chrome's crash handler reads its own processes.
+  ptrace (trace,read) peer=bruh-browser,
+
+  # The ingress panel, the Supervisor API, the web over HTTPS (and Chrome's
+  # QUIC over UDP), and X11/VNC on unix sockets and loopback.
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network unix stream,
+  network unix dgram,
+  network unix seqpacket,
+  network netlink raw,
+
+  # `m` as well as `ix`: V8 and SwiftShader map executable memory.
+  /** ixm,
+}
