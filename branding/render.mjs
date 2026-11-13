@@ -215,6 +215,14 @@ const APPS = [
 			['brands/custom_integrations/bruh_cooking/logo@2x.png', 682, 512],
 		],
 	},
+	{
+		name: 'BRUH Browser',
+		tile: 'browser/bruh-browser-tile-dark.svg',
+		logo: 'browser/bruh-browser-logo-ondark.svg',
+		// No integration, so no brand/ folder: the add-on store's two marks only.
+		squares: [['bruh-browser/icon.png', 256]],
+		lockups: [['bruh-browser/logo.png', 512, 384]],
+	},
 ];
 
 const browser = await chromium.launch(

@@ -175,6 +175,24 @@ Pro) in Home Assistant, over the same cloud as the Breville+ Cooking app.
 
 📖 [add-on README](bruh-cooking/) · [full documentation](bruh-cooking/DOCS.md)
 
+### [BRUH Browser](bruh-browser/)
+
+> ⚠️ **Experimental. Requires brAIn. amd64 only.**
+
+**brAIn's hands on the web.** A real Google Chrome with Anthropic's Claude in
+Chrome extension, in the sidebar, so brAIn can run errands on websites for
+you — *"add my usual order plus oat milk"* builds your grocery cart.
+
+- **It never buys without you** — it builds the cart and stops on the review
+  page; brAIn reads you every item and the total, and a purchase is a second
+  errand you approve
+- **Watch it, or step in** — the live browser is on the page; when a site
+  wants a login or a CAPTCHA, the errand waits for you and carries on
+- **Needs a paid Claude plan** and two one-time sign-ins with the same Claude
+  account; it does nothing on its own
+
+📖 [add-on README](bruh-browser/) · [full documentation](bruh-browser/DOCS.md)
+
 ## Installation
 
 Click the badge above, or add this repository URL to your Home Assistant add-on store (**Settings → Add-ons → Add-on Store → ⋮ → Repositories**):

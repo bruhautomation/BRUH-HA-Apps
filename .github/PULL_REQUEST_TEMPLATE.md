@@ -9,6 +9,7 @@
 - [ ] BRight
 - [ ] BRUH Print
 - [ ] BRUH Bambu Studio
+- [ ] BRUH Browser
 - [ ] Repo-wide (CI, docs, etc.)
 
 ## Checklist

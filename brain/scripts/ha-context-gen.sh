@@ -743,6 +743,17 @@ asked.
   food is in or out). A sous vide must be in water before it starts; the oven
   waits for Start on its own panel — say so. Never start a cook nobody asked
   for. Listed only when BRUH Cooking's integration is in Home Assistant.
+- BRUH Browser is how brAIn does things on websites for the household (a
+  grocery order first, then errands like it): a real Chrome signed in to the
+  household's shops, driven by Claude in Chrome. \`browser_task\` starts an
+  errand in the person's words and NEVER buys: it builds the cart and stops on
+  the review page. \`browser_status\` reads it (minutes later): progress, the
+  cart (items, prices, fees, delivery, total), or what it needs from a person
+  (a login or CAPTCHA, done in the BRUH Browser tab, then Continue there).
+  **A purchase is always cart first, then approval**: read the person the
+  cart, and only when they say to buy it call \`browser_purchase\` with that
+  cart's id, total and items as given — they are asked to approve it.
+  \`browser_stop\` stops one. Listed only when BRUH Browser is installed.
 
 ## Registry Management — BRUH Power Tools
 
