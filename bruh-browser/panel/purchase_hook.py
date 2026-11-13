@@ -130,8 +130,9 @@ def refusal(what: str) -> str:
     return (f"BRUH Browser's spending guard: this looks like it places an order or "
             f"pays (\"{what}\"), and this errand has no purchase approval. Do not "
             "place the order. Stop on the review page and report the cart — every "
-            "item, quantity, price, fee and the total — and brAIn will ask the "
-            "household to approve the purchase.")
+            "item, quantity, price, fee and the total — with outcome done. Do not "
+            "ask the person to approve the purchase: approving it is a separate step "
+            "they take with the cart in front of them, outside this errand.")
 
 
 def pre(payload: dict) -> int:

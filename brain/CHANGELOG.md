@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.2.5
+
+### Added
+
+- When a BRUH Browser errand stops to ask something (which oat milk, whether to take a substitute), brAIn reads you the question and its choices and passes your answer back so the errand carries on. By voice it answers only choices that don't change what you spend.
+- brAIn asks which browser to use when more than one Chrome with the Claude extension is connected to your account, remembers your answer when you want it to, and says which browser it used.
+
 ## 5.2.3
 
 ### Changed

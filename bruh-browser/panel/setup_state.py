@@ -1,4 +1,4 @@
-"""The four setup steps, each read from the real state on disk.
+"""The five setup steps, each read from the real state on disk.
 
 Nothing here is a flag the panel set when somebody pressed a button: a step
 is done when the thing it asks for is there.
@@ -14,7 +14,13 @@ is done when the thing it asks for is there.
 3. Claude Code is signed in with a Claude account: `~/.claude/.credentials.json`
    carries a `claudeAiOauth` token. An API key (in `~/.claude.json` or the
    environment) is called out, because it keeps the Chrome integration off.
-4. The last Test errand, as it ended.
+4. The extension acts without asking in this Chrome. Every errand tells it
+   so (`runner.environment`: `CLAUDE_CHROME_PERMISSION_MODE`), but whether
+   the extension honours that for a script, and what its own settings or
+   per-site permissions say, cannot be read from outside it: so this step is
+   "Not proved yet" until a Test runs without the extension asking, and
+   "Not yet" when the latest errand was stopped by the extension's own prompt.
+5. The last Test errand, as it ended.
 
 `HOME` is read at call time so a test can point it anywhere.
 """
@@ -117,8 +123,27 @@ def claude_code() -> dict:
     return {"status": "not_yet", "plan": "", "detail": "Claude Code is not signed in."}
 
 
-def steps(last_test: dict | None) -> list[dict]:
-    """The four steps, in order, for the page."""
+def acting(last_test: dict | None, last_blocked: dict | None) -> dict:
+    test = last_test or {}
+    blocked = last_blocked or {}
+    tested_at = float(test.get("finished_at") or 0) if test.get("state") == "done" else 0
+    blocked_at = float(blocked.get("finished_at") or 0)
+    if blocked and blocked_at >= tested_at:
+        return {"status": "not_yet", "detail": (
+            "An errand was stopped because the Claude extension asked for permission "
+            "in its own side panel. Answer it there, or allow the site on the "
+            "extension's site permissions page, then press Test.")}
+    if tested_at:
+        return {"status": "done", "detail": (
+            "Every errand tells the extension to act without asking in this Chrome, "
+            "and the last Test ran without it asking.")}
+    return {"status": "unknown", "detail": (
+        "Every errand tells the extension to act without asking in this Chrome; the "
+        "Test proves the extension went along with it.")}
+
+
+def steps(last_test: dict | None, last_blocked: dict | None = None) -> list[dict]:
+    """The five steps, in order, for the page."""
     ext = extension()
     code = claude_code()
     test = last_test or {}
@@ -147,5 +172,6 @@ def steps(last_test: dict | None) -> list[dict]:
         {"n": 1, "title": "Install the Claude extension", **ext},
         {"n": 2, "title": "Sign the extension in to claude.ai", **signed},
         {"n": 3, "title": "Sign Claude Code in", **code},
-        {"n": 4, "title": "Test", **tested},
+        {"n": 4, "title": "Let it act without asking", **acting(last_test, last_blocked)},
+        {"n": 5, "title": "Test", **tested},
     ]

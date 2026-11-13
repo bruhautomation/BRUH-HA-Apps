@@ -980,7 +980,8 @@ ANALYST_DENIED = [
     # Errands on the web: each one spends the household's Claude plan in a
     # browser signed in to its shops, and a purchase spends money. A person
     # asks for one; an unattended card never does.
-    f"{MCP}browser_task", f"{MCP}browser_stop", f"{MCP}browser_purchase",
+    f"{MCP}browser_task", f"{MCP}browser_answer", f"{MCP}browser_stop",
+    f"{MCP}browser_purchase",
     # Filing a bug upstream sends text off the box: a person asks for it.
     f"{MCP}report_bug",
     # A timed action calls services on a timer: a person asks for one.
