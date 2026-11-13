@@ -16,6 +16,7 @@
 #   brain login                    Sign in to Claude (same as `ha login`)
 #   brain check                    Run the house checks now (no Claude run)
 #   brain why [ask]                Why somebody did something by hand
+#   brain tune "<q>" "<answer>"    Record how the household wants brAIn to be
 #   brain doctor [--json]          End-to-end diagnostic
 #   brain doctor --deep            Every face, one real round trip each
 #   brain doctor --rehearse        Plant defects, score the checks, clean up
@@ -78,6 +79,10 @@ Usage:
                                  worked out. `ask` spends one Claude run
   brain weekly [send]            The week's report: energy, findings, what was
                                  learned, and the one thing to do
+  brain tune "<asked>" "<answer>"
+                                 Record one thing the household said about
+                                 how brAIn should be. Kept in ⚙ › Personality,
+                                 where it can be removed
   brain doctor [--json]          End-to-end diagnostic of brAIn itself —
                                  free, and never calls Claude
   brain doctor --deep [--json]   Every face of brAIn, one real round trip
@@ -152,6 +157,7 @@ case "$action" in
     check)      delegate brain-check.sh "$@" ;;
     why)        delegate brain-why.sh "$@" ;;
     weekly)     delegate brain-weekly.sh "$@" ;;
+    tune)       delegate brain-tune.sh "$@" ;;
     doctor)
         # Plain `brain doctor` is unchanged: it is the free one, and the
         # two costed checks are a different script rather than a flag

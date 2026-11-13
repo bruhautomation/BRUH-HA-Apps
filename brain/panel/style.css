@@ -7132,8 +7132,25 @@ body.term-classic #chatModelPick { display: none; }
 .learnedtext.none { color: var(--ink-3); }
 .learnedbox .pressub { margin: 0; }
 .learnedacts { margin-top: 0; flex-wrap: wrap; }
+/* Shape <name>: the assistant asking. One question as its own words in
+   one box, its answers under it; the rows after it are `.presrow`s. */
+.tunebody { display: grid; gap: 6px; max-width: 600px; margin-bottom: var(--sp-3); }
+.tuneq {
+  display: grid; gap: 10px; padding: 14px; background: var(--plane);
+  border: 1px solid var(--hairline); border-radius: 12px;
+}
+.tuneqtext { margin: 0; font-size: 17px; line-height: 1.4; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.tuneq .pressub, .tunesay { margin: 0; }
+.tunesay { font-size: var(--fs-body); color: var(--ink-2); overflow-wrap: anywhere; }
+.tunechips, .tuneacts { display: flex; flex-wrap: wrap; gap: 8px; }
+.tuneown { display: flex; gap: 8px; }
+.tuneown input { flex: 1 1 auto; min-width: 0; margin: 0; }
+.tunerow { align-items: flex-start; }
+.tunerow .presacts { flex-wrap: wrap; margin-left: 0; flex: 1 1 100%; }
+.tunerow .tuneown { flex: 1 1 100%; }
 @media (pointer: coarse) {
-  .presrow .btn, .learnedacts .btn { min-height: 44px; }
+  .presrow .btn, .learnedacts .btn, .tunebody .btn { min-height: 44px; }
+  .tuneown input { min-height: 44px; }
 }
 /* The persona as sections (`personaSections`): a plain title over its words,
    hairlines between, the whole outline readable without opening a box. */

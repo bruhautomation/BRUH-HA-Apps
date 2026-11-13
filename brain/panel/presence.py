@@ -61,10 +61,20 @@ new version when it says what the current one says.
      "touches": [{id, person, name, kind, text, reason, at, channel,
                   delivery, reaction, reacted_at}],
      "reflect": {"at": t, "ok": bool, ...},
-     "tuning": {"answers": [{"question": "…", "answer": "…", "at": t}]}}
+     "tuning": {"answers": [{id, question, answer, at, source}],
+                "questions": [{id, text, why, options, made_at, expires_at}],
+                "closed": [{text, how, at}], "starter": ["s1", …],
+                "rated": [key, …], "absorbed_at": t}}
 
-`tuning` is read here and written elsewhere: what the household answered
-when asked how brAIn should be (`tuning_answers`).
+**It asks, and the household answers** (`tuning`, the section "Shape
+<name>" in ⚙ › Personality). ONE question at a time: the nightly run's own
+(`questions`, each grounded in something it was shown, read as strictly as
+everything else it writes), and a shipped starter set (`STARTERS`) for a
+house that has answered nothing yet. An answer, a verdict on a line it
+really said (`said_lately`) and what a led conversation in Ask settled
+(`brain tune`) all land in `answers`, which the next reflection reads
+(`tuning_answers`) and which the household can remove one by one. A
+question answered, skipped or retired is never asked again (`closed`).
 """
 from __future__ import annotations
 
@@ -170,6 +180,69 @@ TUNING_CHARS = 240
 # versions sharing this much of their content words say the same thing.
 LEARNED_CHARS = personality.LEARNED_MAX
 LEARNED_SAME = 0.9
+
+# ---- tuning: its questions and the household's answers ---------------------
+QUESTIONS_PER_NIGHT = 3
+QUESTIONS_MAX = 6
+QUESTION_TTL_S = 14 * 86400
+QUESTION_CHARS = 220
+QUESTION_WHY_CHARS = 160
+OPTION_CHARS = 80
+OPTIONS_MIN, OPTIONS_MAX = 2, 4
+# What the household typed: theirs, so capped and never refused.
+ANSWER_CHARS = 400
+ANSWERS_MAX = 60
+CLOSED_MAX = 80
+RATED_MAX = 120
+# Lines it really said, offered for a verdict: a few, newest first.
+FEEDBACK_ROWS = 3
+SAID_CHARS = 220
+SAID_DAYS = 7
+# ...and the same lines as a new conversation in Ask is told them.
+CHAT_SAID_ROWS = 5
+CHAT_SAID_BYTES = 1500
+ANSWER_SOURCES = ("question", "feedback", "ask")
+VERDICTS = {"more": "More like this", "less": "Less like this"}
+
+# The starter set: how it should BE, nothing about the house or anybody in
+# it, so the section is alive on the first day. Asked in order, and only
+# while the nightly run has no question of its own waiting. In the first
+# person and never naming the assistant: the page shows them as its words.
+STARTERS = (
+    {"id": "s1", "text": "How long should my messages be?",
+     "why": "So I stop guessing between a line and a paragraph.",
+     "options": ["One line", "A few sentences", "As long as it takes"]},
+    {"id": "s2", "text": "Should I joke with you?",
+     "why": "A joke nobody wanted is worse than none.",
+     "options": ["Yes, go ahead", "Only when we joke first",
+                 "No, keep it straight"]},
+    {"id": "s3", "text": "When something is wrong, how blunt should I be?",
+     "why": "I would rather be clear than careful in the wrong place.",
+     "options": ["Say it straight", "Soften it a little",
+                 "Lead with what to do"]},
+    {"id": "s4", "text": "When I notice something that can wait, should I "
+                         "speak up or hold it until you ask?",
+     "why": "So I know when a quiet day should stay quiet.",
+     "options": ["Speak up", "Only if it matters this week",
+                 "Hold it until I ask"]},
+    {"id": "s5", "text": "Do you want my reasoning, or only what to do?",
+     "why": "I can show my working or keep it to myself.",
+     "options": ["Only what to do", "One line of why",
+                 "Walk me through it"]},
+    {"id": "s6", "text": "When you correct me, what should I do?",
+     "why": "So being wrong costs you as little as possible.",
+     "options": ["Fix it and move on", "Say what I will change",
+                 "Ask me what I missed"]},
+    {"id": "s7", "text": "Should I check in mornings and evenings, or stay "
+                         "quiet unless there is something to say?",
+     "why": "A check-in with nothing in it is just noise.",
+     "options": ["Check in", "Only with something to say", "Stay quiet"]},
+)
+ACK_ANSWER = "Noted. That goes into how I am here."
+ACK_SKIP = "Skipped."
+ACK_RETIRE = "I will not ask that again."
+ACK_FEEDBACK = {"more": "Good. More like that.", "less": "Less of that, then.",
+                "differently": "I will say it more like that."}
 
 ACTION_PREFIX = "brain_presence"
 
@@ -803,6 +876,348 @@ def learned_refusal(text, *, name: str = "", people=None) -> str:
     return ""
 
 
+# ---------------------------------------------------------------------------
+# Tuning: the questions it asks, and what the household answered
+# ---------------------------------------------------------------------------
+
+def _tuning(state: dict) -> dict:
+    """The tuning part of the store, every list a list whatever was read."""
+    tuning = state.get("tuning")
+    if not isinstance(tuning, dict):
+        tuning = state["tuning"] = {}
+    for key in ("answers", "questions", "closed", "starter", "rated"):
+        if not isinstance(tuning.get(key), list):
+            tuning[key] = []
+    return tuning
+
+
+def _tuning_view(state: dict) -> dict:
+    """The same, read-only: a state that is not changed by being looked at."""
+    tuning = (state or {}).get("tuning")
+    tuning = tuning if isinstance(tuning, dict) else {}
+    return {key: (tuning.get(key) if isinstance(tuning.get(key), list) else [])
+            for key in ("answers", "questions", "closed", "starter", "rated")} \
+        | {"absorbed_at": _num(tuning.get("absorbed_at"))}
+
+
+def _queued(state: dict, now: float) -> list[dict]:
+    return [q for q in _tuning_view(state)["questions"]
+            if isinstance(q, dict) and q.get("id") and q.get("text")
+            and _num(q.get("expires_at")) > now]
+
+
+def _starters_left(state: dict) -> list[dict]:
+    asked = set(_tuning_view(state)["starter"])
+    return [q for q in STARTERS if q["id"] not in asked]
+
+
+def questions_waiting(state: dict, now: float) -> int:
+    """How many questions it has to ask: its own, or ONE while only the
+    starter set is left — seven waiting on the first day would be a form
+    to get through, and the set is asked one at a time."""
+    return len(_queued(state, now)) or (1 if _starters_left(state) else 0)
+
+
+def current_question(state: dict, now: float) -> dict | None:
+    """THE question to show: the nightly run's own, oldest first, else the
+    next of the starter set. One, never a list."""
+    queued = _queued(state, now)
+    if queued:
+        q = queued[0]
+        return {"id": str(q["id"]), "text": str(q["text"]),
+                "why": str(q.get("why") or ""),
+                "options": [str(o) for o in q.get("options") or []
+                            if isinstance(o, str)][:OPTIONS_MAX]}
+    left = _starters_left(state)
+    if left:
+        q = left[0]
+        return {"id": q["id"], "text": personality.speak(q["text"]),
+                "why": personality.speak(q["why"]),
+                "options": list(q["options"])}
+    return None
+
+
+def asked_before(state: dict) -> list[str]:
+    """Every question that must not be asked again: answered, skipped,
+    retired, waiting now, or one of the starter set."""
+    view = _tuning_view(state)
+    out = [str(c.get("text") or "") for c in view["closed"]
+           if isinstance(c, dict)]
+    out += [str(q.get("text") or "") for q in view["questions"]
+            if isinstance(q, dict)]
+    out += [q["text"] for q in STARTERS]
+    return [t for t in out if t]
+
+
+def _close(state: dict, question_id: str, how: str, now: float) -> dict | None:
+    """Take one question out of what is asked. Returns it, or None."""
+    tuning = _tuning(state)
+    for q in STARTERS:
+        if q["id"] == question_id:
+            if question_id in tuning["starter"]:
+                return None
+            tuning["starter"].append(question_id)
+            return dict(q)
+    found = next((q for q in tuning["questions"]
+                  if isinstance(q, dict) and q.get("id") == question_id), None)
+    if found is None:
+        return None
+    tuning["questions"] = [q for q in tuning["questions"] if q is not found]
+    tuning["closed"] = (tuning["closed"] + [
+        {"text": str(found.get("text") or ""), "how": how,
+         "at": int(now)}])[-CLOSED_MAX:]
+    return found
+
+
+def add_answer(state: dict, question: str, answer: str, now: float,
+               source: str = "question") -> dict | None:
+    """Keep one thing the household said about how brAIn should be. Their
+    words, so capped and never refused. Returns the row, or None when
+    either half is empty."""
+    question = textclip.clip(" ".join(str(question or "").split()),
+                             ANSWER_CHARS)
+    answer = textclip.clip(" ".join(str(answer or "").split()), ANSWER_CHARS)
+    if not question or not answer:
+        return None
+    tuning = _tuning(state)
+    row = {"id": _new_id(), "question": question, "answer": answer,
+           "at": int(now),
+           "source": source if source in ANSWER_SOURCES else "question"}
+    tuning["answers"] = (tuning["answers"] + [row])[-ANSWERS_MAX:]
+    return row
+
+
+def answer_question(state: dict, question_id: str, answer: str,
+                    now: float) -> dict | None:
+    """The household answered the question shown. Returns the answer kept."""
+    if not str(answer or "").strip():
+        return None
+    q = _close(state, str(question_id or ""), "answered", now)
+    if q is None:
+        return None
+    return add_answer(state, str(q.get("text") or ""), answer, now)
+
+
+def pass_question(state: dict, question_id: str, retire_it: bool,
+                  now: float) -> bool:
+    """Skip, or Don't ask this. Either way it is not asked again; a retired
+    one is shown to the next reflection as a kind of question not wanted."""
+    return _close(state, str(question_id or ""),
+                  "retired" if retire_it else "skipped", now) is not None
+
+
+def remove_answer(state: dict, answer_id: str) -> bool:
+    tuning = _tuning(state)
+    before = len(tuning["answers"])
+    tuning["answers"] = [a for a in tuning["answers"]
+                         if not (isinstance(a, dict)
+                                 and a.get("id") == answer_id)]
+    return len(tuning["answers"]) != before
+
+
+def unabsorbed(state: dict) -> int:
+    """How many answers the paragraph has not been revised from yet."""
+    view = _tuning_view(state)
+    return sum(1 for a in view["answers"] if isinstance(a, dict)
+               and _num(a.get("at")) > view["absorbed_at"])
+
+
+def note_absorbed(state: dict, now: float) -> None:
+    """A reflection has read every answer there is."""
+    _tuning(state)["absorbed_at"] = int(now)
+
+
+def add_questions(state: dict, questions: list[dict], now: float) -> int:
+    """Queue the night's parsed questions under the cap. Returns how many."""
+    tuning = _tuning(state)
+    tuning["questions"] = [q for q in tuning["questions"]
+                           if isinstance(q, dict)
+                           and _num(q.get("expires_at")) > now]
+    added = 0
+    for item in questions or []:
+        if len(tuning["questions"]) >= QUESTIONS_MAX:
+            break
+        tuning["questions"].append({
+            "id": _new_id(), "text": item["text"], "why": item["why"],
+            "options": list(item.get("options") or []),
+            "made_at": int(now), "expires_at": int(now + QUESTION_TTL_S)})
+        added += 1
+    return added
+
+
+def parse_questions(obj, people: dict, state: dict, *, name: str = "") -> dict:
+    """The run's `questions`, kept only where each is on the schema, passes
+    `refusal_of`, names nobody of the house, and was not asked before.
+    `{questions, refused}`. Pure."""
+    out = {"questions": [], "refused": 0}
+    rows = obj.get("questions") if isinstance(obj, dict) else None
+    before = asked_before(state)
+    for item in rows if isinstance(rows, list) else []:
+        text = _string(item, "text", QUESTION_CHARS) \
+            if isinstance(item, dict) else None
+        why = _string(item, "why", QUESTION_WHY_CHARS) \
+            if isinstance(item, dict) else None
+        options = item.get("options") if isinstance(item, dict) else None
+        options = [] if options is None else options
+        clean = [" ".join(o.split()) for o in options if isinstance(o, str)] \
+            if isinstance(options, list) else None
+        words = [text or "", why or ""] + (clean or [])
+        if (text is None or why is None or clean is None
+                or len(clean) != len(options)
+                or (clean and not OPTIONS_MIN <= len(clean) <= OPTIONS_MAX)
+                or any(not o or len(o) > OPTION_CHARS for o in clean)
+                or any(refusal_of(w, growth=True, name=name) for w in words)
+                or any(_names_a_person(w, people.values()) for w in words)
+                or len(out["questions"]) >= QUESTIONS_PER_NIGHT):
+            out["refused"] += 1
+            continue
+        if any(_similar(text, t) for t in before + [
+                q["text"] for q in out["questions"]]):
+            continue        # asked already: not refused, just not again
+        out["questions"].append({"text": text, "why": why, "options": clean})
+    return out
+
+
+# ---- what it really said ---------------------------------------------------
+
+_FIRST_SENTENCE = re.compile(r"(?<=[.!?])\s")
+SAID_LABELS = {"brief": "Morning brief", "weekly": "Weekly report",
+               "notify": "Notification", "touch": "Message"}
+_OUTCOME_WORDS = {"answered": "answered", "cleared": "swiped away",
+                  "ignored": "no answer"}
+
+
+def said_lately(state: dict, folded: list[dict] | None, now: float, *,
+                tz=None) -> list[dict]:
+    """Lines brAIn really said unprompted, newest first: its touches (this
+    store), and from the delivery ledger the morning brief's opening, the
+    weekly report's, and each notification whose words a model wrote
+    (`dispatched`; a message the fixed composer assembled has no voice to
+    have an opinion on). `[{key, kind, label, text, at, when, name,
+    outcome}]`. A source that holds nothing is a source left out. Pure."""
+    rows: list[dict] = []
+    for t in (state or {}).get("touches") or []:
+        if not isinstance(t, dict) or not t.get("id") or not t.get("text"):
+            continue
+        rows.append({"key": f"touch:{t['id']}", "kind": "touch",
+                     "label": KIND_LABELS.get(t.get("kind"), "Message"),
+                     "text": str(t["text"]), "at": int(_num(t.get("at"))),
+                     "name": str(t.get("name") or "").split(" ")[0],
+                     "outcome": REACTION_WORDS.get(
+                         str(t.get("reaction") or ""), "").lower()})
+    for d in folded or []:
+        if not isinstance(d, dict) or not d.get("id") or not d.get("ok", True):
+            continue
+        kind = str(d.get("kind") or "")
+        body = " ".join(str(d.get("body") or "").split())
+        if kind in ("brief", "weekly"):
+            text = _FIRST_SENTENCE.split(body, 1)[0]
+        elif kind in ("notify", "held") and d.get("dispatched"):
+            kind = "notify"
+            title = " ".join(str(d.get("title") or "").split())
+            text = f"{title}. {body}" if title and body else title or body
+        else:
+            continue
+        if not text:
+            continue
+        rows.append({"key": f"sent:{d['id']}", "kind": kind,
+                     "label": SAID_LABELS[kind], "text": text,
+                     "at": int(_num(d.get("at"))), "name": "",
+                     "outcome": _OUTCOME_WORDS.get(
+                         str(d.get("outcome") or ""), "")})
+    rows = [r for r in rows if 0 <= now - r["at"] <= SAID_DAYS * 86400]
+    rows.sort(key=lambda r: r["at"], reverse=True)
+    for r in rows:
+        r["text"] = textclip.clip(personality.speak(r["text"]), SAID_CHARS)
+        r["when"] = _when(now, r["at"], tz)
+        # A date that still reads right in a prompt written days ago (the
+        # terminal's is a file): never "today".
+        local = _local(r["at"], tz)
+        r["stamp"] = f"{local:%a} {local.day} {local:%b %H:%M}"
+    return rows
+
+
+def feedback_rows(state: dict, said: list[dict]) -> list[dict]:
+    """The few lines offered for a verdict: none it already has one on."""
+    rated = set(_tuning_view(state)["rated"])
+    return [r for r in said if r["key"] not in rated][:FEEDBACK_ROWS]
+
+
+def give_feedback(state: dict, said: list[dict], key: str, verdict: str,
+                  text: str, now: float) -> dict | None:
+    """A verdict on one line it said: More like this, Less like this, or
+    how the person would have wanted it said. The line is read from
+    ``said`` by its key, never from the request. Returns the answer kept."""
+    row = next((r for r in said or [] if r.get("key") == key), None)
+    if row is None or key in _tuning_view(state)["rated"]:
+        return None
+    if verdict == "differently":
+        wanted = " ".join(str(text or "").split())
+        if not wanted:
+            return None
+        answer = "Say it more like this: " + wanted
+    elif verdict in VERDICTS:
+        answer = VERDICTS[verdict]
+    else:
+        return None
+    kept = add_answer(state, f"I said: \"{row['text']}\"", answer, now,
+                      "feedback")
+    if kept is not None:
+        tuning = _tuning(state)
+        tuning["rated"] = (tuning["rated"] + [key])[-RATED_MAX:]
+    return kept
+
+
+def chat_said_block(said: list[dict]) -> str:
+    """What a new conversation in Ask is told brAIn said lately, so "what
+    did you mean this morning?" has something to stand on. The newest few
+    inside a byte cap, or "" when there is nothing."""
+    lines: list[str] = []
+    spent = 0
+    for r in (said or [])[:CHAT_SAID_ROWS]:
+        who = f" to {r['name']}" if r.get("kind") == "touch" and r.get("name") \
+            else ""
+        how = f" ({r['outcome']})" if r.get("outcome") else ""
+        line = (f"- {r.get('stamp')}, {str(r.get('label') or '').lower()}{who}: "
+                f"\"{r.get('text')}\"{how}")
+        spent += len(line.encode("utf-8")) + 1
+        if spent > CHAT_SAID_BYTES:
+            break
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def tuning_payload(state: dict, said: list[dict], now: float, *,
+                   tz=None) -> dict:
+    """The section "Shape <name>": one question, a few lines for a verdict,
+    and what the household has told it, newest first."""
+    view = _tuning_view(state)
+    answers = [{"id": str(a.get("id") or ""),
+                "question": str(a.get("question") or ""),
+                "answer": str(a.get("answer") or ""),
+                "when": _when(now, _num(a.get("at")), tz),
+                "source": str(a.get("source") or "question"),
+                "pending": _num(a.get("at")) > view["absorbed_at"]}
+               for a in reversed(view["answers"])
+               if isinstance(a, dict) and a.get("id")]
+    return {"question": current_question(state, now),
+            "waiting": questions_waiting(state, now),
+            "feedback": [{k: r[k] for k in ("key", "label", "text", "when",
+                                            "name", "outcome")}
+                         for r in feedback_rows(state, said)],
+            "answers": answers, "pending": unabsorbed(state),
+            "limits": {"answer": ANSWER_CHARS}}
+
+
+def waiting_line(state: dict, now: float, name: str) -> str:
+    """What ⚙'s Personality row says when it has something to ask, or ""."""
+    n = questions_waiting(state, now)
+    if not n:
+        return ""
+    return (f"{name} has a question for you" if n == 1
+            else f"{name} has {n} questions for you")
+
+
 def _string(item: dict, key: str, limit: int) -> str | None:
     """A required string field, whole, or None: too long is refused,
     never clipped — a clipped greeting is a broken one."""
@@ -826,7 +1241,7 @@ def parse_reflection(obj, people: dict, state: dict, *,
     (``learned_now``) does not; `learned_refused` is why one was sent and
     not kept. Pure."""
     out = {"growth": [], "ideas": [], "notes": [], "refused": 0,
-           "learned": "", "learned_refused": ""}
+           "learned": "", "learned_refused": "", "questions": []}
     if isinstance(obj, str):
         try:
             obj = json.loads(obj)
@@ -897,6 +1312,10 @@ def parse_reflection(obj, people: dict, state: dict, *,
             out["refused"] += 1
             continue
         out["notes"].append({"person": pid, "text": text})
+
+    asked = parse_questions(obj, people, state, name=name)
+    out["questions"] = asked["questions"]
+    out["refused"] += asked["refused"]
     return out
 
 
@@ -1016,8 +1435,9 @@ SYSTEM = prompt_kit.assemble(
     "LEARNED, the one paragraph brAIn keeps about how it has learned to "
     "be in this house, revised whole when tonight taught it something; at "
     "most two short GROWTH notes about what changed (tone, timing, what "
-    "the household liked or did not); and a few IDEAS for small proactive "
-    "touches tomorrow, each for one person.",
+    "the household liked or did not); a few IDEAS for small proactive "
+    "touches tomorrow, each for one person; and at most three QUESTIONS "
+    "brAIn would like to ask the household about how it should be.",
     inputs=(
         "You are given the time, brAIn's name and personality, the "
         "paragraph as it stands, its recent growth notes, the people who "
@@ -1082,6 +1502,18 @@ SYSTEM = prompt_kit.assemble(
   line above and the whole paragraph is thrown away.
 - A paragraph the household corrected themselves is theirs: keep their
   words wherever you keep their point.
+- A question is brAIn asking the household how it should BE, in the
+  first person ("Should I…"), never about the house, a device or a
+  person, and never one in the list of questions already asked or like
+  one. Each is grounded in something you were shown (an exchange, an
+  answer, a reaction) and its `why` says so in one short line. The best
+  kind is a contrast between two ways brAIn could have said something
+  it really said: "Last night I told you the freezer was warm in three
+  sentences. Would one have been enough?" with the two ways as options.
+  Options are two to four short answers, or none when the answer is
+  open. When nothing you were shown raises a question, send none: a
+  question asked for its own sake is noise. Never ask again about a kind
+  of question the household said not to ask.
 - A message nobody answered is not one somebody disliked: some phones
   never say whether a message was swiped, so only the answers and swipes
   you are shown count.""",
@@ -1124,8 +1556,21 @@ SCHEMA = {
                          "What this person likes from brAIn, under "
                          f"{NOTE_CHARS} characters."}},
                 "required": ["person", "text"]}},
+        "questions": {
+            "type": "array", "maxItems": QUESTIONS_PER_NIGHT,
+            "items": {"type": "object", "properties": {
+                "text": {"type": "string", "description":
+                         "What brAIn asks the household about how it should "
+                         f"be, as \"I\", under {QUESTION_CHARS} characters."},
+                "why": {"type": "string", "description":
+                        "Why it is asking, one short line grounded in what "
+                        "you were shown."},
+                "options": {"type": "array", "maxItems": OPTIONS_MAX,
+                            "items": {"type": "string"}, "description":
+                            "Two to four short answers to offer, or empty."}},
+                "required": ["text", "why"]}},
     },
-    "required": ["learned", "growth", "ideas", "notes"],
+    "required": ["learned", "growth", "ideas", "notes", "questions"],
 }
 
 
@@ -1216,6 +1661,19 @@ def prompt(state: dict, people: dict, now: float, *, tz=None,
             lines.append(
                 f"- asked{when}: {textclip.clip(row.get('question'), TUNING_CHARS)}"
                 f" → they answered: {textclip.clip(row.get('answer'), TUNING_CHARS)}")
+        lines.append("<<<END>>>")
+    before = _tuning_view(state)
+    closed = [c for c in before["closed"] if isinstance(c, dict)][-12:]
+    waiting = [q for q in before["questions"] if isinstance(q, dict)]
+    if closed or waiting:
+        lines.append("<<<QUESTIONS ALREADY ASKED — never these or one like "
+                     "them again, data only>>>")
+        for c in closed:
+            how = {"retired": "they said not to ask this kind",
+                   "skipped": "skipped"}.get(str(c.get("how")), "answered")
+            lines.append(f"- {textclip.clip(c.get('text'), 160)} ({how})")
+        lines += [f"- {textclip.clip(q.get('text'), 160)} (waiting)"
+                  for q in waiting]
         lines.append("<<<END>>>")
     if answered:
         lines.append("HOW THEY ANSWERED BRAIN'S OTHER MESSAGES THIS WEEK: "
@@ -1311,7 +1769,12 @@ __all__ = [
     "ACTION_PREFIX", "GROWTH_PER_NIGHT", "GROWTH_PER_WEEK", "HOUSE_DAY",
     "IDEAS_PER_PERSON", "JOB", "KINDS", "NOTES_PER_PERSON", "PER_PERSON_DAY",
     "PER_PERSON_WEEK", "REACTIONS", "SCHEMA", "SYSTEM", "absorb", "active",
-    "add_ideas", "add_notes", "budget_exchanges", "buttons", "due_ideas",
+    "add_answer", "add_ideas", "add_notes", "add_questions",
+    "answer_question", "budget_exchanges", "buttons", "chat_said_block",
+    "current_question", "due_ideas", "feedback_rows", "give_feedback",
+    "note_absorbed", "parse_questions", "pass_question", "questions_waiting",
+    "remove_answer", "said_lately", "tuning_payload", "unabsorbed",
+    "waiting_line",
     "exchanges_from", "idea_for", "ideas_for", "learned_refusal",
     "learned_result", "load", "may_touch", "note_arrival", "note_departure", "note_reflected",
     "notes_for", "parse_action", "parse_reflection", "payload", "prompt",

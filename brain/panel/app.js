@@ -18591,10 +18591,182 @@ function presCount(n, word) {
   return `${words[n] || n} ${word}${n === 1 ? "" : "s"}`;
 }
 
+// ---- ⚙ › Personality › Shape … ---------------------------------------------
+//
+// The assistant leads (presence.py `tuning`): ONE question at a time in its
+// own words, a few lines it really said for a verdict, and a conversation it
+// leads in Ask. Every answer lands in one list ("What you have told …"),
+// each removable, and the next reflection revises the learned paragraph
+// from them — tonight, or now with Take this in now. Never a list of
+// questions: answering shows the next one.
+const tuneState = { result: "", differently: "" };
+
+function tuneOwnRow(placeholder, aria, onSend) {
+  const row = el("div", "tuneown");
+  const input = el("input", "persname");
+  input.type = "text";
+  input.maxLength = ((presState.data || {}).tuning || {}).limits?.answer || 400;
+  input.placeholder = placeholder;
+  input.setAttribute("aria-label", aria);
+  input.autocomplete = "off";
+  const send = presButton("Send", aria, () => {
+    const text = input.value.trim();
+    if (text) onSend(text);
+    else input.focus();
+  });
+  input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); send.click(); } });
+  row.appendChild(input);
+  row.appendChild(send);
+  return row;
+}
+
+function tunePost(payload) {
+  tuneState.differently = "";
+  return presencePost(payload);
+}
+
+async function tuneTakeIn(btn) {
+  btn.disabled = true;
+  btn.textContent = "Taking it in…";
+  tuneState.result = "";
+  try {
+    const out = await api("api/presence/tuning/take-in", { method: "POST", body: "{}" });
+    tuneState.result = out.ok ? out.said : out.why;
+    if (out.personality) { persState.data = out.personality; renderLearned(); }
+    if (out.presence) presState.data = out.presence;
+  } catch (e) {
+    tuneState.result = e.message;
+  }
+  renderPresence();
+}
+
+function tuneTalkPrompt(name) {
+  const p = persState.data || {};
+  const t = (presState.data || {}).tuning || {};
+  const lines = [
+    "Lead this conversation: interview me about how you should be in this house. I will answer; you ask.",
+    "",
+    "How to run it:",
+    "- Your first message is your opening question, with no preamble.",
+    "- One question at a time, short. Ask about how you should BE (how long your messages are, your humour, "
+    + "how blunt, when to speak up, how to take a correction), never about a person, and never what the "
+    + "list below already answers.",
+    "- Where you can, offer two contrasting ways you could say the same real thing and ask which is closer. "
+    + "Use something you actually said lately when you have it.",
+    "- After five or six questions, or when I say enough, say back in a few lines what you will change.",
+    "- Then record each thing you learned, one call each, in the shell: "
+    + "brain tune \"<what you asked>\" \"<what I answered, in my words>\". "
+    + "Do not edit any file for this and do not use note_personality_change.",
+  ];
+  if ((p.learned || {}).text) lines.push("", "How you have learned to be here so far:", p.learned.text);
+  const told = (t.answers || []).slice(0, 8);
+  if (told.length) {
+    lines.push("", "What I have already told you:");
+    told.forEach((a) => lines.push(`- ${a.question} -> ${a.answer}`));
+  }
+  return lines.join("\n");
+}
+
+function renderTuning(d, name) {
+  const body = $("#tuneBody");
+  if (!body) return;
+  const t = d.tuning;
+  $("#tuneHead").textContent = `Shape ${name}`;
+  body.textContent = "";
+  $("#tuneOff").hidden = !!t;
+  if (!t) {
+    // One line, and nothing else: it asks nothing while it is switched off.
+    $("#tuneOff").textContent = "Off: it needs Personality and the Learning loop on in Features.";
+    return;
+  }
+  if (t.ack) body.appendChild(el("p", "tunesay", t.ack));
+  const q = t.question;
+  if (q) {
+    const box = el("div", "tuneq");
+    box.appendChild(el("p", "tuneqtext", q.text));
+    if (q.why) box.appendChild(el("p", "pressub", q.why));
+    if ((q.options || []).length) {
+      const chips = el("div", "tunechips");
+      q.options.forEach((o) => chips.appendChild(presButton(o, `Answer: ${o}`,
+        () => tunePost({ do: "tune_answer", id: q.id, answer: o }))));
+      box.appendChild(chips);
+    }
+    box.appendChild(tuneOwnRow((q.options || []).length ? "Or say it your way…" : "Say it your way…",
+      "Answer in your own words", (text) => tunePost({ do: "tune_answer", id: q.id, answer: text })));
+    const acts = el("div", "tuneacts");
+    acts.appendChild(presButton("Skip", "Skip this question",
+      () => tunePost({ do: "tune_skip", id: q.id })));
+    acts.appendChild(presButton("Don\u2019t ask this", "Do not ask this kind of question",
+      () => tunePost({ do: "tune_retire", id: q.id })));
+    box.appendChild(acts);
+    body.appendChild(box);
+  } else {
+    body.appendChild(el("p", "tunesay", "I have nothing to ask right now."));
+  }
+  const said = t.feedback || [];
+  if (said.length) {
+    body.appendChild(el("p", "preshead", "Things I said lately. Was that right?"));
+    said.forEach((r) => {
+      const meta = [r.label, r.name ? `to ${r.name}` : "", r.when].filter(Boolean).join(" · ");
+      const btns = [
+        presButton("More like this", `More like this: ${r.text}`,
+          () => tunePost({ do: "tune_feedback", key: r.key, verdict: "more" })),
+        presButton("Less like this", `Less like this: ${r.text}`,
+          () => tunePost({ do: "tune_feedback", key: r.key, verdict: "less" })),
+      ];
+      if (tuneState.differently !== r.key) {
+        btns.push(presButton("Say it differently", `Say it differently: ${r.text}`,
+          () => { tuneState.differently = r.key; renderPresence(); }));
+      }
+      const row = presRow(r.text, meta, btns);
+      row.classList.add("tunerow");
+      if (tuneState.differently === r.key) {
+        const own = tuneOwnRow("How should I have said it?", "How it should have been said",
+          (text) => tunePost({ do: "tune_feedback", key: r.key, verdict: "differently", text }));
+        row.appendChild(own);
+        setTimeout(() => own.querySelector("input").focus(), 0);
+      }
+      body.appendChild(row);
+    });
+  }
+  const talk = presButton("Talk it through", `Talk it through with ${name}`, (ev) => {
+    askAbout(tuneTalkPrompt(name), ev.currentTarget);
+  });
+  body.appendChild(presRow("Or we talk it through.",
+    "I ask, you answer, and I tell you what I will change.", [talk]));
+  const answers = t.answers || [];
+  if (t.pending || tuneState.result) {
+    const btns = t.pending ? [presButton("Take this in now", "Take these answers in now",
+      (ev) => tuneTakeIn(ev.currentTarget))] : [];
+    if (t.taking && btns.length) { btns[0].disabled = true; btns[0].textContent = "Taking it in…"; }
+    body.appendChild(presRow(
+      tuneState.result || (t.pending === 1
+        ? "One answer I have not taken in yet."
+        : `${t.pending} answers I have not taken in yet.`),
+      tuneState.result ? "" : "I do that overnight, or now if you would rather not wait.", btns));
+  }
+  if (answers.length) {
+    body.appendChild(el("p", "preshead", `What you have told ${name}`));
+    answers.forEach((a) => body.appendChild(presRow(a.answer, `${a.question} · ${a.when}`, [
+      presButton("Remove", `Remove: ${a.answer}`, () => tunePost({ do: "tune_remove", id: a.id })),
+    ])));
+  }
+}
+
+// ⚙'s Personality row: who it is, and that it has something to ask.
+function paintPersRow() {
+  const base = (persState.data || {}).summary;
+  if (!base) return;
+  const row = (presState.data || {}).row;
+  setSummary("setSumPersonality", row ? `${base} · ${row}` : base);
+}
+
 function renderPresence() {
   const d = presState.data || {};
   const p = persState.data || {};
   const name = d.name || p.name || "brAIn";
+  renderTuning(d, name);
+  paintPersRow();
   $("#presHead").textContent = `How ${name} is growing`;
   // The paragraph's heading carries the name, and its line the night's
   // result: both are this payload's.
@@ -18718,6 +18890,7 @@ $("#persSave").addEventListener("click", async () => {
     renderPersonality();
     setSummary("setSumPersonality", persState.data.summary
       || (persState.data.set ? persState.data.name || "Set" : "None set"));
+    paintPersRow();
     toast("Saved. The next conversation speaks as it.");
   } catch (e) {
     toast(e.message);
@@ -18911,7 +19084,7 @@ function learnedWords(learned) {
       const by = Object.entries(r.by_source || {}).map(([k, n]) => `${n} ${k}`).join(", ");
       return `memory ${r.count}${by ? ` (${by})` : ""}`;
     }
-    if (r.key === "presence") return `presence ${r.count} (${r.growth || 0} about itself, ${r.notes || 0} about people)`;
+    if (r.key === "presence") return `presence ${r.count} (${(r.growth || 0) + (r.revisions || 0)} about itself, ${r.notes || 0} about people)`;
     if (r.key === "morph") return `Morph learning ${r.count} change${r.count === 1 ? "" : "s"} (${r.learned_md || 0} to LEARNED.md)`;
     return `${String(r.label || r.key).toLowerCase()} ${r.count}`;
   });

@@ -294,6 +294,10 @@ window.fetch = async (url, opts) => {
       updated_at: ${NOW}, path: '/config/.brain/personality.json',
       limits: { name: 60, persona: 32000, growth: 500, learned: 1200 } });
   }
+  if (p.includes('api/presence/tuning/take-in')) {
+    window.__takeIns = (window.__takeIns || 0) + 1;
+    return answer({ ok: false, why: 'I cannot make a run right now: automatic runs are paused. I will take them in overnight, or press again later.' });
+  }
   if (p.includes('api/presence')) {
     // The presence loop's section (⚙ › Personality › How … is growing):
     // two invented people, an idea each, a note, a retired kind and two
@@ -321,7 +325,44 @@ window.fetch = async (url, opts) => {
           reason: 'Wren asked for the porch light at dusk.', reaction: 'thanks', reaction_label: 'Thanks' },
         { id: 'a7b8', name: 'Ilo Marguerite-Okonkwo', kind_label: 'Morning check-in', when: 'Tuesday 08:30',
           text: 'Morning, Ilo. Rain from eleven, the washing is better inside.', channel: 'speaker',
-          reason: 'Ilo hangs washing out on Tuesdays.', reaction: 'spoken', reaction_label: 'Said aloud' }] });
+          reason: 'Ilo hangs washing out on Tuesdays.', reaction: 'spoken', reaction_label: 'Said aloud' }],
+      // Shape … : ONE question (the second after an answer), three lines it
+      // said, and what the household has told it. window.__tuneOff is the
+      // loop switched off.
+      row: window.__tuneOff ? '' : 'Juniper has 3 questions for you',
+      tuning: window.__tuneOff ? undefined : (() => {
+        const posts = (window.__presencePosts || []).filter((x) => /^tune_/.test(x.do));
+        const answered = posts.filter((x) => x.do === 'tune_answer');
+        const rated = posts.filter((x) => x.do === 'tune_feedback').map((x) => x.key);
+        const removed = posts.filter((x) => x.do === 'tune_remove').map((x) => x.id);
+        const first = { id: 'q1', text: 'Last night I told you the freezer was warming in three sentences. Would one have been enough?',
+          why: 'You swiped it away before the second line.',
+          options: ['One is enough', 'Three was right', 'Depends how bad it is'] };
+        const second = { id: 's2', text: 'Should I joke with you?', why: 'A joke nobody wanted is worse than none.',
+          options: ['Yes, go ahead', 'Only when we joke first', 'No, keep it straight'] };
+        const closed = posts.filter((x) => ['tune_answer', 'tune_skip', 'tune_retire'].includes(x.do)).length;
+        const answers = [
+          ...answered.map((x, i) => ({ id: 'new' + i, question: first.text, answer: x.answer, when: 'Today 09:14', source: 'question', pending: true })),
+          { id: 'a1', question: 'How long should my messages be?', answer: 'One line', when: 'Yesterday 20:02', source: 'question', pending: true },
+          { id: 'a2', question: 'I said: "Welcome back, Wren. The porch light is on."', answer: 'More like this', when: 'Yesterday 17:50', source: 'feedback', pending: false },
+          { id: 'a3', question: 'How blunt should I be when something is wrong?',
+            answer: 'Say it straight, but lead with what I should actually do about it rather than what went wrong',
+            when: 'Monday 21:30', source: 'ask', pending: false },
+        ].filter((x) => !removed.includes(x.id));
+        const last = posts[posts.length - 1] || {};
+        return {
+          ack: last.do === 'tune_answer' ? 'Noted. That goes into how I am here.' : last.do === 'tune_retire' ? 'I will not ask that again.' : '',
+          question: closed === 0 ? first : closed === 1 ? second : null, waiting: Math.max(0, 3 - closed),
+          feedback: [
+            { key: 'sent:d1', label: 'Morning brief', when: 'Today 07:02', name: '', outcome: '',
+              text: 'The garage freezer is at -12°C; it usually holds -18, so check the door is shut.' },
+            { key: 'sent:d2', label: 'Notification', when: 'Yesterday 22:41', name: '', outcome: 'swiped away',
+              text: 'Garage freezer warming. It has climbed to -12°C from its usual -18. Check the door is shut.' },
+            { key: 'touch:e5f6', label: 'Welcome home', when: 'Yesterday 17:42', name: 'Wren', outcome: 'thanks',
+              text: 'Welcome back, Wren. The porch light is on.' },
+          ].filter((r) => !rated.includes(r.key)),
+          answers, pending: answers.filter((x) => x.pending).length, limits: { answer: 400 }, taking: false };
+      })() });
   }
   if (p.includes('api/settings') && opts && opts.method === 'PUT') {
     (window.__puts = window.__puts || []).push(JSON.parse(opts.body));
@@ -1805,6 +1846,88 @@ for (const width of WIDTHS) {
       await page.locator('#presBody .presrow').last().evaluate((n) => n.scrollIntoView({ block: 'end' }));
       await page.screenshot({ path: `${process.env.PRESENCE_SHOT_DIR}/presence-${width}-end.png` });
     }
+    // ---- Shape … : it asks ONE question, and every answer is one press ----
+    const tune = await page.evaluate(() => {
+      const box = document.querySelector('#tuneBody');
+      const shown = (n) => !n.hidden && n.offsetHeight > 0;
+      return {
+        head: document.querySelector('#tuneHead').textContent,
+        above: box.getBoundingClientRect().top < document.querySelector('#presHead').getBoundingClientRect().top,
+        questions: box.querySelectorAll('.tuneq').length,
+        q: (box.querySelector('.tuneqtext') || {}).textContent || '',
+        chips: [...box.querySelectorAll('.tunechips button')].map((b) => b.textContent),
+        text: box.innerText,
+        row: document.querySelector('#setSumPersonality').textContent,
+        buttons: [...box.querySelectorAll('button')].filter(shown).map((b) => ({
+          label: b.textContent, h: b.offsetHeight, right: Math.round(b.getBoundingClientRect().right) })),
+        inputs: [...box.querySelectorAll('input')].map((i) => parseFloat(getComputedStyle(i).fontSize)),
+        coarse: matchMedia('(pointer: coarse)').matches,
+      };
+    });
+    if (tune.head !== 'Shape Juniper') note(where, `the tuning heading reads "${tune.head}"`);
+    if (!tune.above) note(where, 'Shape … is not above How … is growing');
+    if (tune.questions !== 1) note(where, `${tune.questions} questions are shown at once`);
+    if (!/Would one have been enough/.test(tune.q)) note(where, `the question reads "${tune.q}"`);
+    if (tune.chips.length !== 3) note(where, `the question has ${tune.chips.length} chips`);
+    if (/Should I joke/.test(tune.text)) note(where, 'the next question is shown before this one is answered');
+    if (!/Juniper has 3 questions for you/.test(tune.row)) note(where, `the Personality row reads "${tune.row}"`);
+    for (const want of ['Skip', 'Don’t ask this', 'More like this', 'Less like this', 'Say it differently',
+                        'Talk it through', 'Take this in now', 'Remove']) {
+      if (!tune.buttons.some((b) => b.label === want)) note(where, `Shape … has no ${want}`);
+    }
+    if (touch && tune.coarse) {
+      tune.buttons.filter((b) => b.h < MIN_TARGET)
+        .forEach((b) => note(where, `the tuning button "${b.label}" is ${b.h}px on a finger`));
+      if (tune.inputs.some((f) => f < 16)) note(where, `a tuning box is ${Math.min(...tune.inputs)}px on a finger`);
+    }
+    tune.buttons.filter((b) => b.right > width + 1)
+      .forEach((b) => note(where, `the tuning button "${b.label}" runs off the page`));
+    const tuneShot = async (name, sel) => {
+      if (!process.env.TUNING_SHOT_DIR) return;
+      await page.locator(sel).first().evaluate((n) => n.scrollIntoView({ block: 'start' }));
+      await page.screenshot({ path: `${process.env.TUNING_SHOT_DIR}/${name}-${width}.png` });
+    };
+    await tuneShot('tuning-question', '#tuneHead');
+    await tuneShot('tuning-feedback', '#tuneBody .tunerow');
+    await tuneShot('tuning-answers', '#tuneBody .presrow:not(.tunerow)');
+    // Say it differently opens one box in that row; a chip answers and the
+    // NEXT question takes its place with a line saying it was heard.
+    await page.locator('#tuneBody button', { hasText: 'Say it differently' }).first().click();
+    await page.waitForSelector('#tuneBody .tunerow .tuneown input', { timeout: 4000 });
+    await tuneShot('tuning-differently', '#tuneBody .tunerow');
+    await page.fill('#tuneBody .tunerow .tuneown input', 'Freezer is warm. Check the door.');
+    await page.locator('#tuneBody .tunerow .tuneown button').click();
+    await page.waitForFunction(() => (window.__presencePosts || []).some((x) => x.do === 'tune_feedback'), null, { timeout: 4000 });
+    await page.locator('#tuneBody .tunechips button').first().click();
+    await page.waitForFunction(() => /Should I joke/.test(document.querySelector('#tuneBody').innerText), null, { timeout: 4000 });
+    const after = await page.evaluate(() => ({
+      posts: window.__presencePosts.filter((x) => /^tune_/.test(x.do)),
+      text: document.querySelector('#tuneBody').innerText,
+      questions: document.querySelectorAll('#tuneBody .tuneq').length }));
+    const fb = after.posts[0], ans = after.posts[1];
+    if (fb.key !== 'sent:d1' || fb.verdict !== 'differently' || fb.text !== 'Freezer is warm. Check the door.') {
+      note(where, `Say it differently sent ${JSON.stringify(fb)}`);
+    }
+    if (ans.do !== 'tune_answer' || ans.id !== 'q1' || ans.answer !== 'One is enough') note(where, `a chip sent ${JSON.stringify(ans)}`);
+    if (!/Noted\. That goes into how I am here/.test(after.text)) note(where, 'an answer is not acknowledged');
+    if (after.questions !== 1) note(where, `${after.questions} questions after an answer`);
+    if (/The garage freezer is at -12°C; it usually/.test(after.text)) note(where, 'a line with a verdict is still offered');
+    await tuneShot('tuning-next', '#tuneHead');
+    // Take this in now says why when no run can be made, and changes nothing.
+    await page.locator('#tuneBody button', { hasText: 'Take this in now' }).click();
+    await page.waitForFunction(() => /automatic runs are paused/.test(document.querySelector('#tuneBody').innerText), null, { timeout: 4000 })
+      .catch(() => note(where, 'Take this in now does not say why no run could be made'));
+    await page.evaluate(() => { window.__presencePosts = []; });
+    await page.evaluate(() => loadPresence());
+    await page.waitForFunction(() => /Would one have been enough/.test(document.querySelector('#tuneBody').innerText), null, { timeout: 4000 });
+    // Switched off: one line and nothing else.
+    await page.evaluate(() => { window.__tuneOff = true; return loadPresence(); });
+    await page.waitForFunction(() => !document.querySelector('#tuneOff').hidden, null, { timeout: 4000 });
+    const off = await page.evaluate(() => ({ kids: document.querySelector('#tuneBody').childElementCount,
+      line: document.querySelector('#tuneOff').textContent }));
+    if (off.kids || !/Features/.test(off.line)) note(where, `switched off, Shape … shows ${off.kids} things under "${off.line}"`);
+    await page.evaluate(() => { window.__tuneOff = false; return loadPresence(); });
+    await page.waitForFunction(() => document.querySelectorAll('#tuneBody .tuneq').length === 1, null, { timeout: 4000 });
     // The paragraph it keeps itself leads the section: shown once, with
     // when it changed, and Undo, Edit and Clear each one press.
     const learned = await page.evaluate(() => {

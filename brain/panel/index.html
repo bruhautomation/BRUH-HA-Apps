@@ -1507,6 +1507,15 @@
           <p class="hint tight">Ask opens a conversation with brAIn about who it is; what you settle there is added below.</p>
           <h4 class="sethead">How it has grown</h4>
           <ul id="persGrowth" class="persgrowth" aria-label="How brAIn's personality has grown"></ul>
+          <!-- Shape <name> (presence.py `tuning`): the assistant leads. ONE
+               question at a time in its own words, a few lines it really
+               said for a verdict, a conversation it leads in Ask, and
+               below them what the household has told it, each removable.
+               Built by `renderTuning`; off (Personality or the Learning
+               loop), one line says so and nothing else is drawn. -->
+          <h4 class="sethead" id="tuneHead">Shape brAIn</h4>
+          <p id="tuneOff" class="hint tight" hidden></p>
+          <div id="tuneBody" class="tunebody" aria-labelledby="tuneHead"></div>
           <!-- The presence loop (panel/presence.py): what the assistant
                noted about itself overnight, the small touches it has in
                mind for each person, and the ones it sent with their

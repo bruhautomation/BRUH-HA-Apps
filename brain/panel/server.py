@@ -26971,7 +26971,7 @@ def _settings_payload(settings: dict) -> dict:
     return {
         "settings": {**settings, **options},
         "model_label": chat_session.pretty_model(options["model"]),
-        "personality_summary": personality.summary(personality.load()),
+        "personality_summary": _personality_row(),
         "usage": _usage_for_panel(settings),
         "addon_defaults": addon_defaults(),
         "options_synced": addon_options.snapshot() is not None,
@@ -27413,6 +27413,21 @@ def development_mode() -> bool:
         return False
 
 
+def _personality_row() -> str:
+    """⚙'s Personality row: who it is, and — because it leads — that it has
+    something to ask when it does. Never raises."""
+    row = personality.summary(personality.load())
+    try:
+        if presence.active()[0]:
+            waiting = presence.waiting_line(
+                presence.load(), time.time(), personality.assistant_name())
+            if waiting:
+                row = f"{row} · {waiting}"
+    except Exception as exc:  # noqa: BLE001 — a row is never a failure
+        log.debug("could not count the questions waiting: %s", exc)
+    return row
+
+
 def _personality_lines() -> str:
     """The household's chosen personality for brAIn, as prompt lines, or ""
     when none is set (`personality.prompt_block`). Never raises: a file
@@ -27454,11 +27469,36 @@ def _chat_system_prompt(session) -> str:
         base += "\n\n" + persona
     if yolo_mode():
         base += "\n\n" + YOLO_MODE_ON
+    said = _chat_said_lines()
+    if said:
+        base += "\n\n" + said
     if not lines:
         return base
     return (base + "\n\nWhen this conversation started: "
             + "; ".join(lines) + ". That is a snapshot — ask get_findings "
             "and get_health for how things stand now.")
+
+
+def _chat_said_lines() -> str:
+    """What brAIn said to the household lately without being asked — the
+    morning brief's opening, the notifications whose words it wrote, its
+    touches — so a conversation that opens with "what did you mean this
+    morning?" does not land on a blank. The same reader ⚙ › Personality's
+    feedback rows use (`presence.said_lately`), the newest few inside a
+    byte cap. Never raises: a source that cannot be read is lines left
+    out, and nothing said is no block at all."""
+    try:
+        now = time.time()
+        block = presence.chat_said_block(presence.said_lately(
+            presence.load(), deliveries.fold(now), now, tz=_presence_tz()))
+    except Exception as exc:  # noqa: BLE001 — continuity is a nicety
+        log.debug("could not read what brAIn said lately: %s", exc)
+        return ""
+    if not block:
+        return ""
+    return ("What you have said to the household lately, unprompted (newest "
+            "first, with how each was answered where that is known; they "
+            "may ask about any of it):\n" + block)
 
 
 chat_session.PROMPT_PROVIDER = _chat_system_prompt
@@ -28196,14 +28236,22 @@ def _presence_exchanges(now: float) -> list[dict]:
     return presence.budget_exchanges(rows)
 
 
-async def _presence_reflect(now: float, people: dict[str, str]) -> dict:
-    """The one run a night: the learned paragraph, growth notes and
-    tomorrow's ideas."""
+async def _presence_reflect(now: float, people: dict[str, str], *,
+                            pressed: bool = False) -> dict:
+    """The one run a night: the learned paragraph, growth notes, tomorrow's
+    ideas and the questions it would like to ask.
+
+    ``pressed`` is "Take this in now" (⚙ › Personality): the same run, the
+    same prompt and the same reading of its answer, made because somebody
+    asked, and only the paragraph is taken from it — the night's ideas,
+    notes and questions stay the night's, so a press never spends a touch
+    or stacks the queue."""
     prompt = await asyncio.to_thread(_presence_inputs, now, people)
     result = await _claude(
         engine.run_claude, prompt, presence.SYSTEM, eff_model(),
         presence.REFLECT_TIMEOUT_S, presence.REFLECT_MAX_TURNS, "presence",
-        job="presence", schema=presence.SCHEMA)
+        job="presence", schema=presence.SCHEMA,
+        priority=run_queue.PRESS if pressed else run_queue.SCHEDULED)
     cost = await asyncio.to_thread(_record_usage, result, "presence")
     LEDGER.record("presence", int(cost.get("total") or 0), now,
                   tier=_ran_tier(result, "presence"))
@@ -28222,13 +28270,20 @@ async def _presence_reflect(now: float, people: dict[str, str]) -> dict:
                 _answer(result), people, state, recent_growth=recent,
                 name="" if name == personality.DEFAULT_NAME else name,
                 learned_now=pers["learned"]["text"])
+            # Every answer the household gave was in this run's prompt.
+            presence.note_absorbed(state, now)
+            if pressed:
+                return {"parsed": parsed, "ideas": 0, "notes": 0,
+                        "questions": 0}
             ideas = presence.add_ideas(state, parsed["ideas"], people, now)
             notes = presence.add_notes(state, parsed["notes"], people, now)
-            return {"parsed": parsed, "ideas": ideas, "notes": notes}
+            asked = presence.add_questions(state, parsed["questions"], now)
+            return {"parsed": parsed, "ideas": ideas, "notes": notes,
+                    "questions": asked}
 
         got = _presence_update(apply)
         grown = presence.write_growth(got["parsed"]["growth"], now) \
-            if personality.writable() else 0
+            if personality.writable() and not pressed else 0
         # The paragraph: written whole or not at all, and a refusal — here
         # or in the reading above — is the night's result, said in ⚙.
         revised, why = False, got["parsed"]["learned_refused"]
@@ -28237,6 +28292,7 @@ async def _presence_reflect(now: float, people: dict[str, str]) -> dict:
                 got["parsed"]["learned"], now, people.values())
         return {"ok": True, "growth": grown, "ideas": got["ideas"],
                 "notes": got["notes"], "refused": got["parsed"]["refused"],
+                "questions": got["questions"],
                 "learned": revised, "learned_refused": why}
 
     out = await asyncio.to_thread(write)
@@ -28248,10 +28304,11 @@ async def _presence_reflect(now: float, people: dict[str, str]) -> dict:
     if out.get("learned_refused"):
         log.info("presence: the revised paragraph was not kept (%s); the "
                  "stored one stands", out["learned_refused"])
-    log.info("presence: reflected — %s, %d growth note(s), %d idea(s), %d "
-             "refused", "the paragraph revised" if out["learned"]
+    log.info("presence: reflected%s — %s, %d growth note(s), %d idea(s), %d "
+             "question(s), %d refused", " on a press" if pressed else "",
+             "the paragraph revised" if out["learned"]
              else "the paragraph as it was", out["growth"], out["ideas"],
-             out["refused"])
+             out["questions"], out["refused"])
     return out
 
 
@@ -28317,11 +28374,114 @@ async def _presence_loop() -> None:
 async def h_presence_get(request: web.Request) -> web.Response:
     """⚙ › Personality's "How it is growing": its own notes are in the
     personality payload; this is the people, the queue and the history."""
-    def build() -> dict:
-        out = presence.payload_now(tz=_presence_tz())
-        out["name"] = personality.assistant_name()
-        return out
-    return web.json_response(await asyncio.to_thread(build))
+    return web.json_response(await asyncio.to_thread(_presence_payload))
+
+
+def _presence_said(state: dict, now: float) -> list[dict]:
+    """What brAIn really said lately (`presence.said_lately`): its touches
+    and, off the delivery ledger, the brief, the weekly report and the
+    notifications whose words it wrote. An unreadable ledger is those
+    lines left out."""
+    try:
+        folded = deliveries.fold(now)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("presence could not read the delivery ledger: %s", exc)
+        folded = None
+    return presence.said_lately(state, folded, now, tz=_presence_tz())
+
+
+def _presence_payload(ack: str = "") -> dict:
+    """⚙ › Personality's two sections the presence loop owns: "Shape
+    <name>" (`tuning`, only while the loop is on: off, the page says so in
+    one line and shows nothing else) and "How <name> is growing"."""
+    tz = _presence_tz()
+    now = time.time()
+    on, why = presence.active()
+    state = presence.load()
+    out = presence.payload(state, now, tz=tz, on=on, why=why)
+    out["name"] = name = personality.assistant_name()
+    if on:
+        out["tuning"] = presence.tuning_payload(
+            state, _presence_said(state, now), now, tz=tz)
+        out["tuning"]["ack"] = personality.speak(ack)
+        out["tuning"]["taking"] = bool(PRESENCE_STATE.get("taking"))
+    out["row"] = presence.waiting_line(state, now, name) if on else ""
+    return out
+
+
+PRESENCE_TUNING_OFF = ("That is switched off: it needs Personality and the "
+                       "Learning loop on in Features.")
+
+
+async def h_presence_tune(request: web.Request) -> web.Response:
+    """POST {question, answer}: one thing the household settled about how
+    brAIn should be, recorded from a conversation brAIn led (`brain tune`,
+    which the "Talk it through" conversation is told to run). Kept with
+    the answers given on the page, and read by the next reflection."""
+    body = await _personality_body(request)
+    question, answer = body.get("question"), body.get("answer")
+    if not isinstance(question, str) or not isinstance(answer, str) \
+            or not question.strip() or not answer.strip():
+        raise web.HTTPBadRequest(text="send {question, answer} as text")
+    if not (await asyncio.to_thread(presence.active))[0]:
+        raise web.HTTPConflict(text=PRESENCE_TUNING_OFF)
+    now = time.time()
+    row = await asyncio.to_thread(_presence_update, lambda s: presence.add_answer(
+        s, question, answer, now, "ask"))
+    if row is None:
+        raise web.HTTPBadRequest(text="send {question, answer} as text")
+    return web.json_response({"ok": True, "answer": row})
+
+
+async def h_presence_take_in(request: web.Request) -> web.Response:
+    """POST: "Take this in now". The reflection's paragraph revision, made
+    because somebody pressed: the same job through the run queue, the same
+    three gates a scheduled run answers to, the same refusals. When no run
+    can be made the answer says why, in a sentence, and nothing changed."""
+    def held(why: str) -> web.Response:
+        return web.json_response({"ok": False, "why": why})
+
+    on, why = await asyncio.to_thread(presence.active)
+    if not on:
+        return held(why[:1].upper() + why[1:] + ".")
+    if PRESENCE_STATE.get("taking"):
+        return held("I am already taking them in.")
+    gate = _resident_gate(await asyncio.to_thread(settings_store.load))
+    if gate:
+        return held(f"I cannot make a run right now: {gate}. I will take "
+                    "them in overnight, or press again later.")
+    house = await _presence_read_house()
+    people = {pid: p["name"] for pid, p in
+              _presence_people(house.get("states") or []).items()}
+    if not people:
+        return held("I could not read Home Assistant just now, so I "
+                    "cannot tell who lives here. Nothing changed.")
+    PRESENCE_STATE["taking"] = True
+    try:
+        result = await _presence_reflect(time.time(), people, pressed=True)
+    except Exception as exc:  # noqa: BLE001 — said, never a 500
+        log.warning("presence: taking the answers in failed: %s", exc)
+        result = {"ok": False, "error": str(exc)[:200]}
+    finally:
+        PRESENCE_STATE["taking"] = False
+    if not result.get("ok"):
+        log.info("presence: the pressed run did not answer: %s",
+                 result.get("error"))
+        return held("The run did not come back with an answer. Nothing "
+                    "changed; the add-on log says why.")
+    if result.get("learned"):
+        said = "Taken in. The paragraph below is my new one; Undo steps back."
+    elif result.get("learned_refused"):
+        said = ("I read them, but my revision was not kept, because "
+                f"{result['learned_refused']}. Nothing changed.")
+    else:
+        said = ("I read them and my paragraph already says it. Nothing "
+                "changed.")
+    return web.json_response({
+        "ok": True, "said": personality.speak(said),
+        "changed": bool(result.get("learned")),
+        "personality": await asyncio.to_thread(personality.payload),
+        "presence": await asyncio.to_thread(_presence_payload)})
 
 
 async def h_presence_post(request: web.Request) -> web.Response:
@@ -28342,6 +28502,35 @@ async def h_presence_post(request: web.Request) -> web.Response:
         return web.json_response({"ok": True,
                                   "personality": await asyncio.to_thread(
                                       personality.payload)})
+    # "Shape <name>": an answer to its question, Skip, Don't ask this, a
+    # verdict on a line it said, and Remove on an answer already given.
+    said = await asyncio.to_thread(
+        lambda: _presence_said(presence.load(), now)) \
+        if do == "tune_feedback" else []
+    verdict = str(body.get("verdict") or "")
+    tune = {
+        "tune_answer": (lambda s: presence.answer_question(
+            s, str(body.get("id") or ""), str(body.get("answer") or ""), now),
+            presence.ACK_ANSWER),
+        "tune_skip": (lambda s: presence.pass_question(
+            s, str(body.get("id") or ""), False, now), presence.ACK_SKIP),
+        "tune_retire": (lambda s: presence.pass_question(
+            s, str(body.get("id") or ""), True, now), presence.ACK_RETIRE),
+        "tune_feedback": (lambda s: presence.give_feedback(
+            s, said, str(body.get("key") or ""), verdict,
+            str(body.get("text") or ""), now),
+            presence.ACK_FEEDBACK.get(verdict, "")),
+        "tune_remove": (lambda s: presence.remove_answer(
+            s, str(body.get("id") or "")), ""),
+    }
+    if isinstance(do, str) and do in tune:
+        if not (await asyncio.to_thread(presence.active))[0]:
+            raise web.HTTPConflict(text=PRESENCE_TUNING_OFF)
+        change, ack = tune[do]
+        if not await asyncio.to_thread(_presence_update, change):
+            raise web.HTTPNotFound(text="that is not there any more")
+        return web.json_response(
+            await asyncio.to_thread(_presence_payload, ack))
     actions = {
         "skip": lambda s: presence.skip_idea(s, pid, str(body.get("id") or "")),
         "never": lambda s: (presence.retire(s, pid, str(body.get("kind") or ""),
@@ -28596,6 +28785,7 @@ def _context_sources() -> dict:
         DEVELOPMENT_MODE_ON if development_mode() else DEVELOPMENT_MODE_OFF) + (
         "\n\n" + YOLO_MODE_ON if yolo_mode() else "")
     src["personality"] = _personality_lines()
+    src["said_lately"] = _chat_said_lines()
     # Off is not "none set": the page says which (⚙ › Features).
     src["personality_on"] = read(personality.enabled, True)
     src["house_now"] = "; ".join(read(_chat_house_lines, []))
@@ -28634,6 +28824,8 @@ def _context_sources() -> dict:
     src["reflection_person_chars"] = presence.PROMPT_TOUCHES * (
         presence.TEXT_CHARS + 60)
     src["reflection_occasion_chars"] = 6 * 120
+    src["tuning_chars"] = presence.PROMPT_TUNING * (
+        2 * presence.TUNING_CHARS + 40)
     src["document_bytes"] = context_map.size(_read_shared_memory())
     src["facts"] = read(facts_store.count, 0)
     src["waiting"] = read(_inbox_pending, 0)
@@ -29997,6 +30189,8 @@ def make_app() -> web.Application:
                         h_personality_learned_undo)
     app.router.add_get("/api/presence", h_presence_get)
     app.router.add_post("/api/presence", h_presence_post)
+    app.router.add_post("/api/presence/tuning", h_presence_tune)
+    app.router.add_post("/api/presence/tuning/take-in", h_presence_take_in)
     app.router.add_get("/header-logo", h_header_logo_get)
     app.router.add_put("/api/header/logo", h_header_logo_put)
     app.router.add_delete("/api/header/logo", h_header_logo_delete)

@@ -273,6 +273,14 @@ def report(src: dict) -> dict:
                  else "Personality is switched off, so nothing is sent."
                  if personality_off else "None is set, so nothing is sent.",
                  size(s.get("personality")), **personality_where),
+            part("said_lately", "What it told you lately without being asked",
+                 "The opening of the last morning brief and weekly report, "
+                 "the notifications whose words it wrote and its messages "
+                 "to each of you, the newest five, with how each was "
+                 "answered: so you can ask what it meant."
+                 if s.get("said_lately")
+                 else "Nothing in the last week, so nothing is sent.",
+                 size(s.get("said_lately"))),
             part("house_now", "How the house stands as it starts",
                  "How many things are waiting on you, brAIn's own health and "
                  "when the house wakes and settles — as of the start.",
@@ -508,6 +516,13 @@ def report(src: dict) -> dict:
                  "The newest exchanges of the last few days, each cut short. "
                  "Only conversations you started; none of its tool traffic.",
                  int(s.get("exchange_bytes") or 0), upto=True),
+            part("tuning", "What you told it about how it should be",
+                 "Your answers to its questions, your verdicts on things it "
+                 "said and what a talk in Ask settled: the newest eight, and "
+                 "the questions it has already asked. The same run is made "
+                 "when you press Take this in now.",
+                 int(s.get("tuning_chars") or 0), upto=True,
+                 change="⚙ › Personality", sec="personality"),
             part("answers", "How you answered it",
                  "Its recent touches per person with what happened to each, "
                  "what each person asked for less of, and how its other "

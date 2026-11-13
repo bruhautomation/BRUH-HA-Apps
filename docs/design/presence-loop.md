@@ -68,6 +68,41 @@ nightly run, delivery). Tests: `tests/test_presence.py`,
   speaking in a room), never a protected satellite, and never a follow-up.
   No channel, no touch. Words go through `personality.speak` with the
   assistant's name as the title.
+- **It asks.** ⚙ › Personality › **Shape *name*** is the assistant leading
+  (the owner: *"brain can ask questions to tune and get feedback … It should
+  lead those conversations"*). Three parts, all in its own words:
+  - **One question at a time**, with why it is asking, two to four answers
+    to press when the question has natural ones, a box to say it your way,
+    **Skip** and **Don't ask this**. The nightly run writes them (`questions`
+    in its schema: three a night at most, six waiting at most, two weeks to
+    live, each grounded in something it was shown, best as a contrast
+    between two ways it could have said something it really said). They are
+    read as strictly as everything else it writes (`parse_questions`:
+    `refusal_of`, no name of anybody in the house, nothing like a question
+    already answered, skipped, retired or waiting). A house that has
+    answered nothing gets a shipped starter set of seven (`STARTERS`), in
+    order, only while the run has none of its own waiting. Never a list:
+    answering shows a one-line acknowledgement and the next.
+  - **Things it said lately** (`said_lately`): the last week's touches, the
+    opening sentence of the morning brief and the weekly report, and each
+    notification whose words the dispatcher wrote (a message the fixed
+    composer assembled has no voice to judge), three at a time, newest
+    first, each with **More like this**, **Less like this** and **Say it
+    differently**; a line with a verdict is never offered again.
+  - **Talk it through**: one press opens an Ask conversation (`POST
+    /api/ask`, the saved face) whose prompt tells it to lead — one question
+    at a time, two contrasting ways of saying a real thing, say back what it
+    will change — and to record each thing it learned with `brain tune
+    "<asked>" "<answered>"` (`POST /api/presence/tuning`). No MCP tool.
+  Every answer from all three lands in `tuning.answers` (sixty kept), is
+  listed under **What you have told *name*** with Remove, and is in the next
+  reflection's prompt, where it outranks what the run infers. **Take this in
+  now** (shown while an answer is newer than `tuning.absorbed_at`) makes the
+  same run on a press — same job, same queue, the same three gates, the
+  same refusals — and takes only the paragraph from it; when no run can be
+  made it says why and nothing changes. ⚙'s list row for Personality says
+  "*name* has 2 questions for you"; there is no phone push and no new kind
+  of notification.
 - **⚙ › Personality › How *name* is growing**: the paragraph first, with
   when it last changed and whose words it is (Undo, Edit, Clear), then its
   own growth notes
