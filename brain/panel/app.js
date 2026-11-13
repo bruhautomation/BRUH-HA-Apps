@@ -920,6 +920,17 @@ function limitsNote(u) {
 // deleted one falls back to the id it was recorded under rather than
 // disappearing from the list, because a row that vanishes takes its tokens
 // off a total that did not shrink.
+function spendLabel(id) {
+  if (!id) return "Everything else";
+  if (id === "onboarding") return "First-run setup";
+  if (id.startsWith("fix-")) return "A plan for a finding";
+  const insight = insightFor(id);
+  if (insight && insight.title) return insight.title;
+  const cat = (state.status && state.status.categories || []).find((c) => c.id === id);
+  if (cat && cat.title) return cat.title;
+  return id;
+}
+
 // Where the session went — the half of "you are at 41%" that the pill has
 // never been able to answer.
 //
@@ -932,18 +943,21 @@ function limitsNote(u) {
 function spendRows(u) {
   const rows = u && u.breakdown;
   if (!rows || !rows.length) return "";
-  const out = [`<div class="psub">Where this session went</div>`];
+  const out = [`<div class="psub">What brAIn spent, this session</div>`];
   rows.forEach((r) => {
-    const share = Number(r.share) || 0;
-    out.push(`<div class="prow"><span class="pname">${esc(r.label || "Everything else")}`
-      + `</span><span class="pval">${share < 1 ? "under 1%" : `${share}%`}</span></div>`);
+    const runs = r.runs > 1 ? `${r.runs} runs` : "1 run";
+    out.push(`<div class="prow"><span class="pname">`
+      + `${esc(r.rest ? "Everything else" : spendLabel(r.id))}`
+      + `<span class="pwhen">${esc(runs)}</span></span>`
+      + `<span class="pval">${esc(fmtTokens(r.tokens))}</span></div>`);
   });
   out.push(`<p class="pnote">`
     + (u.source === "account"
-      ? `Of what brAIn's own work used. The percentage above is your whole `
-        + `Anthropic account, so the terminal is in that number and not in this list.`
-      : `Of what brAIn's own work used in the last 5 hours, against a rough `
-        + `<b>${esc(u.plan_label || "plan")}</b> allowance, which is what the `
+      ? `Insight, fix and setup runs only — the percentage above is your whole `
+        + `Anthropic account, so the terminal, the chat and voice are in that `
+        + `number and not in this list.`
+      : `Insight, fix and setup runs in the last 5 hours, against a rough `
+        + `<b>${esc(u.plan_label || "plan")}</b> allowance — which is what the `
         + `percentage above is measured from while your account's own usage `
         + `is unavailable.`)
     + `</p>`);
@@ -3178,54 +3192,6 @@ const OPTION_FIELDS = {
   setKeepDays: "history_keep_days",
 };
 
-// A closed <select> shows one line and cuts a longer option off with an
-// ellipsis, on every phone, and nothing can make it wrap. The four ⚙
-// dropdowns whose options are sentences (the model, how hard it thinks, how a
-// card gets its data, when to refresh) are drawn as a list of full-text,
-// wrapping choices instead; the <select> stays as the one source of truth
-// (its value, its disabled state, its `change`), visually hidden.
-function paintChoices(id) {
-  const sel = $("#" + id);
-  if (!sel) return;
-  sel.classList.add("choicesrc");
-  let list = sel.nextElementSibling;
-  if (!list || !list.classList.contains("choicelist")) {
-    list = el("div", "choicelist");
-    list.setAttribute("role", "radiogroup");
-    list.dataset.for = id;
-    sel.after(list);
-  }
-  const lab = document.querySelector(`label[for="${id}"]`);
-  if (lab) list.setAttribute("aria-label", lab.textContent.trim());
-  list.textContent = "";
-  list.classList.toggle("off", sel.disabled);
-  const add = (opt) => {
-    const row = el("label", "choice");
-    const input = el("input");
-    input.type = "radio";
-    input.name = "choice-" + id;
-    input.checked = opt.value === sel.value;
-    input.disabled = sel.disabled;
-    input.addEventListener("change", () => {
-      if (!input.checked) return;
-      sel.value = opt.value;
-      sel.dispatchEvent(new Event("change", { bubbles: true }));
-      paintChoices(id);
-    });
-    row.appendChild(input);
-    row.appendChild(el("span", "choicetext", opt.textContent));
-    list.appendChild(row);
-  };
-  [...sel.children].forEach((c) => {
-    if (c.tagName === "OPTGROUP") {
-      list.appendChild(el("div", "choicegroup", c.label));
-      [...c.children].forEach(add);
-    } else add(c);
-  });
-}
-const CHOICE_SELECTS = ["setModel", "setThinking", "setGatherMode", "setRefreshMode"];
-const paintAllChoices = () => CHOICE_SELECTS.forEach(paintChoices);
-
 // sentinel option value; no real model id can collide with it
 const CUSTOM_MODEL = "__custom__";
 
@@ -3281,7 +3247,7 @@ function syncThinking(model) {
   const sel = $("#setThinking");
   const note = $("#setThinkingNote");
   const fixed = Boolean(model) && model !== CUSTOM_MODEL;
-  if (sel) { sel.disabled = fixed; paintChoices("setThinking"); }
+  if (sel) sel.disabled = fixed;
   if (note) {
     note.textContent = fixed
       ? "Not used while a model is chosen above: every run uses that model. "
@@ -3323,7 +3289,6 @@ function renderSettingsForm(data) {
     $("#" + id).value = val == null ? "" : String(val);
   });
   renderModelField(data);
-  paintAllChoices();
   renderNotifyPolicy(data.settings || {});
   renderSetSummaries(data);
   $("#setSyncNote").textContent = data.options_synced
