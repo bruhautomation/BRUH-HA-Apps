@@ -725,6 +725,7 @@ request is in CI:
   | BRUH Minecraft | `devloop:bruh_minecraft_server` | `bruh-minecraft-server/` | CLAUDE.md's Minecraft entry |
   | BRUH Cooking | `devloop:bruh-cooking` | `bruh-cooking/` | `docs/notes/cooking.md`; the integration's tests run against a real Home Assistant (`cd bruh-cooking && python3 -m pytest` after `pip install -r requirements_test.txt`), and a panel change is rebuilt (`cd bruh-cooking/frontend && npm ci && npm run check`) and the bundle committed |
   | BRUH Task Manager | `devloop:bruh-task-manager` | `bruh-task-manager/` | `docs/notes/task-manager.md` |
+  | BRUH Browser | `devloop:bruh-browser` | `bruh-browser/` | `docs/notes/browser.md` |
 
   Morph's issues are faults it found in its own code; the others' come
   from the `siblings` stream (brAIn reading that add-on's log, Supervisor

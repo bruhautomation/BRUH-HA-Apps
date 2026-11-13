@@ -2,7 +2,7 @@
 
 brAIn's own faults reach the development loop because brAIn measures
 itself. GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft,
-BRUH Cooking and BRUH Task Manager do not, and until this the only route from one of them breaking to a
+BRUH Cooking, BRUH Task Manager and BRUH Browser do not, and until this the only route from one of them breaking to a
 fix was the owner noticing, opening a cloud session and describing it. Yet
 brAIn already holds what a description would carry: it is the Supervisor's
 admin, so it can read each add-on's state and its log, and Home Assistant's
@@ -63,6 +63,9 @@ CATALOG: tuple[dict, ...] = (
      "domain": "bruh_cooking"},
     {"key": "bruh-task-manager", "name": "BRUH Task Manager",
      "dir": "bruh-task-manager/", "domain": "bruh_task_manager"},
+    # No integration: its faults are its Supervisor state and its own log.
+    {"key": "bruh-browser", "name": "BRUH Browser", "dir": "bruh-browser/",
+     "domain": ""},
 )
 PRODUCTS = tuple(s["name"] for s in CATALOG)
 
@@ -279,8 +282,12 @@ def log_errors(text: str) -> list[dict]:
 
 def _integration_errors(entries, domain: str) -> list[dict]:
     """Home Assistant's own error log, for one integration: ERROR and
-    above only, the way the add-on log is read."""
+    above only, the way the add-on log is read. An add-on with no
+    integration (`domain` empty) has none: an empty domain would otherwise
+    match every custom integration's errors."""
     out = []
+    if not domain:
+        return out
     needles = (f"custom_components.{domain}", f"homeassistant.components.{domain}")
     path = f"custom_components/{domain}/"
     for entry in entries or []:

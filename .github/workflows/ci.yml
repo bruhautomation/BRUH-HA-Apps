@@ -102,7 +102,7 @@ jobs:
       - name: Validate profiles
         run: |
           status=0
-          for profile in brain/apparmor.txt bruh-minecraft-server/apparmor.txt bright/apparmor.txt gardenrx/apparmor.txt bruh-task-manager/apparmor.txt bruh-cooking/apparmor.txt; do
+          for profile in brain/apparmor.txt bruh-minecraft-server/apparmor.txt bright/apparmor.txt gardenrx/apparmor.txt bruh-task-manager/apparmor.txt bruh-cooking/apparmor.txt bruh-browser/apparmor.txt; do
             if sudo apparmor_parser -Q -K "$profile"; then
               echo "✓ $profile"
             else

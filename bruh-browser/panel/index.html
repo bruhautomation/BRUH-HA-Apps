@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BRUH Browser</title>
+<link rel="icon" href="favicon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><strong>BRUH</strong> Browser</div>
+  <span id="pill" class="pill">Loading…</span>
+  <button type="button" id="setupToggle" class="ghost" aria-expanded="false">Setup</button>
+</header>
+
+<main>
+  <p class="lede">brAIn's hands on the web. brAIn sends the errands; you can watch
+    each one here and take over when it waits for you. It never buys without your
+    approval.</p>
+
+  <section id="errand" class="card" aria-live="polite" aria-labelledby="errandTitle">
+    <div class="cardhead">
+      <h2 id="errandTitle">Errand</h2>
+      <span id="errandState" class="badge" hidden></span>
+    </div>
+    <div id="errandBody"></div>
+  </section>
+
+  <section id="setup" class="card" hidden aria-labelledby="setupTitle">
+    <h2 id="setupTitle">Set up, once</h2>
+    <p class="note"><strong>Both sign-ins must be the same Claude account</strong>: the
+      extension in step 2 and Claude Code in step 3. A paid Claude plan (Pro, Max,
+      Team or Enterprise) is needed; an API key does not work here.</p>
+    <ol id="steps" class="steps"></ol>
+    <p id="sandboxNote" class="muted" hidden></p>
+  </section>
+
+  <section class="card screen" aria-labelledby="screenTitle">
+    <div class="cardhead">
+      <h2 id="screenTitle">Live browser</h2>
+      <a id="fullLink" class="button ghost" target="_blank" rel="noopener">Open full screen</a>
+    </div>
+    <p id="screenNote" class="muted" hidden></p>
+    <iframe id="screen" title="The BRUH Browser Chrome" allow="clipboard-read; clipboard-write"></iframe>
+  </section>
+
+  <section class="card" aria-labelledby="historyTitle">
+    <h2 id="historyTitle">Recent errands</h2>
+    <ul id="history" class="history"></ul>
+  </section>
+</main>
+
+<div id="toast" class="toast" role="status" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -143,12 +143,12 @@ STREAMS: dict[str, dict] = {
         "cost": "free", "clears": True, "rolling": False,
         "default_on": True, "default_hours": 1},
     # The other BRUH add-ons — GardenRX, BRUH Bambu Studio, BRUH Print,
-    # BRight, BRUH Minecraft, BRUH Cooking, BRUH Task Manager — watched from outside: each one's
+    # BRight, BRUH Minecraft, BRUH Cooking, BRUH Task Manager, BRUH Browser — watched from outside: each one's
     # Supervisor state, the errors in its log, what Home Assistant logged
     # about its integration, and anything it published about itself
     # (`devloop/siblings.py`). Needs nothing from the add-on it watches.
     "siblings": {
-        "label": "Other BRUH add-ons: errors in GardenRX, Bambu Studio, Print, BRight, Minecraft, Cooking and Task Manager",
+        "label": "Other BRUH add-ons: errors in GardenRX, Bambu Studio, Print, BRight, Minecraft, Cooking, Task Manager and Browser",
         "cost": "free", "clears": True, "rolling": False,
         "default_on": True, "default_hours": 1},
     # brAIn using what it can reach the way a person does: its own panels,

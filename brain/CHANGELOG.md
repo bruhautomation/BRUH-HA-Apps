@@ -2,6 +2,28 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.2.2
+
+### Changed
+
+- The test screens in ⚙ › Diagnostics and ⚙ › Developer open with one sentence on whether everything works and when it was last checked, and say when that is old. Rows have plain names, and the technical values sit in a Details fold (#881).
+- Memory › Knowledge opens on the facts search and list. Suggested reports appears once, and the maintenance rows are one Tools fold in plain words (#883).
+
+### Fixed
+
+- With Personality on, the message boxes on Ask, Knowledge and the dashboard say your assistant's name, like the rest of the page. What you typed is never rewritten (#884).
+## 5.2.1
+
+### Added
+
+- brAIn can do things on websites for you through the new BRUH Browser app (experimental, amd64): `browser_task` starts an errand in your words and builds the cart without buying, `browser_status` says how it went (the cart with every item, fee and the total, or what it needs from you), `browser_stop` stops one, and `browser_purchase` buys a cart you have heard and approved. The tools are listed only when BRUH Browser is installed.
+- By voice you can start a shopping errand and ask how it went; buying and stopping are left to the chat.
+- BRUH Browser joins the development loop's other add-ons (its state and log, no integration).
+
+### Security
+
+- A purchase always needs a person: the action gate asks before every `browser_purchase` in the chat and the terminal, with "Let brAIn act without asking" on and in YOLO mode too, and refuses it in any run nobody is watching. The tool also refuses a call whose items or total are not the cart as it stands, so what you approved is what is bought.
+
 ## 5.2.0
 
 ### Added

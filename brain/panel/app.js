@@ -3841,6 +3841,25 @@ function faultValue(r) {
     + techDetail(r.technical);
 }
 
+// When a result was made, in the words a person says, and whether it is old
+// enough that it should be run again ("Checked 2 hours ago." / "Checked 5
+// days ago, so it may be out of date."). `staleDays` is how old is old.
+function checkedWords(stamp, staleDays) {
+  if (!stamp) return "Not checked yet.";
+  const when = timeAgo(new Date(stamp * 1000).toISOString());
+  const days = (Date.now() / 1000 - stamp) / 86400;
+  return days >= staleDays
+    ? `Checked ${when}, so it may be out of date.` : `Checked ${when}.`;
+}
+
+// Technical values behind one closed fold, the form ⚙ allows (read-only text,
+// no control inside; see `techDetail`).
+function detailsFold(innerHtml, label) {
+  if (!innerHtml) return "";
+  return `<details class="techdetails detailsfold"><summary>${esc(label || "Details")}</summary>`
+    + `<div class="detailsbody">${innerHtml}</div></details>`;
+}
+
 function techDetail(text) {
   if (!text) return "";
   return `<details class="techdetails"><summary>Technical detail</summary>`
@@ -3853,18 +3872,37 @@ function renderDiagnostics(d) {
   const c = d.checks || {};
   const ok = (j.by_outcome || {}).ok || 0;
   const failures = j.failures || [];
-  const rows = faultRows(d);
+  const faults = (d && d.faults) || [];
+  // The first row says how many; the lead sentence below says it already.
+  const rows = faults.length ? faultRows(d).slice(1) : [];
+  const healthOk = !((d.health || {}).state && d.health.state !== "ok");
+  // The screen opens with one sentence: does everything work, and when was
+  // that looked at. Everything under it is the evidence, in one fold.
+  const lead = faults.length || !healthOk
+    ? `Something needs a look${faults.length ? `: ${faults.length} thing${faults.length > 1 ? "s" : ""} below` : ""}. `
+    : "Everything works. ";
+  // When the checks behind the verdict last ran (`checks.finished_at`), not
+  // when this page was asked for: the payload's own clock is always "now".
+  const ranAt = (d.checks || {}).finished_at;
+  const when = ranAt ? checkedWords(ranAt, 1).replace(/^Checked/, "The house checks last ran")
+    : "No house check has finished a pass yet.";
+  const leadWords = !ranAt && !faults.length && healthOk
+    ? "Nothing is reported wrong. " : lead;
+  const leadHtml = `<p class="testssum${faults.length || !healthOk ? " bad" : ""}">`
+    + esc(leadWords + when) + `</p>`;
   // The verdict first, because it is the one line somebody who is not
   // debugging should have to read. Everything below it is the evidence.
   const h = d.health || {};
-  rows.push(diagRow("brAIn", esc(h.reason || h.state || "unknown"),
-    h.state && h.state !== "ok"));
+  if (!healthOk) {
+    rows.push(diagRow("brAIn", esc(h.reason || h.state || "unknown"), true));
+  }
   if (h.fix) rows.push(diagRow("What to do", esc(h.fix), true));
   if ((h.problems || []).length > 1) {
     const more = h.problems.slice(1, 5).map(
       (p) => `<li>${esc(p.what)} &mdash; ${esc(p.fix)}</li>`);
     rows.push(diagRow("Also", `<ul>${more.join("")}</ul>`, true));
   }
+  const upTop = rows.length;
   rows.push(diagRow("Add-on version",
     esc((d.versions || {}).addon || "unknown")));
   // `claude --version` answers "2.1.290 (Claude Code)", which under a row
@@ -4145,7 +4183,8 @@ function renderDiagnostics(d) {
       + (f.error ? ` — ${esc(String(f.error).slice(0, 160))}` : "") + "</li>");
     rows.push(diagRow("Recent failures", `<ul>${items.join("")}</ul>`, true));
   }
-  $("#diagBody").innerHTML = rows.join("");
+  $("#diagBody").innerHTML = leadHtml + rows.slice(0, upTop).join("")
+    + detailsFold(rows.slice(upTop).join(""), "Details");
 }
 
 async function loadDiagnostics() {
@@ -5140,11 +5179,24 @@ function deepTime(stamp) {
   return new Date(stamp * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+// What each test is called to a person; the stage's own title is its
+// engineering name ("Claude, no tools", "Analyst tools").
+const DEEP_TITLES = {
+  snapshot_claude: "Asking Claude a plain question",
+  analyst_tools: "Reading the house",
+  chat: "The chat in Ask",
+  automation_task: "Tasks from automations",
+  assist: "Voice answers",
+  memory: "Remembering things",
+  findings_undo: "Ending a problem, and taking it back",
+  fixer_dry: "Making a change, and putting it back",
+};
+
 function deepRow(state, word, title, reason, detail, time) {
   return `<div class="testrow ${state}"><span class="testword">${esc(word)}</span>`
     + `<div class="testmain"><div class="testtitle">${esc(title)}</div>`
     + (reason ? `<div class="testreason">${esc(reason)}</div>` : "")
-    + (detail ? `<div class="hint tight">${esc(detail)}</div>` : "")
+    + (detail ? detailsFold(`<div class="hint tight">${esc(detail)}</div>`) : "")
     + `</div>`
     + (time ? `<span class="testtime">${esc(time)}</span>` : "")
     + `</div>`;
@@ -5169,7 +5221,7 @@ function renderDeep(d) {
   const rows = stages.map((s) => deepRow(
     s.state || "",
     DEEP_WORD[s.state] || "—",
-    s.title || s.name,
+    DEEP_TITLES[s.name] || s.title || s.name,
     s.sentence || "",
     s.detail || "",
     deepTime(s.at || (d.running ? 0 : last.finished_at))));
@@ -5179,25 +5231,39 @@ function renderDeep(d) {
     // that is stuck on whatever it is doing.
     (d.stage_catalog || []).slice(stages.length).forEach((s, i) =>
       rows.push(deepRow("waiting", i === 0 ? "Running" : "Waiting",
-                        s.title, s.proves, "", "")));
+                        DEEP_TITLES[s.name] || s.title, s.proves, "", "")));
   }
-  body.innerHTML = rows.join("");
+  let deepCounts = "";
   const sum = $("#deepSummary");
   if (sum) {
     if (stages.length && (d.running || last.finished_at)) {
       const c = deepCountLine(stages);
-      sum.textContent = d.running ? `${c.line} so far` : c.line;
+      const failedNames = stages.filter((x) => x.state === "failed")
+        .map((x) => DEEP_TITLES[x.name] || x.title || x.name);
+      const skipped = stages.filter((x) => x.state === "skipped").length;
+      // One plain sentence, then when it was looked at; the count is for
+      // whoever wants the numbers, and sits in the fold under the rows.
+      let said;
+      if (d.running) said = "Running the tests…";
+      else if (failedNames.length) said = `Something does not work (${failedNames.join(", ")}).`;
+      else if (skipped) said = `Everything that could be tried works; ${skipped} part${skipped > 1 ? "s were" : " was"} left out.`;
+      else said = "Everything works.";
+      sum.textContent = d.running ? said : `${said} ${checkedWords(last.finished_at, 3)}`;
       sum.classList.toggle("bad", c.failed > 0);
       sum.hidden = false;
+      deepCounts = c.line;
     } else {
       sum.hidden = true;
     }
   }
+  body.innerHTML = rows.join("")
+    + (deepCounts ? detailsFold(`<p class="hint tight">${esc(deepCounts)}</p>`) : "");
+  // The summary already says when it last ran; this line is for a run in
+  // flight and for an install that has never run one.
   $("#deepLast").textContent = d.running
-    ? "Running — this takes a few minutes."
-    : (last.finished_at
-      ? `Last run ${timeAgo(new Date(last.finished_at * 1000).toISOString())}.`
-      : "Not run on this install yet.");
+    ? "This takes a few minutes."
+    : (last.finished_at ? "" : "Not run on this install yet.");
+  $("#deepLast").hidden = !$("#deepLast").textContent;
   $("#deepRun").disabled = !!d.running;
 }
 
@@ -5251,22 +5317,27 @@ const REHEARSAL_WORDS = {
 function renderRehearsal(d) {
   const last = d.last || {};
   const body = $("#rehearseBody");
+  const sum = $("#rehearseSum");
   const c = last.checks || {};
   const a = last.analyst || {};
   const clean = last.cleanup || {};
-  const rows = [];
+  const rows = [];   // what a person reads: each planted thing, and any problem
+  const tech = [];   // the numbers and the housekeeping, behind the fold
   if (last.finished_at) {
-    rows.push(diagRow("Checks",
-      `${c.found || 0} of ${c.planted || 0} planted defects found`
+    const planted = c.planted || 0;
+    const missed = planted - (c.found || 0);
+    const leftBehind = last.cleared && last.cleared.at ? !last.cleared.ok : !clean.ok;
+    tech.push(diagRow("Checks",
+      `${c.found || 0} of ${planted} planted defects found`
       + (c.extra ? `, ${c.extra} reported that were not planted` : ""),
-      (c.found || 0) < (c.planted || 0) || !!c.extra));
+      missed > 0 || !!c.extra));
     // Each planted thing by what it is, and the verdict in words: the
     // planted ids and the check ids are the record's, not the reader's.
     (c.rows || []).forEach((r) => rows.push(diagRow(
       r.name || "A planted test",
       esc(REHEARSAL_WORDS[r.verdict] || r.verdict || ""),
-      r.verdict === "missed" || r.verdict === "false positive", true)));
-    rows.push(diagRow("Analyst", a.ran
+      r.verdict === "missed" || r.verdict === "false positive")));
+    tech.push(diagRow("Analyst", a.ran
       ? `found ${a.found || 0} of ${a.planted || 0}`
         + ` — recall ${Math.round((a.recall || 0) * 100)}%,`
         + ` precision ${Math.round((a.precision || 0) * 100)}%`
@@ -5287,9 +5358,11 @@ function renderRehearsal(d) {
     // a previous rehearsal failed to clean up.
     const swept = last.swept || {};
     if (swept.sentence) {
-      rows.push(diagRow("Before starting", esc(swept.sentence), !swept.ran));
+      tech.push(diagRow("Before starting", esc(swept.sentence), !swept.ran));
     }
-    rows.push(diagRow("Cleanup", esc(clean.sentence || "?"), !clean.ok));
+    // A cleanup that failed is for the reader, in the open; one that worked
+    // is housekeeping.
+    (leftBehind ? rows : tech).push(diagRow("Cleanup", esc(clean.sentence || "?"), !clean.ok));
     // A sweep that ran afterwards is the newer claim about the house, and
     // it goes UNDER the cleanup rather than over it: the run's own failure
     // is the evidence a cleanup failed, and deleting it would leave the
@@ -5299,25 +5372,33 @@ function renderRehearsal(d) {
       const took = (cleared.removed || []).length
         ? ` <span class="hint">took out ${esc((cleared.removed || []).join(", "))}</span>`
         : "";
-      rows.push(diagRow("Cleared up since",
+      (cleared.ok ? tech : rows).push(diagRow("Cleared up since",
         (cleared.ok ? "nothing the rehearsal planted is left"
           : "could not finish — " + esc((cleared.left || []).join(", ") || "?"))
         + took,
         !cleared.ok));
     }
     if (last.error) rows.push(diagRow("Error", esc(last.error), true));
+    // One plain sentence first: did the checks do their job, and when.
+    const bad = missed > 0 || !!c.extra || leftBehind || !!last.error;
+    const said = last.error ? "The rehearsal could not finish."
+      : missed > 0 ? `The checks missed ${missed} of ${planted} problems that were planted.`
+      : c.extra ? "The checks reported something that was not there."
+      : leftBehind ? "The checks caught every planted problem, but something it planted is still in the house."
+      : "The checks caught every problem that was planted, and it cleaned up after itself.";
+    sum.textContent = `${said} ${checkedWords(last.finished_at, 30)}`;
+    sum.classList.toggle("bad", bad);
   }
-  body.innerHTML = rows.join("");
-  body.hidden = !rows.length;
+  sum.hidden = !last.finished_at;
+  body.innerHTML = rows.join("") + detailsFold(tech.join(""), "Details");
+  body.hidden = !rows.length && !tech.length;
   const step = (d.progress || {}).step;
   const busy = !!(d.running || d.sweeping);
   $("#rehearseLast").textContent = d.sweeping
     ? "Clearing up…"
     : (d.running
       ? `Rehearsing — ${step || "starting"}…`
-      : (last.finished_at
-        ? `Last rehearsal ${timeAgo(new Date(last.finished_at * 1000).toISOString())}`
-        : "Not rehearsed on this install yet."));
+      : (last.finished_at ? "" : "Not rehearsed on this install yet."));
   $("#rehearseRun").disabled = busy;
   // The button exists only while there is something for it to take out —
   // `leftovers` is the server's derivation, so this and the fault row in
@@ -9258,7 +9339,7 @@ function paintFacts() {
   if (!rows.length) {
     host.appendChild(el("div", "kempty", filtered
       ? "No facts match."
-      : "Tell brAIn something above — a habit, why a device is set up the "
+      : "Tell brAIn something below — a habit, why a device is set up the "
         + "way it is, who uses which room. It remembers that, and what it "
         + "learns watching the house."));
     if (more) more.classList.add("hidden");
@@ -13224,9 +13305,13 @@ function speakAll(root) {
   if (!root) return;
   const walk = (node) => {
     if (node.nodeType === 3) { speakNode(node); return; }
-    if (node.nodeType !== 1 || SPEAK_SKIP.has(node.tagName) || node.isContentEditable) return;
-    if (node.closest && node.closest(".wordmark, .brandlink")) return;
+    if (node.nodeType !== 1) return;
+    if (node.closest && node.closest(".wordmark, .brandlink, [data-product]")) return;
+    // A box's placeholder, label and tooltip are the page's words even though
+    // what is typed in it (its value and its text) never is: the attributes
+    // are spoken for every element, the children only where they are page text.
     for (const a of SPEAK_ATTRS) speakAttr(node, a);
+    if (SPEAK_SKIP.has(node.tagName) || node.isContentEditable) return;
     for (const c of node.childNodes) walk(c);
   };
   walk(root);
@@ -13242,7 +13327,7 @@ function speakAll(root) {
         const p = n.parentElement;
         if (p && !SPEAK_SKIP.has(p.tagName) && !p.closest("code, pre, textarea, .brandlink")) speakNode(n);
       } else if (rec.type === "attributes") {
-        if (!rec.target.closest(".wordmark")) speakAttr(rec.target, rec.attributeName);
+        if (!rec.target.closest(".wordmark, [data-product]")) speakAttr(rec.target, rec.attributeName);
       } else {
         rec.addedNodes.forEach((n) => {
           const p = n.parentElement;
@@ -17670,10 +17755,9 @@ function paintContextMap() {
   const meta = $("#kDocMeta");
   if (d && d.memory && meta) {
     const m = d.memory;
-    const kb = `${(m.document_bytes / 1024).toFixed(1)} KB`;
-    meta.textContent = m.document_bytes
-      ? `${kb} · ${m.waiting} waiting to be filed`
-      : `Empty · ${m.waiting} waiting to be filed`;
+    meta.textContent = m.waiting
+      ? `${m.waiting} fact${m.waiting === 1 ? "" : "s"} waiting to be written in`
+      : (m.document_bytes ? "Up to date" : "Nothing yet");
   }
   const box = $("#kCtxRun");
   const kinds = $("#kCtxKinds");
@@ -17764,6 +17848,9 @@ function openKnowledgeFold(id, run) {
   const fold = document.getElementById(id);
   const name = fold && fold.querySelector(".kfoldname");
   if (!name) return;
+  // The upkeep folds sit inside Tools: it opens first so the one asked for shows.
+  const tools = fold.closest("#kToolsBody");
+  if (tools && tools.hidden) document.querySelector("#kToolsFold .kfoldname").click();
   if (name.getAttribute("aria-expanded") !== "true") name.click();
   if (id === "kCtxFold") paintContextMap();
   fold.scrollIntoView({ block: "start" });
