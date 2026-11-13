@@ -454,7 +454,7 @@ export class MorphAskCard extends HTMLElement {
       const d = await this.dashboard();
       if (!d) { this.say(speakText('That is a change to a dashboard: open the brAIn button on a dashboard brAIn keeps and tell it there.'), true); return; }
       const out = await this._hass.callWS({ type: 'morph/request', kind: 'tell', payload: { target: { kind: 'lovelace', dashboard: d.key, at: '[]', label: 'the dashboard', path: d.title }, text: r.tell_text || text } });
-      if (!out.ok) { this.say(speakText(out.error || 'brAIn could not take that.'), true); return; }
+      if (!out.ok) { this.say(out.error || speakText('brAIn could not take that.'), true); return; }
       this.follow(out.id);
       return;
     }
@@ -478,7 +478,7 @@ export class MorphAskCard extends HTMLElement {
       try { st = await this._hass.callWS({ type: 'morph/tell_status', tell: id }); } catch (e) { /* asked again */ }
       if (st && (st.phase === 'done' || st.phase === 'failed')) { this.say(st.say || 'Done.'); return; }
       const steps = (st && st.steps) || [];
-      this.say(speakText(steps.length ? steps[steps.length - 1].t : 'brAIn is on it…'), true);
+      this.say(steps.length ? steps[steps.length - 1].t : speakText('brAIn is on it…'), true);
       await new Promise((r) => setTimeout(r, 1000));
     }
   }

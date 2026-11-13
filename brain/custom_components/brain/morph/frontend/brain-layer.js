@@ -25,7 +25,17 @@ import { setHouseName, speakHtml } from './util.js';
 const POLL_MS = 1000;
 const LIST_TTL = 8000;
 
-const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const escRaw = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// While the sheet is being drawn, every value put into it (a Tell, a commit
+// message, a dashboard's title, a card's name) is held back as a slot and put
+// in AFTER the household's name has been said over brAIn's own words, so what
+// a person typed is never rewritten when it is shown back (`render`).
+let SLOTS = null;
+const esc = (s) => {
+  if (!SLOTS) return escRaw(s);
+  SLOTS.push(escRaw(s));
+  return `\uE000${SLOTS.length - 1}\uE001`;
+};
 
 const MARK = '<svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M4 5.2A1.2 1.2 0 0 1 5.2 4H18.8A1.2 1.2 0 0 1 20 5.2V12A8 8 0 0 1 12 20H5.2A1.2 1.2 0 0 1 4 18.8Z"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/></svg>';
 
@@ -472,10 +482,17 @@ ${sw('fold', 'Fold quiet rooms', 'A room with nothing on and nothing recent is o
     const keepDraft = this.shadowRoot.querySelector('textarea');
     const draft = keepDraft ? keepDraft.value : '';
     let sheet = '';
+    SLOTS = [];
+    let body = '';
+    try {
     if (this.s.open) sheet = `<div class="sheet" role="dialog" aria-label="brAIn">${this.sheetHtml(row)}${this.s.err ? `<p class="sm" style="color:var(--error-color,#c62828)">${esc(this.s.err)}</p>` : ''}</div>`;
     const pick = this.s.picking ? '<div class="pick" role="status">Tap the card you mean<button type="button" data-a="cancel">Cancel</button></div>' : '';
+    const slots = SLOTS;
+    body = speakHtml(`${pick}${sheet}<button type="button" class="fab" data-a="fab" aria-label="brAIn" aria-expanded="${this.s.open}">${MARK}</button>`)
+      .replace(/\uE000(\d+)\uE001/g, (m, i) => slots[Number(i)]);
+    } finally { SLOTS = null; }
     const ring = this.shadowRoot.querySelector('.ring');
-    this.shadowRoot.innerHTML = `<style>${CSS}</style>${speakHtml(`${pick}${sheet}<button type="button" class="fab" data-a="fab" aria-label="brAIn" aria-expanded="${this.s.open}">${MARK}</button>`)}`;
+    this.shadowRoot.innerHTML = `<style>${CSS}</style>${body}`;
     if (ring) this.shadowRoot.appendChild(ring);
     const ta = this.shadowRoot.querySelector('textarea');
     if (ta && draft) ta.value = draft;
