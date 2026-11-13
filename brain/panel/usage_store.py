@@ -194,8 +194,13 @@ _SPEND_OF = {
     "onboarding": "setup", "doctor": "setup", "doctor-rehearsal": "setup",
     "eval-first-look": "setup", "replay": "setup", "devloop": "setup",
     "deep-review": "setup",
+    # What the Resident and its neighbours spend watching the house.
+    "world-model": "checks", "situation": "checks", "occasions": "checks",
+    # The assistant's own growth.
+    "presence": "memory",
 }
 _SPEND_PREFIX = (("fix-", "fixes"), ("plan-", "fixes"), ("followup-", "checks"),
+                 ("resident-", "checks"), ("milestone-", "dashboard"),
                  ("doctor", "setup"), ("eval-", "setup"), ("chat-", "chats"))
 
 

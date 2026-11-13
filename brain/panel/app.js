@@ -5266,7 +5266,7 @@ function renderDeep(d) {
     // that is stuck on whatever it is doing.
     (d.stage_catalog || []).slice(stages.length).forEach((s, i) =>
       rows.push(deepRow("waiting", i === 0 ? "Running" : "Waiting",
-                        s.title, s.proves, "", "")));
+                        DEEP_TITLES[s.name] || s.title, s.proves, "", "")));
   }
   let deepCounts = "";
   const sum = $("#deepSummary");
