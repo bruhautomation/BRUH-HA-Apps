@@ -1515,6 +1515,26 @@
                list above, so nothing is shown twice. -->
           <h4 class="sethead" id="presHead">How brAIn is growing</h4>
           <p id="presWhat" class="hint tight"></p>
+          <!-- The paragraph it keeps itself about how to be in this house
+               (`personality.py` `learned`): the current state, where the
+               notes under it are the dated trail. Undo is one press back
+               to the version before; Edit saves the household's own
+               correction; Clear empties it (and Undo brings it back). -->
+          <div id="learnedBox" class="learnedbox">
+            <p class="preshead" id="learnedHead">What it has learned about being here</p>
+            <p id="learnedText" class="learnedtext"></p>
+            <textarea id="learnedEdit" class="perstext" rows="7" maxlength="1200" hidden
+              aria-labelledby="learnedHead"
+              placeholder="How it should be in this house, in your own words…"></textarea>
+            <p id="learnedMeta" class="pressub"></p>
+            <div class="row persacts learnedacts">
+              <button type="button" id="learnedUndo" class="btn" hidden>Undo</button>
+              <button type="button" id="learnedEditBtn" class="btn">Edit</button>
+              <button type="button" id="learnedSave" class="btn primary" hidden>Save</button>
+              <button type="button" id="learnedCancel" class="btn" hidden>Cancel</button>
+              <button type="button" id="learnedClear" class="btn" hidden>Clear</button>
+            </div>
+          </div>
           <div id="presBody" class="presbody" aria-labelledby="presHead"></div>
         </div>
       </section>

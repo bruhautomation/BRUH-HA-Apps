@@ -2189,7 +2189,8 @@ async def _send_brief(now: float) -> str:
         _memory_block, entities=subjects, query=_subject_names(subjects))
 
     result = await _claude(
-        engine.run_analyst, brief.frame(reasons, state), brief.SYSTEM,
+        engine.run_analyst, brief.frame(reasons, state),
+        await asyncio.to_thread(_voiced, brief.SYSTEM),
         eff_model(), brief.TIMEOUT_S, brief.MAX_TURNS,
         "brief", job="brief")
     if not result.get("ok"):
@@ -2534,7 +2535,8 @@ async def _send_weekly(now: float, *, pressed: bool = False) -> str:
     state["one_thing_why"] = picked["why"]
 
     result = await _claude(
-        engine.run_analyst, weekly.frame(state), weekly.SYSTEM,
+        engine.run_analyst, weekly.frame(state),
+        await asyncio.to_thread(_voiced, weekly.SYSTEM),
         eff_model(), weekly.TIMEOUT_S, weekly.MAX_TURNS, "weekly",
         job="weekly",
         priority=run_queue.PRESS if pressed else run_queue.SCHEDULED)
@@ -5294,7 +5296,10 @@ async def _dispatch_notify_tier(rows: list[dict], now: float) -> list[dict]:
         # The wait includes the queue's: a dispatcher that cannot get a
         # seat in time falls back to the fixed path like any failure.
         result = await asyncio.wait_for(_claude(
-            engine.run_claude, prompt, dispatch.SYSTEM, eff_model(),
+            engine.run_claude, prompt,
+            # The lock-screen words are brAIn's own voice; an escalating
+            # row never reaches this run, so nothing here is the safety lane.
+            await asyncio.to_thread(_voiced, dispatch.SYSTEM), eff_model(),
             dispatch.TIMEOUT_S, 2, "dispatch", job=dispatch.JOB,
             schema=dispatch.SCHEMA, priority=run_queue.SCHEDULED),
             dispatch.TIMEOUT_S + 30)
@@ -15157,7 +15162,11 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
         camera_line=camera_policy.prompt_line(grant, trip))
     result = await _claude(
         engine.run_analyst, prompt,
-        resident.investigate_system(refining), eff_model(),
+        # The report's words are read on Today and on a phone: the voice,
+        # except on the safety lane, where the report is plain.
+        await asyncio.to_thread(_voiced, resident.investigate_system(refining),
+                                plain=bool(signal.get("hot"))),
+        eff_model(),
         resident.INVESTIGATE_TIMEOUT_S, resident.INVESTIGATE_MAX_TURNS,
         "resident", job=resident.JOB_INVESTIGATE, schema=resident.CASE_SCHEMA,
         camera_grant=tuple(grant),
@@ -15509,7 +15518,9 @@ async def _resident_escalate(case: dict, signal: dict, now: float,
             examples=await asyncio.to_thread(_outcome_examples, [signal], now,
                                              investigating=True),
             situation_line=await asyncio.to_thread(_situation_line, now)),
-        resident.investigate_system(refining), eff_model(),
+        await asyncio.to_thread(_voiced, resident.investigate_system(refining),
+                                plain=bool(signal.get("hot"))),
+        eff_model(),
         resident.INVESTIGATE_TIMEOUT_S, resident.INVESTIGATE_MAX_TURNS,
         "resident", job=ESCALATE_JOB, schema=resident.CASE_SCHEMA,
         priority=(run_queue.SAFETY if signal.get("hot")
@@ -27416,6 +27427,23 @@ def _personality_lines() -> str:
             "speak as it.\n" + block)
 
 
+def _voiced(system: str, *, plain: bool = False) -> str:
+    """A writer run's system prompt with the household's voice after it
+    (`personality.voice_block`): what brAIn says unprompted — the morning
+    brief, the weekly report, a report on something it looked into, a
+    lock-screen message — is written by the assistant the household named,
+    not by an analyst with its name pasted on. Last, after the run's own
+    rules, because it changes how a sentence sounds and nothing about
+    what it may say. ``plain`` is a run about something that cannot wait
+    (the safety lane): it gets no voice at all, in code rather than by a
+    sentence asking for restraint. No personality, or Personality off, is
+    the prompt as it was. Adds no run: only runs that already happen."""
+    if plain:
+        return system
+    block = personality.voice_block()
+    return system + "\n\n" + block if block else system
+
+
 def _chat_system_prompt(session) -> str:
     """The appended system prompt for one chat spawn (see CHAT_IDENTITY)."""
     lines = _chat_house_lines()
@@ -27814,13 +27842,65 @@ async def h_personality_growth(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "entry": entry})
 
 
+async def _learned_changed() -> web.Response:
+    """After any change to the learned paragraph: the next terminal window
+    and /config/CLAUDE.md carry it, and the page gets the personality."""
+    await asyncio.to_thread(_write_terminal_prompt)
+    _refresh_claude_md()
+    return web.json_response(await asyncio.to_thread(personality.payload))
+
+
+async def h_personality_learned_put(request: web.Request) -> web.Response:
+    """PUT {text}: the household corrects the paragraph brAIn keeps about
+    how it has learned to be here. Saved as theirs (`by: household`), the
+    version it replaces kept for Undo. Their words are theirs: only the
+    length is checked, not what the nightly run's own are held to."""
+    body = await _personality_body(request)
+    text = body.get("text")
+    refusal = await asyncio.to_thread(personality.learned_refusal, text)
+    if refusal:
+        raise web.HTTPBadRequest(text=refusal)
+    try:
+        await asyncio.to_thread(personality.set_learned, text,
+                                personality.HOUSEHOLD)
+    except (ValueError, OSError):
+        log.exception("could not save the learned paragraph")
+        raise web.HTTPInternalServerError(
+            text="brAIn could not save that; the add-on log says why.")
+    return await _learned_changed()
+
+
+async def h_personality_learned_undo(request: web.Request) -> web.Response:
+    """POST: back to the version before this one, in one press."""
+    try:
+        back = await asyncio.to_thread(personality.undo_learned)
+    except OSError:
+        log.exception("could not undo the learned paragraph")
+        raise web.HTTPInternalServerError(
+            text="brAIn could not save that; the add-on log says why.")
+    if not back:
+        raise web.HTTPNotFound(text="there is no earlier version to go back to")
+    return await _learned_changed()
+
+
+async def h_personality_learned_delete(request: web.Request) -> web.Response:
+    """DELETE: clear the paragraph. The version cleared is kept for Undo."""
+    try:
+        await asyncio.to_thread(personality.clear_learned)
+    except OSError:
+        log.exception("could not clear the learned paragraph")
+        raise web.HTTPInternalServerError(
+            text="brAIn could not save that; the add-on log says why.")
+    return await _learned_changed()
+
+
 # ---------------------------------------------------------------------------
 # The presence loop — how the assistant grows, and how it keeps in touch
 # ---------------------------------------------------------------------------
 #
 # `presence.py` holds the budget, the store and the strict reading of the
 # nightly answer; this is where it meets the house: the bus (an arrival,
-# a phone's button), one cheap run a night through the run queue, and
+# a phone's button), one run a night through the run queue, and
 # delivery through the household's own notify target and, when Speak first
 # is on, its own voice satellites. Off — Personality or the Learning loop
 # switched off in Features — every entry point returns before it reads
@@ -28075,6 +28155,11 @@ def _presence_inputs(now: float, people: dict[str, str]) -> str:
                 titles.append(str(row.get("title") or ""))
     except Exception as exc:  # noqa: BLE001
         log.debug("presence could not list conversations: %s", exc)
+    try:
+        exchanges = _presence_exchanges(now)
+    except Exception as exc:  # noqa: BLE001 — no exchanges is a thinner night
+        log.debug("presence could not read the conversations: %s", exc)
+        exchanges = []
     answered = presence.answer_counts(deliveries.fold(now), now)
     try:
         upcoming = occasions.lines(occasions.load(), _house_date(now))
@@ -28083,12 +28168,37 @@ def _presence_inputs(now: float, people: dict[str, str]) -> str:
     return presence.prompt(
         state, people, now, tz=tz, name=personality.assistant_name(pers),
         persona_line=personality.tagline(pers.get("persona")),
+        persona=textclip.clip(pers.get("persona") or "",
+                              personality.VOICE_PERSONA_CHARS),
+        learned=pers["learned"]["text"],
+        learned_by=pers["learned"].get("by") or "",
         growth=growth, titles=titles, answered=answered,
+        exchanges=exchanges, tuning=presence.tuning_answers(state),
         occasions=upcoming, now_line=_now_line(now))
 
 
+def _presence_exchanges(now: float) -> list[dict]:
+    """What the household said to brAIn in Ask lately and what it answered,
+    oldest first, inside the reflection's budget (`presence.budget_
+    exchanges`). Only conversations a person started ("you": the chat and
+    the terminal), read from the CLI's own transcripts on this machine;
+    nothing brAIn ran by itself, and no tool traffic."""
+    rows: list[dict] = []
+    listed = conversations.listing(chat_session.WORK_DIR, 12, ("you",))
+    # Oldest conversation first, so the newest exchange is last.
+    for conv in reversed(listed):
+        if now - float(conv.get("modified") or 0) > presence.EXCHANGE_DAYS * 86400:
+            continue
+        events = conversations.transcript(
+            chat_session.WORK_DIR, str(conv.get("id") or ""),
+            presence.PROMPT_EXCHANGES * 12)
+        rows += presence.exchanges_from(events)
+    return presence.budget_exchanges(rows)
+
+
 async def _presence_reflect(now: float, people: dict[str, str]) -> dict:
-    """The one cheap run a night: growth notes and tomorrow's ideas."""
+    """The one run a night: the learned paragraph, growth notes and
+    tomorrow's ideas."""
     prompt = await asyncio.to_thread(_presence_inputs, now, people)
     result = await _claude(
         engine.run_claude, prompt, presence.SYSTEM, eff_model(),
@@ -28102,12 +28212,16 @@ async def _presence_reflect(now: float, people: dict[str, str]) -> dict:
                 "error": str(result.get("error") or "no answer")[:200]}
 
     def write() -> dict:
+        pers = personality.load()
         recent = [g.get("text") or "" for g in
-                  (personality.load().get("growth") or [])[-20:]]
+                  (pers.get("growth") or [])[-20:]]
+        name = personality.assistant_name(pers)
 
         def apply(state: dict) -> dict:
             parsed = presence.parse_reflection(
-                _answer(result), people, state, recent_growth=recent)
+                _answer(result), people, state, recent_growth=recent,
+                name="" if name == personality.DEFAULT_NAME else name,
+                learned_now=pers["learned"]["text"])
             ideas = presence.add_ideas(state, parsed["ideas"], people, now)
             notes = presence.add_notes(state, parsed["notes"], people, now)
             return {"parsed": parsed, "ideas": ideas, "notes": notes}
@@ -28115,14 +28229,29 @@ async def _presence_reflect(now: float, people: dict[str, str]) -> dict:
         got = _presence_update(apply)
         grown = presence.write_growth(got["parsed"]["growth"], now) \
             if personality.writable() else 0
+        # The paragraph: written whole or not at all, and a refusal — here
+        # or in the reading above — is the night's result, said in ⚙.
+        revised, why = False, got["parsed"]["learned_refused"]
+        if got["parsed"]["learned"] and personality.writable():
+            revised, why = presence.write_learned(
+                got["parsed"]["learned"], now, people.values())
         return {"ok": True, "growth": grown, "ideas": got["ideas"],
-                "notes": got["notes"], "refused": got["parsed"]["refused"]}
+                "notes": got["notes"], "refused": got["parsed"]["refused"],
+                "learned": revised, "learned_refused": why}
 
     out = await asyncio.to_thread(write)
-    if out.get("growth"):
+    if out.get("growth") or out.get("learned"):
         await asyncio.to_thread(_write_terminal_prompt)
-    log.info("presence: reflected — %d growth note(s), %d idea(s), %d "
-             "refused", out["growth"], out["ideas"], out["refused"])
+    if out.get("learned"):
+        # The paragraph is in /config/CLAUDE.md's personality section too.
+        _refresh_claude_md()
+    if out.get("learned_refused"):
+        log.info("presence: the revised paragraph was not kept (%s); the "
+                 "stored one stands", out["learned_refused"])
+    log.info("presence: reflected — %s, %d growth note(s), %d idea(s), %d "
+             "refused", "the paragraph revised" if out["learned"]
+             else "the paragraph as it was", out["growth"], out["ideas"],
+             out["refused"])
     return out
 
 
@@ -28493,6 +28622,18 @@ def _context_sources() -> dict:
     src["first_look_rules"] = resident.FIRST_LOOK_SYSTEM
     src["investigate_rules"] = read(resident.investigate_system)
     src["overnight_rules"] = sre.SYSTEM
+    # What a writer run is handed for its wording (`_voiced`), and the
+    # nightly reflection's own inputs, by the caps its builder holds.
+    src["voice_block"] = read(personality.voice_block)
+    src["said_rules"] = "\n\n".join(
+        (brief.SYSTEM, weekly.SYSTEM, dispatch.SYSTEM))
+    src["reflection_rules"] = presence.SYSTEM
+    src["voice_persona_chars"] = personality.VOICE_PERSONA_CHARS
+    src["learned_chars"] = personality.LEARNED_MAX
+    src["exchange_bytes"] = presence.EXCHANGES_BYTES
+    src["reflection_person_chars"] = presence.PROMPT_TOUCHES * (
+        presence.TEXT_CHARS + 60)
+    src["reflection_occasion_chars"] = 6 * 120
     src["document_bytes"] = context_map.size(_read_shared_memory())
     src["facts"] = read(facts_store.count, 0)
     src["waiting"] = read(_inbox_pending, 0)
@@ -29849,6 +29990,11 @@ def make_app() -> web.Application:
     app.router.add_get("/api/personality", h_personality_get)
     app.router.add_put("/api/personality", h_personality_put)
     app.router.add_post("/api/personality/growth", h_personality_growth)
+    app.router.add_put("/api/personality/learned", h_personality_learned_put)
+    app.router.add_delete("/api/personality/learned",
+                          h_personality_learned_delete)
+    app.router.add_post("/api/personality/learned/undo",
+                        h_personality_learned_undo)
     app.router.add_get("/api/presence", h_presence_get)
     app.router.add_post("/api/presence", h_presence_post)
     app.router.add_get("/header-logo", h_header_logo_get)

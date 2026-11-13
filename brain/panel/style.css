@@ -7117,8 +7117,23 @@ body.term-classic #chatModelPick { display: none; }
 .presline { font-size: var(--fs-body); color: var(--ink); overflow-wrap: anywhere; }
 .pressub { font-size: var(--fs-meta); color: var(--ink-3); overflow-wrap: anywhere; }
 .presacts { flex: none; display: flex; gap: 8px; margin-left: auto; }
+/* The paragraph it keeps about how to be here: read as prose, its presses
+   under it. One box like a row, so it sits with the rows it leads. */
+.learnedbox {
+  display: grid; gap: 6px; max-width: 600px; margin-bottom: var(--sp-2);
+}
+.learnedbox .preshead { margin-top: 0; }
+.learnedtext {
+  margin: 0; padding: 10px 12px; background: var(--plane);
+  border: 1px solid var(--hairline); border-radius: 10px;
+  font-size: var(--fs-body); line-height: 1.5; color: var(--ink);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.learnedtext.none { color: var(--ink-3); }
+.learnedbox .pressub { margin: 0; }
+.learnedacts { margin-top: 0; flex-wrap: wrap; }
 @media (pointer: coarse) {
-  .presrow .btn { min-height: 44px; }
+  .presrow .btn, .learnedacts .btn { min-height: 44px; }
 }
 /* The persona as sections (`personaSections`): a plain title over its words,
    hairlines between, the whole outline readable without opening a box. */

@@ -232,6 +232,19 @@ def report(src: dict) -> dict:
                          if personality_off else
                          {"change": "⚙ › Personality", "sec": "personality"})
 
+    # What a run that WRITES to the household is handed so it sounds like
+    # the assistant they named (`personality.voice_block`): the name, the
+    # opening of the persona and the paragraph brAIn keeps itself.
+    voiced = s.get("voice_block") or ""
+
+    def voice_part(about: str) -> dict:
+        return part("voice", "The voice to write in",
+                    about if voiced
+                    else "Personality is switched off, so it writes plainly."
+                    if personality_off
+                    else "None is set, so it writes plainly.",
+                    size(voiced), **personality_where)
+
     def facts_or_doc(key: str, cap: int, head: int, label: str) -> dict:
         # `_memory_block` and `ha_data._memory_for`: the facts about this
         # run's subjects over the document's head — or, on a house with no
@@ -410,6 +423,10 @@ def report(src: dict) -> dict:
             part("measured", "What brAIn has measured",
                  "What is normal here, how rooms hold heat, machines, habits.",
                  int(s.get("house_chars") or 0), upto=True),
+            voice_part("Its name, the start of the personality you gave it "
+                       "and what it has learned about how to be here: for "
+                       "the wording of its report only. Left out when the "
+                       "thing cannot wait, where the report is plain."),
         ],
         "each_time": [],
         "looks_up": {
@@ -436,8 +453,79 @@ def report(src: dict) -> dict:
                      "groups": [], "count": 0},
     }
 
+    said = {
+        "key": "said",
+        "title": "What brAIn tells you unprompted",
+        "when": "The morning brief, the weekly report and the wording of a "
+                "notification that can wait: each only when there is "
+                "something to say.",
+        "given": [
+            part("said_rules", "How to write each one",
+                 "The brief's rules, the weekly report's and the lock-screen "
+                 "message's, with what is worth saying already decided by "
+                 "brAIn's code.", size(s.get("said_rules"))),
+            part("measured", "What brAIn has measured",
+                 "What is normal here, how rooms hold heat, machines, habits. "
+                 "Not handed to the lock-screen wording.",
+                 int(s.get("house_chars") or 0), upto=True),
+            voice_part("Its name, the start of the personality you gave it "
+                       "and what it has learned about how to be here: for "
+                       "tone and word choice only, never for what is said."),
+        ],
+        "each_time": [],
+        "looks_up": {
+            "summary": "The brief and the weekly report have Home "
+                       "Assistant's reading tools and can change nothing. "
+                       "The lock-screen wording has none.",
+            "groups": read_only, "count": sum(g["count"] for g in read_only),
+        },
+    }
+
+    reflection = {
+        "key": "reflection",
+        "title": "The nightly reflection on how it is with you",
+        "when": "Once a night, while Personality and the Learning loop are "
+                "both on. Switch either off in ⚙ › Features and it "
+                "does not run.",
+        "given": [
+            part("reflection_rules", "How to reflect",
+                 "What it may write (its own paragraph, growth notes, "
+                 "tomorrow's touches) and what it never may.",
+                 size(s.get("reflection_rules"))),
+            part("personality", "The personality you gave it",
+                 "Its name and the start of its personality, to read and "
+                 "never to change." if s.get("personality")
+                 else "Personality is switched off, so this does not run."
+                 if personality_off else "None is set.",
+                 min(size(s.get("personality")),
+                     int(s.get("voice_persona_chars") or 0)),
+                 **personality_where),
+            part("learned_paragraph", "What it has learned about how to be here",
+                 "Its own paragraph as it stands, which it may revise.",
+                 int(s.get("learned_chars") or 0), upto=True,
+                 change="⚙ › Personality", sec="personality"),
+            part("exchanges", "What you said to it in Ask, and what it answered",
+                 "The newest exchanges of the last few days, each cut short. "
+                 "Only conversations you started; none of its tool traffic.",
+                 int(s.get("exchange_bytes") or 0), upto=True),
+            part("answers", "How you answered it",
+                 "Its recent touches per person with what happened to each, "
+                 "what each person asked for less of, and how its other "
+                 "messages were answered this week. This much for each "
+                 "person at most.",
+                 int(s.get("reflection_person_chars") or 0), upto=True),
+            part("occasions", "Coming occasions",
+                 "From the calendars you chose to share.",
+                 int(s.get("reflection_occasion_chars") or 0), upto=True),
+        ],
+        "each_time": [],
+        "looks_up": {"summary": "Nothing. It has no tools: it reflects on "
+                                "what it was handed.", "groups": [], "count": 0},
+    }
+
     return {
-        "runs": [conversation, card, voice, first_look, investigation, overnight],
+        "runs": [conversation, card, voice, first_look, investigation,
+                 overnight, said, reflection],
         "memory": {
             "document_bytes": doc,
             "document_tokens": round(doc / CHARS_PER_TOKEN),

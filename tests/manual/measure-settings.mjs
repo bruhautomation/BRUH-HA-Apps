@@ -257,6 +257,19 @@ window.fetch = async (url, opts) => {
   if (p.includes('api/house-rules')) {
     return answer({ rules: [{ text: 'never turn the heating above 23', compiled: true }] });
   }
+  if (p.includes('api/personality/learned')) {
+    // The paragraph it keeps itself: every press answers with the
+    // personality, and what was sent is kept for the checks.
+    (window.__learnedSends = window.__learnedSends || []).push(
+      { path: p, method: (opts && opts.method) || 'GET', body: opts && opts.body ? JSON.parse(opts.body) : null });
+    const sent = opts && opts.method === 'PUT' ? JSON.parse(opts.body).text : null;
+    return answer({ set: true, name: 'Juniper', persona: PERSONA_OUTLINE,
+      summary: 'Juniper · The evening star of the house, steady and a little wry.',
+      growth: [], updated_at: ${NOW}, path: '/config/.brain/personality.json',
+      learned: sent ? { text: sent, updated_at: ${NOW}, by: 'household', can_undo: true }
+        : { text: '', updated_at: ${NOW}, by: '', can_undo: true },
+      limits: { name: 60, persona: 32000, growth: 500, learned: 1200 } });
+  }
   if (p.includes('api/personality')) {
     if (opts && opts.method === 'PUT') {
       (window.__personaPuts = window.__personaPuts || []).push(JSON.parse(opts.body));
@@ -273,8 +286,13 @@ window.fetch = async (url, opts) => {
                  text: 'Keeps evening messages to one line; the longer ones went unanswered.' },
                { date: '2026-09-20', text: 'Stopped announcing the heating twice.' },
                { date: '2026-08-02', text: 'Calls the side door the garden door.' }],
+      learned: { text: 'I lead with the one thing to do and stop: this house asks short questions '
+        + 'and wants short answers. In the evening I say one line or nothing. I keep the dry humour for '
+        + 'when somebody jokes first, and I never joke about something that is broken. When I am corrected '
+        + 'I say what I will do differently, once, and move on.',
+        updated_at: ${NOW} - 86400, by: 'self', can_undo: true },
       updated_at: ${NOW}, path: '/config/.brain/personality.json',
-      limits: { name: 60, persona: 32000, growth: 500 } });
+      limits: { name: 60, persona: 32000, growth: 500, learned: 1200 } });
   }
   if (p.includes('api/presence')) {
     // The presence loop's section (⚙ › Personality › How … is growing):
@@ -1787,6 +1805,35 @@ for (const width of WIDTHS) {
       await page.locator('#presBody .presrow').last().evaluate((n) => n.scrollIntoView({ block: 'end' }));
       await page.screenshot({ path: `${process.env.PRESENCE_SHOT_DIR}/presence-${width}-end.png` });
     }
+    // The paragraph it keeps itself leads the section: shown once, with
+    // when it changed, and Undo, Edit and Clear each one press.
+    const learned = await page.evaluate(() => {
+      const box = document.querySelector('#learnedBox');
+      const shown = (n) => !n.hidden && n.offsetHeight > 0;
+      return {
+        head: document.querySelector('#learnedHead').textContent,
+        text: document.querySelector('#learnedText').textContent,
+        meta: document.querySelector('#learnedMeta').textContent,
+        above: box.getBoundingClientRect().top < document.querySelector('#presBody').getBoundingClientRect().top,
+        twice: document.querySelector('#presBody').innerText.includes('I lead with the one thing'),
+        buttons: [...box.querySelectorAll('button')].filter(shown).map((b) => ({ label: b.textContent, h: b.offsetHeight })),
+        font: parseFloat(getComputedStyle(document.querySelector('#learnedText')).fontSize),
+        coarse: matchMedia('(pointer: coarse)').matches,
+      };
+    });
+    if (learned.head !== 'What Juniper has learned about being here') note(where, `the learned heading reads "${learned.head}"`);
+    if (!/I lead with the one thing to do/.test(learned.text)) note(where, 'the learned paragraph is not shown');
+    if (!/It wrote this yesterday/.test(learned.meta)) note(where, `the learned line reads "${learned.meta}"`);
+    if (!learned.above) note(where, 'the learned paragraph is not first under How … is growing');
+    if (learned.twice) note(where, 'the learned paragraph is shown twice');
+    if (learned.buttons.map((b) => b.label).join(',') !== 'Undo,Edit,Clear') {
+      note(where, `the learned paragraph's presses are ${learned.buttons.map((b) => b.label).join(',')}`);
+    }
+    if (touch && learned.coarse) {
+      learned.buttons.filter((b) => b.h < MIN_TARGET)
+        .forEach((b) => note(where, `the learned button "${b.label}" is ${b.h}px on a finger`));
+    }
+    if (learned.font < 14) note(where, `the learned paragraph is ${learned.font}px`);
     await page.locator('#presBody button', { hasText: 'Skip' }).first().click();
     await page.waitForFunction(() => (window.__presencePosts || []).length > 0, null, { timeout: 4000 });
     const post = await page.evaluate(() => window.__presencePosts[0]);
@@ -1799,6 +1846,28 @@ for (const width of WIDTHS) {
     if (less.do !== 'react' || less.reaction !== 'less' || less.id !== 'e5f6') {
       note(where, `Less like this sent ${JSON.stringify(less)}`);
     }
+    // Edit saves the household's own words with a PUT; Undo is one POST.
+    await page.locator('#learnedEditBtn').click();
+    const editFont = await page.evaluate(() => parseFloat(getComputedStyle(document.querySelector('#learnedEdit')).fontSize));
+    if (touch && learned.coarse && editFont < 16) note(where, `the learned box is ${editFont}px on a finger`);
+    if (process.env.PRESENCE_SHOT_DIR) {
+      await page.locator('#presHead').evaluate((n) => n.scrollIntoView({ block: 'start' }));
+      await page.screenshot({ path: `${process.env.PRESENCE_SHOT_DIR}/learned-edit-${width}.png` });
+    }
+    await page.fill('#learnedEdit', 'Short answers. One line in the evening.');
+    await page.locator('#learnedSave').click();
+    await page.waitForFunction(() => /Short answers/.test(document.querySelector('#learnedText').textContent), null, { timeout: 4000 });
+    const saved = await page.evaluate(() => ({
+      sends: window.__learnedSends, meta: document.querySelector('#learnedMeta').textContent }));
+    const put = saved.sends[saved.sends.length - 1];
+    if (put.method !== 'PUT' || !/learned$/.test(put.path) || put.body.text !== 'Short answers. One line in the evening.') {
+      note(where, `Save on the learned paragraph sent ${JSON.stringify(put)}`);
+    }
+    if (!/You corrected it today/.test(saved.meta)) note(where, `after Save the learned line reads "${saved.meta}"`);
+    await page.locator('#learnedUndo').click();
+    await page.waitForFunction(() => (window.__learnedSends || []).length > 1, null, { timeout: 4000 });
+    const undo = await page.evaluate(() => window.__learnedSends[window.__learnedSends.length - 1]);
+    if (undo.method !== 'POST' || !/learned\/undo$/.test(undo.path)) note(where, `Undo sent ${JSON.stringify(undo)}`);
     await page.evaluate(() => { window.__presencePosts = []; });
   } catch (e) {
     note(where, `driving How … is growing failed: ${String(e.message).split('\n')[0]}`);

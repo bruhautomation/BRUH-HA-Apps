@@ -18445,8 +18445,86 @@ function renderPersonality() {
     li.appendChild(el("span", "persline", g.text || ""));
     list.appendChild(li);
   });
+  renderLearned();
   loadPresence();
 }
+
+// ---- ⚙ › Personality › What it has learned about being here ---------------
+//
+// The one paragraph the assistant keeps itself (`personality.py` `learned`,
+// /api/personality/learned): the nightly reflection revises it whole, and the
+// household may step it back (Undo), correct it (Edit, saved as theirs) or
+// empty it (Clear). The notes under it are the dated trail of the same thing,
+// so the paragraph is shown once, here.
+function learnedWhen(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0)) / 86400000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
+}
+
+function setLearnedEditing(on) {
+  persState.learnedEditing = !!on;
+  const l = (persState.data || {}).learned || {};
+  $("#learnedEdit").hidden = !on;
+  $("#learnedText").hidden = !!on;
+  $("#learnedEditBtn").hidden = !!on;
+  $("#learnedSave").hidden = !on;
+  $("#learnedCancel").hidden = !on;
+  $("#learnedUndo").hidden = !!on || !l.can_undo;
+  $("#learnedClear").hidden = !!on || !l.text;
+  if (on) $("#learnedEdit").focus();
+}
+
+function renderLearned() {
+  if (!$("#learnedBox")) return;
+  const d = persState.data || {};
+  const l = d.learned || {};
+  const name = (presState.data || {}).name || d.name || "brAIn";
+  $("#learnedHead").textContent = `What ${name} has learned about being here`;
+  const text = $("#learnedText");
+  text.textContent = l.text
+    || "Nothing yet. It writes this overnight, from how you talk with it and how you answer it.";
+  text.classList.toggle("none", !l.text);
+  $("#learnedEdit").value = l.text || "";
+  $("#learnedEdit").maxLength = (d.limits || {}).learned || 1200;
+  // When it last changed and whose words it is, then the night's result
+  // when last night's revision was refused: said, never dropped quietly.
+  const meta = [];
+  if (l.text && l.updated_at) {
+    meta.push(`${l.by === "household" ? "You corrected it" : "It wrote this"} ${learnedWhen(l.updated_at)}.`);
+  }
+  const result = (presState.data || {}).learned_result || "";
+  if (result && !/^Revised/.test(result)) meta.push(result);
+  $("#learnedMeta").textContent = meta.join(" ");
+  $("#learnedMeta").hidden = !meta.length;
+  $("#learnedEditBtn").textContent = l.text ? "Edit" : "Write it";
+  setLearnedEditing(false);
+}
+
+async function learnedSend(path, method, body, said) {
+  try {
+    persState.data = await api(path, { method, body: body ? JSON.stringify(body) : undefined });
+    renderLearned();
+    toast(said);
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+$("#learnedEditBtn").addEventListener("click", () => setLearnedEditing(true));
+$("#learnedCancel").addEventListener("click", () => renderLearned());
+$("#learnedSave").addEventListener("click", () => {
+  const text = $("#learnedEdit").value.trim();
+  if (!text) { toast("Write the paragraph, or use Clear."); return; }
+  learnedSend("api/personality/learned", "PUT", { text }, "Saved as yours.");
+});
+$("#learnedUndo").addEventListener("click", () => learnedSend(
+  "api/personality/learned/undo", "POST", {}, "Back to the version before."));
+$("#learnedClear").addEventListener("click", () => learnedSend(
+  "api/personality/learned", "DELETE", null, "Cleared. Undo brings it back."));
 
 // ---- ⚙ › Personality › How … is growing ------------------------------------
 //
@@ -18518,6 +18596,9 @@ function renderPresence() {
   const p = persState.data || {};
   const name = d.name || p.name || "brAIn";
   $("#presHead").textContent = `How ${name} is growing`;
+  // The paragraph's heading carries the name, and its line the night's
+  // result: both are this payload's.
+  if (!persState.learnedEditing) renderLearned();
   const b = d.budget || {};
   $("#presWhat").textContent = d.on
     ? `Once a night ${name} notes how it is doing and thinks of small ways to keep in touch. `
