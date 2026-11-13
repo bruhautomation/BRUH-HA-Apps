@@ -318,6 +318,11 @@ claim_task_session() {
     sid=$(jq -r 'if type == "object" then (.session_id // empty) else empty end' \
         "$out_file" 2>/dev/null | tr -cd 'A-Za-z0-9._-')
     [ -n "$sid" ] && brain_claim_session "$sid" "$source"
+    # What the person said, when a caller wrapped a prompt round it
+    # (`task_words`, process_task's): the conversation's title.
+    if [ -n "$sid" ] && [ -n "${task_words:-}" ] && command -v brain_title_session > /dev/null 2>&1; then
+        brain_title_session "$sid" "$task_words"
+    fi
     return 0
 }
 
@@ -645,6 +650,9 @@ PYMEM
 # read as the refusal. So each writer waits for the one before it to finish
 # — the previous writer's pid is kept in `journal_task_pid`, which
 # process_task declares local so it never names another task's child.
+# The row's source is the task's own (`task_origin`, process_task's): a
+# task Morph sent is booked as Morph's, so ⚙ › Model & usage counts it under
+# the dashboard and not under the automations (`usage_store.SPEND_IDS`).
 journal_task() {
     local outcome="$1" duration="$2" envelope="$3" model="$4" error="$5" scheduled="$6"
     local journal_py="${BRAIN_SCRIPTS_DIR:-/opt/scripts}/brain_run_journal.py"
@@ -655,7 +663,7 @@ journal_task() {
         wait "$prev" 2>/dev/null || true
     fi
     (
-        python3 "$journal_py" record task "$outcome" --duration "$duration" \
+        python3 "$journal_py" record "${task_origin:-task}" "$outcome" --duration "$duration" \
             ${envelope:+--envelope "$envelope"} --model "$model" \
             --error "$error" "${extra[@]}" > /dev/null 2>&1 || true
         [ -n "$envelope" ] && rm -f "$envelope"

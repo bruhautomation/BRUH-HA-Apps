@@ -7521,3 +7521,23 @@ html.in-shell.bar-hidden .topbar > .shelledit { opacity: 0; visibility: hidden; 
 .ktools { margin-top: var(--sp-4); }
 .kfoldnest { padding-left: var(--sp-3); border-left: 2px solid var(--hairline); margin-bottom: var(--sp-3); }
 .kfoldnest .kfold:last-child { border-bottom: 0; }
+
+/* A ⚙ menu whose options are sentences is a list of wrapping radio rows,
+   not a closed select that cuts them off (`paintChoices` in app.js, #880).
+   The select stays in the page, hidden, as the one place the value lives.
+   Each row is at the touch floor and no taller than its text needs. */
+select.choicesrc { display: none; }
+.choicelist { display: flex; flex-direction: column; max-width: 520px; margin: 2px 0 var(--sp-2);
+  border: 1px solid var(--hairline); border-radius: var(--card-radius); background: var(--surface); }
+#setModal .setsecbody .choicelist label.choice, .choicelist .choice { display: flex; align-items: center;
+  gap: var(--sp-3); min-height: 44px; padding: 8px var(--sp-3); margin: 0; box-sizing: border-box;
+  cursor: pointer; font-size: var(--fs-body); line-height: var(--lh-body); font-weight: 400;
+  color: var(--ink); border-top: 1px solid var(--hairline); }
+.choicelist .choice:first-child, .choicelist .choicegroup + .choice { border-top: 0; }
+.choicelist .choice input { flex: none; margin: 0; width: 18px; height: 18px; }
+.choicelist .choicetext { min-width: 0; overflow-wrap: anywhere; }
+.choicelist .choicegroup { padding: 8px var(--sp-3) 0; font-size: var(--fs-meta);
+  line-height: var(--lh-meta); color: var(--ink-2); border-top: 1px solid var(--hairline); }
+.choicelist .choicegroup:first-child { border-top: 0; }
+.choicelist.off { opacity: 0.55; }
+.choicelist.off .choice { cursor: not-allowed; }

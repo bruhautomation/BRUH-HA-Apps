@@ -682,11 +682,15 @@ def _from_todo(item: dict, snoozes: dict[str, int]) -> dict:
     """A to-do item, as a case. A finished one carries its ending, which
     is the one place `ended` is ever set by a read: every other ending
     deletes the row it was given on."""
+    headline, line = findings_store.todo_item_parts(item)
     case = _base(
         "todo", item.get("id") or 0,
         kind="chore",
-        claim=item.get("text") or "",
-        detail=item.get("detail") or "",
+        # The card's headline and line (`findings_store.todo_item_parts`):
+        # the item's text, fix and the check's account were three
+        # paragraphs of the same advice (#879).
+        claim=headline or item.get("text") or "",
+        detail=line,
         status="done" if item.get("status") == "done" else "open",
         ts=int(item.get("added_at") or 0),
         source=item.get("source") or "",
