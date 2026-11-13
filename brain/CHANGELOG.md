@@ -12,8 +12,6 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ### Fixed
 
-- A To Do item made from a finding has a short headline that names the device and the job, one line under it, and says nothing twice (#879).
-- Chats that brAIn opened for you (an Ask about something, Personality's and Instructions' Ask, Talk it through, a request from the dashboard) are titled by what they are about, never by the prompt text behind them (#882).
 - With Personality on, the message boxes on Ask, Knowledge and the dashboard say your assistant's name, like the rest of the page. What you typed is never rewritten (#884).
 
 ## 5.2.0
