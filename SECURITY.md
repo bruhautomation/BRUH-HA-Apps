@@ -112,6 +112,23 @@ time limit and a cap on what it may write. That check is a guard against a
 model wandering, not a sandbox against an adversary: the words that drive it
 come from an admin, in a panel only an admin can open.
 
+**BRUH Browser** runs a real Google Chrome that the household signs in to
+its shops with, and Claude Code signed in with a Claude account, both in its
+`/data` (left out of backups). Errands come only from brAIn, with a bearer
+token in `/config/.bruh_browser/api_token` (mode 0600, UID 1000); the live
+screen and its websocket answer Home Assistant's ingress (admin-only) and
+nothing else. A purchase needs a person's approval twice over: brAIn's action
+gate always asks before `browser_purchase` (in every mode, YOLO included),
+and the add-on refuses a purchase errand without a finished, recent, unused
+cart and its exact total. The model's tools are the Claude in Chrome tools
+only, without JavaScript execution or file upload, and a hook refuses
+order-placing clicks in an errand without approval — best-effort text
+matching, which a coordinate click or an oddly labelled button can pass.
+Chrome normally runs with `--no-sandbox` there, because an app container
+cannot give it user namespaces; its AppArmor profile and container are the
+boundary, and a compromised renderer would hold the shop sessions and the
+Claude sign-ins.
+
 **BRUH Task Manager** asks for `hassio_role: manager`, the narrowest role
 that can restart or stop another app, and for `host_pid: true`. The
 Supervisor only applies `host_pid` while the user has switched the add-on's

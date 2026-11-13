@@ -1,0 +1,35 @@
+---
+# Option labels and help text for BRUH Browser's configuration UI.
+configuration:
+  model:
+    name: Claude model
+    description: >-
+      The Claude model an errand runs on. A shopping errand is many small
+      steps (search, open, add, check), which Sonnet does well and quickly;
+      Opus is slower and uses more of your plan, Haiku is cheaper and makes
+      more mistakes on busy shop pages.
+  max_turns:
+    name: Most steps per errand
+    description: >-
+      How many steps one errand may take before it stops and asks you to
+      continue it. A weekly grocery order is often 40 to 80.
+  task_timeout_minutes:
+    name: Longest errand (minutes)
+    description: >-
+      An errand still running after this long is stopped and reported as
+      failed.
+  purchase_tolerance_percent:
+    name: Price change allowed at purchase (%)
+    description: >-
+      When you approve a cart, how far its total may have moved by the time
+      the order is placed (a price change, a fee) before BRUH Browser stops
+      and tells you instead. 0 means the total must be exactly what you
+      approved.
+  screen_resolution:
+    name: Screen size
+    description: >-
+      The size of the virtual screen Chrome draws on, shown in the sidebar.
+  log_level:
+    name: Log level
+    description: >-
+      How much the add-on writes to its log.

@@ -68,6 +68,46 @@ class TestVoiceReachesNoPowerTool(unittest.TestCase):
         self.assertNotIn("brain", ha_mcp_server.VOICE_CROSS_DOMAIN)
 
 
+class TestVoiceMayShopButNeverBuy(unittest.TestCase):
+    """BRUH Browser by voice: start a cart errand and ask how it went, never
+    buy and never stop one. Refused before anything reaches the add-on, and
+    not shown to a voice turn at all."""
+
+    def setUp(self):
+        self._old = ha_mcp_server.EXPOSED_ONLY
+        ha_mcp_server.EXPOSED_ONLY = True
+        self.addCleanup(setattr, ha_mcp_server, "EXPOSED_ONLY", self._old)
+        self.calls = []
+        original = ha_mcp_server._browser_request
+
+        def record(method, path, body=None, timeout=20):
+            self.calls.append((method, path, body))
+            return {"task": {"id": "abc123", "state": "queued"}}
+
+        ha_mcp_server._browser_request = record
+        self.addCleanup(setattr, ha_mcp_server, "_browser_request", original)
+
+    def test_buying_and_stopping_are_refused_before_the_add_on_is_asked(self):
+        for name, args in (("browser_purchase", {"cart_task": "abc123", "total": 3.0,
+                                                 "items": [{"name": "oat milk", "quantity": 1}]}),
+                           ("browser_stop", {})):
+            with self.subTest(tool=name):
+                answer = ha_mcp_server.handle_tool_call(name, args)
+                self.assertIn("error", answer)
+        self.assertEqual(self.calls, [])
+
+    def test_a_cart_errand_and_its_status_reach_the_add_on(self):
+        ha_mcp_server.handle_tool_call("browser_task", {"errand": "add oat milk"})
+        ha_mcp_server.handle_tool_call("browser_status", {})
+        self.assertEqual([c[0] for c in self.calls], ["POST", "GET"])
+        self.assertIs(self.calls[0][2]["purchase"], False)
+
+    def test_voice_is_not_shown_the_buying_tools(self):
+        names = {t["name"] for t in ha_mcp_server.tools_for_channel()}
+        self.assertIn("browser_task", names)
+        self.assertEqual({"browser_purchase", "browser_stop"} & names, set())
+
+
 if __name__ == "__main__":
     os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
     unittest.main()

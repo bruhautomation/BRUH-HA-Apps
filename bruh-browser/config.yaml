@@ -1,0 +1,96 @@
+---
+name: "BRUH Browser"
+description: "brAIn's hands on the web: a real Google Chrome with Anthropic's Claude in Chrome extension, so brAIn can run errands on websites for you (a grocery cart first). Builds carts and stops for your approval before any purchase. Requires brAIn and a paid Claude plan."
+version: "0.1.0"
+slug: "bruh-browser"
+init: false
+
+# The image name follows the FOLDER (build.yml names it after the matrix
+# entry, which is the directory it builds).
+image: "ghcr.io/bruhautomation/{arch}-bruh-browser"
+
+# amd64 only: Google publishes Chrome for Linux on x86-64 and nothing else.
+# The Claude in Chrome extension needs Google Chrome (or Edge); plain
+# Chromium is not documented as supported, so an aarch64 image built on
+# Chromium would be an add-on whose one job is untested.
+arch:
+  - amd64
+
+url: "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/bruh-browser"
+
+apparmor: true
+
+boot: auto
+startup: services
+stage: experimental
+
+# Bridged network, port not published. The port lives in this container's
+# own namespace, so it is pinned; brAIn reaches it on the add-ons' network
+# by this add-on's hostname, with the bearer token in /config/.bruh_browser.
+watchdog: "http://[HOST]:[PORT:8105]/api/health"
+
+homeassistant: "2024.7.0"
+
+ingress: true
+ingress_port: 8105
+panel_icon: mdi:web
+panel_title: "Browser"
+# The live browser is signed in to the household's shops: admins only.
+panel_admin: true
+
+# ============================================================================
+# Options. Documented inline for whoever edits this file; the text people
+# see is translations/en.yaml.
+# ============================================================================
+options:
+  # model: the Claude model an errand runs on. A shopping errand is many
+  # small steps (open, search, add, check), which is Sonnet's work.
+  model: sonnet
+
+  # max_turns: the most steps one errand may take before it stops and says
+  # so. A weekly grocery order is often 40 to 80.
+  max_turns: 80
+
+  # task_timeout_minutes: wall clock for one errand, after which it is
+  # stopped and reported as failed.
+  task_timeout_minutes: 30
+
+  # purchase_tolerance_percent: how far an approved order's total may drift
+  # (a price changed, a substitution) before the purchase errand stops
+  # instead of placing it. 0 is exact.
+  purchase_tolerance_percent: 0
+
+  # screen_resolution: the size of the virtual screen Chrome draws on.
+  screen_resolution: "1366x900"
+
+  # log_level: verbosity of the add-on's own logging.
+  log_level: info
+schema:
+  model: "list(sonnet|opus|haiku)"
+  max_turns: "int(10,300)"
+  task_timeout_minutes: "int(5,180)"
+  purchase_tolerance_percent: "float(0,20)"
+  screen_resolution: "match(^[0-9]{3,4}x[0-9]{3,4}$)"
+  log_level: "list(trace|debug|info|notice|warning|error|fatal)"
+
+# /config: the token brAIn reads (/config/.bruh_browser/api_token). Nothing
+# else in Home Assistant's configuration is touched.
+map:
+  - type: homeassistant_config
+    read_only: false
+    path: /config
+
+# Chrome's profile holds the household's signed-in shops (cookies), the
+# extension's claude.ai sign-in, and Claude Code's own login: all of them
+# are credentials, and backups are unencrypted unless somebody opts in. So
+# the whole home stays out, and signing in again after a restore is the
+# price. The errand history (/data/tasks.json) is kept.
+backup_exclude:
+  - "home/**"
+  - "run/**"
+
+# `default` reads /supervisor/info, to refuse to start without brAIn.
+hassio_api: true
+hassio_role: default
+homeassistant_api: false
+auth_api: false
