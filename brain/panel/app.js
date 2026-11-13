@@ -8460,7 +8460,7 @@ function makeTodo(item) {
   const row = el("div", "todorow");
   row.dataset.todoId = item.id;
   const text = el("div", "todotext");
-  text.appendChild(el("span", "todotitle", prettyText(item.headline || item.text)));
+  text.appendChild(el("span", "todotitle", prettyText(item.text)));
   const meta = [item.origin === "finding" ? (sourceName(item) || "From a finding") : "Added by you"];
   if (item.added_at) meta.push("added " + timeAgo(new Date(item.added_at * 1000).toISOString()));
   // The house reported this chore's problem again while it waited, and the
@@ -8469,7 +8469,7 @@ function makeTodo(item) {
   const metaLine = el("span", "item-state", meta.join(" · "));
   if (item.seen_again_text) metaLine.title = "Last reported as: " + prettyText(item.seen_again_text);
   text.appendChild(metaLine);
-  if (item.line) text.appendChild(el("span", "todofix", prettyText(item.line)));
+  if (item.fix) text.appendChild(el("span", "todofix", prettyText(item.fix)));
   row.appendChild(text);
   const actions = el("div", "todoactions");
   const btns = [];

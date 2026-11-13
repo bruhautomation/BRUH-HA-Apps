@@ -22867,10 +22867,6 @@ def _todo_payload() -> dict:
     for item in payload.get("items") or []:
         until = int(asleep.get(f"t:{item.get('id')}", 0) or 0)
         item["snoozed_until"] = until if until > now else 0
-        # The card reads one headline and one short line, never the stored
-        # paragraph and the fix beside it.
-        item["headline"] = findings_store.todo_item_text(item) or item.get("text") or ""
-        item["line"] = findings_store.todo_item_line(item)
     return payload
 
 
@@ -22975,8 +22971,7 @@ async def _move_finding_to_todo(finding: dict, note: str = "",
             source=finding.get("source") or "",
             source_title=finding.get("source_title") or "",
             finding_key=key,
-            run_id=finding.get("run_id") or "",
-            about=findings_store.about_names(finding))
+            run_id=finding.get("run_id") or "")
 
     item = await asyncio.to_thread(place)
     if item is None:

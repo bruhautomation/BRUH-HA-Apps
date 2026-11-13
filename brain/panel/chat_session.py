@@ -1143,7 +1143,7 @@ class ChatSession:
         """
         for event in self.events:
             if event.get("type") == "user" and event.get("text"):
-                return conversations.readable_title(str(event["text"]))[:60]
+                return " ".join(str(event["text"]).split())[:60]
         return ""
 
     # -- what the registry watches ---------------------------------------

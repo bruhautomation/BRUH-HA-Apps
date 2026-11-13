@@ -685,11 +685,8 @@ def _from_todo(item: dict, snoozes: dict[str, int]) -> dict:
     case = _base(
         "todo", item.get("id") or 0,
         kind="chore",
-        # One headline and one short line, nothing said twice: the item's
-        # text, its fix and its check's account used to be three paragraphs
-        # of the same advice (`findings_store.todo_item_line`).
-        claim=findings_store.todo_item_text(item) or item.get("text") or "",
-        detail=findings_store.todo_item_line(item),
+        claim=item.get("text") or "",
+        detail=item.get("detail") or "",
         status="done" if item.get("status") == "done" else "open",
         ts=int(item.get("added_at") or 0),
         source=item.get("source") or "",
@@ -699,7 +696,7 @@ def _from_todo(item: dict, snoozes: dict[str, int]) -> dict:
         "stakes": _stakes_of(item),
         "severity": item.get("severity") or "warning",
         "entity_id": item.get("entity_id") or "",
-        "fix": "",
+        "fix": item.get("fix") or "",
         "snoozed_until": int(snoozes.get(case["id"], 0)),
     })
     if item.get("status") == "done":

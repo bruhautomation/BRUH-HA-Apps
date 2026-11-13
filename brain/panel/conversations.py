@@ -278,124 +278,24 @@ _FIXED_TITLES = (
 )
 
 
-# A conversation brAIn opened with its own words (an ask-about from the
-# panel, the "Talk it through" interview, a discussion, a background run)
-# is titled by what it is about, never by the prompt it was sent: the
-# prompt is for the model. `readable_title` is the one place that knows the
-# openers, so the list, a toast and the approval card name a conversation
-# the same way. A title that cannot be made from an opener we know and
-# still looks machine-written (a block of capitals, the model's own
-# instructions) is a plain description, not the text.
-_ASK_ABOUT_RE = re.compile(r"^I'm in the brAIn panel \((?P<where>[^)]*)\) and pointed at this:")
-_ON_PAGE_RE = re.compile(r"^\(on the page:.*\)$")
-_ASK_DEFAULT_WORDS = "Talk with me about it:"
-_ASK_TAIL = "If I ask you to do something with it"
-_INSTRUCTION_RE = re.compile(r"^I want to talk about one of brAIn's instructions: \"(?P<name>[^\"]+)\"")
-_OPENER_TITLES = (
-    ("Lead this conversation: interview me about how you should be",
-     "Talking through how the assistant should be"),
-    ("I want to talk with you about who you are in this house",
-     "Talking about the personality"),
-)
-# Sources whose runs are opened by a prompt brAIn built, never by a person:
-# an opener we do not recognise under one of these is still a machine's, and
-# is named by what the source is, not by its text.
-MACHINE_SOURCES = frozenset((
-    "memory", "study", "doctor", "curiosity", "triage", "resident", "gate",
-    "followup", "replay", "maintenance", "morph", "automation"))
-
-
-def _clip_title(text: str) -> str:
-    text = " ".join(str(text or "").split()).strip(" >:-—")
-    if len(text) > MAX_TITLE_CHARS:
-        text = text[:MAX_TITLE_CHARS - 1].rstrip() + "…"
-    return text
-
-
-def _ask_about_title(raw: str) -> str:
-    """"About <what was pointed at>", or the person's own words when they
-    typed some after it. The quoted lines and the words are told apart on
-    the raw lines, where the quote is the lines that start with ">"."""
-    quote, words, seen = [], [], False
-    for line in raw.splitlines()[1:]:
-        line = line.strip()
-        if not line or _ON_PAGE_RE.match(line):
-            continue
-        if line.startswith(">"):
-            quote.append(line.lstrip("> ").strip())
-            seen = True
-            continue
-        if line.startswith(_ASK_TAIL):
-            break
-        if seen and not line.startswith(_ASK_DEFAULT_WORDS):
-            words.append(line)
-    if words:
-        return _clip_title(" ".join(words))
-    first = next((q for q in quote if q), "")
-    return _clip_title("About " + first) if first else "Something on the page"
-
-
-def known_title(raw: str) -> str | None:
-    """The title for a first message that is EXACTLY one of the openers
-    brAIn itself writes, or None. Nothing here guesses from how a text
-    reads: a person's capitals, acronyms, "You are right" and "Please …"
-    are their own words and are never matched."""
-    raw = str(raw or "").strip()
-    if not raw:
-        return None
-    folded = " ".join(raw.split())
-    if _ASK_ABOUT_RE.match(raw):
-        return _ask_about_title(raw)
-    m = _CARD_TITLE_RE.match(folded)
+def display_title(path: Path) -> str:
+    """The title a person should read for a conversation in the list."""
+    text = _first_prompt(path)
+    m = _CARD_TITLE_RE.match(text)
     if m:
-        return _clip_title(m.group(1))
-    if folded.startswith("The user asked this question"):
-        m = _QUESTION_RE.search(folded)
+        return m.group(1).strip()[:MAX_TITLE_CHARS]
+    if text.startswith("The user asked this question"):
+        m = _QUESTION_RE.search(text)
         if m:
-            return _clip_title(m.group(1))
+            return m.group(1).strip()[:MAX_TITLE_CHARS]
     for prefix, title in _FIXED_TITLES:
-        if folded.startswith(prefix):
+        if text.startswith(prefix):
             return title
-    for prefix, title in _OPENER_TITLES:
-        if folded.startswith(prefix):
-            return title
-    m = _INSTRUCTION_RE.match(folded)
-    if m:
-        return _clip_title(f"Talking about the instruction \u201c{m.group('name')}\u201d")
-    if folded.startswith(MORPH_OPENERS):
-        return "A request from the dashboard"
-    return None
+    return text[:MAX_TITLE_CHARS]
 
 
-def readable_title(raw: str) -> str:
-    """The title a person should read for a conversation whose first message
-    is ``raw`` (newlines kept): a summary for an opener brAIn wrote, else the
-    person's own words folded to one line. Always the words, never a guess."""
-    raw = str(raw or "").strip()
-    if not raw:
-        return ""
-    known = known_title(raw)
-    return known if known is not None else _clip_title(" ".join(raw.split()))
-
-
-def display_title(path: Path, source: str = "") -> str:
-    """The title a person should read for a conversation in the list.
-    ``source`` is the claimed source the registry records for it: only a
-    run KNOWN to be a machine's, whose opener is not one we recognise, is
-    named by what its source is instead of by the prompt text."""
-    raw = _first_prompt(path, fold=False)
-    known = known_title(raw)
-    if known is not None:
-        return known
-    if raw and source in MACHINE_SOURCES:
-        meta = run_sources.SOURCES.get(source) or {}
-        return f"{meta.get('label', 'A background run')}: {meta.get('blurb', 'a background run')}"
-    return _clip_title(" ".join(raw.split()))
-
-
-def _first_prompt(path: Path, fold: bool = True) -> str:
-    """The first genuine user message, uncut: whitespace folded, or with its
-    lines kept when ``fold`` is False (`readable_title` reads quotes off them)."""
+def _first_prompt(path: Path) -> str:
+    """The first genuine user message, whitespace folded, uncut."""
     try:
         with path.open("r", encoding="utf-8", errors="replace") as fh:
             for count, line in enumerate(fh):
@@ -409,8 +309,7 @@ def _first_prompt(path: Path, fold: bool = True) -> str:
                 except ValueError:
                     continue
                 if _is_prompt(entry):
-                    text = _message_text(entry)
-                    return " ".join(text.split()) if fold else text.strip()
+                    return " ".join(_message_text(entry).split())
     except OSError:
         # A transcript that cannot be read has no title to offer.
         pass
@@ -479,7 +378,7 @@ def listing(cwd: str, limit: int = 30,
             continue
         out.append({
             "id": row["id"],
-            "title": display_title(row["path"], source) or "(no opening message)",
+            "title": display_title(row["path"]) or "(no opening message)",
             "modified": row["modified"],
             "age": _age(row["modified"]),
             "source": source,

@@ -1321,112 +1321,6 @@ def _with_name(sentence: str, name: str) -> str:
     return f"{name}: {body}"
 
 
-# A fix is written as a paragraph — "Zigbee, on a battery: press its button
-# and check its battery; re-pair it near the coordinator if it does not come
-# back." — and a To Do card has one headline and one short line, so it is cut
-# into clauses: sentences, then ";" and a spaced dash. A leading label that
-# names the kind of thing ("Zigbee, on a battery:") is the check's, not the
-# errand's, and goes.
-_CLAUSE_SPLIT_RE = re.compile(r"\s*;\s+|\s+[—–]\s+|\s+-\s+")
-_LABEL_RE = re.compile(r"^[A-Z][\w/-]*(?:,? [\w/-]+){0,3}: (?=[a-z])")
-_CONDITIONAL_RE = re.compile(r"^(?:if|when|otherwise|unless|once)\b", re.I)
-# The longest headline, and the longest line under it, a To Do card carries.
-TODO_HEADLINE_MAX = 80
-TODO_LINE_MAX = 140
-_STOP_WORDS = frozenset(
-    "a an the it its is are to of in on at and or for with then that this "
-    "if be as by up".split())
-
-
-def _fix_clauses(fix: str) -> list[str]:
-    """A fix as its separate instructions, in order, each one a sentence
-    fragment without its label."""
-    out = []
-    for sentence in _TODO_SENTENCE_RE.split(" ".join(str(fix or "").split())):
-        for part in _CLAUSE_SPLIT_RE.split(sentence):
-            part = _LABEL_RE.sub("", part.strip()).strip(" .!")
-            if part:
-                out.append(part)
-    return out
-
-
-def _words_of(text: str) -> set[str]:
-    return {w for w in re.findall(r"[a-z0-9']+", str(text or "").lower())
-            if w not in _STOP_WORDS}
-
-
-def _already_said(clause: str, said: list[str]) -> bool:
-    """Whether most of ``clause``'s words are already in one of ``said``:
-    the same instruction reworded is still the same instruction."""
-    mine = _words_of(clause)
-    if not mine:
-        return True
-    return any(len(mine & _words_of(t)) >= 0.7 * len(mine) for t in said)
-
-
-def _short_errand(clause: str) -> str:
-    """One errand as a headline: past the length a headline holds, cut at
-    its first " and ", where a second errand starts."""
-    if len(clause) <= TODO_HEADLINE_MAX:
-        return clause
-    head = clause.split(" and ", 1)[0]
-    return head if len(head) >= 12 else clause
-
-
-def _clip_line(text: str) -> str:
-    """The detail line, cut on a clause or word boundary rather than mid-word."""
-    text = " ".join(text.split())
-    if len(text) <= TODO_LINE_MAX:
-        return text
-    cut = text[:TODO_LINE_MAX]
-    stop = max(cut.rfind(". "), cut.rfind("; "))
-    if stop >= 40:
-        return cut[:stop + 1]
-    return cut.rsplit(" ", 1)[0].rstrip(" ,;:—-") + "…"
-
-
-# How the connectivity check words a device in its detail: "Hall sensor
-# (Zigbee), quiet since Tue". A To Do filed before it kept the names is still
-# about those devices, and its detail is where they are.
-_DEVICE_IN_DETAIL_RE = re.compile(
-    r"(?:^|[:;]\s+)([^;:()]{2,60}?) \((?:Zigbee|Z-Wave|Wi-Fi)\)")
-MAX_ABOUT = 6
-
-
-def item_names(row: dict, names: dict | None = None) -> list[str]:
-    """The names of the things a row (a finding, or a To Do item) is about,
-    best source first: the names kept when it was filed (`about`), the
-    friendly names of its `items` (a check that lists several devices), and
-    the devices its detail lists. Empty only when nothing names them."""
-    kept = [str(n).strip() for n in (row.get("about") or ()) if str(n).strip()]
-    if kept:
-        return kept[:MAX_ABOUT]
-    items = [str(e) for e in (row.get("items") or ()) if e]
-    named = [n for n in (_display_name(e, names) for e in items) if n]
-    if named:
-        return named[:MAX_ABOUT]
-    found = _DEVICE_IN_DETAIL_RE.findall(" ".join(str(row.get("detail") or "").split()))
-    return [f.strip() for f in found][:MAX_ABOUT]
-
-
-def _things_name(row: dict, name: str, names: dict | None = None) -> str:
-    """What a To Do is about: the thing's name, or for a row filed on no one
-    entity the first two names and a count, so the headline still names what
-    to go and do it to."""
-    if name:
-        return name
-    named = item_names(row, names)
-    if not named:
-        return ""
-    total = max(len(named), len([e for e in (row.get("items") or ()) if e]))
-    if total == 1:
-        return named[0]
-    more = total - 2
-    if more > 0:
-        return f"{', '.join(named[:2])} and {more} more"
-    return " and ".join(named[:2])
-
-
 def derive_todo_text(row: dict, name: str = "") -> str:
     """The To Do sentence for a row that was filed without one.
 
@@ -1446,34 +1340,18 @@ def derive_todo_text(row: dict, name: str = "") -> str:
     name = str(name or "").strip()
     eid = str(row.get("entity_id") or "").strip()
     fix = " ".join(str(row.get("fix") or "").split())
-    plural = False
-    if not name and not eid:
-        name = _things_name(row, "")
-        plural = " and " in name
-    sentences = _fix_clauses(fix) if fix else []
+    sentences = [x.strip() for x in _TODO_SENTENCE_RE.split(fix) if x.strip()] \
+        if fix else []
     statement = ""
     for first in sentences:
         if first.endswith("?"):
             continue
         if _NOTHING_RE.match(first):
             break
-        if _CONDITIONAL_RE.match(first):
-            # "If it does not come back, re-pair it": the fallback, said on
-            # the line under the headline, never the headline.
-            continue
         if is_statement(first):
             statement = statement or first
             continue
-        first = _short_errand(first)
-        if plural:
-            first = _ITS_RE.sub("their", _IT_RE.sub("them", first))
-        elif not name and (_IT_RE.search(first) or _ITS_RE.search(first)):
-            # Nothing names the thing: a pronoun would point at nothing.
-            first = _ITS_RE.sub("the device's", _IT_RE.sub("the device", first))
-        # A short statement rides along to say what "it" is ("The battery
-        # is low. Replace it."); a long one is the check's explanation, which
-        # the line under the headline carries if it carries anything.
-        if statement and len(statement) <= 60 and _IT_RE.search(first):
+        if statement and _IT_RE.search(first):
             # "The battery is low. Replace it." — the "it" is the battery,
             # not the thing, so the statement rides along to say what.
             body = statement.rstrip(" .!")
@@ -1510,10 +1388,8 @@ def todo_item_text(item: dict, names: dict | None = None) -> str:
     if not isinstance(item, dict):
         return ""
     text = " ".join(str(item.get("text") or "").split())
-    if not text or item.get("origin") == "hand":
+    if not text or not is_statement(text) or item.get("origin") == "hand":
         return text
-    if not is_statement(text):
-        return _tightened_todo_text(item, text, names)
     eid = str(item.get("entity_id") or "")
     better = derive_todo_text(
         {"fix": item.get("fix") or "", "entity_id": eid,
@@ -1533,51 +1409,6 @@ def todo_item_text(item: dict, names: dict | None = None) -> str:
     return text
 
 
-def _tightened_todo_text(item: dict, text: str, names: dict | None) -> str:
-    """An item filed with a paragraph for its headline (the whole fix, which
-    is what an item moved before headlines were cut to one errand holds) is
-    worded again from its fix as one errand. A headline already short and
-    in one piece is left as it was filed."""
-    if len(text) <= TODO_HEADLINE_MAX and ";" not in text and " — " not in text:
-        return text
-    eid = str(item.get("entity_id") or "")
-    better = derive_todo_text(
-        {"fix": item.get("fix") or text, "entity_id": eid,
-         "claim": item.get("claim") or text, "about": item.get("about"),
-         "detail": item.get("detail")}, _display_name(eid, names))
-    return better if better and len(better) < len(text) else text
-
-
-def todo_item_line(item: dict, names: dict | None = None) -> str:
-    """The one short line under a To Do's headline: what is left of the
-    item's fix once the headline has said its errand, and nothing the
-    headline already said. Empty when there is nothing more to say. The
-    check's long account of the problem (`detail`) is for the finding, not
-    for the chore, so it is used only when the fix says nothing."""
-    if not isinstance(item, dict):
-        return ""
-    head = todo_item_text(item, names)
-    said = [head, str(item.get("claim") or "")]
-    kept: list[str] = []
-    for clause in _fix_clauses(item.get("fix") or ""):
-        if is_statement(clause) and not _CONDITIONAL_RE.match(clause):
-            # The check's explanation of why ("a battery device this quiet
-            # has usually run its battery down") is not a step.
-            continue
-        if _already_said(clause, said + kept):
-            continue
-        kept.append(clause)
-    if not kept and not item.get("fix"):
-        first = next((x for x in _TODO_SENTENCE_RE.split(
-            " ".join(str(item.get("detail") or "").split())) if x.strip()), "")
-        if first and not _already_said(first, said):
-            return _clip_line(first)
-        return ""
-    line = "; ".join(c[0].upper() + c[1:] if i == 0 else c
-                     for i, c in enumerate(kept))
-    return _clip_line(line + ".") if line else ""
-
-
 def todo_text_of(row: dict, names: dict | None = None) -> str:
     """What To Do shows for this row: the producer's sentence, or one
     derived from its fix and the thing's friendly name."""
@@ -1588,14 +1419,6 @@ def todo_text_of(row: dict, names: dict | None = None) -> str:
         return stored
     return derive_todo_text(
         row, _display_name(str(row.get("entity_id") or ""), names))
-
-
-def about_names(finding: dict, names: dict | None = None) -> list[str]:
-    """What a finding becoming a To Do keeps of what it is about: the names
-    (never the ids) of its entity, or of the several things it lists."""
-    eid = str(finding.get("entity_id") or "")
-    one = _display_name(eid, names) if eid else ""
-    return [one] if one else item_names(finding, names)
 
 
 def clean_morph_key(value) -> str:
