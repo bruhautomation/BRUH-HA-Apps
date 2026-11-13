@@ -1633,6 +1633,9 @@ body.modal-open {
 .devstreamwhen {
   grid-column: 1 / -1; min-width: 0; font-size: var(--fs-meta); color: var(--ink-3);
 }
+/* An app the Walkthrough looks at: the same card, its foot holding the
+   version it runs beside Look now. */
+.devwalkver { min-width: 0; font-size: var(--fs-meta); color: var(--ink-3); }
 #setModal .devstreamfoot .sel { width: 100%; min-width: 0; }
 #setModal .devstream .devslow { margin: 0; }
 #setModal #devloopBody > .row { margin-top: var(--sp-3); }

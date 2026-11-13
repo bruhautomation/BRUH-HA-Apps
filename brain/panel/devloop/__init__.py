@@ -41,7 +41,9 @@ from pathlib import Path
 
 import atomic_write
 
-DATA_DIR = Path(os.environ.get("BRAIN_DEVLOOP_DIR", "/data/devloop"))
+from .siblings import CATALOG
+
+DATA_DIR =Path(os.environ.get("BRAIN_DEVLOOP_DIR", "/data/devloop"))
 TOKEN_FILE = Path(os.environ.get(
     "BRAIN_SECRETS", "/data/secrets")) / "devloop_github_token"
 
@@ -120,9 +122,18 @@ STREAMS: dict[str, dict] = {
     # go to the private repository with the issue; `devloop/screens.py`
     # says what is blanked and covered before anything is captured.
     "screens": {
-        "label": "Screens: pictures of every BRUH panel and card, redacted, with the layout faults measured",
+        "label": "Screens: pictures of every BRUH panel and card, redacted, with the layout faults measured, once for each new release",
         "cost": "free", "clears": False, "rolling": True,
         "default_on": False, "default_hours": 168},
+    # The one stream that reports what went RIGHT. Every other stream
+    # carries a fault, a Wrong or a gap, so a cloud that reads only them
+    # can only make brAIn quieter; this is what the household agreed with,
+    # thanked and kept, as counts (`streams.liked`). Off by default with the
+    # other streams drawn from what people did; nothing a person typed.
+    "liked": {
+        "label": "Liked: what this household agreed with, thanked and kept, as counts, so a fix does not remove it",
+        "cost": "free", "clears": False, "rolling": True,
+        "default_on": False, "default_hours": 24},
     # Morph — brAIn's dashboard (part of brAIn since 4.0) — keeps a ledger of its own
     # faults (a card that failed to draw, sections that overlapped, a request
     # it could not carry out) and publishes them for this stream to file. It
@@ -140,12 +151,13 @@ STREAMS: dict[str, dict] = {
         "label": "Other BRUH add-ons: errors in GardenRX, Bambu Studio, Print, BRight, Minecraft, Cooking and Task Manager",
         "cost": "free", "clears": True, "rolling": False,
         "default_on": True, "default_hours": 1},
-    # brAIn using Morph the way a person does: opens every card and room
-    # in the dashboard through the read-only harness, looks at each one at
-    # a phone's width and a laptop's, and files what a person living here
-    # would trip on. Nothing it presses can reach the house.
+    # brAIn using what it can reach the way a person does: its own panels,
+    # Morph, and each other BRUH app switched on in `WALK_APPS`, one run
+    # per app. Every screen is opened through the read-only capture at a
+    # phone's width and a laptop's, and what a person living here would
+    # trip on is filed. Nothing it presses can reach the house.
     "walkthrough": {
-        "label": "Walkthrough: brAIn opens every Morph card and room like a person and files what it finds (one Claude run)",
+        "label": "Walkthrough: brAIn uses its own screens, Morph and the apps switched on below like a person, and files what it finds (one Claude run per app)",
         "cost": "claude", "clears": False, "rolling": False,
         "default_on": False, "default_hours": 24},
     "look": {
@@ -167,6 +179,18 @@ STREAMS: dict[str, dict] = {
         "label": "Corpus: first looks that were wrong or missed here, as test cases (needs capture)",
         "cost": "free", "clears": False, "rolling": False,
         "default_on": False, "default_hours": 24},
+}
+# What the Walkthrough may look at, one switch each (`walks` in the
+# settings): brAIn's own panels, Morph, and every other BRUH add-on the
+# loop knows. A look is one Claude run, so an app nobody uses is not worth
+# one a day: brAIn and Morph are on, every other app is off until the
+# owner switches it on, and AUTOPILOT DOES NOT — it is the one thing
+# autopilot leaves alone, because it spends tokens on an app the owner may
+# not use. "Look now" (⚙ › Developer) is one look whatever the switch says.
+WALK_APPS: dict[str, dict] = {
+    "brain": {"name": "brAIn", "default_on": True},
+    "morph": {"name": "Morph", "default_on": True},
+    **{s["key"]: {"name": s["name"], "default_on": False} for s in CATALOG},
 }
 # The schedule choices, in hours. 0 is "only when asked" — Run now, the
 # What do you want to fix? box and `brain devloop` still work.
@@ -204,7 +228,7 @@ def limits_text(limits: tuple) -> str:
 # open.
 AUTOPILOT_HOURS = {"faults": 1, "scorecard": 24, "wrongs": 24, "outcomes": 24, "unmet": 24,
                    "snapshot": 168, "gaps": 24, "ideas": 168, "design": 24,
-                   "screens": 168, "morph": 1, "siblings": 1,
+                   "screens": 168, "liked": 24, "morph": 1, "siblings": 1,
                    "walkthrough": 24, "look": 0, "canary": 1, "corpus": 24}
 # Only runs: the issue cap is no limit unless the owner sets one (#797),
 # and autopilot leaves a number they set alone.
@@ -215,6 +239,7 @@ DEFAULTS = {
     "autopilot": False,
     "streams": {k: v["default_on"] for k, v in STREAMS.items()},
     "schedule": {k: v["default_hours"] for k, v in STREAMS.items()},
+    "walks": {k: v["default_on"] for k, v in WALK_APPS.items()},
     "repo": "",
     # Every new report waits for a press until this is turned off. On by
     # default because the first few reports are how somebody learns what
@@ -261,6 +286,8 @@ def _apply_autopilot(settings: dict) -> dict:
     if not settings.get("autopilot"):
         return settings
     out = dict(settings)
+    # Every stream, and NOT every app the Walkthrough may look at: `walks`
+    # stays the owner's (see `WALK_APPS`).
     out["streams"] = {k: True for k in STREAMS}
     out["schedule"] = {k: AUTOPILOT_HOURS.get(k, v["default_hours"])
                        for k, v in STREAMS.items()}
@@ -275,7 +302,8 @@ def _raw_settings() -> dict:
     # return handed back DEFAULTS' own `streams`, and the first save then
     # switched a stream on for every later reader in the process.
     out = {**DEFAULTS, "streams": dict(DEFAULTS["streams"]),
-           "schedule": dict(DEFAULTS["schedule"])}
+           "schedule": dict(DEFAULTS["schedule"]),
+           "walks": dict(DEFAULTS["walks"])}
     try:
         data = json.loads(settings_file().read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -301,6 +329,10 @@ def _raw_settings() -> dict:
             if isinstance(data.get("schedule"), dict) else []:
         if name in STREAMS and hours in HOURS_CHOICES:
             out["schedule"][name] = hours
+    for name, on in (data.get("walks") or {}).items() \
+            if isinstance(data.get("walks"), dict) else []:
+        if name in WALK_APPS and isinstance(on, bool):
+            out["walks"][name] = on
     for key, limits in {**CAP_LIMITS, **NUMBER_LIMITS}.items():
         value = data.get(key)
         if in_limits(value, limits):
@@ -342,6 +374,15 @@ def save_settings(changes: dict) -> dict:
                     raise ValueError(f"schedule.{name} must be one of "
                                      f"{', '.join(map(str, HOURS_CHOICES))} hours")
                 current["schedule"][name] = hours
+        elif key == "walks":
+            if not isinstance(value, dict):
+                raise ValueError("walks must be an object")
+            for name, on in value.items():
+                if name not in WALK_APPS:
+                    raise ValueError(f"unknown app: {name}")
+                if not isinstance(on, bool):
+                    raise ValueError(f"walks.{name} must be true or false")
+                current["walks"][name] = on
         elif key in CAP_LIMITS or key in NUMBER_LIMITS:
             limits = {**CAP_LIMITS, **NUMBER_LIMITS}[key]
             if not in_limits(value, limits):

@@ -4755,6 +4755,7 @@ function paintDevloop(data) {
         + (notes[st.name] ? `<div class="hint tight">${esc(notes[st.name])}</div>` : "")
         + `</div>`;
     }).join("");
+  $("#devWalks").innerHTML = (data.walks || []).map(devWalkRow).join("");
   const looks = data.looks || {};
   // Where the last request went: each report it became, its issue, and
   // what the cloud said when it closed it. "Sent" alone could not tell a
@@ -4771,6 +4772,60 @@ function paintDevloop(data) {
     $("#devCapRuns").value = s.max_runs_per_day ?? 4;
   }
 }
+
+// One app the Walkthrough may look at (`_devloop_walk_rows`): its switch,
+// what brAIn can open of it, when it was last looked at and what came of
+// that, and Look now. Autopilot does not hold these switches: they are the
+// owner's, because a look at an app nobody uses is a run spent on nothing.
+// An app that is not installed says so and can be neither switched on nor
+// looked at.
+const devCap = (s) => String(s || "").replace(/^./, (c) => c.toUpperCase());
+
+function devWalkRow(w) {
+  const about = !w.installed ? (w.why === "not installed" ? "Not installed" : devCap(w.why || "Not here"))
+    : w.key === "morph" ? "Every card and room of the dashboard"
+    : w.screens ? `${w.screens} screen${w.screens === 1 ? "" : "s"} brAIn can open`
+    : "No screen brAIn can open: it reads what the app reports instead";
+  let when = "Not looked at yet";
+  if (w.looked_at) {
+    const ago = timeAgo(new Date(w.looked_at * 1000).toISOString());
+    when = w.error ? `Tried ${ago}: ${w.error}`
+      : `Looked ${ago}${w.looked_version ? " on " + w.looked_version : ""}: `
+        + (w.rows ? `${w.rows} report${w.rows === 1 ? "" : "s"}` : "nothing to report");
+  }
+  const off = w.installed ? "" : " disabled";
+  return `<div class="setrow top devstream"><label class="check bigcheck">`
+    + `<input class="tog" type="checkbox" data-dev-walk="${esc(w.key)}"`
+    + `${w.on ? " checked" : ""}${off}><span><b>${esc(w.name)}</b>`
+    + `<span class="subtext">${esc(about)}</span></span></label>`
+    + `<div class="devstreamfoot"><span class="devstreamwhen">${esc(when)}</span>`
+    + `<span class="devwalkver">${esc(w.installed && w.version ? "Runs " + w.version : "")}</span>`
+    + `<button class="btn tiny" data-dev-walk-now="${esc(w.key)}"${off}`
+    + ` aria-label="Look at ${esc(w.name)} now">Look now</button></div></div>`;
+}
+
+$("#devWalks").addEventListener("change", (ev) => {
+  const box = ev.target.closest("[data-dev-walk]");
+  if (!box) return;
+  devloopCall("api/devloop", { method: "PUT", body: JSON.stringify(
+    { walks: { [box.getAttribute("data-dev-walk")]: box.checked } }) })
+    .then((out) => { if (!out) box.checked = !box.checked; });
+});
+$("#devWalks").addEventListener("click", async (ev) => {
+  const now = ev.target.closest("[data-dev-walk-now]");
+  if (!now) return;
+  const key = now.getAttribute("data-dev-walk-now");
+  // A look is a Claude run and takes minutes: the button says so while it
+  // runs, and the row says what came of it when the list is painted again.
+  now.disabled = true;
+  now.textContent = "Looking…";
+  const out = await devloopCall("api/devloop/walk", { method: "POST",
+    body: JSON.stringify({ app: key }) });
+  if (!out) { now.disabled = false; now.textContent = "Look now"; return; }
+  const r = out.walked || {};
+  toast(r.error || r.skipped ? devCap(r.error || r.skipped)
+    : r.rows ? `${r.rows} report${r.rows === 1 ? "" : "s"} filed` : "Nothing to report");
+});
 
 // Whether the cloud's fixes held on this house, as the server counted them
 // (`upstream.efficacy`): the share still silent seven days after install,
