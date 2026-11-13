@@ -28726,9 +28726,11 @@ async def h_presence_tune(request: web.Request) -> web.Response:
 
 async def h_presence_take_in(request: web.Request) -> web.Response:
     """POST: "Take this in now". The reflection's paragraph revision, made
-    because somebody pressed: the same job through the run queue, the same
-    three gates a scheduled run answers to, the same refusals. When no run
-    can be made the answer says why, in a sentence, and nothing changed."""
+    because somebody pressed: the same job through the run queue and the
+    same refusals. A press needs only a credential, as every pressed run
+    does (`_maint_pressed_refusal`): the budget and the pause on automatic
+    runs are for runs nobody asked for. When no run can be made the answer
+    says why, in a sentence, and nothing changed."""
     def held(why: str) -> web.Response:
         return web.json_response({"ok": False, "why": why})
 
@@ -28737,10 +28739,9 @@ async def h_presence_take_in(request: web.Request) -> web.Response:
         return held(why[:1].upper() + why[1:] + ".")
     if PRESENCE_STATE.get("taking"):
         return held("I am already taking them in.")
-    gate = _resident_gate(await asyncio.to_thread(settings_store.load))
-    if gate:
-        return held(f"I cannot make a run right now: {gate}. I will take "
-                    "them in overnight, or press again later.")
+    if not engine.get_auth():
+        return held("I cannot make a run right now: there is no Claude "
+                    "sign-in yet. Sign in under ⚙ and press again.")
     house = await _presence_read_house()
     people = {pid: p["name"] for pid, p in
               _presence_people(house.get("states") or []).items()}

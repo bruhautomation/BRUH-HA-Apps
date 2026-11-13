@@ -98,8 +98,8 @@ nightly run, delivery). Tests: `tests/test_presence.py`,
   listed under **What you have told *name*** with Remove, and is in the next
   reflection's prompt, where it outranks what the run infers. **Take this in
   now** (shown while an answer is newer than `tuning.absorbed_at`) makes the
-  same run on a press — same job, same queue, the same three gates, the
-  same refusals — and takes only the paragraph from it; when no run can be
+  same run on a press — same job, same queue, the same refusals, and only a
+  sign-in needed, as for every pressed run — and takes only the paragraph from it; when no run can be
   made it says why and nothing changes. ⚙'s list row for Personality says
   "*name* has 2 questions for you"; there is no phone push and no new kind
   of notification.
