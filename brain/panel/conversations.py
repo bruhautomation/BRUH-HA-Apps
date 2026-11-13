@@ -287,20 +287,48 @@ _FIXED_TITLES = (
 # (`run_sources.record_title`: the panel's Ask, a discussion, Morph's Ask
 # line and Tell), and that wins; these name the conversations that already
 # existed, and the classic terminal's, whose session id is not known.
+# The openers the PANEL writes under the person's own source ("you"): an
+# ask-about, Personality's and Instructions' Ask, Talk it through. A person
+# could start a message the same way, so each is matched WHOLE — its fixed
+# head and its fixed closing words, the variable middle (what was pointed
+# at, what is set) in between — never by a prefix; and since #882 each
+# records its title as it opens, so these only name older ones.
 _ASK_ABOUT_RE = re.compile(r"^I'm in the brAIn panel \([^)\n]*\) and pointed at this:\n")
 _ASK_DEFAULT_WORDS = ("Talk with me about it: what it is, what it means for "
                       "the house, and what could be done.")
 _ASK_TAIL = "If I ask you to do something with it, do it,"
+_ASK_TAIL_WHOLE = (
+    "If I ask you to do something with it, do it, whether or not the panel "
+    "has a button for it. If brAIn cannot do it, say whether that is a gap "
+    "in brAIn itself (and offer to file it with report_bug) or something "
+    "outside what brAIn can reach.")
 _ON_PAGE_RE = re.compile(r"^\(on the page: .*\)$")
 _INSTRUCTION_RE = re.compile(
     r"^I want to talk about one of brAIn's instructions: \"(?P<name>[^\"\n]+)\"\.")
-_OPENER_TITLES = (
-    ("Lead this conversation: interview me about how you should be in this "
-     "house. I will answer; you ask.", "How brAIn should be in this house"),
-    ("I want to talk with you about who you are in this house: your "
-     "personality.", "brAIn's personality"),
-    ("MORPH · learning pass.", "The dashboard learning from how it is used"),
-)
+_INSTRUCTION_TAIL = "Read it, tell me what it makes brAIn do, and help me change it."
+_TUNE_WHOLE = (
+    "Lead this conversation: interview me about how you should be in this "
+    "house. I will answer; you ask. How to run it: - Your first message is "
+    "your opening question, with no preamble. - One question at a time, "
+    "short. Ask about how you should BE (how long your messages are, your "
+    "humour, how blunt, when to speak up, how to take a correction), never "
+    "about a person, and never what the list below already answers. - Where "
+    "you can, offer two contrasting ways you could say the same real thing "
+    "and ask which is closer. Use something you actually said lately when "
+    "you have it. - After five or six questions, or when I say enough, say "
+    "back in a few lines what you will change. - Then record each thing you "
+    "learned, one call each, in the shell: brain tune \"<what you asked>\" "
+    "\"<what I answered, in my words>\". Do not edit any file for this and "
+    "do not use note_personality_change.")
+_PERSONALITY_HEAD = ("I want to talk with you about who you are in this "
+                     "house: your personality.")
+_PERSONALITY_TAIL = (
+    "When we settle a change to how you speak or behave, record it with "
+    "note_personality_change in one sentence, and if the persona itself "
+    "should change, tell me what to put in \u2699 \u203a Personality.")
+# The machine sources' openers: matched ONLY on a conversation the
+# registry recorded as that source's, because a person can type anything.
+_MORPH_LEARNING = "MORPH · learning pass."
 # What `automation-listener.sh` puts in front of a task that asked for
 # memory (`task_memory_block`): the opener follows it. Only on the
 # listener's own runs: a person who types the same words typed them.
@@ -345,10 +373,24 @@ def _ask_about_title(raw: str) -> str:
 def known_title(raw: str, source: str = "you") -> str | None:
     """The title for a first message that is one of brAIn's own openers,
     or None for anything else. ``raw`` keeps its lines; ``source`` is what
-    the registry recorded, which decides the voice faces' openers (a person
-    could type "(Local time: " — Assist's prompt is only Assist's)."""
+    the registry recorded for the conversation, and each machine's opener
+    is recognised only under that machine's source: a conversation that is
+    the person's own ("you") is never retitled by how it starts, except by
+    the panel's own openers matched whole."""
     raw = str(raw or "").strip()
     if not raw:
+        return None
+    folded = " ".join(raw.split())
+    if source in ("you", ""):
+        if _ASK_ABOUT_RE.match(raw) and folded.endswith(_ASK_TAIL_WHOLE):
+            return _ask_about_title(raw)
+        if folded.startswith(_TUNE_WHOLE):
+            return "How brAIn should be in this house"
+        if folded.startswith(_PERSONALITY_HEAD) and folded.endswith(_PERSONALITY_TAIL):
+            return "brAIn's personality"
+        m = _INSTRUCTION_RE.match(folded)
+        if m and folded.endswith(_INSTRUCTION_TAIL):
+            return clip_title(f"brAIn's instruction \u201c{m.group('name')}\u201d")
         return None
     if source in _MEMORY_SOURCES and raw.startswith(_MEMORY_LEAD):
         at = [raw.find(o) for o in (_MORPH_ASK, _MORPH_TELL, *MORPH_OPENERS)]
@@ -356,40 +398,39 @@ def known_title(raw: str, source: str = "you") -> str | None:
         if not at:
             return None
         raw = raw[min(at):]
-    if source in ("voice",) and raw.startswith(_VOICE_OPENERS):
+        folded = " ".join(raw.split())
+    if source == "voice" and raw.startswith(_VOICE_OPENERS):
         last = raw.splitlines()[-1].strip()
         if last.startswith("USER: "):
             last = last[len("USER: "):]
         return clip_title(last) or None
     if source == "memory" and raw.startswith(MACHINE_OPENERS[0][0]):
         return "Remembering what was said to Assist"
-    if _ASK_ABOUT_RE.match(raw):
-        return _ask_about_title(raw)
-    if raw.startswith(_MORPH_ASK) or (
-            " ".join(raw.split()).startswith(MORPH_OPENERS[3]) and _MORPH_ASK in raw):
-        # The card's context comes first and the person's words last,
-        # after Morph's own frame (`converse.prompt_for`).
-        words = raw[raw.find(_MORPH_ASK):].split(_MORPH_ASK_WORDS, 1)
-        return clip_title(words[1]) if len(words) == 2 and words[1].strip() \
-            else "A question from the dashboard"
-    if raw.startswith(_MORPH_TELL):
-        m = _MORPH_TELL_ASKED_RE.search(raw)
-        return clip_title(m.group(1)) if m and m.group(1).strip() \
-            else "A change to the dashboard"
-    folded = " ".join(raw.split())
-    m = _CARD_TITLE_RE.match(folded)
-    if m:
-        return clip_title(m.group(1))
-    if folded.startswith("The user asked this question"):
-        m = _QUESTION_RE.search(folded)
+    if source == "morph":
+        if raw.startswith(_MORPH_ASK) or (
+                folded.startswith(MORPH_OPENERS[3]) and _MORPH_ASK in raw):
+            # The card's context comes first and the person's words last,
+            # after Morph's own frame (`converse.prompt_for`).
+            words = raw[raw.find(_MORPH_ASK):].split(_MORPH_ASK_WORDS, 1)
+            return clip_title(words[1]) if len(words) == 2 and words[1].strip() \
+                else "A question from the dashboard"
+        if raw.startswith(_MORPH_TELL):
+            m = _MORPH_TELL_ASKED_RE.search(raw)
+            return clip_title(m.group(1)) if m and m.group(1).strip() \
+                else "A change to the dashboard"
+        if folded.startswith(_MORPH_LEARNING):
+            return "The dashboard learning from how it is used"
+    if source == "card":
+        m = _CARD_TITLE_RE.match(folded)
         if m:
             return clip_title(m.group(1))
-    for prefix, title in _FIXED_TITLES + _OPENER_TITLES:
-        if folded.startswith(prefix):
-            return title
-    m = _INSTRUCTION_RE.match(folded)
-    if m:
-        return clip_title(f"brAIn's instruction \u201c{m.group('name')}\u201d")
+        if folded.startswith("The user asked this question"):
+            m = _QUESTION_RE.search(folded)
+            if m:
+                return clip_title(m.group(1))
+        for prefix, title in _FIXED_TITLES:
+            if folded.startswith(prefix):
+                return title
     return None
 
 

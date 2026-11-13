@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import re
 
+import textclip
 from numfmt import count
 
 from ._registry_facts import SELF_PLATFORMS, entry_not_loaded, is_node_status
@@ -957,10 +958,17 @@ TODO_HEADLINE_MAX = 80
 TODO_LINE_MAX = 140
 
 
+# The longest a device's name may be inside a headline: past it the name
+# is shortened on a word, so the headline keeps its job and its length.
+TODO_NAME_MAX = 40
+
+
 def _the(name: str) -> str:
     """A device's name as the object of a sentence: "the Hall sensor",
-    but never "the the porch light", "the A Zigbee device" or "the Sam's
-    phone"."""
+    but never "the the porch light", "The Reading lamp" mid-sentence, "the
+    A Zigbee device" or "the Sam's phone"."""
+    name = textclip.clip(" ".join(str(name or "").split()), TODO_NAME_MAX) \
+        or "a device"
     m = re.match(r"(?i)^(the|a|an)\s+", name)
     if m:
         return m.group(1).lower() + name[m.end(1):]
@@ -974,6 +982,9 @@ def _thing(names: list[str], total: int, noun: str, cap: int) -> str:
     many more; the kind and count when no name survived. Fitted to ``cap``
     characters by naming fewer, never by cutting a name."""
     total = max(total, len(names))
+    # Two devices with one name are one name and a count, never "the Porch
+    # sensor and the Porch sensor".
+    names = list(dict.fromkeys(n for n in names if str(n or "").strip()))
     if not names:
         return (f"the quiet {noun}" if total <= 1
                 else f"the {count(total, noun)}")

@@ -3826,7 +3826,6 @@ def _morph_cases_payload(now: float | None = None) -> dict:
     rows = [c for c in cases.list_cases(None, now=now, stores=cases.STORES)
             if cases.on_feed(c)]
     side = morph_bridge.threads()
-    names = dict(_NAMES)
     assistant = personality.assistant_name()
     out = []
     for case in rows:
@@ -3841,7 +3840,7 @@ def _morph_cases_payload(now: float | None = None) -> dict:
         case_answers = cases.answers(case)
         out.append(morph_bridge.case_row(
             case,
-            todo_text=(findings_store.todo_text_of(row, names)
+            todo_text=(findings_store.todo_text_of(row)
                        if row is not None else ""),
             thread=(row or {}).get("thread") or side.get(case["id"]) or [],
             ask=morph_bridge.ask_line(case, situation),
@@ -3869,7 +3868,7 @@ def _morph_cases_payload(now: float | None = None) -> dict:
             "cases": out,
             "todo": morph_bridge.todo_rows(
                 items, cases.snoozes(), _morph_area_of,
-                lambda item: findings_store.todo_item_text(item, names)),
+                findings_store.todo_item_text),
             "ended_morph": morph_bridge.ended(),
             "said": sorted(said, key=lambda t: t.get("at") or 0)[-20:]}
 
@@ -9859,7 +9858,7 @@ hypotheses.KNOWN_ANSWER = _hypothesis_known_answer
 # handed the reader rather than importing it.
 todo_store.SNOOZED = lambda: cases.snoozes()
 # The mirror's summary is the card's headline (`findings_store.todo_item_text`).
-todo_store.HEADLINE = lambda item: findings_store.todo_item_text(item, dict(_NAMES))
+todo_store.HEADLINE = findings_store.todo_item_text
 # Every write to either store marks Morph's `cases.json` as owed, and the
 # Morph loop rewrites it within a second (`_morph_loop`).
 findings_store.ON_WRITE = _morph_dirty
@@ -22893,13 +22892,12 @@ def _todo_payload() -> dict:
     except Exception:  # noqa: BLE001 — nothing snoozed shows the item
         asleep = {}
     now = time.time()
-    names = dict(_NAMES)
     for item in payload.get("items") or []:
         until = int(asleep.get(f"t:{item.get('id')}", 0) or 0)
         item["snoozed_until"] = until if until > now else 0
         # What the card shows: one headline and one line, nothing said
         # twice (`findings_store.todo_item_parts`, #879).
-        item["headline"], item["line"] = findings_store.todo_item_parts(item, names)
+        item["headline"], item["line"] = findings_store.todo_item_parts(item)
     return payload
 
 
