@@ -33,7 +33,7 @@
 import { Engine } from './engine.js';
 import { CSS as STYLES, FONTS_URL } from './styles.js';
 import { floorFields } from './floor.js';
-import { TYPES, typeOf, tileAria, stateWord } from './cards.js';
+import { TYPES, typeOf, tileAria, stateWord, hollowList } from './cards.js';
 import * as history from './history.js';
 import * as snap from './snap.js';
 import * as upc from './upcoming.js';
@@ -1526,7 +1526,7 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
       return;
     }
     (sec.groups || []).forEach((g, gi) => {
-      let cards = (g.cards || []).filter((c) => !lifted.has(c.id) && (this.s.edit || !isHeadCard(c)));
+      let cards = (g.cards || []).filter((c) => !lifted.has(c.id) && (this.s.edit || (!isHeadCard(c) && !hollowList(c))));
       // An item the list says leads its room goes first in its group.
       // An anchor keeps its slot whatever its score (§4.4): the
       // others are ordered around it.
@@ -1541,7 +1541,7 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
       // row of two heights (the engine's §5 rule).
       const items = cards.map((c) => { const it = this.itemOf(c); return this.leadsWithReason(c.id) ? { ...it, hk: it.hk + ':lead' } : it; });
       if (this.s.edit && gi === sec.groups.length - 1) items.push({ id: `add@${sec.id}@${gi}`, span: 1, grow: 1, dir: 'down', want: 3, hk: 'x:add' });
-      if (items.length || g.label) groups.push({ key: sec.id + ':' + gi, label: g.label || '', items });
+      if (items.length || (g.label && this.s.edit)) groups.push({ key: sec.id + ':' + gi, label: g.label || '', items });
     });
     if (this.s.edit && !(sec.groups || []).length) groups.push({ key: sec.id + ':new', label: '', items: [{ id: `add@${sec.id}@0`, span: 1, grow: 1, dir: 'down', want: 3, hk: 'x:add' }] });
     // A case follows the room's own things (§13.2: "under the
