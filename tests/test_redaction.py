@@ -118,5 +118,61 @@ class TestLikedCarriesCountsOnly(unittest.TestCase):
         self.assertEqual(streams.liked({"settled": [], "presence": {}}, "9.9.9"), [])
 
 
+class TestOrdinaryWordsSurviveAliasing(unittest.TestCase):
+    """A household's one-word names are aliased where they are names, and
+    the same word used as English is left in the report's prose."""
+
+    def aliases(self):
+        from devloop.aliases import Aliases
+        a = Aliases()
+        a.learn({
+            "switch.screen": {"name": "Screen"},
+            "light.inside": {"name": "Inside"},
+            "binary_sensor.box": {"name": "Box"},
+            "person.will": {"name": "Will"},
+            "person.grace": {"name": "Grace"},
+            "light.kitchen_ceiling": {"name": "Kitchen ceiling", "area": "Ben's room"},
+        })
+        return a
+
+    def test_the_prose_comes_out_unchanged(self):
+        a = self.aliases()
+        text = ("On a phone the message box sits under the home indicator "
+                "inside HA's frame; full-screen is off.")
+        self.assertEqual(a.apply(text), text)
+        self.assertEqual(upstream.compose(
+            {"fp": "x", "where": "Ask", "what": "w", "body": text}, a)["body"].count(text), 1)
+
+    def test_the_name_used_as_a_name_is_aliased(self):
+        a = self.aliases()
+        screen = a.names["switch:Screen"]
+        for text in ("Screen is on", "the Screen switch", "the screen switch",
+                     "`Screen`", "`screen`", '"screen"', "| switch.screen | screen | on |",
+                     "screen", "- screen: off", "Ask · screen", "screen (switch.screen)"):
+            with self.subTest(text=text):
+                out = a.apply(text)
+                self.assertIn(screen, out)
+                self.assertNotRegex(out.casefold().replace(screen.casefold(), ""),
+                                    r"(?<![\w.])screen\b")
+        self.assertEqual(a.apply("Box: open"), a.names["binary_sensor:Box"] + ": open")
+
+    def test_a_persons_name_is_aliased_however_it_is_written(self):
+        # "will grace the hall" loses its verb: a sentence a reader has to
+        # reread costs less than a name that leaves the house.
+        a = self.aliases()
+        will, grace = a.names["person:Will"], a.names["person:Grace"]
+        self.assertEqual(a.apply("Grace said the lights were off"),
+                         f"{grace} said the lights were off")
+        self.assertEqual(a.apply("will grace the hall"), f"{will} {grace} the hall")
+
+    def test_a_distinctive_name_is_aliased_in_prose(self):
+        a = self.aliases()
+        out = a.apply("the kitchen ceiling flickers in ben's room every night")
+        self.assertNotIn("kitchen ceiling", out.casefold())
+        self.assertNotIn("ben's room", out.casefold())
+        self.assertIn(a.names["light:Kitchen ceiling"], out)
+        self.assertIn(a.names["room:Ben's room"], out)
+
+
 if __name__ == "__main__":
     unittest.main()
