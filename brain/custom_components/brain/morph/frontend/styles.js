@@ -496,6 +496,4 @@ ${STATUS_RULES}
 .morph input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=color]),.morph textarea,.morph select{font-size:16px}
 `;
 /* The 16px text floor, on every screen (a phone with a desktop-width page or a pointer that says it is fine still zooms): below it iOS zooms the page when a field takes focus (#677). Every field Morph draws, and the same floor handed to a card's own shadow root by morph-panel.js (FIELD_FLOOR). */
-/* The same for a button in a card Morph did not draw (a built type, a hosted card): 40px a side on a phone, handed to its shadow roots by floor.js, since a card's own 30px chip is out of reach of the rules above. */
-export const TARGET_FLOOR = '@media (pointer:coarse){button,[role=button],[role=tab],summary,a[href]{min-height:40px;min-width:40px;box-sizing:border-box}}';
 export const FIELD_FLOOR = 'input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=color]),textarea,select{font-size:16px!important}';

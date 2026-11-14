@@ -210,9 +210,11 @@ const lightGroup = {
     const n = lit.length, total = lanes.length;
     const avg = n ? Math.round(lit.reduce((a, l) => a + l.pct, 0) / n) : 0;
     const gone = lightGroup.gone(ctx).length;
-    // ONE format: how many are on ("20 of 31 on", "All 5 on", "All 6 off"), then the average level of the ones that are on, labelled, then (where the tile has the room) how many cannot be reached. "mixed" said less than the number and a bare "1%" could be read as the count; a narrow tile says the first fact whole.
+    const reach = total - gone; // only members that answer are on or off
+    // ONE format: how many of the reachable ones are on ("20 of 31 on", "All 5 on", "5 off"), then the average level of those that are on, labelled, then (where the tile has the room) how many cannot be reached. "All" only when every member answers; one light reads "On" or "Off".
+    const bad = gone ? gone + ' unavailable' : '';
     const val = off(st) ? 'Unavailable' : ctx.preview != null ? ctx.preview + '%'
-      : n ? [n === total ? `All ${total} on` : `${n} of ${total} on`, `avg ${avg}%`, gone ? gone + ' unavailable' : ''] : total ? [`All ${total} off`, gone ? gone + ' unavailable' : ''] : 'Off';
+      : total === 1 && !gone ? [n ? 'On' : 'Off', n ? `avg ${avg}%` : ''] : n ? [!gone && n === total ? `All ${total} on` : `${n} of ${total} on`, `avg ${avg}%`, bad] : total ? [!gone ? `All ${total} off` : reach ? `${reach} off` : 'All unavailable', reach ? bad : ''] : 'Off';
     return stripFace({ kind: 'lanes', lanes, icon: 'group', accent: ctx.accent, active: n > 0, name: ctx.name, val, hint: ctx.hint });
   },
   more: (ctx) => {

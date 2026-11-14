@@ -1,12 +1,11 @@
-// The 16px field floor (#677) and the 40px button floor (#965) for a card Morph did not draw. A hosted
+// The 16px field floor (#677) for a card Morph did not draw. A hosted
 // Lovelace card, a card brAIn built and a house's own card keep their own
 // shadow roots, out of reach of Morph's styles, so the floor is handed to
 // every open root in the card, again whenever a root changes (fields are
 // made late).
-import { FIELD_FLOOR, TARGET_FLOOR } from './styles.js';
+import { FIELD_FLOOR } from './styles.js';
 
 let _floorSheet;
-let _targetSheet;
 const _floored = new WeakSet();
 const _watched = new WeakSet();
 
@@ -21,8 +20,7 @@ export function floorFields(node, depth = 0) {
   if (root === node.shadowRoot && !_floored.has(root)) {
     try {
       if (!_floorSheet) { _floorSheet = new CSSStyleSheet(); _floorSheet.replaceSync(FIELD_FLOOR); }
-      if (!_targetSheet) { _targetSheet = new CSSStyleSheet(); _targetSheet.replaceSync(TARGET_FLOOR); }
-      root.adoptedStyleSheets = [...root.adoptedStyleSheets, _floorSheet, _targetSheet];
+      root.adoptedStyleSheets = [...root.adoptedStyleSheets, _floorSheet];
       _floored.add(root);
     } catch (e) { /* a browser without constructable sheets keeps the card's own size */ }
   }

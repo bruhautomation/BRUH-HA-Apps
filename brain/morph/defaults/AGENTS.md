@@ -390,6 +390,10 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   `min-width`, never a fixed `height` under it), with a gap between
   neighbours, so a finger on a phone hits the one it means. A row of chips
   wraps rather than shrinking them.
+  Morph does not resize a built card's buttons for it (a blanket rule pushed a
+  twelve-column hour grid out of its card), so a grid of buttons that does not
+  fit at 40px has fewer columns, wraps, or scrolls sideways inside its own box:
+  never smaller buttons, never buttons pushed past the card's edge.
 - **Text is 4.5:1 against what it sits on, in light and dark themes.** Take
   colours from the theme's variables (`--primary-text-color`,
   `--secondary-text-color`), never a fixed colour picked on one theme: an
