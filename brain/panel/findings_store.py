@@ -1401,13 +1401,21 @@ def _clip_line(text: str) -> str:
     return textclip.clip(text, MAX_TODO_LINE)
 
 
+# A step's rest that continues the headline's sentence rather than starting
+# its own: a preposition, a conjunction other than "and then", a participle.
+_CONTINUES_RE = re.compile(
+    r"(?i)^(?:in|on|at|near|with|by|from|to|into|onto|under|behind|for|of|"
+    r"inside|outside|above|below|beside|between|after|before|until|via|"
+    r"using|so|or|but|if|unless|because|while|which|that|where|when)\b")
+
+
 def _adds(step: str, head: str, name: str) -> str:
     """What a step adds under a headline, as a line, or "" when it adds
     nothing. A step that starts with the headline's own words says only
-    the rest ("Wake it up and press its button." under "Hall sensor: Wake
-    it up." is "Then press its button."; "Re-pair it near the hub." under
-    "Re-pair it." is "Near the hub."), or itself whole when the rest is
-    too short to stand alone; any other step is shown unless every word of
+    the rest when it is a sentence of its own ("Wake it up and press its
+    button." under "Hall sensor: Wake it up." is "Then press its button."),
+    or itself whole when the rest only continues the headline ("Re-pair it
+    near the hub.") or is too short to stand alone; any other step is shown unless every word of
     it (the device's name aside) is already the headline's."""
     own = head[len(name) + 2:] if name and head.startswith(name + ": ") else head
     own = " ".join(own.split()).rstrip(".!…")
@@ -1418,7 +1426,10 @@ def _adds(step: str, head: str, name: str) -> str:
         rest = re.sub(r"(?i)^and\s+(?:then\s+)?", "then ", rest)
         if not _words(rest) - said:
             return ""
-        if len(rest.split()) >= 2:
+        # A rest that is a sentence of its own ("Then press its button.");
+        # one that only continues the headline ("in the Hall sensor with a
+        # CR2032", "near the hub") is no sentence, so the step is shown whole.
+        if len(rest.split()) >= 2 and not _CONTINUES_RE.match(rest):
             return rest
         return flat
     return flat if _words(step) - said else ""
@@ -1460,17 +1471,29 @@ def _worded_before(text: str, name: str, fix: str) -> bool:
     return False
 
 
+def _dangles(step: str) -> bool:
+    """Whether words open on a pronoun with nothing before it to stand for:
+    one in their first three words ("Re-pair it.", "Replace its battery."),
+    never one well after a subject ("Sam's phone has not reported its
+    location")."""
+    return bool(_PRONOUN_RE.search(" ".join(str(step or "").split()[:3])))
+
+
 def _parts(words: str, fallbacks: list[str], fix: str, name: str,
-           line: str = "") -> tuple[str, str]:
+           line: str = "", label: str = "") -> tuple[str, str]:
     """`(headline, line)` from an item's or a finding's own words: the
     headline is them (`_headline`), the line the producer's when it wrote
     one, else the fix's first step the headline does not say (`_line`).
     With no device, words that dangle ("Re-pair it.") give way to the first
-    of ``fallbacks`` that does not; no subject is ever made up."""
-    if not name and _PRONOUN_RE.search(next(iter(_steps(words)), "")):
+    of ``fallbacks`` that does not; with none, the item's source ``label``
+    goes in front ("Zigbee devices gone quiet: Re-pair it."), the subject
+    the item already holds. No subject is ever made up."""
+    if not name and _dangles(next(iter(_steps(words)), "")):
         whole = next((f for f in (next(iter(_steps(t)), "") for t in fallbacks)
                       if f and not _PRONOUN_RE.search(f)), "")
         words = whole or words
+        if not whole:
+            name = textclip.clip(" ".join(str(label or "").split()), TODO_NAME_MAX)
     head = _headline(words, name)
     if line and _adds(line, head, name):
         return head, clean_todo_line(_clip_line(line))
@@ -1498,8 +1521,10 @@ def todo_parts(row: dict) -> tuple[str, str]:
     own = _no_ids(str(row.get("todo_text") or ""), names)
     if own and not _worded_before(own, name, fix):
         return _parts(own, [claim, detail], fix, name,
-                      _no_ids(str(row.get("todo_line") or ""), names))
-    return _parts(claim, [detail], fix, name)
+                      _no_ids(str(row.get("todo_line") or ""), names),
+                      label=str(row.get("source_title") or ""))
+    return _parts(claim, [detail], fix, name,
+                  label=str(row.get("source_title") or ""))
 
 
 def todo_item_parts(item: dict) -> tuple[str, str]:
@@ -1538,7 +1563,8 @@ def todo_item_parts(item: dict) -> tuple[str, str]:
     own = _no_ids(text, names)
     if claim and _worded_before(own, name, fix):
         own = claim
-    return _parts(own, [claim, detail], fix, name)
+    return _parts(own, [claim, detail], fix, name,
+                  label=str(item.get("source_title") or ""))
 
 
 def todo_item_text(item: dict) -> str:

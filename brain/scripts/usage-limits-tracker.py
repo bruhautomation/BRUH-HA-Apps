@@ -351,10 +351,11 @@ EDGE_BLOCK_RE = re.compile(
 _EDGE_STATUS_RE = re.compile(
     r"(?:api error|http(?: error)?|status(?:_code)?\"?)\s*[:=]?\s*(\d{3})\b", re.IGNORECASE)
 _CREDENTIAL_REFUSED_RE = re.compile(
-    r"authentication_error|invalid (?:x-)?api[ -]?key|invalid bearer|"
-    r"oauth token (?:has )?(?:expired|been revoked)|token (?:has )?(?:expired|"
-    r"been revoked)|not logged in|please run /login|"
-    r"(?:api error|http(?: error)?|status(?:_code)?\"?)\s*[:=]?\s*401\b", re.IGNORECASE)
+    r"token|api[ _-]?key|credential|auth|log ?in|logged|scope|"
+    r"permission_error|expired|revoked|signed out|sign ?in", re.IGNORECASE)
+# The CLI's own wrapper on every API error it could not get past, a block
+# included: its words are not the API's, so they never count as a refusal.
+_CLI_WRAPPER_RE = re.compile(r"^\s*Failed to authenticate\.?\s*", re.IGNORECASE)
 
 
 def edge_blocked(error, status=None):
@@ -366,7 +367,7 @@ def edge_blocked(error, status=None):
         status = int(m.group(1)) if m else None
     if status not in EDGE_STATUSES or not EDGE_BLOCK_RE.search(text):
         return False
-    return not _CREDENTIAL_REFUSED_RE.search(text)
+    return not _CREDENTIAL_REFUSED_RE.search(_CLI_WRAPPER_RE.sub("", text))
 
 
 ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
@@ -1201,18 +1202,15 @@ def _error_code(status, body):
     fallback = f"http_{status}"
     if not body:
         return fallback
-    # An edge page (a Cloudflare challenge, "Attention Required!") where the
-    # API's JSON belongs: the request never reached the endpoint and no
-    # credential was judged, so it is not a refusal to move past or to sign
-    # in again over — it is the network not getting through (#911).
-    if edge_blocked(body, status):
-        return "network_error"
+    # The API's own JSON error is read first, and is the answer whenever
+    # there is one: an edge block is only ever a body that is NOT one — a
+    # page served in front of the API (#911).
     try:
         parsed = json.loads(body)
     except (ValueError, TypeError):
-        return fallback
+        parsed = None
     if not isinstance(parsed, dict):
-        return fallback
+        return "network_error" if edge_blocked(body, status) else fallback
     # The envelope's own `error` object first, then the top level: neither
     # placement is documented, and one file reading both is cheaper than a
     # release that misses the day it moves. Every real refusal seen has

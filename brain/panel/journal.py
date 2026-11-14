@@ -215,7 +215,8 @@ def scrub(text: str) -> str:
 # but no credential was judged, so signing in again cannot help; it clears
 # on its own and is retried (`engine.transient`). It takes BOTH an edge
 # status and an edge marker — an "<html" in a model's output is neither —
-# and a credential refusal in the API's own words beside them wins (#911).
+# and the text must say nothing about a credential: any such word and it
+# is `auth`, exactly as before this existed (#911).
 # `usage-limits-tracker.edge_blocked` is this function, copied with both
 # patterns in this order, because that script does not import the panel.
 EDGE_STATUSES = (403, 429, 503)
@@ -224,14 +225,17 @@ EDGE_BLOCK_RE = re.compile(
     r"challenge-platform|\bray id\b", re.IGNORECASE)
 _EDGE_STATUS_RE = re.compile(
     r"(?:api error|http(?: error)?|status(?:_code)?\"?)\s*[:=]?\s*(\d{3})\b", re.IGNORECASE)
-# What a refused credential says, in the API's and the CLI's own forms: a
-# 401 only as the API states one ("API Error: 401", a status field), never
-# a bare number, which a challenge page's own markup is full of.
+# Any word about a credential at all (token, key, auth…, login, scope,
+# expired, revoked, sign in). The rule fails safe: a text that carries one
+# beside an edge marker is a refused credential, as it always was, because
+# "403 Cloudflare Access: token revoked" is a real refusal behind the same
+# edge. A 401 is never an edge status, so it is `auth` before this is read.
 _CREDENTIAL_REFUSED_RE = re.compile(
-    r"authentication_error|invalid (?:x-)?api[ -]?key|invalid bearer|"
-    r"oauth token (?:has )?(?:expired|been revoked)|token (?:has )?(?:expired|"
-    r"been revoked)|not logged in|please run /login|"
-    r"(?:api error|http(?: error)?|status(?:_code)?\"?)\s*[:=]?\s*401\b", re.IGNORECASE)
+    r"token|api[ _-]?key|credential|auth|log ?in|logged|scope|"
+    r"permission_error|expired|revoked|signed out|sign ?in", re.IGNORECASE)
+# The CLI's own wrapper on every API error it could not get past, a block
+# included: its words are not the API's, so they never count as a refusal.
+_CLI_WRAPPER_RE = re.compile(r"^\s*Failed to authenticate\.?\s*", re.IGNORECASE)
 
 
 def edge_blocked(error: str, status: int | None = None) -> bool:
@@ -243,7 +247,7 @@ def edge_blocked(error: str, status: int | None = None) -> bool:
         status = int(m.group(1)) if m else None
     if status not in EDGE_STATUSES or not EDGE_BLOCK_RE.search(text):
         return False
-    return not _CREDENTIAL_REFUSED_RE.search(text)
+    return not _CREDENTIAL_REFUSED_RE.search(_CLI_WRAPPER_RE.sub("", text))
 
 
 def classify(result: dict, timeout_message: str = "") -> str:
