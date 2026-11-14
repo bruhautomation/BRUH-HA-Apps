@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.1
+
+### Fixed
+
+- A thermostat's action button showed its long and short words together on a wide screen ("Drop humidity Dry"); it shows one, the short word only when the card is narrow.
+- A room's own icon (`icon:` on the section) was not drawn on a page that hosted no Home Assistant card: Morph now asks Home Assistant for its icon element and redraws when it is there.
+
 ## 5.3.0
 
 The Morph dashboard now ships the design one house built for itself over the last month, so what ships is what that house runs.
