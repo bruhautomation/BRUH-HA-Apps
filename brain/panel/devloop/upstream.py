@@ -1031,11 +1031,23 @@ def evidence_refs(entry: dict) -> list[str]:
     return refs
 
 
-def block_object(entry: dict, clean) -> dict:
+def _typed(entry: dict, key: str) -> bool:
+    """Whether ``entry[key]`` is the owner's own words (a look filed as
+    typed carries them as its `what`), which are cleaned strictly."""
+    owner = " ".join(_field(entry, "owner_words", _OWNER_RE).split())
+    text = " ".join(str(entry.get(key) or "").split()).rstrip("…").strip()
+    return bool(owner and text and text in owner)
+
+
+def block_object(entry: dict, clean, strict=None) -> dict:
     """The ``brain-devloop`` block's object (plan 3.2), every string already
-    through ``clean`` — the scrub and the aliases the human half got."""
-    def opt(text: str):
-        return clean(text) if text else None
+    through ``clean`` — the scrub and the aliases the human half got.
+    ``strict`` cleans the person's typed words and the log, where no name
+    is ever read as an ordinary word (`Aliases.apply(strict=True)`)."""
+    strict = strict or clean
+
+    def opt(text: str, fn=clean):
+        return fn(text) if text else None
     return {
         "v": 1,
         "fp": str(entry.get("fp") or ""),
@@ -1043,13 +1055,13 @@ def block_object(entry: dict, clean) -> dict:
         "product": product_slug(entry),
         "release": clean(str(entry.get("version") or "?")),
         "where": clean(str(entry.get("where") or "")),
-        "what": clean(str(entry.get("what") or "")),
+        "what": (strict if _typed(entry, "what") else clean)(str(entry.get("what") or "")),
         # A string always (the cloud requires one); "" when nobody wrote
         # the line. Only the two quoted fields are null when absent.
         "done_when": opt(_field(entry, "done_when", _DONE_RE)) or "",
         "evidence_refs": evidence_refs(entry),
-        "owner_words": opt(_field(entry, "owner_words", _OWNER_RE)),
-        "log_excerpt": opt(_field(entry, "log_excerpt", _LOG_RE)),
+        "owner_words": opt(_field(entry, "owner_words", _OWNER_RE), strict),
+        "log_excerpt": opt(_field(entry, "log_excerpt", _LOG_RE), strict),
     }
 
 
@@ -1073,7 +1085,11 @@ def compose(entry: dict, aliases: Aliases | None = None) -> dict:
     def clean(text: str) -> str:
         return aliases.apply(scrub(text))
 
-    where, what = clean(entry.get("where", "")), clean(entry.get("what", ""))
+    def strict(text: str) -> str:
+        return aliases.apply(scrub(text), strict=True)
+
+    where = clean(entry.get("where", ""))
+    what = (strict if _typed(entry, "what") else clean)(entry.get("what", ""))
     title = clip(f"[{where}] {what}" if where else what, 120)
     if entry.get("stream") == "canary":
         return _compose_canary(entry, title, clean)
@@ -1121,7 +1137,7 @@ def compose(entry: dict, aliases: Aliases | None = None) -> dict:
             "</details>",
         ]
     lines += ["", f"Stream: `{entry.get('stream') or 'faults'}`"]
-    block = blocks.make_block("devloop", block_object(entry, clean))
+    block = blocks.make_block("devloop", block_object(entry, clean, strict))
     if isinstance(entry.get("corpus_entry"), dict):
         from . import corpus  # noqa: PLC0415
         block += "\n\n" + corpus.block(entry["corpus_entry"], clean)
@@ -1758,7 +1774,7 @@ def _post_owner_answers(token: str, repo: str, items: dict, aliases: Aliases,
         if owner.get("verdict") == "held":
             text, reopen = f"The owner confirms this is fixed on {product} {version}.", False
         else:
-            words = aliases.apply(scrub(str(owner.get("note") or "")))
+            words = aliases.apply(scrub(str(owner.get("note") or "")), strict=True)
             text = f"Not fixed on {product} {version}" + (f": {words}" if words else ".")
             reopen = True
         ok, err = github.comment(token, repo, number, text, reopen=reopen)
