@@ -18,6 +18,7 @@
 // dispatches it. `svc` is a service call described in the markup, so a new
 // control is markup, not a new handler.
 
+import { STATUS } from './styles.js';
 import { esc, mix, clamp, lightColor, lightTone, fmt, since, clock, ago, icon, friendly, shortName, UNAVAILABLE, domainOf, outdoorStale, minecraftStatus, lastSeen, isMoisture, probeOffline } from './util.js';
 import * as history from './history.js';
 
@@ -104,6 +105,26 @@ const ACT_ICONS = {
   start: '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5l13 7.5-13 7.5z"></path></svg>',
   dock: '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7M5.5 9.5V20h13V9.5M10 20v-5h4v5"></path></svg>',
 };
+// A status line is ONE line, and what it says is chosen, not clipped: the
+// facts come in the order that matters and each later one carries the width
+// its tile needs to show it whole (`w<px>`, shown by styles.js's STATUS
+// rules). A one-column tile says "Unavailable"; a wider one adds when it was
+// last seen. `val` is a string, or the parts of one; `sep` joins them and
+// `action` says a word of the tile's own sits beside the line.
+export function statusHtml(val, o) {
+  const opt = o || {};
+  const parts = (Array.isArray(val) ? val : [val]).map((p) => (p == null ? '' : String(p))).filter(Boolean);
+  if (parts.length < 2) return esc(parts[0] || '');
+  const sep = opt.sep == null ? ' \u00b7 ' : opt.sep;
+  let n = 0;
+  return `${parts.map((p, i) => {
+    const text = (i ? sep : '') + p; n += text.length;
+    if (!i) return `<i>${esc(text)}</i>`;
+    const need = Math.min(STATUS.max, Math.max(STATUS.min, Math.ceil((n * STATUS.charPx + STATUS.linePx + (opt.action ? STATUS.actionPx : 0)) / STATUS.step) * STATUS.step));
+    return `<i class="w${need}">${esc(text)}</i>`;
+  }).join('')}`;
+}
+
 export function stripFace(o) {
   const active = !!o.active;
   const accent = o.accent;
@@ -121,12 +142,13 @@ export function stripFace(o) {
     layer = `<div aria-hidden="true" class="lanes">${(o.lanes || []).map((l) => `<span class="lane" style="background:${l.on ? mix(l.color, 5) : 'transparent'}"><span style="width:${l.on ? Math.max(3, l.pct) : 0}%;background:linear-gradient(90deg, ${mix(l.color, 34)}, ${mix(l.color, 14)});box-shadow:inset -1.5px 0 0 ${l.on ? mix(l.color, 70) : 'transparent'}"></span></span>`).join('')}</div>`;
   }
   const isSwitch = o.kind === 'switch' && !o.action;
-  const sw = isSwitch ? `<span aria-hidden="true" class="track" style="background:${active ? mix(accent, 30) : 'transparent'};box-shadow:inset 0 0 0 1px ${active ? 'transparent' : 'var(--line2)'}"><span class="knob" style="left:${active ? 15 : 3}px;background:${active ? accent : 'var(--quiet)'}"></span></span>` : '';
+  // A switch that cannot be reached draws no toggle, so its word has the room.
+  const sw = isSwitch && !o.dead ? `<span aria-hidden="true" class="track" style="background:${active ? mix(accent, 30) : 'transparent'};box-shadow:inset 0 0 0 1px ${active ? 'transparent' : 'var(--line2)'}"><span class="knob" style="left:${active ? 15 : 3}px;background:${active ? accent : 'var(--quiet)'}"></span></span>` : '';
   const valColor = o.valColor || (isSwitch ? (active ? accent : 'var(--muted)') : active ? 'var(--text)' : 'var(--quiet)');
   const bg = o.stripBg || (isSwitch && active ? mix(accent, 10) : 'transparent');
   return `<div class="strip" style="box-shadow:inset 0 0 0 1px ${active ? mix(accent, o.edgeMix || 30) : 'var(--line)'};background-color:${bg}">${layer}
 <div class="sline">${icon(o.icon, { color: o.iconColor || (active ? accent : 'var(--quiet)'), active: o.iconActive != null ? o.iconActive : active, dur: o.dur, transform: o.iconTransform, partOpacity: o.partOpacity })}
-<span class="nv"><b style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(o.name)}</b><span style="color:${valColor}">${esc(o.val)}</span></span><span class="flex1"></span>${o.hint ? `<span class="hint">${esc(o.hint)}</span>` : ''}${o.action ? `<span class="actword${o.armed ? ' armed' : ''}${o.actIcon && !o.armed ? ' hasicon' : ''}" style="--ac:${o.actionColor || accent}" aria-hidden="true"${o.armed ? '' : ` data-name="${esc(o.action + (o.actNoun ? ' ' + o.actNoun : ''))}"`}>${o.actIcon && !o.armed ? ACT_ICONS[o.actIcon] : ''}<span class="acttext">${esc(o.armed || o.action)}${o.actNoun && !o.armed ? `<span class="actnoun"> ${esc(o.actNoun)}</span>` : ''}</span></span>` : sw}</div></div>`;
+<span class="nv${o.two ? ' two' : ''}"><b style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(o.name)}</b><span class="vs" style="color:${valColor}">${statusHtml(o.val, { sep: o.sep, action: !!o.action })}</span></span><span class="flex1"></span>${o.hint ? `<span class="hint">${esc(o.hint)}</span>` : ''}${o.action ? `<span class="actword${o.armed ? ' armed' : ''}${o.actIcon && !o.armed ? ' hasicon' : ''}" style="--ac:${o.actionColor || accent}" aria-hidden="true"${o.armed ? '' : ` data-name="${esc(o.action + (o.actNoun ? ' ' + o.actNoun : ''))}"`}>${o.actIcon && !o.armed ? ACT_ICONS[o.actIcon] : ''}<span class="acttext">${esc(o.armed || o.action)}${o.actNoun && !o.armed ? `<span class="actnoun"> ${esc(o.actNoun)}</span>` : ''}</span></span>` : sw}</div></div>`;
 }
 
 function histBlock(ctx, label) {
@@ -225,7 +247,7 @@ const light = {
   face: (ctx) => {
     const st = ctx.st; const on = st && st.state === 'on'; const p = ctx.preview != null ? ctx.preview : pct(st);
     const lit = on || ctx.preview > 0;
-    return stripFace({ kind: 'fill', icon: /\b(strip|led)\b/i.test(ctx.name || '') ? 'led' : 'bulb', accent: ctx.accent, active: lit, pct: on || ctx.preview != null ? p : 0, name: ctx.name, val: off(st) ? (st ? 'Unavailable' : 'Missing') : lit ? (((st.attributes || {}).supported_color_modes || []).every((m) => m === 'onoff') ? 'On' : `${p}% · ${lightTone(st)}`) : 'Off', valColor: lit ? 'var(--muted)' : 'var(--quiet)', hint: ctx.hint });
+    return stripFace({ kind: 'fill', icon: /\b(strip|led)\b/i.test(ctx.name || '') ? 'led' : 'bulb', accent: ctx.accent, active: lit, pct: on || ctx.preview != null ? p : 0, name: ctx.name, val: off(st) ? (st ? 'Unavailable' : 'Missing') : lit ? (((st.attributes || {}).supported_color_modes || []).every((m) => m === 'onoff') ? 'On' : [`${p}%`, lightTone(st)]) : 'Off', valColor: lit ? 'var(--muted)' : 'var(--quiet)', hint: ctx.hint });
   },
   more: (ctx) => lightMore(ctx, ctx.card.entity) + histBlock(ctx),
   tap: (ctx) => ({ domain: 'light', service: 'toggle', data: { entity_id: ctx.card.entity } }),
@@ -250,7 +272,7 @@ const isCG = (ctx) => ctx.card.type === 'cover_group';
 // into a row per fan. Its level is speed, where a fan has one.
 const isFG = (ctx) => ctx.card.type === 'fan_group';
 const fanPct = (ms) => (!ms || ms.state !== 'on' ? 0 : fanHasSpeed(ms) ? ms.attributes.percentage || 0 : 100);
-const fanWord = (ms, p) => (!ms ? 'Missing' : off(ms) ? 'Unavailable' : ms.state !== 'on' ? 'Off' : fanHasSpeed(ms) && p ? `${fanLevel(p)} · ${p}%` : 'On');
+const fanWord = (ms, p) => (!ms ? 'Missing' : off(ms) ? 'Unavailable' : ms.state !== 'on' ? 'Off' : fanHasSpeed(ms) && p ? [fanLevel(p), `${p}%`] : 'On');
 const lgIcon = (ctx) => (isCG(ctx) ? 'blinds' : isFG(ctx) ? 'fan' : 'group');
 const coverPos = (ms) => (ms && ms.attributes.current_position != null ? ms.attributes.current_position : ms && ms.state === 'open' ? 100 : 0);
 const coverWord = (ms, p) => (!ms ? 'Missing' : ms.state === 'opening' ? 'Opening' : ms.state === 'closing' ? 'Closing' : p >= 100 ? 'Open' : p <= 0 ? 'Closed' : p + '% open');
@@ -260,6 +282,8 @@ const lightGroup = {
   item: { span: 2, grow: 3, dir: 'down', want: 4, hk: 's', soft: true },
   accent: (ctx) => (isCG(ctx) || isFG(ctx) ? 'var(--sky)' : light.accent(ctx)),
   members: (ctx) => ((ctx.st && ctx.st.attributes.entity_id) || []).filter((e) => domainOf(e) === (isCG(ctx) ? 'cover' : isFG(ctx) ? 'fan' : 'light')),
+  // The members Home Assistant cannot reach: counted in the tile when there is room, and named in the opened card.
+  gone: (ctx) => lightGroup.members(ctx).filter((m) => off(ctx.hass.states[m])),
   // Opened, the lane strip itself grows down: each lane becomes a tall row
   // named for its light, which is the whole face (no group name above it).
   // Tap a row to toggle that light, slide it for its level, hold it to make
@@ -269,7 +293,7 @@ const lightGroup = {
     const ms = ctx.hass.states[m]; const cg = isCG(ctx); const on = cg ? coverPos(ms) > 0 : ms && ms.state === 'on'; const acc = cg ? 'var(--sky)' : on ? lightAccent(ms) : 'var(--amber)';
     const pv = ctx.memberPreview && ctx.memberPreview.id === m ? ctx.memberPreview.v : null;
     const picked = ctx.member === m;
-    const face = isFG(ctx) ? (() => { const sp = fanHasSpeed(ms); const fon = !!(ms && ms.state === 'on'); const p = pv != null ? pv : fanPct(ms); return stripFace({ kind: sp ? 'fill' : 'switch', icon: 'fan', accent: 'var(--sky)', active: fon || pv > 0 || picked, edgeMix: picked ? 80 : 0, pct: fon || pv != null ? p : 0, iconActive: !off(ms), dur: fanDur(fon || pv > 0, p), fillA: mix('var(--sky)', 26), fillB: mix('var(--sky)', 8), name: lightGroup.label(ctx, m), val: pv != null ? (pv <= 1 ? 'Off' : `${fanLevel(pv)} · ${pv}%`) : fanWord(ms, p) }); })() : cg ? stripFace({ kind: 'slats', plainSlats: true, icon: 'blinds', accent: acc, iconColor: 'var(--sky)', active: on || pv > 0 || picked, edgeMix: picked ? 80 : 28, fillA: mix(acc, 20), fillB: mix(acc, 6), pct: pv != null ? pv : coverPos(ms), iconTransform: `scaleY(${Math.max(0.08, (100 - (pv != null ? pv : coverPos(ms))) / 100).toFixed(2)})`, name: lightGroup.label(ctx, m), val: pv != null ? pv + '% open' : coverWord(ms, coverPos(ms)) }) : stripFace({ kind: 'fill', icon: 'bulb', accent: acc, active: on || pv > 0 || picked, edgeMix: picked ? 80 : 0, pct: pv != null ? pv : on ? pct(ms) : 0, name: lightGroup.label(ctx, m), val: !ms ? 'Missing' : pv != null ? pv + '%' : on ? `${pct(ms)}% · ${lightTone(ms)}` : off(ms) ? 'Unavailable' : 'Off' });
+    const face = isFG(ctx) ? (() => { const sp = fanHasSpeed(ms); const fon = !!(ms && ms.state === 'on'); const p = pv != null ? pv : fanPct(ms); return stripFace({ kind: sp ? 'fill' : 'switch', icon: 'fan', accent: 'var(--sky)', active: fon || pv > 0 || picked, edgeMix: picked ? 80 : 0, pct: fon || pv != null ? p : 0, iconActive: !off(ms), dur: fanDur(fon || pv > 0, p), fillA: mix('var(--sky)', 26), fillB: mix('var(--sky)', 8), name: lightGroup.label(ctx, m), val: pv != null ? (pv <= 1 ? 'Off' : [fanLevel(pv), `${pv}%`]) : fanWord(ms, p) }); })() : cg ? stripFace({ kind: 'slats', plainSlats: true, icon: 'blinds', accent: acc, iconColor: 'var(--sky)', active: on || pv > 0 || picked, edgeMix: picked ? 80 : 28, fillA: mix(acc, 20), fillB: mix(acc, 6), pct: pv != null ? pv : coverPos(ms), iconTransform: `scaleY(${Math.max(0.08, (100 - (pv != null ? pv : coverPos(ms))) / 100).toFixed(2)})`, name: lightGroup.label(ctx, m), val: pv != null ? pv + '% open' : coverWord(ms, coverPos(ms)) }) : stripFace({ kind: 'fill', icon: 'bulb', accent: acc, active: on || pv > 0 || picked, edgeMix: picked ? 80 : 0, pct: pv != null ? pv : on ? pct(ms) : 0, name: lightGroup.label(ctx, m), val: !ms ? 'Missing' : pv != null ? pv + '%' : on ? [`${pct(ms)}%`, lightTone(ms)] : off(ms) ? 'Unavailable' : 'Off' });
     // While opening, each row starts squeezed onto its lane of the closed
     // strip (same top, same height) and grows out of it.
     const lane = (56 - (all.length - 1)) / all.length;
@@ -348,14 +372,19 @@ const lightGroup = {
     const lit = lanes.filter((l) => l.on);
     const n = lit.length, total = lanes.length;
     // Lights that are disconnected are not "off": say so (house change, Oct 2026).
-    const gone = isCG(ctx) ? 0 : lightGroup.members(ctx).filter((m) => off(ctx.hass.states[m])).length;
-    const tail = gone ? ` · ${gone} unavailable` : '';
+    const gone = isCG(ctx) ? 0 : lightGroup.gone(ctx).length;
     const mixed = n > 1 && lit.some((l) => l.pct !== lit[0].pct);
     const avg = n ? Math.round(lit.reduce((a, l) => a + l.pct, 0) / n) : 0;
+    // The parts of one status line (statusHtml): the first is always shown, a later one only where the tile has the room.
     if (isFG(ctx)) return off(ctx.st) ? 'Unavailable' : n ? `${n === total ? 'All ' + total : n + ' of ' + total} on` : total ? `All ${total} off` : 'Off';
-    if (isCG(ctx)) return off(ctx.st) ? 'Unavailable' : ctx.preview != null ? ctx.preview + '% open' : n ? `${n === total ? 'All ' + total : n + ' of ' + total} open${mixed ? '' : ' · ' + avg + '%'}` : total ? `All ${total} closed` : 'Closed';
+    if (isCG(ctx)) return off(ctx.st) ? 'Unavailable' : ctx.preview != null ? ctx.preview + '% open' : n ? [`${n === total ? 'All ' + total : n + ' of ' + total} open`, mixed ? '' : avg + '%'] : total ? `All ${total} closed` : 'Closed';
+    // ONE format for a light group (#887 #967): how many of the reachable ones are on ("20 of 31 on", "All 5 on", "5 off"), then the average level of those that are on, labelled, then (where the tile has the room) how many cannot be reached. "All" only when every member answers; one light reads "On" or "Off".
+    const reach = total - gone;
+    const bad = gone ? gone + ' unavailable' : '';
     return off(ctx.st) ? 'Unavailable' : ctx.preview != null ? ctx.preview + '%'
-      : n ? `${n === total ? 'All ' + total : n + ' of ' + total} · ${mixed ? 'mixed' : avg + '%'}${tail}` : gone === total && total ? `All ${total} unavailable` : total ? `All ${total - gone} off${tail}` : 'Off';
+      : total === 1 && !gone ? [n ? 'On' : 'Off', n ? `avg ${avg}%` : '']
+        : n ? [!gone && n === total ? `All ${total} on` : `${n} of ${total} on`, `avg ${avg}%`, bad]
+          : total ? [!gone ? `All ${total} off` : reach ? `${reach} off` : 'All unavailable', reach ? bad : ''] : 'Off';
   },
   more: (ctx) => {
     // Below the rows: one colour selector and one history, for the active
@@ -374,7 +403,10 @@ const lightGroup = {
       // No Open/Stop/Close row: the blind rows above already open and close each one.
       return tilt + histBlock(ms ? { ...ctx, card: { ...ctx.card, type: 'cover', entity: m }, st: ms, name: nm } : ctx, ms ? 'History · ' + nm : undefined);
     }
-    if (!ms) return lightMore(ctx, ctx.card.entity, null, 'Color · All lights') + histBlock(ctx);
+    // What the tile has no room for: which lights cannot be reached, by name.
+    const gone = ms ? [] : lightGroup.gone(ctx).map((g) => lightGroup.label(ctx, g));
+    const goneNote = gone.length ? `<div class="small" style="margin:0 0 8px">${gone.length} of ${lightGroup.members(ctx).length} unavailable: ${esc(gone.slice(0, 3).join(', '))}${gone.length > 3 ? ` and ${gone.length - 3} more` : ''}</div>` : '';
+    if (!ms) return goneNote + lightMore(ctx, ctx.card.entity, null, 'Color · All lights') + histBlock(ctx);
     const nm = lightGroup.label(ctx, m);
     const sub = { ...ctx, card: { ...ctx.card, type: 'light', entity: m }, st: ms, accent: ms.state === 'on' ? lightAccent(ms) : ctx.accent, name: nm };
     return lightMore(ctx, m, ms, 'Color · ' + nm) + histBlock(sub, 'History · ' + nm);
@@ -406,7 +438,7 @@ const fan = {
     // speed it does not have, and sliding it called a service it refuses.
     const speed = fanHasSpeed(st);
     const p = ctx.preview != null ? ctx.preview : (speed ? st.attributes.percentage : on ? 100 : 0);
-    return stripFace({ kind: speed ? 'fill' : 'switch', icon: 'fan', accent: ctx.accent, active: on || ctx.preview > 0, pct: on || ctx.preview != null ? p : 0, iconActive: !off(st), dur: fanDur(on || ctx.preview > 0, p), name: ctx.name, fillA: mix(ctx.accent, 26), fillB: mix(ctx.accent, 8), val: off(st) ? stateWord(st, ctx.hass) : on || ctx.preview > 0 ? (speed && p ? `${fanLevel(p)} · ${p}%` : 'On') : 'Off', hint: ctx.hint });
+    return stripFace({ kind: speed ? 'fill' : 'switch', icon: 'fan', dead: off(st), accent: ctx.accent, active: on || ctx.preview > 0, pct: on || ctx.preview != null ? p : 0, iconActive: !off(st), dur: fanDur(on || ctx.preview > 0, p), name: ctx.name, fillA: mix(ctx.accent, 26), fillB: mix(ctx.accent, 8), val: off(st) ? stateWord(st, ctx.hass) : on || ctx.preview > 0 ? (speed && p ? [fanLevel(p), `${p}%`] : 'On') : 'Off', hint: ctx.hint });
   },
   more: (ctx) => {
     const a = (ctx.st && ctx.st.attributes) || {}; const e = ctx.card.entity; const parts = [];
@@ -505,7 +537,7 @@ const sw = {
     const pw = on && ctx.card.options && ctx.card.options.power && ctx.hass && ctx.hass.states[ctx.card.options.power];
     const w = pw ? parseFloat(pw.state) : NaN;
     if (isFinite(w)) val = w < 5 ? 'Standby' : `${Math.round(w)} W`;
-    return stripFace({ kind: 'switch', ...fanIcon, accent: ctx.accent, active: on, name: ctx.name, val, hint: ctx.hint });
+    return stripFace({ kind: 'switch', ...fanIcon, accent: ctx.accent, active: on, name: ctx.name, dead: off(st), val, hint: ctx.hint });
   },
   more: (ctx) => histBlock(ctx),
   tap: (ctx) => ({ domain: 'homeassistant', service: 'toggle', data: { entity_id: ctx.card.entity } }),
@@ -620,12 +652,12 @@ const vacuum = {
   accent: () => 'var(--teal)',
   face: (ctx) => {
     const st = ctx.st; const run = st && ['cleaning', 'returning'].includes(st.state);
-    const bat = st && st.attributes.battery_level != null ? ` · ${st.attributes.battery_level}%` : '';
+    const bat = st && st.attributes.battery_level != null ? `${st.attributes.battery_level}%` : '';
     // The press is a button that says what it does, as a lock's is: Start,
     // or Dock while it cleans (the same as a tap). It was a switch with
     // nothing written on it, which a tap could not be told apart from.
     const action = vacuum.act(ctx);
-    return stripFace({ kind: 'switch', icon: 'vacuum', accent: ctx.accent, active: run, name: ctx.name, val: off(st) ? stateWord(st, ctx.hass) : stateWord(st, ctx.hass) + bat, action, actIcon: action === 'Dock' ? 'dock' : 'start', armed: ctx.confirm || '', actionColor: ctx.accent, hint: ctx.hint });
+    return stripFace({ kind: 'switch', icon: 'vacuum', accent: ctx.accent, active: run, name: ctx.name, val: off(st) ? stateWord(st, ctx.hass) : [stateWord(st, ctx.hass), bat], action, actIcon: action === 'Dock' ? 'dock' : 'start', armed: ctx.confirm || '', actionColor: ctx.accent, hint: ctx.hint });
   },
   act: (ctx) => (off(ctx.st) ? '' : ctx.st.state === 'cleaning' ? 'Dock' : 'Start'),
   more: (ctx) => words([svcBtn('Start', 'vacuum', 'start', { entity_id: ctx.card.entity }), svcBtn('Pause', 'vacuum', 'pause', { entity_id: ctx.card.entity }), svcBtn('Go home', 'vacuum', 'return_to_base', { entity_id: ctx.card.entity })]) + histBlock(ctx),
@@ -976,12 +1008,14 @@ const WORDS = {
 // Two tones: something open, wet or smoking wants attention (rose); a room
 // with motion or someone in it is only activity (amber).
 const ACTIVITY = ['motion', 'occupancy', 'presence', 'vibration'];
-const isActivity = (st) => !!(st && ACTIVITY.includes(st.attributes.device_class));
+// Something a person switched on (a zone, a pump, a valve) is activity too: only a sensor reading open, wet or smoking is something that needs them.
+const isActivity = (st) => !!(st && (ACTIVITY.includes(st.attributes.device_class) || !/^binary_sensor\./.test(st.entity_id || 'binary_sensor.')));
 export const listWord = (st) => {
   if (!st) return ['Missing', false];
   if (UNAVAILABLE.includes(st.state)) return ['Unavailable', false];
-  const w = WORDS[st.attributes.device_class] || BINARY_WORDS[st.attributes.device_class] || ['On', 'Off'];
-  const on = st.state === 'on';
+  const valve = /^valve\./.test(st.entity_id || '');
+  const w = WORDS[st.attributes.device_class] || BINARY_WORDS[st.attributes.device_class] || (valve ? ['Open', 'Closed'] : ['On', 'Off']);
+  const on = st.state === 'on' || (valve && ['open', 'opening'].includes(st.state));
   return [on ? w[0] : w[1], on];
 };
 // One row of a list. The BRUH Minecraft server's Online sensor reads the
@@ -1002,6 +1036,8 @@ const list = {
   },
   face: (ctx) => {
     const rows = (ctx.card.entities || []).map((e) => listRow(ctx, e));
+    // A list with nothing in it is not drawn outside Edit (morph-panel's modelSection); in Edit it says how to fill it, not "All quiet" over no rows.
+    if (!rows.length) return `<div class="box" style="box-shadow:inset 0 0 0 1px var(--line);min-height:56px;padding:8px 14px;justify-content:center">${ctx.card.name ? `<b style="font-size:14px">${esc(ctx.name)}</b>` : ''}<span class="small">Nothing in this list yet. Hold it and tell brAIn what to add.</span></div>`;
     rows.sort((a, b) => (b.on - a.on) || (a.act - b.act));
     const openRows = rows.filter((r) => r.on);
     const attention = openRows.filter((r) => !r.act);
@@ -1009,8 +1045,9 @@ const list = {
     // "All closed" in the kind's own word when every row is one kind.
     const kinds = new Set(rows.map((r) => (r.st && r.st.attributes.device_class) || ''));
     const mc = rows.length === 1 && rows[0].mc;
+    // The summary counts; it never names a row and repeats its state, because the rows are right under it ("Zone 2 on" over a row that says "Zone 2 · On" said it twice).
     const summary = mc ? rows[0].w : openRows.length
-      ? `${openRows.length === 1 ? openRows[0].name : openRows.length + ' of ' + rows.length} ${openRows.length === 1 ? openRows[0].w.toLowerCase() : attention.length ? 'need you' : 'active'}`
+      ? (openRows.length === 1 ? (attention.length ? '1 needs you' : '1 active') : `${openRows.length} of ${rows.length} ${attention.length ? 'need you' : 'active'}`)
       : kinds.size === 1 && rows[0] ? `All ${listWord({ ...rows[0].st, state: 'off' })[0].toLowerCase()}` : 'All quiet';
     // Closed, a list is one 56px row (household, Oct 2026: door cards took a
     // row per sensor to say one thing): an icon, the summary, and each sensor
@@ -1024,7 +1061,7 @@ const list = {
     }
     const shown = rows;
     return `<div class="box" style="box-shadow:inset 0 0 0 1px ${openRows.length ? mix(tone, 35) : 'var(--line)'};padding:12px 12px 8px 16px"><div class="rowb">${ctx.card.name ? `<b style="font-size:14px">${esc(ctx.name)}</b>` : ''}<span class="flex1"></span>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}<span style="font-size:13px;font-weight:700;color:${tone}">${esc(summary)}</span></div>
-${shown.map((r) => `<button type="button" class="lrow" data-ctl="1" data-act="member" data-v="${esc(r.e)}" data-member="${esc(r.e)}" aria-pressed="${ctx.member === r.e}" style="padding:0 4px;min-height:44px;align-items:center"><span class="lx"><span>${esc(r.name)}</span></span><span style="font-size:13px;font-weight:600;color:${r.on ? (r.act ? 'var(--amber)' : 'var(--rose)') : 'var(--quiet)'}">${esc(r.w)}</span><span class="small">${r.st ? esc(since(r.st.last_changed).replace('since ', '')) : ''}</span></button>`).join('')}${rows.length > shown.length ? `<span class="small" style="padding:4px">+${rows.length - shown.length} more</span>` : ''}</div>`;
+${shown.map((r) => `<button type="button" class="lrow" data-ctl="1" data-act="member" data-v="${esc(r.e)}" data-member="${esc(r.e)}" aria-pressed="${ctx.member === r.e}" style="padding:0 4px;min-height:44px;align-items:center"><span class="lx"><span>${esc(r.name)}</span></span><span style="font-size:13px;font-weight:600;color:${r.on ? (r.act ? 'var(--amber)' : 'var(--rose)') : 'var(--quiet)'}">${esc(r.w)}</span><span class="small">${r.st ? esc(since(r.st.last_changed)) : ''}</span></button>`).join('')}${rows.length > shown.length ? `<span class="small" style="padding:4px">+${rows.length - shown.length} more</span>` : ''}</div>`;
   },
   more: (ctx) => {
     if (!ctx.member) return '';
@@ -1045,7 +1082,7 @@ const person = {
     const where = !st ? 'Missing' : home ? 'Home' : st.state === 'not_home' ? 'Away' : st.state;
     // The initial is always drawn; a photo lies over it and is hidden if it does not load, so a missing picture never shows a broken-image mark or its alt text.
     const av = `<span class="avatar" style="background:${mix(ctx.accent, 25)};color:${ctx.accent}">${esc((ctx.name || '?')[0])}${a.entity_picture ? `<img src="${esc(a.entity_picture)}" alt="" onerror="this.style.visibility='hidden'">` : ''}</span>`;
-    return `<div class="strip" style="box-shadow:inset 0 0 0 1px ${home ? mix(ctx.accent, 30) : 'var(--line)'};background:${home ? mix(ctx.accent, 8) : 'transparent'}"><div class="sline">${av}<span class="nv"><b>${esc(ctx.name)}</b><span style="color:${ctx.accent}">${esc(where)} ${st ? '· ' + esc(since(st.last_changed).replace('since ', '')) : ''}</span></span>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div></div>`;
+    return `<div class="strip" style="box-shadow:inset 0 0 0 1px ${home ? mix(ctx.accent, 30) : 'var(--line)'};background:${home ? mix(ctx.accent, 8) : 'transparent'}"><div class="sline">${av}<span class="nv"><b>${esc(ctx.name)}</b><span class="vs" style="color:${ctx.accent}">${statusHtml(st ? [where, since(st.last_changed).replace('since ', '')] : [where])}</span></span>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div></div>`;
   },
   more: (ctx) => histBlock(ctx, 'Today'),
   tap: () => null,
@@ -1216,8 +1253,8 @@ const entity = {
     const st = ctx.st; const unit = (st && st.attributes.unit_of_measurement) || '';
     const mc = st ? minecraftStatus(ctx.hass, ctx.card.entity) : null;
     const idle = st && !mc && IDLE.includes(st.state) && !unit;
-    const val = !st ? 'Missing' : mc || (off(st) ? `${stateWord(st, ctx.hass)} · ${lastSeen(st)}` : idle ? `${stateWord(st, ctx.hass)} ${since(st.last_changed)}`.trim() : isNaN(parseFloat(st.state)) ? stateWord(st, ctx.hass) : fmt(st.state, unit));
-    return stripFace({ kind: 'none', icon: entityIcon(ctx), accent: ctx.accent, active: st && st.state === 'on', name: ctx.name, val, valColor: 'var(--muted)', hint: ctx.hint });
+    const val = !st ? 'Missing' : mc || (off(st) ? `${stateWord(st, ctx.hass)}${lastSeen(st) ? ' \u00b7 ' + lastSeen(st) : ''}` : idle ? [stateWord(st, ctx.hass), since(st.last_changed)] : isNaN(parseFloat(st.state)) ? stateWord(st, ctx.hass) : fmt(st.state, unit));
+    return stripFace({ kind: 'none', two: off(st), sep: idle ? ' ' : ' \u00b7 ', icon: entityIcon(ctx), accent: ctx.accent, active: st && st.state === 'on', name: ctx.name, val, valColor: 'var(--muted)', hint: ctx.hint });
   },
   more: (ctx) => histBlock(ctx),
   tap: () => null,
@@ -1242,6 +1279,7 @@ const lovelace = {
   host: true,
 };
 
+export const hollowList = (c) => !!c && c.type === 'list' && !(c.entities || []).length;
 export const TYPES = { light, light_group: lightGroup, cover_group: lightGroup, fan_group: lightGroup, fan, cover, lock, switch: sw, button, vacuum, climate, sensor, readings, meter, media, camera, list, person, weather, alarm, scenes, entity, note, lovelace };
 
 // A thing that is unavailable (or missing) is not switched or slid: a tap

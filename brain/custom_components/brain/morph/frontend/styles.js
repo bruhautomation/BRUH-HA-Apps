@@ -5,11 +5,19 @@
 
 export const FONTS_URL = 'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300;12..96,400;12..96,500&family=Manrope:wght@400;500;600;700&display=swap';
 
+// A status line is one line, and what it says is chosen by the width the tile
+// has (`statusHtml` in cards.js gives each later part the width it needs as a
+// class, `w<px>`): the rules below show a part only when its tile is at least
+// that wide, so a narrow tile says the first fact whole and never the first
+// half of two.
+export const STATUS = { min: 120, max: 600, step: 24, charPx: 7, linePx: 40, actionPx: 84 };
+const STATUS_RULES = Array.from({ length: (STATUS.max - STATUS.min) / STATUS.step + 1 }, (_, i) => { const w = STATUS.min + i * STATUS.step; return `@container (min-width:${w}px){.nv .vs i.w${w}{display:inline}}`; }).join('');
+
 export const CSS = `
 :host{display:block;height:100%;--ease:cubic-bezier(.22,1,.36,1);--ease-io:cubic-bezier(.65,0,.35,1)}
-.t-dark{--indigo:#9DAAF5;--peach:#F2B590;--bg:#0A0C0E;--surface:#15181B;--sunk:#0F1114;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.2);--text:#EDEFF1;--muted:#A0A9B3;--quiet:#808994;--chip:rgba(255,255,255,.06);--hover:rgba(255,255,255,.035);--amber:#F4B969;--sand:#E9D3A6;--sky:#9CC2F5;--violet:#BBA6F2;--teal:#63CCC2;--lime:#BCD873;--rose:#F2907F;--ink:#15120D;--lpull:var(--text);--secK:1;color-scheme:dark}
-.t-medium{--indigo:#A9B4F2;--peach:#F0BC9C;--bg:#2A2D31;--surface:#34383D;--sunk:#25282C;--line:rgba(255,255,255,.1);--line2:rgba(255,255,255,.22);--text:#F1F2F3;--muted:#B5BCC4;--quiet:#9DA5AF;--chip:rgba(255,255,255,.07);--hover:rgba(255,255,255,.04);--amber:#F5C27F;--sand:#E6D3AC;--sky:#A7C8F2;--violet:#C3B1F0;--teal:#72CFC6;--lime:#C3DB86;--rose:#F29C8C;--ink:#15120D;--lpull:var(--text);--secK:1;color-scheme:dark}
-.t-light{--indigo:#4F5FC4;--peach:#9E5428;--bg:#ECEBE6;--surface:#FFFFFF;--sunk:#E4E3DD;--line:rgba(22,24,27,.1);--line2:rgba(22,24,27,.24);--text:#16181B;--muted:#535A63;--quiet:#5B636C;--chip:rgba(22,24,27,.06);--hover:rgba(22,24,27,.03);--amber:#935C14;--sand:#7D6630;--sky:#3168B2;--violet:#7053CD;--teal:#13746C;--lime:#527313;--rose:#B44333;--ink:#FFFFFF;--lpull:#C9741A;--secK:.55;color-scheme:light}
+.t-dark{--indigo:#9DAAF5;--peach:#F2B590;--bg:#0A0C0E;--surface:#15181B;--sunk:#0F1114;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.2);--text:#EDEFF1;--muted:#A0A9B3;--quiet:#8E97A2;--chip:rgba(255,255,255,.06);--hover:rgba(255,255,255,.035);--amber:#F4B969;--sand:#E9D3A6;--sky:#9CC2F5;--violet:#BBA6F2;--teal:#63CCC2;--lime:#BCD873;--rose:#F2907F;--ink:#15120D;--lpull:var(--text);--secK:1;color-scheme:dark}
+.t-medium{--indigo:#A9B4F2;--peach:#F0BC9C;--bg:#2A2D31;--surface:#34383D;--sunk:#25282C;--line:rgba(255,255,255,.1);--line2:rgba(255,255,255,.22);--text:#F1F2F3;--muted:#C6CCD3;--quiet:#B8BFC8;--chip:rgba(255,255,255,.07);--hover:rgba(255,255,255,.04);--amber:#F5C27F;--sand:#E6D3AC;--sky:#A7C8F2;--violet:#C3B1F0;--teal:#72CFC6;--lime:#C3DB86;--rose:#F29C8C;--ink:#15120D;--lpull:var(--text);--secK:1;color-scheme:dark}
+.t-light{--indigo:#4F5FC4;--peach:#9E5428;--bg:#ECEBE6;--surface:#FFFFFF;--sunk:#E4E3DD;--line:rgba(22,24,27,.1);--line2:rgba(22,24,27,.24);--text:#16181B;--muted:#535A63;--quiet:#575E67;--chip:rgba(22,24,27,.06);--hover:rgba(22,24,27,.03);--amber:#935C14;--sand:#7D6630;--sky:#3168B2;--violet:#7053CD;--teal:#13746C;--lime:#527313;--rose:#B44333;--ink:#FFFFFF;--lpull:#C9741A;--secK:.55;color-scheme:light}
 .morph{min-height:100%;background:var(--bg);color:var(--text);font-family:'Manrope',system-ui,sans-serif;font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased;overflow-anchor:none;box-sizing:border-box}
 .morph *{box-sizing:border-box}
 .morph h1,.morph h2,.morph h3,.morph p,.morph pre{margin:0}
@@ -273,6 +281,13 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}.s
 .nv{display:flex;flex-direction:column;min-width:0;flex:0 1 auto;line-height:1.25}
 .nv b{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .nv span{font-size:12px;font-variant-numeric:tabular-nums;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow-wrap:anywhere;transition:color .4s ease}
+/* A strip is 56px: a name of two lines and a status of two overran its edge. The status is one line, and what it says is picked by width (STATUS). */
+.strip .nv>span{display:block;-webkit-line-clamp:unset;line-clamp:unset;white-space:nowrap;text-overflow:ellipsis;overflow-wrap:normal}
+/* "Unavailable · last seen Tue 3:58 AM" is one fact a person needs whole (#764): it takes two lines under a one-line name, which a 56px strip holds. */
+.strip .nv.two>span{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;text-overflow:ellipsis}
+.strip .nv.two b{display:block;white-space:nowrap;-webkit-line-clamp:unset;line-clamp:unset}
+.nv .vs i{font-style:normal}.nv .vs i[class]{display:none}
+${STATUS_RULES}
 @media (max-width:520px){.sline{gap:8px;padding:0 11px}.nv b{font-size:13px}}
 .sline>.flex1{display:none}.sline>.track,.sline>.actword{margin-left:auto}
 .strip{container-type:inline-size}
@@ -560,6 +575,8 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}.s
 .inshell .wrap>[data-region="bar"]:has(.toastline .bartoast:empty){margin-bottom:-12px}
 /* A row of chips (rooms, a chart's legend, a note's words) is a row of targets on touch: 40px, like every other chip (#786). */
 @media (pointer:coarse){.morph .roomw,.morph .legend .wd,.morph .bnote .wd{min-height:40px}}
+/* Every button is a 40px target on a phone, in both directions (the audit counts width too): a room's jump word, the sidebar button and a coming-up title were 26-30px. The height is taken from the margin, so the page's layout does not move. */
+@media (pointer:coarse){.morph .roomw,.morph .menu{min-width:40px;justify-content:center}.morph .cu-name.go{min-height:40px;margin-block:-6px;display:inline-flex;align-items:center}}
 .morph input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=color]),.morph textarea,.morph select{font-size:16px}
 `;
 /* The 16px text floor, on every screen (a phone with a desktop-width page or a pointer that says it is fine still zooms): below it iOS zooms the page when a field takes focus (#677). Every field Morph draws, and the same floor handed to a card's own shadow root by morph-panel.js (FIELD_FLOOR). */

@@ -33,7 +33,7 @@
 import { Engine } from './engine.js';
 import { CSS as STYLES, FONTS_URL } from './styles.js';
 import { floorFields } from './floor.js';
-import { TYPES, typeOf, hueColor, listWord, climatePending, tileAria, sceneWords, stateWord, fanHasSpeed } from './cards.js';
+import { TYPES, typeOf, hueColor, listWord, climatePending, tileAria, sceneWords, stateWord, fanHasSpeed, hollowList } from './cards.js';
 import * as history from './history.js';
 import * as snap from './snap.js';
 import * as upc from './upcoming.js';
@@ -1667,7 +1667,8 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
       // The add-on drops a group's `when`, so a card may carry it as
       // `options.when` instead; a group whose cards are all hidden goes too.
       const shown = (c) => this.s.edit || !(c.options && c.options.when) || this.whenMet(c.options.when);
-      let cards = (g.cards || []).filter((c) => !lifted.has(c.id) && !this.isHeadCard(c) && shown(c));
+      // A list with nothing in it is not drawn outside Edit (in Edit it says how to fill it).
+      let cards = (g.cards || []).filter((c) => !lifted.has(c.id) && !this.isHeadCard(c) && shown(c) && (this.s.edit || !hollowList(c)));
       // Cards keep their configured order (house change, Oct 2026).
       // A card that leads its room carries a because line, so it is a
       // row of its own kind: beside plain strips of its type it was a
