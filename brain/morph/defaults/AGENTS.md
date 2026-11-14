@@ -333,6 +333,27 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   "Normal" over a number the card itself shows outside its band, and a status
   worked out from the mode alone is wrong the moment the reading and the mode
   disagree. Compare the reading with its band before choosing the word.
+- **A tile's status is ONE line, composed to fit.** A name and one short line
+  under it ("20 of 31 on"), never two lines of status: a tile is one row tall
+  and a status that wraps runs over its edge and its texture. Say the fact
+  that matters first and add the rest only when the tile is wide enough
+  ("20 of 31 on · mixed · 2 unavailable" on a wide tile, "20 of 31 on" on a
+  narrow one), by leaving the later parts out, never by letting the line wrap
+  or be cut in the middle of a fact. What a tile has no room for (which lights
+  are unavailable, each brightness) belongs in the opened card, labelled.
+  Morph's own tiles do this with `statusHtml` (`cards.js`); a built card does
+  it with a container query (`@container (min-width: …)`) that shows the
+  later parts, and `white-space: nowrap` on the line.
+- **A thing's state is said once in a card.** The tile, a row and the opened
+  card each say what a thing is doing in one place: not "Off" in the header
+  and "Off" on a badge beside it, not "Zone 2 on" over a row that says "On",
+  not a switch's word and the same word on its button. A control that sets
+  the state shows it by being pressed. Two controls for the same thing (a pump
+  and the button that runs it) agree about when it last ran, or each says what
+  its date is ("pump last ran", "run pump last pressed").
+- **A part with nothing in it is left out, or says how to fill it.** An empty
+  list ("Sequence · Empty") is not drawn as a dimmed tile: it is hidden, or in
+  one line says what to add ("Add zones to build a sequence").
 - **No empty space.** The card is as tall as what it draws: no `min-height`,
   padding or spacer kept for a row that is not there, and a part with
   nothing to show is left out, not drawn blank.
@@ -360,7 +381,9 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
 - **Text is 4.5:1 against what it sits on, in light and dark themes.** Take
   colours from the theme's variables (`--primary-text-color`,
   `--secondary-text-color`), never a fixed colour picked on one theme: an
-  accent chosen on a dark page is unreadable on a light one.
+  accent chosen on a dark page is unreadable on a light one. A small label
+  ("History", an hour tick, "1 change") is text too: it uses the same
+  variable, never a grey mixed toward the background or dimmed with `opacity`.
 - **Every button shows an icon or words, and has a name.** Icons are inline
   SVG you draw yourself: an `<ha-icon icon="mdi:…">` or any icon font is
   blank when its set is not loaded in the card, which leaves a round button

@@ -5,11 +5,19 @@
 
 export const FONTS_URL = 'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300;12..96,400;12..96,500&family=Manrope:wght@400;500;600;700&display=swap';
 
+// A status line is one line, and what it says is chosen by the width the tile
+// has (`statusHtml` in cards.js gives each later part the width it needs as a
+// class, `w<px>`): the rules below show a part only when its tile is at least
+// that wide, so a narrow tile says the first fact whole and never the first
+// half of two.
+export const STATUS = { min: 120, max: 600, step: 24, charPx: 7, linePx: 40, actionPx: 84 };
+const STATUS_RULES = Array.from({ length: (STATUS.max - STATUS.min) / STATUS.step + 1 }, (_, i) => { const w = STATUS.min + i * STATUS.step; return `@container (min-width:${w}px){.nv .vs i.w${w}{display:inline}}`; }).join('');
+
 export const CSS = `
 :host{display:block;height:100%}
-.t-dark{--lpull:#FFFFFF;--indigo:#9DAAF5;--peach:#F2B590;--bg:#0A0C0E;--surface:#15181B;--sunk:#0F1114;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.2);--text:#EDEFF1;--muted:#A0A9B3;--quiet:#808994;--chip:rgba(255,255,255,.06);--hover:rgba(255,255,255,.035);--amber:#F4B969;--sand:#E9D3A6;--sky:#9CC2F5;--violet:#BBA6F2;--teal:#63CCC2;--lime:#BCD873;--rose:#F2907F;--ink:#15120D;color-scheme:dark}
-.t-medium{--lpull:#FFFFFF;--indigo:#A9B4F2;--peach:#F0BC9C;--bg:#2A2D31;--surface:#34383D;--sunk:#25282C;--line:rgba(255,255,255,.1);--line2:rgba(255,255,255,.22);--text:#F1F2F3;--muted:#B5BCC4;--quiet:#9DA5AF;--chip:rgba(255,255,255,.07);--hover:rgba(255,255,255,.04);--amber:#F5C27F;--sand:#E6D3AC;--sky:#A7C8F2;--violet:#C3B1F0;--teal:#72CFC6;--lime:#C3DB86;--rose:#F29C8C;--ink:#15120D;color-scheme:dark}
-.t-light{--lpull:#3A2E1A;--indigo:#4F5FC4;--peach:#9E5428;--bg:#ECEBE6;--surface:#FFFFFF;--sunk:#E4E3DD;--line:rgba(22,24,27,.1);--line2:rgba(22,24,27,.24);--text:#16181B;--muted:#535A63;--quiet:#5B636C;--chip:rgba(22,24,27,.06);--hover:rgba(22,24,27,.03);--amber:#935C14;--sand:#7D6630;--sky:#3168B2;--violet:#7053CD;--teal:#13746C;--lime:#527313;--rose:#B44333;--ink:#FFFFFF;color-scheme:light}
+.t-dark{--lpull:#FFFFFF;--indigo:#9DAAF5;--peach:#F2B590;--bg:#0A0C0E;--surface:#15181B;--sunk:#0F1114;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.2);--text:#EDEFF1;--muted:#A0A9B3;--quiet:#8E97A2;--chip:rgba(255,255,255,.06);--hover:rgba(255,255,255,.035);--amber:#F4B969;--sand:#E9D3A6;--sky:#9CC2F5;--violet:#BBA6F2;--teal:#63CCC2;--lime:#BCD873;--rose:#F2907F;--ink:#15120D;color-scheme:dark}
+.t-medium{--lpull:#FFFFFF;--indigo:#A9B4F2;--peach:#F0BC9C;--bg:#2A2D31;--surface:#34383D;--sunk:#25282C;--line:rgba(255,255,255,.1);--line2:rgba(255,255,255,.22);--text:#F1F2F3;--muted:#C6CCD3;--quiet:#B8BFC8;--chip:rgba(255,255,255,.07);--hover:rgba(255,255,255,.04);--amber:#F5C27F;--sand:#E6D3AC;--sky:#A7C8F2;--violet:#C3B1F0;--teal:#72CFC6;--lime:#C3DB86;--rose:#F29C8C;--ink:#15120D;color-scheme:dark}
+.t-light{--lpull:#3A2E1A;--indigo:#4F5FC4;--peach:#9E5428;--bg:#ECEBE6;--surface:#FFFFFF;--sunk:#E4E3DD;--line:rgba(22,24,27,.1);--line2:rgba(22,24,27,.24);--text:#16181B;--muted:#535A63;--quiet:#575E67;--chip:rgba(22,24,27,.06);--hover:rgba(22,24,27,.03);--amber:#935C14;--sand:#7D6630;--sky:#3168B2;--violet:#7053CD;--teal:#13746C;--lime:#527313;--rose:#B44333;--ink:#FFFFFF;color-scheme:light}
 .morph{--ease:cubic-bezier(.2,.8,.2,1);--ease-io:cubic-bezier(.65,0,.35,1);min-height:100%;background:var(--bg);color:var(--text);font-family:'Manrope',system-ui,sans-serif;font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased;overflow-anchor:none;box-sizing:border-box}
 .morph *{box-sizing:border-box}
 .morph h1,.morph h2,.morph h3,.morph p,.morph pre{margin:0}
@@ -277,6 +285,10 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .nv{display:flex;flex-direction:column;min-width:0;flex:0 1 auto;line-height:1.25}
 .nv b{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .nv span{font-size:12px;font-variant-numeric:tabular-nums;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow-wrap:anywhere;transition:color .4s ease}
+/* A strip is 56px: a name of two lines and a status of two overran its edge. The status is one line, and what it says is picked by width (STATUS). */
+.strip .nv>span{display:block;-webkit-line-clamp:unset;line-clamp:unset;white-space:nowrap;text-overflow:ellipsis;overflow-wrap:normal}
+.nv .vs i{font-style:normal}.nv .vs i[class]{display:none}
+${STATUS_RULES}
 @media (max-width:520px){.sline{gap:8px;padding:0 11px}.nv b{font-size:13px}}
 /* In a narrow tile a name wraps to a second line before it is cut to dots: the tile is two lines tall, the name is what says which door it is. */
 @container (max-width:260px){.sline{gap:8px}.nv b{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow-wrap:anywhere;font-size:13px;line-height:1.15}}

@@ -301,7 +301,18 @@ export class Engine {
       }
       if (best && best.w !== wmap[openSec.id]) { wmap[openSec.id] = best.w; measure(wmap); M.sections.forEach((s) => { flows[s.id] = flow(s, wmap[s.id]); }); }
       pl = place(best ? best.c : null, best ? best.w : null, (s) => flows[s.id].h);
-    } else pl = place(null, null, (s) => flows[s.id].h);
+    } else {
+      pl = place(null, null, (s) => flows[s.id].h);
+      // The widths chosen above were chosen from the heights the sections had THEN. Cards load, fonts arrive and a chart draws after that, and a section that was beside another when the choice was made can end up alone in its band with a dead strip at its side while the section below it spans the floor. A section with nothing beside it takes the whole floor, as it would have at the choice; stable, because a section the width of the floor can only have sections above and below it.
+      for (let pass = 0; pass < 3; pass++) {
+        const alone = pl.filter((p) => p.w < N && pl.every((q) => q === p || q.f !== p.f || p.y + p.h + G <= q.y + 0.5 || q.y + q.h + G <= p.y + 0.5));
+        if (!alone.length) break;
+        alone.forEach((p) => { wmap[p.id] = N; this.base.pos[p.id] = { ...this.base.pos[p.id], c: 0, w: N }; });
+        measure(wmap);
+        M.sections.forEach((s) => { flows[s.id] = flow(s, wmap[s.id]); });
+        pl = place(null, null, (s) => flows[s.id].h);
+      }
+    }
     // A spring whose element has left the page is forgotten here, whether or
     // not it was moving: a resting one would otherwise keep its old place.
     Object.keys(this.it).forEach((k) => { if (k !== 'board' && !this.it[k].el.isConnected) delete this.it[k]; });

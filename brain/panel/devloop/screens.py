@@ -134,6 +134,9 @@ FOCUS_ID_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,120}$")
 FOCUS_PRESSES = ("tap", "open")
 ELEMENT_MAX_HEIGHT = 6000
 FOCUS_MARGIN = 8
+# How long a card is given to stop moving before it is photographed.
+STILL_STEP_S = 0.25
+STILL_TRIES = 10
 # Long enough to be a hold on every panel this photographs (Morph's is
 # 540 ms), and short enough not to be a second press.
 HOLD_S = 0.9
@@ -397,9 +400,15 @@ _COVER_JS = r"""
 
 # Find a card or section by its id through every open shadow root, scroll
 # it into view and say where it is now (viewport coordinates). A card's own
-# tile wins over anything else carrying the same id.
+# tile wins over anything else carrying the same id. With `still` the
+# element is only measured, never scrolled, so a caller can wait for a page's
+# own scrolling (Morph glides to an opened card) to stop before it looks.
+# `cover` is how far down the top of the window the page keeps for a bar of
+# its own (a sticky room line): the element is scrolled to just under it,
+# because scrolled to the window's very top an opened card's title and first
+# row sit behind that bar and the picture starts partway down the card.
 _FOCUS_JS = r"""
-((id) => {
+((id, still) => {
   const sels = [`.tile[data-tile="${CSS.escape(id)}"]`, `[data-tile="${CSS.escape(id)}"]`,
                 `section[data-sec="${CSS.escape(id)}"]`, `[data-sec="${CSS.escape(id)}"]`,
                 `[data-card="${CSS.escape(id)}"]`, `#${CSS.escape(id)}`];
@@ -414,9 +423,25 @@ _FOCUS_JS = r"""
   let el = null;
   for (const sel of sels) { el = find(document, sel); if (el) break; }
   if (!el) return null;
-  el.scrollIntoView({ block: "start", inline: "nearest" });
+  const covers = (root, out) => {
+    for (const e of root.querySelectorAll("*")) {
+      const pos = getComputedStyle(e).position;
+      if ((pos === "sticky" || pos === "fixed") && !e.contains(el) && !el.contains(e)) {
+        const b = e.getBoundingClientRect();
+        if (b.width >= innerWidth * 0.4 && b.height <= innerHeight * 0.5 && b.top <= 2 && b.bottom > 0) out.push(b.bottom);
+      }
+      if (e.shadowRoot) covers(e.shadowRoot, out);
+    }
+    return out;
+  };
+  const cover = Math.ceil(Math.max(0, ...covers(document, [])));
+  if (!still) {
+    el.style.scrollMarginTop = cover + "px";
+    el.scrollIntoView({ block: "start", inline: "nearest" });
+    el.style.scrollMarginTop = "";
+  }
   const r = el.getBoundingClientRect();
-  return { x: r.left, y: r.top, w: r.width, h: r.height };
+  return { x: r.left, y: r.top, w: r.width, h: r.height, cover: cover };
 })
 """
 
@@ -1417,9 +1442,11 @@ async def _reveal(cdp: CDP, session: str, focus: dict) -> None:
         focus["found"] = got
 
 
-async def _find(cdp: CDP, session: str, focus: dict, label: str) -> dict:
+async def _find(cdp: CDP, session: str, focus: dict, label: str,
+                still: bool = False) -> dict:
     res = await cdp.call("Runtime.evaluate", {
-        "expression": f"({_FOCUS_JS})({json.dumps(str(focus.get('found') or focus['id']))})",
+        "expression": (f"({_FOCUS_JS})({json.dumps(str(focus.get('found') or focus['id']))}, "
+                       f"{'true' if still else 'false'})"),
         "returnByValue": True}, session)
     rect = (res.get("result") or {}).get("value")
     if not isinstance(rect, dict) or not rect.get("w") or not rect.get("h"):
@@ -1443,6 +1470,11 @@ async def _focus_press(cdp: CDP, session: str, focus: dict, label: str,
     if press not in FOCUS_PRESSES:
         return
     x, y = rect["x"] + rect["w"] / 2, rect["y"] + min(rect["h"] / 2, 40)
+    if press == "open":
+        # A hold opens a card from its title corner. The middle of a tall
+        # card is a stepper, a slider or a chart, which answer a hold
+        # themselves, so the card stayed shut and was photographed shut.
+        x, y = rect["x"] + min(rect["w"] / 2, 40), rect["y"] + min(rect["h"] / 2, 20)
     hold = HOLD_S if press == "open" else 0.05
     if touch:
         # A phone's press is a finger. A card built on Home Assistant's
@@ -1467,15 +1499,29 @@ async def _focus_press(cdp: CDP, session: str, focus: dict, label: str,
 async def _focus_clip(cdp: CDP, session: str, focus: dict, label: str,
                       width: int, height: int, touch: bool) -> dict:
     """The screenshot arguments for one element: the window made tall
-    enough to hold it, the element scrolled to its top, and the picture
-    cropped to it with a little room round it."""
+    enough to hold it (and the bar the page keeps over its own top), the
+    element scrolled to just under that bar once the page has stopped
+    moving, and the picture cropped to it with a little room round it."""
     rect = await _find(cdp, session, focus, label)
-    tall = int(min(rect["h"] + 2 * FOCUS_MARGIN, ELEMENT_MAX_HEIGHT))
+    tall = int(min(rect["h"] + 2 * FOCUS_MARGIN + rect.get("cover", 0), ELEMENT_MAX_HEIGHT))
     await cdp.call("Emulation.setDeviceMetricsOverride", {
         "width": width, "height": max(height, tall), "deviceScaleFactor": 1,
         "mobile": touch}, session)
-    await asyncio.sleep(0.3)
+    # A new window size lays the page out again, and a page that glides to
+    # an opened card (Morph's springs) does so for about a second; scrolling
+    # to the card first and measuring it while the glide pulls it away took
+    # a picture of whatever the glide had moved to. Wait for the card to
+    # stand still, then scroll to it and look at once.
+    last = None
+    for _ in range(STILL_TRIES):
+        await asyncio.sleep(STILL_STEP_S)
+        now = await _find(cdp, session, focus, label, still=True)
+        key = (round(now["x"]), round(now["y"]), round(now["w"]), round(now["h"]))
+        if key == last:
+            break
+        last = key
     rect = await _find(cdp, session, focus, label)
+    tall = int(min(rect["h"] + 2 * FOCUS_MARGIN + rect.get("cover", 0), ELEMENT_MAX_HEIGHT))
     view_h = max(height, tall)
     x0 = max(0.0, rect["x"] - FOCUS_MARGIN)
     y0 = max(0.0, rect["y"] - FOCUS_MARGIN)
