@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.2.6
+
+### Added
+
+- brAIn can read your BRUH Browser shopping profile (`browser_status` with `profiles`) and says what it knows of your usual order and asks what changes before it starts a grocery errand (#899).
+
+### Fixed
+
+- `browser_status` returns an errand's whole report. It used to cut it at 2,000 characters mid-word; a very long one now comes in parts, each ending on a word, with a way to read the next (#899).
+
 ## 5.2.5
 
 ### Added
