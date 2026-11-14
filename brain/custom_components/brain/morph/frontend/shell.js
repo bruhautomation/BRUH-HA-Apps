@@ -97,7 +97,50 @@ class BrainShell extends HTMLElement {
     // viewport that is no element's scroll, so the guard above never hears
     // it, and the header stays under the island with no way back. Once the
     // screen has its height again, the page goes back to the top.
-    this._onViewport = () => { clearTimeout(this._vvT); this._vvT = setTimeout(() => this.settleOuter(), 250); };
+    this._onViewport = () => { clearTimeout(this._vvT); this._vvT = setTimeout(() => this.settleOuter(), 250); this.remeasure(); };
+    // Home Assistant moves the panel without resizing the window: its
+    // toolbar comes or goes, the app's full-screen setting changes, the
+    // safe area arrives after the first paint. Each is a change of size of
+    // something holding the panel, or of the panel itself, so those are
+    // watched (`watchPlace`), and a new `hass` (Home Assistant redrawing)
+    // asks once per frame at most. Nothing polls (a house had to look every
+    // 1.5 s from inside the frame to catch it).
+    this._place = '';
+    this._placeRaf = 0;
+    this._onVisible = () => { if (!document.hidden) this.remeasure(); };
+  }
+
+  // Where the panel is and how much of the safe areas lies over it; when
+  // any of it moved, the panel is fitted again and brAIn's page told.
+  remeasure() {
+    if (this._placeRaf || !this.isConnected) return;
+    this._placeRaf = requestAnimationFrame(() => {
+      this._placeRaf = 0;
+      if (!this.isConnected) return;
+      const r = this.getBoundingClientRect();
+      const key = `${Math.round(r.top)}|${Math.round(r.bottom)}|${this.inset()}|${this.insetBottom()}|${window.innerHeight}`;
+      if (key === this._place) return;
+      this._place = key;
+      this.fit();
+      if (this.info) this.sync();
+    });
+  }
+
+  watchPlace() {
+    this.unwatchPlace();
+    if (typeof ResizeObserver === 'undefined') return;
+    this._placeRo = new ResizeObserver(() => this.remeasure());
+    for (const n of [this, ...this.ancestors()]) {
+      try { this._placeRo.observe(n); } catch (e) { /* not an element we may watch */ }
+    }
+    for (const n of [this.insetEl, this.footEl]) if (n) this._placeRo.observe(n);
+  }
+
+  unwatchPlace() {
+    if (this._placeRo) this._placeRo.disconnect();
+    this._placeRo = null;
+    if (this._placeRaf) cancelAnimationFrame(this._placeRaf);
+    this._placeRaf = 0;
   }
 
   // The panel is as tall as the space Home Assistant gives it: the screen
@@ -180,6 +223,9 @@ class BrainShell extends HTMLElement {
     this.holdOuter();
     this.fit();
     requestAnimationFrame(() => this.fit());
+    this.watchPlace();
+    document.addEventListener('visibilitychange', this._onVisible);
+    window.addEventListener('orientationchange', this._onVisible);
     if (this._v.hass && !this.info) this.start();
   }
 
@@ -189,6 +235,9 @@ class BrainShell extends HTMLElement {
     this.removeEventListener('morph-chrome', this._onChrome);
     this.removeEventListener('morph-scroll', this._onScroll);
     window.removeEventListener('resize', this._onResize);
+    document.removeEventListener('visibilitychange', this._onVisible);
+    window.removeEventListener('orientationchange', this._onVisible);
+    this.unwatchPlace();
     this.releaseOuter();
     clearInterval(this._validate);
     this._validate = null;
@@ -435,6 +484,7 @@ for (const k of PROPS) {
       if (this.morph) this.morph[k] = v;
       if (first && this.isConnected && !this.info) this.start();
       if (k === 'narrow' && this.info) this.sync();
+      else if (k === 'hass' && this.info) this.remeasure();
     },
   });
 }

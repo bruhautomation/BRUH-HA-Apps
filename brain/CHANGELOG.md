@@ -2,6 +2,57 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.0
+
+The Morph dashboard now ships the design one house built for itself over the last month, so what ships is what that house runs.
+
+### Added
+
+- Morph's room rail runs down the right edge in place of the scroll bar: swipe left to open it, then slide the same finger from room to room, with the floors set apart.
+- In the Home Assistant app, every action, slide detent and rail notch has a haptic.
+- Pull the page down past the top to refresh it; the Morph mark draws itself in as you pull.
+- Numbers roll when they change, and a tile glows briefly when something changes it from elsewhere.
+- Every tile and card sits on one grid of equal columns, at most 1480px wide; on a phone that is two half-columns. A section's `width` is its share of the page.
+- A section with one card is just that card, with no box around it. Rooms always keep their box and name.
+- A room's scenes are one segmented control under its name, and a room can carry a faint icon of its own (`icon:` on the section).
+- Light colour is one slim track: the whites, then a rainbow dot that opens the full spectrum. An opened light or blind group ends with an All slider that sets every member; tapping it toggles them all.
+- Tapping a number or name that comes from a sensor opens that sensor's own card, saying how recently it updated.
+- Coming up: tap any item to open it in place, tap a lane's name to hide or show it, and drag along the time axis to zoom. `coming_up_lanes:` in `dashboard.yaml` gives machines lanes of their own, showing when each one ran.
+- Charts with many lines have drag-to-zoom and a chip per line to hide or show it.
+- `sleep_guard: true` on a room holds what the page would do to it while its sleeper is asleep, and asks first. A sleep sensor that reads *In bed* / *Up* now decides whether a room is asleep.
+- A climate card's `options.actions` buttons now sit on the card's one control row, with optional `short`, `running`, `icon`, `color` and `modes`.
+- A group can carry `when: {entity, state}` (or `state_not`) to show only at those times.
+- ⚙ › Permissions › **Talk it through in chat**: off by default. When on, words that would become a draft to approve go to the conversation instead, which does them there. That covers something to do later, once or every time, a change to an automation, and new scenes.
+- The room rail comes to Home Assistant dashboards: a view with `morph: {rail: true}` (and `custom:morph-view`) gets the same scrub rail as Morph's page on a touch screen. A swipe left opens it, the same finger slides room to room, and each notch is coloured by its room's state.
+- brAIn's Needs you has To Do with a tick box that ticks an item off at once. Tap an item to open its whole story with a line to tell brAIn what to do with it; the answer is drawn under the item. The heading shows a count.
+
+### Changed
+
+- Nothing on the dashboard reorders itself. Floors, rooms and cards keep `dashboard.yaml`'s order: no Now band, no rooms rising for motion or presence, no cards lifted by habit.
+- Rooms never fold; every room always shows all of its cards.
+- brAIn's cases and To Do live in brAIn's Needs you, no longer on the dashboard.
+- Edit is a quiet pencil under brAIn's header; Done and YAML stay in the header while you edit.
+- Off fans stand still; a running fan spins faster with its speed.
+- Locking a lock takes a second tap, like opening the garage.
+- brAIn's shell re-measures its header's safe area whenever the page around it moves, not only when the window is resized.
+- brAIn's header shows the health dot only when brAIn is signed out.
+- Insight cards draw in Morph's palette and look in every Morph theme.
+- The overnight check no longer counts a passing blip as a cause, and its fix says only what a reload cannot mend.
+
+### Removed
+
+- Morph's own Feed, Settings and Personality pages. They duplicated brAIn's own tabs.
+- Habit predictions, the "you usually do this now" lines and prediction dots, cards anchored by recent use, and per-device and per-person ranking.
+- Folding quiet rooms, the family tablet's still form, and the "Fold quiet rooms" and "This device" settings in ⚙ › Dashboard.
+- Door and motion chips and marks in a room's title line, and `room_marks`.
+- Then mode's last leftovers (#970).
+- On Home Assistant dashboards, the `order` (lift a room that needs you) and `fold` (fold quiet rooms) view switches, and their switches under the brAIn button. `custom:morph-view` no longer reorders or folds either. The older `rail.js` is gone; the scrub rail replaces it.
+
+### Fixed
+
+- LEARNED.md no longer cuts a household's own lines at 300 characters on every rewrite. A line brAIn writes is shortened only at a whole sentence.
+- A room's `icon:`, a group's `when:`, and the `cover_group` and `fan_group` card types are no longer dropped when Morph reads `dashboard.yaml`.
+- A Morph thermostat card on a Home Assistant dashboard sets both setpoints in heat/cool. Its History words (24 hours, 7 days) work there too.
 ## 5.2.9
 
 ### Fixed

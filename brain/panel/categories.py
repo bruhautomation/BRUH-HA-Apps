@@ -373,27 +373,37 @@ def memory_excerpt(text: str | None, limit: int = MEMORY_EXCERPT_CHARS) -> str:
 # insight cards "don't go great with the Morph theming"): the panel writes
 # the shell's theme onto the card's own <html> as `data-theme` (dark,
 # medium, light), and the three blocks below restate the variables with
-# Morph's surfaces, inks and hues (styles.js) and its font. Outside the
-# shell no `data-theme` is set and prefers-color-scheme decides, as it did.
+# Morph's surfaces, inks, hues and status colours (styles.js) and its font.
+# Outside the shell no `data-theme` is set and prefers-color-scheme decides,
+# as it did. Every palette runs in the same order of hues — blue, teal,
+# amber, violet, red, green, then two spares — so the contract can say
+# which series means what (amber for heat or "on", blue for cooling) and be
+# right in every theme; a house's layer used to overwrite this sheet in
+# every frame to get Morph's order and status colours.
 # A card saved under an older copy of this sheet is served with this one
 # (`refresh_styles`), so a change here reaches every card on screen.
 CARD_STYLES = """:root{--bg:#ffffff;--ink:#0b0b0b;--ink2:#52514e;--muted:#706e69;--grid:#e1e0d9;--axis:#c3c2b7;
---c1:#2a78d6;--c2:#008300;--c3:#e87ba4;--c4:#eda100;--c5:#1baf7a;--c6:#eb6834;--c7:#4a3aa7;--c8:#e34948;--other:#898781;
+--c1:#2a78d6;--c2:#1baf7a;--c3:#eda100;--c4:#4a3aa7;--c5:#e34948;--c6:#008300;--c7:#eb6834;--c8:#e87ba4;--other:#898781;
 --seq-lo:#cde2fb;--seq-hi:#0d366b;--div-mid:#f0efec;
---good:#0ca30c;--warning:#fab219;--serious:#ec835a;--critical:#d03b3b;color-scheme:light dark}
+--good:#0ca30c;--warning:#fab219;--serious:#ec835a;--critical:#d03b3b;
+--font:system-ui,sans-serif;--font-num:system-ui,sans-serif;color-scheme:light dark}
 @media (prefers-color-scheme: dark){:root{--bg:#0e1e30;--ink:#ffffff;--ink2:#c3c2b7;--muted:#898781;--grid:#2c2c2a;--axis:#383835;
---c1:#3987e5;--c2:#008300;--c3:#d55181;--c4:#c98500;--c5:#199e70;--c6:#d95926;--c7:#9085e9;--c8:#e66767;--div-mid:#383835}}
-:root[data-theme="dark"]{--bg:#15181b;--ink:#edeff1;--ink2:#a0a9b3;--muted:#8e97a1;--grid:#2a2f35;--axis:#3a4048;
---c1:#9cc2f5;--c2:#63ccc2;--c3:#bba6f2;--c4:#f4b969;--c5:#bcd873;--c6:#f2b590;--c7:#9daaf5;--c8:#f2907f;--other:#808994;
---seq-lo:#1d2a3a;--seq-hi:#9cc2f5;--div-mid:#2a2f35;color-scheme:dark}
-:root[data-theme="medium"]{--bg:#34383d;--ink:#f1f2f3;--ink2:#d2d7dc;--muted:#b5bcc4;--grid:#4a5057;--axis:#5a6068;
---c1:#a7c8f2;--c2:#72cfc6;--c3:#c3b1f0;--c4:#f5c27f;--c5:#c3db86;--c6:#f0bc9c;--c7:#a9b4f2;--c8:#f29c8c;--other:#949ca6;
---seq-lo:#3d4a5a;--seq-hi:#a7c8f2;--div-mid:#4a5057;color-scheme:dark}
-:root[data-theme="light"]{--bg:#ffffff;--ink:#16181b;--ink2:#3b4148;--muted:#535a63;--grid:#e4e3dd;--axis:#c9c7c0;
---c1:#3b78c9;--c2:#178a80;--c3:#7a5fd0;--c4:#c27a1a;--c5:#5e8416;--c6:#b8622f;--c7:#4f5fc4;--c8:#c9503f;--other:#68707a;
---seq-lo:#dce7f5;--seq-hi:#1e3f6e;--div-mid:#ecebe6;color-scheme:light}
-html,body{margin:0;padding:0;background:transparent;color:var(--ink);font-family:system-ui,sans-serif}
-:root[data-theme] body{font-family:'Manrope',system-ui,sans-serif}
+--c1:#3987e5;--c2:#199e70;--c3:#c98500;--c4:#9085e9;--c5:#e66767;--c6:#008300;--c7:#d95926;--c8:#d55181;--div-mid:#383835}}
+:root[data-theme]{--font:'Manrope',system-ui,sans-serif;--font-num:'Bricolage Grotesque','Manrope',system-ui,sans-serif}
+:root[data-theme="dark"]{--bg:#15181b;--ink:#edeff1;--ink2:#a0a9b3;--muted:#808994;--grid:rgba(255,255,255,.07);--axis:rgba(255,255,255,.18);
+--c1:#9cc2f5;--c2:#63ccc2;--c3:#f4b969;--c4:#bba6f2;--c5:#f2907f;--c6:#bcd873;--c7:#f2b590;--c8:#9daaf5;--other:#5d646c;
+--seq-lo:#1e2a38;--seq-hi:#9cc2f5;--div-mid:#2a2f35;
+--good:#bcd873;--warning:#f4b969;--serious:#f2b590;--critical:#f2907f;color-scheme:dark}
+:root[data-theme="medium"]{--bg:#34383d;--ink:#f1f2f3;--ink2:#b5bcc4;--muted:#a3abb4;--grid:rgba(255,255,255,.08);--axis:rgba(255,255,255,.2);
+--c1:#a7c8f2;--c2:#72cfc6;--c3:#f5c27f;--c4:#c3b1f0;--c5:#f29c8c;--c6:#c3db86;--c7:#f0bc9c;--c8:#a9b4f2;--other:#7d848c;
+--seq-lo:#3d4654;--seq-hi:#a7c8f2;--div-mid:#4a5057;
+--good:#c3db86;--warning:#f5c27f;--serious:#f0bc9c;--critical:#f29c8c;color-scheme:dark}
+:root[data-theme="light"]{--bg:#ffffff;--ink:#16181b;--ink2:#535a63;--muted:#5b636c;--grid:rgba(22,24,27,.08);--axis:rgba(22,24,27,.22);
+--c1:#3168b2;--c2:#13746c;--c3:#935c14;--c4:#7053cd;--c5:#b44333;--c6:#527313;--c7:#9e5428;--c8:#4f5fc4;--other:#a3a8ae;
+--seq-lo:#dfe8f5;--seq-hi:#3168b2;--div-mid:#e4e3dd;
+--good:#527313;--warning:#935c14;--serious:#9e5428;--critical:#b44333;color-scheme:light}
+html,body{margin:0;padding:0;background:transparent;color:var(--ink);font-family:var(--font)}
+svg text{font-family:var(--font)}
 .tabular{font-variant-numeric:tabular-nums}
 @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
 """
@@ -540,16 +550,17 @@ THE HTML DOCUMENT:
 - ONE focused visual: a single chart, timeline or state map. No stat tiles duplicating the highlights, no second chart unless the story needs a pair, no prose.
 - It sits on the card: no outer border, box, background, shadow or padding, and no heading repeating the title — at most one short chart title line (13-14px, bold).
 - Inline CSS and JS only, nothing external. 300px (a phone) to 900px wide: 100% width, height to content (~220-420px), no fixed width, no sideways scroll. A viewBox scales its text, so draw each SVG in script at `document.body.clientWidth`, redraw on resize, every label 11px or more. Leave a left margin for the longest label: a label cut at the edge is a bug. Legends go ABOVE the plot. Inline SVG (or CSS grid for state maps), no canvas.
-- Hover tooltips on every mark; readable without hovering. Animate under prefers-reduced-motion: no-preference.
+- A pair of charts sits in a CSS grid of `repeat(auto-fit, minmax(260px, 1fr))`.
+- Hover tooltips on every mark, with a hit target bigger than the mark; readable without hovering. Draw in within 800ms, only under prefers-reduced-motion: no-preference.
 
-DESIGN SYSTEM: the dashboard's look unless asked otherwise. brAIn prepends a sheet following its themes (prefers-color-scheme elsewhere): use its variables and font, no fixed colour. Surfaces, text: var(--bg), var(--ink), var(--ink2), var(--muted); grid var(--grid), axis var(--axis). Series in order var(--c1) (#2a78d6 elsewhere) … var(--c8), past six folded into var(--other). Sequential: var(--seq-lo) to var(--seq-hi); diverging: --c1 ↔ --c8 via var(--div-mid). Status: var(--good), var(--warning), var(--serious), var(--critical), never a series, always labelled. Marks: 2px lines; bars from zero, 4px rounded tops; ≥8px hover markers. Dark: #0e1e30. ONE y-axis per chart (two scales → two charts).
+DESIGN SYSTEM: the dashboard's look unless asked otherwise. brAIn prepends a sheet following its themes (prefers-color-scheme elsewhere): use its variables, never a fixed colour or background. Surfaces, text: var(--bg), var(--ink), var(--ink2), var(--muted); grid var(--grid), axis var(--axis). Series in order var(--c1) … var(--c8), one per series, past six folded into var(--other); match meaning where there is one: --c1 blue for cooling and climate, --c2 teal for water, --c3 amber for light, heat or "on", --c4 violet for people, --c5 red for open or alarm, --c6 green for good. Sequential: var(--seq-lo) to var(--seq-hi); diverging: --c1 ↔ --c5 via var(--div-mid); never a rainbow. Status: var(--good), var(--warning), var(--serious), var(--critical), never a series, always labelled. Type: var(--font) for text, var(--font-num) for a big number; axis and legend labels 11px, uppercase, letter-spacing .08em, var(--muted). Quiet: transparent body, no boxes, shadows, gradients or filled plot areas; few 1px var(--grid) gridlines; nothing bold but the one chart title line. Marks: 2px lines; dots 8-10px; bars from zero, 4px rounded ends, 2px gaps between stacked segments. ONE y-axis per chart (two scales → two charts). A legend from two series, direct labels up to four.
 
 ANALYSIS RULES:
 - RUTHLESSLY CONCISE and specific to this home: every sentence carries a real name, number or time; no hedging, no invented number. Convert entity_ids to friendly names.
 - Read every number against this house's own normal (its usual, last week) and say which side it is on. Never call it fine with your own figures rising by more than half.
 - Plain words: never a tool or its cap, "baseline", "readings window", "this hour of the week" or a field name; a limit that matters is "at least 10". No unit to look up or made up (°F·h, degree-hours, "2.4x", "min per °F per hour", "kWh of one per kWh of another"): compare like with like in everyday units (minutes, °F, kWh per load), "twice the usual", with the raw value beside any claim about it. No coined measure ("lit spells", "door swings", "safety gap", "coasted"): say what happened ("the light came on 13 times"). A threshold says whose it is ("your usual limit is 350 gal between cycles"), never a bare "flag". A partial day is compared with the same hours of other days.
 - One style: times of day in the house's clock (the prompt says which; data times are local unless suffixed Z), dates "Tue 13 Oct", ranges "13–19 Oct", durations "6 h 42 min", temperatures "66 °F" in whole degrees.
-- REASON LIKE A DETECTIVE: cross-reference related entities and cite the chain; "device_context" holds clues.
+- REASON LIKE A DETECTIVE: cross-reference related entities to reach what no single sensor states, and cite the chain; "device_context" holds clues.
 - KNOWN FACTS and ANSWERED QUESTIONS in the prompt are established truth: use them, never rediscover or contradict them without new evidence, never re-ask.
 - GO DEEPER: with your previous analysis in the prompt, lead with what CHANGED and go one level deeper on the rest — a repeated headline is a failed run.
 - Title and summary suit a reader who saw no earlier card: no chains of sensor names or raw temperatures; introduce each name and number once (what it is, normal against now) or leave it out.

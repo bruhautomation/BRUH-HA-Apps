@@ -1,12 +1,11 @@
 /**
  * Morph's features on a Home Assistant dashboard (frontend/morph-features.js):
  *
- *   - custom:morph-view arranges HA's own sections: a room that needs
- *     somebody is lifted to the top with why, a quiet room folds to one line
- *     and opens on a tap, `morph: {order: false, fold: false}` keeps HA's
- *     order and everything open, and edit mode never folds or reorders;
- *   - on a touch screen the room rail is drawn with one notch per open room,
- *     and `morph: {rail: false}` turns it off;
+ *   - custom:morph-view draws HA's own sections in the order they are
+ *     written: nothing is lifted and no room folds (5.3.0);
+ *   - the room rail (scrub.js) is drawn with one notch per room plus the
+ *     top, a swipe left on it opens it and sliding goes room to room, and
+ *     `morph: {rail: false}` turns it off;
  *   - the cases card draws brAIn's cases (all, or one area's) and a press
  *     goes to brAIn's queue (morph/case);
  *   - the Ask card answers from brAIn's interpreter, and a change to the
@@ -94,30 +93,20 @@ async function open(touch) {
 }
 const view = (p) => p.evaluate(() => {
   const v = document.querySelector('morph-view');
-  return [...v.shadowRoot.querySelectorAll('section.sec')].map((s) => ({ name: s.querySelector('h2').textContent, lifted: s.classList.contains('lifted'), why: s.querySelector('.why').hidden ? '' : s.querySelector('.why').textContent, folded: !s.querySelector('.fold').hidden, fold: s.querySelector('.fold').textContent, has: !!s.querySelector('hui-section') }));
+  return [...v.shadowRoot.querySelectorAll('section.sec')].map((s) => ({ name: s.querySelector('h2').textContent, has: !!s.querySelector('hui-section') }));
 });
 
 let p = await open(false);
 await p.evaluate(() => window.__mkView());
 await p.waitForTimeout(150);
 let v = await view(p);
-if (v.map((r) => r.name).join() !== 'Entry,Kitchen,Bedroom') fail('order', `rooms in order ${v.map((r) => r.name)}`);
-if (!v[0].lifted || v[0].why !== 'Front Door is unlocked') fail('lifted', JSON.stringify(v[0]));
-if (v[1].folded || !v[1].has) fail('kitchen', `an active room is folded or empty ${JSON.stringify(v[1])}`);
-if (!v[2].folded || !/Bedroom.*nothing on/.test(v[2].fold)) fail('fold', JSON.stringify(v[2]));
-await p.evaluate(() => document.querySelector('morph-view').shadowRoot.querySelectorAll('.fold')[2].click());
-await p.waitForTimeout(100);
-v = await view(p);
-if (v[2].folded || !v[2].has) fail('unfold', 'a tap did not open the folded room');
-await p.evaluate(() => window.__mkView({ order: false, fold: false }));
-await p.waitForTimeout(100);
-v = await view(p);
-if (v.map((r) => r.name).join() !== 'Kitchen,Bedroom,Entry' || v.some((r) => r.folded)) fail('options off', JSON.stringify(v.map((r) => [r.name, r.folded])));
+if (v.map((r) => r.name).join() !== 'Kitchen,Bedroom,Entry') fail('order', `rooms in order ${v.map((r) => r.name)} (want the written order)`);
+if (v.some((r) => !r.has)) fail('rooms', `a room is drawn empty ${JSON.stringify(v)}`);
 await p.evaluate(() => window.__mkView(null, true));
 await p.waitForTimeout(100);
 v = await view(p);
-if (v.map((r) => r.name).join() !== 'Kitchen,Bedroom,Entry' || v.some((r) => r.folded)) fail('edit mode', JSON.stringify(v.map((r) => [r.name, r.folded])));
-const rail0 = await p.evaluate(() => { const r = document.querySelector('morph-view').shadowRoot.querySelector('.srail'); return getComputedStyle(r).display; });
+if (v.map((r) => r.name).join() !== 'Kitchen,Bedroom,Entry') fail('edit mode', JSON.stringify(v.map((r) => r.name)));
+const rail0 = await p.evaluate(() => { const r = document.querySelector('morph-view').shadowRoot.querySelector('.mrail'); return r ? getComputedStyle(r).display : 'none'; });
 if (rail0 !== 'none') fail('rail', `the rail is drawn on a fine pointer (${rail0})`);
 
 // Cases: all, then one area's; a press reaches brAIn's queue.
@@ -154,11 +143,23 @@ await p.context().close();
 p = await open(true);
 await p.evaluate(() => window.__mkView());
 await p.waitForTimeout(300);
-const rail = await p.evaluate(() => { const r = document.querySelector('morph-view').shadowRoot.querySelector('.srail'); return { display: getComputedStyle(r).display, notches: r.querySelectorAll('.srnotches i').length }; });
-if (rail.display === 'none' || rail.notches !== 2) fail('rail', `phone rail ${JSON.stringify(rail)} (want 2 notches: Entry and Kitchen; Bedroom is folded)`);
+const rail = await p.evaluate(() => { const r = document.querySelector('morph-view').shadowRoot.querySelector('.mrail'); if (!r) return null; const b = r.getBoundingClientRect(); return { notches: r.querySelectorAll('.mrail-seg').length, x: b.right - 8, y: b.top + 4, h: b.height }; });
+if (!rail || rail.notches !== 4) fail('rail', `phone rail ${JSON.stringify(rail)} (want 4 notches: the top and three rooms)`);
+if (rail) {
+  // Rooms taller than the screen, so going to the last one has to scroll.
+  await p.evaluate(() => { document.querySelector('morph-view').style.setProperty('--mv-col', '5000px'); document.querySelector('morph-view').shadowRoot.querySelectorAll('hui-section > div').forEach((d) => { d.style.height = '1600px'; }); });
+  await p.waitForTimeout(400);
+  await p.mouse.move(rail.x, rail.y + rail.h * 0.1); await p.mouse.down();
+  for (let i = 1; i <= 8; i++) { await p.mouse.move(rail.x - i * 3, rail.y + rail.h * 0.1); await p.waitForTimeout(16); }
+  for (let i = 1; i <= 8; i++) { await p.mouse.move(rail.x - 24, rail.y + rail.h * (0.1 + i * 0.1)); await p.waitForTimeout(30); }
+  await p.mouse.up(); await p.waitForTimeout(1200);
+  const lit = await p.evaluate(() => ({ y: window.scrollY, open: !!document.querySelector('morph-view').shadowRoot.querySelector('.mrail.open') }));
+  if (lit.open) fail('rail', 'the rail stayed open after the finger lifted');
+  if (!(lit.y > 0)) fail('rail', `sliding down the rail did not move the page (scrollY ${lit.y})`);
+}
 await p.evaluate(() => window.__mkView({ rail: false }));
 await p.waitForTimeout(200);
-const off = await p.evaluate(() => { const r = document.querySelector('morph-view').shadowRoot.querySelector('.srail'); return r.hidden; });
+const off = await p.evaluate(() => !document.querySelector('morph-view').shadowRoot.querySelector('.mrail'));
 if (!off) fail('rail', 'morph: {rail: false} still draws the rail');
 if (p.errors.length) fail('console (phone)', p.errors.slice(0, 3).join(' | '));
 await browser.close();

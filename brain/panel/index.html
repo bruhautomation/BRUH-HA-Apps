@@ -464,7 +464,7 @@
     <div class="aboutcards">
       <button id="aboutCardsBtn" class="aboutline" type="button" aria-expanded="false"
               aria-controls="aboutCards">How insight cards differ from the dashboard</button>
-      <p id="aboutCards" class="aboutbody" hidden></p>
+      <div id="aboutCards" class="aboutbody" hidden></div>
     </div>
     <div class="insighthead">
       <h1 class="panetitle">Insights</h1>
@@ -513,7 +513,7 @@
     <div id="findList" class="findlist todayqueue"></div>
     <button id="todayMore" class="btn-tertiary todaymore" hidden></button>
     <section class="todaysec" aria-labelledby="todayListHead">
-      <h2 id="todayListHead" class="t-card">To Do</h2>
+      <h2 id="todayListHead" class="t-card todohead2">To Do <span id="todoCount" class="todocount"></span></h2>
       <form id="todoAdd" class="todoadd">
         <input id="todoText" type="text" maxlength="200" autocomplete="off"
                placeholder="Add to To Do…" aria-label="Add to To Do">
@@ -1345,6 +1345,16 @@
             message.</p>
           <p class="hint setgroupnote" id="setSkipPermsCaveat">Protected entities are refused through brAIn's
             own tools, not every shell command.</p>
+          </div>
+
+          <div class="setgroup">
+          <div class="setrow top">
+            <label class="check bigcheck"><input id="setTalkFirst" class="tog" type="checkbox">
+              <span><b>Talk it through in chat</b>
+              <span class="subtext">Something to do later, once or every time, a change to an
+              automation, or new scenes goes to the conversation, which does it there, instead of
+              becoming a draft for you to approve.</span></span></label>
+          </div>
           </div>
 
           <!-- One step past the switch above: acting without asking still

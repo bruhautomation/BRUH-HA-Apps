@@ -130,6 +130,13 @@ SURFACE_ENDINGS = {
 # A person is waiting on these: the budget does not stop them.
 PRESSED = frozenset({"ask_bar", "reply", "repairs", "morph", "panel"})
 
+# The kinds that end as a draft to approve. With ⚙'s "Talk it through in
+# chat" on (`talk_first`), each becomes `chat` on a surface that has a
+# conversation, so the chat does it directly; a surface with no chat (an
+# automation's service call, a Repairs box) keeps what it had.
+DRAFT_KINDS = frozenset({"timed", "one_off", "standing_rule",
+                         "automation_edit", "scenes"})
+
 MAX_ROUTES = 3
 MAX_WORDS = 500
 MAX_TEXT = 500
@@ -414,7 +421,7 @@ def _clean_route(item, surface: str, words: str) -> dict | None:
     return route
 
 
-def parse(data, surface: str, words: str) -> list[dict] | None:
+def parse(data, surface: str, words: str, *, talk_first: bool = False) -> list[dict] | None:
     """The routes a reply may take on this surface, or None.
 
     None — the caller's old path — for a reply that is not an object, has
@@ -431,10 +438,15 @@ def parse(data, surface: str, words: str) -> list[dict] | None:
     words = " ".join(str(words or "").split())[:MAX_WORDS]
     out: list[dict] = []
     ended = False
+    chatty = talk_first and "chat" in ALLOWED.get(surface, ())
     for item in items[:MAX_ROUTES * 2]:
         route = _clean_route(item, surface, words)
         if route is None:
             continue
+        if chatty and route["kind"] in DRAFT_KINDS:
+            route = {"kind": "chat", "text": words or route["text"]}  # the whole message
+            if any(r["kind"] == "chat" for r in out):
+                continue  # one conversation carries them all
         if route["kind"] in ("case_ending", "defer"):
             if ended:
                 continue

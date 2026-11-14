@@ -4035,7 +4035,7 @@ body.term-classic #termMode .ico-out { display: block; }
     -webkit-backdrop-filter: none;
   }
   .topbar .chip { display: none; }
-  .topbar .btn.icon.statusdot { display: inline-flex; }
+  .topbar .btn.icon.statusdot[data-state="signed_out"] { display: inline-flex; }
 
   .viewtabs {
     position: fixed;
@@ -6400,16 +6400,63 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 .todaysec { display: grid; gap: var(--sp-3); }
 .todaysec .todoadd { margin: 0; }
 .todolist { display: grid; gap: var(--sp-2); }
+.todohead2 { display: flex; align-items: baseline; gap: var(--sp-2); }
+.todocount { font-size: var(--fs-meta); font-weight: 600; color: var(--ink-3);
+  font-variant-numeric: tabular-nums; }
+.todocount:empty { display: none; }
+/* A row: the tick box, then the task, which opens in place on a press. */
 .todorow {
-  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3);
-  padding: var(--sp-3) var(--card-pad);
+  display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 var(--sp-3);
+  padding: var(--sp-2) var(--card-pad) var(--sp-2) var(--sp-2);
   border: var(--card-border); border-radius: var(--card-radius); background: var(--card-bg);
+  transition: opacity .25s ease .4s;
 }
-.todotext { flex: 1 1 240px; min-width: 0; display: grid; gap: 2px; }
-.todotitle { font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink); }
+.todotick {
+  appearance: none; flex: none; width: 44px; height: 44px; margin: 0; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; background: none; cursor: pointer; color: var(--ink-3);
+}
+.todotick::before {
+  content: ""; position: absolute; width: 22px; height: 22px; border-radius: 7px;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--ink) 30%, transparent);
+  transition: background .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+.todotick { position: relative; }
+.todorow[data-severity="critical"] .todotick::before,
+.todorow[data-severity="serious"] .todotick::before {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--critical-ink) 70%, transparent);
+}
+.todotick svg {
+  position: relative; width: 14px; height: 14px; fill: none; stroke: currentColor;
+  stroke-width: 3; stroke-linecap: round; stroke-linejoin: round;
+  opacity: 0; transform: scale(.6); transition: opacity .18s ease, transform .18s ease;
+}
+.todotick:hover::before, .todotick:focus-visible::before {
+  box-shadow: inset 0 0 0 2px var(--ink-2);
+}
+.todorow.done .todotick { color: var(--plane); }
+.todorow.done .todotick::before { background: var(--good-ink); box-shadow: none; transform: scale(1.08); }
+.todorow.done .todotick svg { opacity: 1; transform: none; }
+.todorow.done .todotitle { text-decoration: line-through; color: var(--ink-3); }
+.todorow.done { opacity: 0; }
+.todohead {
+  appearance: none; flex: 1 1 200px; min-width: 0; min-height: 44px; margin: 0;
+  padding: var(--sp-2) 0; border: 0; background: none; cursor: pointer;
+  display: grid; gap: 2px; align-content: center; text-align: left; font: inherit; color: inherit;
+}
+.todotitle { font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink); transition: color .18s ease; }
 .todofix { font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--ink-3); }
-.todoactions { display: flex; align-items: center; gap: var(--sp-2); }
+.todomore {
+  flex: 1 1 100%; min-width: 0; display: grid; gap: var(--sp-2);
+  padding: 0 0 var(--sp-2) calc(44px + var(--sp-3));
+}
+.todomore .phase { margin: 0; }
+.todoactions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
 .todorow .findnote { flex-basis: 100%; margin-top: 0; }
+@media (max-width: 640px) { .todomore { padding-left: var(--sp-2); } }
+@media (prefers-reduced-motion: reduce) {
+  .todorow, .todotick::before, .todotick svg, .todotitle { transition: none; }
+}
 
 /* History's rows (the pane itself is styled under Sections, below). */
 .histfilters { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
@@ -7283,12 +7330,12 @@ html.in-shell .topbar {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-html.in-shell .topbar .btn.icon.statusdot { display: inline-flex; }
-/* The status shows only when there is something to do about it (signed
-   out, paused, a restart, a fault); watching is the header saying nothing
-   (the owner: "I also don't need the health indicator icon next to the
-   gear"). */
-html.in-shell .topbar .btn.icon.statusdot[data-state="watching"] { display: none; }
+/* No health dot beside ⚙ (the owner: "I also don't need the health
+   indicator icon next to the gear"), except when brAIn cannot work at all
+   because it is signed out. Paused, a restart or a fault is said in ⚙ and
+   on Today's status line, where it always was too. */
+html.in-shell .topbar .btn.icon.statusdot[data-state="signed_out"] { display: inline-flex; }
+html.in-shell .topbar .btn.icon.statusdot:not([data-state="signed_out"]) { display: none; }
 /* The clock beside ⚙ (`syncShellClock`), on every tab and at every width. */
 .shellclock { display: none; }
 html.in-shell .shellclock:not([hidden]) {
@@ -7438,6 +7485,23 @@ html.in-shell.bar-hidden .topbar > .shelledit { opacity: 0; visibility: hidden; 
   html.in-shell.searching .insighthead { display: flex; }
 }
 
+/* ------------------------------------- insight cards in Morph's look
+   Inside the shell the page already wears Morph's ground and ink; these are
+   its shapes: one hairline, a larger radius, quiet labels over each tile,
+   and no glow on hover. Sizes stay on the page's type scale. */
+html.in-shell .card { border: 1px solid var(--hairline); border-radius: 20px; }
+html.in-shell .card:hover {
+  border-color: color-mix(in srgb, var(--ink) 14%, transparent); box-shadow: none;
+}
+html.in-shell .card .summary .lead { font-weight: 600; }
+html.in-shell .hl {
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  border: 1px solid var(--hairline); border-radius: 14px; padding: 10px 12px 11px;
+}
+html.in-shell .hl .l { text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--ink-3); }
+html.in-shell .hl .v { font-weight: 500; letter-spacing: -.01em; margin-top: 4px; }
+html.in-shell .hl .d { color: var(--ink-3); }
+
 /* ---------------------------------------- what an insight card is (#539)
    One line above the pane's heading (#695) that opens on a press — a phone
    has no hover — saying how a card differs from the dashboard. A 40px
@@ -7460,6 +7524,8 @@ html.in-shell.bar-hidden .topbar > .shelledit { opacity: 0; visibility: hidden; 
 .aboutline:hover, .aboutline:focus-visible { color: var(--ink); }
 .aboutbody { margin: var(--sp-2) 0 0; max-width: 68ch; color: var(--ink-2);
   font-size: var(--fs-body); line-height: var(--lh-body); }
+.aboutbody p { margin: 0; }
+.aboutbody p + p { margin-top: var(--sp-2); }
 @media (pointer: coarse) { .aboutline { min-height: 44px; } }
 
 /* ------------------------- Memory › Knowledge's folded lines (#539)

@@ -3155,8 +3155,11 @@ section is one press away and nothing inside one is folded away.
   options; editing them here or on the Configuration tab is the same setting.
 * **Permissions** — **Let brAIn act without asking** (the same switch as the
   Configuration tab's), with the line that stays under it: protected entities
-  are refused through brAIn's own tools, not every shell command. **House rules**
-  can only make brAIn more careful. **Ask tab** holds which face the Ask tab
+  are refused through brAIn's own tools, not every shell command. **Talk it
+  through in chat** sends what would become a draft to approve (something to
+  do later, once or every time, a change to an automation, new scenes) to the
+  conversation, which does it there. **House rules** can only make brAIn more
+  careful. **Ask tab** holds which face the Ask tab
   shows and how many conversations keep a live Claude Code process.
 * **Notifications** — what deserves a notification, in your own words, and
   whether urgent problems are said aloud.
@@ -3598,15 +3601,12 @@ makes a card type from it instead and says so.
 ### Morph's view, the room rail and themes
 
 - **Morph on a tab.** Any Home Assistant **sections** tab can have Morph's
-  extras: the brAIn button › **Morph on this tab** switches on the **room
-  rail** (on a phone or tablet, pull the strip at the right edge and slide
-  room to room), **lift a room that needs you** (an unlocked lock, an open
-  door or a leak moves its room to the top, with why) and **fold quiet
-  rooms** (a room with nothing on is one line until you tap it). Each is
-  off until you turn it on; Home Assistant still lays out, edits and sizes
-  the tab, and in edit mode nothing moves. In YAML they are `morph: {rail:
-  true, order: false, fold: false}` on the view. (5.0's own Morph view
-  type was changed to this once, in 5.1, with its switches kept.)
+  **room rail**: the brAIn button › **Morph on this tab** switches it on (on
+  a phone or tablet, swipe the strip at the right edge left and slide room
+  to room). Home Assistant still lays out, edits and sizes the tab, and
+  nothing on it reorders itself or folds. In YAML it is `morph: {rail:
+  true}` on the view. (5.0's own Morph view type was changed to this once,
+  in 5.1.)
 - **Themes.** Morph's looks are Home Assistant themes, **Morph** (light and
   dark, following your own setting), **Morph Light**, **Morph Dark** and
   **Morph Medium**, in your profile's theme list with no setup.
@@ -3672,60 +3672,53 @@ as a strip of on and off, a sensor's readings as a line you can scrub, a
 meter's week as bars. Tap a day or a bar to see its hours, and the logbook's
 "who" for each change.
 
-### What leads the page
+### What the page shows
 
-Morph is brAIn's face: the page is laid out by what matters in the house
-right now, and it can always say why.
+Morph is brAIn's face, laid out the way you wrote `dashboard.yaml`.
 
-- **The verdict.** The first line says what is going on, its first clause in
-  the colour of what it means: rose for something wrong, amber for
-  something worth a look, indigo when the house is at rest.
-- **Now.** Up to three cards (two on a phone) are lifted to the top: a door
-  open longer than it usually is, a machine that finished, a light you
-  usually dim about now. A lifted card is **moved**, not copied; its room
-  keeps a faint trace where it was. Under it, one quiet line says why
-  (*open at this hour on 1 night in 20*, *you usually do this now*). Hold
-  that line for **Keep it here** and **Not this**.
-- **Rooms.** A room with something on, moving or unusual is open; a quiet
-  room folds to one line with its name, its scenes and anything open. Tap a
-  room's name to open it. A room where somebody is asleep is dimmed. The
-  door and motion marks at the right of a room's title go with
-  `room_marks: false` in `dashboard.yaml`.
-- **Night, away and still.** With the alarm armed for the night (or
-  everyone asleep) the rooms fold and the page shows only what is wrong,
-  usually nothing: *Everything is at rest.* It is not dimmed unless
-  `night_dim: true` is in `dashboard.yaml`. With everybody away it says so. A
-  family tablet left untouched settles into a page readable across the room.
-- **Then.** Slide Coming up into the past and every card shows the house as
-  it was at that moment; dots behind the line are what happened.
-
-The page rearranges only at a quiet moment: never under your finger, while
-you scroll, while a card is open, or within a few seconds of the last
-change, unless something urgent (a door opening at night) needs it.
+- **The order is yours.** Nothing on the page reorders itself. Floors, rooms
+  and cards keep the order they have in `dashboard.yaml`. Nothing is lifted
+  to the top and no room rises because someone walked in. Several people use
+  the page and learn where things are.
+- **Rooms never fold.** Every room always shows all of its cards. A room's
+  title line carries its name, an optional faint icon (`icon:` on the
+  section) and its scenes as one segmented control. No door or motion chips
+  ride beside it.
+- **The verdict.** When `story:` is on, the first line says what is going on.
+  Its first clause is in the colour of what it means: rose for something
+  wrong, amber for something worth a look, indigo when the house is at rest.
+  Each card's colour and "because" line come from the same reading. They
+  colour what is there and never move it.
+- **Asleep rooms.** A room whose sleeper is asleep is dimmed. A sleep sensor
+  that reads *In bed* / *Up* decides that over every other sign. With
+  `sleep_guard: true` on the section, anything the page would do to that
+  room (a light, the fan, a scene, a slide) is held. The room's header then
+  asks before sending it.
+- **Night and away.** The page is not dimmed at night unless
+  `night_dim: true` is in `dashboard.yaml`. With everybody away it says so.
+- **Coming up** is always shown while `coming_up:` is on. Tap any item to
+  open it in place. In the expanded view, tap a lane's name to hide or show
+  that lane, and drag along the time axis to zoom. `coming_up_lanes:` gives
+  machines a lane of their own, showing when each one ran and what is
+  running now (a washer, the irrigation zones, a printer).
+- **The room rail.** The right edge is a rail of notches, one per room, with
+  the floors set apart. Swipe left to open it, then slide the same finger
+  from room to room. In the Home Assistant app, every detent is a haptic
+  tick.
+- **Pull to refresh.** Pull the page down past the top and let go.
 
 What Morph reads to decide is brAIn's: what is normal for each sensor and
-door at this hour, your habits and the house's rhythm (published in
+door at this hour, and the house's rhythm (published in
 `/config/.brain/morph/feed.json`). Without brAIn, the page still works from
 the house's own state.
 
-**⚙ › Dashboard › This device** says whether this screen is somebody's own (it
-leads with their habits) or the family's (a wall tablet), and **Fold quiet
-rooms** turns folding off.
-
 ### brAIn's cases and To Do
 
-A problem or a question brAIn has is drawn **in the room it is about**: the
-claim, what brAIn wants from you, and a reply line. Answer in your own words
-— "yes, but call it Sump Pump Current", "it is meant to be off in winter",
-"put it on my list" — and brAIn reads the reply and ends the case the way
-the words say, or answers with a question in the card. **Fix** (where brAIn
-could make the change), **Dismiss** and **To Do** are there for when a word
-is quicker. A case about nothing on the page is drawn at the top of its
-floor.
-
-**To Do** is brAIn's list, the same one Home Assistant's To-do app shows.
-Tap a line to tick it off; slide it right to snooze it a week; hold it for
-**Delete**.
+brAIn's cases and its To Do list live in brAIn's own **Needs you**, not on the
+dashboard. There, the box at the left of a To Do item ticks it off at once.
+Tap the item to open its whole story with a line to tell brAIn what to do
+with it, and brAIn's answer is drawn under the item. The list is the same one
+Home Assistant's To-do app shows.
 
 Morph's own suggestions for the dashboard are brAIn's cases too, answered the
 same way; a yes makes the change as a Tell.
@@ -3744,7 +3737,8 @@ brAIn decides what the words are:
 
 ### Edit mode
 
-Press **Edit** in the top bar.
+Press the quiet pencil (**Edit**) at the right of the page's first line, under
+brAIn's header. **Done** and **YAML** are in the header while you edit.
 
 - **Tap a section** to rename it, recolour it, move it to another floor (or a
   new one), widen it, add a group, hide it or remove it.
@@ -3930,7 +3924,6 @@ while the Morph dashboard is on).
 | Part | What is there |
 |---|---|
 | **Changes** | The model a Tell uses, and how long a hold takes. |
-| **This device** | Whether this screen is somebody’s own or the family’s (kept in this browser), and **Fold quiet rooms**. |
 | **Appearance** | Theme (auto, dark, medium, light) and reduced motion. |
 | **Learning loop** | How often, which model, **Learn now**, the scorecard and the lessons. Whether it runs at all is the switch in ⚙ › Features. |
 | **Changes to the dashboard's own code** | Every change this house made to Morph's code, in use or paused, with **Remove my change**. A paused one is updated from its note on the Home tab. |
@@ -4004,10 +3997,9 @@ What comes with you, untouched, because it was never in the Morph app:
 - brAIn's cases, To Do and personality, which were always brAIn's.
 
 What starts again from its default, once: Morph's own settings (theme, how
-long a hold takes, the learning loop's schedule and model, folding quiet
-rooms) and the learning scorecard, which lived in the Morph app's private
-storage. Set them again in ⚙ › Dashboard. Which device is the family's is
-kept in each browser, as before.
+long a hold takes, the learning loop's schedule and model) and the learning
+scorecard, which lived in the Morph app's private storage. Set them again in
+⚙ › Dashboard.
 
 ## What brAIn is measuring
 

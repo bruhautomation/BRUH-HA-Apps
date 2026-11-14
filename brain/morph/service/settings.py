@@ -22,9 +22,6 @@ DEFAULTS = {
     "theme": "auto",
     "reduce_motion": False,
     "hold_ms": 540,
-    # Morph 1.0: quiet rooms fold to a line (vision §6.1); off keeps every
-    # room open as before.
-    "fold_rooms": True,
     # A habit whose prediction was ignored is halved, and one use restores
     # it (vision §4.3): {entity_id: weight}, kept here so every device of
     # the house agrees.
@@ -79,7 +76,7 @@ def load() -> dict:
 
 def clean(s: dict) -> dict:
     out = dict(DEFAULTS)
-    for key in ("learning", "report_code_issues", "reduce_motion", "fold_rooms"):
+    for key in ("learning", "report_code_issues", "reduce_motion"):
         out[key] = bool(s.get(key, DEFAULTS[key]))
     try:
         out["learning_hours"] = max(6, min(24 * 14, int(s.get("learning_hours") or 24)))

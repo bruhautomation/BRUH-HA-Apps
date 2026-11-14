@@ -11,7 +11,7 @@ const SHELL = new URLSearchParams(location.search).get("shell") === "1"
 const shellState = { morph: false, narrow: false, raised: false, home: {}, clock: 0 };
 // The header that gets out of the way (`shellScrolled`): whether it is
 // hidden, and the scroll position the last decision was made at.
-const shellBar = { hidden: false, y: null, cut: 0 };
+const shellBar = { hidden: false, y: null, cut: 0, calm: 0 };
 // Inside the shell the page is drawn in Morph's theme (dark, medium,
 // light). The shell says which on every state message; until the first,
 // the one Morph last rendered in — the frame shares Home Assistant's origin
@@ -3301,6 +3301,7 @@ function renderSettingsForm(data) {
   // malformed is asking, which is what the terminal and the chat will do.
   $("#setSkipPerms").checked = data.settings.dangerously_skip_permissions === true;
   $("#setYolo").checked = data.settings.yolo_mode === true;
+  $("#setTalkFirst").checked = data.settings.talk_first === true;
   renderSkipPermsNote(data);
   $("#setGatherMode").value = data.settings.gather_mode || "search";
   $("#setRefreshMode").value = data.settings.refresh_mode || "changed";
@@ -5760,6 +5761,13 @@ $("#setSkipPerms").addEventListener("change", async () => {
   // A refused save leaves the switch where it was, and so does the box.
   if (!data) box.checked = !on;
 });
+$("#setTalkFirst").addEventListener("change", async () => {
+  const box = $("#setTalkFirst");
+  const on = box.checked;
+  const data = await saveSettings({ talk_first: on },
+    on ? "Requests that would be drafts go to the chat now" : "Requests become drafts to approve again");
+  if (!data) box.checked = !on;
+});
 // No restrictions (`yolo_mode`) removes every restriction brAIn has, so
 // turning it on is confirmed once in words; turning it off is never asked
 // about.
@@ -6193,10 +6201,17 @@ function renderAboutCards() {
   btn.textContent = on ? `How insight cards differ from the ${home} dashboard`
                        : "How insight cards differ from the dashboard";
   const dash = on ? `The ${home} tab` : "The Morph dashboard (switched on in ⚙ › Features)";
-  body.textContent = `${dash} is live and in control: what is happening now, and the `
-    + "controls to change it. An insight card is a report worked out from days of history, "
-    + "one question per card, and it never controls anything. Decisions brAIn needs from "
-    + `you go to Needs you; what it learns goes to ${tabWords("memory").label}.`;
+  // Three short paragraphs, each one thing: what the dashboard is, what a
+  // card is, and where the rest goes.
+  body.textContent = "";
+  [`${dash} is the house as it is right now: every light, lock and reading, `
+    + "live, to see and to control.",
+   "An insight card is what brAIn worked out by studying the house: each one answers "
+    + "one question (how the night went, why a room ran warm) from days of history, "
+    + "with the evidence and one chart. A card changes only when brAIn looks again, "
+    + "and it never controls anything.",
+   `Decisions brAIn needs from you go to Needs you; what it learns goes to ${tabWords("memory").label}.`,
+  ].forEach((t) => body.appendChild(el("p", null, t)));
   speakAll(btn);
   speakAll(body);
 }
@@ -8439,40 +8454,171 @@ async function todoAction(item, path, method, message, btns, body) {
   }
 }
 
+// The list as a person uses it (the owner, moving To Do off Morph's Feed
+// onto this tab): the box at the left ticks a task off at once — it
+// fills, strikes through and goes — with no form in between; tapping the
+// task opens it in place with its whole story (what is wrong, what to try,
+// where it came from and when) and its options; and a line under the story
+// takes words about the task to brAIn with the task itself (the case's
+// Respond, `api/case/t:<id>/respond`, so the interpreter reads them against
+// this task), with brAIn's answer drawn under it. What is open, ticked,
+// typed and answered is kept here, because Today repaints on every poll.
+const todoUi = { open: null, ticked: {}, gone: {}, talk: {}, drafts: {} };
+const TODO_TICK_MS = 650;
+
+function todoRows() {
+  const now = Date.now();
+  return (state.todo || []).filter((i) =>
+    !((Number(i.snoozed_until) || 0) * 1000 > now)
+    && !((todoUi.gone[i.id] || 0) > now));
+}
+
 function renderTodo() {
   const list = $("#todoList");
   if (!list) return;
+  // A repaint must not take the line somebody is typing in away from them.
+  const typing = document.activeElement && document.activeElement.closest
+    && document.activeElement.closest(".todotell") ? document.activeElement : null;
+  const typingId = typing ? typing.closest(".todorow").dataset.todoId : null;
+  const caret = typing ? [typing.selectionStart, typing.selectionEnd] : null;
   list.textContent = "";
-  const rows = (state.todo || []).filter((i) =>
-    !((Number(i.snoozed_until) || 0) * 1000 > Date.now()));
+  const rows = todoRows();
+  const count = $("#todoCount");
+  if (count) {
+    count.textContent = rows.length ? String(rows.length) : "";
+    count.setAttribute("aria-label", rows.length === 1 ? "1 thing to do" : `${rows.length} things to do`);
+  }
+  if (todoUi.open != null && !rows.some((i) => String(i.id) === String(todoUi.open))) todoUi.open = null;
   if (!rows.length) {
     list.appendChild(el("p", "empty-line", "Nothing to do."));
     return;
   }
   rows.forEach((i) => list.appendChild(makeTodo(i)));
+  if (typingId != null) {
+    const box = list.querySelector(`.todorow[data-todo-id="${CSS.escape(String(typingId))}"] .todotellin`);
+    if (box) {
+      box.focus({ preventScroll: true });
+      try { box.setSelectionRange(caret[0], caret[1]); } catch (e) { /* not a text box */ }
+    }
+  }
+}
+
+function todoTime(t) {
+  return t ? timeAgo(new Date(t * 1000).toISOString()) : "";
 }
 
 function makeTodo(item) {
-  const row = el("div", "todorow");
-  row.dataset.todoId = item.id;
-  const text = el("div", "todotext");
+  const id = String(item.id);
+  const open = todoUi.open != null && String(todoUi.open) === id;
+  const ticked = !!todoUi.ticked[id];
+  const row = el("div", "todorow" + (open ? " open" : "") + (ticked ? " done" : ""));
+  row.dataset.todoId = id;
+  row.dataset.severity = item.severity || "warning";
   // One headline and one short line, worded by the server
   // (`findings_store.todo_item_parts`): the item's fix under its text said
   // the same advice twice.
-  text.appendChild(el("span", "todotitle", prettyText(item.headline || item.text)));
-  if (item.line) text.appendChild(el("span", "todofix", prettyText(item.line)));
+  const headline = prettyText(item.headline || item.text);
+
+  const tick = el("button", "todotick");
+  tick.type = "button";
+  tick.setAttribute("role", "checkbox");
+  tick.setAttribute("aria-checked", ticked ? "true" : "false");
+  tick.setAttribute("aria-label", `Tick off: ${headline}`);
+  tick.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+  tick.disabled = ticked;
+  tick.addEventListener("click", () => tickTodo(item, row, tick));
+  row.appendChild(tick);
+
+  const head = el("button", "todohead");
+  head.type = "button";
+  head.setAttribute("aria-expanded", open ? "true" : "false");
+  head.appendChild(el("span", "todotitle", headline));
+  if (item.line && !open) head.appendChild(el("span", "todofix", prettyText(item.line)));
   const meta = [item.origin === "finding" ? (sourceName(item) || "From a finding") : "Added by you"];
-  if (item.added_at) meta.push("added " + timeAgo(new Date(item.added_at * 1000).toISOString()));
+  if (item.added_at) meta.push("added " + todoTime(item.added_at));
   // The house reported this chore's problem again while it waited, and the
   // report was held here rather than filed as a second card.
-  if (item.seen_again_at) meta.push("seen again " + timeAgo(new Date(item.seen_again_at * 1000).toISOString()));
-  const metaLine = el("span", "item-state", meta.join(" · "));
-  if (item.seen_again_text) metaLine.title = "Last reported as: " + prettyText(item.seen_again_text);
-  text.appendChild(metaLine);
-  row.appendChild(text);
+  if (item.seen_again_at) meta.push("seen again " + todoTime(item.seen_again_at));
+  head.appendChild(el("span", "item-state", meta.join(" · ")));
+  head.addEventListener("click", () => {
+    todoUi.open = open ? null : id;
+    renderTodo();
+    if (!open) {
+      const again = $(`#todoList .todorow[data-todo-id="${CSS.escape(id)}"] .todohead`);
+      if (again) again.focus({ preventScroll: true });
+    }
+  });
+  row.appendChild(head);
+  if (open) row.appendChild(todoStory(item, row));
+  return row;
+}
+
+// The whole story of one task, its line to brAIn and its options.
+function todoStory(item, row) {
+  const id = String(item.id);
+  const more = el("div", "todomore");
+  const seen = new Set([String(item.headline || item.text || "").trim()]);
+  const say = (label, text) => {
+    const t = String(text || "").trim();
+    if (!t || seen.has(t)) return;
+    seen.add(t);
+    const p = el("p", "qdline");
+    if (label) p.appendChild(el("span", "qdlabel", label));
+    p.appendChild(el("span", null, prettyText(t)));
+    more.appendChild(p);
+  };
+  say("", item.claim);
+  say("", item.detail);
+  say("Try", item.fix || item.line);
+  if (item.seen_again_text) say("Last reported as", item.seen_again_text);
+
+  const talk = todoUi.talk[id];
+  if (talk) {
+    const box = el("div", "qthread todotalk");
+    const you = el("p", "qturn you");
+    you.appendChild(el("span", "qturnwho", "You"));
+    you.appendChild(el("span", null, talk.q));
+    box.appendChild(you);
+    if (talk.busy) {
+      box.appendChild(phaseLine("brAIn is working on it…"));
+    } else {
+      const ans = el("p", "qturn brain");
+      ans.appendChild(el("span", "qturnwho", "brAIn"));
+      ans.appendChild(el("span", null, prettyText(talk.answer || "")));
+      box.appendChild(ans);
+    }
+    more.appendChild(box);
+  }
+
+  const form = el("form", "todotell qrespond");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "todotellin qrespondin";
+  input.maxLength = 500;
+  input.placeholder = "Tell brAIn what to do with this…";
+  input.setAttribute("aria-label", "Tell brAIn what to do with this");
+  input.setAttribute("enterkeyhint", "send");
+  input.value = todoUi.drafts[id] || "";
+  const busy = !!(talk && talk.busy);
+  input.disabled = busy;
+  const send = el("button", "btn-secondary qrespondgo", "Send");
+  send.type = "submit";
+  send.disabled = busy || !input.value.trim();
+  input.addEventListener("input", () => {
+    todoUi.drafts[id] = input.value;
+    send.disabled = !input.value.trim();
+  });
+  form.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const text = input.value.trim();
+    if (text && !(todoUi.talk[id] || {}).busy) tellTodo(item, text);
+  });
+  form.append(input, send);
+  more.appendChild(form);
+
   const actions = el("div", "todoactions");
   const btns = [];
-  const done = qButton("Done", false);
+  const done = qButton("Done, with a note", false);
   btns.push(done);
   actions.appendChild(done);
   done.addEventListener("click", () => openNoteForm(row, actions,
@@ -8486,7 +8632,6 @@ function makeTodo(item) {
   // line, no settled answer. A moved finding's report is released, so it
   // comes back only if brAIn sees it again — Dismiss's rule, on a chore.
   const del = qButton("Delete", false);
-  del.title = "Off the list. Nothing goes into memory; if brAIn sees the problem again it comes back.";
   btns.push(del);
   actions.appendChild(del);
   del.addEventListener("click", () => todoAction(item, `api/todo/${item.id}`, "DELETE",
@@ -8501,8 +8646,88 @@ function makeTodo(item) {
   ]);
   btns.push(menu);
   actions.appendChild(menu);
-  row.appendChild(actions);
-  return row;
+  more.appendChild(actions);
+  return more;
+}
+
+// Ticked: the box fills and the words strike through at once, and the row
+// goes once that has been seen; the list's own Done says it to the server
+// (and through it to Home Assistant's To-do list). A refusal puts it back.
+async function tickTodo(item, row, tick) {
+  const id = String(item.id);
+  if (todoUi.ticked[id]) return;
+  todoUi.ticked[id] = true;
+  row.classList.add("done");
+  tick.setAttribute("aria-checked", "true");
+  tick.disabled = true;
+  const shown = new Promise((r) => setTimeout(r, TODO_TICK_MS));
+  let data = null;
+  let err = null;
+  try {
+    data = await api(`api/todo/${item.id}/done`, { method: "POST" });
+  } catch (e) {
+    err = e;
+  }
+  await shown;
+  delete todoUi.ticked[id];
+  if (err) {
+    renderTodo();
+    toast(err.message || "that didn't work");
+    return;
+  }
+  todoUi.gone[id] = Date.now() + 5 * 60 * 1000;
+  if (String(todoUi.open) === id) todoUi.open = null;
+  takeTodo(data);
+  renderTodo();
+  toast("Ticked off", data && data.undo);
+  refreshToday().then(renderFindings).catch(() => {});
+}
+
+// Words about one task, read against the task (the case's Respond): an
+// ending ("done", "not now", "it's not a problem") ends it, a question is
+// answered by a run that can read the house, and either way the answer is
+// drawn under the task while it is still on the list.
+async function tellTodo(item, text) {
+  const id = String(item.id);
+  const caseId = `t:${item.id}`;
+  todoUi.talk[id] = { q: text, busy: true };
+  delete todoUi.drafts[id];
+  renderTodo();
+  const finish = (answer) => {
+    todoUi.talk[id] = { q: text, answer };
+    renderTodo();
+  };
+  try {
+    await api(`api/case/${encodeURIComponent(caseId)}/respond`, {
+      method: "POST", body: JSON.stringify({ text }) });
+  } catch (e) {
+    todoUi.drafts[id] = text;
+    delete todoUi.talk[id];
+    renderTodo();
+    toast(e.message || "brAIn could not take that just now");
+    return;
+  }
+  const started = Date.now();
+  let result = null;
+  while (Date.now() - started < RESPOND_WAIT_MS) {
+    await new Promise((r) => setTimeout(r, RESPOND_POLL_MS));
+    try {
+      result = await api(`api/case/${encodeURIComponent(caseId)}/respond`);
+    } catch (e) {
+      result = null;
+    }
+    if (result && result.state !== "running") break;
+  }
+  if (!result || result.state === "running") {
+    finish("brAIn is still working on that; the answer will be on Today.");
+    return;
+  }
+  finish(result.say || "Done.");
+  await refreshToday().catch(() => {});
+  renderFindings();
+  // An ending took the task off the list, so its answer is said where it
+  // can still be read.
+  if (result.ended) toast(result.say || "Done", result.undo || undefined);
 }
 
 // ---- History ---------------------------------------------------------------
@@ -13088,6 +13313,11 @@ function setBarHidden(hidden) {
     document.documentElement.style.setProperty("--bar-cut", shellBar.cut + "px");
   }
   shellBar.hidden = hidden;
+  // The slide moves the pane under the finger (on Home, Morph grows or
+  // shrinks by the tab row), and the scroll that causes is not a direction:
+  // until the slide (0.22 s) is over, a position only becomes the new
+  // starting point (`shellScrolled`), or the row fed itself in and out.
+  shellBar.calm = performance.now() + 450;
   document.documentElement.classList.toggle("bar-hidden", hidden);
   shellBars();
 }
@@ -13108,6 +13338,7 @@ function shellScrolled(y, max) {
   const bar = document.querySelector(".topbar");
   const full = bar ? bar.getBoundingClientRect().height : 0;
   if (shellBar.y === null) { shellBar.y = y; return; }
+  if (y > full && performance.now() < shellBar.calm) { shellBar.y = y; return; }
   const dy = y - shellBar.y;
   const busy = document.documentElement.classList.contains("searching")
     || (bar && bar.contains(document.activeElement) && document.activeElement.tagName === "INPUT");
@@ -14547,6 +14778,15 @@ function measureKbOverlap() {
   if (px) document.body.style.setProperty("--kb-overlap", px + "px");
   else document.body.style.removeProperty("--kb-overlap");
   document.body.classList.toggle("kb-lift", px > 0);
+  // The chat view has just given up the keyboard's height: the message
+  // box being typed in is brought into what is left, or it could sit under
+  // the keys until the next scroll.
+  const box = document.activeElement;
+  if (px && box && box.id === "chatInput") {
+    requestAnimationFrame(() => {
+      try { box.scrollIntoView({ block: "nearest" }); } catch (e) { /* gone */ }
+    });
+  }
 }
 
 function installKbLift() {
@@ -19350,15 +19590,6 @@ const DASH_PICKS = {
 };
 const DASH_WHO = { person: "You", brain: "brAIn", learning: "Learning", outside: "Outside", morph: "Morph" };
 
-function dashDevice() {
-  try { return localStorage.getItem("morph.device") === "family" ? "family" : "personal"; }
-  catch (e) { return "personal"; }
-}
-
-function dashPerson() {
-  try { return localStorage.getItem("morph.person") || ""; } catch (e) { return ""; }
-}
-
 function dashPick(key, label, value) {
   const opts = DASH_PICKS[key].map(([v, name]) =>
     `<option value="${esc(String(v))}"${String(v) === String(value) ? " selected" : ""}>${esc(name)}</option>`).join("");
@@ -19422,18 +19653,6 @@ function renderDashboard() {
     + dashPick("tell_model", "Model for changes", s.tell_model)
     + dashPick("hold_ms", "How long a hold takes", s.hold_ms)
     + `<p class="hint tight">In Edit, hold anything and tell brAIn what to change. Every change is one entry in History below, with an Undo.</p>`);
-  parts.push(`<h4 class="sethead">This device</h4>`
-    + `<label for="dash_device">Whose device this is</label>`
-    + `<select id="dash_device" class="sel selin" data-dash-device="1">`
-    + `<option value="personal"${dashDevice() === "personal" ? " selected" : ""}>Personal — leads with its person's habits</option>`
-    + `<option value="family"${dashDevice() === "family" ? " selected" : ""}>Family — a wall tablet everybody reads</option></select>`
-    + `<p class="hint tight">Kept in this browser. A family device settles into a page you can read from across the room after a minute and a half untouched.</p>`
-    + (dashDevice() === "personal" && (st.people || []).length
-      ? `<label for="dash_person">Whose</label><select id="dash_person" class="sel selin" data-dash-person="1">`
-        + `<option value=""${dashPerson() ? "" : " selected"}>Whoever is signed in</option>`
-        + st.people.map((x) => `<option value="${esc(x.entity_id)}"${dashPerson() === x.entity_id ? " selected" : ""}>${esc(x.name)}</option>`).join("")
-        + `</select>` : "")
-    + dashSwitch("fold_rooms", "Fold quiet rooms", "A room with nothing on, moving or unusual folds to its name, its scenes and its doors.", s.fold_rooms));
   parts.push(`<h4 class="sethead">Appearance</h4>` + dashPick("theme", "Theme", s.theme)
     + dashSwitch("reduce_motion", "Reduce motion", "Things move straight to where they belong instead of springing there.", s.reduce_motion));
   parts.push(`<h4 class="sethead">Header tabs</h4>` + dashTabsHtml(s.header_tabs || {})
@@ -19489,17 +19708,6 @@ async function loadDashboard() {
 
 $("#dashBody").addEventListener("change", async (ev) => {
   const t = ev.target;
-  if (t.dataset.dashDevice) {
-    try { localStorage.setItem("morph.device", t.value === "family" ? "family" : "personal"); } catch (e) { /* storage refused */ }
-    toast("Saved for this browser.");
-    renderDashboard();
-    return;
-  }
-  if (t.dataset.dashPerson) {
-    try { if (t.value) localStorage.setItem("morph.person", t.value); else localStorage.removeItem("morph.person"); } catch (e) { /* storage refused */ }
-    toast("Saved for this browser.");
-    return;
-  }
   if (t.dataset.dashTab) {
     const tabs = dashTabsValue();
     const r = await dashRequest("settings", { patch: { header_tabs: tabs } });

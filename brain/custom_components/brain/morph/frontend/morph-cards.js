@@ -149,7 +149,6 @@ ha-card{overflow:hidden;height:100%}
 :host([opened]) ha-card>div,:host([opened]) .morph.mc,:host([opened]) .mc .mtile,:host([opened]) .mc .tc{height:auto}
 :host([opened]) .mc.open .more{overflow:visible}
 .mc[data-h="s"] .box>.row.small:last-child{display:none}
-.mc[data-h="s"] .box>.row.small:has(+.cl-acts){display:none}
 :host([grid]) .mc .chart svg{max-height:none}
 .mc[data-h="s"] .box>svg:last-child,.mc[data-h="s"] .box>.cols:last-child{min-height:8px}
 .mc[data-h="xs"] .box{flex-direction:row;align-items:center;gap:10px;padding:0 14px}
@@ -394,11 +393,9 @@ export class MorphCard extends HTMLElement {
   // Sections view: the kind's size (SIZES), which the person changes with
   // HA's own handles; the face fills whatever it is given.
   getGridOptions() {
-    const o = sizeOf(this.kind, TYPES[this.kind] || TYPES.entity);
-    // A thermostat with routine buttons needs room for a 40px row of them: three rows, not two.
-    const acts = this._card && this._card.options && this._card.options.actions;
-    if (this.kind === 'climate' && Array.isArray(acts) && acts.length) { o.rows = Math.max(3, o.rows); o.min_rows = Math.max(3, o.min_rows); }
-    return o;
+    // A thermostat's routine buttons ride on its control row, so they need
+    // no row of their own.
+    return sizeOf(this.kind, TYPES[this.kind] || TYPES.entity);
   }
 
   static getConfigForm() { return configForm(this.kind); }
@@ -519,13 +516,41 @@ export class MorphCard extends HTMLElement {
     return null;
   }
 
+  // The section-grid cell this card sits in, fixed height or not (rows:
+  // auto cells have no `fit-rows`): the first ancestor whose parent is a grid.
+  _slot() {
+    let n = this.parentElement || null;
+    for (let i = 0; i < 6 && n; i++) {
+      const p = n.parentElement;
+      if (p && getComputedStyle(p).display === 'grid') return n;
+      n = p || (n.getRootNode && n.getRootNode().host) || null;
+    }
+    return null;
+  }
+
+  // An opened card takes the whole section; the row it left is packed densely
+  // so the card beside it fills the gap instead of leaving a hole.
+  _wide(on) {
+    if (on) {
+      const c = this._slot();
+      if (!c) return;
+      this._wideCell = c;
+      c.style.setProperty('grid-column', '1 / -1');
+      c.parentElement.style.setProperty('grid-auto-flow', 'row dense');
+    } else if (this._wideCell) {
+      const c = this._wideCell; this._wideCell = null;
+      c.style.removeProperty('grid-column');
+      if (c.parentElement) c.parentElement.style.removeProperty('grid-auto-flow');
+    }
+  }
+
   // Open at a fixed height: the cell grows to the opened card for as long
   // as it is open (rows of 64px, HA's own), and every card after it makes
   // room the way a sections view always does. Without a cell to grow (an
   // older or newer HA), the opened part scrolls inside the card.
   _grow() {
     const cell = this._cell();
-    if (!cell) return;
+    if (!cell) { this.setAttribute('opened', ''); this._wide(true); return; }
     const fit = () => {
       if (!this._open) return;
       // The card's own height while open (`:host([opened])` lets it be its
@@ -534,6 +559,9 @@ export class MorphCard extends HTMLElement {
       cell.style.setProperty('height', 'auto');
       cell.style.setProperty('min-height', `${want * 64 - 8}px`);
       cell.style.setProperty('grid-row', `span ${want}`);
+      // An opened card needs two columns' room (house change): a half-width
+      // tile takes the whole section while open, so its detail is not squeezed.
+      this._wide(true);
     };
     this._grown = { cell, fit };
     this.setAttribute('opened', '');
@@ -547,9 +575,10 @@ export class MorphCard extends HTMLElement {
   _shrink() {
     const g = this._grown;
     this.removeAttribute('opened');
+    this._wide(false);
     if (!g) return;
     if (g.ro) g.ro.disconnect();
-    ['height', 'min-height', 'grid-row'].forEach((p) => g.cell.style.removeProperty(p));
+    ['height', 'min-height', 'grid-row', 'grid-column'].forEach((p) => g.cell.style.removeProperty(p));
     this._grown = null;
   }
 
@@ -698,13 +727,27 @@ export class MorphCard extends HTMLElement {
         const st = this._hass.states[this._card.entity]; if (!st) return;
         const unit = String((this._hass.config && this._hass.config.unit_system && this._hass.config.unit_system.temperature) || '');
         const step = st.attributes.target_temp_step || (unit.includes('F') ? 1 : 0.5);
-        const cur = st.attributes.temperature != null ? st.attributes.temperature : st.attributes.target_temp_low;
-        this._call({ domain: 'climate', service: 'set_temperature', data: { entity_id: this._card.entity, temperature: Math.round((cur + step * Number(v)) * 10) / 10 } });
+        // A range (heat/cool) thermostat takes both setpoints together, kept
+        // two steps apart, as on Morph's own page.
+        const a = st.attributes; const k = el.dataset.k || (a.temperature != null ? 't' : 'lo');
+        const r1 = (x) => Math.round(x * 10) / 10;
+        const lim = (x) => Math.min(a.max_temp != null ? a.max_temp : 99, Math.max(a.min_temp != null ? a.min_temp : 0, x));
+        let data;
+        if (k === 't' || a.target_temp_low == null || a.target_temp_high == null) {
+          const cur = a.temperature != null ? a.temperature : a.target_temp_low;
+          data = { entity_id: this._card.entity, temperature: r1(lim(cur + step * Number(v))) };
+        } else {
+          let lo = a.target_temp_low, hi = a.target_temp_high; const gap = step * 2;
+          if (k === 'lo') { lo = lim(lo + step * Number(v)); if (hi - lo < gap) hi = lim(lo + gap); } else { hi = lim(hi + step * Number(v)); if (hi - lo < gap) lo = lim(hi - gap); }
+          data = { entity_id: this._card.entity, target_temp_low: r1(lo), target_temp_high: r1(hi) };
+        }
+        this._call({ domain: 'climate', service: 'set_temperature', data });
         return;
       }
       case 'member': this._member = v; this._H = { depth: 0 }; this.toggleOpen(true); return;
       case 'more-info': this._fire('hass-more-info', { entityId: v }); return;
       case 'h-open': this._H = { depth: 1, day: null }; this._render(); return;
+      case 'h-range': this._H = { ...this._H, depth: 1, day: null, hour: null, range: v === 'week' ? 'week' : 'day' }; this._render(); return;
       case 'h-day': this._H = { depth: 1, day: Number(v) }; this._render(); return;
       case 'h-hour': this._H = { ...this._H, depth: 2, hour: Number(v) }; this._render(); return;
       case 'h-back': { const d = Number(v); this._H = d === 0 ? { depth: 0 } : { ...this._H, depth: d }; this._render(); return; }
