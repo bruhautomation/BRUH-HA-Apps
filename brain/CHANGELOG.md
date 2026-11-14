@@ -2,6 +2,22 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.2.8
+
+### Changed
+
+- Morph's light group tiles all read the same way: "20 of 31 on · avg 50%", "All 5 on · avg 1%", "5 off · 1 unavailable". The status is one line that fits the tile; on a phone an unavailable count that does not fit moves into the opened card, which names the unavailable lights. "mixed" and a bare percentage are gone, and only lights that answer are counted (#887, #967).
+- Morph's own status lines are composed to fit their tile, and a device that is unavailable says when it was last seen on a second line instead of being cut off. An unreachable switch or fan draws no toggle (#969).
+- In an opened card, a list's summary no longer repeats a row that is listed under it, a zone, pump or valve that is running shows as activity rather than something that needs you, a valve reads Open or Closed, a row's time says "since 9:34 AM", and an empty list is hidden outside Edit (#889, #966).
+- brAIn writes the cards it builds for you so that each part states its state once, an empty part is left out, two controls for one thing agree about when it last ran, a group summary leads with what is on ("2 on: Crawl fan, Dryer blower" or "All equipment off"), and buttons are 40px tall with a grid that does not fit using fewer columns rather than smaller buttons (#889, #965, #969).
+
+### Fixed
+
+- On a laptop, a dashboard section left alone in its row (House Overview, for example) spans the whole width instead of stopping short of the edge (#886).
+- The small grey labels in opened cards (Details, History, hour ticks) are readable: at least 4.5:1 contrast in the light, medium and dark themes (#888).
+- Room titles, the "Cans, above" link, the coming-up title and the room jump words are at least 40px to tap on a phone (#965).
+- The development loop's pictures of an opened card start at its top: on a phone the card was photographed under Morph's room line, and on a laptop before it finished moving (#885).
+
 ## 5.2.7
 
 ### Fixed
