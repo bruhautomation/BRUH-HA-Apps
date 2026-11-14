@@ -54,16 +54,13 @@ OUTCOMES = (
     "heal_failed",   # it made it and the call came back a failure
     "heal_skipped",  # it was refused before any call was made
     "rate_limited",  # the account's usage limit (or the API's rate limit) said wait
-    "blocked",       # the request was stopped on its way (a Cloudflare challenge), not refused
     "stopped",       # ended on purpose: the add-on stopping, or a person pressing Stop
     "error",         # anything else
 )
 
-# Which of those is a PROBLEM. Eight of the sixteen non-`ok` outcomes are
-# not: `blocked` is a request the edge in front of Claude stopped, retried
-# and no fault of the run (#911); `stopped` is a run ended on purpose (the
-# add-on stopping, a person pressing Stop on their own chat), which is not
-# the CLI failing anybody,
+# Which of those is a PROBLEM. Seven of the sixteen non-`ok` outcomes are
+# not: `stopped` is a run ended on purpose (the add-on stopping, a person
+# pressing Stop on their own chat), which is not the CLI failing anybody,
 # `applied` and `healed` are successes, `heal_skipped` and `denied` are
 # refusals doing their job, `fallback` is a quieter path that still
 # produced a card, and `rate_limited` is the account saying "not now" —
@@ -117,11 +114,6 @@ def outcome_of(row: dict) -> str:
     outcome = str(row.get("outcome") or "error")
     if outcome == "error" and _RATE_LIMITED_RE.search(str(row.get("error") or "")):
         return "rate_limited"
-    # A block journaled as `auth` (or `error`) before `classify` knew one:
-    # three Resident runs a house filed were a Cloudflare page read as a
-    # refused sign-in (#911), and health and the canary count rows by this.
-    if outcome in ("auth", "error") and edge_blocked(str(row.get("error") or "")):
-        return "blocked"
     return outcome
 
 
@@ -208,48 +200,6 @@ def scrub(text: str) -> str:
                              _SECRET_RE.sub("[redacted]", str(text or "")))
 
 
-# A request stopped before it reached Claude's API: the edge in front of
-# it answered a 403 (or 429/503) with a challenge or block page ("API
-# Error: 403 Attention Required! | Cloudflare", "Just a moment...", a page
-# carrying a Cloudflare Ray ID). The CLI words it "Failed to authenticate",
-# but no credential was judged, so signing in again cannot help; it clears
-# on its own and is retried (`engine.transient`). It takes BOTH an edge
-# status and an edge marker — an "<html" in a model's output is neither —
-# and the text must say nothing about a credential: any such word and it
-# is `auth`, exactly as before this existed (#911).
-# `usage-limits-tracker.edge_blocked` is this function, copied with both
-# patterns in this order, because that script does not import the panel.
-EDGE_STATUSES = (403, 429, 503)
-EDGE_BLOCK_RE = re.compile(
-    r"cloudflare|attention required!|just a moment\.\.\.|\bcf-ray\b|cf[_-]chl|"
-    r"challenge-platform|\bray id\b", re.IGNORECASE)
-_EDGE_STATUS_RE = re.compile(
-    r"(?:api error|http(?: error)?|status(?:_code)?\"?)\s*[:=]?\s*(\d{3})\b", re.IGNORECASE)
-# Any word about a credential at all (token, key, auth…, login, scope,
-# expired, revoked, sign in). The rule fails safe: a text that carries one
-# beside an edge marker is a refused credential, as it always was, because
-# "403 Cloudflare Access: token revoked" is a real refusal behind the same
-# edge. A 401 is never an edge status, so it is `auth` before this is read.
-_CREDENTIAL_REFUSED_RE = re.compile(
-    r"token|api[ _-]?key|credential|auth|log ?in|logged|scope|"
-    r"permission_error|expired|revoked|signed out|sign ?in", re.IGNORECASE)
-# The CLI's own wrapper on every API error it could not get past, a block
-# included: its words are not the API's, so they never count as a refusal.
-_CLI_WRAPPER_RE = re.compile(r"^\s*Failed to authenticate\.?\s*", re.IGNORECASE)
-
-
-def edge_blocked(error: str, status: int | None = None) -> bool:
-    """Whether a run's error (or a response body with its ``status``) is an
-    edge block rather than a refused credential (`EDGE_BLOCK_RE`)."""
-    text = str(error or "")
-    if status is None:
-        m = _EDGE_STATUS_RE.search(text)
-        status = int(m.group(1)) if m else None
-    if status not in EDGE_STATUSES or not EDGE_BLOCK_RE.search(text):
-        return False
-    return not _CREDENTIAL_REFUSED_RE.search(_CLI_WRAPPER_RE.sub("", text))
-
-
 def classify(result: dict, timeout_message: str = "") -> str:
     """The outcome word for an engine result envelope."""
     if result.get("ok"):
@@ -274,10 +224,6 @@ def classify(result: dict, timeout_message: str = "") -> str:
     # is the CLI's own wordings, the subscription's and the API's.
     if _RATE_LIMITED_RE.search(err):
         return "rate_limited"
-    # Before the auth words too: the CLI says "Failed to authenticate" over
-    # a Cloudflare page that never let the request reach the API (#911).
-    if edge_blocked(err):
-        return "blocked"
     if ("authenticat" in low or "oauth" in low or "401" in low
             or "not logged in" in low or "invalid api key" in low):
         return "auth"

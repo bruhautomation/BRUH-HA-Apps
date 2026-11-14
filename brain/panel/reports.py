@@ -414,14 +414,6 @@ WAITING_LOOK_AFTER_S = 2 * 3600
 
 RATE_LIMITED_SHARE = 0.10
 RATE_LIMITED_MIN = 5
-# Requests the edge in front of Claude's API blocked (`journal` outcome
-# `blocked`): a row from this many in the day, said as a block that clears
-# on its own and never as a sign-in to redo (#911).
-BLOCKED_MIN = 3
-# Where that row is filed: the development loop's faults stream leaves it
-# out (`devloop.streams.SKIP_WHERE`), because a block on the network is no
-# fault of a release; the scorecard still counts `blocked` runs.
-BLOCKED_WHERE = "Claude's service"
 
 
 # What a journal row says its run was about, best first. A caller that
@@ -504,24 +496,6 @@ def _estimated_budget_note(resident, usage) -> str:
             "the account's real usage figures are not being reported.")
 
 
-def _blocked_row(runs: dict) -> tuple[str, str, str] | None:
-    """The fault row for a day the edge in front of Claude's API blocked
-    `BLOCKED_MIN` or more of brAIn's requests, or None."""
-    if not isinstance(runs, dict):
-        return None
-    blocked = int((runs.get("by_outcome") or {}).get("blocked") or 0)
-    if blocked < BLOCKED_MIN:
-        return None
-    hours = runs.get("hours") or 24
-    span = "day" if float(hours) == 24 else f"{hours:g} hours"
-    return (BLOCKED_WHERE, f"blocked {blocked} requests in the last {span}",
-            "The requests were stopped on their way to Claude by a network "
-            "block (a Cloudflare challenge page in front of Claude's "
-            "service), not refused for the sign-in, so the sign-in is fine "
-            "and signing in again will not help. brAIn tries a blocked run "
-            "again by itself, and the next scheduled runs go ahead as usual.")
-
-
 def _rate_limited_row(runs: dict, usage: dict) -> tuple[str, str, str] | None:
     """The fault row for a day the account's usage limit refused a large
     share of brAIn's runs, or None. Pure over the journal summary and the
@@ -598,9 +572,6 @@ RUN_MEANINGS = {
                 "⚙ › Model & usage helps a long job finish in time"),
     "auth": ("it could not sign in to Claude",
              "press Sign in again in ⚙ › Account"),
-    "blocked": ("the request was blocked on its way to Claude by a network "
-                "block, not refused for the sign-in",
-                "nothing to do: brAIn tries it again by itself"),
     "crash": ("the Claude program stopped unexpectedly before it finished",
               "nothing to do unless it keeps happening, then use Report a " +
               "problem below"),
@@ -777,11 +748,6 @@ def _faults(diag) -> list[dict]:
         _row(out, *rate_row,
              sentence=_sentence(rate_row[1].replace("refused", "The account "
                                                     "refused", 1), rate_row[2]))
-    blocked_row = _blocked_row(runs)
-    if blocked_row:
-        _row(out, *blocked_row,
-             sentence=_sentence("Claude's service " + blocked_row[1],
-                                blocked_row[2]))
 
     # The integration a version behind the add-on. run.sh deploys new
     # integration files at every start and Home Assistant runs the old ones
@@ -1552,9 +1518,6 @@ def describe_run(row: dict) -> tuple[str, str, str]:
         "crash": f"The claude process behind a {source} run exited without an answer.",
         "unparseable": f"A {source} run answered, and the answer was not the shape asked for.",
         "auth": f"The credential was refused on a {source} run.",
-        "blocked": f"A {source} run's request was blocked on its way to Claude "
-                   "(an edge page such as a Cloudflare challenge); no "
-                   "credential was judged.",
         "no_cli": "The claude binary could not be found.",
         "max_turns": f"A {source} run stopped at its turn cap before finishing.",
         "heal_failed": "An overnight remediation made its call and the call failed.",
@@ -1568,10 +1531,6 @@ def describe_run(row: dict) -> tuple[str, str, str]:
                  "mentions the credential, sign in again under ⚙.",
         "unparseable": "Usually a model that wrote prose around its JSON. Regenerate "
                        "the card; if it repeats, pick a larger model under ⚙ → Model.",
-        "blocked": "Nothing to do: the run is tried again by itself. If it "
-                   "keeps happening, something on the way to Claude's service "
-                   "(the house's network, or the service's own edge) is "
-                   "blocking it; the sign-in is not the cause.",
         "auth": "Sign in again under ⚙ → Claude account. If the terminal still "
                 "works, the panel is reading a different store — `ha login --status` "
                 "names all three.",
