@@ -38,6 +38,7 @@ from aiohttp.abc import AbstractAccessLogger
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import browsers as browser_choice  # noqa: E402
+import profiles as shopping  # noqa: E402
 import runner  # noqa: E402
 import setup_state  # noqa: E402
 import tasks as errands  # noqa: E402
@@ -57,9 +58,10 @@ TICK_S = 3
 INGRESS_PEERS = frozenset(
     p.strip() for p in os.environ.get(
         "BROWSER_INGRESS_PEERS", "172.30.32.2,127.0.0.1,::1").split(",") if p.strip())
-TOKEN_ROUTES = ("/api/tasks", "/api/browsers")
+TOKEN_ROUTES = ("/api/tasks", "/api/browsers", "/api/profiles")
 # What only a person on the panel's page may press, token or no token.
-PANEL_ONLY = ("/continue", "/buy", "/decline", "/api/browsers/own")
+PANEL_ONLY = ("/continue", "/buy", "/decline", "/api/browsers/own",
+              "/api/profiles/remove", "/api/profiles/clear")
 
 # Debian bookworm's aiohttp (3.8) has no web.AppKey; a newer one warns
 # about a plain string key. BRUH Bambu Studio's answer, copied.
@@ -197,6 +199,7 @@ async def h_state(request):
     picks = errs.browsers.view() if errs.browsers is not None else None
     return web.json_response({
         "browsers": picks,
+        "profiles": errs.profiles.view() if errs.profiles is not None else [],
         "version": os.environ.get("ADDON_VERSION", "dev"),
         "chrome": chrome.state(),
         "setup": steps,
@@ -233,7 +236,8 @@ async def h_task_create(request):
             picks.set_default(target)
     task, why = _errands(request).create(
         str(body.get("prompt") or ""), purchase=purchase, source=source,
-        approval=body.get("approval"), browser=target)
+        approval=body.get("approval"), browser=target,
+        history=body.get("history") is True, profile=str(body.get("profile") or "")[:12])
     if not task:
         return _err(why, 409)
     return web.json_response({"task": task}, status=201)
@@ -335,6 +339,30 @@ async def h_browsers_own(request):
     return _err(why, 409) if why else web.json_response(view)
 
 
+async def h_profiles(request):
+    store = _errands(request).profiles
+    return web.json_response({"profiles": store.view() if store is not None else []})
+
+
+async def h_profile_remove(request):
+    store = _errands(request).profiles
+    body = await _body(request)
+    if store is None:
+        return _err("Shopping profiles are not available.", 503)
+    row, why = store.remove(str(body.get("profile") or ""), str(body.get("kind") or ""),
+                            str(body.get("key") or ""))
+    return _err(why, 409) if why else web.json_response({"profile": row})
+
+
+async def h_profile_clear(request):
+    store = _errands(request).profiles
+    body = await _body(request)
+    if store is None:
+        return _err("Shopping profiles are not available.", 503)
+    done, why = store.clear(str(body.get("profile") or ""))
+    return web.json_response({"ok": True}) if done else _err(why, 409)
+
+
 async def h_setup_open(request):
     body = await _body(request)
     why = _chrome(request).open_page(str(body.get("page") or ""))
@@ -411,7 +439,9 @@ def make_errands(chrome: Chrome, store: Path | None = None, run=None) -> errands
     picks = browser_choice.Browsers(
         DATA / "browsers.json", os.environ.get("BROWSER_CLAUDE_BIN", "claude"), claude_env)
     return errands.Errands(store or DATA / "tasks.json", run or default_run,
-                           options, before_run=before_run, browsers=picks)
+                           options, before_run=before_run, browsers=picks,
+                           profiles=shopping.Profiles(
+                               (store.parent if store else DATA) / "profiles.json"))
 
 
 def build_app(chrome: Chrome | None = None, errs: errands.Errands | None = None, *,
@@ -445,6 +475,9 @@ def build_app(chrome: Chrome | None = None, errs: errands.Errands | None = None,
     r.add_get("/api/browsers", h_browsers)
     r.add_post("/api/browsers/default", h_browsers_default)
     r.add_post("/api/browsers/own", h_browsers_own)
+    r.add_get("/api/profiles", h_profiles)
+    r.add_post("/api/profiles/remove", h_profile_remove)
+    r.add_post("/api/profiles/clear", h_profile_clear)
     if ticker:
         app.cleanup_ctx.append(_ticker)
     return app

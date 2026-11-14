@@ -4812,13 +4812,95 @@ def _browser_next(task):
                 "if they say to buy it, call browser_purchase with this task's id, the "
                 "total and the items exactly as listed here. They can also press Buy "
                 "this on BRUH Browser's page.")
+    if state == "done" and isinstance(task.get("profile_saved"), dict):
+        return ("It read the household's order history and saved their shopping profile "
+                "for that store on BRUH Browser (the person can see, edit or clear it on "
+                "its page). Tell them what it learned, from the report; it is never "
+                "an approval to buy.")
     if state == "failed" and task.get("setup_step"):
         return (f"Tell the person the problem: it is setup step {task['setup_step']} on "
                 "the BRUH Browser page in the sidebar.")
     return "Tell the person what it reported."
 
 
-def _browser_view(task):
+# A report is handed over whole up to this many characters; a longer one is
+# marked truncated and read on with `offset` (the end of the last piece). The
+# cut is always at a space or a line end, never inside a word.
+BROWSER_REPORT_CHARS = 24000
+
+
+def _browser_report(text, offset=0):
+    """(the report as brAIn reads it, how it was cut or None). Wrapped untrusted
+    like every web-sourced text, but not clipped to MAX_UNTRUSTED_CHARS. A cut
+    is at the last space or line end in the window; a window with none at all
+    (one unbroken run of text) is cut at the limit and says so (`mid_word`)."""
+    text = str(text or "")
+    try:
+        start = max(0, min(int(offset or 0), len(text)))
+    except (TypeError, ValueError):
+        start = 0
+    end = min(len(text), start + BROWSER_REPORT_CHARS)
+    mid_word = False
+    if end < len(text):
+        cut = max(text.rfind("\n", start, end), text.rfind(" ", start, end))
+        if cut > start:
+            end = cut + 1
+        else:
+            mid_word = True
+    whole = start == 0 and end >= len(text)
+    wrapped = {"untrusted": True, "text": text[start:end]}
+    if whole:
+        return wrapped, None
+    paging = {"truncated": end < len(text), "offset": start, "next_offset": end,
+              "total_chars": len(text)}
+    if mid_word:
+        paging["ends_mid_word"] = True
+    return wrapped, paging
+
+
+def _browser_profile_id(value):
+    """The add-on's own id for a profile (`p1`, `p2`, ...): a number it counted,
+    never text a page wrote. Anything else is left out."""
+    value = str(value or "")
+    return value if re.fullmatch(r"p\d{1,6}", value) else None
+
+
+def _browser_profile_view(rows):
+    """The household's shopping profiles as brAIn reads them. Every string in
+    one came from a store's web page, so every string is wrapped untrusted;
+    the only bare values are the add-on's id and numbers it checked."""
+    def number(value):
+        return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+    def item_view(i):
+        out = {"name": untrusted(i.get("name"))}
+        if i.get("variant"):
+            out["variant"] = untrusted(i["variant"])
+        if number(i.get("quantity")):
+            out["usual_quantity"] = number(i["quantity"])
+        every = i.get("every")
+        if number(every):
+            out["every_days"] = number(every)
+        elif every:
+            out["how_often"] = untrusted(every)
+        if i.get("last_bought"):
+            out["last_bought"] = untrusted(i["last_bought"])
+        return out
+
+    out = []
+    for p in rows or []:
+        if not isinstance(p, dict):
+            continue
+        out.append({
+            "id": _browser_profile_id(p.get("id")),
+            "store": untrusted(p.get("store")),
+            "items": [item_view(i) for i in (p.get("items") or [])[:150] if isinstance(i, dict)],
+            "preferred_brands": [untrusted(w) for w in p.get("brands") or []],
+            "avoid": [untrusted(w) for w in p.get("avoid") or []]})
+    return out
+
+
+def _browser_view(task, offset=0):
     """An errand as brAIn reads it. What a web page said is marked untrusted."""
     if not isinstance(task, dict):
         return {"task": None, "next": "There are no errands yet."}
@@ -4848,9 +4930,29 @@ def _browser_view(task):
         # (build_tool_response), and a failed errand is a call that worked.
         out["problem"] = task["error"]
     out["errand"] = task.get("prompt")
-    for key in ("answer", "needs_you"):
-        if task.get(key):
-            out[key] = untrusted(task[key])
+    if task.get("needs_you"):
+        out["needs_you"] = untrusted(task["needs_you"])
+    if task.get("answer"):
+        out["answer"], paging = _browser_report(task["answer"], offset)
+        if paging:
+            out["answer_paging"] = {**paging, "how": (
+                "The report is longer than one answer. Call browser_status again with "
+                "this task and offset set to next_offset to read the rest."
+                if paging["truncated"] else "This is the last part of the report.")}
+    if task.get("answer_cut"):
+        out["report_limit"] = (f"The report was {task['answer_cut']} characters, longer than "
+                               "BRUH Browser keeps; its end was not kept. Say so, and offer "
+                               "to ask again for a shorter one.")
+    used = [i for i in (_browser_profile_id(x) for x in task.get("profiles_used") or []) if i]
+    if used:
+        out["shopping_profile_used"] = used
+    saved = task.get("profile_saved")
+    if isinstance(saved, dict) and saved.get("store"):
+        out["profile_saved"] = {"id": _browser_profile_id(saved.get("id")),
+                                "store": untrusted(saved.get("store")),
+                                **{k: saved[k] for k in ("items", "brands", "avoid")
+                                   if isinstance(saved.get(k), int)
+                                   and not isinstance(saved.get(k), bool)}}
     cart = task.get("cart")
     if isinstance(cart, dict):
         out["cart"] = {
@@ -4893,12 +4995,25 @@ def _browser_choices(view):
     return out
 
 
-def browser_task(errand, browser="", make_default=False):
-    """Start an errand on the web in BRUH Browser. It builds a cart at most."""
+def browser_task(errand, browser="", make_default=False, history=False, profile=""):
+    """Start an errand on the web in BRUH Browser. It builds a cart at most.
+    history: the person asked it to read their past orders (only such an
+    errand saves a shopping profile). profile: the id of the shopping profile
+    the person agreed to use (from browser_status profiles), for an errand
+    whose words name no store."""
     words = str(errand or "").strip()
     if not words:
         return {"error": "Say what the errand is, in the person's words."}
     body = {"prompt": words[:4000], "purchase": False, "source": "brain"}
+    if history is True:
+        body["history"] = True
+    if str(profile or "").strip():
+        ident = _browser_profile_id(str(profile).strip())
+        if not ident:
+            return {"error": "profile is the id browser_status with profiles gave "
+                             "(p1, p2 ...); leave it out when the person named the store "
+                             "or wants none."}
+        body["profile"] = ident
     if str(browser or "").strip():
         body["browser"] = str(browser).strip()[:128]
         body["make_default"] = make_default is True
@@ -4908,8 +5023,24 @@ def browser_task(errand, browser="", make_default=False):
     return _browser_view(answer.get("task"))
 
 
-def browser_status(task="", browsers=False):
-    """One errand by id, or the current one; with browsers, the connected Chromes."""
+def browser_status(task="", browsers=False, offset=0, profiles=False):
+    """One errand by id, or the current one; with browsers, the connected Chromes;
+    with profiles, what BRUH Browser knows the household usually buys."""
+    if profiles is True and not str(task or "").strip():
+        view = _browser_request("GET", "/api/profiles")
+        if view.get("error"):
+            return view
+        rows = _browser_profile_view(view.get("profiles"))
+        return {"profiles": rows, "next": (
+            "These are the household's usual items per store, read from their own order "
+            "history. Before a cart errand for a store with a profile, tell them what "
+            "you know (\"I know your usual order at ...\") and ask whether anything "
+            "changes; they can edit or clear it on BRUH Browser's page. An errand that "
+            "names the store gets its profile by itself; one that names no store gets "
+            "it only when you pass its id as browser_task's profile, after the person "
+            "says yes. It is never an approval to buy." if rows else
+            "There is no shopping profile yet. An errand that looks at the household's "
+            "old orders at a store (browser_task with history: true) builds one.")}
     if browsers is True and not str(task or "").strip():
         view = _browser_request("GET", "/api/browsers", timeout=45)
         if view.get("error"):
@@ -4923,7 +5054,7 @@ def browser_status(task="", browsers=False):
     answer = _browser_request("GET", f"/api/tasks/{ident}" if ident else "/api/tasks/current")
     if answer.get("error"):
         return answer
-    out = _browser_view(answer.get("task"))
+    out = _browser_view(answer.get("task"), offset)
     if browsers is True:
         view = _browser_request("GET", "/api/browsers", timeout=45)
         if not view.get("error"):
@@ -8551,12 +8682,21 @@ TOOLS = [
             "browser_status with browsers. When more than one is connected and "
             "the person has not said which, ask them first; make_default "
             "remembers their pick for later errands. Say which browser it "
-            "used when you report back."
+            "used when you report back. history: true when the person asked "
+            "it to look at their past orders at a store; only such an errand "
+            "saves their shopping profile. profile: a profile id from "
+            "browser_status with profiles. An errand that names a store with "
+            "a profile gets it by itself; for one that names no store, check "
+            "browser_status profiles first and, if there is one, ask (\"your "
+            "usual Walmart order?\") and pass its id on a yes. Pass none when "
+            "the person names another store or says no."
         ),
         "inputSchema": {"type": "object", "properties": {
             "errand": {"type": "string"},
             "browser": {"type": "string"},
-            "make_default": {"type": "boolean"}},
+            "make_default": {"type": "boolean"},
+            "history": {"type": "boolean"},
+            "profile": {"type": "string"}},
             "required": ["errand"]},
     },
     {
@@ -8572,11 +8712,19 @@ TOOLS = [
             "and options. Also the problem with the setup step to redo. task is "
             "the id; left out, the current errand. browsers: true lists the "
             "Claude in Chrome browsers this account has connected, which one is "
-            "BRUH Browser's own and which is the default. Read-only."
+            "BRUH Browser's own and which is the default. A long report comes "
+            "back whole up to a generous size; past that answer_paging says so "
+            "and offset (its next_offset) reads the next part. profiles: true "
+            "(with no task) returns the household's shopping profile per store "
+            "(usual items, brands, things to avoid) that an order-history "
+            "errand saved; say what you know of it and ask what changes before "
+            "a cart errand for that store. Read-only."
         ),
         "inputSchema": {"type": "object", "properties": {
             "task": {"type": "string"},
-            "browsers": {"type": "boolean"}}},
+            "browsers": {"type": "boolean"},
+            "offset": {"type": "integer"},
+            "profiles": {"type": "boolean"}}},
     },
     {
         "name": "browser_answer",
@@ -11162,7 +11310,13 @@ INSTRUCTIONS = (
     "bright_status, bambu_status, music_assistant_status. Errands on websites "
     "(shopping): browser_task builds a cart, browser_status reads it, browser_answer "
     "passes on the person's answer when it asks, and only after the person approves "
-    "it browser_purchase buys it. When more than one Claude in Chrome is connected "
+    "it browser_purchase buys it. When the person asks it to look at their old "
+    "orders at a store, pass history: true and it saves their shopping profile "
+    "(browser_status profiles). Before a grocery errand that does not name the "
+    "store, look at browser_status profiles; if there is one, ask (\"your usual "
+    "Walmart order?\") and pass its id as profile on a yes, none if they name "
+    "another store. Before a cart, say what you know of their usual order and "
+    "ask what changes. When more than one Claude in Chrome is connected "
     "(browser_status browsers) and the person has not said which, ask which "
     "browser before starting. A run with only reading tools has "
     "no acting ones. A refusal is the homeowner's policy — tell the user and "
