@@ -265,7 +265,6 @@ break
 breaking
 breakpoint
 breaks
-bridge
 brief
 brightness
 bring
@@ -394,7 +393,6 @@ chooses
 choosing
 chore
 chores
-chorus
 chose
 chosen
 chunk
@@ -1029,7 +1027,6 @@ function
 furniture
 further
 future
-gable
 gain
 gained
 gains
@@ -1067,7 +1064,6 @@ grade
 graded
 grader
 grades
-grant
 graphics
 great
 green
@@ -1549,7 +1545,6 @@ monitor
 month
 monthly
 months
-mood
 moods
 more
 morning
@@ -1720,7 +1715,6 @@ packs
 pad
 padding
 pads
-page
 pages
 paid
 painted
@@ -2158,7 +2152,6 @@ rhythm
 ride
 rides
 right
-ring
 rings
 rises
 risk
@@ -2374,7 +2367,6 @@ smoke
 snapshot
 snapshots
 snapshotted
-snare
 snoozed
 socket
 software
@@ -2424,8 +2416,6 @@ spoken
 spray
 spread
 spreads
-springs
-spyglass
 square
 stab
 stable
@@ -2906,7 +2896,6 @@ with
 withdrawn
 within
 without
-wizard
 won
 word
 worded
