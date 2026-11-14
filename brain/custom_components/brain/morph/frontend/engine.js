@@ -270,6 +270,7 @@ export class Engine {
     let fpos = {}; const FLH = {};
     r.querySelectorAll('[data-floor]').forEach((el) => { const inn = el.querySelector('[data-flin]'); FLH[el.getAttribute('data-floor')] = inn ? hgt(inn) + (W < 700 ? 14 : 16) + 6 : 0; });
     const fhOf = (f) => (this.floorHead[String(f)] === 0 ? 0 : Math.max(FH, FLH[String(f)] || 0));
+    const stretch = {};
     const place = (oc, ow, hts) => {
       const pl = []; const fp = {}; let cursor = 0, curF = null, top = 0;
       const yAt = (c, w) => { let y = top; pl.forEach((p) => { if (p.f === curF && !(c + w <= p.c || p.c + p.w <= c)) y = Math.max(y, p.y + p.h + G); }); return y; };
@@ -277,7 +278,7 @@ export class Engine {
         if (s.floor !== curF) { curF = s.floor; const fy = cursor + (pl.length ? FGAP : 0); fp[curF] = { x: 0, y: fy, w: W, h: fhOf(curF) }; top = fy + fhOf(curF); }
         const isO = s === openSec && oc != null;
         const w = isO ? ow : (s === openSec ? Math.min(N, this.base.pos[s.id].w) : wmap[s.id]);
-        const c = isO ? oc : Math.max(0, Math.min(this.base.pos[s.id].c, N - w));
+        const c = isO ? oc : stretch[s.id] ? 0 : Math.max(0, Math.min(this.base.pos[s.id].c, N - w));
         const y = yAt(c, w);
         const h = hts(s, w); pl.push({ id: s.id, f: s.floor, c: c, y: y, w: w, h: h }); cursor = Math.max(cursor, y + h);
       });
@@ -301,7 +302,19 @@ export class Engine {
       }
       if (best && best.w !== wmap[openSec.id]) { wmap[openSec.id] = best.w; measure(wmap); M.sections.forEach((s) => { flows[s.id] = flow(s, wmap[s.id]); }); }
       pl = place(best ? best.c : null, best ? best.w : null, (s) => flows[s.id].h);
-    } else pl = place(null, null, (s) => flows[s.id].h);
+    } else {
+      pl = place(null, null, (s) => flows[s.id].h);
+      // The widths chosen above were chosen from the heights the sections had THEN. Cards load, fonts arrive and a chart draws after that, and a section that was beside another when the choice was made can end up alone in its band with a dead strip at its side while the section below it spans the floor. A section with nothing beside it takes the whole floor, as it would have at the choice; stable, because a section the width of the floor can only have sections above and below it.
+      for (let pass = 0; pass < 3; pass++) {
+        const alone = pl.filter((p) => p.w < N && pl.every((q) => q === p || q.f !== p.f || p.y + p.h + G <= q.y + 0.5 || q.y + q.h + G <= p.y + 0.5));
+        if (!alone.length) break;
+        // For this render only: the cached base layout is never written, so when the heights settle the sections go back beside each other.
+        alone.forEach((p) => { wmap[p.id] = N; stretch[p.id] = 1; });
+        measure(wmap);
+        M.sections.forEach((s) => { flows[s.id] = flow(s, wmap[s.id]); });
+        pl = place(null, null, (s) => flows[s.id].h);
+      }
+    }
     // A spring whose element has left the page is forgotten here, whether or
     // not it was moving: a resting one would otherwise keep its old place.
     Object.keys(this.it).forEach((k) => { if (k !== 'board' && !this.it[k].el.isConnected) delete this.it[k]; });
