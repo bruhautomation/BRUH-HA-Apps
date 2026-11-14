@@ -158,6 +158,15 @@ SCHEMA = {
     },
 }
 
+def clip_report(text: str) -> tuple[str, int]:
+    """(the report kept, its original length when it was cut else 0). A report
+    over `MAX_REPORT` is cut at a word, never in the middle of one."""
+    if len(text) <= MAX_REPORT:
+        return text, 0
+    cut = max(text.rfind("\n", 0, MAX_REPORT), text.rfind(" ", 0, MAX_REPORT))
+    return text[:cut if cut > MAX_REPORT // 2 else MAX_REPORT].rstrip(), len(text)
+
+
 # A report is stored whole up to this many characters (a long order-history
 # read is the longest thing an errand says); brAIn pages through what it
 # returns. It was 4000, which cut a report off mid-word.
@@ -670,7 +679,9 @@ def _run(task: dict, cfg: RunConfig, on_progress, stop) -> dict:
         outcome = data.get("outcome") if data.get("outcome") in (
             "done", "needs_you", "failed") else "done"
         out["state"] = outcome
-        out["answer"] = str(data.get("report") or text)[:MAX_REPORT]
+        out["answer"], cut = clip_report(str(data.get("report") or text))
+        if cut:
+            out["answer_cut"] = cut
         out["needs_you"] = str(data.get("needs_you") or "")[:1000]
         if outcome == "needs_you":
             out["question"] = clean_question(data.get("question"),
@@ -689,7 +700,9 @@ def _run(task: dict, cfg: RunConfig, on_progress, stop) -> dict:
         # A CLI that ran without the structured answer: the prose is the
         # report, and there is no cart a purchase could be approved against.
         out["state"] = "done"
-        out["answer"] = text[:MAX_REPORT]
+        out["answer"], cut = clip_report(text)
+        if cut:
+            out["answer_cut"] = cut
     if dialog and out["state"] != "done" and not out["needs_you"]:
         out["state"] = "needs_you"
         out["needs_you"] = ("A dialog on the page is blocking the browser. Close it "

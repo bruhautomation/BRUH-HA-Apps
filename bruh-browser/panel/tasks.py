@@ -521,7 +521,7 @@ class Errands:
                              if k in ("state", "answer", "needs_you", "error",
                                       "setup_step", "cart", "order_placed",
                                       "order_number", "turns", "cost_usd",
-                                      "steps", "question")})
+                                      "steps", "question", "answer_cut")})
                 if outcome.get("profile") and self.profiles is not None \
                         and not live.get("purchase") and live.get("kind") == "errand":
                     try:

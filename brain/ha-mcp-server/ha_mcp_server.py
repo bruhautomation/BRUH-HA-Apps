@@ -4916,6 +4916,10 @@ def _browser_view(task, offset=0):
                 "The report is longer than one answer. Call browser_status again with "
                 "this task and offset set to next_offset to read the rest."
                 if paging["truncated"] else "This is the last part of the report.")}
+    if task.get("answer_cut"):
+        out["report_limit"] = (f"The report was {task['answer_cut']} characters, longer than "
+                               "BRUH Browser keeps; its end was not kept. Say so, and offer "
+                               "to ask again for a shorter one.")
     saved = task.get("profile_saved")
     if isinstance(saved, dict) and saved.get("store"):
         out["profile_saved"] = {"store": untrusted(saved.get("store")), "items": saved.get("items"),

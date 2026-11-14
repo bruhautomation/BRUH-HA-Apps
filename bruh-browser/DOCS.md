@@ -164,9 +164,10 @@ them. It is never guessed. Running the same kind of errand again adds to it
 and updates what changed.
 
 - **Where it lives:** in this app's own storage (`/data`), on this app only.
-  It is left out of Home Assistant backups like the rest of the browser's
-  data, and it is sent nowhere but into the message of a later errand for
-  that store, and to brAIn when it asks.
+  It **is included in Home Assistant backups** (like your errand history),
+  so a restore keeps it; it holds what you buy, not passwords, and backups
+  are unencrypted unless you opt in. It is sent nowhere but into the message
+  of a later errand for that store, and to brAIn when it asks.
 - **How it is used:** a later cart errand for that store starts from it, so
   "add my usual" means your profile first and the store's own buy-again list
   second. brAIn tells you what it knows and asks what changes before it
