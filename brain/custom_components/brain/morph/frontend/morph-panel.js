@@ -2000,6 +2000,14 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
     const toggle = tgs ? `<button type="button" class="shtog" data-snap-skip="1" data-act="rmk-svc" data-v="homeassistant.toggle|${esc(tg.entity)}" data-on="${tgs.state === 'on' ? 1 : 0}" aria-pressed="${tgs.state === 'on'}" aria-label="${esc(this.cardName(tg, sec))}">${esc(this.cardName(tg, sec))}</button>` : '';
     const scenes = !edit && ((sec.scenes || []).length || sc) ? this.secScenesHtml(sec, sc ? sc.entities || [] : sec.scenes) : '';
     // Each room's own faint icon before its name, so rooms tell apart at a glance (house change, Oct 2026).
+    // <ha-icon> is Home Assistant's, defined only once its card helpers have
+    // loaded: a page with no hosted Lovelace card never asks for them, and
+    // the icon stayed an empty tag. Ask once, and redraw when it exists.
+    if (sec.icon && window.customElements && !customElements.get('ha-icon') && !this._iconWait) {
+      this._iconWait = true;
+      cardHelpers().catch(() => null);
+      customElements.whenDefined('ha-icon').then(() => { this.cache.clear(); this.engine.invalidate(); this.schedule(); });
+    }
     const ric = sec.icon ? `<ha-icon class="secic" icon="${esc(sec.icon)}" aria-hidden="true" style="color:${mix(hue(sec.color), 45, 'var(--quiet)')}"></ha-icon>` : '';
     const name = edit ? `<h2>${ric}${esc(sec.title)}</h2>` : `<h2 style="position:relative">${ric}${esc(sec.title)}</h2>`;
     // Nothing rides at the right of a room's title line: no door or motion

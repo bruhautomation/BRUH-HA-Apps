@@ -702,7 +702,7 @@ const CLIMATE_CSS = `<style>
 .cl-seg button:hover{color:var(--text);background:color-mix(in oklab,var(--text) 10%,transparent)}
 .cl-seg button::before{content:"";position:absolute;inset:-8px -1px}
 .cl-sq:focus-visible,.cl-seg button:focus-visible{outline:2px solid var(--sky);outline-offset:2px}
-.cl-short{display:none}
+.cl-run .cl-short{display:none}
 .cl-seg button[aria-pressed="true"]{color:var(--c,var(--text));background:color-mix(in oklab,var(--c,var(--text)) 11%,transparent)}
 .cl-div{width:1px;height:14px;background:var(--line2);opacity:.6;margin:0 6px}
 .cl-run{margin-left:auto;padding-left:6px;flex:0 1 auto;min-width:0}
@@ -716,7 +716,7 @@ const CLIMATE_CSS = `<style>
    action with an icon is its icon alone; past that an action's word ends in
    an ellipsis (it is the one part of the row that shrinks). */
 @container (max-width:470px){.cl-seglab{display:none}.cl-seg button{padding:0 7px}.cl-div{margin:0 4px}}
-@container (max-width:420px){.cl-long{display:none}.cl-short{display:inline-block}}
+@container (max-width:420px){.cl-run .cl-long{display:none}.cl-run .cl-short{display:inline-block}}
 @container (max-width:370px){.cl-run button.cl-hasic .cl-txt{display:none}}
 @container (max-width:330px){.cl-seg{gap:2px}.cl-seg button{padding:0 5px}}
 </style>`;
