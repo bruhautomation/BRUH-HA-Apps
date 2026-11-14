@@ -168,7 +168,7 @@ export class ViewLayer {
     return all;
   }
 
-  railColor(id) { return `var(--morph-${HUE[Number(String(id).slice(1)) % HUE.length]},var(--primary-color))`; }
+  railColor() { return 'var(--secondary-text-color,var(--primary-text-color))'; } // one quiet tone, like Morph's own rail: no rainbow per room
 
   railFloor() { return ''; }
 

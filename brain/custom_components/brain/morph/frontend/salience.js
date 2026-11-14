@@ -15,8 +15,12 @@
 //   * a missing source contributes 0 and says so — nothing here invents a
 //     usual value (§4.7: "A page that said unusual for a Tuesday without a
 //     Tuesday behind it would be the one lie that breaks the whole idea");
-//   * recency only BOOSTS something that already has a reason;
-//   * a habit alone (capped at 0.9) never outranks a fault.
+//   * recency only BOOSTS something that already has a reason.
+//
+// No habits and no viewer: the page is the same on every device for
+// everybody, and nothing here reads who is looking or what anybody usually
+// does. Nothing on the page reorders itself either; salience colours and
+// words what is there, it never moves it.
 
 export const BANDS = { now: { enter: 0.75, leave: 0.60 }, lead: { enter: 0.45, leave: 0.35 }, shown: { enter: 0.20, leave: 0.20 } };
 export const BAND_ORDER = ['folded', 'shown', 'lead', 'now'];
@@ -30,15 +34,10 @@ export const DECAY_AFTER_MS = 20 * 60000;
 export const DECAY_STEP_MS = 10 * 60000;
 export const ASKED_MS = 10 * 60000;
 export const OCCUPIED_MS = 10 * 60000;
-export const HABIT_AHEAD_MIN = 30;
-export const HABIT_MIN_DAYS = 4;
 export const FEED_OFFLINE_MS = 7 * 86400000;
-export const HABIT_STOP_WEIGHT = 0.25;
 // [from, to] in minutes past midnight: armed_home is night inside it until
 // brAIn has measured the house's own settle and wake.
 export const UNMEASURED_NIGHT = [19 * 60, 9 * 60];
-// A habit this likely is a prediction (§7.1): the control arrives early.
-export const PREDICT_MIN_H = 0.5;
 
 const SEVERITY_U = { critical: 1.0, serious: 0.7, warning: 0.4, info: 0.15 };
 const SAFETY = ['smoke', 'gas', 'carbon_monoxide', 'moisture'];
@@ -127,6 +126,20 @@ export function sleepSignal(eid, st) {
   return false;
 }
 
+// A sensor that tracks somebody's sleep ("… Sleep": In bed / Up) and so
+// outranks every other sign in its room: 'asleep', 'awake', or null when the
+// entity is not such a tracker or cannot say right now.
+const AWAKE_STATE = /^(up|awake|out of bed|out_of_bed|woke|woken)$/i;
+export function sleepTracker(eid, st) {
+  if (!st || domainOf(eid) !== 'sensor') return null;
+  const name = String(eid).split('.')[1].replace(/_/g, ' ') + ' ' + String((st.attributes || {}).friendly_name || '');
+  if (!SLEEP_WORD.test(name) || DEVICE_WORD.test(name)) return null;
+  const s = String(st.state);
+  if (SLEEP_STATE.test(s)) return 'asleep';
+  if (AWAKE_STATE.test(s)) return 'awake';
+  return null;
+}
+
 // ------------------------------------------------------------------ inputs
 
 function deviation(st, feed, now) {
@@ -189,53 +202,14 @@ function recency(st, now) {
   return Math.exp(-dt / (TAU_MIN[kindForTau(st)] * 60000));
 }
 
-// A habit the viewer is likely to act on in the next half hour: a measured
-// time of day, on this kind of day, for a state the entity is not in now.
-function habit(st, feed, ctx) {
-  if (!st) return { h: 0 };
-  const rows = ((feed && feed.habits) || []).filter((x) => x.entity_id === st.entity_id && (x.days_seen || 0) >= HABIT_MIN_DAYS);
-  const m = minuteOf(ctx.now); const we = weekend(ctx.now);
-  let best = null;
-  rows.forEach((x) => {
-    if (x.days === 'weekdays' && we) return;
-    if (x.days === 'weekends' && !we) return;
-    if (x.state && String(x.state) === String(st.state)) return;
-    const spread = Math.max(1, x.spread || 0);
-    const start = x.minute - spread; // the window opens one spread early
-    let ahead = start - m; if (ahead < -720) ahead += 1440; if (ahead > 720) ahead -= 1440;
-    if (ahead > HABIT_AHEAD_MIN || ahead < -(spread * 2 + 20)) return;
-    const w = (ctx.habitWeights && ctx.habitWeights[st.entity_id] != null) ? ctx.habitWeights[st.entity_id] : 1;
-    // Two ignored windows in a row and the prediction stops (§7.1): each
-    // halves the weight, so a quarter is two ignored and silence.
-    if (w <= HABIT_STOP_WEIGHT) return;
-    const h = Math.min(0.9, (x.share || 0)) * w;
-    if (!best || h > best.h) best = { h, row: x };
-  });
-  if (!best) return { h: 0 };
-  return { h: best.h, person: best.row.person || null, minute: best.row.minute, spread: best.row.spread };
-}
-
-function viewerWeight(person, ctx) {
-  if (!person) return 1;
-  const v = ctx.viewer || {};
-  if (v.device === 'family') {
-    const st = (ctx.states || {})[person];
-    return st && st.state !== 'home' ? 0 : 1;
-  }
-  if (v.person) return v.person === person ? 1 : 0.35;
-  return 1;
-}
-
 // The six inputs for one entity, with what they were read from.
 export function inputs(st, ctx) {
   const feed = ctx.feed || {};
   const dv = deviation(st, feed, ctx.now);
   const ur = urgency(st, (ctx.casesByEntity || {})[st && st.entity_id]);
   const pr = progress(st, feed, ctx.now);
-  const hb = habit(st, feed, ctx);
   const r = recency(st, ctx.now);
-  const v = viewerWeight(hb.person, ctx);
-  return { d: dv.d, u: ur.u, g: pr.g, h: hb.h, r, v, dv, ur, pr, hb };
+  return { d: dv.d, u: ur.u, g: pr.g, h: 0, r, v: 1, dv, ur, pr, hb: {} };
 }
 
 // ------------------------------------------------------------------ score
@@ -250,10 +224,8 @@ export function reweight(inp, st, per) {
   } else if (per === 'night') {
     if ((d === 'lock' || isClosure(st)) && isOpenState(st)) o.d = 1;
     if (d === 'light') o.d *= 0.5;
-    o.h *= 0.3;
   } else if (per === 'away') {
     if (d === 'lock' || isClosure(st) || d === 'camera' || isSafety(st)) o.d = Math.min(1, o.d * 1.5);
-    if (d === 'light' || d === 'media_player') o.h = 0;
   }
   return o;
 }
@@ -281,7 +253,6 @@ export function bandFor(S, was) {
 // The because line (§11): one sentence out of a closed set, in the item's
 // meaning colour. Never a reason without a measurement behind it.
 export function because(x, ctx) {
-  const name = ctx.name || ((e) => e);
   if (x.pinned) return { text: x.pinned === 'active' ? 'kept here while it is on' : 'kept here', color: 'var(--violet)', kind: 'pinned' };
   if (x.asked) return { text: 'because you asked', color: 'var(--violet)', kind: 'asked' };
   const i = x.inp;
@@ -294,10 +265,6 @@ export function because(x, ctx) {
     if (i.dv.usual != null) return { text: `${fmtv(i.dv.value, i.dv.unit)}, usually about ${fmtv(i.dv.usual, i.dv.unit)} at this hour`, color: i.d >= 0.7 ? 'var(--rose)' : 'var(--amber)', kind: 'deviation' };
     if (i.dv.share != null) return { text: x.night && x.open ? 'open at night' : `unusual for ${clockWords(ctx.now)}`, color: x.night ? 'var(--rose)' : 'var(--amber)', kind: 'deviation' };
     if (x.night) return { text: 'open at night', color: 'var(--rose)', kind: 'deviation' };
-  }
-  if (i.h > 0) {
-    const who = i.hb.person && ctx.viewer && ctx.viewer.person !== i.hb.person ? `${name(i.hb.person)} usually does this now` : 'you usually do this now';
-    return { text: who, color: 'var(--violet)', kind: 'habit' };
   }
   if (i.dv.unmeasured && x.S >= BANDS.shown.enter) return { text: 'no usual yet', color: 'var(--quiet)', kind: 'none' };
   return null;
@@ -354,20 +321,13 @@ export function compute(items, ctx, prev) {
     const pinnedNow = pin === true || (pin === 'active' && best.st && (isOpenState(best.st) || ['playing', 'cleaning', 'heating', 'cooling'].includes(best.st.state) || best.inp.g > 0));
     const asked = ctx.asked && ctx.asked[it.id] && ctx.asked[it.id] > now;
     if (pinnedNow || asked) Sx = Math.max(Sx, 0.8);
-    // A prediction is a control arriving early (§7.1): into Now on a
-    // personal device, to the top of its room on a family one. The score
-    // alone cannot carry it there — a habit at its 0.9 cap is 0.63 — so
-    // the lift is a floor, and in Now a prediction takes only the places
-    // nothing with a reason of its own wanted (it never outranks a fault).
-    const predicted = !!(best.inp.h > 0 && best.inp.h * (best.inp.v == null ? 1 : best.inp.v) >= PREDICT_MIN_H && !best.isCase);
-    if (predicted) Sx = Math.max(Sx, ctx.viewer && ctx.viewer.device === 'family' ? BANDS.lead.enter : BANDS.now.enter);
     // Not this: suppressed for today, whatever lifted it.
     if (ctx.suppressed && ctx.suppressed[it.id]) Sx = Math.min(Sx, BANDS.lead.enter - 0.01);
     // Decay: in Now and untouched past its window.
     if (was.band === 'now' && was.liftedAt && !pinnedNow && !asked && !best.inp.ur.safety) {
       const touched = (ctx.touched && ctx.touched[it.id]) || 0;
       const from = Math.max(was.liftedAt, touched);
-      const win = best.inp.h > 0 && best.inp.hb.spread ? (best.inp.hb.spread * 2 + 20) * 60000 : DECAY_AFTER_MS;
+      const win = DECAY_AFTER_MS;
       const over = now - from - win;
       if (over > 0) Sx *= Math.pow(0.5, over / DECAY_STEP_MS);
     }
@@ -384,15 +344,14 @@ export function compute(items, ctx, prev) {
     const cut = !!(best.inp.ur.safety || (per === 'night' && best.st && isOpenState(best.st) && (domainOf(best.st.entity_id) === 'lock' || isClosure(best.st)) && justOpened));
     const urgent = cut || best.inp.u >= 0.7;
     const night = per === 'night' && best.st && (domainOf(best.st.entity_id) === 'lock' || isClosure(best.st));
-    const x = { id: it.id, sec: it.sec, S: Sx, band, eid: best.eid, inp: best.inp, urgent, cut, isCase: !!best.isCase, pinned: pinnedNow ? pin : null, asked, night, open: best.st && isOpenState(best.st), predicted: predicted && !(ctx.suppressed && ctx.suppressed[it.id]) };
+    const x = { id: it.id, sec: it.sec, S: Sx, band, eid: best.eid, inp: best.inp, urgent, cut, isCase: !!best.isCase, pinned: pinnedNow ? pin : null, asked, night, open: best.st && isOpenState(best.st) };
     x.why = because(x, ctx);
     x.color = colorOf(x);
     out[it.id] = x;
   });
   // Now: at most N, highest first; the rest wait at the top of their room.
   const max = ctx.nowMax || NOW_MAX;
-  const mere = (x) => (x.predicted && !(x.inp.u || x.inp.d || x.inp.g) && !x.pinned && !x.asked ? 1 : 0);
-  const nowIds = Object.values(out).filter((x) => x.band === 'now').sort((a, b) => mere(a) - mere(b) || b.S - a.S || String(a.id).localeCompare(String(b.id)));
+  const nowIds = Object.values(out).filter((x) => x.band === 'now').sort((a, b) => b.S - a.S || String(a.id).localeCompare(String(b.id)));
   // One thing is lifted once: two cards for the same lock (the Entry and
   // the Security room both carry it) are one card in Now, the first.
   const seenE = new Set(); const kept = [];
@@ -429,7 +388,7 @@ export function compute(items, ctx, prev) {
 export function colorOf(x) {
   if (!x || !x.inp) return 'var(--text)';
   if (x.urgent || (x.night && x.open)) return 'var(--rose)';
-  if (x.asked || x.pinned || (x.inp.h > x.inp.d && x.inp.h > x.inp.g)) return 'var(--violet)';
+  if (x.asked || x.pinned) return 'var(--violet)';
   if (x.inp.d > 0 || x.inp.u > 0 || x.inp.pr.finished) return 'var(--amber)';
   return 'var(--text)';
 }

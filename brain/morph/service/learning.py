@@ -759,6 +759,27 @@ def read_lessons(tagged: bool = False) -> list[str]:
     return [f"{r['text']} ({r['source']})" if tagged else r["text"] for r in read_lesson_rows()]
 
 
+# How long a lesson may be, by who wrote it. A household's line is theirs and
+# is never shortened (the cap is only a guard against a pasted file); every
+# rewrite of LEARNED.md runs through ``_rows_of``, so a cap here applies on
+# every pass, and a flat 300 cut 45 of one house's 79 lines mid-word.
+LESSON_CAP = {"you": 4000, "tell": 1200, "learned": 600}
+
+
+def _cap_lesson(text: str, source: str) -> str:
+    """A lesson within its writer's cap, cut at the last whole sentence (or
+    word, with "…") that fits; never mid-word."""
+    text = " ".join(str(text or "").split())
+    cap = LESSON_CAP.get(source, LESSON_CAP["learned"])
+    if len(text) <= cap:
+        return text
+    head = text[:cap]
+    stop = max(head.rfind(". "), head.rfind("! "), head.rfind("? "), head.rfind(".)"))
+    if stop >= cap // 2:
+        return head[:stop + 1].rstrip()
+    return head[:head.rfind(" ")].rstrip(" ,;:—-") + "…" if " " in head else head
+
+
 def _rows_of(lessons) -> list[dict]:
     rows = []
     for x in lessons or []:
@@ -768,7 +789,7 @@ def _rows_of(lessons) -> list[dict]:
             source = source if source in SOURCES else tagged
         else:
             text, source = split_lesson(str(x))
-        text = text[:300]
+        text = _cap_lesson(text, source)
         if text:
             rows.append({"text": text, "source": source})
     return rows
@@ -876,7 +897,7 @@ def merge_pass_lessons(returned, notes=()) -> dict:
             unsupported += 1
             continue
         keep.add(k)
-        new.append({"text": body[:300], "source": "learned"})
+        new.append({"text": _cap_lesson(body, "learned"), "source": "learned"})
     rows = [r for r in current if _key(r["text"]) in keep] + new
     write_lessons(rows)
     return {"added": len(new), "unsupported": unsupported}

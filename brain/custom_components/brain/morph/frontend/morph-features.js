@@ -101,6 +101,7 @@ const VIEW_CSS = `
 .mv section.sec{position:relative;border-radius:var(--ha-card-border-radius,12px);overflow:hidden;--rc:var(--sky)}
 .mv section.sec .secbg{position:absolute;inset:0;pointer-events:none;border-radius:inherit}
 .mv section.sec .sechead{height:0;overflow:hidden}
+.mv section.sec .body{padding:12px}
 .mv section.sec.lifted{box-shadow:inset 3px 0 0 var(--rose)}
 .mv .why{margin:4px 8px 2px 14px;font-size:14px;font-weight:600;color:var(--rose)}
 .mv .fold{display:flex;align-items:center;gap:10px;width:100%;min-height:48px;padding:0 14px;border:0;border-radius:var(--ha-card-border-radius,12px);background:var(--surface);color:var(--text);font:inherit;font-size:15px;cursor:pointer;text-align:left;box-shadow:var(--ha-card-box-shadow,none)}
