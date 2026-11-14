@@ -88,9 +88,21 @@ export function casePresses(c) {
 // Ids in brAIn's sentence read as the device's name, as brAIn's panel does.
 const named = (text, name) => String(text || '').replace(/\b[a-z_]+\.[a-z0-9_]+\b/g, (id) => (name && name(id)) || id);
 
+// brAIn clips a long claim at ~120 characters. When its own detail still
+// carries the whole sentence, finish the claim from there so nothing is cut.
+function fullClaim(c) {
+  const t = c.claim || c.text || '';
+  if (!t || /[.?!”"')]$/.test(t) || !c.detail) return t;
+  const i = String(c.detail).indexOf(t);
+  if (i < 0) return t;
+  const rest = String(c.detail).slice(i + t.length);
+  const m = rest.match(/^[^.?!”"]*[.?!]?/);
+  return t + (m ? m[0] : '');
+}
+
 const turnHtml = (t) => `<div class="turnline ${t.who === 'you' ? 'you' : 'brain'}">${esc(t.text)}</div>`;
 
-// The card's face. `ui`: {pending, draft, family, replyOpen, admin, who,
+// The card's face. `ui`: {pending, draft, replyOpen, admin, who,
 // name}: `who` is the household's name for the assistant (brAIn's
 // personality), `name(id)` a device's friendly name.
 export function caseFace(c, ui) {
@@ -105,32 +117,13 @@ export function caseFace(c, ui) {
   const phase = c.status === 'planning' ? `${who} is working out a plan…` : c.status === 'fixing' ? `${who} is making the change…` : c.status === 'triaging' ? `${who} has not looked at this yet.` : '';
   const busy = u.pending ? `<div class="working"><span class="pulse"></span><span>${esc(u.pending)}</span></div>` : '';
   const words = u.admin === false ? [] : casePresses(c).map((a, i) => `<button type="button" class="wd${i === 0 && ['fix', 'apply', 'todo'].includes(a.action) ? ' strong' : ''}" data-act="case" data-v="${esc(a.action)}" data-case="${esc(c.id)}">${esc(a.label)}</button>`);
-  // A wall tablet shows a question's reply line only once tapped, so a
-  // child leaning on the counter cannot answer it (§14.6).
-  const hideReply = u.family && c.kind === 'question' && !u.replyOpen;
-  const reply = u.admin === false ? '' : hideReply
-    ? `<button type="button" class="wd" data-act="case-open-reply" data-case="${esc(c.id)}">Reply</button>`
-    : `<input class="replyin" type="text" data-keep="reply:${esc(c.id)}" data-act-enter="case-reply" data-case="${esc(c.id)}" placeholder="Reply…" aria-label="Reply to ${esc(who)} about this" style="--cc:${color}">`;
+  const reply = u.admin === false ? '' : `<input class="replyin" type="text" data-keep="reply:${esc(c.id)}" data-act-enter="case-reply" data-case="${esc(c.id)}" placeholder="Reply…" aria-label="Reply to ${esc(who)} about this" style="--cc:${color}"><button type="button" class="replysend" data-act="case-reply" data-case="${esc(c.id)}" aria-label="Send reply" style="--cc:${color}">Send</button>`;
   const detail = c.detail && c.detail !== c.claim ? `<p class="casebody">${esc(named(c.detail, u.name))}</p>` : '';
   return `<div class="case" data-ctl="1" style="--cc:${color}" data-case-card="${esc(c.id)}">
 <span class="casechip" data-chip="${chip}" style="--chip:${CHIP_COLORS[chip]}"><i></i>${esc(CHIP_WORDS[chip])}</span>
-<p class="claim">${esc(named(c.claim || c.text || '', u.name))}</p>${detail}${c.ask ? `<p class="caseask">${esc(named(c.ask, u.name))}</p>` : ''}${phase ? `<p class="small">${esc(phase)}</p>` : ''}${plan}
+<p class="claim">${esc(named(fullClaim(c), u.name))}</p>${detail}${c.ask ? `<p class="caseask">${esc(named(c.ask, u.name))}</p>` : ''}${phase ? `<p class="small">${esc(phase)}</p>` : ''}${plan}
 ${thread.length ? `<div class="thread">${earlier ? `<details class="earlier"><summary>earlier</summary>${thread.slice(0, earlier).map(turnHtml).join('')}</details>` : ''}${shown.map(turnHtml).join('')}</div>` : ''}${busy}
 <div class="replyrow">${reply}<span class="casewords">${words.join('')}</span></div></div>`;
-}
-
-// The To Do section: one line per item, the sentence and its room. Tap
-// ticks it off; slide right snoozes it a week; hold opens its options.
-export function todoFace(items, hass, ui) {
-  const u = ui || {};
-  if (!items.length) return '';
-  return `<div class="todolist" data-ctl="1">${items.map((t) => {
-    const open = u.open === t.id;
-    const room = t.area_name || '';
-    return `<div class="todorow${open ? ' open' : ''}" data-todo="${esc(t.id)}" data-k="todo-${esc(t.id)}" role="button" tabindex="0" aria-label="${esc(String(t.text).replace(/\.$/, ""))}. Tap to tick it off.">
-<span class="tick" aria-hidden="true"></span><span class="lx"><span>${esc(t.text)}</span>${room ? `<span class="small">${esc(room)}</span>` : ''}</span>${u.sliding === t.id ? `<span class="small" style="color:var(--violet)">${esc(u.slideWord || '')}</span>` : ''}
-${open ? `<span class="todoacts"><button type="button" class="wd" data-act="todo" data-v="snooze" data-id="${esc(t.id)}">Snooze a week</button><button type="button" class="wd bad" data-act="todo" data-v="drop" data-id="${esc(t.id)}">Delete</button></span>` : ''}</div>`;
-  }).join('')}</div>`;
 }
 
 // The friendly name brAIn's sentence uses; the panel's own lookup is the

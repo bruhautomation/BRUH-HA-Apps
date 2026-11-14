@@ -532,7 +532,7 @@ def lovelace_how(target: dict) -> list[str]:
         "  `theme:` key.",
         "- A card's size is its `grid_options` ({columns: 1-12, rows: n or \"auto\"}) in Home Assistant's",
         "  sections view, and Morph's cards fill whatever they are given: resize with that, never a style.",
-        "  Morph's room rail, lifting and folding are the view's `morph: {rail, order, fold}` (AGENTS.md,",
+        "  Morph's room rail is the view's `morph: {rail: true}`; nothing reorders itself or folds (AGENTS.md,",
         "  “Size and layout”). Write `type: sections` for a new tab, never `custom:morph-view`.",
         "- Look at the dashboard as Home Assistant draws it with screenshot_panel (addon \"Home",
         "  Assistant\", screen \"<url_path>/<view path>\") before you answer about how it looks.",

@@ -1353,6 +1353,18 @@ SYSTEM = prompt_kit.assemble(
   device failing while its siblings answer is that device, never the
   router, DNS or the internet. Urgent words ("now", "immediately") only
   when two readings agree.
+- A transient is not a cause. A disconnect, timeout, failed login or
+  re-authentication, cloud or broker connection error, "not found" or
+  "unknown state" burst around a restart, a reload, a network blip or a
+  device reboot that then stops is left out. An integration or device is
+  a cause only when it is still broken now (its entities unavailable or
+  unknown, or its errors still coming in the latest records) AND has been
+  for hours or across nights. Errors from an integration whose entities
+  work are no cause. When in doubt, leave it out.
+- For an integration that is still failing, brAIn reloads it: the fix
+  says only what a reload cannot mend (a changed password, an account to
+  sign in to again, a device that needs power), never "reload it" as
+  their job.
 - """ + prompt_kit.DEVICE_WORDS + """
 - Records are cited by id EXACTLY as given.
 - At most 5 causes. If nothing here is a real problem, answer with no

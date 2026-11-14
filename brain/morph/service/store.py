@@ -34,7 +34,7 @@ COLORS = ("amber", "sand", "sky", "violet", "teal", "lime", "rose", "peach", "in
 # passed through untouched (`type: lovelace` with its config under `card`,
 # or any `custom:`/core card type written directly).
 MORPH_TYPES = (
-    "light", "light_group", "fan", "cover", "lock", "switch", "climate",
+    "light", "light_group", "cover_group", "fan_group", "fan", "cover", "lock", "switch", "climate",
     "sensor", "readings", "meter", "media", "camera", "list", "person",
     "weather", "vacuum", "alarm", "scenes", "button", "entity", "note",
     "lovelace",
@@ -201,11 +201,32 @@ def normalize(raw) -> tuple[dict, list[str]]:
         out["theme"] = raw["theme"]
     # Kept only where somebody set them, so a house that never did gets no
     # new line in its file: night_dim (off: night does not dim the page,
-    # #343) and room_marks (on: a room's title carries its door and motion
-    # marks, #347).
-    for flag in ("night_dim", "room_marks"):
+    # #343). room_marks went with the marks themselves: a room's title line
+    # carries no chips or marks.
+    for flag in ("night_dim",):
         if flag in raw:
             out[flag] = bool(raw[flag])
+    # The machines Coming up gives a lane of their own (upcoming.js setLanes):
+    # each {label, entities, running | not_running, attribute, word, color}.
+    lanes = []
+    for lane in raw.get("coming_up_lanes") or [] if isinstance(raw.get("coming_up_lanes"), list) else []:
+        if not isinstance(lane, dict):
+            continue
+        ents = _entities(lane.get("entities")) or _entities(lane.get("entity"))
+        if not ents:
+            continue
+        row = {"label": str(lane.get("label") or "Machines")[:40], "entities": ents[:20]}
+        for key in ("running", "not_running"):
+            v = lane.get(key)
+            v = [v] if isinstance(v, (str, int, float, bool)) else v
+            if isinstance(v, list) and v:
+                row[key] = [str(s) for s in v][:12]
+        for key in ("attribute", "word", "color", "id"):
+            if isinstance(lane.get(key), str) and lane[key]:
+                row[key] = lane[key][:40]
+        lanes.append(row)
+    if lanes:
+        out["coming_up_lanes"] = lanes[:12]
 
     used: set[str] = set()
     # Types a copy of cards.js in /config/morph/frontend adds are Morph's own
@@ -248,6 +269,13 @@ def normalize(raw) -> tuple[dict, list[str]]:
                 sec["area"] = str(sraw["area"])[:64]
             if sraw.get("hidden"):
                 sec["hidden"] = True
+            # A room's own faint icon before its name (`mdi:…`).
+            if isinstance(sraw.get("icon"), str) and re.fullmatch(r"[a-z0-9-]+:[a-z0-9-]+", sraw["icon"]):
+                sec["icon"] = sraw["icon"]
+            # A room whose controls ask before acting while its sleeper is
+            # asleep (a child's room): `sleep_guard: true`.
+            if sraw.get("sleep_guard") is True:
+                sec["sleep_guard"] = True
             groups = sraw.get("groups")
             if groups is None and isinstance(sraw.get("cards"), list):
                 groups = [{"cards": sraw["cards"]}]
@@ -259,6 +287,18 @@ def normalize(raw) -> tuple[dict, list[str]]:
                     group["label"] = str(graw["label"])[:40]
                 if graw.get("note"):
                     group["note"] = str(graw["note"])[:80]
+                # `when: {entity, state}`: the group shows only while that
+                # entity is in that state (or one of a list of states).
+                w = graw.get("when")
+                if isinstance(w, dict) and isinstance(w.get("entity"), str) and ENTITY_RE.match(w["entity"]):
+                    when = {"entity": w["entity"]}
+                    for key in ("state", "state_not"):
+                        v = w.get(key)
+                        v = [v] if isinstance(v, (str, int, float, bool)) else v
+                        if isinstance(v, list) and v:
+                            when[key] = [str(s) for s in v][:8]
+                    if len(when) > 1:
+                        group["when"] = when
                 for ci, craw in enumerate(graw.get("cards") or []):
                     card = _card(craw, problems, f"{ftitle} › {stitle} › card {ci + 1}", extra)
                     if not card:

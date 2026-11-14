@@ -227,6 +227,11 @@ DEFAULTS = {
     # decision 5). On by default — the doc's recommendation — and the one
     # switch that turns the scheduled run back into a press.
     "upgrade_advice_auto": True,
+    # Talk it through in chat (`interpret.DRAFT_KINDS`): words that would
+    # become a draft to approve (a timed or once-only action, a rule, an
+    # automation change, a set of scenes) go to the conversation instead,
+    # which does them directly. Off by default: a draft is the safer path.
+    "talk_first": False,
     # Producers whose findings are not wanted: a check id as `check:<id>`
     # or an insight category's id. "Stop raising these" on the Findings
     # tab writes one here; `triage.gate` drops a row from any of them
@@ -346,6 +351,8 @@ def load() -> dict:
         out["yolo_mode"] = data["yolo_mode"]
     if isinstance(data.get("upgrade_advice_auto"), bool):
         out["upgrade_advice_auto"] = data["upgrade_advice_auto"]
+    if isinstance(data.get("talk_first"), bool):
+        out["talk_first"] = data["talk_first"]
     if data.get("plan") in PLANS:
         out["plan"] = data["plan"]
     # The Ask tab is Claude Code's own terminal from 4.0. Every save before
@@ -536,6 +543,10 @@ def save(fields: dict) -> dict:
         elif key == "upgrade_advice_auto":
             if not isinstance(value, bool):
                 raise ValueError("upgrade_advice_auto must be a boolean")
+            clean[key] = value
+        elif key == "talk_first":
+            if not isinstance(value, bool):
+                raise ValueError("talk_first must be a boolean")
             clean[key] = value
         elif key == "header_brand":
             if value is not None and value not in HEADER_BRANDS:

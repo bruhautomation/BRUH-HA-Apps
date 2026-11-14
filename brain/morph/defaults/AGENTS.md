@@ -53,9 +53,18 @@ story: true          # the story line: what is going on right now, at the top
 ask: true            # "Ask or tell the house…"
 coming_up: true      # the Coming up strip: timers, sun, calendars, what usually happens
 night_dim: false     # true: at night the rooms are dimmed a little (optional; off by default)
-room_marks: true     # false: no door and motion marks at the right of a room's title (optional)
 theme: auto          # auto | dark | light | medium (optional)
 scenes: [scene.morning, scene.evening]   # house-wide scenes, shown as words
+coming_up_lanes:     # optional: machines that get a lane of their own in Coming up
+  - label: Laundry
+    entities: [sensor.washer_status, sensor.dryer_status]
+    not_running: [off, power_off]    # or running: [...]; default on/open/running/cleaning
+  - label: Heating & cooling
+    entities: [climate.upstairs]
+    attribute: hvac_action           # read an attribute instead of the state
+    running: [heating, cooling, drying]
+    word: running                    # what a run is called (optional)
+    color: peach                     # optional; one of the colours below
 floors:
   - id: f_first_floor
     title: First floor
@@ -67,6 +76,8 @@ floors:
         color: sand          # amber sand sky violet teal lime rose peach indigo
         width: 3             # preferred columns, 1–4 (the layout may use one more or less)
         hidden: false        # true hides the section outside Edit (Edit shows it faded)
+        icon: mdi:silverware-fork-knife   # optional: a faint icon before the room's name
+        sleep_guard: false   # true: while the room's sleeper is asleep, its controls ask first
         groups:
           - cards:
               - id: c_kitchen_scenes
@@ -81,6 +92,7 @@ floors:
                 entity: light.kitchen_countertop   # type is inferred from the domain
           - label: Party       # a group gets a small tinted label only when it needs a name
             note: optional short note beside the label
+            when: {entity: input_boolean.party, state: [on]}   # optional: shown only then (or state_not)
             cards:
               - id: c_party_chips
                 type: custom:mushroom-chips-card   # ANY Lovelace card, written directly
@@ -108,8 +120,7 @@ only while the card is open (a performance chart under a thermostat: folded
 away until somebody opens that card), `climate`'s `options.actions`, below,
 and `switch`'s `options.header: true`, which puts the switch in its
 section's title row as a small pill button named by the card's `name` (amber
-while on, one tap toggles it, there even while the room is folded) instead
-of a tile: the place for a setting about the room, like a pause toggle. It
+while on, one tap toggles it) instead of a tile: the place for a setting about the room, like a pause toggle. It
 is a tile again in Edit, so it can be edited.
 
 **Any Lovelace card works.** A `type` that is not in the table below is a
@@ -136,7 +147,7 @@ wrapper yourself is the same thing:
 | `lock` | `entity` | switch · lock/unlock · — · logbook |
 | `switch` | `entity` (switch, input_boolean, siren, automation); optional `options.header: true` (a pill in the section's title row instead of a tile) | switch · toggle · — · timeline |
 | `button` | `entity` (script, button, input_button) | runs it on tap |
-| `climate` | `entity`; optional `options.actions` (up to 4 scripts, buttons or scenes: an id, or `{entity, label}`) | current temperature, a target ruler, −/+, the actions as buttons (a script reads as pressed while it runs) · — · — · modes, history |
+| `climate` | `entity`; optional `options.actions` (up to 4 scripts, buttons or scenes on the control row: an id, or `{entity, label, short, running, icon, color, modes}` — `short` is the word when the row is narrow, `running` the word while a script runs, `modes` the hvac modes it is offered in) | current temperature, a target ruler, −/+, the actions as buttons (a script reads as pressed while it runs) · — · — · modes, history |
 | `sensor` | `entity` | the value and a 24 h trace · opens history |
 | `readings` | `entities` (several sensors of one kind; a thermostat counts as its own temperature) | ONE overlaid chart, one line per sensor across the day (from statistics, else recorded history); slide to read every value at that moment |
 | `meter` | `entity` (an energy or water total) | today's total and 7-day bars |
@@ -161,24 +172,21 @@ that copy is in use.
   `storyFacts`) from the house's state, led by brAIn's situation sentence when
   there is one. `story:` only switches it on or off.
 - **Coming up** is drawn by Morph's own code (`upcoming.js` gathers the events,
-  `morph-panel.js` places the strip, under the story or under the card whose
-  Next chip opened it). `coming_up:` only switches it.
+  `morph-panel.js` places the strip). `coming_up:` switches it, and
+  `coming_up_lanes:` names the machines that get lanes of their own.
 - **The personality** is brAIn's (`/config/.brain/personality.json`, edited in
   brAIn's ⚙ › Personality, and read only while ⚙ › Features › Personality is
   on); Morph keeps none of its own. Never write a personality into Morph's files. An old
   `frontend/personality.js` is retired: never import, read or write it — Morph
   pauses it, and any copy that still reads it, until it is removed.
-- **What leads the page.** The verdict at the top, the **Now** row, which rooms
-  are open and which are one folded line, and each card's "because" line are
+- **The order is dashboard.yaml's.** Nothing on the page reorders itself:
+  floors, rooms and cards keep the order they have in the file, and no room
+  folds. The verdict at the top and each card's colour and "because" line are
   worked out by Morph (`salience.js`) from the house's state and what brAIn
-  publishes (`/config/.brain/morph/feed.json`). A card moves up because it
-  matters right now and goes back when it stops; `pin:` is how a person says a
-  card stays where it is. Never write an order into `dashboard.yaml` to make
-  something lead.
-- **brAIn's cases and To Do.** A problem or a question brAIn has is drawn in
-  the room it is about, with a reply line, from brAIn's own list
-  (`/config/.brain/morph/cases.json`). Morph keeps no list of its own; never
-  add a card for a case.
+  publishes (`/config/.brain/morph/feed.json`); they colour and word what is
+  there, they never move it.
+- **brAIn's cases and To Do** live in brAIn's own Needs you, never on the
+  page. Morph keeps no list of its own; never add a card for a case.
 - **How anything looks or moves** — the header, the layout, a built-in card's
   face — is Morph's own code.
 
@@ -200,17 +208,20 @@ Morph's own panel modules are in `/config/custom_components/brain/morph/frontend
 | `morph-types.js` | Card types (`types/*.yaml`) as Home Assistant custom cards (`custom:morph-type-<slug>`), redrawn everywhere when a type changes |
 | `brain-layer.js` | The brAIn button on a Home Assistant dashboard: Tell brAIn about a card or the dashboard, History, and letting brAIn keep a dashboard |
 | `morph-features.js` | Morph on a Home Assistant dashboard: the older `custom:morph-view` view type, the cases card and the Ask card |
-| `morph-view-layer.js` | Morph's switches on Home Assistant's own sections view (`morph: {rail, order, fold}` on a view): the room rail, lifting a room that needs you, folding a quiet one |
-| `morph-panel.js` | The page: the verdict, Now, the rooms, brAIn's cases, To Do, Ask, Edit, Tell, Settings |
+| `morph-view-layer.js` | The room rail on Home Assistant's own sections view (`morph: {rail: true}` on a view) |
+| `morph-panel.js` | The page: the verdict, the rooms, Ask, Edit, Tell (Feed and Settings are brAIn's own tabs) |
 | `cards.js` | The built-in card types (`TYPES`) |
 | `engine.js` | The layout engine: springs, masonry, opening in place |
 | `history.js` | History and charts |
 | `upcoming.js` | The Coming up strip |
-| `rail.js` | The room rail on a touch screen's right edge: a column of notches, one per room by floor; a short pull left opens it, then, without lifting, up or down goes room to room (ringed on the page, its title at the finger) and lifting lands there |
+| `scrub.js` | The room rail, on Morph's page in place of the scroll bar and on a Home Assistant view with `morph: {rail: true}`: one notch per room, floors set apart; a swipe left opens it, then the same finger slides room to room |
+| `haptics.js` | Haptics in the Home Assistant app (a tick per detent, a bump at an end, a tap per action) |
+| `polish.js` | Morph's motion language: the self-drawing mark, rolling numbers, the touch light, a tile's glow on a change made elsewhere |
+| `pull.js` | Morph's own pull to refresh |
 | `snap.js` | The picture a Tell takes of what was held |
 | `styles.js` | The styles |
-| `salience.js` | What matters right now: each card's score, its band (Now, Lead, Shown, Folded), its "because" line, and the room states |
-| `cases.js` | brAIn's cases as Morph draws them in a room, and the To Do list |
+| `salience.js` | What matters right now: each card's score, colour and "because" line, and the room states (asleep, occupied) |
+| `cases.js` | brAIn's cases as the Lovelace layer's cases card draws them |
 | `morph-dom.js` | Updating the page in place, so nothing a person is touching is rebuilt |
 | `util.js` | Icons and small helpers |
 
@@ -296,15 +307,8 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   `{type: "morph/tell_status", tell: id}` until `phase` is `done` or
   `failed` (`say` is brAIn's answer), and send its `session_id` as `session`
   on the next turn to carry the conversation on.
-- **Open Coming up from a card** (a "Next" chip) with an event, never by
-  moving Morph's elements yourself:
-  `const e = new CustomEvent("morph-coming-up", {bubbles: true, composed: true, detail: {}}); this.dispatchEvent(e);`.
-  Coming up unfolds directly under the tile the event came from, across its
-  row, and the board makes room; the same press again folds it.
-  `detail.open: true/false` says which outright, and after the dispatch
-  `e.detail.shown` says whether it is showing, so the chip can draw itself
-  pressed. A card that is not on the board opens it in its usual place under
-  the story.
+- **Coming up is always shown** under the top of the page while `coming_up:`
+  is on; a card never opens or moves it.
 - **Render with no data at all**: `hass` may arrive late, and an entity may be
   unavailable.
 - **An entity that is `unavailable` or `unknown` has no reading now.** Its
@@ -577,12 +581,10 @@ to make one bigger or smaller, never a style. A section is
 `{type: grid, cards: [...]}` with an optional `column_span` (how many of
 the view's columns it takes); the view's `max_columns` caps the columns.
 
-Morph's switches are on the view, under `morph:` (all off unless set):
-`rail` (the room rail down the right edge of a touch screen), `order`
-(a room that needs somebody — an unlocked lock, an open door, a leak — is
-lifted to the top with why) and `fold` (a room with nothing on and
-nothing recent is one line until tapped). A section's name is its first
-`heading` card. In edit mode nothing moves.
+Morph's switch is on the view, under `morph:` (off unless set): `rail`
+(the room rail down the right edge of a touch screen). Nothing on a view
+reorders itself or folds. A section's name is its first `heading` card.
+In edit mode the rail is off.
 
 To SEE a dashboard as Home Assistant draws it, use `screenshot_panel`
 with addon `Home Assistant` and screen `<url_path>/<view path>` (no
