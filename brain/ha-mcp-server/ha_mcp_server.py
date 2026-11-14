@@ -4858,20 +4858,43 @@ def _browser_report(text, offset=0):
     return wrapped, paging
 
 
+def _browser_profile_id(value):
+    """The add-on's own id for a profile (`p1`, `p2`, ...): a number it counted,
+    never text a page wrote. Anything else is left out."""
+    value = str(value or "")
+    return value if re.fullmatch(r"p\d{1,6}", value) else None
+
+
 def _browser_profile_view(rows):
-    """The household's shopping profiles as brAIn reads them (web-sourced
-    names are untrusted data)."""
+    """The household's shopping profiles as brAIn reads them. Every string in
+    one came from a store's web page, so every string is wrapped untrusted;
+    the only bare values are the add-on's id and numbers it checked."""
+    def number(value):
+        return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+    def item_view(i):
+        out = {"name": untrusted(i.get("name"))}
+        if i.get("variant"):
+            out["variant"] = untrusted(i["variant"])
+        if number(i.get("quantity")):
+            out["usual_quantity"] = number(i["quantity"])
+        every = i.get("every")
+        if number(every):
+            out["every_days"] = number(every)
+        elif every:
+            out["how_often"] = untrusted(every)
+        if i.get("last_bought"):
+            out["last_bought"] = untrusted(i["last_bought"])
+        return out
+
     out = []
     for p in rows or []:
         if not isinstance(p, dict):
             continue
         out.append({
+            "id": _browser_profile_id(p.get("id")),
             "store": untrusted(p.get("store")),
-            "store_key": p.get("key"),
-            "items": [{"name": untrusted(i.get("name")), "variant": untrusted(i.get("variant")) if i.get("variant") else "",
-                       "usual_quantity": i.get("quantity"), "how_often": untrusted(i["every"]) if i.get("every") else "",
-                       "last_bought": untrusted(i["last_bought"]) if i.get("last_bought") else ""}
-                      for i in (p.get("items") or [])[:150] if isinstance(i, dict)],
+            "items": [item_view(i) for i in (p.get("items") or [])[:150] if isinstance(i, dict)],
             "preferred_brands": [untrusted(w) for w in p.get("brands") or []],
             "avoid": [untrusted(w) for w in p.get("avoid") or []]})
     return out
@@ -4922,8 +4945,11 @@ def _browser_view(task, offset=0):
                                "to ask again for a shorter one.")
     saved = task.get("profile_saved")
     if isinstance(saved, dict) and saved.get("store"):
-        out["profile_saved"] = {"store": untrusted(saved.get("store")), "items": saved.get("items"),
-                                "brands": saved.get("brands"), "avoid": saved.get("avoid")}
+        out["profile_saved"] = {"id": _browser_profile_id(saved.get("id")),
+                                "store": untrusted(saved.get("store")),
+                                **{k: saved[k] for k in ("items", "brands", "avoid")
+                                   if isinstance(saved.get(k), int)
+                                   and not isinstance(saved.get(k), bool)}}
     cart = task.get("cart")
     if isinstance(cart, dict):
         out["cart"] = {

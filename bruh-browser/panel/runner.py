@@ -149,8 +149,12 @@ SCHEMA = {
                     "properties": {"name": {"type": "string"},
                                    "variant": {"type": "string"},
                                    "quantity": {"type": "number"},
-                                   "every": {"type": "string"},
-                                   "last_bought": {"type": "string"}}}},
+                                   "every": {"type": "string", "description": (
+                                       "daily, weekly, fortnightly, monthly, quarterly, "
+                                       "yearly, every order, most orders, occasionally, "
+                                       "or every N days/weeks/months")},
+                                   "last_bought": {"type": "string",
+                                                   "description": "YYYY-MM-DD"}}}},
                 "brands": {"type": "array", "items": {"type": "string"}},
                 "avoid": {"type": "array", "items": {"type": "string"}},
             },

@@ -170,15 +170,21 @@ and updates what changed.
   of a later errand for that store, and to brAIn when it asks.
 - **How it is used:** a later cart errand for that store starts from it, so
   "add my usual" means your profile first and the store's own buy-again list
-  second. brAIn tells you what it knows and asks what changes before it
-  starts.
+  second. An errand gets a store's profile when it names that store, or when
+  it names no store at all and you have only one profile ("add my usual
+  order plus oat milk"); "my usual from Costco" never gets your Walmart one.
+  brAIn tells you what it knows and asks what changes before it starts.
 - **You are in charge:** the page shows every store's profile. Press
   **Remove** beside an item, a brand or a thing to avoid and it stays out,
   even when the next order-history errand sees it again. **Clear profile**
   forgets the whole store (press twice to confirm). Only you can do this, on
   this page.
 - **It is not an approval.** A profile never lets an errand buy anything;
-  buying still takes your yes on a finished cart.
+  buying still takes your yes on a finished cart. Everything in it came from
+  a web page, so it is kept as plain data (each product name, size, count,
+  how often and date, tidied and shortened) and handed to an errand only as a
+  list of things you have bought before. Nothing is left out for what its
+  name says, and nothing in a product name can read as permission to buy.
 
 ## For brAIn
 

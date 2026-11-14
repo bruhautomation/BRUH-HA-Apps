@@ -348,7 +348,7 @@ async def h_profile_remove(request):
     body = await _body(request)
     if store is None:
         return _err("Shopping profiles are not available.", 503)
-    row, why = store.remove(str(body.get("store") or ""), str(body.get("kind") or ""),
+    row, why = store.remove(str(body.get("profile") or ""), str(body.get("kind") or ""),
                             str(body.get("key") or ""))
     return _err(why, 409) if why else web.json_response({"profile": row})
 
@@ -358,7 +358,7 @@ async def h_profile_clear(request):
     body = await _body(request)
     if store is None:
         return _err("Shopping profiles are not available.", 503)
-    done, why = store.clear(str(body.get("store") or ""))
+    done, why = store.clear(str(body.get("profile") or ""))
     return web.json_response({"ok": True}) if done else _err(why, 409)
 
 

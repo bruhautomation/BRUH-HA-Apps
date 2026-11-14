@@ -374,7 +374,7 @@ function profileItemRow(p, kind, key, label, sub) {
   return el("li", {},
     el("div", { class: "what" }, el("span", { text: label }), sub ? el("span", { class: "sub", text: sub }) : null),
     el("button", { type: "button", class: "ghost", "aria-label": `Remove ${label}`,
-      onclick: () => profileAction("api/profiles/remove", { store: p.key, kind, key },
+      onclick: () => profileAction("api/profiles/remove", { profile: p.id, kind, key },
         "Removed. A later order-history errand will not add it back.") }, "Remove"));
 }
 
@@ -386,11 +386,11 @@ function renderProfiles(rows) {
     return;
   }
   box.replaceChildren(...rows.map((p) => {
-    const armed = state.clearing === p.key;
+    const armed = state.clearing === p.id;
     const kids = [el("h3", { text: p.store }),
       el("p", { class: "cap", text: `${p.items.length} item${p.items.length === 1 ? "" : "s"} · updated ${ago(p.updated_at)}` })];
     if (p.items.length) kids.push(el("ul", {}, p.items.map((it) => profileItemRow(p, "item", it.key, it.name,
-      [it.variant, it.quantity ? `usually ${it.quantity}` : "", it.every ? `about ${it.every}` : "", it.last_bought ? `last bought ${it.last_bought}` : ""]
+      [it.variant, it.quantity ? `usually ${it.quantity}` : "", it.every ? (typeof it.every === "number" ? `about every ${it.every} days` : it.every) : "", it.last_bought ? `last bought ${it.last_bought}` : ""]
         .filter(Boolean).join(" · ")))));
     for (const [kind, title, list] of [["brand", "Brands you prefer", p.brands], ["avoid", "Things to avoid", p.avoid]]) {
       if (list.length) kids.push(el("div", { class: "group" }, el("strong", { text: title }),
@@ -398,8 +398,8 @@ function renderProfiles(rows) {
     }
     kids.push(el("div", { class: "actions" }, el("button", { type: "button", class: armed ? "danger" : "ghost danger-ink",
       onclick: () => {
-        if (!armed) { state.clearing = p.key; renderProfiles(state.data.profiles || []); return; }
-        profileAction("api/profiles/clear", { store: p.key }, `Cleared the ${p.store} profile.`);
+        if (!armed) { state.clearing = p.id; renderProfiles(state.data.profiles || []); return; }
+        profileAction("api/profiles/clear", { profile: p.id }, `Cleared the ${p.store} profile.`);
       } }, armed ? `Clear ${p.store}? Press again` : "Clear profile"),
       armed ? el("button", { type: "button", class: "ghost", onclick: () => { state.clearing = null; renderProfiles(state.data.profiles || []); } }, "Not now") : null));
     return el("div", { class: "profile" }, kids);
