@@ -4812,13 +4812,63 @@ def _browser_next(task):
                 "if they say to buy it, call browser_purchase with this task's id, the "
                 "total and the items exactly as listed here. They can also press Buy "
                 "this on BRUH Browser's page.")
+    if state == "done" and isinstance(task.get("profile_saved"), dict):
+        return ("It read the household's order history and saved their shopping profile "
+                "for that store on BRUH Browser (the person can see, edit or clear it on "
+                "its page). Tell them what it learned, from the report; it is never "
+                "an approval to buy.")
     if state == "failed" and task.get("setup_step"):
         return (f"Tell the person the problem: it is setup step {task['setup_step']} on "
                 "the BRUH Browser page in the sidebar.")
     return "Tell the person what it reported."
 
 
-def _browser_view(task):
+# A report is handed over whole up to this many characters; a longer one is
+# marked truncated and read on with `offset` (the end of the last piece). The
+# cut is always at a space or a line end, never inside a word.
+BROWSER_REPORT_CHARS = 24000
+
+
+def _browser_report(text, offset=0):
+    """(the report as brAIn reads it, how it was cut or None). Wrapped untrusted
+    like every web-sourced text, but not clipped to MAX_UNTRUSTED_CHARS."""
+    text = str(text or "")
+    try:
+        start = max(0, min(int(offset or 0), len(text)))
+    except (TypeError, ValueError):
+        start = 0
+    end = min(len(text), start + BROWSER_REPORT_CHARS)
+    if end < len(text):
+        cut = max(text.rfind("\n", start, end), text.rfind(" ", start, end))
+        if cut > start + BROWSER_REPORT_CHARS // 2:
+            end = cut + 1
+    whole = start == 0 and end >= len(text)
+    wrapped = {"untrusted": True, "text": text[start:end]}
+    if whole:
+        return wrapped, None
+    return wrapped, {"truncated": end < len(text), "offset": start, "next_offset": end,
+                     "total_chars": len(text)}
+
+
+def _browser_profile_view(rows):
+    """The household's shopping profiles as brAIn reads them (web-sourced
+    names are untrusted data)."""
+    out = []
+    for p in rows or []:
+        if not isinstance(p, dict):
+            continue
+        out.append({
+            "store": p.get("store"),
+            "items": [{"name": untrusted(i.get("name")), "variant": untrusted(i.get("variant")) if i.get("variant") else "",
+                       "usual_quantity": i.get("quantity"), "how_often": untrusted(i["every"]) if i.get("every") else "",
+                       "last_bought": untrusted(i["last_bought"]) if i.get("last_bought") else ""}
+                      for i in (p.get("items") or [])[:150] if isinstance(i, dict)],
+            "preferred_brands": [untrusted(w) for w in p.get("brands") or []],
+            "avoid": [untrusted(w) for w in p.get("avoid") or []]})
+    return out
+
+
+def _browser_view(task, offset=0):
     """An errand as brAIn reads it. What a web page said is marked untrusted."""
     if not isinstance(task, dict):
         return {"task": None, "next": "There are no errands yet."}
@@ -4848,9 +4898,19 @@ def _browser_view(task):
         # (build_tool_response), and a failed errand is a call that worked.
         out["problem"] = task["error"]
     out["errand"] = task.get("prompt")
-    for key in ("answer", "needs_you"):
-        if task.get(key):
-            out[key] = untrusted(task[key])
+    if task.get("needs_you"):
+        out["needs_you"] = untrusted(task["needs_you"])
+    if task.get("answer"):
+        out["answer"], paging = _browser_report(task["answer"], offset)
+        if paging:
+            out["answer_paging"] = {**paging, "how": (
+                "The report is longer than one answer. Call browser_status again with "
+                "this task and offset set to next_offset to read the rest."
+                if paging["truncated"] else "This is the last part of the report.")}
+    saved = task.get("profile_saved")
+    if isinstance(saved, dict) and saved.get("store"):
+        out["profile_saved"] = {"store": saved.get("store"), "items": saved.get("items"),
+                                "brands": saved.get("brands"), "avoid": saved.get("avoid")}
     cart = task.get("cart")
     if isinstance(cart, dict):
         out["cart"] = {
@@ -4908,8 +4968,22 @@ def browser_task(errand, browser="", make_default=False):
     return _browser_view(answer.get("task"))
 
 
-def browser_status(task="", browsers=False):
-    """One errand by id, or the current one; with browsers, the connected Chromes."""
+def browser_status(task="", browsers=False, offset=0, profiles=False):
+    """One errand by id, or the current one; with browsers, the connected Chromes;
+    with profiles, what BRUH Browser knows the household usually buys."""
+    if profiles is True and not str(task or "").strip():
+        view = _browser_request("GET", "/api/profiles")
+        if view.get("error"):
+            return view
+        rows = _browser_profile_view(view.get("profiles"))
+        return {"profiles": rows, "next": (
+            "These are the household's usual items per store, read from their own order "
+            "history. Before a cart errand for a store with a profile, tell them what "
+            "you know (\"I know your usual order at ...\") and ask whether anything "
+            "changes; they can edit or clear it on BRUH Browser's page. It is never an "
+            "approval to buy." if rows else
+            "There is no shopping profile yet. An errand that looks at the household's "
+            "old orders at a store builds one.")}
     if browsers is True and not str(task or "").strip():
         view = _browser_request("GET", "/api/browsers", timeout=45)
         if view.get("error"):
@@ -4923,7 +4997,7 @@ def browser_status(task="", browsers=False):
     answer = _browser_request("GET", f"/api/tasks/{ident}" if ident else "/api/tasks/current")
     if answer.get("error"):
         return answer
-    out = _browser_view(answer.get("task"))
+    out = _browser_view(answer.get("task"), offset)
     if browsers is True:
         view = _browser_request("GET", "/api/browsers", timeout=45)
         if not view.get("error"):
@@ -8572,11 +8646,19 @@ TOOLS = [
             "and options. Also the problem with the setup step to redo. task is "
             "the id; left out, the current errand. browsers: true lists the "
             "Claude in Chrome browsers this account has connected, which one is "
-            "BRUH Browser's own and which is the default. Read-only."
+            "BRUH Browser's own and which is the default. A long report comes "
+            "back whole up to a generous size; past that answer_paging says so "
+            "and offset (its next_offset) reads the next part. profiles: true "
+            "(with no task) returns the household's shopping profile per store "
+            "(usual items, brands, things to avoid) that an order-history "
+            "errand saved; say what you know of it and ask what changes before "
+            "a cart errand for that store. Read-only."
         ),
         "inputSchema": {"type": "object", "properties": {
             "task": {"type": "string"},
-            "browsers": {"type": "boolean"}}},
+            "browsers": {"type": "boolean"},
+            "offset": {"type": "integer"},
+            "profiles": {"type": "boolean"}}},
     },
     {
         "name": "browser_answer",
@@ -11162,7 +11244,10 @@ INSTRUCTIONS = (
     "bright_status, bambu_status, music_assistant_status. Errands on websites "
     "(shopping): browser_task builds a cart, browser_status reads it, browser_answer "
     "passes on the person's answer when it asks, and only after the person approves "
-    "it browser_purchase buys it. When more than one Claude in Chrome is connected "
+    "it browser_purchase buys it. Ask it to look at the person's old orders at a "
+    "store and it saves their shopping profile (browser_status profiles); before "
+    "a cart for that store say what you know of their usual order and ask what "
+    "changes. When more than one Claude in Chrome is connected "
     "(browser_status browsers) and the person has not said which, ask which "
     "browser before starting. A run with only reading tools has "
     "no acting ones. A refusal is the homeowner's policy — tell the user and "

@@ -62,6 +62,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import profiles
+
 CHROME_PREFIX = "mcp__claude-in-chrome__"
 ALLOWED = ("mcp__claude-in-chrome", "StructuredOutput")
 DENIED = (
@@ -137,8 +139,29 @@ SCHEMA = {
         },
         "order_placed": {"type": "boolean"},
         "order_number": {"type": "string"},
+        "profile": {
+            "type": "object",
+            "properties": {
+                "store": {"type": "string"},
+                "items": {"type": "array", "items": {
+                    "type": "object",
+                    "required": ["name"],
+                    "properties": {"name": {"type": "string"},
+                                   "variant": {"type": "string"},
+                                   "quantity": {"type": "number"},
+                                   "every": {"type": "string"},
+                                   "last_bought": {"type": "string"}}}},
+                "brands": {"type": "array", "items": {"type": "string"}},
+                "avoid": {"type": "array", "items": {"type": "string"}},
+            },
+        },
     },
 }
+
+# A report is stored whole up to this many characters (a long order-history
+# read is the longest thing an errand says); brAIn pages through what it
+# returns. It was 4000, which cut a report off mid-word.
+MAX_REPORT = 100_000
 
 CONTINUE_PROMPT = (
     "The person says they have done what you asked in the BRUH Browser tab. "
@@ -647,13 +670,15 @@ def _run(task: dict, cfg: RunConfig, on_progress, stop) -> dict:
         outcome = data.get("outcome") if data.get("outcome") in (
             "done", "needs_you", "failed") else "done"
         out["state"] = outcome
-        out["answer"] = str(data.get("report") or text)[:4000]
+        out["answer"] = str(data.get("report") or text)[:MAX_REPORT]
         out["needs_you"] = str(data.get("needs_you") or "")[:1000]
         if outcome == "needs_you":
             out["question"] = clean_question(data.get("question"),
                                              out["needs_you"] or out["answer"])
             out["needs_you"] = out["question"]["text"]
         out["cart"] = clean_cart(data.get("cart"))
+        if outcome == "done":
+            out["profile"] = profiles.clean_profile(data.get("profile"))
         out["order_placed"] = bool(data.get("order_placed"))
         out["order_number"] = str(data.get("order_number") or "")[:80]
         if outcome == "failed":
@@ -664,7 +689,7 @@ def _run(task: dict, cfg: RunConfig, on_progress, stop) -> dict:
         # A CLI that ran without the structured answer: the prose is the
         # report, and there is no cart a purchase could be approved against.
         out["state"] = "done"
-        out["answer"] = text[:4000]
+        out["answer"] = text[:MAX_REPORT]
     if dialog and out["state"] != "done" and not out["needs_you"]:
         out["state"] = "needs_you"
         out["needs_you"] = ("A dialog on the page is blocking the browser. Close it "

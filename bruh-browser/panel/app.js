@@ -360,6 +360,52 @@ function renderBrowsers(view) {
   box.replaceChildren(...kids);
 }
 
+// -------------------------------------------------------- profiles ---
+// What an order-history errand read off a store's own site, kept in this
+// add-on: items, brands and things to avoid, each removable, and a store's
+// profile can be cleared. Everything in it came from a web page (textContent).
+async function profileAction(path, body, said) {
+  try { await api(path, body); if (said) toast(said); } catch (err) { toast(err.message); }
+  state.clearing = null;
+  refresh();
+}
+
+function profileItemRow(p, kind, key, label, sub) {
+  return el("li", {},
+    el("div", { class: "what" }, el("span", { text: label }), sub ? el("span", { class: "sub", text: sub }) : null),
+    el("button", { type: "button", class: "ghost", "aria-label": `Remove ${label}`,
+      onclick: () => profileAction("api/profiles/remove", { store: p.key, kind, key },
+        "Removed. A later order-history errand will not add it back.") }, "Remove"));
+}
+
+function renderProfiles(rows) {
+  const box = $("#profilesBody");
+  if (!rows.length) {
+    box.replaceChildren(el("p", { class: "muted",
+      text: "None yet. Ask brAIn to look at your old orders at a store, for example “look at my old Walmart orders and learn what I usually buy”. What it reads is kept here, on this add-on only, and used the next time you ask for your usual order. It never lets an errand buy anything." }));
+    return;
+  }
+  box.replaceChildren(...rows.map((p) => {
+    const armed = state.clearing === p.key;
+    const kids = [el("h3", { text: p.store }),
+      el("p", { class: "cap", text: `${p.items.length} item${p.items.length === 1 ? "" : "s"} · updated ${ago(p.updated_at)}` })];
+    if (p.items.length) kids.push(el("ul", {}, p.items.map((it) => profileItemRow(p, "item", it.key, it.name,
+      [it.variant, it.quantity ? `usually ${it.quantity}` : "", it.every ? `about ${it.every}` : "", it.last_bought ? `last bought ${it.last_bought}` : ""]
+        .filter(Boolean).join(" · ")))));
+    for (const [kind, title, list] of [["brand", "Brands you prefer", p.brands], ["avoid", "Things to avoid", p.avoid]]) {
+      if (list.length) kids.push(el("div", { class: "group" }, el("strong", { text: title }),
+        el("ul", {}, list.map((w) => profileItemRow(p, kind, w, w, ""))))); 
+    }
+    kids.push(el("div", { class: "actions" }, el("button", { type: "button", class: armed ? "danger" : "ghost danger-ink",
+      onclick: () => {
+        if (!armed) { state.clearing = p.key; renderProfiles(state.data.profiles || []); return; }
+        profileAction("api/profiles/clear", { store: p.key }, `Cleared the ${p.store} profile.`);
+      } }, armed ? `Clear ${p.store}? Press again` : "Clear profile"),
+      armed ? el("button", { type: "button", class: "ghost", onclick: () => { state.clearing = null; renderProfiles(state.data.profiles || []); } }, "Not now") : null));
+    return el("div", { class: "profile" }, kids);
+  }));
+}
+
 function renderHistory(rows) {
   const list = $("#history");
   if (!rows.length) {
@@ -416,6 +462,7 @@ async function refresh() {
     renderSetup(data);
     renderErrand(data.current);
     renderBrowsers(data.browsers);
+    renderProfiles(data.profiles || []);
     renderScreen(data);
     renderHistory(data.history || []);
   } catch (err) {

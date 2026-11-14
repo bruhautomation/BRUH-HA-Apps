@@ -153,11 +153,39 @@ approval.
   click at a screen position names nothing, so the guard is a second line;
   the first is that no errand is ever told it may buy without your yes.
 
+## Your shopping profile
+
+Ask brAIn to look at your old orders at a store ("look at my old Walmart
+orders and learn what I usually buy"). The errand reads what the store's
+order history shows and saves a profile for that store: the items you buy
+(name as the store shows it, size, usual quantity, how often, when last
+bought), brands you prefer, and things to avoid when your history shows
+them. It is never guessed. Running the same kind of errand again adds to it
+and updates what changed.
+
+- **Where it lives:** in this app's own storage (`/data`), on this app only.
+  It is left out of Home Assistant backups like the rest of the browser's
+  data, and it is sent nowhere but into the message of a later errand for
+  that store, and to brAIn when it asks.
+- **How it is used:** a later cart errand for that store starts from it, so
+  "add my usual" means your profile first and the store's own buy-again list
+  second. brAIn tells you what it knows and asks what changes before it
+  starts.
+- **You are in charge:** the page shows every store's profile. Press
+  **Remove** beside an item, a brand or a thing to avoid and it stays out,
+  even when the next order-history errand sees it again. **Clear profile**
+  forgets the whole store (press twice to confirm). Only you can do this, on
+  this page.
+- **It is not an approval.** A profile never lets an errand buy anything;
+  buying still takes your yes on a finished cart.
+
 ## For brAIn
 
 brAIn's tools are `browser_task` (start an errand, optionally in a named
 browser; it never buys), `browser_status` (how it went, the cart, the
-question it is waiting on, and with `browsers` the connected browsers),
+question it is waiting on, and with `browsers` the connected browsers; a
+long report comes back whole, or in parts with an `offset` to read on, and
+with `profiles` your shopping profile),
 `browser_answer` (pass on your answer to its question), `browser_stop`, and
 `browser_purchase` (buy a cart you approved). They are listed only when this
 app is installed.
