@@ -3826,7 +3826,6 @@ def _morph_cases_payload(now: float | None = None) -> dict:
     rows = [c for c in cases.list_cases(None, now=now, stores=cases.STORES)
             if cases.on_feed(c)]
     side = morph_bridge.threads()
-    names = dict(_NAMES)
     assistant = personality.assistant_name()
     out = []
     for case in rows:
@@ -3841,7 +3840,7 @@ def _morph_cases_payload(now: float | None = None) -> dict:
         case_answers = cases.answers(case)
         out.append(morph_bridge.case_row(
             case,
-            todo_text=(findings_store.todo_text_of(row, names)
+            todo_text=(findings_store.todo_text_of(row)
                        if row is not None else ""),
             thread=(row or {}).get("thread") or side.get(case["id"]) or [],
             ask=morph_bridge.ask_line(case, situation),
@@ -3869,7 +3868,7 @@ def _morph_cases_payload(now: float | None = None) -> dict:
             "cases": out,
             "todo": morph_bridge.todo_rows(
                 items, cases.snoozes(), _morph_area_of,
-                lambda item: findings_store.todo_item_text(item, names)),
+                findings_store.todo_item_text),
             "ended_morph": morph_bridge.ended(),
             "said": sorted(said, key=lambda t: t.get("at") or 0)[-20:]}
 
@@ -9858,6 +9857,8 @@ hypotheses.KNOWN_ANSWER = _hypothesis_known_answer
 # are the cases' sidecar, and `cases` reads `todo_store`, so the store is
 # handed the reader rather than importing it.
 todo_store.SNOOZED = lambda: cases.snoozes()
+# The mirror's summary is the card's headline (`findings_store.todo_item_text`).
+todo_store.HEADLINE = findings_store.todo_item_text
 # Every write to either store marks Morph's `cases.json` as owed, and the
 # Morph loop rewrites it within a second (`_morph_loop`).
 findings_store.ON_WRITE = _morph_dirty
@@ -22894,6 +22895,9 @@ def _todo_payload() -> dict:
     for item in payload.get("items") or []:
         until = int(asleep.get(f"t:{item.get('id')}", 0) or 0)
         item["snoozed_until"] = until if until > now else 0
+        # What the card shows: one headline and one line, nothing said
+        # twice (`findings_store.todo_item_parts`, #879).
+        item["headline"], item["line"] = findings_store.todo_item_parts(item)
     return payload
 
 
@@ -22981,13 +22985,18 @@ async def _move_finding_to_todo(finding: dict, note: str = "",
     # hallway motion sensor."), never the finding's claim (contract B,
     # `todo_text`); the claim rides as `claim`, which is what the settled
     # ledger's entry is still called when the chore is done.
-    sentence = findings_store.todo_text_of(
-        {**finding, "fix": fix, "todo_text": ""} if fix else finding) \
-        or finding["text"]
+    # Headline and line composed once, here, from the finding's own To Do
+    # words or its fix and the thing's name (`findings_store.todo_parts`),
+    # and stored, so the card never has to cut them out of free text again.
+    sentence, line = findings_store.todo_parts(
+        {**finding, "fix": fix, "todo_text": "", "todo_line": ""}
+        if fix else finding)
+    sentence = sentence or finding["text"]
 
     def place() -> dict | None:
         return todo_store.add(
             sentence,
+            line=line,
             claim=finding["text"],
             from_case=f"f:{int(finding['ts'])}",
             detail=finding.get("detail") or "",
@@ -25424,11 +25433,20 @@ async def h_finding_discuss(request: web.Request) -> web.Response:
                                   "face": "terminal"})
     prompt = await asyncio.to_thread(_discuss_prompt, finding)
     out = await _ask_in_chat(prompt, await _json_body(request),
-                             finding_ts=int(finding["ts"]))
+                             finding_ts=int(finding["ts"]),
+                             title=str(finding.get("text") or ""))
     return web.json_response({**out, "finding": finding})
 
 
-async def _ask_in_chat(prompt: str, body: dict, finding_ts: int = 0) -> dict:
+def _ask_title(body: dict) -> str:
+    """The title the asking page gave its conversation (an ask-about's
+    subject or the person's own words): one line, capped, or ""."""
+    return " ".join(str((body or {}).get("title") or "").split())[
+        :run_sources.MAX_TITLE]
+
+
+async def _ask_in_chat(prompt: str, body: dict, finding_ts: int = 0,
+                       title: str = "") -> dict:
     """A NEW chat conversation that starts with ``prompt``, answered at once.
 
     The one path every ask-about takes on the chat face (Discuss, Ask on a
@@ -25449,7 +25467,14 @@ async def _ask_in_chat(prompt: str, body: dict, finding_ts: int = 0) -> dict:
             raise RuntimeError("the new conversation could not be opened")
         session.model = eff_chat_model()
         session.skip_permissions = registry.skip_permissions
+        # Named as it opens, by whoever opened it, so the list never has to
+        # read a title out of the prompt (#882).
+        title = title or _ask_title(body)
+        session.named = title
         sent = await _send_promptly(session, prompt)
+        if title and session.session_id:
+            await asyncio.to_thread(run_sources.record_title,
+                                    session.session_id, title)
     except ValueError as exc:
         raise web.HTTPBadRequest(reason=_refusal(exc))
     except RuntimeError as exc:
@@ -28570,7 +28595,10 @@ async def _presence_reflect(now: float, people: dict[str, str], *,
         presence.REFLECT_TIMEOUT_S, presence.REFLECT_MAX_TURNS, "presence",
         job="presence", schema=presence.SCHEMA,
         priority=run_queue.PRESS if pressed else run_queue.SCHEDULED)
-    cost = await asyncio.to_thread(_record_usage, result, "presence")
+    # Its own id in the usage ledger: "presence" is also a shipped card's,
+    # and an id that names two things puts one of them in the wrong place
+    # on ⚙ › Model & usage (`usage_store.SPEND_IDS`).
+    cost = await asyncio.to_thread(_record_usage, result, "presence-reflect")
     LEDGER.record("presence", int(cost.get("total") or 0), now,
                   tier=_ran_tier(result, "presence"))
     if not result.get("ok"):

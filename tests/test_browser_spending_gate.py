@@ -10,7 +10,9 @@ process, the payload on stdin — and refuses an order-placing call for an
 errand without approval, including a click on an element a page-read
 labelled "Place order", and lets it through for an approved one. brAIn's
 ACTION GATE asks a person about every `browser_purchase`, with YOLO on,
-and refuses it where nobody can be asked.
+and refuses it where nobody can be asked. The panel's own Buy this is the
+same approval check, pressed only from the sidebar, and a declined cart, or
+one built in another computer's Chrome, is never bought.
 """
 from __future__ import annotations
 
@@ -150,6 +152,93 @@ class TestThePanelRefusesAPurchaseWithoutAnApproval(unittest.TestCase):
         self.assertEqual(wrong, 409)
         self.assertEqual(right, 201)
         self.assertTrue(task["purchase_approved"])
+
+
+class TestBuyThisOnThePanelIsTheSameApproval(unittest.TestCase):
+    """The page's Buy this goes through `check_approval` like brAIn's
+    purchase, only a person on the page can press it (never a token caller),
+    and a cart the household declined, or one built in another computer's
+    Chrome, is never bought."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.clock = Clock()
+        self.errs, self.cart_id = errands_with_a_cart(self.tmp.name, self.clock)
+        self.token_file = Path(self.tmp.name) / "api_token"
+        self.token_file.write_text("t" * 40)
+
+    def drive(self, calls, ingress: bool):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        async def go():
+            app = server.build_app(chrome=object(), errs=self.errs, ticker=False)
+            out = []
+            async with TestClient(TestServer(app)) as client:
+                for path, body in calls:
+                    headers = {} if ingress else {"Authorization": "Bearer " + "t" * 40}
+                    res = await client.post(path, json=body, headers=headers)
+                    out.append((res.status, await res.json()))
+            return out
+
+        peers = frozenset({"127.0.0.1", "::1"}) if ingress else frozenset()
+        with patch.object(server, "INGRESS_PEERS", peers), \
+                patch.object(server, "TOKEN_FILE", self.token_file):
+            server._TOKEN.update(mtime=None, value=None)
+            return asyncio.run(go())
+
+    def test_a_token_caller_cannot_buy_decline_or_say_it_is_done(self):
+        base = f"/api/tasks/{self.cart_id}"
+        answers = self.drive([(base + "/buy", {"total": 3.0}), (base + "/decline", {}),
+                              (base + "/continue", {}),
+                              (base + "/answer", {"carry_on": True}),
+                              ("/api/browsers/own", {"browser": "x"})], ingress=False)
+        self.assertEqual([status for status, _ in answers], [403] * 5)
+        self.assertFalse(any(t.get("purchase") for t in self.errs.tasks.values()))
+        self.assertFalse(self.errs.tasks[self.cart_id].get("declined"))
+
+    def test_buy_this_needs_the_cart_total_and_buys_once(self):
+        base = f"/api/tasks/{self.cart_id}/buy"
+        (wrong, why), (bare, _), (right, made), (again, why2) = self.drive(
+            [(base, {"total": 2.0}), (base, {}), (base, {"total": 3.0}),
+             (base, {"total": 3.0})], ingress=True)
+        self.assertEqual((wrong, bare, right, again), (409, 409, 201, 409))
+        self.assertIn("not the cart's total", why["error"])
+        self.assertTrue(made["task"]["purchase_approved"])
+        self.assertEqual(made["task"]["source"], "panel")
+        self.assertIn("already approved", why2["error"])
+
+    def test_buy_this_is_refused_on_a_stale_cart(self):
+        self.clock.t += tasks.APPROVAL_WINDOW_S + 1
+        (status, why), = self.drive([(f"/api/tasks/{self.cart_id}/buy", {"total": 3.0})],
+                                    ingress=True)
+        self.assertEqual(status, 409)
+        self.assertIn("minutes ago", why["error"])
+
+    def test_a_declined_cart_is_never_bought_from_the_page_or_by_brain(self):
+        base = f"/api/tasks/{self.cart_id}"
+        (declined, _), (buy, why) = self.drive(
+            [(base + "/decline", {}), (base + "/buy", {"total": 3.0})], ingress=True)
+        self.assertEqual((declined, buy), (200, 409))
+        self.assertIn("declined", why["error"])
+        (status, _), = self.drive([("/api/tasks", {
+            "purchase": True, "approval": {"cart_task": self.cart_id, "total": 3.0}})],
+            ingress=False)
+        self.assertEqual(status, 409)
+        self.assertFalse(any(t.get("purchase") for t in self.errs.tasks.values()))
+
+    def test_a_cart_bought_cannot_then_be_declined(self):
+        base = f"/api/tasks/{self.cart_id}"
+        (bought, _), (declined, _) = self.drive(
+            [(base + "/buy", {"total": 3.0}), (base + "/decline", {})], ingress=True)
+        self.assertEqual((bought, declined), (201, 409))
+
+    def test_a_cart_from_another_computers_chrome_is_never_bought(self):
+        self.errs.tasks[self.cart_id]["browser_own"] = False
+        task, why = self.errs.create("", purchase=True,
+                                     approval={"cart_task": self.cart_id, "total": 3.0})
+        self.assertIsNone(task)
+        self.assertIn("another computer", why)
 
 
 def run_hook(mode: str, payload, approved: bool, state: Path) -> dict | None:

@@ -50,6 +50,8 @@ PAGES = {
     "webstore": "https://chromewebstore.google.com/detail/fcoeoabgfenejglbffodgkkbkcdhcgfn",
     "claude": "https://claude.ai/login",
     "extensions": "chrome://extensions/?id=fcoeoabgfenejglbffodgkkbkcdhcgfn",
+    # The extension's site permissions page, as Claude Code's /chrome links it.
+    "permissions": "https://clau.de/chrome/permissions",
 }
 
 

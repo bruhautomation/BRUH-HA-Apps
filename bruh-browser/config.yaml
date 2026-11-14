@@ -1,7 +1,7 @@
 ---
 name: "BRUH Browser"
 description: "brAIn's hands on the web: a real Google Chrome with Anthropic's Claude in Chrome extension, so brAIn can run errands on websites for you (a grocery cart first). Builds carts and stops for your approval before any purchase. Requires brAIn and a paid Claude plan."
-version: "0.1.0"
+version: "0.1.1"
 slug: "bruh-browser"
 init: false
 

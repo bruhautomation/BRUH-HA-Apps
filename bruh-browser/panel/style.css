@@ -98,6 +98,36 @@ button:disabled { opacity: .55; cursor: default; }
 .report { white-space: pre-wrap; overflow-wrap: anywhere; }
 .meta { color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px var(--s3); }
 
+/* A paused errand's question: an answer per option, words, or "done it". */
+.question-text { font-size: 17px; font-weight: 600; overflow-wrap: anywhere; }
+.money-note { font-weight: 600; }
+.options { display: flex; flex-wrap: wrap; gap: var(--s2); }
+button.option {
+  background: var(--surface); color: var(--ink); border-color: var(--line);
+  text-align: left; min-height: 48px; padding: 8px var(--s4); white-space: normal;
+}
+@media (hover: hover) { button.option:hover { background: var(--sunk); } }
+.answer-label { font-weight: 600; }
+.answer-row { display: flex; gap: var(--s2); align-items: stretch; }
+.answer-row textarea {
+  flex: 1; min-width: 0; min-height: 44px; font: inherit; font-size: 16px; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+  resize: vertical;
+}
+button.danger-ink { color: var(--bad); }
+.buybox .buy { min-width: 9em; }
+.buybox .buy.armed { background: #c62828; color: #fff; }
+
+.browsers { list-style: none; margin: 0; padding: 0; display: grid; }
+.browsers li {
+  display: grid; grid-template-columns: 1fr auto; gap: var(--s2) var(--s3); align-items: center;
+  padding: var(--s3) 0; border-bottom: 1px solid var(--line);
+}
+.browsers li:last-child { border-bottom: 0; }
+.browsers .who { display: grid; min-width: 0; overflow-wrap: anywhere; }
+.browsers .tags { display: flex; gap: var(--s2); flex-wrap: wrap; justify-content: flex-end; }
+.browsers .actions { grid-column: 1 / -1; }
+
 .cart { width: 100%; border-collapse: collapse; }
 .cart th, .cart td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .cart td.n, .cart th.n { text-align: right; white-space: nowrap; }
@@ -126,11 +156,16 @@ button:disabled { opacity: .55; cursor: default; }
 
 @media (max-width: 640px) {
   main { padding: var(--s3); }
-  .bar { padding: 0 var(--s3); }
+  .bar { padding: 0 var(--s3); gap: var(--s2); }
+  .bar .ghost { padding: 0 var(--s3); }
   .card { padding: var(--s3); }
   .screen iframe { height: 62vh; min-height: 360px; }
   .actions button, .actions .button { flex: 1 1 100%; }
   .history li { grid-template-columns: 1fr; }
+  .options button.option { flex: 1 1 100%; }
+  .answer-row { flex-direction: column; }
+  .browsers li { grid-template-columns: 1fr; }
+  .browsers .tags { justify-content: flex-start; }
   .history .when { grid-column: 1; }
 }
 @media (pointer: coarse) {

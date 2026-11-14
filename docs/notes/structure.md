@@ -228,7 +228,7 @@ BRUH-HA-Apps/
 │   ├── run.sh                   # require brAIn, /data, the API token, the screen, the panel
 │   └── panel/                   # server (routes, ingress/token guard), tasks (queue, approval),
 │                                #   runner (the one-errand seam), purchase_hook (spending guard),
-│                                #   browser (Chrome + the sign-in xterm), setup_state, system_prompt.md
+│                                #   browser (Chrome + the sign-in xterm), browsers (which Claude in Chrome), setup_state, system_prompt.md
 ├── tests/
 │   ├── corpus/                  # Houses and what was true of them — the frozen entries,
 │   │                            #   the schema, the one scorer's corpus shape, and replay.py

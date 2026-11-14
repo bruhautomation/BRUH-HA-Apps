@@ -12,7 +12,7 @@ integration:
            --disallowedTools <every built-in, javascript_tool, file uploads>
            --permission-mode dontAsk --settings <run settings with the hook>
            --json-schema <SCHEMA> [--resume <session>]
-    (the errand's message on stdin)
+    (the errand's message, or the person's answer, on stdin)
 
 **If print mode turns out not to work with `--chrome` on a real box** (the
 docs neither promise nor rule it out), an interactive-session runner can
@@ -34,6 +34,21 @@ What it guarantees the caller:
   step to redo (`diagnose`), and a run that started without its Chrome tools
   stopped at once rather than left to spend its turns.
 * **A wall clock and a Stop** that end the whole process group.
+* **A pause a person can answer** (`clean_question`): the structured answer
+  carries what it needs as a KIND (`sign_in`, `captcha`, `verification`,
+  `dialog`, `choice`, `confirm`, `other`), and a resumed run is told either
+  that the person did it (`CONTINUE_PROMPT`) or what they answered
+  (`answer_prompt`).
+* **The extension never waits on a prompt nobody can see**: for this
+  add-on's own Chrome the run sets `CLAUDE_CHROME_PERMISSION_MODE` to
+  `skip_all_permission_checks` (the mode Claude Code itself sends the
+  extension under `bypassPermissions`), and a tool result that says the
+  extension is still waiting on its own prompt stops the run with a pause of
+  kind `extension` (`EXTENSION_SIGNS`).
+* **The browser it drives is the one `browsers.preflight` chose**, pinned
+  by device id, and a `list_connected_browsers` answer that shows another
+  browser in use, or Claude Code saying several are connected and none is
+  chosen, stops the run with a `choice` (`_wrong_browser`).
 """
 from __future__ import annotations
 
@@ -57,10 +72,28 @@ DENIED = (
     "CronList", "ScheduleWakeup", "Monitor", "TeamCreate", "TeamDelete",
     f"{CHROME_PREFIX}javascript_tool", f"{CHROME_PREFIX}file_upload",
     f"{CHROME_PREFIX}upload_image",
+    # Choosing or pairing a browser is the panel's (browsers.preflight), never
+    # the model's: select_browser persists its pick for every later run, and
+    # switch_browser broadcasts a Connect prompt to every Chrome on the account.
+    f"{CHROME_PREFIX}select_browser", f"{CHROME_PREFIX}switch_browser",
+    # Older CLIs: a plan the person approves in the extension's side panel,
+    # which a -p run has nobody to approve, and saved shortcuts that run there.
+    f"{CHROME_PREFIX}update_plan", f"{CHROME_PREFIX}shortcuts_execute",
+    f"{CHROME_PREFIX}shortcuts_list",
+    # Asking the person goes through the structured answer, not a dialog.
+    "AskUserQuestion",
 )
 # What Claude Code is never handed: either of these keeps the Chrome
 # integration off (the docs: an API key or a setup-token disables it).
 STRIPPED_ENV = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN")
+
+# What a paused errand asks of a person. The first four are done in the
+# browser and answered with "I've done it"; a choice or a confirm is answered
+# with words; `other` takes either. `extension` is the runner's own (the
+# extension waiting on its own prompt), never the model's.
+IN_BROWSER = ("sign_in", "captcha", "verification", "dialog")
+KINDS = IN_BROWSER + ("choice", "confirm", "other")
+PERSON_ONLY = IN_BROWSER + ("extension",)
 
 SCHEMA = {
     "type": "object",
@@ -69,6 +102,17 @@ SCHEMA = {
         "outcome": {"type": "string", "enum": ["done", "needs_you", "failed"]},
         "report": {"type": "string"},
         "needs_you": {"type": "string"},
+        "question": {
+            "type": "object",
+            "required": ["text", "kind"],
+            "properties": {
+                "text": {"type": "string"},
+                "kind": {"type": "string", "enum": list(KINDS)},
+                "options": {"type": "array", "items": {"type": "string"},
+                            "maxItems": 4},
+                "money": {"type": "boolean"},
+            },
+        },
         "cart": {
             "type": "object",
             "properties": {
@@ -101,16 +145,51 @@ CONTINUE_PROMPT = (
     "Look at the page again and carry on with the same errand from where you "
     "stopped. The same rules apply.")
 
+
+def answer_prompt(answer: str) -> str:
+    """The person's answer to the question the errand paused on: their words
+    are the household's instruction for that point of the errand."""
+    return ("The person answered the question you stopped on. Their answer, in "
+            "their own words (this is the household speaking, so follow it for "
+            "this point of the errand):\n"
+            f"<answer>\n{str(answer)[:1000]}\n</answer>\n"
+            "Look at the page again and carry on with the same errand from where "
+            "you stopped. The same rules apply; an answer never approves a "
+            "purchase.")
+
+
+# The extension waiting on its own prompt (its side panel in the live
+# browser), or refusing because nobody answered it. Strings from Claude
+# Code 2.1.323's bundle and its error codes.
+EXTENSION_SIGNS = (
+    "no response to the claude in chrome permission prompt",
+    "claude in chrome permission prompt window couldn't be opened",
+    "permission_prompt_timed_out", "permission_prompt_unavailable",
+    "permission_handler_missing", "permission_denied_user", "plan_rejected_user",
+    "site_not_permitted", "user denied permission")
+EXTENSION_SENTENCE = (
+    "The Claude extension is waiting for someone to allow it to act on this site. "
+    "It asks in its own side panel in the live browser, not on this page: click the "
+    "Claude icon in Chrome's toolbar (or the puzzle-piece icon, then Claude), answer "
+    "Allow, then press I've done it, carry on.")
+# Claude Code saying it has several browsers and has not been told which.
+MANY_BROWSERS_SIGNS = ("browsers are connected and none is selected",
+                       "several browsers are connected")
+
 # The documented ways this goes wrong, as (signs, setup step, sentence). A
 # step of 1 means "the extension" (steps 1 and 2); 3 is Claude Code's sign-in.
 SIGNS = (
     (("browser extension is not connected", "extension is not connected",
       "extension isn't connected", "no browser is connected",
       "no connected browser", "could not connect to the browser",
-      "chrome extension not connected"), 1,
+      "chrome extension not connected", "the browser chosen for this session could not"), 1,
      "Claude Code could not reach the Claude extension in this Chrome. Check step 1 "
      "(the extension is installed and switched on) and step 2 (it is signed in to "
      "claude.ai with the same Claude account as Claude Code), then press Test."),
+    (("the extension may need to be re-authenticated",), 2,
+     "The Claude extension in this Chrome is signed out. Redo step 2: open the "
+     "Claude side panel in the live browser and sign in to claude.ai with the same "
+     "Claude account as Claude Code, then press Test."),
     (("unknown option '--chrome'", 'unknown option "--chrome"'), None,
      "This add-on's Claude Code does not know --chrome. Update BRUH Browser."),
     (("invalid api key", "please run /login", "not logged in", "authentication_error",
@@ -130,7 +209,7 @@ SIGNS = (
 )
 DIALOG_SIGNS = ("javascript dialog", "dialog is open", "alert dialog", "beforeunload",
                 "dialog blocking", "blocked by a dialog")
-FATAL_STEPS = (1, 3)
+FATAL_STEPS = (1, 2, 3)
 
 
 def diagnose(text: str) -> tuple[int | None, str] | None:
@@ -190,12 +269,34 @@ def command(task: dict, cfg: RunConfig, settings: Path) -> list[str]:
     return argv
 
 
+def opening(task: dict) -> str:
+    """What the run is told on stdin: the errand, the person's answer, or
+    that they did what it asked in the browser."""
+    if not task.get("resume_session"):
+        return task["message"]
+    if str(task.get("reply") or "").strip():
+        return answer_prompt(task["reply"])
+    return CONTINUE_PROMPT
+
+
 def environment(task: dict, cfg: RunConfig, state_path: Path) -> dict:
     env = {k: v for k, v in os.environ.items() if k not in STRIPPED_ENV}
     env.update(cfg.env)
     env["BROWSER_PURCHASE_APPROVED"] = "1" if task.get("purchase_approved") else "0"
     env["BROWSER_TASK_STATE"] = str(state_path)
     env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
+    # Which browser: the device browsers.preflight chose (also written into
+    # ~/.claude.json, which the CLI reads first).
+    env.pop("CLAUDE_CHROME_PAIRED_DEVICE_ID", None)
+    if task.get("browser_device"):
+        env["CLAUDE_CHROME_PAIRED_DEVICE_ID"] = str(task["browser_device"])
+    # The extension's own ask-before-acting: off in this add-on's Chrome,
+    # where nobody can answer it during a -p run; left as the extension has
+    # it on another computer, where its person can.
+    if task.get("browser_own", True):
+        env["CLAUDE_CHROME_PERMISSION_MODE"] = "skip_all_permission_checks"
+    else:
+        env.pop("CLAUDE_CHROME_PERMISSION_MODE", None)
     return env
 
 
@@ -220,6 +321,8 @@ def describe(name: str, args) -> str:
         return "Reading the page"
     if short in ("tabs_create_mcp", "tabs_context_mcp"):
         return "Getting a tab ready"
+    if short == "list_connected_browsers":
+        return "Checking which browser it is using"
     if short == "browser_batch":
         steps = args.get("actions") or args.get("steps") or []
         return f"Doing {len(steps) if isinstance(steps, list) else 'several'} steps"
@@ -272,6 +375,58 @@ def clean_cart(raw) -> dict | None:
             "on_review_page": bool(raw.get("on_review_page"))}
 
 
+def clean_question(raw, fallback: str = "") -> dict:
+    """The question a paused errand asks, in a shape the page and brAIn can
+    always offer an answer to: a kind it knows, a sentence, and for a choice
+    2-4 short options (a confirm is Yes/No)."""
+    raw = raw if isinstance(raw, dict) else {}
+    text = " ".join(str(raw.get("text") or fallback or "").split())[:600]
+    kind = raw.get("kind") if raw.get("kind") in KINDS else "other"
+    options = []
+    for opt in raw.get("options") or []:
+        words = " ".join(str(opt or "").split())[:80]
+        if words and words not in options:
+            options.append(words)
+    if kind == "confirm":
+        options = options[:2] if len(options) == 2 else ["Yes", "No"]
+    elif kind == "choice":
+        options = options[:4]
+        if len(options) < 2:
+            kind = "other"
+            options = []
+    else:
+        options = []
+    return {"text": text or "It needs a person to look at the live browser.",
+            "kind": kind, "options": options, "money": bool(raw.get("money"))}
+
+
+def _browsers_in(text: str) -> list[dict] | None:
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(data, list):
+        return None
+    return [r for r in data if isinstance(r, dict) and r.get("deviceId")]
+
+
+def _wrong_browser(text: str, expect: str | None) -> str | None:
+    """Why this tool result says the run is on the wrong browser, or None."""
+    low = text.lower()
+    if any(sign in low for sign in MANY_BROWSERS_SIGNS) and "is the one" not in low:
+        return "Claude Code found several browsers on this Claude account and none chosen."
+    if not expect:
+        return None
+    rows = _browsers_in(text.strip())
+    if rows is None:
+        return None
+    in_use = [r for r in rows if r.get("inUse")]
+    if in_use and in_use[0].get("deviceId") != expect:
+        name = str(in_use[0].get("name") or "another browser")[:60]
+        return f"Claude Code was about to use {name}, not the browser this errand was meant for."
+    return None
+
+
 def _kill(proc: subprocess.Popen) -> None:
     try:
         os.killpg(proc.pid, signal.SIGTERM)
@@ -305,7 +460,7 @@ def run_task(task: dict, cfg: RunConfig, on_progress=None,
 def _run(task: dict, cfg: RunConfig, on_progress, stop) -> dict:
     stop = stop or threading.Event()
     say = on_progress or (lambda _line: None)
-    out = {"state": "failed", "answer": "", "needs_you": "", "error": "",
+    out = {"state": "failed", "answer": "", "needs_you": "", "question": None, "error": "",
            "setup_step": None, "cart": None, "order_placed": False,
            "order_number": "", "session_id": task.get("resume_session") or "",
            "turns": None, "cost_usd": None, "steps": 0}
@@ -313,7 +468,7 @@ def _run(task: dict, cfg: RunConfig, on_progress, stop) -> dict:
         settings = settings_file(cfg)
         cfg.cwd.mkdir(parents=True, exist_ok=True)
         state_path = cfg.run_dir / f"task-{task['id']}.json"
-        prompt = CONTINUE_PROMPT if task.get("resume_session") else task["message"]
+        prompt = opening(task)
         proc = subprocess.Popen(command(task, cfg, settings), cwd=cfg.cwd,
                                 env=environment(task, cfg, state_path),
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -347,7 +502,10 @@ def _run(task: dict, cfg: RunConfig, on_progress, stop) -> dict:
     result = None
     fatal = None
     dialog = False
+    blocked = ""      # the extension is waiting on its own prompt
+    wrong = ""        # the run is on a browser nobody chose
     ended_by = ""
+    browser_calls: dict[str, str] = {}
     while True:
         if stop.is_set():
             ended_by = "stop"
@@ -388,6 +546,7 @@ def _run(task: dict, cfg: RunConfig, on_progress, stop) -> dict:
                     continue
                 if block.get("type") == "tool_use":
                     out["steps"] += 1
+                    browser_calls[str(block.get("id") or "")] = str(block.get("name") or "")
                     say(describe(str(block.get("name") or ""), block.get("input")))
                 elif block.get("type") == "text" and str(block.get("text") or "").strip():
                     say(str(block["text"]).strip().splitlines()[0][:160])
@@ -396,14 +555,26 @@ def _run(task: dict, cfg: RunConfig, on_progress, stop) -> dict:
                 if not isinstance(block, dict) or block.get("type") != "tool_result":
                     continue
                 text = " ".join(_texts(block.get("content")))
-                if any(sign in text.lower() for sign in DIALOG_SIGNS):
+                low = text.lower()
+                if any(sign in low for sign in DIALOG_SIGNS):
                     dialog = True
+                if any(sign in low for sign in EXTENSION_SIGNS):
+                    blocked = EXTENSION_SENTENCE
+                    ended_by = "blocked"
+                    break
+                called = browser_calls.get(str(block.get("tool_use_id") or ""), "")
+                if called.endswith("list_connected_browsers") or any(
+                        sign in low for sign in MANY_BROWSERS_SIGNS):
+                    wrong = _wrong_browser(text, task.get("browser_device")) or ""
+                    if wrong:
+                        ended_by = "wrong_browser"
+                        break
                 found = diagnose(text) if block.get("is_error") else None
                 if found and found[0] in FATAL_STEPS:
                     fatal = found
                     ended_by = "fatal"
                     break
-            if ended_by == "fatal":
+            if ended_by in ("fatal", "blocked", "wrong_browser"):
                 break
         elif kind == "result":
             result = event
@@ -427,6 +598,17 @@ def _run(task: dict, cfg: RunConfig, on_progress, stop) -> dict:
     if fatal:
         out.update(setup_step=fatal[0], error=fatal[1])
         return out
+    if blocked:
+        out.update(state="needs_you", needs_you=blocked, setup_step=4,
+                   question={"text": blocked, "kind": "extension", "options": [],
+                             "money": False})
+        return out
+    if wrong:
+        out.update(state="needs_you", session_id="", needs_you=wrong,
+                   question={"text": wrong + " Which browser should this errand use?",
+                             "kind": "choice", "options": [], "money": False,
+                             "pick_browser": True})
+        return out
     if result is None:
         tail = " ".join(err_tail[-6:])
         found = diagnose(tail)
@@ -447,8 +629,11 @@ def _run(task: dict, cfg: RunConfig, on_progress, stop) -> dict:
                         "option) before it finished. It can be continued, or asked "
                         "again with less to do.")
         out["state"] = "needs_you"
-        out["needs_you"] = ("It ran out of steps. Look at the BRUH Browser tab and "
-                            "press Continue to let it carry on.")
+        out["needs_you"] = ("It ran out of steps before it finished. Let it carry on, "
+                            "or stop it here.")
+        out["question"] = {"text": out["needs_you"], "kind": "confirm",
+                           "options": ["Carry on", "Stop here"], "money": False,
+                           "ran_out": True}
         return out
     if result.get("is_error") or subtype not in ("success", ""):
         found = diagnose(text + " " + " ".join(err_tail[-6:]))
@@ -464,6 +649,10 @@ def _run(task: dict, cfg: RunConfig, on_progress, stop) -> dict:
         out["state"] = outcome
         out["answer"] = str(data.get("report") or text)[:4000]
         out["needs_you"] = str(data.get("needs_you") or "")[:1000]
+        if outcome == "needs_you":
+            out["question"] = clean_question(data.get("question"),
+                                             out["needs_you"] or out["answer"])
+            out["needs_you"] = out["question"]["text"]
         out["cart"] = clean_cart(data.get("cart"))
         out["order_placed"] = bool(data.get("order_placed"))
         out["order_number"] = str(data.get("order_number") or "")[:80]
@@ -479,5 +668,7 @@ def _run(task: dict, cfg: RunConfig, on_progress, stop) -> dict:
     if dialog and out["state"] != "done" and not out["needs_you"]:
         out["state"] = "needs_you"
         out["needs_you"] = ("A dialog on the page is blocking the browser. Close it "
-                            "in the BRUH Browser tab, then press Continue.")
+                            "in the live browser below, then press I've done it, carry on.")
+        out["question"] = {"text": out["needs_you"], "kind": "dialog", "options": [],
+                           "money": False}
     return out
