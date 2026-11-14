@@ -4831,23 +4831,31 @@ BROWSER_REPORT_CHARS = 24000
 
 def _browser_report(text, offset=0):
     """(the report as brAIn reads it, how it was cut or None). Wrapped untrusted
-    like every web-sourced text, but not clipped to MAX_UNTRUSTED_CHARS."""
+    like every web-sourced text, but not clipped to MAX_UNTRUSTED_CHARS. A cut
+    is at the last space or line end in the window; a window with none at all
+    (one unbroken run of text) is cut at the limit and says so (`mid_word`)."""
     text = str(text or "")
     try:
         start = max(0, min(int(offset or 0), len(text)))
     except (TypeError, ValueError):
         start = 0
     end = min(len(text), start + BROWSER_REPORT_CHARS)
+    mid_word = False
     if end < len(text):
         cut = max(text.rfind("\n", start, end), text.rfind(" ", start, end))
-        if cut > start + BROWSER_REPORT_CHARS // 2:
+        if cut > start:
             end = cut + 1
+        else:
+            mid_word = True
     whole = start == 0 and end >= len(text)
     wrapped = {"untrusted": True, "text": text[start:end]}
     if whole:
         return wrapped, None
-    return wrapped, {"truncated": end < len(text), "offset": start, "next_offset": end,
-                     "total_chars": len(text)}
+    paging = {"truncated": end < len(text), "offset": start, "next_offset": end,
+              "total_chars": len(text)}
+    if mid_word:
+        paging["ends_mid_word"] = True
+    return wrapped, paging
 
 
 def _browser_profile_view(rows):
@@ -4858,7 +4866,8 @@ def _browser_profile_view(rows):
         if not isinstance(p, dict):
             continue
         out.append({
-            "store": p.get("store"),
+            "store": untrusted(p.get("store")),
+            "store_key": p.get("key"),
             "items": [{"name": untrusted(i.get("name")), "variant": untrusted(i.get("variant")) if i.get("variant") else "",
                        "usual_quantity": i.get("quantity"), "how_often": untrusted(i["every"]) if i.get("every") else "",
                        "last_bought": untrusted(i["last_bought"]) if i.get("last_bought") else ""}
@@ -4909,7 +4918,7 @@ def _browser_view(task, offset=0):
                 if paging["truncated"] else "This is the last part of the report.")}
     saved = task.get("profile_saved")
     if isinstance(saved, dict) and saved.get("store"):
-        out["profile_saved"] = {"store": saved.get("store"), "items": saved.get("items"),
+        out["profile_saved"] = {"store": untrusted(saved.get("store")), "items": saved.get("items"),
                                 "brands": saved.get("brands"), "avoid": saved.get("avoid")}
     cart = task.get("cart")
     if isinstance(cart, dict):

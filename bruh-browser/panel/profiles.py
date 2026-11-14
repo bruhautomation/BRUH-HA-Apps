@@ -184,8 +184,29 @@ class Profiles:
         things, so a one-off like "find a charger" carries none)."""
         text = str(words or "").lower()
         squeezed = re.sub(r"[^a-z0-9]+", "", text)
+        # A store is named when its key is the words' own letters run together
+        # at word edges ("wal mart" counts), never a few letters inside another
+        # word; keys under three characters are too short to tell.
+        spaced = " " + " ".join(re.findall(r"[a-z0-9]+", text)) + " "
+        words = spaced.split()
+
+        def named_in(key: str) -> bool:
+            if len(key) < 3 or key not in squeezed:
+                return False
+            if key in words:
+                return True
+            for i in range(len(words)):
+                run = ""
+                for w in words[i:i + 4]:
+                    run += w
+                    if run == key:
+                        return True
+                    if not key.startswith(run):
+                        break
+            return False
+
         with self.lock:
-            named = [self._public(k, v) for k, v in self.data.items() if k and k in squeezed]
+            named = [self._public(k, v) for k, v in self.data.items() if named_in(k)]
             if named:
                 return named
             if len(self.data) == 1 and re.search(
@@ -300,16 +321,23 @@ def message_block(profiles: list[dict]) -> str:
             if it.get("last_bought"):
                 extra.append(f"last bought {it['last_bought']}")
             rows.append("- " + ", ".join(bits) + (f" ({'; '.join(extra)})" if extra else ""))
-        text = f"Store: {p['store']}\n"
-        if p["brands"]:
-            text += "Preferred brands: " + "; ".join(p["brands"]) + "\n"
-        if p["avoid"]:
-            text += "Avoid: " + "; ".join(p["avoid"]) + "\n"
+        budget = MESSAGE_CHARS // max(1, len(profiles))
+        text = f"Store: {p['store'][:80]}\n"
+        # The header is counted too: brands and things to avoid share a third
+        # of the budget and are dropped from the end when they do not fit.
+        for label, words in (("Preferred brands: ", p["brands"]), ("Avoid: ", p["avoid"])):
+            kept = []
+            for w in words:
+                if len(text) + len(label) + len("; ".join(kept + [w])) + 1 > budget // 3 + 80:
+                    break
+                kept.append(w)
+            if kept:
+                text += label + "; ".join(kept) + "\n"
         text += "Usual items:\n"
         used = len(text)
         shown = 0
         for row in rows:
-            if used + len(row) + 1 > MESSAGE_CHARS // max(1, len(profiles)):
+            if used + len(row) + 1 > budget:
                 break
             text += row + "\n"
             used += len(row) + 1
