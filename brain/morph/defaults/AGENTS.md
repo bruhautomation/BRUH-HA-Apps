@@ -344,6 +344,18 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   Morph's own tiles do this with `statusHtml` (`cards.js`); a built card does
   it with a container query (`@container (min-width: …)`) that shows the
   later parts, and `white-space: nowrap` on the line.
+- **A group's summary leads with what is on, and is never a list of every
+  member.** A tile for several things (lights, equipment, switches, covers,
+  media players, people) says how many are on and, while it fits, which:
+  "2 on: Crawl fan, Dryer blower", "20 of 31 on", "All equipment off", "3 of 4
+  open", "Dana home, Eli away". Never "Crawl dehum off · Crawl fan off · Dryer
+  blower off · …": that hides the one fact that matters behind the ones that
+  are the default, and it ends in a bare ellipsis. Say the count first, then
+  at most two names, then "and 3 more"; put the full list in the opened card.
+  Every tile of a kind uses one format ("N of M on" for all of them, a level
+  labelled "avg 62%", never "mixed" on one tile and "1%" on another), and a
+  count of members that cannot be reached is labelled ("2 unavailable") or
+  moved to the opened card.
 - **A thing's state is said once in a card.** The tile, a row and the opened
   card each say what a thing is doing in one place: not "Off" in the header
   and "Off" on a badge beside it, not "Zone 2 on" over a row that says "On",

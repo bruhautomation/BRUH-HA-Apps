@@ -287,6 +287,9 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .nv span{font-size:12px;font-variant-numeric:tabular-nums;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow-wrap:anywhere;transition:color .4s ease}
 /* A strip is 56px: a name of two lines and a status of two overran its edge. The status is one line, and what it says is picked by width (STATUS). */
 .strip .nv>span{display:block;-webkit-line-clamp:unset;line-clamp:unset;white-space:nowrap;text-overflow:ellipsis;overflow-wrap:normal}
+/* "Unavailable · last seen Tue 3:58 AM" is one fact a person needs whole (#764): it takes two lines under a one-line name, which a 56px strip holds. */
+.strip .nv.two>span{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;text-overflow:ellipsis}
+.strip .nv.two b{display:block;white-space:nowrap;-webkit-line-clamp:unset;line-clamp:unset}
 .nv .vs i{font-style:normal}.nv .vs i[class]{display:none}
 ${STATUS_RULES}
 @media (max-width:520px){.sline{gap:8px;padding:0 11px}.nv b{font-size:13px}}
@@ -488,7 +491,11 @@ ${STATUS_RULES}
 @media (prefers-reduced-motion:reduce){.srpanel,.morph.railing section.sec[data-sec],.morph section.sec .sechead h2,.secbg{transition:none!important}.rise,.holdbar,.nowdot,.w,.spin,.breathe,.wave,.bob,.pulse,.mprog{animation:none}.mtile,.cu-track.glide,.cu-dot,.cu-lens,.cu-bar,.todorow{transition:none}.form-night section.sec,.form-night .flh{transition:none}}
 /* A row of chips (rooms, a chart's legend, a note's words) is a row of targets on touch: 40px, like every other chip (#786). */
 @media (pointer:coarse){.morph .roomw,.morph .legend .wd,.morph .bnote .wd{min-height:40px}}
+/* Every button is a 40px target on a phone, in both directions (the audit counts width too): a room's name or jump word, the sidebar button, the "Cans, above" link and a coming-up title were 26-30px. The height is taken from the margin, so the page's layout does not move. */
+@media (pointer:coarse){.morph .roomw,.morph .menu{min-width:40px;justify-content:center}.morph .roomname{display:inline-flex;align-items:center;min-width:40px;min-height:40px;margin-block:-7px}.morph .trace,.morph .cu-name.go{min-height:40px;margin-block:-6px;display:inline-flex;align-items:center}}
 .morph input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=color]),.morph textarea,.morph select{font-size:16px}
 `;
 /* The 16px text floor, on every screen (a phone with a desktop-width page or a pointer that says it is fine still zooms): below it iOS zooms the page when a field takes focus (#677). Every field Morph draws, and the same floor handed to a card's own shadow root by morph-panel.js (FIELD_FLOOR). */
+/* The same for a button in a card Morph did not draw (a built type, a hosted card): 40px a side on a phone, handed to its shadow roots by floor.js, since a card's own 30px chip is out of reach of the rules above. */
+export const TARGET_FLOOR = '@media (pointer:coarse){button,[role=button],[role=tab],summary,a[href]{min-height:40px;min-width:40px;box-sizing:border-box}}';
 export const FIELD_FLOOR = 'input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=color]),textarea,select{font-size:16px!important}';
