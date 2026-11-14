@@ -2,6 +2,24 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.2.7
+
+### Fixed
+
+- A To Do item made from a finding reads as the finding's own words, with the device named in front when the words don't name it ("Hall sensor battery low.") and one step of what to do under it. 5.2.4 rewrote those words and could produce "Look at the Hall sensor: it battery low.", name a device twice, or cut a numbered fix into "1." and "Replace the battery; 2; 3."; items already on your list read correctly again (#879).
+- Home Assistant's To-do list shows the same short line under each item, instead of the whole fix again (#879).
+- The battery check writes its own To Do words ("Replace the battery in the Hall sensor") (#879).
+
+## 5.2.6
+
+### Added
+
+- brAIn can read your BRUH Browser shopping profile (`browser_status` with `profiles`) and says what it knows of your usual order and asks what changes before it starts a grocery errand (#899).
+
+### Fixed
+
+- `browser_status` returns an errand's whole report. It used to cut it at 2,000 characters mid-word; a very long one now comes in parts, each ending on a word, with a way to read the next (#899).
+
 ## 5.2.5
 
 ### Added

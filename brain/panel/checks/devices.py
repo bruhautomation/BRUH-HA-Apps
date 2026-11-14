@@ -1011,6 +1011,15 @@ def _battery_outlook(snap: dict, eid: str, level: float, now: float) -> str:
             f"out around {date.day} {date:%b}.")
 
 
+def _battery_todo(who: str, line: str = "") -> dict:
+    """What To Do says for a battery row, from the parts the check has:
+    the device and the job ("Replace the battery in the Hall sensor"), and
+    the one thing to add under it, never cut out of `fix` (#879)."""
+    from . import network  # noqa: PLC0415 — network imports this module
+    return {"todo_text": f"Replace the battery in {network.the_name(who)}",
+            **({"todo_line": line} if line else {})}
+
+
 def battery_low(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     # A node the Z-Wave controller has declared dead is dev.zwave_dead's
@@ -1072,6 +1081,9 @@ def battery_low(snap: dict, now: float) -> list[dict]:
                 "severity": "warning" if level > 5 else "serious",
                 "fixable": False,
                 "entity_id": eid,
+                **_battery_todo(who, "If it runs off mains power and has no "
+                                     "battery, disable its battery entity "
+                                     "instead." if level == 0 else ""),
             })
             continue
         # A dead device stops reporting its own battery, and the last
@@ -1094,6 +1106,9 @@ def battery_low(snap: dict, now: float) -> list[dict]:
                 "severity": "warning",
                 "fixable": False,
                 "entity_id": eid,
+                **_battery_todo(who, "Or wake it with its button: a dead "
+                                     "battery is the usual reason a device "
+                                     "goes quiet."),
             })
     out.extend(_flag_rows(house, flagged, dead_devices))
     return out
@@ -1138,6 +1153,7 @@ def _flag_rows(house: House, flagged: list, dead_devices: set) -> list[dict]:
             "severity": "warning",
             "fixable": False,
             "entity_id": eid,
+            **_battery_todo(who),
         })
     return out
 

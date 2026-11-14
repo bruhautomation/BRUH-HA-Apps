@@ -394,9 +394,9 @@ def ask_line(case: dict, situation: str) -> str:
 def todo_rows(items: list, snoozes: dict, area_of, word=None) -> list:
     """To Do as Morph lists it: open items, each with its snooze.
 
-    `word` turns an item into the sentence shown (`findings_store.
-    todo_item_text`, which rewords a claim filed as an item into an errand);
-    without it the stored text is shown."""
+    `word` turns an item into the headline the panel's To Do shows
+    (`findings_store.todo_item_text`); without it the stored text is
+    shown."""
     out = []
     now = time.time()
     for item in items or []:
