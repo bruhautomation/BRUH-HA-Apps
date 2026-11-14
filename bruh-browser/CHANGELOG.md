@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.2
+
+### Added
+
+- A shopping profile for each store. Ask brAIn to look at your past orders and the errand saves what you usually buy (each item, its size, how many and how often), the brands you prefer and anything to avoid, read only from the orders the site shows. Later cart errands for that store start from it, so "my usual" means your usual. It lives in the add-on, never leaves it except into those errands and to brAIn, and is on the page under "Your shopping profile" with Remove on every line and Clear profile. A profile never approves a purchase (#899).
+
+### Fixed
+
+- A long errand report is kept whole. It used to be cut to its first 4,000 characters, so the end of what an errand found was lost (#899).
+
 ## 0.1.1
 
 ### Added
