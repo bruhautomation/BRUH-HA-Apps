@@ -1224,6 +1224,16 @@ def overloaded(result: dict) -> bool:
             and bool(_OVERLOADED_RE.search(str(result.get("error") or ""))))
 
 
+def transient(result: dict) -> bool:
+    """Did this run fail for a reason that clears on its own: the API
+    overloaded, or the request blocked on its way by the edge in front of
+    it (`journal.edge_blocked`, a Cloudflare challenge page the CLI words
+    "Failed to authenticate", #911)? Both get the one retry below."""
+    return overloaded(result) or (
+        not result.get("ok")
+        and journal.edge_blocked(str(result.get("error") or "")))
+
+
 # A safety classifier's refusal ("API Error: … safeguards flagged this
 # message …", or the Usage Policy wording) is mostly a false positive on
 # one model's classifier (#680), so `_run_cli` tries the run once more on
@@ -1416,7 +1426,7 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
         # backup), one fresh id is the whole remedy.
         result, session_id = spawn(timeout)
     retried = False
-    if overloaded(result):
+    if transient(result):
         remaining = int(timeout - (time.monotonic() - started))
         if remaining > OVERLOAD_RETRY_S + LANDING_MIN_S:
             time.sleep(OVERLOAD_RETRY_S)

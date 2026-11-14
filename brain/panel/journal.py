@@ -54,6 +54,7 @@ OUTCOMES = (
     "heal_failed",   # it made it and the call came back a failure
     "heal_skipped",  # it was refused before any call was made
     "rate_limited",  # the account's usage limit (or the API's rate limit) said wait
+    "blocked",       # the request was stopped on its way (a Cloudflare challenge), not refused
     "stopped",       # ended on purpose: the add-on stopping, or a person pressing Stop
     "error",         # anything else
 )
@@ -114,6 +115,11 @@ def outcome_of(row: dict) -> str:
     outcome = str(row.get("outcome") or "error")
     if outcome == "error" and _RATE_LIMITED_RE.search(str(row.get("error") or "")):
         return "rate_limited"
+    # A block journaled as `auth` (or `error`) before `classify` knew one:
+    # three Resident runs a house filed were a Cloudflare page read as a
+    # refused sign-in (#911), and health and the canary count rows by this.
+    if outcome in ("auth", "error") and edge_blocked(str(row.get("error") or "")):
+        return "blocked"
     return outcome
 
 
@@ -200,6 +206,32 @@ def scrub(text: str) -> str:
                              _SECRET_RE.sub("[redacted]", str(text or "")))
 
 
+# A request stopped before it reached Claude's API: the edge in front of
+# it served a challenge or block page ("API Error: 403 Attention Required!
+# | Cloudflare", "Just a moment...", an HTML page where JSON belongs). The
+# CLI words it "Failed to authenticate", but no credential was judged, so
+# signing in again cannot help; it clears on its own and is retried
+# (`engine.transient`). `usage-limits-tracker.EDGE_BLOCK_RE` is the same
+# rule for the tracker, which cannot import this module.
+EDGE_BLOCK_RE = re.compile(
+    r"cloudflare|attention required!|just a moment\.\.\.|\bcf-ray\b|cf[_-]chl|"
+    r"challenge-platform|<!doctype html|<html\b", re.IGNORECASE)
+# What a refused credential says, in the API's and the CLI's words. Any of
+# these beside an edge page is still a refused credential: a block is
+# classed as one only when nothing says the credential was judged.
+_CREDENTIAL_REFUSED_RE = re.compile(
+    r"authentication_error|invalid (?:x-)?api[ -]?key|invalid bearer|"
+    r"oauth token (?:has )?(?:expired|been revoked)|token (?:has )?(?:expired|"
+    r"been revoked)|not logged in|please run /login|\b401\b", re.IGNORECASE)
+
+
+def edge_blocked(error: str) -> bool:
+    """Whether a run's error is an edge or network block rather than a
+    refused credential (`EDGE_BLOCK_RE`)."""
+    text = str(error or "")
+    return bool(EDGE_BLOCK_RE.search(text)) and not _CREDENTIAL_REFUSED_RE.search(text)
+
+
 def classify(result: dict, timeout_message: str = "") -> str:
     """The outcome word for an engine result envelope."""
     if result.get("ok"):
@@ -224,6 +256,10 @@ def classify(result: dict, timeout_message: str = "") -> str:
     # is the CLI's own wordings, the subscription's and the API's.
     if _RATE_LIMITED_RE.search(err):
         return "rate_limited"
+    # Before the auth words too: the CLI says "Failed to authenticate" over
+    # a Cloudflare page that never let the request reach the API (#911).
+    if edge_blocked(err):
+        return "blocked"
     if ("authenticat" in low or "oauth" in low or "401" in low
             or "not logged in" in low or "invalid api key" in low):
         return "auth"

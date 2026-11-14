@@ -6659,7 +6659,7 @@ def _no_fallback(result: dict) -> bool:
     """Did a search run fail in a way the snapshot would fail too?"""
     if result.get("ok"):
         return False
-    if engine.overloaded(result):
+    if engine.transient(result):
         return True
     return journal.classify(result) in ("auth", "rate_limited")
 
@@ -9355,9 +9355,21 @@ async def _check_auth_bg() -> None:
         # this verdict (health, the status line, the fault rows).
         limited = (not result["ok"] and journal.classify(
             {"ok": False, "error": error}) == "rate_limited")
+        # A request the edge blocked (a Cloudflare challenge page, which the
+        # CLI words "Failed to authenticate") never reached the API, so no
+        # credential was judged: the verdict stays what it was, and a
+        # first check reads it as not refused (#911). The next check asks
+        # again on its usual clock.
+        blocked = not result["ok"] and journal.edge_blocked(error)
+        if blocked:
+            log.warning("sign-in check: the request was blocked on its way "
+                        "to Claude, not refused: %s", journal.scrub(error)[:200])
+        held = AUTH_CHECK.get("state") if blocked else ""
         AUTH_CHECK.update(
-            state="ok" if result["ok"] or limited else "failed",
-            error="" if limited else error,
+            state=("failed" if held == "failed"
+                   else "ok" if result["ok"] or limited or blocked
+                   else "failed"),
+            error="" if limited or blocked else error,
             limited=journal.scrub(error)[:200] if limited else "",
             checked_at=time.time(),
         )

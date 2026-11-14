@@ -340,6 +340,13 @@ SETTLED_REFUSALS = (SCOPE_ERROR,)
 # right even while another one waits on a refresh.
 MASKED_BY_REFRESH = SETTLED_REFUSALS + ("no_oauth_token",)
 
+# A block page served by the edge in front of the API instead of its JSON:
+# `panel/journal.EDGE_BLOCK_RE`'s rule, kept here because this script runs
+# on its own and does not import the panel.
+EDGE_BLOCK_RE = re.compile(
+    r"cloudflare|attention required!|just a moment\.\.\.|\bcf-ray\b|cf[_-]chl|"
+    r"challenge-platform|<!doctype html|<html\b", re.IGNORECASE)
+
 ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 
 # The endpoint buckets its rate limits by User-Agent: the UA Claude Code
@@ -1172,6 +1179,12 @@ def _error_code(status, body):
     fallback = f"http_{status}"
     if not body:
         return fallback
+    # An edge page (a Cloudflare challenge, "Attention Required!") where the
+    # API's JSON belongs: the request never reached the endpoint and no
+    # credential was judged, so it is not a refusal to move past or to sign
+    # in again over — it is the network not getting through (#911).
+    if EDGE_BLOCK_RE.search(body):
+        return "network_error"
     try:
         parsed = json.loads(body)
     except (ValueError, TypeError):

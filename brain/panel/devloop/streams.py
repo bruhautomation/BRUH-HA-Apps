@@ -40,7 +40,10 @@ DONE_CHARS = 1500
 
 # --------------------------------------------------------------- faults
 
-SKIP_WHERE = frozenset({"This list"})
+# "This list" is the list's own heading; `reports.BLOCKED_WHERE` is requests
+# the edge in front of Claude blocked, which no release made and none can
+# fix (#911): the scorecard still counts them, by outcome.
+SKIP_WHERE = frozenset({"This list", reports.BLOCKED_WHERE})
 # How many journal rows a fault issue quotes, and how many log lines. The
 # issue used to carry the fault's one sentence and nothing a fix could be
 # aimed at: the cloud fixer read "Run (card): ended crash" and had to guess

@@ -274,6 +274,10 @@ def _engine_failure(result: dict, what: str, timeout_message: str) -> dict:
         "auth": f"{what} could not authenticate. Sign in again from "
                 "⚙ Settings → Claude account, or run `claude /login` in "
                 "the classic terminal on the Ask tab.",
+        "blocked": f"{what} was blocked on its way to Claude by a network "
+                   "block (a Cloudflare challenge page), not refused for the "
+                   "sign-in. Try again in a few minutes; signing in again "
+                   "will not help.",
         "no_cli": "The Claude Code CLI is not in this image — nothing "
                   "here can run until it is back. Restart the add-on.",
         "max_turns": f"{what} hit the turn limit before answering.",
