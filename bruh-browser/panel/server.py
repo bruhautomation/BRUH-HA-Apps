@@ -236,7 +236,8 @@ async def h_task_create(request):
             picks.set_default(target)
     task, why = _errands(request).create(
         str(body.get("prompt") or ""), purchase=purchase, source=source,
-        approval=body.get("approval"), browser=target)
+        approval=body.get("approval"), browser=target,
+        history=body.get("history") is True, profile=str(body.get("profile") or "")[:12])
     if not task:
         return _err(why, 409)
     return web.json_response({"task": task}, status=201)

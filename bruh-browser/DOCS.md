@@ -157,7 +157,9 @@ approval.
 
 Ask brAIn to look at your old orders at a store ("look at my old Walmart
 orders and learn what I usually buy"). The errand reads what the store's
-order history shows and saves a profile for that store: the items you buy
+order history shows and saves a profile for that store (only an errand
+brAIn starts for that purpose saves one; an ordinary shopping errand never
+changes it): the items you buy
 (name as the store shows it, size, usual quantity, how often, when last
 bought), brands you prefer, and things to avoid when your history shows
 them. It is never guessed. Running the same kind of errand again adds to it
@@ -170,10 +172,12 @@ and updates what changed.
   of a later errand for that store, and to brAIn when it asks.
 - **How it is used:** a later cart errand for that store starts from it, so
   "add my usual" means your profile first and the store's own buy-again list
-  second. An errand gets a store's profile when it names that store, or when
-  it names no store at all and you have only one profile ("add my usual
-  order plus oat milk"); "my usual from Costco" never gets your Walmart one.
-  brAIn tells you what it knows and asks what changes before it starts.
+  second. An errand gets a store's profile when it names that store ("add my
+  usual Walmart order"). When you don't name a store ("add my usual order
+  plus oat milk"), brAIn asks first ("your usual Walmart order?") and uses
+  the profile only if you say yes; "my usual from Costco" never gets your
+  Walmart one. brAIn tells you what it knows and asks what changes before it
+  starts.
 - **You are in charge:** the page shows every store's profile. Press
   **Remove** beside an item, a brand or a thing to avoid and it stays out,
   even when the next order-history errand sees it again. **Clear profile**

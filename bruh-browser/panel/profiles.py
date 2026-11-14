@@ -21,7 +21,7 @@ Rules this file keeps:
   Nothing is dropped for what its words say (a word list both missed planted
   text and dropped real products: "Brita Elite Water Filtration System",
   "Heart-Check Approved Cheerios"); instead every string is normalised
-  (`line`: NFKC, invisible and control characters and angle brackets gone,
+  (`line`: NFKC, invisible and control characters gone, angle brackets made "‹ ›",
   one line, capped), every field is typed (`quantity` a small number,
   `last_bought` a date, `every` a cadence word or a number of days; a value
   that does not fit is dropped as a field, never the item), and a later
@@ -29,6 +29,12 @@ Rules this file keeps:
   (`message_block`). Approval of a purchase is only ever the add-on's own
   opening lines of a purchase errand (`tasks.purchase_message`), which never
   carry a profile.
+* **Only an order-history errand writes it** (`Errands.create(history=True)`,
+  which brAIn sets when the person asks it to look at past orders); a
+  `profile` in any other errand's answer is ignored (`Errands._run`).
+* **It is carried only where it was asked for**: into an errand whose words
+  name its store, or one brAIn names by id after asking the person
+  (`Errands.create(profile=...)`). Nothing is guessed from the words.
 * **A profile is named by an id this add-on gives it** (`p1`, `p2`, ...), so
   nothing a page wrote is ever used as a key brAIn or the page sends back.
 * **It is bounded.** `MAX_STORES` stores, `MAX_ITEMS` items, `MAX_WORDS` brands
@@ -61,21 +67,34 @@ SHORT_CHARS = 40
 STORE_CHARS = 60
 
 _DROP_CATEGORIES = ("Cc", "Cf", "Co", "Cs", "Cn")
+_LOOK_ALIKE = {"<": "\u2039", ">": "\u203a", "\t": " ", "\n": " ", "\r": " ", "\v": " ",
+               "\f": " "}
 
 
 def line(value, limit: int) -> str:
     """One short line of plain text. NFKC (so a full-width bracket is a
     bracket), every invisible, format or control character removed (zero-width
-    spaces, bidi controls, the soft hyphen), no angle brackets, whitespace
-    collapsed, capped at `limit`."""
+    spaces, bidi controls, the soft hyphen), angle brackets turned into the
+    look-alike "‹ ›" (so "<8 oz>" keeps its meaning and nothing can close a
+    tag), whitespace collapsed, capped at `limit`."""
     text = unicodedata.normalize("NFKC", str(value or ""))
-    text = "".join(" " if ch in "<>\t\n\r\v\f" else ch for ch in text
+    text = "".join(_LOOK_ALIKE.get(ch, ch) for ch in text
                    if ch in "\t\n\r\v\f" or unicodedata.category(ch) not in _DROP_CATEGORIES)
     return " ".join(text.split())[:limit].strip()
 
 
+def fold(text) -> str:
+    """A key: the text normalised (`line`), case-folded, and only its letters,
+    marks and digits kept (Unicode categories L*, M*, N*). Punctuation,
+    symbols and spaces go; combining marks stay, so "आटा" and "आटे", or
+    "ไข่" and "ไข", are different products."""
+    return "".join(ch for ch in line(text, 400).casefold()
+                   if unicodedata.category(ch)[0] in "LMN")
+
+
 def store_key(name) -> str:
-    """"Walmart", "walmart.com" and "Walmart Grocery" are one store."""
+    """"Walmart", "walmart.com" and "Walmart Grocery" are one store. Can be
+    empty (a name of symbols only): `Profiles` then keys it by its id."""
     text = line(name, STORE_CHARS).casefold()
     text = re.sub(r"^https?://", "", text)
     text = re.sub(r"^www\.", "", text)
@@ -83,14 +102,15 @@ def store_key(name) -> str:
     text = re.sub(r"\.(com|co\.uk|co|ca|net|org|com\.au|de|fr|ie)\b", " ", text)
     text = re.sub(r"\b(supercenter|superstore|grocery|groceries|supermarket|online|store|shop)\b",
                   " ", text)
-    return re.sub(r"[\W_]+", "", text)
+    return fold(text)
 
 
 def word_key(text) -> str:
-    return re.sub(r"[\W_]+", "", line(text, NAME_CHARS).casefold())
+    return fold(line(text, NAME_CHARS))
 
 
 def item_key(item: dict) -> str:
+    """An item's key; an item whose key is empty is not kept (`clean_items`)."""
     return word_key(f"{item.get('name', '')} {item.get('variant', '')}")
 
 
@@ -215,7 +235,7 @@ def clean_profile(raw) -> dict | None:
     items = clean_items(raw.get("items"))
     brands = clean_words(raw.get("brands"))
     avoid = clean_words(raw.get("avoid"), NAME_CHARS)
-    if not store_key(store) or not (items or brands or avoid):
+    if not store or not (items or brands or avoid):
         return None
     return {"store": store, "items": items, "brands": brands, "avoid": avoid}
 
@@ -226,38 +246,12 @@ def _sort_key(item: dict):
 
 # ------------------------------------------------------------ naming a store
 
-# Common grocery and general stores, as `store_key` folds them, with the other
-# ways people write them. A profile for one of these also answers to its
-# aliases; an errand naming one of these names a store, so the household's
-# only profile is not assumed for it ("buy my usual costco" is not Walmart).
-KNOWN_STORES = {
-    "walmart": ("walmart", "wallmart"), "target": ("target",), "costco": ("costco",),
-    "kroger": ("kroger",), "aldi": ("aldi",), "lidl": ("lidl",),
-    "wholefoods": ("wholefoods", "wholefoodsmarket"),
-    "amazon": ("amazon", "amazonfresh", "amazonprime"), "safeway": ("safeway",),
-    "publix": ("publix",), "heb": ("heb",), "tesco": ("tesco",),
-    "sainsburys": ("sainsburys", "sainsbury"), "asda": ("asda",), "morrisons": ("morrisons",),
-    "waitrose": ("waitrose",), "ocado": ("ocado",), "instacart": ("instacart",),
-    "traderjoes": ("traderjoes", "traderjoe"), "samsclub": ("samsclub",),
-    "meijer": ("meijer",), "wegmans": ("wegmans",), "albertsons": ("albertsons",),
-    "foodlion": ("foodlion",), "sprouts": ("sprouts",), "freshdirect": ("freshdirect",),
-    "shipt": ("shipt",), "walgreens": ("walgreens",), "cvs": ("cvs",),
-    "bestbuy": ("bestbuy",), "homedepot": ("homedepot",), "lowes": ("lowes",),
-    "loblaws": ("loblaws",), "woolworths": ("woolworths",), "coles": ("coles",),
-}
-
-
-def _aliases(key: str) -> tuple[str, ...]:
-    for canonical, names in KNOWN_STORES.items():
-        if key == canonical or key in names:
-            return (key,) + tuple(n for n in names if n != key)
-    return (key,)
-
-
 def _tokens(words: str) -> list[str]:
-    """The errand's words as lower-case runs of letters and digits ("H-E-B" is
-    h, e, b; "Sainsbury's" is sainsbury, s; "walmart.com" is walmart, com)."""
-    return re.findall(r"[^\W_]+", line(words, 8000).casefold())
+    """The errand's words as runs of letters, marks and digits, case-folded
+    ("H-E-B" is h, e, b; "Sainsbury's" is sainsbury, s; "walmart.com" is
+    walmart, com)."""
+    text = line(words, 8000).casefold()
+    return "".join(ch if unicodedata.category(ch)[0] in "LMN" else " " for ch in text).split()
 
 
 def _named(key: str, tokens: list[str]) -> bool:
@@ -277,27 +271,13 @@ def _named(key: str, tokens: list[str]) -> bool:
     return False
 
 
-_DOMAIN = re.compile(r"\b[^\W_][\w-]*\.(?:com|co\.uk|ca|net|org|com\.au|de|fr|ie)\b")
-_USUALISH = re.compile(r"\b(usual|regular|normal|the same|buy again|my order|groceries|"
-                       r"grocery|shopping|cart|basket|restock|stock up)\b")
-
-
-def names_a_store(words: str, extra_keys=()) -> bool:
-    """Do the words name a store: one in `KNOWN_STORES`, one in `extra_keys`
-    (the household's own profiles), or a web address?"""
-    tokens = _tokens(words)
-    keys = [a for names in KNOWN_STORES.values() for a in names] + list(extra_keys)
-    if any(_named(k, tokens) for k in keys):
-        return True
-    return bool(_DOMAIN.search(line(words, 8000).casefold()))
-
-
 class Profiles:
     def __init__(self, store: Path, now=time.time):
         self.store = Path(store)
         self.now = now
         self.lock = threading.Lock()
         self.data: dict[str, dict] = {}
+        self.last_id = 0
         self._load()
 
     # ------------------------------------------------------------ store
@@ -307,23 +287,25 @@ class Profiles:
             raw = json.loads(self.store.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             raw = {}
+        if isinstance(raw, dict) and isinstance(raw.get("_last_id"), int):
+            self.last_id = max(0, raw["_last_id"])
         for row in (raw.values() if isinstance(raw, dict) else []):
             if not isinstance(row, dict):
                 continue
             store = line(row.get("store"), STORE_CHARS)
-            key = store_key(store)
-            if not key or key in self.data:
+            ident = str(row.get("id") or "")
+            ident = ident if re.fullmatch(r"p\d{1,6}", ident) else ""
+            key = store_key(store) or ident
+            if not store or not key or key in self.data:
                 continue
             removed = row.get("removed") if isinstance(row.get("removed"), dict) else {}
-            ident = str(row.get("id") or "")
             self.data[key] = {
-                "id": ident if re.fullmatch(r"p\d{1,6}", ident) else "",
+                "id": ident,
                 "store": store,
                 "items": clean_items(row.get("items")),
                 "brands": clean_words(row.get("brands")),
                 "avoid": clean_words(row.get("avoid"), NAME_CHARS),
-                "removed": {k: [word_key(x) if k != "items" else re.sub(r"[\W_]+", "", str(x))
-                                for x in (removed.get(k) or [])][-MAX_REMOVED:]
+                "removed": {k: [fold(x) for x in (removed.get(k) or []) if fold(x)][-MAX_REMOVED:]
                             for k in ("items", "brands", "avoid")},
                 "updated_at": row.get("updated_at") if isinstance(row.get("updated_at"), (int, float)) else 0,
                 "built_from": re.sub(r"[^0-9a-f]", "", str(row.get("built_from") or ""))[:24],
@@ -336,13 +318,16 @@ class Profiles:
 
     def _next_id(self) -> str:
         """The next opaque id: `p` and a number this add-on counts, never text
-        a page wrote."""
+        a page wrote, and never one a cleared profile had (brAIn may still
+        hold it). The count is kept in the file as `_last_id`, a key no store
+        can fold to."""
         used = [int(r["id"][1:]) for r in self.data.values() if r.get("id")]
-        return f"p{max(used, default=0) + 1}"
+        self.last_id = max([self.last_id] + used) + 1
+        return f"p{self.last_id}"
 
     def _save(self) -> None:
         try:
-            browser_atomic.write_json(self.store, self.data)
+            browser_atomic.write_json(self.store, {**self.data, "_last_id": self.last_id})
         except OSError as exc:
             log.warning("Could not save the shopping profiles: %s", exc)
 
@@ -369,23 +354,23 @@ class Profiles:
                 "updated_at": row["updated_at"], "edited_at": row.get("edited_at") or 0,
                 "built_from": row.get("built_from") or ""}
 
+    def get(self, ident: str) -> dict | None:
+        """One profile by the add-on's id, as the page and an errand see it."""
+        with self.lock:
+            row = self._by_id(ident)
+            return self._public(row) if row else None
+
     def for_words(self, words: str) -> list[dict]:
-        """The profiles an errand's words are about: those whose store (or a
-        known other name for it) the words name; else, when the words name no
-        store at all (none of the household's, none in `KNOWN_STORES`, no web
-        address) and there is exactly one profile, that one, and only when they
-        ask for "usual"-ish things, so a one-off like "find a charger" carries
-        none."""
+        """The profiles whose store the errand's words name (its folded name,
+        as whole words or consecutive words run together). Nothing else: an
+        errand that names no store gets no profile unless brAIn passes one by
+        id (`Errands.create(profile=...)`) after asking the person. A guess
+        from a list of known stores gave Walmart's profile to "my usual from
+        Carrefour"; no list can hold every shop."""
         tokens = _tokens(words)
         with self.lock:
-            named = [self._public(v) for k, v in self.data.items()
-                     if any(_named(a, tokens) for a in _aliases(k))]
-            if named:
-                return named
-            if len(self.data) == 1 and not names_a_store(words, self.data.keys()) \
-                    and _USUALISH.search(line(words, 8000).casefold()):
-                return [self._public(v) for v in self.data.values()]
-        return []
+            return [self._public(v) for k, v in self.data.items()
+                    if k != v["id"] and _named(k, tokens)]
 
     # ------------------------------------------------------------ changes
 
@@ -396,9 +381,11 @@ class Profiles:
         found = clean_profile(raw)
         if not found:
             return None
-        key = store_key(found["store"])
         with self.lock:
-            row = self.data.get(key)
+            key = store_key(found["store"]) or next(
+                (k for k, v in self.data.items() if k == v["id"] and v["store"] == found["store"]),
+                "")
+            row = self.data.get(key) if key else None
             if row is None:
                 if len(self.data) >= MAX_STORES:
                     oldest = min(self.data, key=lambda k: self.data[k]["updated_at"])
@@ -407,7 +394,7 @@ class Profiles:
                        "brands": [], "avoid": [],
                        "removed": {"items": [], "brands": [], "avoid": []},
                        "updated_at": 0, "built_from": "", "edited_at": 0}
-                self.data[key] = row
+                self.data[key or row["id"]] = row
             removed = row["removed"]
             have = {item_key(i): i for i in row["items"]}
             for item in found["items"]:
@@ -511,7 +498,7 @@ def _dump(value) -> str:
 def message_block(profiles: list[dict]) -> str:
     """The profile as a later errand reads it: the fixed preface, then the data
     as one JSON array inside `<household_profile>` tags, bounded to
-    `MESSAGE_CHARS`. `line` already took every angle bracket out of the
+    `MESSAGE_CHARS`. `line` already turned every angle bracket into "‹ ›" in the
     strings, so nothing in it can close the tag."""
     if not profiles:
         return ""

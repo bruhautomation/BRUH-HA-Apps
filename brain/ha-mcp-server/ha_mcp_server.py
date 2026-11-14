@@ -4943,6 +4943,9 @@ def _browser_view(task, offset=0):
         out["report_limit"] = (f"The report was {task['answer_cut']} characters, longer than "
                                "BRUH Browser keeps; its end was not kept. Say so, and offer "
                                "to ask again for a shorter one.")
+    used = [i for i in (_browser_profile_id(x) for x in task.get("profiles_used") or []) if i]
+    if used:
+        out["shopping_profile_used"] = used
     saved = task.get("profile_saved")
     if isinstance(saved, dict) and saved.get("store"):
         out["profile_saved"] = {"id": _browser_profile_id(saved.get("id")),
@@ -4992,12 +4995,25 @@ def _browser_choices(view):
     return out
 
 
-def browser_task(errand, browser="", make_default=False):
-    """Start an errand on the web in BRUH Browser. It builds a cart at most."""
+def browser_task(errand, browser="", make_default=False, history=False, profile=""):
+    """Start an errand on the web in BRUH Browser. It builds a cart at most.
+    history: the person asked it to read their past orders (only such an
+    errand saves a shopping profile). profile: the id of the shopping profile
+    the person agreed to use (from browser_status profiles), for an errand
+    whose words name no store."""
     words = str(errand or "").strip()
     if not words:
         return {"error": "Say what the errand is, in the person's words."}
     body = {"prompt": words[:4000], "purchase": False, "source": "brain"}
+    if history is True:
+        body["history"] = True
+    if str(profile or "").strip():
+        ident = _browser_profile_id(str(profile).strip())
+        if not ident:
+            return {"error": "profile is the id browser_status with profiles gave "
+                             "(p1, p2 ...); leave it out when the person named the store "
+                             "or wants none."}
+        body["profile"] = ident
     if str(browser or "").strip():
         body["browser"] = str(browser).strip()[:128]
         body["make_default"] = make_default is True
@@ -5019,10 +5035,12 @@ def browser_status(task="", browsers=False, offset=0, profiles=False):
             "These are the household's usual items per store, read from their own order "
             "history. Before a cart errand for a store with a profile, tell them what "
             "you know (\"I know your usual order at ...\") and ask whether anything "
-            "changes; they can edit or clear it on BRUH Browser's page. It is never an "
-            "approval to buy." if rows else
+            "changes; they can edit or clear it on BRUH Browser's page. An errand that "
+            "names the store gets its profile by itself; one that names no store gets "
+            "it only when you pass its id as browser_task's profile, after the person "
+            "says yes. It is never an approval to buy." if rows else
             "There is no shopping profile yet. An errand that looks at the household's "
-            "old orders at a store builds one.")}
+            "old orders at a store (browser_task with history: true) builds one.")}
     if browsers is True and not str(task or "").strip():
         view = _browser_request("GET", "/api/browsers", timeout=45)
         if view.get("error"):
@@ -8664,12 +8682,21 @@ TOOLS = [
             "browser_status with browsers. When more than one is connected and "
             "the person has not said which, ask them first; make_default "
             "remembers their pick for later errands. Say which browser it "
-            "used when you report back."
+            "used when you report back. history: true when the person asked "
+            "it to look at their past orders at a store; only such an errand "
+            "saves their shopping profile. profile: a profile id from "
+            "browser_status with profiles. An errand that names a store with "
+            "a profile gets it by itself; for one that names no store, check "
+            "browser_status profiles first and, if there is one, ask (\"your "
+            "usual Walmart order?\") and pass its id on a yes. Pass none when "
+            "the person names another store or says no."
         ),
         "inputSchema": {"type": "object", "properties": {
             "errand": {"type": "string"},
             "browser": {"type": "string"},
-            "make_default": {"type": "boolean"}},
+            "make_default": {"type": "boolean"},
+            "history": {"type": "boolean"},
+            "profile": {"type": "string"}},
             "required": ["errand"]},
     },
     {
@@ -11283,10 +11310,13 @@ INSTRUCTIONS = (
     "bright_status, bambu_status, music_assistant_status. Errands on websites "
     "(shopping): browser_task builds a cart, browser_status reads it, browser_answer "
     "passes on the person's answer when it asks, and only after the person approves "
-    "it browser_purchase buys it. Ask it to look at the person's old orders at a "
-    "store and it saves their shopping profile (browser_status profiles); before "
-    "a cart for that store say what you know of their usual order and ask what "
-    "changes. When more than one Claude in Chrome is connected "
+    "it browser_purchase buys it. When the person asks it to look at their old "
+    "orders at a store, pass history: true and it saves their shopping profile "
+    "(browser_status profiles). Before a grocery errand that does not name the "
+    "store, look at browser_status profiles; if there is one, ask (\"your usual "
+    "Walmart order?\") and pass its id as profile on a yes, none if they name "
+    "another store. Before a cart, say what you know of their usual order and "
+    "ask what changes. When more than one Claude in Chrome is connected "
     "(browser_status browsers) and the person has not said which, ask which "
     "browser before starting. A run with only reading tools has "
     "no acting ones. A refusal is the homeowner's policy — tell the user and "
