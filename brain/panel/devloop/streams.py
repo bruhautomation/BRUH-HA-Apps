@@ -1379,7 +1379,7 @@ def verbatim_rows(topic: str) -> list[dict]:
     return [{**extra,
              "where": (f"{named[0]} · " if extra else "") + f"Fix: {title}",
              "what": clip(words, WHAT_CHARS), "detail": "",
-             "body": "The owner said:\n\n> " + words
+             "body": "The owner said:\n\n> " + words.replace("\n", "\n> ")
                      + "\n\nThe run that should have written this up did not "
                        "answer, so this is their request as they typed it. "
                        "It is the requirement.",

@@ -6,7 +6,7 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ### Fixed
 
-- Reports sent to the development loop keep ordinary words: a device you named "Screen", "Inside" or "Box" no longer turns every "screen", "inside" or "box" in the report's sentences into "Switch 335" or "Light 56". Where the word is used as the device's name it is still replaced, and people's names, entity ids and names that could identify your home ("Kitchen ceiling", "Ben's room") are still replaced everywhere.
+- Reports sent to the development loop keep ordinary words: a device you named "Screen", "Inside" or "Box" no longer turns every "screen", "inside" or "box" in the report's sentences into "Switch 335" or "Light 56". Where the word is used as the device's name it is still replaced, and people's names, rooms, entity ids, names that are not everyday words ("Dexter", "Kitchen ceiling", "Ben's room"), and every word you typed yourself or a log carries are still replaced everywhere.
 ## 5.2.8
 
 ### Changed

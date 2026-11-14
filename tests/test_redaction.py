@@ -165,6 +165,43 @@ class TestOrdinaryWordsSurviveAliasing(unittest.TestCase):
                          f"{grace} said the lights were off")
         self.assertEqual(a.apply("will grace the hall"), f"{will} {grace} the hall")
 
+    def test_a_name_off_the_word_list_is_aliased_in_lower_case(self):
+        from devloop.aliases import Aliases
+        a = Aliases()
+        a.learn({"light.dexter": {"name": "Dexter", "area": "Nursery"},
+                 "switch.desk": {"name": "Desk", "area": "Office"},
+                 "light.kitchen_light": {"name": "свет"},
+                 "switch.screen": {"name": "Screen"}})
+        for text, real, alias in (
+                ("dexter's lamp is stuck", "dexter", a.names["light:Dexter"]),
+                ("the nursery is warm", "nursery", a.names["room:Nursery"]),
+                ("office door", "office", a.names["room:Office"]),
+                ("свет на кухне", "свет", a.names["light:свет"])):
+            with self.subTest(text=text):
+                out = a.apply(text)
+                self.assertNotIn(real, out.casefold())
+                self.assertIn(alias, out)
+        self.assertEqual(a.apply("then the screen goes blank"),
+                         "then the screen goes blank")
+
+    def test_a_persons_typed_words_and_a_log_keep_the_strict_rule(self):
+        a = self.aliases()
+        screen = a.names["switch:Screen"]
+        self.assertEqual(a.apply("the screen goes blank", strict=True),
+                         f"the {screen} goes blank")
+        self.assertIn(screen, a.apply("The owner said:\n\n> the screen goes blank"))
+        self.assertIn(screen, a.apply("log:\n```\nERROR the screen died\n```"))
+        entry = {"fp": "x", "stream": "look", "where": "Fix: blank",
+                 "what": "the screen goes blank",
+                 "owner_words": "the screen goes blank when I open Ask",
+                 "log_excerpt": "ERROR: timeout reading the box"}
+        body = upstream.compose(entry, a)
+        self.assertNotIn("screen", body["title"].casefold().replace(screen.casefold(), ""))
+        block = body["body"].rsplit("```json brain-devloop", 1)[1]
+        self.assertNotRegex(block.casefold().replace(screen.casefold(), ""),
+                            r"\bscreen\b")
+        self.assertNotRegex(block, r"\bbox\b")
+
     def test_a_distinctive_name_is_aliased_in_prose(self):
         a = self.aliases()
         out = a.apply("the kitchen ceiling flickers in ben's room every night")

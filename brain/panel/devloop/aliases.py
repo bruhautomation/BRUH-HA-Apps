@@ -38,23 +38,30 @@ Such a name says nothing about which home it is in, so it is left in the
 text; its entity id is still aliased. A person's, a tracker's and a zone's
 name is never treated as generic, whatever it is.
 
-**A one-word name that is also an English word is aliased where it is
-used as a name, not where it is used as the word** (`_used_as_name`).
-Households name things "Screen", "Inside" and "Box", and replacing every
-such word rewrote the prose: "the message box sits under the home
-indicator inside HA's frame; full-screen is off" arrived as "the message
-Binary sensor 251 sits under the home indicator Light 56 HA's frame;
-full-Switch 335 is off". A word list cannot tell the two apart and the
-way the word is written can: an occurrence written all lower case in
-running prose is the word and is left, while one written with a capital
-(the household's own spelling, which is how every field built from
-entity data carries it), quoted or in a code span, followed by its domain
-word or its entity id, alone in a table cell, list item or field, or
-between the `·` separators of a `where` is the name and is aliased. Only
-names of letters alone qualify: "Ben's room", "Kitchen ceiling" and
-"Lamp2" keep the whole-word rule everywhere, and a person's, tracker's or
-zone's name is aliased however it is written ("will grace the hall"
-loses its verb rather than risk a name).
+**A one-word name that is also a common English word is aliased where
+it is used as a name, not where it is used as the word**
+(`is_ordinary`, `_used_as_name`, `ordinary_words.txt`). Households name
+things "Screen", "Inside" and "Box", and replacing every such word
+rewrote the prose: "the message box sits under the home indicator inside
+HA's frame; full-screen is off" arrived as "the message Binary sensor 251
+sits under the home indicator Light 56 HA's frame; full-Switch 335 is
+off". Privacy decides first and the way the word is written second. A
+name is exempt at all only when it is one ASCII word whose lower-case
+form is on the bundled list of common English words (names, pets' names
+and rooms taken out of it), and it is not a person's, tracker's, zone's
+or room's: "Dexter", "Nursery", "Emma" and "свет" are aliased everywhere,
+as are "Ben's room", "Kitchen ceiling" and "Lamp2". For an exempt name,
+an occurrence written all lower case in running prose is the word and is
+left, while one written with a capital (the household's own spelling,
+which is how every field built from entity data carries it), quoted or in
+a code span, followed by its domain word or beside its entity id, alone
+in a table cell, list item or field, or between the `·` separators of a
+`where` is the name and is aliased. A person's typed words and a log are
+never prose to us: `apply(strict=True)` (the `owner_words` and
+`log_excerpt` fields, the owner's note) and any line quoted with `>` or
+inside a ``` fence keep the whole-word rule for every name. A person's
+name is aliased however it is written ("will grace the hall" loses its
+verb rather than risk a name).
 """
 from __future__ import annotations
 
@@ -132,15 +139,47 @@ def is_generic(name: str, kind: str) -> bool:
 # What a one-word name may stand beside and still be the household's thing.
 _QUOTES = "\"'`\u2018\u2019\u201c\u201d"
 _SEPARATORS = "\u00b7\u203a|"
-_ONE_WORD_RE = re.compile(r"[^\W\d_]+")
 _LINE_LEAD_RE = re.compile(r"^[\s>*\-\u2022|#]*(?:\d+[.)]\s*)?[*_`]*")
 _LINE_TAIL_RE = re.compile(r"[*_`]*\s*(?::.*)?\|?\s*$")
 
 
+# Never exempt, however common the word: a room says where, and these say who.
+_NEVER_ORDINARY = PERSONAL_KINDS | {"room", "area"}
+_ASCII_WORD_RE = re.compile(r"[A-Za-z]+")
+_WORDS: frozenset | None = None
+
+
+def ordinary_words() -> frozenset:
+    """The bundled list (`ordinary_words.txt`), read once. An unreadable
+    list is an empty one, so every name keeps the strict rule."""
+    global _WORDS
+    if _WORDS is None:
+        try:
+            lines = (Path(__file__).with_name("ordinary_words.txt")
+                     .read_text(encoding="utf-8").split("\n"))
+        except OSError:
+            lines = []
+        _WORDS = frozenset(w.strip() for w in lines
+                           if w.strip() and not w.lstrip().startswith("#"))
+    return _WORDS
+
+
 def is_ordinary(name: str, kind: str) -> bool:
-    """True when ``name`` is one word of letters a sentence could hold as an
-    ordinary word, so it is aliased only where it is used as a name."""
-    return kind not in PERSONAL_KINDS and bool(_ONE_WORD_RE.fullmatch(str(name or "")))
+    """True when ``name`` is one ASCII word whose lower-case form is a common
+    English word on the bundled list, and not a person's, place's or room's,
+    so it is aliased only where it is used as a name."""
+    name = str(name or "")
+    return (kind not in _NEVER_ORDINARY and bool(_ASCII_WORD_RE.fullmatch(name))
+            and name.lower() in ordinary_words())
+
+
+def _typed_words(text: str, start: int) -> bool:
+    """Whether ``start`` is inside a line quoted with ``>`` (a person's own
+    words) or a ``` fence (a log, a traceback): never running prose."""
+    line_start = text.rfind("\n", 0, start) + 1
+    if text[line_start:start].lstrip().startswith(">"):
+        return True
+    return text.count("```", 0, start) % 2 == 1
 
 
 def _used_as_name(text: str, start: int, end: int, kinds: frozenset) -> bool:
@@ -249,8 +288,11 @@ class Aliases:
 
     # -- applying ----------------------------------------------------------
 
-    def apply(self, text: str) -> str:
-        """``text`` with every id, name and room swapped for its alias."""
+    def apply(self, text: str, strict: bool = False) -> str:
+        """``text`` with every id, name and room swapped for its alias.
+        ``strict`` is for a person's typed words and logs: every name is
+        replaced wherever it stands, the rule before one-word names were
+        read by their use."""
         text = str(text or "").replace("\x00", "")
         # Ids first, parked behind placeholders while the names run: a room
         # called "Kitchen" would otherwise rewrite `light.kitchen` into
@@ -274,7 +316,7 @@ class Aliases:
         # A one-word name every holder of which is ordinary, with the kinds
         # it names (their domain words are where it stands as a name).
         ordinary: dict[str, set] = {}
-        strict: set[str] = set()
+        strict_names: set[str] = set()
         for key, alias in self.names.items():
             kind, real = key.split(":", 1)
             if len(real) >= MIN_NAME and not is_generic(real, kind):
@@ -283,13 +325,15 @@ class Aliases:
                 if is_ordinary(real, kind):
                     ordinary.setdefault(folded, set()).add(kind)
                 else:
-                    strict.add(folded)
-        kinds = {k: frozenset(v) for k, v in ordinary.items() if k not in strict}
+                    strict_names.add(folded)
+        kinds = {} if strict else {
+            k: frozenset(v) for k, v in ordinary.items() if k not in strict_names}
 
         def _name(m: re.Match) -> str:
             word = m.group(1)
             folded = word.casefold()
             if (folded in kinds and word.islower()
+                    and not _typed_words(m.string, m.start(1))
                     and not _used_as_name(m.string, m.start(1), m.end(1), kinds[folded])):
                 return word
             return lookup[folded]
