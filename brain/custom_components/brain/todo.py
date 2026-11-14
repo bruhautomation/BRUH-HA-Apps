@@ -209,6 +209,10 @@ def item_for_todo(row: dict) -> TodoItem | None:
     if not line and row.get("origin") == "hand":
         line = str(row.get("detail") or "").strip()
     source = str(row.get("source_title") or "").strip()
+    # The source is left out when the summary already begins with it
+    # ("Zigbee devices gone quiet: Re-pair it near the hub.").
+    if source and text.casefold().startswith(source.casefold()):
+        source = ""
     parts = [p for p in (line, source) if p]
     return TodoItem(
         summary=f"{mark} {text}".strip(),

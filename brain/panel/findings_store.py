@@ -1435,6 +1435,20 @@ def _adds(step: str, head: str, name: str) -> str:
     return flat if _words(step) - said else ""
 
 
+def _continues(step: str, head: str, name: str) -> bool:
+    """Whether a step starts with the headline's own words and the rest only
+    continues them ("Re-pair it near the hub." under "…: Re-pair it."), so
+    `_adds` hands the step back whole."""
+    own = head[len(name) + 2:] if name and head.startswith(name + ": ") else head
+    own = " ".join(own.split()).rstrip(".!…")
+    flat = " ".join(step.split())
+    if not own or not flat.casefold().startswith(own.casefold()):
+        return False
+    rest = flat[len(own):].strip(" ,;:—-.!")
+    return bool(_words(rest) - (_words(head) | _words(name))) and \
+        bool(_CONTINUES_RE.match(rest))
+
+
 def _line(fix: str, head: str, name: str) -> str:
     """The one line under a headline: what the first step of the fix that
     adds anything adds (`_adds`), as written, or nothing."""
@@ -1497,6 +1511,13 @@ def _parts(words: str, fallbacks: list[str], fix: str, name: str,
     head = _headline(words, name)
     if line and _adds(line, head, name):
         return head, clean_todo_line(_clip_line(line))
+    # The line would be the whole step because it only continues the
+    # headline: say it once, as the headline's own words, with no line.
+    for step in _steps(fix):
+        if _adds(step, head, name):
+            if _continues(step, head, name):
+                return _headline(step, name), ""
+            break
     return head, _line(fix, head, name)
 
 
