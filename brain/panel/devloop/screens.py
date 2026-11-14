@@ -434,11 +434,20 @@ _FOCUS_JS = r"""
     }
     return out;
   };
-  const cover = Math.ceil(Math.max(0, ...covers(document, [])));
+  const bar = () => Math.ceil(Math.max(0, ...covers(document, [])));
+  let cover = bar();
   if (!still) {
-    el.style.scrollMarginTop = cover + "px";
-    el.scrollIntoView({ block: "start", inline: "nearest" });
-    el.style.scrollMarginTop = "";
+    // A sticky bar only sticks once the page has scrolled, so the first
+    // scroll finds none and lays the element under the bar it then makes:
+    // scroll, look for the bar again, and scroll once more under it.
+    for (let i = 0; i < 3; i++) {
+      el.style.scrollMarginTop = cover + "px";
+      el.scrollIntoView({ block: "start", inline: "nearest" });
+      el.style.scrollMarginTop = "";
+      const now = bar();
+      if (now === cover) break;
+      cover = now;
+    }
   }
   const r = el.getBoundingClientRect();
   return { x: r.left, y: r.top, w: r.width, h: r.height, cover: cover };
