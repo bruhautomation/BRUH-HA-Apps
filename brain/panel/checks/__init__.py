@@ -49,7 +49,7 @@ from __future__ import annotations
 from . import (audit, automations, baseline, chores,  # noqa: F401
                coverage, dashboards, devices, evening, forecasts, integrations, network, registry,
                safety, security, snapshot, system, thermal)
-from ._util import CouldNotLook, House, history_cut
+from ._util import CouldNotLook, history_cut
 
 # The catalog. Order is the order results are filed in, which is also the
 # order the Findings tab shows a fresh batch: what breaks an automation
@@ -170,23 +170,6 @@ def get_check(check_id: str) -> dict | None:
     return None
 
 
-def _todo_text(snap: dict, row: dict, cache: dict) -> str:
-    """A check row's To Do sentence, never raising: a row without one is
-    derived on read (`findings_store.todo_text_of`)."""
-    try:
-        import findings_store  # noqa: PLC0415 — panel-local, read lazily
-        eid = str(row.get("entity_id") or "")
-        name = ""
-        if eid:
-            # One `House` per pass, built the first time a row needs a name.
-            if "house" not in cache:
-                cache["house"] = House(snap)
-            name = cache["house"].label(eid)
-        return findings_store.derive_todo_text(row, name)
-    except Exception:  # noqa: BLE001
-        return ""
-
-
 def run_all(snap: dict, now: float | None = None,
             only: list[str] | None = None) -> dict:
     """Run every check the snapshot can feed.
@@ -224,7 +207,6 @@ def run_all(snap: dict, now: float | None = None,
     errors: dict[str, str] = {}
     per_check: dict[str, int] = {}
     absent: dict[str, str] = {}
-    names_cache: dict = {}
     for check in CHECKS:
         cid = check["id"]
         if only and cid not in only:
@@ -273,11 +255,6 @@ def run_all(snap: dict, now: float | None = None,
             f = dict(f)
             f["source"] = source_for(cid)
             f["source_title"] = title_for(cid)
-            if not f.get("todo_text"):
-                # The To Do sentence, from the check's own fix and the
-                # thing's friendly name (`findings_store.derive_todo_text`):
-                # what a person moving this card onto To Do will read.
-                f["todo_text"] = _todo_text(snap, f, names_cache)
             into.append(f)
     return {"findings": out, "shadow": hidden, "ran": ran, "skipped": skipped,
             "errors": errors, "per_check": per_check, "absent": absent,

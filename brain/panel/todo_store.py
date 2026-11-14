@@ -197,12 +197,13 @@ def _shape(entry: dict) -> dict:
            if entry.get("claim") else {}),
         **({"from_case": _clean(entry.get("from_case"), 40)}
            if entry.get("from_case") else {}),
-        # The one line under the headline, composed with it when a finding
-        # moved here (`findings_store.todo_parts`). Present, even empty, on
-        # every item moved since, which is how a reader tells an item worded
-        # once from one filed before (`findings_store.todo_item_parts`).
-        **({"line": _clean(entry.get("line"), MAX_LINE)}
-           if "line" in entry else {}),
+        # The one line under the headline when the finding's producer wrote
+        # it (`todo_line`: a check that knows its device and its job). An
+        # item without it is worded on read from its own words and its fix
+        # (`findings_store.todo_item_parts`). The `line` key 5.2.4 stored
+        # is not kept: it was cut out of free text, and wrong (#879).
+        **({"todo_line": _clean(entry.get("todo_line"), MAX_LINE)}
+           if entry.get("todo_line") else {}),
     }
 
 
@@ -313,7 +314,7 @@ def add(text: str, *, detail: str = "", fix: str = "", entity_id: str = "",
         severity: str = "warning", origin: str = "hand", source: str = "",
         source_title: str = "", finding_key: str = "", run_id: str = "",
         now: float | None = None, claim: str = "",
-        from_case: str = "", line: str | None = None) -> dict | None:
+        from_case: str = "", todo_line: str = "") -> dict | None:
     """Put something on the list. Returns the item, or None if it is not one.
 
     A blank line is not a chore, and neither is one past the cap: the add
@@ -342,7 +343,7 @@ def add(text: str, *, detail: str = "", fix: str = "", entity_id: str = "",
         "added_at": int(now if now is not None else time.time()),
         "claim": claim if claim and claim != text else "",
         "from_case": from_case,
-        **({"line": line} if line is not None else {}),
+        "todo_line": todo_line,
     })
     items.append(entry)
     _write(_pruned(items))
@@ -547,22 +548,21 @@ def shown(now: float | None = None) -> dict:
             "next_wake": min(asleep.values()) if asleep else None}
 
 
-# What an item's headline is (`findings_store.todo_item_text`), set by the
-# server; the stored text when it is not set or fails.
-HEADLINE = None
+# What an item's headline and line are (`findings_store.todo_item_parts`),
+# set by the server; the stored text and no line when it is not set or fails.
+WORDS = None
 
 
 def _headlined(item: dict) -> dict:
-    """An item as the mirror lists it: under the headline the panel's card
-    shows, so the phone's To-do list and the panel say the same thing."""
-    hook = HEADLINE
-    if hook is None:
-        return item
+    """An item as the mirror lists it: the headline and the one line the
+    panel's card shows, so the phone's To-do list and the panel say the
+    same thing, and the description never repeats the whole fix (#879)."""
+    hook = WORDS
     try:
-        text = hook(item)
+        text, line = hook(item) if hook is not None else ("", "")
     except Exception:  # noqa: BLE001 — the stored text stands in
-        return item
-    return {**item, "text": text} if text else item
+        text, line = "", ""
+    return {**item, "text": text or item.get("text") or "", "line": line or ""}
 
 
 def publish_state(only_if_changed: bool = False) -> bool:

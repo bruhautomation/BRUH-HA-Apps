@@ -200,10 +200,20 @@ def item_for_todo(row: dict) -> TodoItem | None:
     if not item_id or not text:
         return None
     mark = SEVERITY_MARK.get(row.get("severity"), "")
-    detail = str(row.get("detail") or "").strip()
-    fix = str(row.get("fix") or "").strip()
+    # The summary is the card's headline and the description its one line
+    # and where it came from — the panel's own words for the item
+    # (`findings_store.todo_item_parts`, published as `text` and `line`).
+    # The detail and the whole fix under it said everything a third time
+    # (#879). A person's own item keeps the detail they typed.
+    line = str(row.get("line") or "").strip()
+    if not line and row.get("origin") == "hand":
+        line = str(row.get("detail") or "").strip()
     source = str(row.get("source_title") or "").strip()
-    parts = [p for p in (detail, fix and f"Try: {fix}", source) if p]
+    # The source is left out when the summary already begins with it
+    # ("Zigbee devices gone quiet: Re-pair it near the hub.").
+    if source and text.casefold().startswith(source.casefold()):
+        source = ""
+    parts = [p for p in (line, source) if p]
     return TodoItem(
         summary=f"{mark} {text}".strip(),
         uid=f"{TODO_UID}{int(item_id)}",

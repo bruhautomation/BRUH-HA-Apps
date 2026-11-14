@@ -1749,15 +1749,6 @@ def _model_findings(value, max_items: int = 3) -> list[dict]:
             item = {"text": item}
         if not isinstance(item, dict):
             continue
-        if not str(item.get("fix") or "").strip() and \
-                str(item.get("text") or "").strip():
-            # A card that named a problem and said nothing about what to
-            # do filed a row with an empty "what to do". It gets the
-            # sentence To Do would have shown for it — the same derivation,
-            # so the card and the list cannot disagree.
-            name = str((_NAMES.get(str(item.get("entity_id") or ""))
-                        or {}).get("name") or "")
-            item = {**item, "fix": findings_store.derive_todo_text(item, name)}
         out.append(item)
     return out
 
@@ -9857,8 +9848,9 @@ hypotheses.KNOWN_ANSWER = _hypothesis_known_answer
 # are the cases' sidecar, and `cases` reads `todo_store`, so the store is
 # handed the reader rather than importing it.
 todo_store.SNOOZED = lambda: cases.snoozes()
-# The mirror's summary is the card's headline (`findings_store.todo_item_text`).
-todo_store.HEADLINE = findings_store.todo_item_text
+# The mirror's summary and description are the card's headline and line
+# (`findings_store.todo_item_parts`).
+todo_store.WORDS = findings_store.todo_item_parts
 # Every write to either store marks Morph's `cases.json` as owed, and the
 # Morph loop rewrites it within a second (`_morph_loop`).
 findings_store.ON_WRITE = _morph_dirty
@@ -22981,22 +22973,24 @@ async def _move_finding_to_todo(finding: dict, note: str = "",
     screen it was given on.
     """
     key = findings_store.normalize(finding["text"])
-    # The item reads as what needs doing ("Replace the battery in the
-    # hallway motion sensor."), never the finding's claim (contract B,
-    # `todo_text`); the claim rides as `claim`, which is what the settled
-    # ledger's entry is still called when the chore is done.
-    # Headline and line composed once, here, from the finding's own To Do
-    # words or its fix and the thing's name (`findings_store.todo_parts`),
-    # and stored, so the card never has to cut them out of free text again.
-    sentence, line = findings_store.todo_parts(
+    # The item's headline is the finding's own To Do words where its
+    # producer wrote them ("Replace the battery in the hallway motion
+    # sensor."), else its claim, with the thing's name in front when they do
+    # not name it (`findings_store.todo_parts`, #879); the claim also rides
+    # as `claim`, which is what the settled ledger's entry is still called
+    # when the chore is done. A line its producer wrote is kept with it;
+    # any other is read off the fix whenever the card is shown.
+    sentence, _line = findings_store.todo_parts(
         {**finding, "fix": fix, "todo_text": "", "todo_line": ""}
         if fix else finding)
     sentence = sentence or finding["text"]
+    todo_line = "" if fix else findings_store.clean_todo_line(
+        finding.get("todo_line"))
 
     def place() -> dict | None:
         return todo_store.add(
             sentence,
-            line=line,
+            todo_line=todo_line,
             claim=finding["text"],
             from_case=f"f:{int(finding['ts'])}",
             detail=finding.get("detail") or "",
