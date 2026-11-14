@@ -7,8 +7,8 @@ into a Lovelace config that looks like the dashboard the house knows:
   every editing feature HA has works on it (add, move and resize sections
   and cards, badges, columns) and HA's grid does the layout. The room rail
   comes along as the view's ``morph: {rail: true}``, which brAIn's layer
-  draws on any sections view; lifting a room that needs somebody and
-  folding a quiet one are the same switches (``order``, ``fold``), off;
+  draws on any sections view (nothing reorders itself or folds, so there
+  is no other switch);
 * a room is a section: a heading with the room's name (and a switch Morph
   showed in the room's title row as one of the heading's entities), a
   group's label as a smaller heading, and each card;
@@ -36,7 +36,7 @@ KINDS = ("light", "light_group", "fan", "cover", "lock", "switch", "button", "va
 THEMES = {"medium": "Morph Medium", "dark": "Morph Dark", "light": "Morph Light", "auto": "Morph"}
 # The layer's switches a converted view starts with: the rail, which is
 # navigation; reordering and folding are a house's choice to turn on.
-VIEW_MORPH = {"rail": True, "order": False, "fold": False}
+VIEW_MORPH = {"rail": True}
 URL_PATH = "morph-home"
 
 
@@ -177,7 +177,7 @@ def from_morph_view(view: dict) -> dict | None:
     out["type"] = "sections"
     out.setdefault("max_columns", 4)
     had = view.get("morph") if isinstance(view.get("morph"), dict) else {}
-    out["morph"] = {**VIEW_MORPH, **{k: bool(had[k]) for k in ("rail", "order", "fold") if k in had}}
+    out["morph"] = {**VIEW_MORPH, **{k: bool(had[k]) for k in ("rail",) if k in had}}
     return out
 
 

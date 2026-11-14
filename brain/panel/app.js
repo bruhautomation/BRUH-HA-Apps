@@ -3301,6 +3301,7 @@ function renderSettingsForm(data) {
   // malformed is asking, which is what the terminal and the chat will do.
   $("#setSkipPerms").checked = data.settings.dangerously_skip_permissions === true;
   $("#setYolo").checked = data.settings.yolo_mode === true;
+  $("#setTalkFirst").checked = data.settings.talk_first === true;
   renderSkipPermsNote(data);
   $("#setGatherMode").value = data.settings.gather_mode || "search";
   $("#setRefreshMode").value = data.settings.refresh_mode || "changed";
@@ -5758,6 +5759,13 @@ $("#setSkipPerms").addEventListener("change", async () => {
   const data = await saveSettings({ dangerously_skip_permissions: on },
     (saved) => skipPermsToast(on, saved));
   // A refused save leaves the switch where it was, and so does the box.
+  if (!data) box.checked = !on;
+});
+$("#setTalkFirst").addEventListener("change", async () => {
+  const box = $("#setTalkFirst");
+  const on = box.checked;
+  const data = await saveSettings({ talk_first: on },
+    on ? "Requests that would be drafts go to the chat now" : "Requests become drafts to approve again");
   if (!data) box.checked = !on;
 });
 // No restrictions (`yolo_mode`) removes every restriction brAIn has, so

@@ -57,13 +57,18 @@ const TAP_PX = 8, TAP_MS = 350;
 const CLOSE_PX = 36; // a swipe right this far closes it
 const ROW_MAX = 34, ROW_MIN = 17, HEAD_K = 0.75; // row height; a floor heading is 3/4 of a row
 
-export const SCRUB_CSS = `
+// Morph's own page only: the rail takes the scroll bar's place there. A Home
+// Assistant view keeps its own scroller as it is.
+export const SCRUB_PAGE_CSS = `
 .scroll{scrollbar-width:none}.scroll::-webkit-scrollbar{display:none}
 /* iOS flashes its own scroll indicator when the page appears, whatever the CSS
    says: the scroller runs 18px past the right edge (padded back, so nothing
    moves) and the indicator is drawn where it is clipped away. */
 [data-morph-root]{overflow:hidden}
 .scroll{width:calc(100% + 18px)!important;padding-right:18px;box-sizing:border-box}
+`;
+
+export const SCRUB_CSS = `
 .mrail{position:absolute;top:calc(84px + env(safe-area-inset-top, 0px));bottom:calc(96px + env(safe-area-inset-bottom, 0px));right:0;width:30px;z-index:30;touch-action:none;cursor:w-resize;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
 [data-morph-root]:has(input:focus, textarea:focus, .askin:not(:placeholder-shown)) .mrail{pointer-events:none}
 .mrail-track{position:absolute;top:0;bottom:0;right:6px;width:3px;display:flex;flex-direction:column;opacity:.45;transform:translateX(var(--px,0px));transition:width .25s var(--ease),opacity .25s ease,transform .3s var(--ease)}
@@ -113,19 +118,68 @@ export const SCRUB_CSS = `
 @media (prefers-reduced-motion:reduce){.mrail-track,.mrail-seg,.mrail-tip,.mrail-pan,.mrail-row,[data-board] section.sec,[data-board] section.sec .secbg{transition:none!important}.mrail-tip .tp-ch{animation:none!important}}
 `;
 
+// What the rail needs from the page it is on: Morph's own page
+// (`panelHost`) or a Home Assistant sections view (morph-view-layer.js).
+//   root        the positioned box the rail is put in; a press in it closes it
+//   scroller()  what scrolls (an element, or the window's stand-in)
+//   rooms()     [{id, el, title, icon, floor, floorTitle, ents, rc, cases}],
+//               in the page's own order
+//   hidden()    true while the rail stays out of the way (Edit)
+//   board()     what carries `mrail-dim` while a room is lit (may be null)
+//   cover()     px of sticky header inside the scroller (default 0)
+//   reduce()    reduced motion
+//   still()     the page's own glide stops (Morph's engine)
+//   hass        for each room's state colour
+export function panelHost(P) {
+  return {
+    root: P.rootEl,
+    scroller: () => P.rootEl.querySelector('.scroll'),
+    get hass() { return P.hass; },
+    hidden: () => !!P.s.edit,
+    board: () => P.rootEl.querySelector('[data-board]'),
+    reduce: () => !!(P.engine && P.engine.reduce && P.engine.reduce()),
+    still: () => { if (P.engine) P.engine.sc = null; },
+    cover() {
+      let cover = 0; const sc = this.scroller();
+      sc.querySelectorAll('[data-region]').forEach((r) => { const c = getComputedStyle(r); if (c.position === 'sticky' && r.offsetHeight) cover = Math.max(cover, r.offsetHeight + (parseFloat(c.top) || 0)); });
+      return cover;
+    },
+    rooms() {
+      const els = new Map();
+      P.rootEl.querySelectorAll('[data-board] [data-sec]').forEach((s) => els.set(s.getAttribute('data-sec'), s));
+      const fls = (P._floorsOrdered || []).map((F) => F.fl.title);
+      const model = (P.engine && P.engine.model && P.engine.model.sections) || [];
+      const out = [];
+      model.forEach((ms) => {
+        const s = els.get(ms.id);
+        if (!s || SKIP.test(ms.id) || s.offsetParent === null || s.offsetHeight < 40) return;
+        const sec = P.sectionById ? P.sectionById(ms.id) : null;
+        if (!sec) return;
+        let ents = [];
+        try { ents = P.sectionEntities(sec).slice(); } catch (e) { /* none */ }
+        let rc = '';
+        try { rc = P.railColor ? P.railColor(ms.id) : ''; } catch (e) { /* plain */ }
+        out.push({ id: ms.id, el: s, title: sec.title || '', icon: sec.icon || '', ents, rc, floor: ms.floor || 0, floorTitle: fls[ms.floor || 0] || '', cases: 0 });
+      });
+      return out;
+    },
+  };
+}
+
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 export class Scrub {
-  constructor(panel) {
-    this.p = panel; this.rooms = []; this.sig = ''; this.isOpen = false; this.cur = -1;
+  constructor(panel, host) {
+    const h = (this.h = host || panelHost(panel));
+    this.rooms = []; this.sig = ''; this.isOpen = false; this.cur = -1;
     const el = (this.el = document.createElement('div'));
     el.className = 'mrail'; el.setAttribute('aria-hidden', 'true');
     el.innerHTML = '<div class="mrail-track"></div><i class="mrail-glide"></i><div class="mrail-tw"><div class="mrail-tip"><span class="tp-ch">‹</span><span class="tp-tx"></span><span class="tp-ar"></span></div></div><div class="mrail-fls"></div><div class="mrail-pan"></div>';
     this.track = el.children[0]; this.glide = el.children[1]; this.tw = el.children[2]; this.tip = this.tw.firstChild;
     this.fls = el.children[3]; this.pan = el.children[4];
-    panel.rootEl.style.position = 'relative';
-    panel.rootEl.appendChild(el);
-    this.sc = panel.rootEl.querySelector('.scroll');
+    if (getComputedStyle(h.root).position === 'static') h.root.style.position = 'relative';
+    h.root.appendChild(el);
+    this.sc = h.scroller();
     // The closed rail: a pull left opens it, up or down scrolls the page.
     this.track.parentNode.addEventListener('pointerdown', (e) => { if (!this.isOpen) this.press(e); });
     el.addEventListener('pointermove', (e) => this.drag(e));
@@ -139,7 +193,8 @@ export class Scrub {
     // Morph's own press handling (hold, tap outside) never sees the rail.
     ['pointerdown', 'pointerup', 'click'].forEach((t) => el.addEventListener(t, (e) => e.stopPropagation()));
     // A touch anywhere else closes it.
-    panel.rootEl.addEventListener('pointerdown', (e) => { if (this.isOpen && !el.contains(e.target)) this.close(); }, true);
+    this._outside = (e) => { if (this.isOpen && !el.contains(e.target)) this.close(); };
+    h.root.addEventListener('pointerdown', this._outside, true);
     this.sc.addEventListener('scroll', () => this.onScroll(), { passive: true });
     // Held to the screen, not to Morph's frame (house change, 3 Nov 2026:
     // "the sections sliding some when scrolling … those section labels
@@ -151,12 +206,23 @@ export class Scrub {
     // its top is moved back by however far the frame has moved, in the same
     // frame (a ResizeObserver runs before paint), so nothing on it moves.
     this.pin(true);
-    try { this._pinRO = new ResizeObserver(() => this.pin()); this._pinRO.observe(panel.rootEl); } catch (e) { /* the CSS place */ }
-    window.addEventListener('resize', () => this.pin(true), { passive: true });
+    try { this._pinRO = new ResizeObserver(() => this.pin()); this._pinRO.observe(h.root); } catch (e) { /* the CSS place */ }
+    this._resize = () => this.pin(true);
+    window.addEventListener('resize', this._resize, { passive: true });
+  }
+
+  // Taken off the page (a Home Assistant view the rail was on went away).
+  destroy() {
+    try { this._pinRO && this._pinRO.disconnect(); } catch (e) { /* gone */ }
+    window.removeEventListener('resize', this._resize);
+    try { this.h.root.removeEventListener('pointerdown', this._outside, true); } catch (e) { /* gone */ }
+    cancelAnimationFrame(this._raf); cancelAnimationFrame(this._fling); this._raf = null;
+    this.unlight(true);
+    this.el.remove();
   }
 
   pin(reset) {
-    const el = this.el; const root = this.p.rootEl;
+    const el = this.el; const root = this.h.root;
     const rr = root.getBoundingClientRect();
     if (reset || this._base == null || window.innerWidth !== this._vw || window.innerHeight !== this._vh) {
       // The CSS place, measured as it is: inset from the frame's top and bottom.
@@ -179,51 +245,32 @@ export class Scrub {
   // In the dashboard's own order (floors, then rooms), never re-sorted by
   // where they happen to be on screen while the layout is moving.
   read() {
-    const P = this.p;
-    const els = new Map();
-    P.rootEl.querySelectorAll('[data-board] [data-sec]').forEach((s) => els.set(s.getAttribute('data-sec'), s));
-    const fls = (P._floorsOrdered || []).map((F) => F.fl.title);
-    const model = (P.engine && P.engine.model && P.engine.model.sections) || [];
-    const rooms = [];
-    model.forEach((ms) => {
-      const s = els.get(ms.id);
-      if (!s || SKIP.test(ms.id) || s.offsetParent === null || s.offsetHeight < 40) return;
-      const sec = P.sectionById ? P.sectionById(ms.id) : null;
-      if (!sec) return;
-      const st = this.state(sec, ms.id);
-      let rc = '';
-      try { rc = P.railColor ? P.railColor(ms.id) : ''; } catch (e) { /* plain */ }
-      rooms.push({ id: ms.id, el: s, title: sec.title || '', icon: sec.icon || '', hue: st.hue, rc, floor: ms.floor || 0, floorTitle: fls[ms.floor || 0] || '' });
-    });
+    let rooms = [];
+    try { rooms = this.h.rooms() || []; } catch (e) { rooms = []; }
+    rooms = rooms.map((r) => ({ ...r, hue: this.state(r) }));
     rooms.unshift({ id: '__top', el: null, top: true, title: 'Top', icon: 'mdi:arrow-collapse-up', hue: '', rc: '', floor: -99, floorTitle: '' });
     return rooms;
   }
 
   // A room's state: its notch colour.
-  state(sec, id) {
-    const P = this.p; const H = P.hass; if (!sec || !H) return { hue: '' };
-    let ents = [];
-    try { ents = P.sectionEntities(sec).slice(); } catch (e) { /* none */ }
-    try { (P.headItems(sec) || []).forEach((h) => ents.push(h.entity)); } catch (e) { /* none */ }
+  state(room) {
+    const H = this.h.hass; if (!H) return '';
     let lit = 0; let open = 0;
-    ents.forEach((e) => {
+    (room.ents || []).forEach((e) => {
       const st = H.states[e]; if (!st) return;
       const d = e.split('.')[0]; const dc = st.attributes.device_class;
       if (d === 'binary_sensor' && ['door', 'garage_door', 'window', 'opening'].includes(dc) && st.state === 'on') open += 1;
       if (d === 'cover' && dc === 'garage' && st.state === 'open') open += 1;
       if (d === 'light' && st.state === 'on' && !(st.attributes.entity_id || []).length && !/indicator|\bled\b/i.test(e + ' ' + (st.attributes.friendly_name || ''))) lit += 1;
     });
-    let cases = 0;
-    try { cases = (P.casesPlaced() || []).filter((k) => k._sec === id).length; } catch (e) { /* none */ }
-    return { hue: open || cases ? 'var(--rose)' : lit ? 'var(--amber)' : '' };
+    return open || room.cases ? 'var(--rose)' : lit ? 'var(--amber)' : '';
   }
 
   // Morph's panel calls paint() on scroll and after a render.
   paint() { clearTimeout(this._paintT); this._paintT = setTimeout(() => this.refresh(), 160); }
 
   refresh() {
-    const P = this.p;
-    const hide = P.s.edit || P.s.thenAt;
+    const hide = this.h.hidden();
     this.el.style.display = hide ? 'none' : '';
     if (hide) { if (this.isOpen) this.close(true); return; }
     const rooms = this.read();
@@ -325,7 +372,7 @@ export class Scrub {
       const now = performance.now(); const d = e.clientY - g.lastY;
       const dt = Math.max(1, now - g.lastT);
       g.v = 0.8 * (d / dt) + 0.2 * g.v; g.lastY = e.clientY; g.lastT = now;
-      if (this.p.engine) this.p.engine.sc = null;
+      this.h.still();
       this.sc.scrollTop -= d;
     }
   }
@@ -464,20 +511,22 @@ export class Scrub {
   // The room being gone to, lit in place; the rest dimmed while it is open.
   light(room) {
     clearTimeout(this._litT);
-    const board = this.p.rootEl.querySelector('[data-board]');
-    this.p.rootEl.querySelectorAll('section.sec.mrail-tgt').forEach((x) => { if (!room || x !== room.el) x.classList.remove('mrail-tgt'); });
+    const board = this.h.board();
+    if (this._litEl && (!room || this._litEl !== room.el)) this._litEl.classList.remove('mrail-tgt');
     if (board) board.classList.toggle('mrail-dim', !!(room && room.el));
-    if (!room || !room.el) return;
+    this._litEl = room && room.el ? room.el : null;
+    if (!this._litEl) return;
     if (room.rc) room.el.style.setProperty('--rh', room.rc); else room.el.style.removeProperty('--rh');
     room.el.classList.add('mrail-tgt');
   }
 
   // Closing: the others come back at once, the lit room fades a moment later.
-  unlight() {
-    const board = this.p.rootEl.querySelector('[data-board]');
+  unlight(now) {
+    const board = this.h.board();
     if (board) board.classList.remove('mrail-dim');
     clearTimeout(this._litT);
-    this._litT = setTimeout(() => this.p.rootEl.querySelectorAll('section.sec.mrail-tgt').forEach((x) => x.classList.remove('mrail-tgt')), 900);
+    const off = () => { if (this._litEl) this._litEl.classList.remove('mrail-tgt'); this._litEl = null; };
+    if (now === true) off(); else this._litT = setTimeout(off, 900);
   }
 
   // ── The page's glide ───────────────────────────────────────────────
@@ -487,7 +536,7 @@ export class Scrub {
     if (this.targetTop) return 0;
     const el = this.targetEl; if (!el || !el.isConnected) return this.pos;
     let cover = 0;
-    this.sc.querySelectorAll('[data-region]').forEach((r) => { const c = getComputedStyle(r); if (c.position === 'sticky' && r.offsetHeight) cover = Math.max(cover, r.offsetHeight + (parseFloat(c.top) || 0)); });
+    try { cover = this.h.cover ? this.h.cover() : 0; } catch (e) { cover = 0; }
     // The room's title lines up with the thumb (house change, 29 Oct 2026:
     // "the card isn't where my thumb is, it's staying at the top of the
     // window"), held a little in from the top and bottom of the window so the
@@ -503,7 +552,7 @@ export class Scrub {
     if (this._raf) return;
     this.pos = this.sc.scrollTop; this.vel = this.vel || 0;
     let last = performance.now();
-    const reduce = this.p.engine && this.p.engine.reduce && this.p.engine.reduce();
+    const reduce = this.h.reduce();
     const step = (now) => {
       // Real time, in small steps: a dropped frame never slows the glide down.
       let dt = Math.min(0.12, (now - last) / 1000); last = now;
@@ -513,7 +562,7 @@ export class Scrub {
         const c = 2 * ZETA * Math.sqrt(K);
         while (dt > 0) { const h = Math.min(0.008, dt); dt -= h; this.vel += (K * (t - this.pos) - c * this.vel) * h; this.pos += this.vel * h; }
       }
-      if (this.p.engine) this.p.engine.sc = null;
+      this.h.still();
       this.sc.scrollTop = this.pos;
       if (Math.abs(t - this.pos) < 0.5 && Math.abs(this.vel) < 5) { this.sc.scrollTop = this.pos = t; this.vel = 0; this._raf = null; if (!this.isOpen) this.thumbY = null; return; }
       this._raf = requestAnimationFrame(step);

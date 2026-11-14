@@ -5,21 +5,17 @@
 // and only what the view asks for under `morph:`:
 //
 //   morph:
-//     rail: true    the room rail on a touch screen: pull it left and go
-//                   room to room under the thumb (rail.js, unchanged)
-//     order: false  a room that needs somebody (an open door, a leak, an
-//                   unlocked lock) is lifted to the top, with why
-//     fold: false   a room with nothing on and nothing recent is one line,
-//                   a tap opens it
+//     rail: true    the room rail on a touch screen: swipe it left and go
+//                   room to room under the thumb
 //
-// A converted Morph dashboard starts with the rail on and the other two
-// off; brAIn's button on the dashboard switches each one per tab, and so
-// does a Tell or the view's YAML. In edit mode nothing moves or folds:
-// Home Assistant's editor sees the view exactly as it is stored.
+// Nothing on the view reorders itself and no section folds: Morph keeps the
+// order the view is written in, everywhere. A converted Morph dashboard
+// starts with the rail on; brAIn's button on the dashboard switches it per
+// tab, and so does a Tell or the view's YAML. In edit mode the rail is off.
 //
-// It touches HA's page only through styles and attributes on the
-// `.section` wrappers hui-sections-view draws (CSS `order`, `data-fold`,
-// `data-why`), one adopted stylesheet in that view's shadow root, and the
+// It touches HA's page only through attributes on the `.section` wrappers
+// hui-sections-view draws (`data-sec`), one adopted stylesheet in that
+// view's shadow root, and the
 // rail's own box at the start of that shadow root, never by moving nodes
 // HA's renderer owns, so a redraw by HA loses nothing and the next pass
 // puts it back. Every lookup answers null rather
@@ -28,32 +24,30 @@
 
 import { CSS as STYLES } from './styles.js';
 import { HA_THEME } from './morph-cards.js';
-import { plan } from './morph-features.js';
-import { Rail } from './rail.js';
+import { plan, entitiesOf } from './morph-features.js';
+import { Scrub, SCRUB_CSS } from './scrub.js';
 import { deepFind, findPanel } from './brain-layer.js';
 
 const TICK_MS = 1000;
 const HUE = ['sky', 'amber', 'teal', 'violet', 'lime', 'peach', 'sand', 'indigo', 'rose'];
 
-export const DEFAULTS = { rail: false, order: false, fold: false };
+export const DEFAULTS = { rail: false };
 
 // The view's switches; a view with no `morph:` has none on.
 export function optsOf(view) {
   const m = view && typeof view === 'object' && view.morph && typeof view.morph === 'object' ? view.morph : null;
   if (!m) return { ...DEFAULTS };
-  return { rail: !!m.rail, order: !!m.order, fold: !!m.fold };
+  return { rail: !!m.rail };
 }
 
-export const anyOn = (o) => !!(o && (o.rail || o.order || o.fold));
+export const anyOn = (o) => !!(o && o.rail);
 
 // What Morph adds inside hui-sections-view's shadow root.
 export const VIEW_SHEET = `
-.section[data-why]::before{content:attr(data-why);display:block;margin:0 4px 6px;font-size:14px;font-weight:600;color:var(--morph-rose,#DE6E5D)}
-.section[data-fold]>*{display:none!important}
-.section[data-fold]::after{content:attr(data-fold);display:flex;align-items:center;min-height:48px;padding:0 14px;border-radius:var(--ha-card-border-radius,12px);background:var(--ha-card-background,var(--card-background-color));color:var(--secondary-text-color);font-size:15px;cursor:pointer;box-shadow:var(--ha-card-box-shadow,none);border:var(--ha-card-border-width,1px) solid var(--ha-card-border-color,var(--divider-color))}
-:host(.railing) .section[data-sec]:not(.railon){opacity:.55;transition:opacity .2s ease}
-.section.railon{border-radius:var(--ha-card-border-radius,12px);box-shadow:0 0 0 2px color-mix(in oklab,var(--rc) 70%,transparent)}
-@media (prefers-reduced-motion:reduce){:host(.railing) .section[data-sec]{transition:none}}
+/* The room the rail is going to (scrub.js): ringed, the others dimmed. */
+:host(.mrail-dim) .section[data-sec]:not(.mrail-tgt){opacity:.5;transition:opacity .3s ease}
+.section.mrail-tgt{border-radius:var(--ha-card-border-radius,12px);box-shadow:0 0 0 2px color-mix(in oklab,var(--rh,var(--primary-text-color)) 55%,transparent);transition:box-shadow .35s ease}
+@media (prefers-reduced-motion:reduce){:host(.mrail-dim) .section[data-sec],.section.mrail-tgt{transition:none}}
 @media (any-pointer:coarse){:host(.morph-rail) .wrapper{padding-right:30px!important}}
 `;
 
@@ -68,15 +62,17 @@ export const VIEW_SHEET = `
 // on the rail chains to the view's own scroller like a swipe anywhere else.
 const RAIL_CSS = `
 :host{all:initial;display:block;position:sticky;top:calc(var(--header-height,56px) + env(safe-area-inset-top,0px));height:0;z-index:5;pointer-events:none}
-.morph.mrl{background:transparent;min-height:0;position:absolute;right:0;top:0;width:28px;height:calc(100vh - var(--header-height,56px) - env(safe-area-inset-top,0px));height:calc(100dvh - var(--header-height,56px) - env(safe-area-inset-top,0px));pointer-events:none}
-.mrl .srail{position:absolute!important;top:0;right:0;bottom:0;height:auto!important;pointer-events:auto}
+.morph.mrl{background:transparent;min-height:0;position:absolute;right:0;top:0;width:46px;height:calc(100vh - var(--header-height,56px) - env(safe-area-inset-top,0px));height:calc(100dvh - var(--header-height,56px) - env(safe-area-inset-top,0px));pointer-events:none}
+.mrl .mrail{top:8px;bottom:calc(16px + env(safe-area-inset-bottom,0px));pointer-events:auto}
+/* A Home Assistant view keeps its own scroll bar; the rail is for touch. */
+@media not (any-pointer:coarse){.mrl .mrail{display:none}}
 `;
 
 let SHEETS = null;
 function sheets() {
   if (SHEETS) return SHEETS;
   const mk = (css) => { try { const s = new CSSStyleSheet(); s.replaceSync(css); return s; } catch (e) { return null; } };
-  SHEETS = { view: mk(VIEW_SHEET), rail: mk(STYLES + HA_THEME + RAIL_CSS) };
+  SHEETS = { view: mk(VIEW_SHEET), rail: mk(STYLES + HA_THEME + SCRUB_CSS + RAIL_CSS) };
   return SHEETS;
 }
 
@@ -132,47 +128,43 @@ export function scrollerOf(el) {
   };
 }
 
-const foldWords = (r) => `${r.name} · ${r.count} thing${r.count === 1 ? '' : 's'}, nothing on`;
-
 export class ViewLayer {
   constructor() {
     this.view = null;
     this.applied = null;
-    this.open = new Set();
-    this.lastMove = 0;
-    this.lastTouch = 0;
-    this.heard = new WeakSet();
     this.railBox = null;
     this.rail = null;
     this._sc = null;
-    // The rail's host: rail.js reads these (Morph's view and engine shape).
+  }
+
+  // The rail's host (scrub.js): HA's `.section` wrappers are the rooms, in
+  // the order the view has them; their names are each section's heading.
+  railHost(wrap) {
     const self = this;
-    this.engine = {
-      sc: null,
-      get model() { return { sections: (self.applied || []).filter((r) => !self.folded(r)).map((r) => ({ id: 's' + r.i, floorId: '' })) }; },
-      scroller() { return self.scroller(); },
-      scrollY() { return self.scroller().scrollTop; },
-      scrollTo(y) { self.scroller().scrollTop = y; },
-      reduce() { return !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches); },
+    return {
+      root: wrap,
+      scroller: () => self.scroller(),
+      get hass() { return self.view && self.view.hass; },
+      hidden: () => false,
+      board: () => self.view,
+      reduce: () => !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches),
+      still: () => {},
+      // HA's toolbar over the scroller: the rail box's sticky top is its foot.
+      cover() {
+        const sc = self.scroller();
+        const top = self.railBox ? self.railBox.getBoundingClientRect().top : 0;
+        return Math.max(0, top - sc.getBoundingClientRect().top);
+      },
+      rooms() {
+        const cfgs = (viewConfig(self.view) || {}).sections || [];
+        const byI = new Map((self.applied || []).map((r) => [r.i, r]));
+        return sectionsOf(self.view).filter(({ div }) => div.offsetParent !== null && div.offsetHeight >= 40).map(({ div, i }) => {
+          const r = byI.get(i);
+          return { id: 's' + i, el: div, title: r ? r.name : '', icon: '', ents: [...entitiesOf(cfgs[i] || {})], rc: '', floor: 0, floorTitle: '', cases: 0 };
+        });
+      },
     };
-    // rail.js looks rooms up as `[data-board] section[data-sec]` in its
-    // host's shadow root and lights the room it is on; here the rooms are
-    // HA's `.section` wrappers, marked `data-sec`.
-    this.shadowRoot = { querySelectorAll: (sel) => this.railRooms(sel) };
-    this.rootEl = { classList: { add: (c) => this.view && this.view.classList.add(c), remove: (c) => this.view && this.view.classList.remove(c) } };
   }
-
-  railRooms(sel) {
-    const all = this.view && this.view.shadowRoot ? [...this.view.shadowRoot.querySelectorAll('.section[data-sec]')] : [];
-    if (/railon/.test(sel)) return all.filter((d) => d.classList.contains('railon'));
-    return all;
-  }
-
-  railColor() { return 'var(--secondary-text-color,var(--primary-text-color))'; } // one quiet tone, like Morph's own rail: no rainbow per room
-
-  railFloor() { return ''; }
-
-  folded(r) { return r.fold && !this.open.has(r.i); }
 
   scroller() {
     if (this._sc && (this._sc.isConnected !== false)) return this._sc;
@@ -198,37 +190,8 @@ export class ViewLayer {
     const editing = !!(view.lovelace && view.lovelace.editMode);
     const secs = sectionsOf(view);
     const states = (view.hass && view.hass.states) || {};
-    const next = plan(cfg.sections || [], states, editing ? { order: false, fold: false } : { order: opts.order, fold: opts.fold });
-    const sig = (p) => p.map((r) => `${r.i}${r.fold ? 'f' : ''}${r.lifted ? 'l' : ''}`).join(',');
-    const urgent = next.some((r) => r.lifted && !(this.applied || []).some((a) => a.i === r.i && a.lifted));
-    const quiet = Date.now() - this.lastTouch > 1200 && Date.now() - this.lastMove > 8000;
-    if (!this.applied || editing || urgent || (quiet && sig(next) !== sig(this.applied))) {
-      if (this.applied && sig(next) !== sig(this.applied)) this.lastMove = Date.now();
-      this.applied = next;
-    } else {
-      this.applied = this.applied.map((a) => ({ ...(next.find((r) => r.i === a.i) || a), lifted: a.lifted, fold: a.fold }));
-    }
-    const pos = new Map(this.applied.map((r, k) => [r.i, k]));
-    const byI = new Map(this.applied.map((r) => [r.i, r]));
-    secs.forEach(({ div, i }) => {
-      const r = byI.get(i);
-      div.setAttribute('data-sec', 's' + i);
-      if (!this.heard.has(div)) {
-        this.heard.add(div);
-        div.addEventListener('pointerdown', () => { this.lastTouch = Date.now(); }, { passive: true });
-        div.addEventListener('click', (e) => {
-          if (!div.hasAttribute('data-fold')) return;
-          e.stopPropagation();
-          this.open.add(Number(String(div.getAttribute('data-sec')).slice(1)));
-          this.tick(doc);
-        }, true);
-      }
-      const ordered = opts.order && !editing && r;
-      if (ordered) div.style.setProperty('order', String(pos.get(i))); else div.style.removeProperty('order');
-      const why = ordered && r.lifted && r.needs.length ? r.needs.slice(0, 2).join(' · ') : '';
-      if (why) div.setAttribute('data-why', why); else div.removeAttribute('data-why');
-      if (r && !editing && this.folded(r)) { div.setAttribute('data-fold', foldWords(r)); div.setAttribute('role', 'button'); } else { div.removeAttribute('data-fold'); div.removeAttribute('role'); }
-    });
+    this.applied = plan(cfg.sections || [], states);
+    secs.forEach(({ div, i }) => { div.setAttribute('data-sec', 's' + i); });
     this.railOn(opts.rail && !editing);
     view.classList.toggle('morph-rail', !!(opts.rail && !editing));
   }
@@ -253,18 +216,16 @@ export class ViewLayer {
       if (sh) sr.adoptedStyleSheets = [sh];
       const wrap = document.createElement('div');
       wrap.className = 'morph mrl t-ha';
-      const el = document.createElement('div');
-      el.className = 'srail';
-      wrap.appendChild(el);
       sr.appendChild(wrap);
       root.insertBefore(host, root.firstChild);
       this.railBox = host;
-      try { this.rail = new Rail(el, this); } catch (e) { this.rail = null; }
+      try { this.rail = new Scrub(null, this.railHost(wrap)); } catch (e) { this.rail = null; }
     }
     this.paintRail();
   }
 
   railOff() {
+    if (this.rail) { try { this.rail.destroy(); } catch (e) { /* gone */ } }
     if (this.railBox) { this.railBox.remove(); this.railBox = null; }
     this.rail = null;
   }
@@ -274,16 +235,17 @@ export class ViewLayer {
     const view = this.view;
     if (view && view.shadowRoot) {
       view.shadowRoot.querySelectorAll('.section').forEach((div) => {
+        // `order`, `data-why`, `data-fold` and `role` were this layer's until
+        // 5.3.0; a page still carrying them from an older load is put back.
         div.style.removeProperty('order');
         ['data-why', 'data-fold', 'role', 'data-sec'].forEach((a) => div.removeAttribute(a));
-        div.classList.remove('railon');
+        div.classList.remove('railon', 'mrail-tgt');
       });
-      view.classList.remove('railing');
+      view.classList.remove('railing', 'mrail-dim');
       view.classList.remove('morph-rail');
     }
     this.railOff();
     this.applied = null;
-    this.open = new Set();
     this._sc = null;
     this.view = null;
   }

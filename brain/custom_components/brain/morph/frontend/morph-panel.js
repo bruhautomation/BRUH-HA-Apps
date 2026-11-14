@@ -41,7 +41,7 @@ import * as sal from './salience.js';
 import { morph } from './morph-dom.js';
 import { caseFace, caseColor, placeCase } from './cases.js';
 import { icon as mIcon, speakHtml, esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, cardPage, guardDefine, loadCard, cardUrl, cardFailure, isDashChange, ASK_CONTEXT, own, checkDoorClaims, unlockedLocks } from './util.js';
-import { Scrub, SCRUB_CSS } from './scrub.js';
+import { Scrub, SCRUB_CSS, SCRUB_PAGE_CSS } from './scrub.js';
 import { haptic } from './haptics.js';
 import { attachPull, PULL_CSS } from './pull.js';
 import { POLISH_CSS, markSvg, rollDigits, touchLight, pulseTile, stateColor } from './polish.js';
@@ -359,7 +359,7 @@ class MorphPanel extends HTMLElement {
   boot() {
     if (this.engine) return;
     const root = this.shadowRoot;
-    root.innerHTML = `<style>${STYLES}${SCRUB_CSS}${PULL_CSS}${POLISH_CSS}</style><div class="morph t-dark" data-morph-root><div class="scroll" style="height:var(--morph-h,100vh);overflow-y:auto;overflow-x:hidden;overscroll-behavior-y:contain"><div class="wrap">
+    root.innerHTML = `<style>${STYLES}${SCRUB_PAGE_CSS}${SCRUB_CSS}${PULL_CSS}${POLISH_CSS}</style><div class="morph t-dark" data-morph-root><div class="scroll" style="height:var(--morph-h,100vh);overflow-y:auto;overflow-x:hidden;overscroll-behavior-y:contain"><div class="wrap">
 <div data-region="bar"></div><div data-region="lede"></div><div data-region="top"></div><div data-region="upcoming"></div><div data-region="scenes"></div><div data-region="rooms"></div><div data-region="notes"></div>
 <div data-region="board"><div data-board></div></div></div></div></div>`;
     if (!document.querySelector('link[data-morph-fonts]')) {

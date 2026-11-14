@@ -3,11 +3,10 @@
 // switch:
 //
 //   custom:morph-view         a view type beside Masonry, Sections, Panel and
-//                             Sidebar: HA's own sections, with a room that
-//                             needs you lifted to the top, quiet rooms
-//                             folded to one line, and the room rail on a
-//                             touch screen. `morph: {order, fold, rail}` on
-//                             the view turns each off.
+//                             Sidebar: HA's own sections in the order they
+//                             are written (nothing reorders itself and no
+//                             room folds), with the room rail on a touch
+//                             screen. `morph: {rail: false}` turns it off.
 //   custom:morph-cases-card   brAIn's cases (its one list), all of them or
 //                             one room's, with the reply line and presses.
 //   custom:morph-ask-card     Ask: brAIn's interpreter reads the words; a
@@ -17,7 +16,7 @@
 import { CSS as STYLES, FIELD_FLOOR } from './styles.js';
 import { HA_THEME } from './morph-cards.js';
 import { caseFace, placeCase } from './cases.js';
-import { Rail } from './rail.js';
+import { Scrub, SCRUB_CSS } from './scrub.js';
 import { findPanel, urlPathOf } from './brain-layer.js';
 import { setHouseName, houseName, speakText } from './util.js';
 
@@ -82,15 +81,10 @@ export function readRoom(cfg, i, states, now) {
   return { i, name: roomName(cfg, i), needs, on, recent, count: ents.length };
 }
 
-// The order and folds: rooms that need somebody first (in their own order),
-// then the rest as the dashboard has them; a room with nothing on and
-// nothing recent folds. Pure, so it is tested under node.
-export function plan(sections, states, opts, now = Date.now()) {
-  const o = { order: true, fold: true, ...(opts || {}) };
-  const rooms = (sections || []).map((cfg, i) => readRoom(cfg, i, states || {}, now));
-  const lifted = o.order ? rooms.filter((r) => r.needs.length) : [];
-  const rest = rooms.filter((r) => !lifted.includes(r));
-  return [...lifted, ...rest].map((r) => ({ ...r, lifted: lifted.includes(r), fold: o.fold && !r.needs.length && !r.on && !r.recent && r.count > 0 }));
+// The rooms, in the order the dashboard has them: nothing on any Morph
+// surface reorders itself or folds a room. Pure.
+export function plan(sections, states, now = Date.now()) {
+  return (sections || []).map((cfg, i) => readRoom(cfg, i, states || {}, now));
 }
 
 const VIEW_CSS = `
@@ -102,62 +96,47 @@ const VIEW_CSS = `
 .mv section.sec .secbg{position:absolute;inset:0;pointer-events:none;border-radius:inherit}
 .mv section.sec .sechead{height:0;overflow:hidden}
 .mv section.sec .body{padding:12px}
-.mv section.sec.lifted{box-shadow:inset 3px 0 0 var(--rose)}
-.mv .why{margin:4px 8px 2px 14px;font-size:14px;font-weight:600;color:var(--rose)}
-.mv .fold{display:flex;align-items:center;gap:10px;width:100%;min-height:48px;padding:0 14px;border:0;border-radius:var(--ha-card-border-radius,12px);background:var(--surface);color:var(--text);font:inherit;font-size:15px;cursor:pointer;text-align:left;box-shadow:var(--ha-card-box-shadow,none)}
-.mv .fold b{font-weight:600}
-.mv .fold span{color:var(--muted);font-size:14px}
+`;
+
+// The rail's box: a sticky line of no height at the top of the view, the
+// rail hanging from it down the screen's right edge, so it stays put while
+// the page scrolls (morph-view-layer.js's box, inside this view).
+const MV_RAIL_CSS = `
+.mvrail{position:sticky;top:calc(var(--header-height,56px) + env(safe-area-inset-top,0px));height:0;z-index:5;pointer-events:none}
+.mvrail>.mrl{position:absolute;right:0;top:0;width:46px;height:calc(100vh - var(--header-height,56px) - env(safe-area-inset-top,0px));height:calc(100dvh - var(--header-height,56px) - env(safe-area-inset-top,0px));pointer-events:none}
+.mvrail .mrail{top:8px;bottom:calc(16px + env(safe-area-inset-bottom,0px));pointer-events:auto}
+@media not (any-pointer:coarse){.mvrail .mrail{display:none}}
 `;
 
 export class MorphView extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
-    adopt(this.shadowRoot, VIEW_CSS);
+    adopt(this.shadowRoot, VIEW_CSS + SCRUB_CSS + MV_RAIL_CSS);
     this.rootEl = document.createElement('div');
     this.rootEl.className = 'morph mv t-ha';
-    this.rootEl.innerHTML = '<div class="scroll"><div class="wrap" data-board></div><div class="srail"></div></div>';
+    this.rootEl.innerHTML = '<div class="mvrail"><div class="mrl"></div></div><div class="scroll"><div class="wrap" data-board></div></div>';
     this.shadowRoot.appendChild(this.rootEl);
     this.board = this.rootEl.querySelector('[data-board]');
-    this.open = new Set();
     this.applied = null;
-    this.lastMove = 0;
-    this.lastTouch = 0;
     this.railJumps = 0;
-    this.rootEl.addEventListener('pointerdown', () => { this.lastTouch = Date.now(); });
-    this.rootEl.addEventListener('click', (e) => {
-      const b = e.target.closest && e.target.closest('[data-unfold]');
-      if (b) { this.open.add(Number(b.dataset.unfold)); this.draw(true); }
-    });
-    // The rail's host: its model, the page's scrolling, a room's colour.
-    const self = this;
-    this.engine = {
-      sc: null,
-      get model() { return { sections: (self.applied || []).filter((r) => !self.folded(r)).map((r) => ({ id: 's' + r.i, floorId: '' })) }; },
-      scroller() { return self.scroller(); },
-      scrollY() { return self.scroller().scrollTop; },
-      scrollTo(y) { self.scroller().scrollTop = y; },
-      reduce() { return !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches); },
-    };
   }
 
-  setConfig(config) { this._config = config || {}; this.draw(true); }
+  setConfig(config) { this._config = config || {}; this.draw(); }
 
-  set hass(h) { this._hass = h; this.draw(false); }
+  set hass(h) { this._hass = h; this.draw(); }
 
   get hass() { return this._hass; }
 
-  set sections(list) { this._sections = list || []; this.draw(true); }
+  set sections(list) { this._sections = list || []; this.draw(); }
 
-  set cards(list) { this._cards = list || []; this.draw(true); }
+  set cards(list) { this._cards = list || []; this.draw(); }
 
-  set lovelace(l) { this._lovelace = l; this.draw(true); }
+  set lovelace(l) { this._lovelace = l; this.draw(); }
 
   set badges(b) { this._badges = b; }
 
-  get opts() { return { order: true, fold: true, rail: true, ...((this._config && this._config.morph) || {}) }; }
-
-  folded(r) { return r.fold && !this.open.has(r.i); }
+  get opts() { return { rail: true, ...((this._config && this._config.morph) || {}) }; }
 
   // What scrolls this view: the nearest scrolling ancestor through shadow
   // roots, else the window (HA has used both), as the one shape the rail
@@ -192,28 +171,35 @@ export class MorphView extends HTMLElement {
     this._railF = requestAnimationFrame(() => { this._railF = 0; try { this.rail.paint(); } catch (e) { /* no rail */ } });
   }
 
-  railColor(id) { return `var(--${HUE[Number(String(id).slice(1)) % HUE.length]})`; }
+  // The rail's host (scrub.js): this view's own sections, in its order.
+  railHost() {
+    const self = this;
+    return {
+      root: this.rootEl.querySelector('.mrl'),
+      scroller: () => self.scroller(),
+      get hass() { return self._hass; },
+      cover() {
+        const box = self.rootEl.querySelector('.mvrail');
+        return Math.max(0, (box ? box.getBoundingClientRect().top : 0) - self.scroller().getBoundingClientRect().top);
+      },
+      hidden: () => !!(self._lovelace && self._lovelace.editMode),
+      board: () => self.board,
+      reduce: () => !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches),
+      still: () => {},
+      rooms() {
+        const cfgs = (self._config && self._config.sections) || [];
+        return (self.applied || []).map((r) => {
+          const el = self.board.querySelector(`section[data-sec="s${r.i}"]`);
+          return el && el.offsetParent !== null && el.offsetHeight >= 40
+            ? { id: 's' + r.i, el, title: r.name, icon: '', ents: [...entitiesOf(cfgs[r.i] || {})], rc: `var(--${HUE[r.i % HUE.length]})`, floor: 0, floorTitle: '', cases: 0 } : null;
+        }).filter(Boolean);
+      },
+    };
+  }
 
-  railFloor() { return ''; }
-
-  // A new order is taken only at a quiet moment (Morph's rule): not under a
-  // finger, not seconds after the last change, unless a room newly needs
-  // somebody.
-  draw(force) {
+  draw() {
     if (!this._hass || !this._config) return;
-    const cfgs = (this._config.sections || []);
-    const editing = !!(this._lovelace && this._lovelace.editMode);
-    const next = plan(cfgs, this._hass.states, editing ? { order: false, fold: false } : this.opts);
-    const sig = (p) => p.map((r) => `${r.i}${r.fold ? 'f' : ''}${r.lifted ? 'l' : ''}`).join(',');
-    const urgent = next.some((r) => r.lifted && !(this.applied || []).some((a) => a.i === r.i && a.lifted));
-    const quiet = Date.now() - this.lastTouch > 1200 && Date.now() - this.lastMove > 8000;
-    if (!this.applied || force || urgent || (quiet && sig(next) !== sig(this.applied))) {
-      if (this.applied && sig(next) !== sig(this.applied)) this.lastMove = Date.now();
-      this.applied = next;
-    } else {
-      // Same order; the words (why a room is lifted, what is on) are fresh.
-      this.applied = this.applied.map((a) => ({ ...next.find((r) => r.i === a.i), lifted: a.lifted, fold: a.fold }));
-    }
+    this.applied = plan(this._config.sections || [], this._hass.states);
     this.layout();
   }
 
@@ -227,34 +213,21 @@ export class MorphView extends HTMLElement {
         sec = document.createElement('section');
         sec.className = 'sec';
         sec.setAttribute('data-sec', id);
-        sec.innerHTML = '<div class="secbg"></div><div class="sechead"><h2></h2></div><p class="why" hidden></p><div class="body"></div><button type="button" class="fold" hidden></button>';
+        sec.innerHTML = '<div class="secbg"></div><div class="sechead"><h2></h2></div><div class="body"></div>';
       }
-      sec.style.setProperty('--rc', this.railColor(id));
+      sec.style.setProperty('--rc', `var(--${HUE[r.i % HUE.length]})`);
       sec.querySelector('h2').textContent = r.name;
-      sec.classList.toggle('lifted', !!r.lifted);
-      const why = sec.querySelector('.why');
-      why.hidden = !(r.lifted && r.needs.length);
-      why.textContent = r.needs.slice(0, 2).join(' · ');
-      const fold = sec.querySelector('.fold');
       const body = sec.querySelector('.body');
-      const folded = this.folded(r);
-      fold.hidden = !folded;
-      body.hidden = folded;
-      if (folded) {
-        fold.dataset.unfold = String(r.i);
-        fold.innerHTML = `<b>${esc(r.name)}</b><span>${r.count} thing${r.count === 1 ? '' : 's'}, nothing on</span>`;
-      }
       const el = els[r.i];
       if (el && el.parentNode !== body) body.appendChild(el);
       if (el && this._hass) el.hass = this._hass;
       want.push(sec);
     });
-    // In order, moving only what moved.
+    // In the dashboard's order, moving only what moved (a section added or removed).
     want.forEach((sec, k) => { if (this.board.children[k] !== sec) this.board.insertBefore(sec, this.board.children[k] || null); });
     [...this.board.children].forEach((c) => { if (!want.includes(c)) c.remove(); });
-    const railEl = this.rootEl.querySelector('.srail');
-    if (this.opts.rail && !this.rail) this.rail = new Rail(railEl, this);
-    railEl.hidden = !this.opts.rail;
+    if (this.opts.rail && !this.rail) { try { this.rail = new Scrub(null, this.railHost()); } catch (e) { this.rail = null; } }
+    if (!this.opts.rail && this.rail) { this.rail.destroy(); this.rail = null; }
     if (this.rail) this.paintRail();
   }
 }

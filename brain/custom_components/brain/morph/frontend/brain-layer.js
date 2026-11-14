@@ -228,7 +228,8 @@ export class BrainLayer extends HTMLElement {
   async toggleView(key) {
     const t = this.tab();
     if (!t || !this.s.row) return;
-    const m = { rail: false, order: false, fold: false, ...(t.view.morph || {}) };
+    const m = { rail: false, ...(t.view.morph || {}) };
+    delete m.order; delete m.fold; // retired in 5.3.0: nothing reorders itself or folds
     m[key] = !m[key];
     const views = t.config.views.map((v, i) => (i === t.i ? { ...v, morph: m } : v));
     const urlPath = this.s.row.url_path && this.s.row.url_path !== 'lovelace' ? this.s.row.url_path : null;
@@ -240,14 +241,12 @@ export class BrainLayer extends HTMLElement {
     const t = this.tab();
     if (!t) return '';
     if ((t.view.type || 'masonry') !== 'sections') {
-      return `<h2>${esc(t.view.title || 'This tab')}</h2><p class="sm">Morph's room rail, lifting and folding work on Home Assistant's sections tabs. This tab is laid out as ${esc(t.view.type || 'masonry')}.</p><div class="row"><button type="button" class="b" data-a="menu">Back</button></div>`;
+      return `<h2>${esc(t.view.title || 'This tab')}</h2><p class="sm">Morph's room rail works on Home Assistant's sections tabs. This tab is laid out as ${esc(t.view.type || 'masonry')}.</p><div class="row"><button type="button" class="b" data-a="menu">Back</button></div>`;
     }
     const m = t.view.morph || {};
     const sw = (key, label, sub) => `<button type="button" class="menu" data-a="vsw" data-v="${key}" role="switch" aria-checked="${!!m[key]}"><b>${m[key] ? 'On' : 'Off'}</b> · ${label}<br><span class="sm">${sub}</span></button>`;
     return `<h2>Morph on ${esc(t.view.title || 'this tab')}</h2>
 ${sw('rail', 'Room rail', 'On a phone or tablet: pull the strip at the right edge left, then slide to go room to room.')}
-${sw('order', 'Lift a room that needs you', 'An open door, a leak or an unlocked lock moves its room to the top, with why.')}
-${sw('fold', 'Fold quiet rooms', 'A room with nothing on and nothing recent is one line until you tap it.')}
 <div class="row"><button type="button" class="b" data-a="menu">Back</button></div>`;
   }
 

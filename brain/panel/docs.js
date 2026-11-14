@@ -309,8 +309,11 @@ section is one press away and nothing inside one is folded away.
   options; editing them here or on the Configuration tab is the same setting.
 * **Permissions** — **Let brAIn act without asking** (the same switch as the
   Configuration tab's), with the line that stays under it: protected entities
-  are refused through brAIn's own tools, not every shell command. **House rules**
-  can only make brAIn more careful. **Ask tab** holds which face the Ask tab
+  are refused through brAIn's own tools, not every shell command. **Talk it
+  through in chat** sends what would become a draft to approve (something to
+  do later, once or every time, a change to an automation, new scenes) to the
+  conversation, which does it there. **House rules** can only make brAIn more
+  careful. **Ask tab** holds which face the Ask tab
   shows and how many conversations keep a live Claude Code process.
 * **Notifications** — what deserves a notification, in your own words, and
   whether urgent problems are said aloud.
@@ -764,15 +767,12 @@ makes a card type from it instead and says so.
 ## Morph's view, the room rail and themes
 
 - **Morph on a tab.** Any Home Assistant **sections** tab can have Morph's
-  extras: the brAIn button › **Morph on this tab** switches on the **room
-  rail** (on a phone or tablet, pull the strip at the right edge and slide
-  room to room), **lift a room that needs you** (an unlocked lock, an open
-  door or a leak moves its room to the top, with why) and **fold quiet
-  rooms** (a room with nothing on is one line until you tap it). Each is
-  off until you turn it on; Home Assistant still lays out, edits and sizes
-  the tab, and in edit mode nothing moves. In YAML they are \`morph: {rail:
-  true, order: false, fold: false}\` on the view. (5.0's own Morph view
-  type was changed to this once, in 5.1, with its switches kept.)
+  **room rail**: the brAIn button › **Morph on this tab** switches it on (on
+  a phone or tablet, swipe the strip at the right edge left and slide room
+  to room). Home Assistant still lays out, edits and sizes the tab, and
+  nothing on it reorders itself or folds. In YAML it is \`morph: {rail:
+  true}\` on the view. (5.0's own Morph view type was changed to this once,
+  in 5.1.)
 - **Themes.** Morph's looks are Home Assistant themes, **Morph** (light and
   dark, following your own setting), **Morph Light**, **Morph Dark** and
   **Morph Medium**, in your profile's theme list with no setup.

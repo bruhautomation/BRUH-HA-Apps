@@ -24853,7 +24853,8 @@ async def _interpret(words: str, surface: str,
     if not result.get("ok"):
         interpret.note_fallback(str(result.get("error") or "the run failed"))
         return None
-    routes = interpret.parse(_answer(result), surface, words)
+    routes = interpret.parse(_answer(result), surface, words,
+                             talk_first=bool(settings.get("talk_first")))
     if routes is None:
         interpret.note_fallback("the reply named nothing this box can do")
         return None

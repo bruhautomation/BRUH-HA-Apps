@@ -22,6 +22,8 @@ The Morph dashboard now ships the design one house built for itself over the las
 - `sleep_guard: true` on a room holds what the page would do to it while its sleeper is asleep, and asks first. A sleep sensor that reads *In bed* / *Up* now decides whether a room is asleep.
 - A climate card's `options.actions` buttons now sit on the card's one control row, with optional `short`, `running`, `icon`, `color` and `modes`.
 - A group can carry `when: {entity, state}` (or `state_not`) to show only at those times.
+- ⚙ › Permissions › **Talk it through in chat**: off by default. When on, words that would become a draft to approve go to the conversation instead, which does them there. That covers something to do later, once or every time, a change to an automation, and new scenes.
+- The room rail comes to Home Assistant dashboards: a view with `morph: {rail: true}` (and `custom:morph-view`) gets the same scrub rail as Morph's page on a touch screen. A swipe left opens it, the same finger slides room to room, and each notch is coloured by its room's state.
 - brAIn's Needs you has To Do with a tick box that ticks an item off at once. Tap an item to open its whole story with a line to tell brAIn what to do with it; the answer is drawn under the item. The heading shows a count.
 
 ### Changed
@@ -44,6 +46,7 @@ The Morph dashboard now ships the design one house built for itself over the las
 - Folding quiet rooms, the family tablet's still form, and the "Fold quiet rooms" and "This device" settings in ⚙ › Dashboard.
 - Door and motion chips and marks in a room's title line, and `room_marks`.
 - Then mode's last leftovers (#970).
+- On Home Assistant dashboards, the `order` (lift a room that needs you) and `fold` (fold quiet rooms) view switches, and their switches under the brAIn button. `custom:morph-view` no longer reorders or folds either. The older `rail.js` is gone; the scrub rail replaces it.
 
 ### Fixed
 

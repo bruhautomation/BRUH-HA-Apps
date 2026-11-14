@@ -208,17 +208,16 @@ Morph's own panel modules are in `/config/custom_components/brain/morph/frontend
 | `morph-types.js` | Card types (`types/*.yaml`) as Home Assistant custom cards (`custom:morph-type-<slug>`), redrawn everywhere when a type changes |
 | `brain-layer.js` | The brAIn button on a Home Assistant dashboard: Tell brAIn about a card or the dashboard, History, and letting brAIn keep a dashboard |
 | `morph-features.js` | Morph on a Home Assistant dashboard: the older `custom:morph-view` view type, the cases card and the Ask card |
-| `morph-view-layer.js` | Morph's switches on Home Assistant's own sections view (`morph: {rail, order, fold}` on a view): the room rail, lifting a room that needs you, folding a quiet one |
+| `morph-view-layer.js` | The room rail on Home Assistant's own sections view (`morph: {rail: true}` on a view) |
 | `morph-panel.js` | The page: the verdict, the rooms, Ask, Edit, Tell (Feed and Settings are brAIn's own tabs) |
 | `cards.js` | The built-in card types (`TYPES`) |
 | `engine.js` | The layout engine: springs, masonry, opening in place |
 | `history.js` | History and charts |
 | `upcoming.js` | The Coming up strip |
-| `scrub.js` | The room rail on the page's right edge, in place of the scroll bar: one notch per room, floors set apart; a swipe left opens it, then the same finger slides room to room |
+| `scrub.js` | The room rail, on Morph's page in place of the scroll bar and on a Home Assistant view with `morph: {rail: true}`: one notch per room, floors set apart; a swipe left opens it, then the same finger slides room to room |
 | `haptics.js` | Haptics in the Home Assistant app (a tick per detent, a bump at an end, a tap per action) |
 | `polish.js` | Morph's motion language: the self-drawing mark, rolling numbers, the touch light, a tile's glow on a change made elsewhere |
 | `pull.js` | Morph's own pull to refresh |
-| `rail.js` | The room rail on a Home Assistant dashboard (the Lovelace layer): a column of notches, one per room by floor; a short pull left opens it, then, without lifting, up or down goes room to room (ringed on the page, its title at the finger) and lifting lands there |
 | `snap.js` | The picture a Tell takes of what was held |
 | `styles.js` | The styles |
 | `salience.js` | What matters right now: each card's score, colour and "because" line, and the room states (asleep, occupied) |
@@ -582,12 +581,10 @@ to make one bigger or smaller, never a style. A section is
 `{type: grid, cards: [...]}` with an optional `column_span` (how many of
 the view's columns it takes); the view's `max_columns` caps the columns.
 
-Morph's switches are on the view, under `morph:` (all off unless set):
-`rail` (the room rail down the right edge of a touch screen), `order`
-(a room that needs somebody — an unlocked lock, an open door, a leak — is
-lifted to the top with why) and `fold` (a room with nothing on and
-nothing recent is one line until tapped). A section's name is its first
-`heading` card. In edit mode nothing moves.
+Morph's switch is on the view, under `morph:` (off unless set): `rail`
+(the room rail down the right edge of a touch screen). Nothing on a view
+reorders itself or folds. A section's name is its first `heading` card.
+In edit mode the rail is off.
 
 To SEE a dashboard as Home Assistant draws it, use `screenshot_panel`
 with addon `Home Assistant` and screen `<url_path>/<view path>` (no
