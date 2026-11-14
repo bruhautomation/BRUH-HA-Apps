@@ -963,6 +963,11 @@ TODO_LINE_MAX = 140
 TODO_NAME_MAX = 40
 
 
+def the_name(name: str) -> str:
+    """`_the`, for another check's To Do words."""
+    return _the(name)
+
+
 def _the(name: str) -> str:
     """A device's name as the object of a sentence: "the Hall sensor",
     but never "the the porch light", "The Reading lamp" mid-sentence, "the
