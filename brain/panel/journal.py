@@ -59,9 +59,11 @@ OUTCOMES = (
     "error",         # anything else
 )
 
-# Which of those is a PROBLEM. Seven of the sixteen non-`ok` outcomes are
-# not: `stopped` is a run ended on purpose (the add-on stopping, a person
-# pressing Stop on their own chat), which is not the CLI failing anybody,
+# Which of those is a PROBLEM. Eight of the sixteen non-`ok` outcomes are
+# not: `blocked` is a request the edge in front of Claude stopped, retried
+# and no fault of the run (#911); `stopped` is a run ended on purpose (the
+# add-on stopping, a person pressing Stop on their own chat), which is not
+# the CLI failing anybody,
 # `applied` and `healed` are successes, `heal_skipped` and `denied` are
 # refusals doing their job, `fallback` is a quieter path that still
 # produced a card, and `rate_limited` is the account saying "not now" —
@@ -207,29 +209,41 @@ def scrub(text: str) -> str:
 
 
 # A request stopped before it reached Claude's API: the edge in front of
-# it served a challenge or block page ("API Error: 403 Attention Required!
-# | Cloudflare", "Just a moment...", an HTML page where JSON belongs). The
-# CLI words it "Failed to authenticate", but no credential was judged, so
-# signing in again cannot help; it clears on its own and is retried
-# (`engine.transient`). `usage-limits-tracker.EDGE_BLOCK_RE` is the same
-# rule for the tracker, which cannot import this module.
+# it answered a 403 (or 429/503) with a challenge or block page ("API
+# Error: 403 Attention Required! | Cloudflare", "Just a moment...", a page
+# carrying a Cloudflare Ray ID). The CLI words it "Failed to authenticate",
+# but no credential was judged, so signing in again cannot help; it clears
+# on its own and is retried (`engine.transient`). It takes BOTH an edge
+# status and an edge marker — an "<html" in a model's output is neither —
+# and a credential refusal in the API's own words beside them wins (#911).
+# `usage-limits-tracker.edge_blocked` is this function, copied with both
+# patterns in this order, because that script does not import the panel.
+EDGE_STATUSES = (403, 429, 503)
 EDGE_BLOCK_RE = re.compile(
     r"cloudflare|attention required!|just a moment\.\.\.|\bcf-ray\b|cf[_-]chl|"
-    r"challenge-platform|<!doctype html|<html\b", re.IGNORECASE)
-# What a refused credential says, in the API's and the CLI's words. Any of
-# these beside an edge page is still a refused credential: a block is
-# classed as one only when nothing says the credential was judged.
+    r"challenge-platform|\bray id\b", re.IGNORECASE)
+_EDGE_STATUS_RE = re.compile(
+    r"(?:api error|http(?: error)?|status(?:_code)?\"?)\s*[:=]?\s*(\d{3})\b", re.IGNORECASE)
+# What a refused credential says, in the API's and the CLI's own forms: a
+# 401 only as the API states one ("API Error: 401", a status field), never
+# a bare number, which a challenge page's own markup is full of.
 _CREDENTIAL_REFUSED_RE = re.compile(
     r"authentication_error|invalid (?:x-)?api[ -]?key|invalid bearer|"
     r"oauth token (?:has )?(?:expired|been revoked)|token (?:has )?(?:expired|"
-    r"been revoked)|not logged in|please run /login|\b401\b", re.IGNORECASE)
+    r"been revoked)|not logged in|please run /login|"
+    r"(?:api error|http(?: error)?|status(?:_code)?\"?)\s*[:=]?\s*401\b", re.IGNORECASE)
 
 
-def edge_blocked(error: str) -> bool:
-    """Whether a run's error is an edge or network block rather than a
-    refused credential (`EDGE_BLOCK_RE`)."""
+def edge_blocked(error: str, status: int | None = None) -> bool:
+    """Whether a run's error (or a response body with its ``status``) is an
+    edge block rather than a refused credential (`EDGE_BLOCK_RE`)."""
     text = str(error or "")
-    return bool(EDGE_BLOCK_RE.search(text)) and not _CREDENTIAL_REFUSED_RE.search(text)
+    if status is None:
+        m = _EDGE_STATUS_RE.search(text)
+        status = int(m.group(1)) if m else None
+    if status not in EDGE_STATUSES or not EDGE_BLOCK_RE.search(text):
+        return False
+    return not _CREDENTIAL_REFUSED_RE.search(text)
 
 
 def classify(result: dict, timeout_message: str = "") -> str:

@@ -1425,13 +1425,14 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
         # reached anyway (a clock collision, a store restored from a
         # backup), one fresh id is the whole remedy.
         result, session_id = spawn(timeout)
-    retried = False
+    retried = ""
     if transient(result):
         remaining = int(timeout - (time.monotonic() - started))
         if remaining > OVERLOAD_RETRY_S + LANDING_MIN_S:
+            # What the journal says the retry was for: the first failure's.
+            retried = "overloaded" if overloaded(result) else "blocked"
             time.sleep(OVERLOAD_RETRY_S)
             result, session_id = spawn(remaining - OVERLOAD_RETRY_S)
-            retried = True
     refused_on = ""
     if refused(result):
         remaining = int(timeout - (time.monotonic() - started))
@@ -1474,7 +1475,7 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
     if landed:
         extra["landed"] = True
     if retried:
-        extra["retried"] = "overloaded"
+        extra["retried"] = retried
     if refused_on:
         extra["retried"] = "refused"
         extra["refused_on"] = refused_on

@@ -340,12 +340,34 @@ SETTLED_REFUSALS = (SCOPE_ERROR,)
 # right even while another one waits on a refresh.
 MASKED_BY_REFRESH = SETTLED_REFUSALS + ("no_oauth_token",)
 
-# A block page served by the edge in front of the API instead of its JSON:
-# `panel/journal.EDGE_BLOCK_RE`'s rule, kept here because this script runs
-# on its own and does not import the panel.
+# A block page served by the edge in front of the API instead of its JSON.
+# `panel/journal.edge_blocked`, copied: the same two patterns in the same
+# order and the same decision, because this script runs on its own and does
+# not import the panel. Change one, change both (#911).
+EDGE_STATUSES = (403, 429, 503)
 EDGE_BLOCK_RE = re.compile(
     r"cloudflare|attention required!|just a moment\.\.\.|\bcf-ray\b|cf[_-]chl|"
-    r"challenge-platform|<!doctype html|<html\b", re.IGNORECASE)
+    r"challenge-platform|\bray id\b", re.IGNORECASE)
+_EDGE_STATUS_RE = re.compile(
+    r"(?:api error|http(?: error)?|status(?:_code)?\"?)\s*[:=]?\s*(\d{3})\b", re.IGNORECASE)
+_CREDENTIAL_REFUSED_RE = re.compile(
+    r"authentication_error|invalid (?:x-)?api[ -]?key|invalid bearer|"
+    r"oauth token (?:has )?(?:expired|been revoked)|token (?:has )?(?:expired|"
+    r"been revoked)|not logged in|please run /login|"
+    r"(?:api error|http(?: error)?|status(?:_code)?\"?)\s*[:=]?\s*401\b", re.IGNORECASE)
+
+
+def edge_blocked(error, status=None):
+    """Whether a response (its body and status) is an edge block rather
+    than a refused credential — `panel/journal.edge_blocked`."""
+    text = str(error or "")
+    if status is None:
+        m = _EDGE_STATUS_RE.search(text)
+        status = int(m.group(1)) if m else None
+    if status not in EDGE_STATUSES or not EDGE_BLOCK_RE.search(text):
+        return False
+    return not _CREDENTIAL_REFUSED_RE.search(text)
+
 
 ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 
@@ -1183,7 +1205,7 @@ def _error_code(status, body):
     # API's JSON belongs: the request never reached the endpoint and no
     # credential was judged, so it is not a refusal to move past or to sign
     # in again over — it is the network not getting through (#911).
-    if EDGE_BLOCK_RE.search(body):
+    if edge_blocked(body, status):
         return "network_error"
     try:
         parsed = json.loads(body)

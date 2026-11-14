@@ -1370,7 +1370,10 @@ def _names_it(words: str, name: str) -> bool:
     temperature"; never just "sensor")."""
     if name.casefold() in words.casefold():
         return True
-    return bool((_words(name) - _NAME_GENERIC) & _words(words))
+    # A name made only of generic words ("Temperature sensor") is told
+    # apart by those words, or nothing would ever name it.
+    own = _words(name) - _NAME_GENERIC or _words(name)
+    return bool(own & _words(words))
 
 
 def _headline(words: str, name: str) -> str:
@@ -1385,26 +1388,50 @@ def _headline(words: str, name: str) -> str:
     return clean_todo_text(textclip.clip(first, TODO_HEADLINE_MAX))
 
 
-def _restates(step: str, head: str, name: str) -> bool:
-    """Whether a step says again what the headline says: it starts with the
-    headline's own words ("Wake it up and press its button." under "Hall
-    sensor: Wake it up."), or most of its words (the device's name aside)
-    are the headline's."""
+def _clip_line(text: str) -> str:
+    """A line within `MAX_TODO_LINE`, cut at the last sentence or clause
+    end that fits (". ", "; ", ", ", " — ", ": "), else on a word."""
+    text = " ".join(str(text or "").split())
+    if len(text) <= MAX_TODO_LINE:
+        return text
+    head = text[:MAX_TODO_LINE - 1]
+    cut = max(head.rfind(mark) for mark in (". ", "; ", ", ", " — ", ": "))
+    if cut >= int(MAX_TODO_LINE * 0.4):
+        return head[:cut].rstrip(" ,;:—") + "…"
+    return textclip.clip(text, MAX_TODO_LINE)
+
+
+def _adds(step: str, head: str, name: str) -> str:
+    """What a step adds under a headline, as a line, or "" when it adds
+    nothing. A step that starts with the headline's own words says only
+    the rest ("Wake it up and press its button." under "Hall sensor: Wake
+    it up." is "Then press its button."; "Re-pair it near the hub." under
+    "Re-pair it." is "Near the hub."), or itself whole when the rest is
+    too short to stand alone; any other step is shown unless every word of
+    it (the device's name aside) is already the headline's."""
     own = head[len(name) + 2:] if name and head.startswith(name + ": ") else head
-    own = " ".join(own.split()).rstrip(".!…").casefold()
-    if own and " ".join(step.split()).casefold().startswith(own):
-        return True
-    mine = _words(step) - _words(name)
-    return not mine or len(mine & _words(head)) >= 0.7 * len(mine)
+    own = " ".join(own.split()).rstrip(".!…")
+    flat = " ".join(step.split())
+    said = _words(head) | _words(name)
+    if own and flat.casefold().startswith(own.casefold()):
+        rest = flat[len(own):].strip(" ,;:—-.!")
+        rest = re.sub(r"(?i)^and\s+(?:then\s+)?", "then ", rest)
+        if not _words(rest) - said:
+            return ""
+        if len(rest.split()) >= 2:
+            return rest
+        return flat
+    return flat if _words(step) - said else ""
 
 
 def _line(fix: str, head: str, name: str) -> str:
-    """The one line under a headline: the first step of the fix the
-    headline does not already say, as written, or nothing."""
+    """The one line under a headline: what the first step of the fix that
+    adds anything adds (`_adds`), as written, or nothing."""
     for step in _steps(fix):
-        if not _restates(step, head, name):
-            line = step if step[-1] in ".!?…" else step + "."
-            return clean_todo_line(line[0].upper() + line[1:])
+        line = _adds(step, head, name)
+        if line:
+            line = line if line[-1] in ".!?…" else line + "."
+            return clean_todo_line(_clip_line(line[0].upper() + line[1:]))
     return ""
 
 
@@ -1445,8 +1472,8 @@ def _parts(words: str, fallbacks: list[str], fix: str, name: str,
                       if f and not _PRONOUN_RE.search(f)), "")
         words = whole or words
     head = _headline(words, name)
-    if line and not _restates(line, head, name):
-        return head, clean_todo_line(line)
+    if line and _adds(line, head, name):
+        return head, clean_todo_line(_clip_line(line))
     return head, _line(fix, head, name)
 
 

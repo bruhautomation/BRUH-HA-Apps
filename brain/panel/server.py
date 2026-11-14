@@ -9357,9 +9357,12 @@ async def _check_auth_bg() -> None:
             {"ok": False, "error": error}) == "rate_limited")
         # A request the edge blocked (a Cloudflare challenge page, which the
         # CLI words "Failed to authenticate") never reached the API, so no
-        # credential was judged: the verdict stays what it was, and a
-        # first check reads it as not refused (#911). The next check asks
-        # again on its usual clock.
+        # credential was judged: the verdict stays what it was, error and
+        # all. A first check over a block reads "ok" — nothing refused the
+        # sign-in, and every reader takes any other state ("unchecked"
+        # included) as "not signed in", the message this exists to stop
+        # (#911). The next check asks again on its usual clock, never
+        # sooner: a block re-asked at once is more requests into it.
         blocked = not result["ok"] and journal.edge_blocked(error)
         if blocked:
             log.warning("sign-in check: the request was blocked on its way "
@@ -9369,7 +9372,10 @@ async def _check_auth_bg() -> None:
             state=("failed" if held == "failed"
                    else "ok" if result["ok"] or limited or blocked
                    else "failed"),
-            error="" if limited or blocked else error,
+            # A failed verdict a block leaves standing keeps the reason it
+            # was given: health would say "not signed in" with none.
+            error=((AUTH_CHECK.get("error") or "") if held == "failed"
+                   else "" if limited or blocked else error),
             limited=journal.scrub(error)[:200] if limited else "",
             checked_at=time.time(),
         )
