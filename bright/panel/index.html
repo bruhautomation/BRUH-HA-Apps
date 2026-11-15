@@ -39,10 +39,19 @@
         <h3>LIFX bulbs — direct LAN</h3>
         <button id="btnDiscover" class="btn">Discover bulbs</button>
       </div>
-      <p class="muted small">Round-trip time per bulb (an invisible echo, not a
-        flash), a sustained-rate ramp to find each bulb's real ceiling, and a
-        waveform demo — one packet that makes the bulb pulse on the beat by
-        itself, which is how shows stay in sync.</p>
+      <div class="form-row">
+        <button id="btnProbeAll" class="btn">Probe all unprobed</button>
+        <span id="probeAllStatus" class="row-note"></span>
+      </div>
+      <details class="info-toggle">
+        <summary>What do these checks mean?</summary>
+        <p class="muted">Check response time sends an invisible echo (not a
+          flash) and times the reply; shows are timed from it. Find speed
+          limit sends faster and faster messages to see where the bulb
+          starts missing some. Beat-pulse demo is one packet that makes the
+          bulb pulse on the beat by itself, which is how shows stay in
+          sync.</p>
+      </details>
       <div class="demo-controls">
         <label>BPM <input type="number" id="demoBpm" value="120" min="30" max="300"></label>
         <label>Seconds <input type="number" id="demoSecs" value="10" min="2" max="60"></label>
@@ -286,7 +295,7 @@
           <button id="btnAnalyzeAll" class="btn">Analyze new tracks</button>
         </span>
       </div>
-      <div id="libraryFolders" class="muted small"></div>
+      <div id="libraryFolders" class="list"></div>
       <div id="analyzeStatus" class="cal-status"></div>
       <div id="trackList" class="list"><p class="muted">Not scanned yet.</p></div>
     </div>
@@ -703,20 +712,22 @@
       <div class="card-head">
         <h3>The set</h3>
         <span>
-          <button id="btnSetAll" class="btn small">All</button>
-          <button id="btnSetNone" class="btn small">None</button>
+          <button id="btnSetAll" class="btn">All</button>
+          <button id="btnSetNone" class="btn">None</button>
         </span>
       </div>
       <p class="muted small">Tick the songs to play, in the order you tick
         them. Nothing ticked plays everything in your music folders.
         A song with no show yet gets one written while the party runs.</p>
       <div id="partySet" class="list party-set"></div>
-      <div class="demo-controls">
+      <div class="form-row">
         <input type="text" id="partySetName" maxlength="48"
                placeholder="name this set (optional)">
-        <button id="btnPartySave" class="btn small">Save as a set</button>
-        <span id="pfStatus" class="cal-status"></span>
       </div>
+      <div class="form-row">
+        <button id="btnPartySave" class="btn">Save as a set</button>
+      </div>
+      <div id="pfStatus" class="cal-status"></div>
     </div>
 
     <div class="card">

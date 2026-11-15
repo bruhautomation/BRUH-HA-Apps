@@ -672,7 +672,13 @@ async def h_media_folder(request: web.Request) -> web.Response:
     # Found by walking, not by trusting: what gets stored is a path built
     # from directory entries, and a folder that is not there cannot be
     # ticked in the first place.
-    folder = await asyncio.to_thread(_browse_media, raw)
+    if body.get("add"):
+        folder = await asyncio.to_thread(_browse_media, raw)
+    else:
+        # Taking a folder OFF the list must work for a folder that is no
+        # longer there — a missing folder is exactly the one somebody
+        # wants gone, and it cannot be found by walking to it.
+        folder = confined
     if folder is None or folder == MEDIA_DIR:
         return web.json_response(
             {"error": f"no such folder under /media: {raw}"}, status=404)
@@ -688,6 +694,17 @@ async def h_media_folder(request: web.Request) -> web.Response:
                               "picked": folders_store.load()})
 
 
+def _folder_source(folder: Path, main: Path) -> str:
+    """Where a folder in the list came from, so the panel can say whether
+    Remove is the right answer: `main` and `option` are add-on configuration
+    (edited in Settings, not here), `picked` is the panel's own list."""
+    if folder == main:
+        return "main"
+    if folder in _additional_music_folders():
+        return "option"
+    return "picked"
+
+
 async def h_library(request: web.Request) -> web.Response:
     folders = _music_folders()
     tracks = await asyncio.to_thread(library.scan_all, folders)
@@ -696,7 +713,9 @@ async def h_library(request: web.Request) -> web.Response:
         # served before this update; `folders` is what the page renders.
         "folder": str(folders[0]),
         "exists": folders[0].is_dir(),
-        "folders": [{"path": str(f), "exists": f.is_dir()} for f in folders],
+        "folders": [{"path": str(f), "exists": f.is_dir(),
+                     "source": _folder_source(f, folders[0])}
+                    for f in folders],
         "tracks": tracks,
     })
 
@@ -3037,7 +3056,19 @@ async def h_cal_adjust(request: web.Request) -> web.Response:
 
 
 async def h_cal_profiles(request: web.Request) -> web.Response:
-    return web.json_response({"profiles": calibration_store.all_profiles()})
+    profiles = calibration_store.all_profiles()
+    # The speaker's own name beside its id, so a picker reads as a room and
+    # not an entity. Best effort: Home Assistant being unreachable leaves
+    # the names out, and the panel falls back to the id.
+    states, error = await ha_client.async_states_or_error("media_player")
+    if not error:
+        names = {s.get("entity_id"): (s.get("attributes") or {}).get("friendly_name")
+                 for s in states}
+        for profile in profiles:
+            name = names.get(profile.get("entity_id"))
+            if name:
+                profile["name"] = name
+    return web.json_response({"profiles": profiles})
 
 
 def _static_file(name: str, content_type: str):

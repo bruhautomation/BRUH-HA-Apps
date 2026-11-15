@@ -87,10 +87,38 @@
     return job.result || {};
   }
 
+  // Plain words for a probe: how fast, how many ms, whether any replies
+  // were lost. The thresholds are a feel, not a spec — a show's cues are
+  // timed from the number itself, which is still on the row.
   function fmtRtt(rtt) {
-    if (!rtt || rtt.p50_ms === undefined) return "not probed";
-    return "p50 " + rtt.p50_ms + "ms · p95 " + rtt.p95_ms + "ms · loss " +
-      Math.round(rtt.loss * 100) + "%";
+    if (!rtt || rtt.p50_ms === undefined) return "Not checked yet";
+    const speed = rtt.p95_ms < 80 ? "Fast" : rtt.p95_ms < 200 ? "Fair" : "Slow";
+    const lost = Math.round((rtt.loss || 0) * 100);
+    return speed + ", " + Math.round(rtt.p50_ms) + " ms, " +
+      (lost ? lost + "% lost" : "no loss");
+  }
+
+  function ago(epochSeconds) {
+    if (!epochSeconds) return "";
+    const s = Math.max(0, Date.now() / 1000 - epochSeconds);
+    if (s < 60) return "just now";
+    if (s < 3600) return Math.round(s / 60) + " min ago";
+    if (s < 86400) return Math.round(s / 3600) + " h ago";
+    return Math.round(s / 86400) + " d ago";
+  }
+
+  // Speakers by their friendly name, which the profiles endpoint carries
+  // beside the id (a select of ids is a select of strangers).
+  function fillPlayerSelect(select, profiles, previous, withOffset) {
+    select.innerHTML = '<option value="">— calibrated player —</option>';
+    for (const profile of profiles || []) {
+      const option = document.createElement("option");
+      option.value = profile.entity_id;
+      option.textContent = (profile.name || profile.entity_id) +
+        (withOffset ? " (" + profile.effective_offset_ms + "ms)" : "");
+      option.selected = profile.entity_id === previous;
+      select.appendChild(option);
+    }
   }
 
   // ------------------------------------------------------------------
@@ -114,20 +142,23 @@
     list.innerHTML = "";
     for (const device of devices) {
       const row = document.createElement("div");
-      row.className = "row";
+      row.className = "row slim";
       row.innerHTML =
         '<div class="row-main"><strong></strong>' +
-        '<span class="muted small"></span>' +
-        '<span class="rtt small"></span></div>' +
+        '<span class="rtt row-note"></span>' +
+        '<span class="muted row-note addr"></span></div>' +
         '<div class="row-actions">' +
-        '<button class="btn small" data-act="probe">Probe RTT</button>' +
-        '<button class="btn small" data-act="rate">Rate test</button>' +
-        '<button class="btn small" data-act="demo">Waveform demo</button>' +
-        "</div>";
+        '<button class="btn" data-act="probe">Check</button>' +
+        '<details class="more"><summary aria-label="More checks">⋯</summary>' +
+        '<div class="more-menu">' +
+        '<button class="btn" data-act="rate">Find speed limit</button>' +
+        '<button class="btn" data-act="demo">Beat-pulse demo</button>' +
+        "</div></details></div>";
       row.querySelector("strong").textContent = device.label || device.serial;
-      row.querySelector(".muted").textContent =
-        device.ip + " · " + device.serial;
+      row.querySelector(".addr").textContent = device.ip;
       row.querySelector(".rtt").textContent = fmtRtt(device.rtt);
+      row.dataset.probed = device.rtt && device.rtt.p50_ms !== undefined
+        ? "1" : "";
       row.dataset.serial = device.serial;
       list.appendChild(row);
     }
@@ -162,18 +193,23 @@
     const serial = row.dataset.serial;
     const out = row.querySelector(".rtt");
     button.disabled = true;
+    const menu = button.closest("details");
+    if (menu) menu.open = false;
     try {
       if (button.dataset.act === "probe") {
-        out.textContent = "probing…";
+        out.textContent = "Checking…";
         const stats = await post("api/lifx/probe", { serial });
         out.textContent = fmtRtt(stats);
+        row.dataset.probed = "1";
       } else if (button.dataset.act === "rate") {
         out.textContent = "rate ramp running (~12s)…";
         const started = await post("api/lifx/rate-test", { serial });
         const job = await awaitJob(started.job);
         if (job.status === "done") {
           out.textContent = job.result
-            .map((r) => r.rate_hz + "/s: " + Math.round(r.loss * 100) + "% loss")
+            .map((r) => r.rate_hz + " per second: " +
+              (Math.round(r.loss * 100) ? Math.round(r.loss * 100) + "% lost"
+                                        : "no loss"))
             .join(" · ");
         } else {
           out.textContent = "rate test failed: " + job.error;
@@ -190,6 +226,37 @@
     } finally {
       button.disabled = false;
     }
+  });
+
+  // One probe per unprobed bulb, in turn — the same call the Check button
+  // makes, never several at once (a probe is timing, and parallel ones
+  // would time each other).
+  $("btnProbeAll").addEventListener("click", async () => {
+    const button = $("btnProbeAll");
+    const status = $("probeAllStatus");
+    const rows = Array.from($("lifxList").querySelectorAll(".row"))
+      .filter((r) => r.dataset.serial && !r.dataset.probed);
+    if (!rows.length) {
+      status.textContent = "Every bulb has been checked.";
+      return;
+    }
+    button.disabled = true;
+    let done = 0;
+    for (const row of rows) {
+      status.textContent = "Checking " + (done + 1) + " of " + rows.length + "…";
+      const out = row.querySelector(".rtt");
+      out.textContent = "Checking…";
+      try {
+        const stats = await post("api/lifx/probe", { serial: row.dataset.serial });
+        out.textContent = fmtRtt(stats);
+        row.dataset.probed = "1";
+      } catch (error) {
+        out.textContent = "Did not answer: " + error.message;
+      }
+      done += 1;
+    }
+    status.textContent = "Checked " + done + " bulb" + (done === 1 ? "" : "s") + ".";
+    button.disabled = false;
   });
 
   // Show anything already known (persisted discovery) on load.
@@ -291,6 +358,28 @@
     const bar = $("mapSelection");
     const fixture = selectedFixture ? fixtureById(selectedFixture) : null;
     bar.innerHTML = "";
+    if (openCluster && !fixture) {
+      const ask = document.createElement("strong");
+      ask.textContent = openCluster.length + " lights are in this spot — pick one:";
+      const pick = document.createElement("div");
+      pick.className = "cluster-pick";
+      for (const id of openCluster) {
+        const member = fixtureById(id);
+        if (!member) continue;
+        const choose = document.createElement("button");
+        choose.className = "btn";
+        choose.textContent = member.label;
+        choose.addEventListener("click", () => {
+          openCluster = null;
+          selectedFixture = id;
+          renderMap();
+        });
+        pick.appendChild(choose);
+      }
+      bar.appendChild(ask);
+      bar.appendChild(pick);
+      return;
+    }
     if (!fixture) {
       const hint = document.createElement("span");
       hint.className = "muted small";
@@ -359,11 +448,54 @@
     bar.appendChild(remove);
   }
 
+  // Lights that sit within a dot's width of each other cannot be told
+  // apart or picked on a phone, so they are drawn as one dot with a count.
+  // Tapping it lists them; the one you pick is drawn on its own, beside the
+  // pile, where it can be dragged away. Distance is measured in pixels on
+  // the floor as drawn, so it is redone whenever the floor changes size.
+  const CLUSTER_PX = 40;
+  let openCluster = null;   // ids listed in the pick bar, or null
+
+  function clusterFixtures(fixtures) {
+    const floor = $("mapFloor");
+    const w = floor.clientWidth || 340;
+    const h = floor.clientHeight || 340;
+    const groups = [];
+    for (const fixture of fixtures) {
+      if (fixture.id === selectedFixture) { groups.push([fixture]); continue; }
+      const home = groups.find((g) => g[0].id !== selectedFixture &&
+        Math.hypot((g[0].x - fixture.x) * w, (g[0].y - fixture.y) * h) < CLUSTER_PX);
+      if (home) home.push(fixture); else groups.push([fixture]);
+    }
+    return groups;
+  }
+
   function renderMap() {
     const floor = $("mapFloor");
     floor.innerHTML = "";
     if (selectedFixture && !fixtureById(selectedFixture)) selectedFixture = null;
-    for (const fixture of mapData.fixtures) {
+    // A selected light that shares a spot is lifted out of its pile.
+    const groups = clusterFixtures(mapData.fixtures);
+    for (const group of groups) {
+      if (group.length > 1) {
+        const first = group[0];
+        const pile = document.createElement("div");
+        pile.className = "map-dot cluster" +
+          (first.x > 0.85 ? " edge-right" : first.x < 0.15 ? " edge-left" : "");
+        placeDot(pile, first.x, first.y);
+        pile.dataset.cluster = group.map((f) => f.id).join("|");
+        const count = document.createElement("span");
+        count.className = "dot-glyph";
+        count.textContent = String(group.length);
+        const label = document.createElement("span");
+        label.className = "dot-name";
+        label.textContent = group.length + " lights";
+        pile.appendChild(count);
+        pile.appendChild(label);
+        floor.appendChild(pile);
+      }
+    }
+    for (const fixture of groups.filter((g) => g.length === 1).map((g) => g[0])) {
       const dot = document.createElement("div");
       // The name hangs under the dot and is wider than it. Near an edge it
       // would hang off the floor, which clips — so at the edges it hangs
@@ -373,7 +505,11 @@
       dot.className = "map-dot" + edge +
         (fixture.reachable === false ? " unreachable" : "") +
         (fixture.id === selectedFixture ? " selected" : "");
+      const piled = fixture.id === selectedFixture && groups.some(
+        (g) => g.length > 1 && Math.hypot((g[0].x - fixture.x) * (floor.clientWidth || 340),
+          (g[0].y - fixture.y) * (floor.clientHeight || 340)) < CLUSTER_PX);
       placeDot(dot, fixture.x, fixture.y);
+      if (piled) dot.style.transform = "translate(0, -52px)";
       dot.dataset.id = fixture.id;
       const glyph = document.createElement("span");
       glyph.className = "dot-glyph";
@@ -412,6 +548,12 @@
     }
     renderSelection();
   }
+
+  window.addEventListener("resize", () => {
+    if ($("pane-map").classList.contains("active") && mapData.fixtures.length) {
+      renderMap();
+    }
+  });
 
   async function removeFixture(id) {
     try {
@@ -464,6 +606,14 @@
     floor.addEventListener("pointerdown", (event) => {
       const dot = event.target.closest(".map-dot");
       if (!dot) return;
+      if (dot.dataset.cluster) {
+        // A pile is tapped, not dragged: it is several lights.
+        openCluster = dot.dataset.cluster.split("|");
+        selectedFixture = null;
+        renderMap();
+        return;
+      }
+      openCluster = null;
       dragging = dot;
       startedAt = { x: event.clientX, y: event.clientY };
       travelled = false;
@@ -478,6 +628,7 @@
       }
       if (!travelled) return;
       const at = positionIn(event);
+      dragging.style.transform = "";
       placeDot(dragging, at.x, at.y);
     });
     floor.addEventListener("pointerup", (event) => {
@@ -500,7 +651,13 @@
   $("mapList").addEventListener("click", (event) => {
     if (event.target.closest("button, select")) return;
     const row = event.target.closest(".row");
-    if (row) selectFixture(row.dataset.id);
+    if (row) {
+      // Redrawn, not just re-marked: a light picked from the list may be
+      // one that was in a pile, and it has to come out of it.
+      openCluster = null;
+      selectedFixture = row.dataset.id;
+      renderMap();
+    }
   });
 
   $("mapList").addEventListener("change", (event) => {
@@ -582,15 +739,8 @@
         api("api/library"), api("api/calibrate/profiles"),
       ]);
       const playerSelect = $("showPlayer");
-      const previous = playerSelect.value;
-      playerSelect.innerHTML = '<option value="">— calibrated player —</option>';
-      for (const profile of profiles.profiles || []) {
-        const option = document.createElement("option");
-        option.value = profile.entity_id;
-        option.textContent = profile.entity_id;
-        option.selected = profile.entity_id === previous;
-        playerSelect.appendChild(option);
-      }
+      fillPlayerSelect(playerSelect, profiles.profiles,
+                       playerSelect.value, false);
       const tracks = (lib.tracks || []).filter((t) => t.analyzed);
       if (!tracks.length) {
         list.innerHTML = '<p class="muted">No analyzed tracks — Library first.</p>';
@@ -599,31 +749,44 @@
       list.innerHTML = "";
       for (const track of tracks) {
         const row = document.createElement("div");
-        row.className = "row";
+        row.className = "row slim";
         row.dataset.hash = track.hash;
         const show = track.show;
+        // The commonest action stays on the row — play the show if there
+        // is one, build it if not — and the rest sit behind one menu.
         row.innerHTML = '<div class="row-main"><strong></strong>' +
-          '<span class="rtt small"></span></div>' +
+          '<span class="rtt row-note"></span></div>' +
           '<div class="row-actions">' +
-          '<button class="btn small" data-act="compile">Compile</button>' +
-          '<button class="btn small" data-act="claude">✨ Claude</button>' +
-          (show ? '<button class="btn small" data-act="play">▶ Show</button>'
+          (show ? '<button class="btn" data-act="play">▶ Play</button>'
+                : '<button class="btn" data-act="compile">Build show</button>') +
+          '<details class="more"><summary aria-label="More actions">⋯</summary>' +
+          '<div class="more-menu">' +
+          (show ? '<button class="btn" data-act="compile">Rebuild show</button>'
                 : "") +
-          '<button class="btn small" data-act="sync" title="Beat pulses ' +
+          '<button class="btn" data-act="claude">✨ Ask Claude to write it</button>' +
+          '<button class="btn" data-act="sync" title="Beat pulses ' +
           'and drop flashes, no choreography — proves sync and drop ' +
-          'detection">🧪 Test</button>' +
-          "</div>";
+          'detection">🧪 Test beats and drops</button>' +
+          "</div></details></div>";
         row.querySelector("strong").textContent = track.name;
         row.querySelector(".rtt").textContent = show
-          ? "compiled: " + show.tier + " · " + show.palette + " · " +
-            show.cues + " cues"
-          : "not compiled — 🧪 Test plays plain beat pulses and drop "
-            + "flashes; Compile builds the show";
+          ? describeShow(show.tier, show.cues, show.compiled_at)
+          : "No show yet — Build show makes one";
         list.appendChild(row);
       }
     } catch (error) {
       list.innerHTML = '<p class="muted">failed: ' + error.message + "</p>";
     }
+  }
+
+  // A built show in plain words: who wrote it, how big, how long ago.
+  // Parts that are not known are left out, never printed as "null".
+  function describeShow(tier, cues, compiledAt) {
+    const who = tier === "claude" ? "Written by Claude"
+      : tier === "edited" ? "Edited by hand"
+      : tier === "algorithmic" ? "Written by BRight" : "Built";
+    return [who, cues ? cues + " cues" : "", ago(compiledAt)]
+      .filter(Boolean).join(" · ");
   }
 
   // Who wrote this show, in a sentence.
@@ -697,6 +860,8 @@
     const out = row.querySelector(".rtt");
     const status = $("showStatus");
     button.disabled = true;
+    const menu = button.closest("details");
+    if (menu) menu.open = false;
     try {
       if (button.dataset.act === "compile" ||
           button.dataset.act === "claude") {
@@ -721,10 +886,9 @@
           }
         });
         const who = describeDirector(result.director);
-        out.textContent = "compiled: " + result.tier + " · " +
-          result.palette + " · " + result.stats.cues + " cues (peak " +
-          result.stats.peak_per_device_hz + "/s per bulb)" +
-          (who ? " — " + who : "");
+        out.textContent = (result.director && result.director.fell_back && who)
+          ? who
+          : describeShow(result.tier, result.stats.cues, Date.now() / 1000);
         openScript(row.dataset.hash, row.querySelector("strong").textContent);
       } else if (button.dataset.act === "play"
                  || button.dataset.act === "sync") {
@@ -773,15 +937,8 @@
       // Keep the chosen speaker across a reload — this runs on every
       // visit to the tab, and losing the pick meant the party quietly
       // fell back to whichever player calibrated best, in another room.
-      const previous = select.value;
-      select.innerHTML = '<option value="">— calibrated player —</option>';
-      for (const profile of profiles.profiles || []) {
-        const option = document.createElement("option");
-        option.value = profile.entity_id;
-        option.textContent = profile.entity_id;
-        option.selected = profile.entity_id === previous;
-        select.appendChild(option);
-      }
+      fillPlayerSelect(select, profiles.profiles,
+                       select.value, false);
     } catch (error) {
       $("partyStatus").textContent = "failed: " + error.message;
     }
@@ -901,16 +1058,8 @@
         trackSelect.appendChild(option);
       }
       const playerSelect = $("syncPlayer");
-      const hadPlayer = playerSelect.value;
-      playerSelect.innerHTML = '<option value="">— calibrated player —</option>';
-      for (const profile of profiles.profiles || []) {
-        const option = document.createElement("option");
-        option.value = profile.entity_id;
-        option.textContent = profile.entity_id + " (" +
-          profile.effective_offset_ms + "ms)";
-        option.selected = profile.entity_id === hadPlayer;
-        playerSelect.appendChild(option);
-      }
+      fillPlayerSelect(playerSelect, profiles.profiles,
+                       playerSelect.value, true);
     } catch (error) {
       $("syncStatus").textContent = "failed: " + error.message;
     }
@@ -979,11 +1128,73 @@
     // deserves to see the reason on the track rather than guess at it.
     return (s.bpm ? s.bpm + " BPM" : "?") +
       " · " + (s.sections || 0) + " sections · " + (s.drops || 0) + " drops" +
-      (s.hits ? " · " + s.hits + " accents" : "") +
       (s.chords ? " · " + s.chords + " chord changes" : "") +
       (s.lyrics ? " · lyrics ✓" : "") +
       (track.stale ? " · ⟳ analysed by an older version — press Analyze"
                    : "");
+  }
+
+  // One folder: found with its track count, or missing with the one-line
+  // fix. Remove edits the same list the Folders-to-scan card edits; a
+  // folder set in the add-on's options cannot be removed from here, so it
+  // says where to change it instead of offering a button that does nothing.
+  function folderRow(folder, tracks) {
+    const row = document.createElement("div");
+    row.className = "row folder-row";
+    const main = document.createElement("div");
+    main.className = "row-main";
+    const path = document.createElement("strong");
+    path.className = "path";
+    // textContent: a folder name is whatever someone typed, not markup.
+    path.textContent = folder.path;
+    const status = document.createElement("span");
+    status.className = "row-note";
+    const count = tracks.filter((t) => String(t.file).startsWith(
+      folder.path.replace(/\/$/, "") + "/")).length;
+    status.textContent = folder.exists
+      ? "Found, " + count + (count === 1 ? " track" : " tracks")
+      : "Missing";
+    main.appendChild(path);
+    main.appendChild(status);
+    const last = folder.path.split("/").filter(Boolean).pop() || "";
+    const note = document.createElement("span");
+    note.className = "row-note muted";
+    const fromOptions = folder.source === "main" || folder.source === "option";
+    if (last.toLowerCase() === "brigt") {
+      note.textContent = "This is the folder from the add-on's earlier name " +
+        "(BRigt). Move your music to /media/music, or keep using it here.";
+    } else if (!folder.exists) {
+      note.textContent = fromOptions
+        ? "Put music in this folder, or change the folder in the add-on's Configuration."
+        : "This folder is gone. Remove it, or put music back in it.";
+    }
+    if (note.textContent) main.appendChild(note);
+    row.appendChild(main);
+    if (folder.source === "picked") {
+      const actions = document.createElement("div");
+      actions.className = "row-actions";
+      const remove = document.createElement("button");
+      remove.className = "btn";
+      remove.textContent = "Remove";
+      remove.addEventListener("click", async () => {
+        remove.disabled = true;
+        try {
+          await post("api/media/folder", { path: folder.path, add: false });
+          scanLibrary();
+        } catch (error) {
+          status.textContent = "Could not remove it: " + error.message;
+          remove.disabled = false;
+        }
+      });
+      actions.appendChild(remove);
+      row.appendChild(actions);
+    } else if (fromOptions && folder.exists) {
+      const fixed = document.createElement("span");
+      fixed.className = "row-note muted";
+      fixed.textContent = "Set in the add-on's Configuration";
+      main.appendChild(fixed);
+    }
+    return row;
   }
 
   async function scanLibrary() {
@@ -997,14 +1208,8 @@
         [{ path: body.folder, exists: body.exists }];
       const box = $("libraryFolders");
       box.innerHTML = "";
-      for (const folder of folders) {
-        const line = document.createElement("div");
-        // textContent: a folder name is whatever someone typed into the
-        // add-on's options, and it is not markup.
-        line.textContent = folder.path + (folder.exists ? "" : " — missing");
-        box.appendChild(line);
-      }
       const tracks = body.tracks || [];
+      for (const folder of folders) box.appendChild(folderRow(folder, tracks));
       if (!tracks.length) {
         list.innerHTML = '<p class="muted">No audio files found.</p>';
         return;
