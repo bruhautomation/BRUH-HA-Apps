@@ -162,7 +162,7 @@
      for `switchView("docs")`. -->
 <nav id="subtabs" class="subtabs" role="tablist" aria-label="Sections" hidden>
   <button class="subtab" data-view="home" data-group="home" role="tab">Home</button>
-  <button class="subtab" data-view="insights" data-group="insights" role="tab">Insights</button>
+  <button class="subtab" data-view="insights" data-group="insights" role="tab">Cards</button>
   <button class="subtab" data-view="findings" data-group="insights" role="tab">Needs you</button>
   <button class="subtab" data-view="archive" data-group="insights" role="tab">History</button>
   <button class="subtab" data-view="terminal" data-group="ask" role="tab">Chat</button>
@@ -192,7 +192,7 @@
      a count in a 358px row is a row that scrolls sideways. -->
 <nav id="segNav" class="segnav" aria-label="Sections" hidden>
   <div class="segbtns" role="tablist">
-    <button type="button" class="segbtn" data-view="insights" data-group="insights" role="tab">Insights</button>
+    <button type="button" class="segbtn" data-view="insights" data-group="insights" role="tab">Cards</button>
     <button type="button" class="segbtn" data-view="findings" data-group="insights" role="tab">Needs you<span id="segNeedsCount" class="segcount" hidden></span></button>
     <button type="button" class="segbtn" data-view="archive" data-group="insights" role="tab">History</button>
     <button type="button" class="segbtn" data-view="memory" data-group="memory" role="tab">Knowledge</button>
@@ -467,7 +467,7 @@
       <div id="aboutCards" class="aboutbody" hidden></div>
     </div>
     <div class="insighthead">
-      <h1 class="panetitle">Insights</h1>
+      <h1 class="panetitle">Insight cards</h1>
       <input id="reportSearch" class="reportsearch" type="search" autocomplete="off"
              spellcheck="false" placeholder="Search insights" aria-label="Search insights" hidden>
     </div>
@@ -679,6 +679,8 @@
         <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       </button>
     </div>
+    <button id="chatRailFilter" class="crfilter" type="button" aria-expanded="false"
+            aria-controls="chatRailKinds" hidden></button>
     <div id="chatRailKinds" class="pillseg crkinds" role="group" aria-label="Show"></div>
     <p id="chatRailHint" class="crhint" hidden></p>
     <div id="chatRailList" class="crlist"></div>
@@ -1219,22 +1221,6 @@
           <h2 class="setsecname">Model &amp; usage</h2>
         </header>
         <div class="setsecbody">
-          <label for="setModel">Claude model</label>
-          <select id="setModel" class="sel selin"></select>
-          <input id="setModelCustom" class="hidden" type="text" maxlength="100"
-                 autocomplete="off" spellcheck="false" placeholder="e.g. claude-opus-5-5">
-          <label for="setThinking">How hard brAIn thinks</label>
-          <select id="setThinking" class="sel selin">
-            <option value="light">Light — cheaper where it is safe</option>
-            <option value="normal">Normal — tiered by each job</option>
-            <option value="generous">Generous — stronger where it counts</option>
-          </select>
-          <!-- Rewritten by syncThinking: with a model chosen above, the
-               tiers are not consulted at all, so the select is disabled
-               and this line says why rather than looking live. -->
-          <p class="hint tight" id="setThinkingNote">Every run is tiered by its job (Haiku looks,
-            Sonnet thinks, Opus acts); this shifts the tiers.</p>
-
           <h4 class="sethead">Usage</h4>
           <div class="usagewrap">
             <label>This session</label>
@@ -1256,6 +1242,23 @@
             <option value="max5">Claude Max (5×)</option>
             <option value="max20">Claude Max (20×)</option>
           </select>
+
+          <h4 class="sethead">Model</h4>
+          <label for="setModel">Claude model</label>
+          <select id="setModel" class="sel selin"></select>
+          <input id="setModelCustom" class="hidden" type="text" maxlength="100"
+                 autocomplete="off" spellcheck="false" placeholder="e.g. claude-opus-5-5">
+          <label for="setThinking">How hard brAIn thinks</label>
+          <select id="setThinking" class="sel selin">
+            <option value="light">Light — cheaper where it is safe</option>
+            <option value="normal">Normal — tiered by each job</option>
+            <option value="generous">Generous — stronger where it counts</option>
+          </select>
+          <!-- Rewritten by syncThinking: with a model chosen above, the
+               tiers are not consulted at all, so the select is disabled
+               and this line says why rather than looking live. -->
+          <p class="hint tight" id="setThinkingNote">Every run is tiered by its job (Haiku looks,
+            Sonnet thinks, Opus acts); this shifts the tiers.</p>
 
           <div class="setgroup">
             <div class="setrow top">
@@ -1330,24 +1333,27 @@
           <h2 class="setsecname">Permissions</h2>
         </header>
         <div class="setsecbody">
-          <p class="permwarn" id="setPermWarn" role="status" hidden></p>
-          <div class="setgroup">
-          <div class="setrow top" id="setSkipPermsRow">
-            <label class="check bigcheck"><input id="setSkipPerms" class="tog" type="checkbox">
-              <span><b>Let brAIn act without asking</b>
-              <span class="subtext">The terminal and the chat stop asking before each command,
-              edit or change.</span></span></label>
-          </div>
+          <!-- One sentence on what brAIn may do alone, then ONE scale. The
+               scale is the add-on's `dangerously_skip_permissions` option
+               and the `yolo_mode` setting read together: no limits when
+               yolo is on, else acting when skipping is on, else ask first.
+               Each choice writes what the two switches wrote before. -->
+          <p class="permwarn" id="setPermWarn" role="status"></p>
+          <label for="setPermLevel">What brAIn may do without asking</label>
+          <select id="setPermLevel" class="sel selin">
+            <option value="ask">Ask first: before each command, edit or change</option>
+            <option value="act">Act: goes ahead, within your house rules and off-limits list</option>
+            <option value="free">No limits: goes ahead, and ignores both</option>
+          </select>
           <!-- Rewritten by renderSettingsForm from `permission_sessions`
-               when an open terminal session did not get the switch's
+               when an open terminal session did not get the setting's
                current value; this text is what it says otherwise. The
-               caveat under it is never replaced: it is the half of the
-               switch that is about safety. -->
+               caveat under it is never replaced: it is the half that is
+               about safety. -->
           <p class="hint setgroupnote" id="setSkipPermsNote">Applies to the next terminal session and chat
             message.</p>
-          <p class="hint setgroupnote" id="setSkipPermsCaveat">Protected entities are refused through brAIn's
-            own tools, not every shell command.</p>
-          </div>
+          <p class="hint setgroupnote" id="setSkipPermsCaveat">What you have put off limits is blocked in
+            brAIn's own tools, not in every shell command.</p>
 
           <div class="setgroup">
           <div class="setrow top">
@@ -1357,20 +1363,6 @@
               automation, or new scenes goes to the conversation, which does it there, instead of
               becoming a draft for you to approve.</span></span></label>
           </div>
-          </div>
-
-          <!-- One step past the switch above: acting without asking still
-               keeps protected entities, house rules and the action gate;
-               this switches those off too. Its key is still `yolo_mode`. -->
-          <div class="setgroup">
-          <div class="setrow top" id="setYoloRow">
-            <label class="check bigcheck"><input id="setYolo" class="tog" type="checkbox">
-              <span><b>No restrictions</b>
-              <span class="subtext">Goes further than acting without asking: protected
-              entities, house rules and the action gate stop applying too, and brAIn never
-              waits for your approval.</span></span></label>
-          </div>
-          <p class="hint setgroupnote" id="setYoloCaveat">Off by default.</p>
           </div>
 
           <h4 class="sethead">House rules</h4>
@@ -1422,9 +1414,12 @@
                The learned lines are shown apart from it, one each, because a
                clause spliced into somebody's sentence is one they cannot
                find again to remove. -->
+          <p id="setNotifyNow" class="permwarn calm" role="status"></p>
           <label for="setNotifyPolicy">What deserves a notification</label>
           <textarea id="setNotifyPolicy" rows="2" maxlength="400"
             placeholder="In your own words…"></textarea>
+          <p id="setNotifySaved" class="hint tight" role="status">For example: “Wake me for water
+            or smoke; batteries can wait until morning.” It saves by itself when you leave the box.</p>
           <p class="hint tight">Leaks, smoke and other urgent critical alerts always come
             through, whatever this says.</p>
           <div id="setNotifyLearned" class="setlearned hidden"></div>

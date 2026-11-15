@@ -451,16 +451,21 @@ def known_title(raw: str, source: str = "you") -> str | None:
     return None
 
 
-def title_for(raw: str, source: str = "you", recorded: str = "") -> str:
+def title_for(raw: str, source: str = "you", recorded: str = "",
+              generated: str = "") -> str:
     """The title a person reads for a conversation: the one its opener
-    recorded, else the title of an opener brAIn wrote, else — for a run a
-    machine claimed whose opener is none of those — what that machine is,
-    else the person's own words, clipped."""
+    recorded, else the title of an opener brAIn wrote, else the short title
+    Claude Code itself wrote for the session (`generated`, read off the
+    transcript: no run is made for it), else — for a run a machine claimed
+    whose opener is none of those — what that machine is, else the person's
+    own words, clipped."""
     if recorded:
         return clip_title(recorded)
     known = known_title(raw, source)
     if known is not None:
         return known
+    if generated and source in ("you", "", "morph", "voice", "automation"):
+        return clip_title(generated)
     if source in _MEMORY_SOURCES and str(raw or "").lstrip().startswith(_MEMORY_LEAD):
         # A task an automation sent with memory in front: what follows the
         # block is the automation's prompt, and where the block ends is not
@@ -482,7 +487,48 @@ def title_for(raw: str, source: str = "you", recorded: str = "") -> str:
 
 def display_title(path: Path, source: str = "you", recorded: str = "") -> str:
     """The title a person should read for a conversation in the list."""
-    return title_for(_first_prompt(path, fold=False), source, recorded)
+    return title_for(_first_prompt(path, fold=False), source, recorded,
+                     _generated_title(path))
+
+
+def _generated_title(path: Path) -> str:
+    """The short title Claude Code wrote for a session, if it wrote one: an
+    `ai-title` entry, or a `custom-title` entry where the session was
+    renamed (the rename wins). It is the model's own summary of the chat,
+    already in the file, so a list row costs a read and not a run. Looked
+    for in the tail first, where the CLI keeps the latest, then in the lines
+    the opener is read from. Empty when there is none."""
+    def pick(lines):
+        found = {}
+        for line in lines:
+            if '-title"' not in line:
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            kind = entry.get("type") if isinstance(entry, dict) else None
+            key = {"ai-title": "aiTitle", "custom-title": "customTitle"}.get(kind)
+            text = entry.get(key) if key else None
+            if isinstance(text, str) and text.strip():
+                found[kind] = text
+        return found.get("custom-title") or found.get("ai-title") or ""
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - TAIL_BYTES))
+            tail = fh.read().decode("utf-8", errors="replace").splitlines()
+        if size > TAIL_BYTES and tail:
+            tail = tail[1:]          # the first line of a mid-file seek is torn
+        got = pick(tail)
+        if got:
+            return got
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            head = [ln for _, ln in zip(range(TITLE_SCAN_LINES), fh)]
+        return pick(head)
+    except OSError:
+        return ""
 
 
 def _first_prompt(path: Path, fold: bool = True) -> str:

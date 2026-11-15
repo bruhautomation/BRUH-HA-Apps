@@ -172,10 +172,6 @@ MODEL_CHOICES = [
      "label": "Claude Opus 5", "hint": ""},
     {"id": "claude-sonnet-5", "group": "Previous generation",
      "label": "Claude Sonnet 5", "hint": ""},
-    {"id": "claude-opus-4-8", "group": "Previous generation",
-     "label": "Claude Opus 4.8", "hint": ""},
-    {"id": "claude-sonnet-4-6", "group": "Previous generation",
-     "label": "Claude Sonnet 4.6", "hint": ""},
 ]
 
 
