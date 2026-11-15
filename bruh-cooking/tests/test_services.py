@@ -162,7 +162,7 @@ async def test_with_nothing_set_up_the_services_say_so(hass: HomeAssistant, entr
     with pytest.raises(ServiceValidationError) as err:
         await ask(hass, "get_status", appliance="countertop")
     assert err.value.translation_key == "no_appliances"
-    assert await ask(hass, "get_status") == {"appliances": []}
+    assert (await ask(hass, "get_status"))["appliances"] == []
 
 
 async def test_an_offline_appliance_reports_no_temperatures(

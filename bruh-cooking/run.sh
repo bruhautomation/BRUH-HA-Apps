@@ -187,6 +187,27 @@ announce_ha_discovery() {
     esac
 }
 
+# What the integration last wrote about the account (it runs inside Home
+# Assistant, whose log is not this one): connection, appliances found, the
+# last poll, and any appliance it does not drive with the reason. The file
+# holds no credential and no email, and neither does this line.
+report_account() {
+    local file="${COOKING_SHARED}/status.json" line
+    if [ ! -s "${file}" ]; then
+        bashio::log.info "No account report from the integration yet: set it up in Settings > Devices & services > BRUH Cooking, or restart Home Assistant if it was just deployed"
+        return 0
+    fi
+    line=$(jq -r '"Breville account: \(.connection), \(.appliances_found) appliance(s) found, last poll \(.last_poll // "never"), report written \(.at // "unknown")"' "${file}" 2>/dev/null || true)
+    if [ -z "${line}" ]; then
+        bashio::log.warning "The integration's account report could not be read"
+        return 0
+    fi
+    bashio::log.info "${line}"
+    jq -r '.not_driven[]? | "  not driven: \(.name): \(.reason)"' "${file}" 2>/dev/null | while IFS= read -r skipped; do
+        bashio::log.info "${skipped}"
+    done
+}
+
 graceful_shutdown() {
     bashio::log.info "Shutdown signal received; stopping BRUH Cooking"
     [ -n "${SLEEP_PID:-}" ] && kill "${SLEEP_PID}" 2>/dev/null
@@ -195,6 +216,11 @@ graceful_shutdown() {
 
 watch() {
     bashio::log.info "BRUH Cooking is running; the appliances are in Home Assistant's BRUH Cooking integration and sidebar panel"
+    # The integration needs a moment after Home Assistant starts to sign in and poll.
+    sleep 60 &
+    SLEEP_PID=$!
+    wait "${SLEEP_PID}"
+    report_account
     while true; do
         sleep "${WATCH_INTERVAL}" &
         SLEEP_PID=$!
@@ -205,6 +231,7 @@ watch() {
             exit 1
         fi
         deploy_custom_integration
+        report_account
     done
 }
 

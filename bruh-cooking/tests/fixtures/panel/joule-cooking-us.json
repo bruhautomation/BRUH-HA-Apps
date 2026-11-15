@@ -26,6 +26,15 @@
       "problem": {
         "binary_sensor": "binary_sensor.countertop_problem"
       },
+      "target_temperature": {
+        "number": "number.countertop_target_temperature"
+      },
+      "cook_time": {
+        "number": "number.countertop_cook_time"
+      },
+      "continue": {
+        "button": "button.countertop_continue"
+      },
       "status": {
         "sensor": "sensor.countertop_status"
       },
@@ -43,15 +52,6 @@
       },
       "error": {
         "sensor": "sensor.countertop_error"
-      },
-      "continue": {
-        "button": "button.countertop_continue"
-      },
-      "target_temperature": {
-        "number": "number.countertop_target_temperature"
-      },
-      "cook_time": {
-        "number": "number.countertop_cook_time"
       },
       "cook": {
         "switch": "switch.countertop_cook"
@@ -199,15 +199,28 @@
           "error",
           "updating"
         ],
-        "device_class": "enum",
-        "friendly_name": "Countertop Status",
         "last_contact": "2026-10-25T18:00:00+00:00",
         "last_cook": {
           "started_at": "2026-10-25T18:00:00+00:00",
           "ended_at": null,
+          "preset": null,
           "target_temperature_c": 56.0,
-          "duration_s": 5400
-        }
+          "duration_s": 5400,
+          "finish_at": "2026-10-25T19:12:00+00:00"
+        },
+        "account": {
+          "connection": "connected",
+          "appliances_found": 2,
+          "last_poll": "2026-10-25T18:00:00+00:00",
+          "not_driven": [
+            {
+              "name": "Espresso",
+              "reason": "model BES995 is not one this integration drives (Joule, Joule Turbo, Joule Oven Air Fryer Pro)"
+            }
+          ]
+        },
+        "device_class": "enum",
+        "friendly_name": "Countertop Status"
       },
       "last_changed": "2026-10-25T18:00:00+00:00",
       "last_updated": "2026-10-25T18:00:00+00:00"

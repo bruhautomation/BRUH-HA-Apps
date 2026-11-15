@@ -71,5 +71,13 @@ class BrevilleBinarySensor(BrevilleEntity, BinarySensorEntity):
         self.entity_description = description
 
     @property
+    def available(self) -> bool:
+        # The problem sensor says on or off while the appliance is offline: its last
+        # error stands, and being offline is the status sensor's to explain.
+        if self.entity_description.key == "problem":
+            return self.appliance.on_account
+        return super().available
+
+    @property
     def is_on(self) -> bool | None:
         return self.entity_description.value_fn(self.appliance)
