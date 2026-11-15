@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.8
+
+### Fixed
+
+- Crop stages follow the date and the garden's own season, so a past-season annual or a resting perennial reads Dormant in November instead of Bud Break or Green Fruit. A southern-hemisphere garden reads its own season, and a stage set by hand gives way to the calendar once its season is over. "Fungicide due" and "Ready to pick" count only crops in season (#1014).
+- Chips, tabs, toggles, menus and text links on a phone are at least 40px tall, and "Select all" and the green links are readable (#1015).
+- The hold-off card names the next good spray window with its day and time, the Weather page gives the same answer, and a crop's attention row opens a Tank mix with that crop chosen (#1016).
+- Inventory cards on a phone show the whole product name, the level bar and the amount left. Size, count and cost sit behind an edit button, with their full values (#1017).
+- The picks log on a phone is one compact row per pick that opens for editing on a tap, and its last row clears the Log Harvest button (#1018).
+
 ## 0.1.7
 
 ### Fixed

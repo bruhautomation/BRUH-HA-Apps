@@ -7,6 +7,7 @@ import {
   fetchInventory,
   fetchProducts,
   fetchCropUses,
+  fetchVarietyStages,
 } from '@/lib/queries';
 import { sprayEventCost } from '@/lib/spray-cost';
 import { SPRAYER } from '@/config/thresholds';
@@ -15,6 +16,8 @@ import { HarvestCalendar } from '@/components/harvest-calendar';
 import { HarvestStatusCards, type StatusCrop } from '@/components/harvest-status-cards';
 import { computeCropPhi } from '@/lib/phi';
 import { parseHarvestWindow } from '@/lib/harvest-windows';
+import { applyPhenology } from '@/lib/phenology';
+import { needsCoverageNow } from '@/lib/coverage-season';
 import { VARIETY_CATALOG } from '@/lib/variety-catalog';
 
 export const dynamic = 'force-dynamic';
@@ -31,6 +34,7 @@ export default async function HarvestPage() {
     inventory,
     products,
     cropUses,
+    varietyStages,
   ] = await Promise.all([
     fetchVarieties(),
     fetchCrops(),
@@ -40,6 +44,7 @@ export default async function HarvestPage() {
     fetchInventory(),
     fetchProducts(),
     fetchCropUses(),
+    fetchVarietyStages(),
   ]);
 
   // Season spray cost — only the products actually applied in THIS season's spray
@@ -84,6 +89,12 @@ export default async function HarvestPage() {
   const cropGroupName = new Map(cropGroups.map((g) => [g.id, g.name] as const));
   const now = new Date();
   const month = now.getMonth();
+  // Stages follow the date, so a crop that is dormant or past harvest is never "ready".
+  const effectiveStages = applyPhenology(varietyStages, varieties, crops, cropGroups, now);
+  const isResting = (cropId: number) => {
+    const ids = new Set(varieties.filter((v) => v.crop_id === cropId).map((v) => v.id));
+    return !needsCoverageNow(effectiveStages.filter((s) => ids.has(s.variety_id)));
+  };
   const fmtShort = (d: Date | null) =>
     d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
   const inWindowNow = (m: number, r: { startMonth: number; endMonth: number }) =>
@@ -133,8 +144,11 @@ export default async function HarvestPage() {
       });
       continue;
     }
-    if (w.ready) ready.push({ id: crop.id, name: crop.name, group, note: w.phrase ?? 'In season' });
-    else if (w.hasWindow)
+    // Resting crops are never "ready"; the safe-interval warning above is not gated on it.
+    if (w.ready) {
+      if (!isResting(crop.id))
+        ready.push({ id: crop.id, name: crop.name, group, note: w.phrase ?? 'In season' });
+    } else if (w.hasWindow)
       developing.push({ id: crop.id, name: crop.name, group, note: w.phrase ?? 'Upcoming' });
   }
 
@@ -156,7 +170,7 @@ export default async function HarvestPage() {
         />
 
         {/* Expected harvest windows — reference, kept at the bottom */}
-        <div className="mt-8">
+        <div className="mt-8 pb-24">
           <HarvestCalendar crops={crops} varieties={varieties} cropGroups={cropGroups} />
         </div>
       </div>
