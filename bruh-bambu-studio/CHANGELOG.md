@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.6
+
+### Fixed
+
+- The camera's light, pause and full-screen buttons are 40px and nothing covers them: the printer's ⋯ menu (Refresh and the rest) opens under its own row instead of floating over the camera (#1019).
+- Once a print has finished, a look the camera could not take is a quiet "Last look: camera could not see" line instead of the orange warning, which now shows only while a print is running (#1020).
+- Each marker on the "Where it looks" timeline is a 40px target, spaced so a finger can pick one (#1021).
+- 3MF files from other slicers and sites show their own picture, and a file with none shows its kind instead of a grey hatch. The Library has a search box and sorts by newest or name (#1022).
+- Each file row says how long the print takes and how much filament it uses, or "Not sliced yet — Print will slice first". A tiny file reads "<0.1 MB", and a file's ⋯ menu opens in its row, so it no longer runs over Delete and "Open the design" (#1023).
+
 ## 0.4.5
 
 ### Fixed

@@ -30,6 +30,9 @@ NONE = b""
 # Printer pictures are cached under this generation: an older release could
 # remember a read that went wrong as "no picture", and those are not trusted.
 PRINTER_CACHE = "printer2"
+# Library pictures likewise: 0.4.6 finds pictures in 3MFs from other slicers,
+# and a "none" an older release remembered for one of them must not stand.
+LIBRARY_CACHE = "library2"
 # One storage session per printer at a time: a list of jobs asks for every
 # picture at once, and a printer's FTPS server serves one session well and
 # refuses or stalls the rest.
@@ -54,6 +57,20 @@ def png_member(names: list[str], plate: int = 1) -> str | None:
     for name in sorted(names):
         low = name.lower()
         if low.startswith("metadata/plate_") and low.endswith(".png") and "no_light" not in low:
+            return name
+    # Other slicers and sites name their picture otherwise (a leading slash,
+    # Thumbnails/, Metadata/thumbnail_N.png): any picture called a thumbnail,
+    # or sitting in Metadata, is better than the placeholder.
+    # A picture called a thumbnail first; then any other picture in Metadata/
+    # or Thumbnails/, but never Bambu's object-colour map (pick_N.png).
+    pngs = [n for n in sorted(names) if n.lower().endswith(".png")
+            and "no_light" not in n.lower()]
+    for name in pngs:
+        if "thumbnail" in name.lower():
+            return name
+    for name in pngs:
+        low = name.lower().lstrip("/")
+        if low.startswith(("metadata/", "thumbnails/")) and "/pick_" not in low:
             return name
     return None
 
@@ -127,7 +144,7 @@ def library(path: Path, plate: int = 1) -> bytes | None:
     except OSError:
         return None
     lower = path.name.lower()
-    cache = CACHE / "library" / f"{_key(path, stat.st_size, int(stat.st_mtime), plate)}.png"
+    cache = CACHE / LIBRARY_CACHE / f"{_key(path, stat.st_size, int(stat.st_mtime), plate)}.png"
     hit = _cached(cache)
     if hit is not None:
         return hit or None
