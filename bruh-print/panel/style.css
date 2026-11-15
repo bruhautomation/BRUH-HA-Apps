@@ -22,13 +22,13 @@
   --panel-2: #fafbfc;
   --ink: #16181d;
   --ink-2: #5a6270;
-  --ink-3: #8b93a1;
+  --ink-3: #5f6877;
   --line: #dfe3e9;
   --line-2: #eceff3;
   --accent: #0b6bcb;
   --accent-ink: #ffffff;
   --accent-soft: #e7f0fb;
-  --good: #1f9254;
+  --good: #1a7a45;
   --warn: #b26a00;
   --bad: #c0392b;
   --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 4px 14px rgba(16, 24, 40, .06);
@@ -48,7 +48,7 @@
     --panel-2: #22262d;
     --ink: #eef1f5;
     --ink-2: #a7b0be;
-    --ink-3: #7b8593;
+    --ink-3: #8f99a8;
     --line: #2e333c;
     --line-2: #262b33;
     --accent: #5aa2f0;
@@ -549,7 +549,17 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 }
 .addstock { background: var(--panel); border: 1px solid var(--line);
   border-radius: var(--radius); padding: 12px 14px; }
-.addstock summary { cursor: pointer; font-weight: 600; min-height: 30px; }
+.addstock summary { cursor: pointer; font-weight: 600; min-height: 44px;
+  display: flex; align-items: center; }
+.psec > summary { list-style: none; cursor: pointer; min-height: 44px;
+  display: flex; align-items: center; gap: 8px; }
+.psec > summary::-webkit-details-marker { display: none; }
+.psec > summary::before { content: "\25b8"; flex: none; font-size: 14px;
+  color: var(--ink-3); transition: transform .12s ease; }
+.psec[open] > summary::before { transform: rotate(90deg); }
+.psec > summary h2 { margin: 0; }
+.inuse { display: inline-flex; align-items: center; min-height: 40px;
+  padding: 0 4px; font-size: 14px; font-weight: 600; color: var(--good); }
 .settings { display: grid; gap: 10px; }
 /* The USB dump: fixed-width, and it scrolls inside itself rather than
    taking the dialog's width with it. */
@@ -560,14 +570,17 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 
 .hlist { display: grid; gap: 8px; margin-bottom: 14px; }
 .hrow {
-  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-  padding: 11px 13px; background: var(--panel); border: 1px solid var(--line);
+  display: flex; align-items: center; gap: 10px; justify-content: space-between;
+  padding: 7px 10px; background: var(--panel); border: 1px solid var(--line);
   border-radius: 10px;
 }
-.hrow .when { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
-.hrow .what { flex: 1 1 190px; font-weight: 550; min-width: 0;
+.hrow .htext { display: grid; min-width: 0; flex: 1 1 auto; }
+.hrow .what { font-weight: 550; min-width: 0; line-height: 1.3;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hrow .meta { font-size: 12.5px; color: var(--ink-2); }
+.hrow .meta { font-size: 12.5px; color: var(--ink-2); line-height: 1.3;
+  font-variant-numeric: tabular-nums; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.hrow .hbtns { display: flex; gap: 6px; flex: none; }
 
 .tform { display: grid; gap: 10px; padding-bottom: 4px; }
 
@@ -692,6 +705,9 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 .quick-split { display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr); }
 .quick-do { display: grid; gap: 12px; }
 .btn.wide { width: 100%; }
+.printrow { display: grid; gap: 6px; }
+.printson { margin: 0; font-size: 14px; color: var(--ink-2); }
+.chip .bay-on { color: var(--accent); }
 
 /* The secondary controls, behind one press. Nothing is unreachable — the
  * summary line says what is set and opening it is only for changing it. */
@@ -734,7 +750,8 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
    * you do next after looking at the preview, but on a wide screen the
    * whole form is open beside the picture and an action above the settings
    * it acts on reads as a step out of sequence. */
-  .quick-do > .btn.wide { width: auto; justify-self: start; order: 2; }
+  .quick-do > .printrow { order: 2; }
+  .printrow > .btn.wide { width: auto; justify-self: start; }
   .quick-more { order: 1; }
 }
 

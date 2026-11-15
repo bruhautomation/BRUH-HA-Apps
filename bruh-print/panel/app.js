@@ -244,18 +244,25 @@ function renderOneChip() {
   const dot = $('statusDot'), text = $('statusText'), chip = $('statusChip');
   if (!chip) return;
   const twin = !S.printer || S.printer.twin;
+  const active = activeSide();
   const bays = S.rolls
     .filter((roll) => !(roll.side === 'right' && !twin))
     .map((roll) => {
       const stock = stockById(roll.stock);
-      return `${roll.side === 'left' ? 'L' : 'R'} ${stock ? stock.label : 'empty'}`;
+      return { side: roll.side, on: roll.side === active && S.rolls.length > 1 && twin,
+               text: `${roll.side === 'left' ? 'L' : 'R'} ${stock ? stock.label : 'empty'}` };
     });
   if (S.printer) {
     dot.className = 'dot good';
-    text.textContent = bays.join(' \u00b7 ') || S.printer.name;
+    text.textContent = '';
+    bays.forEach((bay, i) => {
+      if (i) text.append(' \u00b7 ');
+      text.append(bay.on ? el('b', 'bay-on', `\u25b8 ${bay.text}`) : bay.text);
+    });
+    if (!bays.length) text.textContent = S.printer.name;
   } else if (S.ambiguous) {
     dot.className = 'dot warn';
-    text.textContent = `${S.printers.length} printers — pick one`;
+    text.textContent = `${S.printers.length} printers \u2014 pick one`;
   } else {
     dot.className = 'dot bad';
     text.textContent = 'No printer';
@@ -267,7 +274,27 @@ function renderOneChip() {
   chip.setAttribute('data-tip',
     (S.printer ? S.printer.name : 'No printer found')
     + (loaded.length ? ` \u2014 ${loaded.join(', ')}` : '')
+    + (twin && S.printer ? `. Quick prints on the ${active} roll` : '')
     + '. Press for the Printer tab.');
+}
+
+/* Which bay a Quick print will use: the roll holding the picked stock, else
+ * the left bay \u2014 the same order the server resolves it in. */
+function activeSide() {
+  const id = $('quickStock') ? $('quickStock').value : '';
+  const roll = S.rolls.find((r) => r.stock === id && r.loaded)
+    || S.rolls.find((r) => r.stock === id);
+  return roll ? roll.side : 'left';
+}
+
+function updatePrintsOn() {
+  const line = $('quickPrintsOn');
+  if (!line) return;
+  const stock = stockById($('quickStock').value);
+  const twin = !S.printer || S.printer.twin;
+  line.textContent = stock
+    ? `Prints on: ${stock.name}${twin ? ` (${activeSide()})` : ''}` : '';
+  renderOneChip();
 }
 
 /* What you can print on: the stock that is actually in the printer.
@@ -411,6 +438,7 @@ function fillPickers() {
     S.fonts.some((f) => f.key === keptFont) ? keptFont : (S.fonts[0] || {}).key);
   updateTurnLines();
   quickSummary();
+  updatePrintsOn();
 
   if (!$('addBar').childElementCount) buildAddBar();
 }
@@ -569,9 +597,10 @@ function quickPayload(printIt) {
 }
 
 async function quickPreview() {
-  const text = $('quickText').value.trim();
+  const typed = $('quickText').value.trim();
+  const text = typed || 'Your text here';
   const image = $('quickPreview');
-  if (!text) {
+  if (!$('quickStock').value) {
     image.classList.remove('on');
     $('quickPlaceholder').hidden = false;
     $('quickFit').textContent = '';
@@ -579,7 +608,7 @@ async function quickPreview() {
   }
   const seq = ++quickSeq;
   try {
-    const data = await post('/api/quick', quickPayload(false));
+    const data = await post('/api/quick', { ...quickPayload(false), text });
     /* Out-of-order replies are the ordinary case here: this fires on every
      * keystroke and a longer word renders slower. Dropping a stale reply is
      * what stops the preview flicking back to what you typed two letters
@@ -588,10 +617,11 @@ async function quickPreview() {
     image.src = data.png;
     image.classList.add('on');
     $('quickPlaceholder').hidden = true;
-    $('quickFit').textContent =
-      `${data.fit.lines.length} line${data.fit.lines.length > 1 ? 's' : ''}, `
-      + `${data.fit.size_mm}mm tall`;
-    S.label = data.label;
+    $('quickFit').textContent = typed
+      ? `${data.fit.lines.length} line${data.fit.lines.length > 1 ? 's' : ''}, `
+        + `${data.fit.size_mm}mm tall`
+      : 'Sample \u2014 type above to replace it.';
+    if (typed) S.label = data.label;
     notes($('quickNotes'), data.notes);
   } catch (error) {
     if (seq !== quickSeq) return;
@@ -610,6 +640,7 @@ const debouncedQuick = () => { clearTimeout(quickTimer); quickTimer = setTimeout
     if (id === 'quickStock') {
       prefSet('bruhprint.stock', $('quickStock').value);
       updateTurnLines();
+      updatePrintsOn();
     }
     quickSummary();
     debouncedQuick();
@@ -1594,6 +1625,14 @@ async function templatePreview(template, inputs) {
 }
 
 /* ── Printer tab ────────────────────────────────────────────────────── */
+/* The four sections fold, and each remembers how the person left it. */
+document.querySelectorAll('.psec').forEach((d) => {
+  const kept = prefGet('bruhprint.sec.' + d.dataset.sec, null);
+  if (kept !== null) d.open = kept === '1';
+  d.addEventListener('toggle', () =>
+    prefSet('bruhprint.sec.' + d.dataset.sec, d.open ? '1' : '0'));
+});
+
 function renderPrinter() {
   const cards = $('printerCards');
   cards.innerHTML = '';
@@ -1626,14 +1665,17 @@ function renderPrinter() {
         + 'that does not carry one. Nothing here can work around that.'));
     const foot = el('div', 'foot');
     const mine = S.printer?.key === printer.key;
-    const use = el('button', 'btn tiny', mine ? 'In use' : 'Use this one');
+    /* The printer that is printing is a state, not a control: a disabled
+     * button said "In use" and could not be pressed. Another printer gets
+     * the button that moves printing to it. */
+    const use = mine
+      ? el('span', 'inuse', 'Printing now')
+      : el('button', 'btn tiny', 'Use this one');
     use.setAttribute('data-tip', mine
-      ? 'Everything prints to this one. It only matters when more than one '
-        + 'LabelWriter is plugged in — press another to move printing there.'
+      ? 'Everything prints to this printer.'
       : 'Send every print to this printer instead. Remembered by serial, so '
         + 'it survives a reboot that renumbers the USB bus.');
-    use.disabled = mine && S.printers.length < 2;
-    use.onclick = async () => {
+    if (!mine) use.onclick = async () => {
       try { await post('/api/printer/select', { printer: printer.key }); await loadState(); renderPrinter(); }
       catch (error) { fail(error); }
     };
@@ -3110,35 +3152,78 @@ function renderHistory() {
     list.append(el('p', 'lede', 'Nothing printed yet.'));
     return;
   }
-  for (const entry of S.history) {
+  for (const group of historyGroups(S.history)) {
+    const entry = group[0];
+    const count = group.reduce((n, e) => n + e.copies, 0);
     const row = el('div', 'hrow');
-    row.append(el('span', 'when', new Date(entry.at * 1000)
-      .toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })));
-    row.append(el('span', 'what', entry.title));
+    const text = el('div', 'htext');
+    text.append(el('span', 'what', historyTitle(group)));
     const stock = stockById(entry.stock);
-    row.append(el('span', 'meta',
-      `${entry.copies}× · ${entry.side} · ${stock ? stock.name : entry.stock}`
-      + (entry.template ? ` · ${entry.template}` : '')));
-    row.append(el('span', 'spacer'));
+    const when = (e) => new Date(e.at * 1000).toLocaleString([],
+      { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    text.append(el('span', 'meta',
+      `${when(entry)} \u00b7 ${group.length > 1 ? `${count} labels` : `${count}\u00d7`}`
+      + ` ${entry.side} \u00b7 ${stock ? stock.name : entry.stock}`));
+    const buttons = el('div', 'hbtns');
     const again = el('button', 'btn tiny', 'Print again');
     /* The Printed tab's lede used to say this and nothing else. A sentence
      * that describes a button belongs on the button. */
-    again.setAttribute('data-tip',
-      'Prints exactly this label again — same words, same stock, same roll.');
+    again.setAttribute('data-tip', group.length > 1
+      ? 'Prints every label of this batch again \u2014 same words, same stock, same roll.'
+      : 'Prints exactly this label again \u2014 same words, same stock, same roll.');
     again.onclick = async () => {
+      if (group.length > 1 && !confirm(`Print these ${count} labels again?`)) return;
       try {
-        const data = await post(`/api/history/${entry.id}/reprint`, {});
-        toast(`Printed ${data.printed} on the ${data.side} roll.`, 'good');
+        let data = null;
+        /* Oldest first, so the batch comes out in the order it went in. */
+        for (const e of [...group].reverse())
+          data = await post(`/api/history/${e.id}/reprint`, {});
+        toast(group.length > 1 ? `Printed ${count} labels.`
+          : `Printed ${data.printed} on the ${data.side} roll.`, 'good');
         await loadState(); renderHistory();
       } catch (error) { fail(error); }
     };
     const open = el('button', 'btn tiny', 'Open');
-    open.setAttribute('data-tip',
-      'Opens this label in the designer with every field already filled in.');
-    open.onclick = () => { loadLabel(structuredClone(entry.label)); show('design'); };
-    row.append(again, open);
+    open.setAttribute('data-tip', group.length > 1
+      ? 'Opens the first label of this batch in the designer.'
+      : 'Opens this label in the designer with every field already filled in.');
+    const first = group[group.length - 1];
+    open.onclick = () => { loadLabel(structuredClone(first.label)); show('design'); };
+    buttons.append(again, open);
+    row.append(text, buttons);
     list.append(row);
   }
+}
+
+/* Prints made in one go are one row. A batch is decided by structure: the
+ * same template (or, with none, the same title), on the same stock and roll,
+ * each print within ten minutes of the one before it. Newest first, as the
+ * store keeps them. */
+const BATCH_GAP_S = 600;
+function historyGroups(entries) {
+  const key = (e) => `${e.template ? 't' : 'w'}|${e.template || e.title}|${e.stock}|${e.side}`;
+  const groups = [];
+  for (const entry of entries) {
+    const last = groups[groups.length - 1];
+    const prev = last && last[last.length - 1];
+    if (prev && key(prev) === key(entry) && prev.at - entry.at <= BATCH_GAP_S) last.push(entry);
+    else groups.push([entry]);
+  }
+  return groups;
+}
+
+/* "Lesson 47\u201357" when the titles differ only in a trailing number, the
+ * template's name otherwise. */
+function historyTitle(group) {
+  const entry = group[0];
+  if (group.length < 2) return entry.title;
+  const parts = group.map((e) => /^(.*?)(\d+)\s*$/.exec(String(e.title)));
+  if (parts.every((m) => m && m[1] === parts[0][1])) {
+    const nums = parts.map((m) => Number(m[2]));
+    const low = Math.min(...nums), high = Math.max(...nums);
+    return low === high ? entry.title : `${parts[0][1]}${low}\u2013${high}`;
+  }
+  return entry.template || entry.title;
 }
 
 $('clearHistory').addEventListener('click', async () => {
@@ -3152,6 +3237,7 @@ $('clearHistory').addEventListener('click', async () => {
   try {
     await loadState();
     loadLabel(null);
+    quickPreview();
     /* The disclosure is a phone's answer to a phone's problem. On a wide
      * screen the whole form fits beside the picture and always did, so it
      * opens once at boot — and only at boot, because a person who shut it
