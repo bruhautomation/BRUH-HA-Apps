@@ -399,3 +399,15 @@ async def test_saved_presets_are_loaded_and_bad_ones_skipped(
     message = await subscribe(await hass_ws_client(hass))
     custom = [preset for preset in message["presets"] if not preset["builtin"]]
     assert [preset["name"] for preset in custom] == ["Toast it"]
+
+
+async def test_a_sous_vide_preset_cooks_the_whole_degree_it_shows(
+    hass: HomeAssistant, entry: MockConfigEntry, socket: FakeSocket, hass_ws_client
+) -> None:
+    hass.config.units = US_CUSTOMARY_SYSTEM
+    ws = await hass_ws_client(hass)
+    await push(hass, socket, csj("IDLE", 0))
+    joule = device_id(hass, JOULE)
+    assert (await command(ws, "apply_preset", device_id=joule, preset_id="steak_medium_rare"))["success"]
+    # 56 °C is 132.8 °F, shown as 133 °F: 133 °F is what is sent.
+    assert round(entry.runtime_data.appliances[JOULE].settings.temperature_c * 9 / 5 + 32, 1) == 133.0

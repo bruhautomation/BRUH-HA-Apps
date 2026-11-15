@@ -7,6 +7,7 @@ from collections import deque
 from collections.abc import Awaitable
 import contextlib
 from dataclasses import dataclass, field
+from datetime import datetime
 import logging
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -100,6 +101,24 @@ class Appliance:
     messages: deque[dict[str, Any]] = field(
         default_factory=lambda: deque(maxlen=MESSAGE_LOG_SIZE)
     )
+    # When the appliance last reported itself online, and since when it has not.
+    last_contact: datetime | None = None
+    offline_since: datetime | None = None
+    # The latest cook seen: when it started and ended, and what it was set to.
+    last_cook: dict[str, Any] | None = None
+
+
+def _ago(seconds: float) -> str:
+    """How long, in words a person reads: "under a minute", "12 min", "3 h 5 min", "2 days"."""
+    minutes = int(seconds // 60)
+    if minutes < 1:
+        return "under a minute"
+    if minutes < 60:
+        return f"{minutes} min"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 48:
+        return f"{hours} h {minutes} min" if minutes else f"{hours} h"
+    return f"{hours // 24} days"
 
 
 class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
@@ -123,14 +142,61 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         self._tracker = StateTracker()
         self._socket: ApplianceSocket | None = None
         self._unsupported: set[str] = set()
+        # What the integration observes about the way to the appliance: Breville
+        # turning the sign-in down, or the cloud connection being down, and since when.
+        self.auth_failed = False
+        self.problem_since: datetime | None = dt_util.utcnow()
+
+    @callback
+    def _note_path(self) -> None:
+        """Track since when the way to the appliances has been down."""
+        if self.connected and not self.auth_failed:
+            self.problem_since = None
+        elif self.problem_since is None:
+            self.problem_since = dt_util.utcnow()
+
+    def offline_report(self, appliance: Appliance) -> dict[str, Any] | None:
+        """Why an appliance is offline and one thing to try; None while it is online.
+
+        Decided from what is observed: Breville turning the sign-in down (an
+        authentication error), the cloud connection being down (the websocket
+        will not connect), or the connection being fine while the appliance
+        reports itself offline.
+        """
+        if self.connected and not self.auth_failed and appliance.status.online:
+            return None
+        if self.auth_failed:
+            cause = "sign_in"
+            since = self.problem_since
+            why = "Breville is not accepting the saved sign-in"
+            fix = "Sign in again: open Settings > Devices & services > BRUH Cooking and choose Reconfigure or the sign-in notice"
+        elif not self.connected:
+            cause = "cloud"
+            since = self.problem_since
+            why = "Home Assistant cannot reach Breville's cloud"
+            fix = "Check that Home Assistant has internet access; it reconnects by itself"
+        else:
+            cause = "device"
+            since = appliance.offline_since
+            why = "Breville's cloud is reachable and the sign-in works, but the appliance is not answering"
+            fix = "Check that the appliance is plugged in and on Wi-Fi, and that the Breville app shows it online"
+        since = since or self.problem_since or dt_util.utcnow()
+        age = max(0.0, (dt_util.utcnow() - since).total_seconds())
+        return {
+            "cause": cause,
+            "since": since.isoformat(timespec="seconds"),
+            "text": f"Offline for {_ago(age)}. {why}. To try: {fix}.",
+        }
 
     async def _async_update_data(self) -> dict[str, Appliance]:
         try:
             result = await self.client.get_appliances()
         except BrevilleAuthError as err:
+            self._set_auth_failed(True)
             raise ConfigEntryAuthFailed(str(err)) from err
         except (BrevilleError, aiohttp.ClientError, TimeoutError) as err:
             raise UpdateFailed(f"Error fetching appliances: {err}") from err
+        self._set_auth_failed(False)
 
         added = []
         listed: set[str] = set()
@@ -149,6 +215,7 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
                     serial, model, raw.get("name"), raw.get("itemNumber"),
                     default_settings(model),
                 )
+                _LOGGER.info("Found %s on the account", MODELS[model].product)
                 added.append(appliance)
             elif raw.get("name"):
                 appliance.name = raw["name"]
@@ -192,6 +259,7 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
                     self._handle_message(msg)
                 _LOGGER.debug("Websocket closed by the server")
             except BrevilleAuthError:
+                self._set_auth_failed(True)
                 _LOGGER.warning("Breville session expired; re-authentication required")
                 self.config_entry.async_start_reauth(self.hass)
                 return
@@ -210,7 +278,43 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
     def _set_connected(self, connected: bool) -> None:
         if self.connected != connected:
             self.connected = connected
+            _LOGGER.info(
+                "Connection to Breville's cloud is %s", "up" if connected else "down"
+            )
+            self._note_path()
+            if connected:
+                self._set_auth_failed(False)
             self.async_update_listeners()
+
+    @callback
+    def _set_auth_failed(self, failed: bool) -> None:
+        if self.auth_failed != failed:
+            self.auth_failed = failed
+            _LOGGER.info("Breville sign-in %s", "was refused" if failed else "works")
+            self._note_path()
+
+    @callback
+    def _track(self, appliance: Appliance, before: ApplianceStatus) -> None:
+        """Log and remember what changed: online or offline, a cook starting or stopping."""
+        status, now = appliance.status, dt_util.utcnow()
+        product = MODELS[appliance.model].product
+        if status.online:
+            appliance.last_contact = now
+        if status.online != before.online:
+            appliance.offline_since = None if status.online else now
+            _LOGGER.info("%s is %s", product, "online" if status.online else "offline")
+        if status.active and not before.active:
+            appliance.last_cook = {
+                "started_at": now.isoformat(timespec="seconds"),
+                "ended_at": None,
+                "target_temperature_c": status.target_temp_c,
+                "duration_s": status.cook_time_s,
+            }
+            _LOGGER.info("A cook started on the %s", product)
+        elif before.active and not status.active:
+            if appliance.last_cook is not None and not appliance.last_cook.get("ended_at"):
+                appliance.last_cook["ended_at"] = now.isoformat(timespec="seconds")
+            _LOGGER.info("The cook on the %s stopped", product)
 
     @callback
     def _handle_message(self, msg: Any) -> None:
@@ -228,7 +332,9 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
             return
         appliance.state = self._tracker.state(update.serial)
         firmware = appliance.status.firmware
+        before = appliance.status
         appliance.status = parse_status(appliance.model, appliance.state, previous=appliance.status)
+        self._track(appliance, before)
         if appliance.status.firmware and appliance.status.firmware != firmware:
             self._update_sw_version(appliance)
         self.async_update_listeners()
@@ -357,6 +463,7 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         try:
             return await request
         except BrevilleAuthError as err:
+            self._set_auth_failed(True)
             self.config_entry.async_start_reauth(self.hass)
             raise HomeAssistantError(
                 translation_domain=DOMAIN, translation_key="auth_expired"

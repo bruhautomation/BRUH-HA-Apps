@@ -258,6 +258,14 @@ def describe(
             "auto_start_timer": settings.auto_start_timer,
         },
     }
+    out["last_contact"] = (
+        appliance.last_contact.isoformat(timespec="seconds") if appliance.last_contact else None
+    )
+    out["last_cook"] = appliance.last_cook
+    if (report := coordinator.offline_report(appliance)) is not None:
+        out["offline_cause"] = report["cause"]
+        out["offline_since"] = report["since"]
+        out["offline_reason"] = report["text"]
     if info.kind.value == "oven":
         out["mode"] = status.cook_mode or status.mode
         out["convection"] = status.convection

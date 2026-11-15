@@ -224,9 +224,13 @@ def applied_settings(
         return oven_settings(preset.settings, current, fahrenheit=fahrenheit)
     seconds = preset.settings.get("duration_s") or None
     low, high = temp_limits(model)
+    celsius = float(preset.settings["temperature_c"])
+    if fahrenheit:
+        # The panel shows a whole °F, so that is what cooks: round the °F value, then back.
+        celsius = fahrenheit_to_celsius(round(celsius * 9 / 5 + 32))
     return replace(
         current,
-        temperature_c=min(high, max(low, float(preset.settings["temperature_c"]))),
+        temperature_c=min(high, max(low, celsius)),
         duration_s=seconds,
     )
 
