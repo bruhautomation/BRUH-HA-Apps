@@ -476,6 +476,8 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
   cursor: pointer; color: var(--ink); font: inherit;
 }
 .card:hover { border-color: var(--accent); }
+.card .tap { margin-left: auto; font-size: 12.5px; color: var(--accent); font-weight: 600; }
+.tname { margin: 0; font-size: 13px; }
 .card.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .card h3 { margin: 0 0 3px; font-size: 15px; }
 .card .sub { font-size: 12.5px; color: var(--ink-2); }
@@ -512,11 +514,16 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
  * the select resolved against the width the select had itself caused.
  * Measured: 413px of page in a 390px window. */
 .strow {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  min-width: 0;
+  display: grid; gap: 10px; min-width: 0;
   padding: 10px 12px; background: var(--panel); border: 1px solid var(--line);
   border-radius: 10px;
 }
+/* The facts about the stock and the controls for it are two rows of a grid,
+ * so a wrapping control can never land on a fact. */
+.strow .sthead { display: flex; align-items: center; gap: 4px 10px;
+  flex-wrap: wrap; min-width: 0; }
+.strow .stctl { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  min-width: 0; }
 .strow .nm { font-weight: 600; }
 .strow .dim { font-variant-numeric: tabular-nums; color: var(--ink-2);
   font-size: 13px; }
@@ -549,6 +556,10 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 }
 .addstock { background: var(--panel); border: 1px solid var(--line);
   border-radius: var(--radius); padding: 12px 14px; }
+.addgrid { display: grid; gap: 0 10px; margin-top: 4px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); }
+.addgrid .field { min-width: 0; margin-bottom: 12px; }
+.addgrid input, .addgrid input[type="number"] { max-width: none; }
 .addstock summary { cursor: pointer; font-weight: 600; min-height: 44px;
   display: flex; align-items: center; }
 .psec > summary { list-style: none; cursor: pointer; min-height: 44px;
@@ -559,7 +570,8 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 .psec[open] > summary::before { transform: rotate(90deg); }
 .psec > summary h2 { margin: 0; }
 .inuse { display: inline-flex; align-items: center; min-height: 40px;
-  padding: 0 4px; font-size: 14px; font-weight: 600; color: var(--good); }
+  padding: 0 4px; font-size: 14px; font-weight: 600; color: var(--ink-2); }
+.inuse.busy { color: var(--accent); }
 .settings { display: grid; gap: 10px; }
 /* The USB dump: fixed-width, and it scrolls inside itself rather than
    taking the dialog's width with it. */
@@ -571,16 +583,16 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 .hlist { display: grid; gap: 8px; margin-bottom: 14px; }
 .hrow {
   display: flex; align-items: center; gap: 10px; justify-content: space-between;
-  padding: 7px 10px; background: var(--panel); border: 1px solid var(--line);
-  border-radius: 10px;
+  flex-wrap: wrap; padding: 8px 10px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 10px;
 }
-.hrow .htext { display: grid; min-width: 0; flex: 1 1 auto; }
+/* A title and a date are read whole: they wrap, they are never cut. */
+.hrow .htext { display: grid; min-width: 0; flex: 1 1 220px; }
 .hrow .what { font-weight: 550; min-width: 0; line-height: 1.3;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hrow .meta { font-size: 12.5px; color: var(--ink-2); line-height: 1.3;
-  font-variant-numeric: tabular-nums; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; }
-.hrow .hbtns { display: flex; gap: 6px; flex: none; }
+  overflow-wrap: anywhere; }
+.hrow .meta { font-size: 12.5px; color: var(--ink-2); line-height: 1.35;
+  font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.hrow .hbtns { display: flex; gap: 6px; flex: none; flex-wrap: wrap; }
 
 .tform { display: grid; gap: 10px; padding-bottom: 4px; }
 
@@ -771,6 +783,19 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 .calbay { display: grid; gap: 8px; margin-top: 10px;
   padding-top: 10px; border-top: 1px solid var(--line-2); }
 .calstate { margin: 0; font-size: 13px; color: var(--ink-2); }
+.calstate p { margin: 0; }
+.calverdict.good { font-size: 15px; font-weight: 600; color: var(--good); }
+.caldetail > summary { cursor: pointer; min-height: 40px; display: flex;
+  align-items: center; font-size: 13px; color: var(--ink-2); }
+.caldetail > summary { list-style: none; gap: 6px; }
+.caldetail > summary::-webkit-details-marker { display: none; }
+.caldetail > summary::before { content: "\25b8"; font-size: 12px; color: var(--ink-3); }
+.caldetail[open] > summary::before { content: "\25be"; }
+.caldetail > p { padding-bottom: 6px; }
+/* Forget throws a measurement away: it sits apart from the harmless check
+   label, on a line of its own, and is a real target. */
+.calbay .forgetcal { justify-self: start; min-height: 40px; margin-top: 6px; }
+.baynote { margin: 10px 0 0; }
 
 /* The wizard. `.calsplit` is one column on a phone and two above 640px:
    the drawing has to be ON the screen you are typing into, and at 390px
