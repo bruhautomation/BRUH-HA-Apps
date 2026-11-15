@@ -298,6 +298,31 @@ def forecast_days(daily, hourly, *, now: float, tz, unit: str = "°C") -> list[d
     return out
 
 
+# How far ahead the hourly temperatures are kept for the checks
+# (`checks.thermal.frost_ahead`): tonight and tomorrow night.
+HOURS_KEPT = 48
+
+
+def forecast_hours(hourly, *, now: float, tz, unit: str = "°C") -> list[dict]:
+    """The hourly forecast's temperatures from now on, as the checks read
+    them: ``{"t", "temp", "date", "hm"}``, the local date and time worked
+    out here, where the house's timezone is known."""
+    end = now + HOURS_KEPT * 3600
+    out = []
+    for row in hourly or []:
+        if not isinstance(row, dict):
+            continue
+        when, temp = _ts(row.get("datetime")), _num(row.get("temperature"))
+        if when is None or temp is None or when < now - 3600 or when > end:
+            continue
+        local = dt.datetime.fromtimestamp(when, tz or dt.timezone.utc)
+        out.append({"t": int(when), "temp": round(temp, 1),
+                    "date": local.strftime("%Y-%m-%d"),
+                    "hm": local.strftime("%H:%M"), "hour": local.hour})
+    out.sort(key=lambda r: r["t"])
+    return out
+
+
 def _c(value: float, fahrenheit: bool) -> float:
     return (value - 32.0) * 5.0 / 9.0 if fahrenheit else value
 

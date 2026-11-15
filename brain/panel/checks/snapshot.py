@@ -140,6 +140,10 @@ and so cannot clear anything):
                     rooms and their outdoor reference. Unavailable with no
                     outdoor temperature sensor, which is not a fault: every
                     number in it is a difference from outside
+    forecast       {hourly: [{t, temp, date, hm, hour}], unit, built_at} —
+                    the weather's hourly forecast from the occasions read
+                    (twice a day). Unavailable with no hourly forecast, or
+                    one older than a day and a half
     actions        {actions, overrides, counts} — the last LOGBOOK_HOURS of
                     the logbook, with every state change filed under what
                     caused it. Unavailable when the logbook integration is
@@ -178,6 +182,8 @@ STATS_DAYS = 7
 # lunchtime, short enough to be a handful of rows per sensor.
 APPLIANCE_HOURS = 14
 THERMAL_HOURS = 4
+# How old the stored hourly forecast may be and still be read as tonight's.
+FORECAST_FRESH_S = 36 * 3600
 BATTERY_DAYS = 60
 # Statistics are one WebSocket call per batch; keep a batch to what the
 # recorder answers comfortably on a Pi.
@@ -956,6 +962,26 @@ async def collect(now: float | None = None) -> dict:
           "" if snap["closures"].get("entities") else
           "brAIn has not measured what is normally open here yet — the "
           "first pass runs overnight")
+
+    # The weather forecast hour by hour, as the occasions read last left it
+    # (twice a day): read, never fetched here. Older than a day and a half
+    # is not a forecast for tonight any more.
+    try:
+        import occasions  # noqa: PLC0415 — panel-local, a leaf
+        told = occasions.load()
+        hours = [r for r in told.get("hourly") or ()
+                 if isinstance(r, dict) and float(r.get("t") or 0) >= now - 3600]
+        fresh = now - float(told.get("built_at") or 0) < FORECAST_FRESH_S
+        snap["forecast"] = {"hourly": hours if fresh else [],
+                            "unit": str(told.get("unit") or "°C"),
+                            "built_at": told.get("built_at") or 0}
+        _mark("forecast", bool(hours and fresh),
+              "" if hours and fresh else
+              "no hourly weather forecast has been read in the last day "
+              "and a half")
+    except Exception as exc:  # noqa: BLE001
+        snap["forecast"] = {"hourly": [], "unit": "°C", "built_at": 0}
+        _mark("forecast", False, str(exc))
 
     snap["baselines"] = baselines.load()
     _mark("baselines", bool(snap["baselines"].get("entities")),

@@ -17733,7 +17733,12 @@ async def _occasions_read(reason: str, pressed: bool,
     new_store = {"built_at": int(now), "reason": reason,
                  "occasions": found, "weather": weather_id,
                  "calendars": calendars, "events": len(events),
-                 "filed": filed, "errors": errors}
+                 "filed": filed, "errors": errors,
+                 # The next two nights hour by hour, for the frost check
+                 # (`checks.thermal.frost_ahead`), which reads this store.
+                 "hourly": occasions.forecast_hours(hourly, now=now, tz=tz,
+                                                    unit=unit),
+                 "unit": "°F" if "f" in str(unit or "").lower() else "°C"}
     await asyncio.to_thread(occasions.save, new_store)
     OCCASIONS_STATE["last"] = {k: new_store[k] for k in
                                ("built_at", "reason", "weather", "events",
