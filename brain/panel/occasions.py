@@ -303,10 +303,49 @@ def forecast_days(daily, hourly, *, now: float, tz, unit: str = "°C") -> list[d
 HOURS_KEPT = 48
 
 
-def forecast_hours(hourly, *, now: float, tz, unit: str = "°C") -> list[dict]:
+def forecast_hours(hourly, *, now: float, tz, unit: str = "°C",
+                   daily=None) -> list[dict]:
     """The hourly forecast's temperatures from now on, as the checks read
     them: ``{"t", "temp", "date", "hm"}``, the local date and time worked
-    out here, where the house's timezone is known."""
+    out here, where the house's timezone is known.
+
+    A provider that gives only a daily (or twice-daily) forecast has no
+    hours to keep, so each of its days' lows stands in as one row at six
+    in the morning, the usual coldest hour: the frost check runs on a
+    forecast low as it does on an hourly one. Hourly rows, where there
+    are any, are always what is read."""
+    out = _hour_rows(hourly, now, tz)
+    if not out:
+        out = _low_rows(daily, now, tz) or _low_rows(hourly, now, tz)
+    return out
+
+
+def _low_rows(rows, now: float, tz) -> list[dict]:
+    end = now + HOURS_KEPT * 3600
+    zone = tz or dt.timezone.utc
+    out = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        when, low = _ts(row.get("datetime")), _num(row.get("templow"))
+        if when is None or low is None:
+            continue
+        day = dt.datetime.fromtimestamp(when, zone)
+        date = day.date()
+        # A night half-day stamped in the evening has its low the next morning.
+        if row.get("is_daytime") is False and day.hour >= 12:
+            date += dt.timedelta(days=1)
+        at = dt.datetime.combine(date, dt.time(6, 0), tzinfo=zone)
+        t = at.timestamp()
+        if t < now - 3600 or t > end:
+            continue
+        out.append({"t": int(t), "temp": round(low, 1),
+                    "date": date.isoformat(), "hm": "06:00", "hour": 6})
+    out.sort(key=lambda r: r["t"])
+    return out
+
+
+def _hour_rows(hourly, now: float, tz) -> list[dict]:
     end = now + HOURS_KEPT * 3600
     out = []
     for row in hourly or []:
