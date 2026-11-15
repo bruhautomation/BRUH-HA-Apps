@@ -130,7 +130,7 @@ export function GlobalSearch({
     return (
       <button
         onClick={() => setOpen(true)}
-        className="topbar-ctl flex items-center justify-center w-10 h-10 rounded-full bg-card/90 backdrop-blur-sm text-muted-foreground ring-1 ring-black/[0.06] shadow-sm hover:ring-emerald-300 hover:text-leaf transition-all"
+        className="topbar-ctl flex items-center justify-center w-10 h-10 rounded-full bg-card/90 backdrop-blur-sm text-muted-foreground ring-1 ring-black/[0.06] shadow-sm hover:ring-emerald-300 hover:text-emerald-700 transition-all"
         title="Search (⌘K)"
       >
         <Search className="w-4 h-4" />
@@ -202,7 +202,7 @@ export function GlobalSearch({
                           r.type === 'product'
                             ? 'bg-violet-50 text-violet-600'
                             : r.type === 'crop'
-                              ? 'bg-emerald-50 text-leaf'
+                              ? 'bg-emerald-50 text-emerald-600'
                               : r.type === 'problem'
                                 ? 'bg-amber-50 text-warn'
                                 : 'bg-sky-50 text-sky-600'

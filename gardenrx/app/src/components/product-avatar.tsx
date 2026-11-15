@@ -18,7 +18,7 @@ import { withBase } from '@/lib/base-path';
 const TYPE_STYLE: Record<AvatarType, { tile: string; icon: LucideIcon; fg: string }> = {
   fungicide: { tile: 'bg-violet-50 ring-violet-200/60', icon: ShieldHalf, fg: 'text-violet-600' },
   insecticide: { tile: 'bg-sky-50 ring-sky-200/60', icon: Bug, fg: 'text-sky-600' },
-  herbicide: { tile: 'bg-emerald-50 ring-emerald-200/60', icon: Leaf, fg: 'text-leaf' },
+  herbicide: { tile: 'bg-emerald-50 ring-emerald-200/60', icon: Leaf, fg: 'text-emerald-600' },
   bactericide: { tile: 'bg-teal-50 ring-teal-200/60', icon: Droplets, fg: 'text-teal-600' },
   combo: { tile: 'bg-fuchsia-50 ring-fuchsia-200/60', icon: SprayCan, fg: 'text-fuchsia-600' },
 };

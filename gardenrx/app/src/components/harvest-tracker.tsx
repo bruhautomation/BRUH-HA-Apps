@@ -101,7 +101,6 @@ export function HarvestTracker({
 }: Props) {
   const router = useRouter();
   const [logOpen, setLogOpen] = useState(false);
-  const [openPick, setOpenPick] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; label: string } | null>(null);
 
@@ -340,7 +339,7 @@ export function HarvestTracker({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-24">
       {/* ── Season total ── */}
       {(() => {
         const net = grandValue - sprayCost;
@@ -415,7 +414,7 @@ export function HarvestTracker({
       <HarvestCharts byCrop={byCrop} events={events} />
 
       {/* ── Recent picks (editable table) ── */}
-      <section className="pb-20">
+      <section>
         <div className="flex items-baseline justify-between mb-2">
           <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground">
             Picks log
@@ -433,99 +432,7 @@ export function HarvestTracker({
           </div>
         ) : (
           <div className="rounded-xl bg-card ring-1 ring-black/[0.05] overflow-hidden">
-            {/* Phone: one compact row per pick (name, date, amount); tap to edit. */}
-            <ul className="divide-y divide-border/40 sm:hidden">
-              {sortedRows.map((h) => {
-                const c = cropForHarvest(h);
-                const v = h.variety_id ? varietyMap.get(h.variety_id) : null;
-                const val = harvestValue(h);
-                const phi = phiViolation(c?.id, h.harvested_at);
-                const open = openPick === h.id;
-                const date = new Date(h.harvested_at).toLocaleDateString('en-US', {
-                  month: 'short',
-                  day: 'numeric',
-                  timeZone: 'UTC',
-                });
-                return (
-                  <li key={h.id}>
-                    <button
-                      type="button"
-                      onClick={() => setOpenPick(open ? null : h.id)}
-                      aria-expanded={open}
-                      className="flex w-full items-center gap-2.5 px-3 py-2 text-left"
-                    >
-                      <CropAvatar
-                        name={c?.name ?? ''}
-                        group={groupNameFor(c)}
-                        size={28}
-                        className="shrink-0"
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="flex items-center gap-1 font-medium">
-                          <span className="truncate">
-                            {c?.name ?? 'Unknown'}
-                            {v ? ` (${v.name})` : ''}
-                          </span>
-                          {phi && <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-terra-600" />}
-                        </span>
-                        <span className="block text-xs text-muted-foreground">
-                          {date}
-                          {val > 0 ? ` · ${fmtMoney(val)}` : ''}
-                        </span>
-                      </span>
-                      <span className="shrink-0 font-medium tabular-nums">
-                        {fmtAmount(Number(h.weight), h.unit)}
-                      </span>
-                    </button>
-                    {open && (
-                      <div className="flex flex-wrap items-center gap-2 px-3 pb-3">
-                        <input
-                          type="date"
-                          value={dateInputValue(h.harvested_at)}
-                          onChange={(e) => {
-                            const d = e.target.value;
-                            if (DATE_RE.test(d)) {
-                              const yr = Number(d.slice(0, 4));
-                              if (yr >= 2000 && yr <= 2100)
-                                patchHarvest(h.id, { harvested_at: isoFromDate(d) });
-                            }
-                          }}
-                          className="h-10 text-base rounded-md ring-1 ring-border/50 bg-card px-1.5"
-                        />
-                        <NumberCell
-                          value={Number(h.weight)}
-                          onCommit={(n) => patchHarvest(h.id, { weight: n })}
-                        />
-                        <select
-                          value={h.unit}
-                          onChange={(e) => patchHarvest(h.id, { unit: e.target.value })}
-                          className="h-10 text-base rounded-md ring-1 ring-border/50 bg-card pl-1 pr-0.5"
-                        >
-                          {UNITS.map((u) => (
-                            <option key={u} value={u}>
-                              {u}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setDeleteConfirm({
-                              id: h.id,
-                              label: `${c?.name ?? 'harvest'} (${fmtAmount(Number(h.weight), h.unit)})`,
-                            })
-                          }
-                          className="ml-auto inline-flex items-center gap-1.5 rounded-md px-3 text-sm font-medium text-terra-600"
-                        >
-                          <Trash2 className="w-4 h-4" /> Delete
-                        </button>
-                      </div>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-            <div className="hidden overflow-x-auto sm:block">
+            <div className="overflow-x-auto">
               <table className="block w-full text-sm sm:table">
                 <thead className="hidden sm:table-header-group">
                   <tr className="text-left text-[10px] font-medium tracking-widest uppercase text-muted-foreground/60 border-b border-border/50">
@@ -636,7 +543,7 @@ export function HarvestTracker({
               </table>
             </div>
             <p className="text-[10px] text-muted-foreground/50 px-3 py-1.5 border-t border-border/40">
-              Tap a pick to edit its date, amount or unit.
+              Tap any date, amount, or unit to edit inline.
             </p>
           </div>
         )}

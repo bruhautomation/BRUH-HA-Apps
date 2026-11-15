@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { Product, ActiveIngredient, Database } from '@/lib/database.types';
 import { createClient } from '@/lib/db/client';
-import { Plus, Trash2, Search, X, Package, ExternalLink, ArrowDownUp, Pencil } from 'lucide-react';
+import { Plus, Trash2, Search, X, Package, ExternalLink, ArrowDownUp } from 'lucide-react';
 import { ACTIVE_PRODUCT_IDS } from '@/config/active-products';
 import { ProductAvatar } from '@/components/product-avatar';
 import { avatarTypeFor } from '@/lib/product-visual';
@@ -169,13 +169,6 @@ export function InventoryList({
   const [saving, setSaving] = useState(false);
   const [areaFilter, setAreaFilter] = useState<CropCategory | null>(null);
   const [sortBy, setSortBy] = useState<SortKey>('name');
-  const [editing, setEditing] = useState<Set<number>>(new Set());
-  const toggleEditing = (id: number) =>
-    setEditing((prev) => {
-      const next = new Set(prev);
-      if (!next.delete(id)) next.add(id);
-      return next;
-    });
 
   const aiNames = (id: number) => (ingredients[id] ?? []).map((i) => i.name).join(' + ');
   const avatarType = (id: number) => avatarTypeFor((ingredients[id] ?? []).map((i) => i.type));
@@ -348,10 +341,10 @@ export function InventoryList({
   }
 
   const numCls =
-    'w-24 h-10 text-right text-base tabular-nums rounded-md ring-1 ring-border/50 bg-card px-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-400/50';
+    'w-14 h-7 text-right text-sm tabular-nums rounded-md ring-1 ring-border/50 bg-card px-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-400/50';
   const unitCls =
-    'h-10 text-base rounded-md ring-1 ring-border/50 bg-card pl-1 pr-0.5 focus:outline-none';
-  const lblCls = 'text-xs font-medium text-muted-foreground';
+    'h-7 text-xs rounded-md ring-1 ring-border/50 bg-card pl-1 pr-0.5 focus:outline-none';
+  const lblCls = 'text-[10px] font-medium uppercase tracking-wide text-muted-foreground/60';
 
   const renderCard = (inv: StockItem, dimmed = false) => {
     const product = inv.product;
@@ -359,7 +352,6 @@ export function InventoryList({
     const noun = containerNoun(form);
     const bottleCount = inv.bottles && inv.bottles > 0 ? inv.bottles : 1;
     const pct = inv.pct;
-    const open = editing.has(inv.id);
     return (
       <div
         key={inv.id}
@@ -379,29 +371,64 @@ export function InventoryList({
           <div className="min-w-0 flex-1">
             <Link
               href={`/products/${product.id}`}
-              className="font-medium text-sm line-clamp-2 break-words hover:text-emerald-800 transition-colors leading-tight"
+              className="font-medium text-sm truncate block hover:text-emerald-800 transition-colors leading-tight"
             >
               {product.brand}
             </Link>
             {aiNames(product.id) && (
-              <span className="text-xs text-muted-foreground line-clamp-1 block">
+              <span className="text-[10px] text-muted-foreground truncate block">
                 {aiNames(product.id)}
               </span>
             )}
           </div>
-          <button
-            onClick={() => toggleEditing(inv.id)}
-            aria-expanded={open}
-            aria-label={`${open ? 'Done editing' : 'Edit'} ${product.brand}`}
-            className={`grid size-10 shrink-0 place-items-center rounded-full transition-colors ${
-              open
-                ? 'bg-emerald-100 text-emerald-800'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            {open ? <X className="w-4 h-4" /> : <Pencil className="w-4 h-4" />}
-          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            {product.price_dollars != null && (
+              <a
+                href={
+                  product.retail_url ??
+                  `https://www.amazon.com/s?k=${encodeURIComponent(product.brand)}`
+                }
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-muted-foreground/40 hover:text-emerald-600 transition-colors p-1"
+                title={`Reorder · $${Number(product.price_dollars).toFixed(2)}`}
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            )}
+            <button
+              onClick={() => removeFromInventory(inv.id)}
+              className="text-muted-foreground/40 hover:text-terra-500 transition-colors p-1"
+              title="Remove"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
+
+        {/* area badges — what this treatment is for */}
+        {inv.areas.length > 0 && (
+          <div className="flex flex-wrap gap-1 mb-2">
+            {inv.areas.map((a) => {
+              const Icon = AREA_STYLE[a].icon;
+              return (
+                <button
+                  key={a}
+                  onClick={() => setAreaFilter(areaFilter === a ? null : a)}
+                  className={`inline-flex items-center gap-1 rounded-full text-[10px] font-medium px-1.5 py-0.5 ring-1 transition-colors ${
+                    areaFilter === a
+                      ? AREA_STYLE[a].chip
+                      : `${AREA_STYLE[a].badge} hover:brightness-95`
+                  }`}
+                  title={`Filter by ${a}`}
+                >
+                  <Icon className="w-2.5 h-2.5" />
+                  {a}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* how much is left — drag the bar to set the level (quantity is derived) */}
         <StockSlider
@@ -409,114 +436,72 @@ export function InventoryList({
           capacity={inv.capacity}
           onCommit={(qty) => updateField(inv.id, 'quantity', qty)}
         />
-        <p className="text-xs text-muted-foreground mt-1 tabular-nums">
+        <p className="text-[10px] text-muted-foreground/60 mb-2.5 mt-1 tabular-nums">
           {inv.capacity != null
             ? `${+inv.quantity.toFixed(2)} of ${+inv.capacity.toFixed(2)} ${inv.unit} · ${bottleCount} ${containerNoun(form, bottleCount)}`
             : `${+inv.quantity.toFixed(2)} ${inv.unit} on hand`}
         </p>
 
-        {open && (
-          <div className="mt-3 flex flex-col gap-3 border-t border-border/40 pt-3">
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
-              <label
-                className="flex items-center gap-1.5"
-                title={`Full size of one ${noun} (what you bought)`}
-              >
-                <span className={lblCls}>{cap(noun)} size</span>
-                <DebouncedNumber
-                  value={inv.bottle_size}
-                  onCommit={(v) => updateField(inv.id, 'bottle_size', v)}
-                  placeholder="—"
-                  className={numCls}
-                />
-                <select
-                  value={inv.unit}
-                  onChange={(e) => updateUnit(inv.id, e.target.value)}
-                  className={unitCls}
-                  title="Unit this product is measured in"
-                >
-                  {UNIT_GROUPS.map((g) => (
-                    <optgroup key={g.label} label={g.label}>
-                      {g.units.map((u) => (
-                        <option key={u} value={u}>
-                          {u}
-                        </option>
-                      ))}
-                    </optgroup>
+        {/* editable fields — wrap instead of scrolling */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <label
+            className="flex items-center gap-1.5"
+            title={`Full size of one ${noun} (what you bought)`}
+          >
+            <span className={lblCls}>{cap(noun)} size</span>
+            <DebouncedNumber
+              value={inv.bottle_size}
+              onCommit={(v) => updateField(inv.id, 'bottle_size', v)}
+              placeholder="—"
+              className={numCls}
+            />
+            <select
+              value={inv.unit}
+              onChange={(e) => updateUnit(inv.id, e.target.value)}
+              className={unitCls}
+              title="Unit this product is measured in"
+            >
+              {UNIT_GROUPS.map((g) => (
+                <optgroup key={g.label} label={g.label}>
+                  {g.units.map((u) => (
+                    <option key={u} value={u}>
+                      {u}
+                    </option>
                   ))}
-                </select>
-              </label>
-              <label
-                className="flex items-center gap-1.5"
-                title={`How many ${containerNoun(form, 2)} you keep on hand (the level bar measures across all of them)`}
-              >
-                <span className={lblCls}>{cap(containerNoun(form, 2))}</span>
-                <DebouncedNumber
-                  value={inv.bottles}
-                  onCommit={(v) =>
-                    updateField(inv.id, 'bottles', v != null && v >= 1 ? Math.round(v) : null)
-                  }
-                  placeholder="1"
-                  className={numCls}
-                />
-              </label>
-              <label className="flex items-center gap-1.5">
-                <span
-                  className={lblCls}
-                  title={`Price for ONE ${noun} (not your total). Drives spray-cost math across the app.`}
-                >
-                  Cost / {noun}
-                </span>
-                <DebouncedNumber
-                  value={inv.cost_dollars}
-                  onCommit={(v) => updateField(inv.id, 'cost_dollars', v)}
-                  placeholder="—"
-                  prefix="$"
-                  className="w-24 h-10 text-right text-base tabular-nums rounded-md ring-1 ring-border/50 bg-card px-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
-                />
-              </label>
-            </div>
-            {inv.areas.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2">
-                <span className={lblCls}>Used for</span>
-                {inv.areas.map((a) => {
-                  const Icon = AREA_STYLE[a].icon;
-                  return (
-                    <span
-                      key={a}
-                      className={`inline-flex items-center gap-1 rounded-full text-xs font-medium px-2.5 py-1 ring-1 ${AREA_STYLE[a].badge}`}
-                    >
-                      <Icon className="w-3 h-3" />
-                      {a}
-                    </span>
-                  );
-                })}
-              </div>
-            )}
-            <div className="flex flex-wrap items-center gap-2">
-              {product.price_dollars != null && (
-                <a
-                  href={
-                    product.retail_url ??
-                    `https://www.amazon.com/s?k=${encodeURIComponent(product.brand)}`
-                  }
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-full px-3 text-sm font-medium text-leaf ring-1 ring-border/60"
-                >
-                  <ExternalLink className="w-4 h-4" /> Reorder · $
-                  {Number(product.price_dollars).toFixed(2)}
-                </a>
-              )}
-              <button
-                onClick={() => removeFromInventory(inv.id)}
-                className="inline-flex items-center gap-1.5 rounded-full px-3 text-sm font-medium text-terra-600 ring-1 ring-border/60"
-              >
-                <Trash2 className="w-4 h-4" /> Remove from stock
-              </button>
-            </div>
-          </div>
-        )}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+          <label
+            className="flex items-center gap-1.5"
+            title={`How many ${containerNoun(form, 2)} you keep on hand (the level bar measures across all of them)`}
+          >
+            <span className={lblCls}>{cap(containerNoun(form, 2))}</span>
+            <DebouncedNumber
+              value={inv.bottles}
+              onCommit={(v) =>
+                updateField(inv.id, 'bottles', v != null && v >= 1 ? Math.round(v) : null)
+              }
+              placeholder="1"
+              className={numCls}
+            />
+          </label>
+          <label className="flex items-center gap-1.5">
+            <span
+              className={lblCls}
+              title={`Price for ONE ${noun} (not your total). Drives spray-cost math across the app.`}
+            >
+              Cost / {noun}
+            </span>
+            <DebouncedNumber
+              value={inv.cost_dollars}
+              onCommit={(v) => updateField(inv.id, 'cost_dollars', v)}
+              placeholder="—"
+              prefix="$"
+              className="w-16 h-7 text-right text-sm tabular-nums rounded-md ring-1 ring-border/50 bg-card px-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+            />
+          </label>
+        </div>
       </div>
     );
   };
@@ -672,8 +657,8 @@ export function InventoryList({
           )}
 
           <p className="text-[10px] text-muted-foreground/50 px-1 py-1.5">
-            Drag the level bar to set how much is left; tap the pencil to edit size, count and cost.{' '}
-            {inStock.length} {inStock.length === 1 ? 'product' : 'products'} in stock.
+            Drag the level bar to set how much is left; tap any field to edit. {inStock.length}{' '}
+            {inStock.length === 1 ? 'product' : 'products'} in stock.
           </p>
         </div>
       )}

@@ -2,7 +2,7 @@ import {
   fetchWeather,
   getCurrentSprayRating,
   rateSprayWindow,
-  nextSprayOpening,
+  findBestSprayWindows,
   type SprayRating,
 } from '@/lib/weather';
 import { fetchCrops, fetchVarieties, fetchVarietyStages, fetchCropGroups } from '@/lib/queries';
@@ -35,6 +35,17 @@ function pill(r: SprayRating): { cls: string; txt: string } {
   return { cls: 'no', txt: 'Hold' };
 }
 
+function windowLabel(d: Date): string {
+  const now = new Date();
+  const day =
+    d.toDateString() === now.toDateString()
+      ? 'today'
+      : d.toLocaleDateString('en-US', { weekday: 'short' });
+  const h = d.getHours();
+  const part = h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening';
+  return `${day} ${part}`;
+}
+
 export default async function WeatherPage() {
   const [weather, crops, varieties, varietyStages, cropGroups] = await Promise.all([
     fetchWeather().catch(() => null),
@@ -56,7 +67,7 @@ export default async function WeatherPage() {
 
   const { current, hourly, daily, precipHistory } = weather;
   const rating = getCurrentSprayRating(current, hourly);
-  const opening = nextSprayOpening(hourly);
+  const best = findBestSprayWindows(hourly, 1)[0];
 
   // hours until next rain
   let nextRainHrs: number | null = null;
@@ -110,6 +121,8 @@ export default async function WeatherPage() {
   );
 
   const goodNow = rating === 'EXCELLENT' || rating === 'GOOD';
+  // Only a slot still ahead is named; the next one is "Sat afternoon", never a time gone by.
+  const bestTime = best ? windowLabel(new Date(best.time)) : null;
 
   return (
     <div className="page animate-stagger">
@@ -127,9 +140,9 @@ export default async function WeatherPage() {
           <div className="wr-title">
             {goodNow
               ? 'Good to spray now'
-              : opening
-                ? `Next opening: ${opening.label}`
-                : 'Hold off: no good window in the next 3 days'}
+              : bestTime
+                ? `Best window: ${bestTime}`
+                : 'Hold off for now'}
           </div>
           <div className="wr-sub">
             {goodNow
