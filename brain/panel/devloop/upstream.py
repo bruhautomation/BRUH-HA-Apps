@@ -1155,11 +1155,15 @@ def _deep_clean(value, clean):
 
 
 def canary_object(entry: dict, clean) -> dict:
-    """The ``brain-canary`` block's object, its words cleaned."""
+    """The ``brain-canary`` block's object, its words cleaned. Its
+    ``product`` is the identity the cloud matches to the add-on a merged
+    pull request bumped, so it is the product's slug and never passes
+    through the aliases (`product_slug`)."""
     raw = dict(entry.get("canary") or {})
     raw.pop("digest", None)
     obj = _deep_clean(raw, clean)
     obj["v"] = 1
+    obj["product"] = product_slug(entry)
     return obj
 
 
@@ -1174,6 +1178,9 @@ def _compose_canary(entry: dict, title: str, clean) -> dict:
     """A canary issue: the house's health on one release, as one sentence
     for a person and the ``brain-canary`` block the cloud reverts by."""
     obj = canary_object(entry, clean)
+    # The title the cloud reads the product and release off, from the
+    # block itself, so the two always agree.
+    title = clip(f"[canary] {obj['product']} {obj.get('release') or '?'}", 120)
     lines = [github.MARKER.format(fp=entry.get("fp", "")),
              CANARY_LEAD, ""]
     if entry.get("body"):
