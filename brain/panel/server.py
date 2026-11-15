@@ -2446,7 +2446,8 @@ async def _weekly_state(now: float) -> dict:
     # could spend a run saying so. The brief has always read "live".
     rows = await asyncio.to_thread(findings_store.list_all, "live")
     settled = await asyncio.to_thread(findings_store.settled_listing)
-    return weekly.gather(rows, settled, power, since, now=now)
+    return weekly.gather(rows, settled, power, since, now=now,
+                         humidity=list(_HUMIDITY_WEEK))
 
 
 async def _weekly_pick(state: dict, now: float, *,
@@ -13709,6 +13710,13 @@ def _note_registry(snapshot: dict) -> None:
     except Exception as exc:  # noqa: BLE001
         log.debug("machine-status note failed: %s", exc)
     try:
+        # Each dehumidifier's week, for the weekly report's lines
+        # (`checks.chores.humidity_summaries`).
+        from checks import chores as _chores  # noqa: PLC0415
+        _HUMIDITY_WEEK[:] = _chores.humidity_summaries(snapshot)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("humidity week note failed: %s", exc)
+    try:
         _USED_BY.clear()
         _USED_BY.update(_used_by_map(snapshot))
     except Exception as exc:  # noqa: BLE001
@@ -13737,6 +13745,9 @@ def _note_registry(snapshot: dict) -> None:
 # against (`chores.condition_holds`), so a press with such a reason knows,
 # before writing, whether brAIn can watch the condition or has to ask.
 _MACHINE_STATUS: dict[str, str] = {}
+# "<room> dehumidifier ran X h; humidity above …" per dehumidifier, off the
+# last checks pass, for the weekly report (`weekly.gather(humidity=)`).
+_HUMIDITY_WEEK: list[str] = []
 
 
 def _machine_status_map(snapshot: dict) -> dict[str, str]:

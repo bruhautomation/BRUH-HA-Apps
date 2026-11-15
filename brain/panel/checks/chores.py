@@ -890,8 +890,133 @@ def _rule_waits(house: House, snap: dict, eid: str, check_id: str) -> bool:
     return True
 
 
+# --- the week, and a plug left off while the room stays damp --------------
+#
+# The nightly store keeps each dehumidifier's last week hour by hour (how
+# much of each hour it ran, what each humidity sensor in its room read:
+# `appliances.week_hours`). What it is held to is the household's own rule
+# when they gave one — "it only runs when the cellar sensor reads over 60%",
+# a reason or a correction about the machine (`House.owner_explained`),
+# read for a percentage and a humidity sensor named by the house's own name
+# for it — and otherwise the level it was measured to start at. A plug
+# switched off is somebody's choice for a while; a room above that target
+# for `DAMP_OFF_H` hours with the plug off the whole time is one row.
+DAMP_OFF_H = 12
+# An hour it ran less than this share of is an hour it was off.
+OFF_SHARE = 0.1
+_PERCENT_RE = re.compile(r"(\d{2}(?:[.,]\d)?)\s*(?:%|percent\b)", re.I)
+
+
+def said_control(house: House, eid: str, shape: dict) -> dict | None:
+    """What the household said controls this machine: ``{"sensor",
+    "target", "said"}`` when their words name a percentage (and, if they
+    name one, a humidity sensor by its name), ``{"said"}`` when they
+    explained it in words this cannot read as a rule, None when they said
+    nothing. A sensor they did not name is the room's (`humidity_entity`)."""
+    said = house.owner_explained(eid, CHORE_CHECKS | {"chore.dehumidifier"})
+    if not said:
+        return None
+    text = str(said.get("text") or "")
+    found = _PERCENT_RE.search(text)
+    if not found:
+        return {"said": text}
+    target = float(found.group(1).replace(",", "."))
+    lowered = text.lower()
+    named = sorted(
+        (e for e in house.states if e.startswith("sensor.")
+         and str(((house.states.get(e) or {}).get("attributes") or {})
+                 .get("device_class") or "") == "humidity"
+         and house.name(e) and house.name(e).lower() in lowered),
+        key=lambda e: -len(house.name(e)))
+    sensor = named[0] if named else str(shape.get("humidity_entity") or "")
+    if not sensor:
+        return {"said": text}
+    return {"sensor": sensor, "target": target, "said": text}
+
+
+def humidity_week(house: House, eid: str, shape: dict) -> dict | None:
+    """The machine's last week against its target: ``{"name", "room",
+    "ran_h", "damp_off_h", "spell_h", "sensor", "target", "said"}``, or
+    None when there is no week or nothing to hold it to."""
+    week = shape.get("week") if isinstance(shape.get("week"), dict) else None
+    if not week or not week.get("hours"):
+        return None
+    control = said_control(house, eid, shape) or {}
+    sensor, target = control.get("sensor"), control.get("target")
+    if not sensor:
+        sensor = str(shape.get("humidity_entity") or "")
+        level = shape.get("runs_from_rh")
+        target = float(level) if isinstance(level, (int, float)) else None
+    if not sensor or target is None:
+        return None
+    hours = {int(h): float(v) for h, v in week.get("hours") or ()}
+    rh = {int(h): float(v) for h, v in (week.get("humidity") or {}).get(sensor) or ()}
+    damp_off = {h for h, share in hours.items()
+                if share < OFF_SHARE and h in rh and rh[h] > target}
+    spell, hour = 0, max(hours)
+    while hour in damp_off:
+        spell += 1
+        hour -= 3600
+    device = house.device_of(eid)
+    return {"name": house.device_name(device) if device else house.name(eid),
+            "room": house.area_of(eid), "ran_h": round(sum(hours.values())),
+            "damp_off_h": len(damp_off), "spell_h": spell, "sensor": sensor,
+            "target": target, "said": str(control.get("said") or "")
+            if control.get("sensor") else ""}
+
+
+def humidity_summaries(snap: dict) -> list[str]:
+    """One line a dehumidifier for the weekly report: "<room> dehumidifier
+    ran X h; humidity above target for Y h while it was off"."""
+    import appliances  # noqa: PLC0415
+
+    house = House(snap)
+    out = []
+    for eid, shape in sorted(((snap.get("appliances") or {}).get("entities")
+                              or {}).items()):
+        if not isinstance(shape, dict) or shape.get("kind") != appliances.DEHUMIDIFIER:
+            continue
+        if not house.should_report(eid, "chore.dehumidifier"):
+            continue
+        week = humidity_week(house, eid, shape)
+        if not week:
+            continue
+        what = f"{week['room']} dehumidifier" if week["room"] else week["name"]
+        out.append(f"{what} ran {week['ran_h']} h; humidity above "
+                   f"{week['target']:.0f}% for {week['damp_off_h']} h while "
+                   f"it was off (read on {house.name(week['sensor'])})")
+    return out
+
+
+def _damp_while_off(house: House, eid: str, shape: dict, plugs: list[str],
+                    humidity_now) -> dict | None:
+    """The row for a plug left off while the room stays damp, or None."""
+    week = humidity_week(house, eid, shape)
+    if not week or week["spell_h"] < DAMP_OFF_H:
+        return None
+    now_rh = humidity_now(week["sensor"])
+    if now_rh is None or now_rh <= week["target"]:
+        return None
+    plug = plugs[0]
+    target, sensor = week["target"], house.name(week["sensor"])
+    return {
+        "text": f"{week['name']} has stayed off while the room is damp",
+        "detail": (f"{sensor} reads {now_rh:.0f}% and has been above "
+                   f"{target:.0f}% for at least {week['spell_h']} hours, and "
+                   f"{house.name(plug)} has been off all that time."
+                   + (f" You said: “{week['said']}”." if week["said"] else "")
+                   + house.placed(eid, week["name"])),
+        "fix": (f"Switch {house.name(plug)} on, or check what is meant to "
+                "switch it on."),
+        "severity": "warning",
+        "fixable": False,
+        "entity_id": eid,
+    }
+
+
 def dehumidifier(snap: dict, now: float) -> list[dict]:
-    """Dehumidifiers at standby in a room damper than they run at."""
+    """Dehumidifiers at standby in a room damper than they run at, and a
+    plug left off while the room stays above its target (`_damp_while_off`)."""
     import appliances  # noqa: PLC0415
 
     store = snap.get("appliances") or {}
@@ -899,8 +1024,27 @@ def dehumidifier(snap: dict, now: float) -> list[dict]:
     recent = store.get("recent") or {}
     house = House(snap)
     hits = []
+    off_rows = []
     for eid, shape in shapes.items():
         if shape.get("kind") != appliances.DEHUMIDIFIER:
+            continue
+        switches = [o for o in house.siblings(eid) if domain_of(o) == "switch"]
+        if switches and not any((house.states.get(o) or {}).get("state")
+                                == "on" for o in switches):
+            # Off at the plug. Somebody's choice — unless the room has
+            # been damp past the target the whole time it was off.
+            if house.enabled(eid) and house.should_report(
+                    eid, "chore.dehumidifier"):
+                control = said_control(house, eid, shape)
+                if control and not control.get("sensor"):
+                    house.gave_up("chore.dehumidifier", [{"entity_id": eid}],
+                                  f"you explained this machine: {control['said']}",
+                                  kind="explained")
+                    continue
+                row = _damp_while_off(house, eid, shape, switches,
+                                      _reading(house))
+                if row:
+                    off_rows.append(row)
             continue
         level = shape.get("runs_from_rh")
         rh_eid = str(shape.get("humidity_entity") or "")
@@ -914,10 +1058,6 @@ def dehumidifier(snap: dict, now: float) -> list[dict]:
         except (TypeError, ValueError):
             continue
         if humidity < float(level) + DRY_MARGIN:
-            continue
-        switches = [o for o in house.siblings(eid) if domain_of(o) == "switch"]
-        if switches and not any((house.states.get(o) or {}).get("state")
-                                == "on" for o in switches):
             continue
         plug = next((o for o in switches
                      if (house.states.get(o) or {}).get("state") == "on"), "")
@@ -946,7 +1086,7 @@ def dehumidifier(snap: dict, now: float) -> list[dict]:
         house.gave_up("chore.dehumidifier", [{"entity_id": h[1]} for h in hits],
                       f"{len(hits)} dehumidifiers stopped at once — past "
                       f"{MAX_ROWS} that is a measurement gone wrong")
-        return []
+        hits = []
     out = []
     for since, eid, humidity, level, rh_eid, plug, watts in sorted(hits):
         hours = int((now - since) // 3600)
@@ -969,7 +1109,7 @@ def dehumidifier(snap: dict, now: float) -> list[dict]:
             "fixable": False,
             "entity_id": eid,
         })
-    return out
+    return out + off_rows[:MAX_ROWS]
 
 
 # ---------------------------------------------------------------------------
