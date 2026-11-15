@@ -57,14 +57,17 @@ async def async_setup_entry(
     domain_data["_health_entry"] = config_entry.entry_id
 
     bridge = domain_data.get(config_entry.entry_id)
-    async_add_entities(
-        [
-            BruhClaudeHealthSensor(config_entry, bridge),
-            BrainNeedsYouSensor(config_entry),
-            BrainWantsInputSensor(config_entry),
-        ],
-        update_before_add=True,
-    )
+    entities = [
+        BruhClaudeHealthSensor(config_entry, bridge),
+        BrainNeedsYouSensor(config_entry),
+        BrainWantsInputSensor(config_entry),
+    ]
+    # BRUH Browser's "waiting on you", only where the add-on has run here.
+    # A first install needs brAIn reloaded to add it.
+    from .sensor import browser_token_path
+    if await hass.async_add_executor_job(os.path.exists, browser_token_path(hass)):
+        entities.append(BrowserWaitingSensor(config_entry))
+    async_add_entities(entities, update_before_add=True)
 
 
 class BruhClaudeHealthSensor(BinarySensorEntity):
@@ -257,3 +260,36 @@ class BrainWantsInputSensor(BinarySensorEntity):
             _LOGGER.debug("could not read the hypothesis queue", exc_info=True)
             self._pending = []
         self._attr_is_on = bool(self._pending)
+
+
+class BrowserWaitingSensor(BinarySensorEntity):
+    """`binary_sensor.bruh_browser_waiting_on_you`: on while an errand waits
+    on a person (a login, a question, a cart to look at). Unknown, with a
+    reason, when the add-on cannot be asked; never off by guess."""
+
+    _attr_has_entity_name = False
+    _attr_should_poll = True
+    _attr_name = "BRUH Browser waiting on you"
+    _attr_icon = "mdi:account-clock-outline"
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        from .sensor import BROWSER_DEVICE
+        self._entry = config_entry
+        self._attr_device_info = BROWSER_DEVICE
+        self._attr_unique_id = f"{DOMAIN}_browser_waiting_on_you"
+        self.entity_id = "binary_sensor.bruh_browser_waiting_on_you"
+        self._attr_is_on = None
+        self._attrs: dict[str, Any] = {"reason": "not read yet"}
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return self._attrs
+
+    async def async_update(self) -> None:
+        from .sensor import async_browser_snapshot
+        state, attrs = await async_browser_snapshot(self.hass)
+        waiting = attrs.get("waiting_on_you")
+        self._attr_is_on = waiting if isinstance(waiting, bool) else None
+        self._attrs = ({"reason": attrs["reason"]} if state == "unknown"
+                       else {"errands_waiting_on_you":
+                             attrs["errands_waiting_on_you"]})
