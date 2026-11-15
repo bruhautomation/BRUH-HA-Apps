@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.11
+
+### Fixed
+
+- Development-loop reports never alias the names of brAIn, Morph and the BRUH add-ons, even when a device in the house is named after the vendor. A BRUH add-on's release check (the canary) had been filed as "Name 13-browser", which stopped the cloud matching it to the release it watches; the canary's product and title now come from the add-on catalogue, not from redacted text. Household names in the same text are still hidden (#1006).
+
 ## 5.3.10
 
 ### Added
