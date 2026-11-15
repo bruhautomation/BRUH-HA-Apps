@@ -8242,7 +8242,14 @@ function renderFindings() {
   if (!setupShown) {
     const cards = todayCards();
     if (!cards.length) {
-      list.appendChild(el("p", "empty-line", "Nothing needs you."));
+      // The To Do list under the queue is the person's too: chores that
+      // need their hands. An empty queue over a full list said two things.
+      const chores = todoRows().length;
+      list.appendChild(el("p", "empty-line tight", !chores
+        ? "Nothing needs you."
+        : chores === 1
+          ? "Nothing new to decide. The one chore on your To Do list below is waiting for you."
+          : `Nothing new to decide. The ${chores} chores on your To Do list below are waiting for you.`));
     } else {
       const waiting = cards.filter((c) => c.unchecked).length;
       if (waiting) list.appendChild(waitingNote(waiting));

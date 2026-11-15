@@ -6055,6 +6055,9 @@ body.term-classic #termMode .ico-out { display: block; }
   color: var(--ink-3);
 }
 
+/* Over a list that follows it, the line needs no air of its own. */
+.empty-line.tight { padding: var(--sp-1) 0; }
+
 /* Three buttons. Primary filled, secondary outline, tertiary text. 36px on
    a pointer, 44px on touch. Usable alone or on top of `.btn`. */
 .btn-primary, .btn-secondary, .btn-tertiary {
