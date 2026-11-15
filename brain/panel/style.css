@@ -1448,6 +1448,7 @@ body.modal-open {
   color: var(--warning-ink); font-size: var(--fs-body); font-weight: 600;
   line-height: var(--lh-body);
 }
+.permwarn.calm { border-color: var(--hairline); background: transparent; color: var(--ink); }
 .permwarn[hidden] { display: none; }
 .setback { display: none; }
 @media (min-width: 900px) {
@@ -1716,6 +1717,7 @@ body.modal-open {
 .testssum { margin: 10px 0 0; font-size: var(--fs-body); font-weight: 600; color: var(--good-ink); }
 .testssum.bad { color: var(--critical-ink); }
 .testssum.old { color: var(--ink-2); }
+.stalenote { color: var(--ink); font-weight: 600; }
 .testlist { margin-top: 8px; }
 .testrow {
   display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; gap: 4px 10px;
@@ -2808,6 +2810,18 @@ body.kb-lift:not(.term-classic) #viewTerminal.active {
   .pillseg.crkinds { gap: 6px 6px; padding-bottom: 6px; }
   .pillseg.crkinds .pill { flex: none; }
 }
+/* The one row that stands for every kind: what is showing, and a press to
+   change it. The pills open beneath it. */
+.crfilter { flex: none; display: flex; align-items: center; gap: var(--sp-2); width: 100%;
+  min-height: 44px; padding: 0 16px; border: 0; border-bottom: 1px solid var(--hairline);
+  background: transparent; color: var(--ink-2); font: inherit; font-size: var(--fs-meta);
+  text-align: left; cursor: pointer; }
+.crfilter[hidden] { display: none; }
+.crfilterlabel { font-weight: 700; color: var(--ink); }
+.crfiltercur { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crfilterchev { width: 8px; height: 8px; margin-right: 4px; border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor; transform: rotate(45deg); }
+.crfilter[aria-expanded="true"] .crfilterchev { transform: rotate(225deg); }
 .crhint {
   flex: none;
   margin: 0;
@@ -7638,6 +7652,10 @@ select.choicesrc { display: none; }
 .choicelist .choicegroup { padding: 8px var(--sp-3) 0; font-size: var(--fs-meta);
   line-height: var(--lh-meta); color: var(--ink-2); border-top: 1px solid var(--hairline); }
 .choicelist .choicegroup:first-child { border-top: 0; }
+.choicelist .choicemore { border-top: 1px solid var(--hairline); }
+.choicelist .choicemore > summary { min-height: 44px; display: flex; align-items: center;
+  padding: 0 var(--sp-3); cursor: pointer; font-size: var(--fs-body); color: var(--ink-2); }
+.choicelist .choicemore .choice:first-of-type { border-top: 1px solid var(--hairline); }
 .choicelist.off { opacity: 0.55; }
 .choicelist.off .choice { cursor: not-allowed; }
 
@@ -7652,3 +7670,11 @@ select.choicesrc { display: none; }
 .dashkeep > span:first-child { min-width: 0; overflow-wrap: anywhere; }
 .dashkeep .btn { flex: none; }
 @media (pointer: coarse) { .dashkeep .btn { min-height: 44px; } }
+
+/* Needs you's first line: what is for the owner now, then the chores. */
+.qlead { margin: 0 0 var(--sp-3); }
+.qleadline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
+  font-weight: 600; color: var(--ink); }
+.qleadrow { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3);
+  margin-top: var(--sp-2); font-size: var(--fs-body); color: var(--ink); }
+.qleadrow .btn { min-height: 44px; display: inline-flex; align-items: center; text-decoration: none; }
