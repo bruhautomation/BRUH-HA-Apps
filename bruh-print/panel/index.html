@@ -81,14 +81,17 @@
     <div class="pane preview-pane quick-see">
       <div class="preview-frame" id="quickPreviewFrame">
         <img id="quickPreview" alt="Label preview">
-        <p class="placeholder" id="quickPlaceholder">Your label appears here.</p>
+        <p class="placeholder" id="quickPlaceholder">Loading the preview…</p>
       </div>
       <p class="fitline" id="quickFit"></p>
       <ul class="notes" id="quickNotes"></ul>
     </div>
 
     <div class="quick-do">
-      <button class="btn primary big wide" id="quickPrint">Print</button>
+      <div class="printrow">
+        <button class="btn primary big wide" id="quickPrint">Print</button>
+        <p class="printson" id="quickPrintsOn"></p>
+      </div>
       <!-- One disclosure, and its summary carries the current answers, so
            the things behind it can be CHECKED without opening it — a
            disclosure you have to open to find out what is inside it is a
@@ -244,16 +247,21 @@
 
 <!-- ── Printer ───────────────────────────────────────────────────────── -->
 <section class="view" id="viewPrinter">
-  <h2>Printer</h2>
+  <details class="psec" data-sec="printer" open>
+  <summary><h2>Printer</h2></summary>
   <div class="cards" id="printerCards"></div>
+  </details>
 
-  <h2>What is loaded</h2>
+  <details class="psec" data-sec="loaded" open>
+  <summary><h2>What is loaded</h2></summary>
   <p class="lede">A LabelWriter cannot tell what stock is in it. Tell BRUH
      Print once and it will stop you printing a 2.25" label onto a 0.56"
      roll.</p>
   <div class="bays" id="bays"></div>
+  </details>
 
-  <h2>Label stock</h2>
+  <details class="psec" data-sec="stock">
+  <summary><h2>Label stock</h2></summary>
   <!-- Every fact here is real and none of it is read twice, so none of it
        is deleted — but two paragraphs of it was ten lines of permanent
        block on a phone above the table they are about. One line stays out
@@ -292,9 +300,12 @@
     </div>
     <button class="btn primary" id="addStock">Add</button>
   </details>
+  </details>
 
-  <h2>Settings</h2>
+  <details class="psec" data-sec="settings">
+  <summary><h2>Settings</h2></summary>
   <div class="settings" id="settings"></div>
+  </details>
 </section>
 
 <!-- ── History ───────────────────────────────────────────────────────── -->
