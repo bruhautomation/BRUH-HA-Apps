@@ -76,6 +76,15 @@ Assistant's vocabulary nor common English, and the names Morph's own
 configuration gives (a card's or a section's name, a group's label, and
 any `person`/`sleeper`/`people` value). A common English word is never
 learnt from these, so "Doors", "People" and "Kids" stay readable.
+
+**Our own product names are never a household's** (`is_product`). A
+report says which add-on it is about ("BRUH Browser", `bruh-browser`),
+and a house whose sensors are named "BRUH <something>" taught the map
+the vendor word, so a canary arrived as "[canary] Name 13-browser" and
+the cloud could no longer tell which add-on's release it judged. The
+vendor word, every BRUH add-on's name and slug, brAIn and Morph are
+never learnt and always written as they are; a longer household name
+that contains one ("BRUH Hall Motion") is still a name, and aliased.
 """
 from __future__ import annotations
 
@@ -87,6 +96,7 @@ from pathlib import Path
 import atomic_write
 
 from . import data_dir
+from .siblings import CATALOG
 
 # The domains whose object ids are chosen by, or named after, a household.
 # A closed list rather than "anything with a dot" for the reason the
@@ -198,10 +208,24 @@ _POSSESSIVE_RE = re.compile(r"([^\W\d_]{3,})['’]s\b")
 _PART_RE = re.compile(r"[^\W\d_]{3,}")
 
 
+# Our own products, which a report names to say what it is about: the
+# vendor word, each BRUH add-on's name and slug, brAIn and Morph.
+PRODUCT_NAMES = frozenset(
+    " ".join(str(w).split()).casefold()
+    for w in ("BRUH", "brAIn", "Morph",
+              *(s["name"] for s in CATALOG), *(s["key"] for s in CATALOG)))
+
+
+def is_product(name: str) -> bool:
+    """True when ``name`` is one of our own product names (`PRODUCT_NAMES`),
+    which is never a household's and never aliased."""
+    return " ".join(str(name or "").split()).casefold() in PRODUCT_NAMES
+
+
 def _common(word: str) -> bool:
     """A word that names nothing in particular: Home Assistant's own
-    vocabulary or a common English word."""
-    return is_generic(word, "thing") or is_ordinary(word, "thing")
+    vocabulary, a common English word or one of our product names."""
+    return is_generic(word, "thing") or is_ordinary(word, "thing") or is_product(word)
 
 
 def name_parts(name: str, kind: str, eid: str = "", klass: str = "") -> list[tuple[str, str]]:
@@ -402,10 +426,10 @@ class Aliases:
             if domain in ENTITY_DOMAINS:
                 self.entity(eid)
             nm = str(row.get("name") or "").strip()
-            if len(nm) >= MIN_NAME:
+            if len(nm) >= MIN_NAME and not is_product(nm):
                 self.name(nm, domain if domain in ENTITY_DOMAINS else "thing")
             area = str(row.get("area") or "").strip()
-            if len(area) >= MIN_NAME:
+            if len(area) >= MIN_NAME and not is_product(area):
                 self.name(area, "room")
         # The words inside those names that are a person's or a room's,
         # and the names Morph's configuration draws: after every whole
@@ -428,7 +452,7 @@ class Aliases:
             found += name_parts(real, kind)
         for real, kind in found:
             if len(real) >= MIN_NAME and real.casefold() not in known \
-                    and not is_generic(real, kind):
+                    and not is_generic(real, kind) and not is_product(real):
                 known.add(real.casefold())
                 self.name(real, kind)
 
@@ -457,15 +481,19 @@ class Aliases:
         # Names, longest first, as whole words, case-insensitively — a
         # sentence starting with a room's name capitalises it.
         # ONE pass over an alternation, so an alias just written ("Room 2")
-        # is never read again by a shorter real name ("Room").
-        lookup: dict[str, str] = {}
+        # is never read again by a shorter real name ("Room"). Our product
+        # names are in it as themselves: a map that learnt one (before
+        # `learn` refused them) still never rewrites it, and a longer
+        # household name around one is still matched whole.
+        lookup: dict[str, str] = dict.fromkeys(PRODUCT_NAMES, "")
         # A one-word name every holder of which is ordinary, with the kinds
         # it names (their domain words are where it stands as a name).
         ordinary: dict[str, set] = {}
         strict_names: set[str] = set()
         for key, alias in self.names.items():
             kind, real = key.split(":", 1)
-            if len(real) >= MIN_NAME and not is_generic(real, kind):
+            if len(real) >= MIN_NAME and not is_generic(real, kind) \
+                    and not is_product(real):
                 folded = real.casefold()
                 lookup.setdefault(folded, alias)
                 if is_ordinary(real, kind):
@@ -478,13 +506,15 @@ class Aliases:
         def _name(m: re.Match) -> str:
             word = m.group(1)
             folded = word.casefold()
+            if folded in PRODUCT_NAMES:
+                return word
             if (folded in kinds and word.islower()
                     and not _typed_words(m.string, m.start(1))
                     and not _used_as_name(m.string, m.start(1), m.end(1), kinds[folded])):
                 return word
             return lookup[folded]
 
-        if lookup:
+        if len(lookup) > len(PRODUCT_NAMES):
             pattern = re.compile(
                 r"(?<![\w])(" + "|".join(re.escape(r) for r in sorted(
                     lookup, key=len, reverse=True)) + r")(?![\w])", re.IGNORECASE)
