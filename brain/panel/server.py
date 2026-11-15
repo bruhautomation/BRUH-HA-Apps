@@ -27454,7 +27454,10 @@ def _settings_payload(settings: dict) -> dict:
     """
     options = effective_options()
     return {
-        "settings": {**settings, **options},
+        # The lowest severity that rings a phone, read-only here: the page
+        # says it in words ("Right now: ...") and never writes it.
+        "settings": {**settings, **options,
+                     "notify_min_severity": _findings_notify_target()[1]},
         "model_label": chat_session.pretty_model(options["model"]),
         "personality_summary": _personality_row(),
         "usage": _usage_for_panel(settings),

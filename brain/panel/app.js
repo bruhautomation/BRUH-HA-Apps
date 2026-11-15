@@ -3229,7 +3229,7 @@ function paintChoices(id) {
   if (lab) list.setAttribute("aria-label", lab.textContent.trim());
   list.textContent = "";
   list.classList.toggle("off", sel.disabled);
-  const add = (opt) => {
+  const add = (opt, host) => {
     const row = el("label", "choice");
     const input = el("input");
     input.type = "radio";
@@ -3244,16 +3244,30 @@ function paintChoices(id) {
     });
     row.appendChild(input);
     row.appendChild(el("span", "choicetext", opt.textContent));
-    list.appendChild(row);
+    host.appendChild(row);
+  };
+  // Options marked data-more fold under one "More versions" line, open
+  // when the chosen value lives in it, so a long catalog is one short list.
+  let more = null;
+  const hostFor = (c) => {
+    if (!c.dataset.more) return list;
+    if (!more) {
+      more = el("details", "choicemore");
+      more.appendChild(el("summary", "", "More versions"));
+      list.appendChild(more);
+    }
+    return more;
   };
   [...sel.children].forEach((c) => {
+    const host = hostFor(c);
     if (c.tagName === "OPTGROUP") {
-      list.appendChild(el("div", "choicegroup", c.label));
-      [...c.children].forEach(add);
-    } else add(c);
+      if (host !== list) host.appendChild(el("div", "choicegroup", c.label));
+      [...c.children].forEach((o) => add(o, host));
+    } else add(c, host);
   });
+  if (more && more.querySelector("input:checked")) more.open = true;
 }
-const CHOICE_SELECTS = ["setModel", "setThinking"];
+const CHOICE_SELECTS = ["setModel", "setThinking", "setPermLevel"];
 
 // sentinel option value; no real model id can collide with it
 const CUSTOM_MODEL = "__custom__";
@@ -3274,6 +3288,7 @@ function renderModelField(data) {
       group = m.group;
       parent = document.createElement("optgroup");
       parent.label = group;
+      if (m.id && !/^(opus|sonnet|haiku)$/.test(m.id)) parent.dataset.more = "1";
       sel.appendChild(parent);
     }
     const opt = document.createElement("option");
@@ -3286,11 +3301,13 @@ function renderModelField(data) {
     const opt = document.createElement("option");
     opt.value = current;
     opt.textContent = `Custom: ${current}`;
+    opt.dataset.more = "1";
     sel.appendChild(opt);
   }
   const other = document.createElement("option");
   other.value = CUSTOM_MODEL;
   other.textContent = "Custom model id…";
+  other.dataset.more = "1";
   sel.appendChild(other);
   sel.value = current;
   custom.value = known ? "" : current;
@@ -3336,8 +3353,9 @@ function renderSettingsForm(data) {
   }
   // Only an explicit true ticks it: a value that arrived missing or
   // malformed is asking, which is what the terminal and the chat will do.
-  $("#setSkipPerms").checked = data.settings.dangerously_skip_permissions === true;
-  $("#setYolo").checked = data.settings.yolo_mode === true;
+  $("#setPermLevel").value = permLevelOf(data.settings);
+  $("#setPermLevel").dataset.level = $("#setPermLevel").value;
+  paintChoices("setPermLevel");
   $("#setTalkFirst").checked = data.settings.talk_first === true;
   renderSkipPermsNote(data);
   renderPermsCaptions(data.settings);
@@ -3624,7 +3642,7 @@ function renderSetSummaries(data) {
     setSummary("setSumUsage", model
       + (Number.isFinite(used) ? ` · ${Math.round(used)}% of this session` : ""));
     setSummary("setSumPermissions", st.yolo_mode === true
-      ? "Acts without asking, no restrictions"
+      ? "No limits"
       : st.dangerously_skip_permissions === true
         ? "Acts without asking" : "Asks before it acts",
       st.yolo_mode === true || st.dangerously_skip_permissions === true);
@@ -3729,23 +3747,31 @@ function skipPermsStale(data) {
   return "";
 }
 
-// What the two switches say about themselves while they are on: a caption
-// that says "off by default" under a switch that is on is a caption read as
-// the switch's state. The warning is plain words, never a colour alone.
+// The one scale over the two stored settings: no limits when `yolo_mode` is
+// on (whatever the other says, as the gate reads it), else acting when
+// `dangerously_skip_permissions` is on, else ask first.
+function permLevelOf(st) {
+  st = st || {};
+  return st.yolo_mode === true ? "free"
+    : st.dangerously_skip_permissions === true ? "act" : "ask";
+}
+
+// The sentence the page opens on: what brAIn may do alone right now, in
+// words. Amber only when it is acting without asking.
+const PERM_SENTENCES = {
+  ask: "brAIn asks you before it runs a command, edits a file or changes anything in the house.",
+  act: "brAIn goes ahead on its own: it runs commands, edits and changes things without "
+    + "asking, but keeps to your house rules and what you have put off limits.",
+  free: "brAIn goes ahead on its own with no limits: your house rules and what you have "
+    + "put off limits do not apply, and it never waits for your approval.",
+};
+
 function renderPermsCaptions(st) {
-  const skip = (st || {}).dangerously_skip_permissions === true;
-  const yolo = (st || {}).yolo_mode === true;
-  const cap = $("#setYoloCaveat");
-  if (cap) {
-    cap.textContent = yolo ? "Normally off \u2014 it is on now." : "Off by default.";
-    cap.classList.toggle("warn", yolo);
-  }
+  const level = permLevelOf(st);
   const warn = $("#setPermWarn");
   if (warn) {
-    warn.hidden = !(skip || yolo);
-    warn.textContent = yolo
-      ? "brAIn is acting without asking, with no restrictions: protected entities, house rules and the action gate are not applied."
-      : "brAIn is acting without asking: the terminal and the chat do not stop before each command, edit or change.";
+    warn.textContent = PERM_SENTENCES[level];
+    warn.classList.toggle("calm", level === "ask");
   }
 }
 
@@ -3942,6 +3968,36 @@ function checkedWords(stamp, staleDays) {
   const dated = resultIsOld(stamp) ? `${fmtWhen(stamp)}, ${when}` : when;
   return days >= staleDays
     ? `Checked ${dated}, so it may be out of date.` : `Checked ${dated}.`;
+}
+
+// "41 days ago" for a result a day or more old, the short words under that.
+function resultAge(stamp) {
+  const days = Math.floor((Date.now() / 1000 - stamp) / 86400);
+  return days >= 2 ? `${days} days ago` : timeAgo(new Date(stamp * 1000).toISOString());
+}
+
+// The one sentence a test page opens with: when it was last run and how it
+// came out, in the page's own words. A result a week old or more is said
+// as old, and the Run button beside it is the way to a fresh one.
+function lastRunLine(stamp, said) {
+  return `Last checked ${resultAge(stamp)}, ${said}.`;
+}
+
+// The Run button of a test page: says plainly when what is shown above it is
+// old, and offers the run as "Run again". Never hides the old result.
+function paintRunButton(btn, note, stamp, label) {
+  const old = resultIsOld(stamp);
+  btn.textContent = old ? "Run again" : "Run";
+  btn.classList.toggle("stalerun", old);
+  btn.setAttribute("aria-label", old
+    ? `${label}: the last result is out of date` : label);
+  if (note) {
+    note.classList.toggle("stalenote", old);
+    if (old) {
+      note.textContent = "Out of date: run it again to see how things are now.";
+      note.hidden = false;
+    }
+  }
 }
 
 // Technical values behind one closed fold, the form ⚙ allows (read-only text,
@@ -5336,14 +5392,13 @@ function renderDeep(d) {
       const failedNames = stages.filter((x) => x.state === "failed")
         .map((x) => DEEP_TITLES[x.name] || x.title || x.name);
       const skipped = stages.filter((x) => x.state === "skipped").length;
-      // One plain sentence, then when it was looked at; the count is for
-      // whoever wants the numbers, and sits in the fold under the rows.
+      // One plain sentence: when it was last run and how it came out. The
+      // count and every test are folded under it, for whoever wants them.
       let said;
-      if (d.running) said = "Running the tests…";
-      else if (failedNames.length) said = `Something does not work (${failedNames.join(", ")}).`;
-      else if (skipped) said = `Everything that could be tried works; ${skipped} part${skipped > 1 ? "s were" : " was"} left out.`;
-      else said = "Everything works.";
-      sum.textContent = d.running ? said : `${said} ${checkedWords(last.finished_at, 3)}`;
+      if (failedNames.length) said = `something does not work (${failedNames.join(", ")})`;
+      else if (skipped) said = `everything that could be tried works; ${skipped} part${skipped > 1 ? "s were" : " was"} left out`;
+      else said = "all good";
+      sum.textContent = d.running ? "Running the tests…" : lastRunLine(last.finished_at, said);
       const stale = !d.running && resultIsOld(last.finished_at);
       sum.classList.toggle("bad", c.failed > 0 && !stale);
       sum.classList.toggle("old", stale);
@@ -5353,14 +5408,19 @@ function renderDeep(d) {
       sum.hidden = true;
     }
   }
-  body.innerHTML = rows.join("")
-    + (deepCounts ? detailsFold(`<p class="hint tight">${esc(deepCounts)}</p>`) : "");
+  // A run in flight shows its rows as they come; a finished one folds them
+  // under its sentence, so the page opens on the verdict and not on a list
+  // of results that may be weeks old.
+  const counts = deepCounts ? `<p class="hint tight">${esc(deepCounts)}</p>` : "";
+  body.innerHTML = d.running ? rows.join("")
+    : detailsFold(rows.join("") + counts, `Each test (${stages.length})`);
   // The summary already says when it last ran; this line is for a run in
   // flight and for an install that has never run one.
   $("#deepLast").textContent = d.running
     ? "This takes a few minutes."
     : (last.finished_at ? "" : "Not run on this install yet.");
   $("#deepLast").hidden = !$("#deepLast").textContent;
+  paintRunButton($("#deepRun"), $("#deepLast"), d.running ? 0 : last.finished_at, "Run all tests");
   $("#deepRun").disabled = !!d.running;
 }
 
@@ -5478,19 +5538,21 @@ function renderRehearsal(d) {
         !cleared.ok));
     }
     if (last.error) rows.push(diagRow("Error", esc(last.error), true));
-    // One plain sentence first: did the checks do their job, and when.
+    // One plain sentence first: when it was run and whether the checks did
+    // their job.
     const bad = missed > 0 || !!c.extra || leftBehind || !!last.error;
-    const said = last.error ? "The rehearsal could not finish."
-      : missed > 0 ? `The checks missed ${missed} of ${planted} problems that were planted.`
-      : c.extra ? "The checks reported something that was not there."
-      : leftBehind ? "The checks caught every planted problem, but something it planted is still in the house."
-      : "The checks caught every problem that was planted, and it cleaned up after itself.";
-    sum.textContent = `${said} ${checkedWords(last.finished_at, 30)}`;
+    const said = last.error ? "the rehearsal could not finish"
+      : missed > 0 ? `the checks missed ${missed} of ${planted} problems that were planted`
+      : c.extra ? "the checks reported something that was not there"
+      : leftBehind ? "the checks caught every planted problem, but something it planted is still in the house"
+      : "all good: the checks caught every problem that was planted";
+    sum.textContent = lastRunLine(last.finished_at, said);
     sum.classList.toggle("bad", bad && !old);
     sum.classList.toggle("old", old);
   }
   sum.hidden = !last.finished_at;
-  body.innerHTML = rows.join("") + detailsFold(tech.join(""), "Details");
+  body.innerHTML = detailsFold(rows.join("") + detailsFold(tech.join(""), "Details"),
+    "Each result");
   body.hidden = !rows.length && !tech.length;
   const step = (d.progress || {}).step;
   const busy = !!(d.running || d.sweeping);
@@ -5499,6 +5561,8 @@ function renderRehearsal(d) {
     : (d.running
       ? `Rehearsing — ${step || "starting"}…`
       : (last.finished_at ? "" : "Not rehearsed on this install yet."));
+  paintRunButton($("#rehearseRun"), $("#rehearseLast"),
+    busy ? 0 : last.finished_at, "Run a rehearsal");
   $("#rehearseRun").disabled = busy;
   // The button exists only while there is something for it to take out —
   // `leftovers` is the server's derivation, so this and the fault row in
@@ -5825,15 +5889,36 @@ function skipPermsToast(on, data) {
   return parts.join(" ");
 }
 
-$("#setSkipPerms").addEventListener("change", async () => {
-  const box = $("#setSkipPerms");
-  const on = box.checked;
-  const data = await saveSettings({ dangerously_skip_permissions: on },
-    (saved) => skipPermsToast(on, saved));
-  // A refused save leaves the switch where it was, and so does the box.
-  if (!data) box.checked = !on;
-  renderPermsCaptions({ dangerously_skip_permissions: $("#setSkipPerms").checked,
-                        yolo_mode: $("#setYolo").checked });
+// The scale writes what the two switches wrote: "ask" turns both off, "act"
+// turns skipping on and No limits off, and "free" turns No limits on and
+// leaves skipping as it was. No limits is confirmed once in words; stepping
+// back down is never asked about.
+$("#setPermLevel").addEventListener("change", async () => {
+  const sel = $("#setPermLevel");
+  const was = sel.dataset.level || "ask";
+  const level = sel.value;
+  if (level === was) return;
+  // After a refusal, show what is actually stored: ask the server, and fall
+  // back to the previous value only if it cannot be read.
+  const revert = async () => {
+    try { renderSettingsForm(await api("api/settings")); return; } catch (e) { /* offline */ }
+    sel.value = was;
+    paintChoices("setPermLevel");
+  };
+  if (level === "free" && !window.confirm(
+      "Turn on No limits? brAIn will be able to do " +
+      "anything in your home and Home Assistant without asking, protected " +
+      "entities and house rules included.")) {
+    await revert();
+    return;
+  }
+  const change = level === "ask" ? { dangerously_skip_permissions: false, yolo_mode: false }
+    : level === "act" ? { dangerously_skip_permissions: true, yolo_mode: false }
+    : { yolo_mode: true };
+  const data = await saveSettings(change, (saved) => level === "free"
+    ? "No limits is on: brAIn may do anything"
+    : skipPermsToast(level === "act", saved));
+  if (!data) { await revert(); return; }
 });
 $("#setTalkFirst").addEventListener("change", async () => {
   const box = $("#setTalkFirst");
@@ -5841,26 +5926,6 @@ $("#setTalkFirst").addEventListener("change", async () => {
   const data = await saveSettings({ talk_first: on },
     on ? "Requests that would be drafts go to the chat now" : "Requests become drafts to approve again");
   if (!data) box.checked = !on;
-});
-// No restrictions (`yolo_mode`) removes every restriction brAIn has, so
-// turning it on is confirmed once in words; turning it off is never asked
-// about.
-$("#setYolo").addEventListener("change", async () => {
-  const box = $("#setYolo");
-  const on = box.checked;
-  if (on && !window.confirm(
-      "Turn on No restrictions? brAIn will be able to do " +
-      "anything in your home and Home Assistant without asking, protected " +
-      "entities and house rules included.")) {
-    box.checked = false;
-    return;
-  }
-  const data = await saveSettings({ yolo_mode: on },
-    on ? "No restrictions is on: brAIn may do anything"
-       : "No restrictions is off: the restrictions are back");
-  if (!data) box.checked = !on;
-  renderPermsCaptions({ dangerously_skip_permissions: $("#setSkipPerms").checked,
-                        yolo_mode: $("#setYolo").checked });
 });
 // Applied straight away rather than on the next status poll, so the Terminal
 // tab has already changed by the time the dialog is closed — and through the
@@ -8257,6 +8322,45 @@ function waitingNote(n) {
     : `${n} cards are waiting for brAIn's first look.`);
 }
 
+// The first thing the queue says: how many of the cards are for the owner
+// now (problems and questions) and that the chores come after them. A
+// pending restart is the one thing here that is not a card, so it is its own
+// row with a press that goes to where Home Assistant restarts.
+function todayLead(groups, chores = 0) {
+  const box = el("div", "qlead");
+  const urgent = groups.problems.filter((c) => c.urgent).length;
+  const now = groups.problems.length + groups.questions.length;
+  const later = groups.chores.length + groups.tidy.length;
+  let text;
+  if (!now && !later && chores) {
+    text = chores === 1
+      ? "Nothing new to decide. The one chore on your To Do list below is waiting for you."
+      : `Nothing new to decide. The ${chores} chores on your To Do list below are waiting for you.`;
+  } else if (!now && !later) {
+    text = "Nothing needs you.";
+  } else if (!now) {
+    text = later ? "Nothing needs you right now. The chores and suggestions below can wait."
+      : "Nothing needs you right now.";
+  } else {
+    text = `${now} ${now === 1 ? "thing needs" : "things need"} you now`
+      + (urgent ? ` (${urgent} urgent)` : "")
+      + (later ? ". The chores and suggestions below can wait." : ".");
+  }
+  box.appendChild(el("p", "qleadline" + (!now && !later ? " empty-line tight" : ""), text));
+  const integ = (state.status || {}).integration || {};
+  if (integ.restart_pending === true) {
+    const row = el("div", "qleadrow");
+    row.appendChild(el("span", "qleadtext",
+      "Home Assistant needs a restart to finish updating brAIn."));
+    const go = el("a", "btn small", "Open System settings");
+    go.href = "/config/system";
+    go.target = "_top";
+    row.appendChild(go);
+    box.appendChild(row);
+  }
+  return box;
+}
+
 // Which group opens by itself: the problems when there are any, else the
 // first group that has cards — a queue that opened on four closed headings
 // would hide the one decision waiting.
@@ -8343,16 +8447,13 @@ function renderFindings() {
     if (!cards.length) {
       // The To Do list under the queue is the person's too: chores that
       // need their hands. An empty queue over a full list said two things.
-      const chores = todoRows().length;
-      list.appendChild(el("p", "empty-line tight", !chores
-        ? "Nothing needs you."
-        : chores === 1
-          ? "Nothing new to decide. The one chore on your To Do list below is waiting for you."
-          : `Nothing new to decide. The ${chores} chores on your To Do list below are waiting for you.`));
+      // The lead line (and a pending restart) is still the first thing said.
+      list.appendChild(todayLead(todayGroups(cards), todoRows().length));
     } else {
+      const groups = todayGroups(cards);
+      list.appendChild(todayLead(groups));
       const waiting = cards.filter((c) => c.unchecked).length;
       if (waiting) list.appendChild(waitingNote(waiting));
-      const groups = todayGroups(cards);
       const lead = todayLeadGroup(groups);
       GROUP_ORDER.forEach((g) => {
         if (groups[g].length) list.appendChild(todayGroup(g, groups[g], lead));
@@ -14271,7 +14372,7 @@ function chatApprovalCard(ev) {
     const stop = el("button", "btn small ghost permstop", "Stop asking…");
     stop.type = "button";
     stop.title = "Open the switch that lets brAIn act without asking";
-    stop.addEventListener("click", () => openSettingsAt("setSkipPerms"));
+    stop.addEventListener("click", () => openSettingsAt("setPermLevel"));
     foot.appendChild(stop);
     card.appendChild(foot);
   }
@@ -15649,6 +15750,7 @@ async function refreshChatRail() {
 
 function pickConvSource(id) {
   chatState.convSource = id;
+  chatState.convFilterOpen = false;
   prefSet(CONV_SOURCE_KEY, id);
   chatState.convs = [];
   renderConvKinds();
@@ -15675,7 +15777,21 @@ function renderConvKinds() {
     hint.hidden = !blurb;
   }
   host.textContent = "";
-  host.hidden = kinds.length < 2;
+  // One "Filter" line stands for the whole row of kinds and their counts:
+  // it says which kind is showing, and the pills open under it on a press.
+  const filter = $("#chatRailFilter");
+  const open = chatState.convFilterOpen === true && kinds.length > 1;
+  host.hidden = kinds.length < 2 || !open;
+  if (filter) {
+    filter.hidden = kinds.length < 2;
+    filter.textContent = "";
+    filter.appendChild(el("span", "crfilterlabel", "Filter"));
+    filter.appendChild(el("span", "crfiltercur",
+      current ? `${current.label} ${current.count}` : ""));
+    filter.appendChild(el("span", "crfilterchev", ""));
+    filter.setAttribute("aria-expanded", open ? "true" : "false");
+    filter.onclick = () => { chatState.convFilterOpen = !open; renderConvKinds(); };
+  }
   if (host.hidden) return;
   kinds.forEach((o) => {
     const on = o.id === chatState.convSource;
@@ -17667,6 +17783,14 @@ const HOUSE_MODE_WORDS = {
 // is not overwritten while it has focus: `refreshOpenSettings` already
 // skips a dialog with focus inside it, and a save re-renders only after
 // the change that triggered it has landed.
+// The severity floor the house set, in words: what reaches a phone.
+const NOTIFY_FLOOR_WORDS = {
+  critical: "urgent alerts only",
+  serious: "serious problems and urgent alerts",
+  warning: "warnings, serious problems and urgent alerts",
+  info: "every finding",
+};
+
 function renderNotifyPolicy(settings) {
   // Speaking first is strictly opt-in, so only an explicit true ticks it:
   // a setting that arrived missing or malformed reads as off.
@@ -17675,6 +17799,19 @@ function renderNotifyPolicy(settings) {
   const box = $("#setNotifyPolicy");
   if (!box) return;
   if (document.activeElement !== box) box.value = settings.notify_policy || "";
+  // The rule as it stands, in words, before the box that changes it.
+  const now = $("#setNotifyNow");
+  if (now) {
+    const policy = String(settings.notify_policy || "").trim();
+    const extra = Array.isArray(settings.notify_policy_learned)
+      ? settings.notify_policy_learned.length : 0;
+    let said = policy
+      ? `Right now: brAIn follows your sentence, \u201c${policy}\u201d.`
+      : `Right now: ${NOTIFY_FLOOR_WORDS[settings.notify_min_severity] || NOTIFY_FLOOR_WORDS.critical}.`;
+    if (extra) said += ` ${extra === 1 ? "1 line" : `${extra} lines`} added from your answers also apply.`;
+    if (settings.speak_first === true) said += " Urgent problems are also said aloud.";
+    now.textContent = said;
+  }
   const list = $("#setNotifyLearned");
   const learned = Array.isArray(settings.notify_policy_learned)
     ? settings.notify_policy_learned : [];
@@ -17702,9 +17839,15 @@ function renderNotifyPolicy(settings) {
   });
 }
 
-$("#setNotifyPolicy").addEventListener("change", () =>
-  saveSettings({ notify_policy: $("#setNotifyPolicy").value.trim() },
-    "Saved — brAIn will time and word notifications by it"));
+$("#setNotifyPolicy").addEventListener("change", async () => {
+  const saved = $("#setNotifySaved");
+  const data = await saveSettings({ notify_policy: $("#setNotifyPolicy").value.trim() },
+    "Saved — brAIn will time and word notifications by it");
+  // The page says it too, where the box is: a toast is gone before it is read.
+  if (saved) saved.textContent = data
+    ? "Saved. brAIn will time and word notifications by it."
+    : "Not saved. Press outside the box to try again.";
+});
 
 $("#setSpeakFirst").addEventListener("change", () => {
   const on = $("#setSpeakFirst").checked;
