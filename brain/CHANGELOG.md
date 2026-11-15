@@ -2,6 +2,18 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.15
+
+### Changed
+
+- Morph: an opened light group whose members all read the same folds them behind one line ("Can 1–6 · all 35% Warm") under the All slider; it opens on a tap, and shows every member when they differ (#1059).
+- Morph's card rules, which brAIn follows when it builds a card for the house: a setting reads as a setting with its unit and last run, a tile always shows its value and its state once, an empty part is left out, and a pending restart is said only by Morph's own bar, never repeated in a card (#1056, #1058).
+
+### Fixed
+
+- Morph: on a touch screen, the Coming up timeline's zoom and fold buttons are 40px targets (#1057).
+- Morph: a detail reading with an empty state is left out of an opened card instead of breaking it (#1056).
+
 ## 5.3.14
 
 ### Fixed

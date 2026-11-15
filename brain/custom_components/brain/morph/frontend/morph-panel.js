@@ -2129,7 +2129,7 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
     const name = this.cardName(card, hit.sec);
     const lifted = ms && ms.id === '__now';
     const x = this.salNow(id);
-    const ctx = { hass: hv, card, st, sec: hit.sec, name, open, member: open ? this.s.view.member : null, colour: open ? this.s.view.colour || null : null, spectrum: open ? this.s.view.spectrum || null : null, H: (open && this.s.view.H) || (card.type === 'readings' ? (this.s.rfocus && this.s.rfocus[id] ? { focus: this.s.rfocus[id] } : {}) : {}), preview: this.s.previews[id] != null ? this.s.previews[id] : null, memberPreview: open ? this.s.memberPreview : null, confirm: this.s.confirm[id] && this.s.confirm[id].until > Date.now() ? this.s.confirm[id].text : '', night: this.salApplied && this.salApplied.period === 'night' };
+    const ctx = { hass: hv, card, st, sec: hit.sec, name, open, member: open ? this.s.view.member : null, rowsShown: open ? !!this.s.view.rows : false, colour: open ? this.s.view.colour || null : null, spectrum: open ? this.s.view.spectrum || null : null, H: (open && this.s.view.H) || (card.type === 'readings' ? (this.s.rfocus && this.s.rfocus[id] ? { focus: this.s.rfocus[id] } : {}) : {}), preview: this.s.previews[id] != null ? this.s.previews[id] : null, memberPreview: open ? this.s.memberPreview : null, confirm: this.s.confirm[id] && this.s.confirm[id].until > Date.now() ? this.s.confirm[id].text : '', night: this.salApplied && this.salApplied.period === 'night' };
     let faceHtml = '', moreHtml = '';
     try {
       ctx.accent = card.color ? hue(card.color) : T.accent(ctx);
@@ -3682,6 +3682,7 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
         this._tgtT[eid] = setTimeout(() => { delete this._tgtT[eid]; this.call({ domain: 'climate', service: 'set_temperature', data }); }, 600);
         this.track('slide', hit.card.id, hit.sec.id); return;
       }
+      case 'lg-rows': if (this.s.view) { this.s.view.rows = !this.s.view.rows; this.schedule(); } return;
       case 'colour': if (this.s.view) { this.s.view.colour = this.s.view.colour === v ? null : v; this.schedule(); } return;
       case 'member': {
         const tile = el.closest('[data-tile]'); const id = tile && tile.getAttribute('data-tile');
