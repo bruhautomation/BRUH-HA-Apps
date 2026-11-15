@@ -8,7 +8,7 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 - Settings › Model & usage opens on how much of the session and the week is used and when it resets. The model choice is a short list, with pinned and older versions folded under "More versions" (#1045).
 - Insights' sub-tabs no longer repeat the top tab's name (the cards are "Cards"). Needs you opens with one line on what needs you now, a visible way to the Home Assistant System page when a restart is pending, and the chores under it (#1046).
-- Ask's chat list keeps its filters behind one Filter row, so the first chat shows at once on a phone. Chats take the short title Claude Code already wrote for the session instead of their first words or a placeholder, with no extra run (#1047).
+- Ask's chat list keeps its filters behind one Filter row, so the first chat shows at once on a phone. A chat is titled with the short title Claude Code wrote for the session where there is one. Otherwise its title is the request itself, shortened to its first clause without the polite lead-in, never a placeholder. No extra run is made (#1047).
 - Diagnostics and Developer open with one sentence on when they last checked and what they found. A result a week old or more says it is out of date on its Run button, and the per-test rows are folded away (#1048).
 - Permissions opens with one plain sentence on what brAIn may do on its own, and its two switches are one scale: Ask first, Act, No limits. Each step stores exactly what the switches stored, and nothing about what brAIn may do has changed (#1049).
 - Notifications opens on the rule in force in plain words ("Right now: urgent alerts only"), with an example under the box and a visible Saved line when it saves (#1050).
