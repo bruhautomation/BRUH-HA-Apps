@@ -120,7 +120,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: BrevilleConfigEntry) -> 
         on_tokens_updated=save_tokens,
     )
     coordinator = BrevilleCoordinator(hass, entry, client)
-    await coordinator.async_load_remembered()
     await coordinator.async_config_entry_first_refresh()
     _LOGGER.info("Signed in to Breville; %d appliance(s) on the account", len(coordinator.appliances))
     entry.runtime_data = coordinator

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.6
+
+### Removed
+
+- Everything in 0.1.5 is taken back out, and BRUH Cooking is again as it was in 0.1.4. The development loop's transcript monitor flagged the batch that made 0.1.5 because its fixer changed an assertion in an existing test of the add-on's own suite. The monitor's rule is to revert any batch it flags and redo it on a stronger model, so the same fixes (#1041, #1042, #1043, #1044) come back in a later release. Entity ids already renamed through Repairs keep their new names, and the small record of the last cook that 0.1.5 kept is left unused.
+
 ## 0.1.5
 
 ### Added
