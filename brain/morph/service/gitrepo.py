@@ -25,6 +25,7 @@ Three rules:
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import threading
 
@@ -170,7 +171,11 @@ def _restore_locked(sha: str) -> tuple[bool, str]:
     commit_pending()
     _git("checkout", sha, "--", ".")
     subject = _git("log", "-1", "--format=%s", sha, check=False).stdout.strip()
-    new = commit(f"Restored the version from “{subject}”", "person")
+    full = _git("rev-parse", sha, check=False).stdout.strip()
+    # The version it went back to, in the body, the way a revert names its
+    # commit: `is_restored_over` reads it so a change a person restored
+    # away counts as one they did not keep.
+    new = commit(f"Restored the version from “{subject}”\n\nThis restores commit {full}.", "person")
     return True, new
 
 
@@ -230,6 +235,21 @@ def file_at(sha: str, path: str) -> str | None:
         return None
     r = _git("show", f"{sha}:{path}", check=False)
     return r.stdout if r.returncode == 0 else None
+
+
+def is_restored_over(sha: str) -> bool:
+    """Whether a later Restore went back to a version from before this
+    commit — the dashboard put back as it was, which undoes this change as
+    surely as a revert does (`restore` names the version in its body)."""
+    full = _git("rev-parse", sha, check=False).stdout.strip()
+    if not full:
+        return False
+    text = _git("log", "--format=%b", f"{sha}..HEAD", check=False).stdout
+    for back in sorted(set(re.findall(r"This restores commit ([0-9a-f]{40})", text))):
+        if back != full and _git("merge-base", "--is-ancestor", back, full,
+                                 check=False).returncode == 0:
+            return True
+    return False
 
 
 def is_reverted(sha: str) -> bool:

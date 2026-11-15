@@ -2,6 +2,28 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.9
+
+### Security
+
+- Development-loop reports and their screen pictures now alias first names the house defines anywhere, not only whole entity names: every word of a person's name, the owner in a possessive name ("X's Room"), the names on sleep, door and presence sensors, and the names, sleepers and people set in Morph's dashboard. The same map cleans the brief's free text and log excerpts, so a child's name on a people tile or in the morning brief no longer leaves the house. Common words stay as they are (#1001).
+
+## 5.3.8
+
+### Added
+
+- **Stop watching** a device, sensor or automation from a finding's Ignore: no check looks at it again, and a line in the log and the decision trail says so. Knowledge › Not watched lists everything you stopped watching, each with Watch again. It is not offered for smoke, leak, gas, locks, alarms, security or protected devices (#916).
+- A frost warning for outdoor water: when the hourly forecast low comes within about 2 °C of freezing in the next day, one item names the irrigation, outdoor taps, pool and unheated spaces at risk, with the low and its time. It skips anything you stopped watching or explained (#918).
+- The weekly report says how long each dehumidifier ran and how long the room stayed damp while it was off. A long damp spell with it off is a finding, read against the sensor and level you said control it (#917).
+
+### Changed
+
+- Morph remembers a card you restored from History as well as one you said No to, keeps its section's order too, and lists what it keeps in ⚙ › Dashboard › Learning loop, each with Forget (#919).
+
+### Fixed
+
+- The automation-conflict check counts only explanations given about the conflict, so a reason given on an unrelated finding about the same device no longer quiets a real conflict (#1002).
+
 ## 5.3.7
 
 ### Fixed

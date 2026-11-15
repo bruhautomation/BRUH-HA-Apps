@@ -160,6 +160,16 @@ def _find(dash: dict, card_id: str = "", sec_id: str = ""):
     return None
 
 
+def _section_of(dash: dict, card_id: str) -> str:
+    """The id of the section a card sits in, or ""."""
+    for fl in dash.get("floors") or []:
+        for sec in fl.get("sections") or []:
+            for g in sec.get("groups") or []:
+                if any(c.get("id") == card_id for c in g.get("cards") or []):
+                    return str(sec.get("id") or "")
+    return ""
+
+
 def _keep(data: dict, item: dict, dash: dict, why: str, now: float) -> None:
     """Remember the answer against the card or section the item was about."""
     # Only a No to taking something away or moving it is a keep: a No to
@@ -170,7 +180,10 @@ def _keep(data: dict, item: dict, dash: dict, why: str, now: float) -> None:
     cid, sid = str(item.get("card") or ""), str(item.get("section") or "")
     card = _find(dash, card_id=cid) if cid else None
     if card is not None:
+        # And the section it sits in: a reorder of that section is a move of
+        # this card, so it is not proposed while the keep holds.
         keeps[f"card:{cid}"] = {"entity": card.get("entity") or "", "sig": _card_sig(card),
+                                "section": _section_of(dash, cid),
                                 "title": item.get("title"), "why": why, "at": now}
     elif sid and not cid:
         keeps[f"section:{sid}"] = {"title": item.get("title"), "why": why, "at": now}
@@ -180,7 +193,8 @@ def _keep(data: dict, item: dict, dash: dict, why: str, now: float) -> None:
 
 
 def kept_ids(data: dict, dash: dict) -> tuple[set, set]:
-    """(card ids, section ids) whose keep still holds."""
+    """(card ids, section ids) whose keep still holds. A kept card's section
+    is among the sections: reordering or removing it would move the card."""
     cards, secs = set(), set()
     for k, v in (data.get("keeps") or {}).items():
         kind, _, ident = k.partition(":")
@@ -190,19 +204,61 @@ def kept_ids(data: dict, dash: dict) -> tuple[set, set]:
             card = _find(dash, card_id=ident)
             if card is not None and v.get("sig") == _card_sig(card):
                 cards.add(ident)
+                where = _section_of(dash, ident)
+                if where:
+                    secs.add(where)
     return cards, secs
+
+
+def keeps_listing(data: dict | None = None, dash: dict | None = None) -> list[dict]:
+    """What the household chose to keep, for ⚙ › Dashboard: one row per
+    keep that still holds, newest first, with the card or section by name
+    and the answer that kept it. ``key`` is what `clear_keep` takes."""
+    data = _load() if data is None else data
+    dash = store.read()[0] if dash is None else dash
+    cards, secs = kept_ids(data, dash)
+    out = []
+    for k, v in (data.get("keeps") or {}).items():
+        kind, _, ident = k.partition(":")
+        if kind == "card" and ident not in cards:
+            continue
+        thing = _find(dash, card_id=ident) if kind == "card" else _find(dash, sec_id=ident)
+        name = str((thing or {}).get("name") or (thing or {}).get("title")
+                   or (thing or {}).get("entity") or v.get("entity") or "")
+        if kind == "section" and not thing:
+            continue
+        out.append({"key": k, "kind": kind, "name": name or ("a card" if kind == "card" else "a section"),
+                    "said": str(v.get("title") or ""),
+                    "how": "undone" if v.get("why") == "undone" else "declined",
+                    "at": float(v.get("at") or 0)})
+    out.sort(key=lambda r: -r["at"])
+    return out
+
+
+def clear_keep(key: str) -> bool:
+    """Forget one keep: Morph may propose moving or removing it again."""
+    data = _load()
+    if key not in (data.get("keeps") or {}):
+        return False
+    del data["keeps"][key]
+    _save(data)
+    return True
 
 
 def record_reverted(data: dict, dash: dict, now: float | None = None) -> bool:
     """A suggestion that was done and then undone is an answer too: the
-    person put the card or order back. Returns whether anything was added."""
+    person put the card or order back, by Undo or by restoring an earlier
+    version. Returns whether anything was added."""
     import gitrepo
     now = now or time.time()
     changed = False
     for it in data["items"]:
         if it.get("status") != "done" or not it.get("commit") or it.get("kept_noted"):
             continue
-        if not (it.get("card") or it.get("section")) or not gitrepo.is_reverted(it["commit"]):
+        if not (it.get("card") or it.get("section")):
+            continue
+        # Undone by a revert, or by a Restore of a version from before it.
+        if not (gitrepo.is_reverted(it["commit"]) or gitrepo.is_restored_over(it["commit"])):
             continue
         _keep(data, it, dash, "undone", now)
         it["kept_noted"] = True

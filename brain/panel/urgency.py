@@ -68,6 +68,10 @@ PRODUCER_URGENCY = {
     # A window open on a cold night is costing money for as long as it
     # stays open, and it is a thing somebody can go and close.
     "check:climate.window": "now",
+    # Tonight's frost and the outdoor taps: worth hearing the same day,
+    # while there is light to drain them, and filed from the forecast in
+    # the daytime, so `today` reaches somebody before the night does.
+    "check:climate.frost_ahead": "today",
     # Everything else here was measured over a month of nights and is
     # about the building: a room that has been two degrees short all
     # winter is not two degrees shorter at 3am, and a heating schedule

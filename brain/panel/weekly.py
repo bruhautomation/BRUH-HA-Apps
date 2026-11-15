@@ -222,13 +222,17 @@ def one_thing(open_rows: list[dict], now: float | None = None) -> dict | None:
 
 def gather(open_rows: list[dict], settled: list[dict], power: dict,
            since: float, memory_path: str | None = None,
-           now: float | None = None) -> dict:
-    """Everything the decision and the prompt read. No model, no network."""
+           now: float | None = None, humidity=None) -> dict:
+    """Everything the decision and the prompt read. No model, no network.
+
+    ``humidity`` is one line a dehumidifier, worked out from the last
+    checks pass (`checks.chores.humidity_summaries`)."""
     now = time.time() if now is None else now
     return {
         "since": since,
         "now": now,
         "energy": power or {},
+        "humidity": [str(x) for x in humidity or () if str(x).strip()][:4],
         "findings": week_findings(open_rows, settled, since),
         "learned": learned(memory_path, since),
         "one_thing": one_thing(open_rows, now),
@@ -294,6 +298,7 @@ def week_lines(state: dict) -> list[str]:
     same words, so the two runs cannot disagree about what the week was.
     """
     out = list(_energy_lines(state.get("energy") or {}))
+    out += list(state.get("humidity") or [])
     found = state.get("findings") or {}
     out.append(f"{found.get('settled', 0)} problem(s) answered this week, "
                f"{found.get('open_now', 0)} open in total")
@@ -315,6 +320,9 @@ def frame(state: dict) -> str:
     elif power.get("reason"):
         lines.append(f"- No energy figures this week: {power['reason']}. "
                      "Do not mention energy at all.")
+
+    for line in state.get("humidity") or []:
+        lines.append(f"- {line}")
 
     found = state.get("findings") or {}
     lines.append(
