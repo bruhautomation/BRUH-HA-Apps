@@ -113,16 +113,28 @@ const ACT_ICONS = {
 // `action` says a word of the tile's own sits beside the line.
 export function statusHtml(val, o) {
   const opt = o || {};
-  const parts = (Array.isArray(val) ? val : [val]).map((p) => (p == null ? '' : String(p))).filter(Boolean);
-  if (parts.length < 2) return esc(parts[0] || '');
+  // A part is a string, or { text, short }: where the tile is too narrow for the
+  // next part, `short` stands in for the first one and says both facts in fewer words.
+  const parts = (Array.isArray(val) ? val : [val]).map((p) => (p == null ? '' : p && typeof p === 'object' ? p : String(p))).filter((p) => p && (typeof p === 'string' || p.text));
+  if (!parts.length) return '';
   const sep = opt.sep == null ? ' \u00b7 ' : opt.sep;
+  const body = (p) => (typeof p === 'string' ? p : p.text);
+  if (parts.length < 2) return esc(body(parts[0]));
   let n = 0;
-  return `${parts.map((p, i) => {
-    const text = (i ? sep : '') + p; n += text.length;
-    if (!i) return `<i>${esc(text)}</i>`;
-    const need = Math.min(STATUS.max, Math.max(STATUS.min, Math.ceil((n * STATUS.charPx + STATUS.linePx + (opt.action ? STATUS.actionPx : 0)) / STATUS.step) * STATUS.step));
+  const needOf = (len) => Math.min(STATUS.max, Math.max(STATUS.min, Math.ceil((len * STATUS.charPx + STATUS.linePx + (opt.action ? STATUS.actionPx : 0)) / STATUS.step) * STATUS.step));
+  const first = parts[0];
+  const short = typeof first === 'object' && first.short ? first.short : '';
+  const out = parts.map((p, i) => {
+    const text = (i ? sep : '') + body(p); n += text.length;
+    if (!i) return short ? '' : `<i>${esc(text)}</i>`;
+    const need = needOf(n);
     return `<i class="w${need}">${esc(text)}</i>`;
-  }).join('')}`;
+  });
+  if (short) {
+    const need = needOf(parts.slice(0, 2).reduce((a, p, i) => a + (i ? sep.length : 0) + body(p).length, 0));
+    out[0] = `<i class="sh h${need}">${esc(short)}</i><i class="w${need}">${esc(body(first))}</i>`;
+  }
+  return out.join('');
 }
 
 export function stripFace(o) {
@@ -383,7 +395,7 @@ const lightGroup = {
     const bad = gone ? gone + ' unavailable' : '';
     return off(ctx.st) ? 'Unavailable' : ctx.preview != null ? ctx.preview + '%'
       : total === 1 && !gone ? [n ? 'On' : 'Off', n ? `avg ${avg}%` : '']
-        : n ? [!gone && n === total ? `All ${total} on` : `${n} of ${total} on`, `avg ${avg}%`, bad]
+        : n ? [{ text: !gone && n === total ? `All ${total} on` : `${n} of ${total} on`, short: `${!gone && n === total ? 'All ' + total : n + ' of ' + total} \u00b7 ${avg}%` }, `avg ${avg}%`, bad]
           : total ? [!gone ? `All ${total} off` : reach ? `${reach} off` : 'All unavailable', reach ? bad : ''] : 'Off';
   },
   more: (ctx) => {
@@ -556,7 +568,7 @@ const lock = {
     // options.sub: one reading said beside the state ("Locked · 188 mi").
     const sub = ctx.card.options && ctx.card.options.sub && ctx.hass.states[ctx.card.options.sub];
     const extra = sub && !off(sub) ? ' · ' + detailValue(sub) : '';
-    return stripFace({ kind: 'none', icon: 'lock', accent: ctx.accent, active: unlocked, action, actIcon: action.toLowerCase(), armed: ctx.confirm || '', actionColor: unlocked ? 'var(--indigo)' : 'var(--amber)', name: ctx.name, val: off(st) ? stateWord(st, ctx.hass) : stateWord(st, ctx.hass) + extra, iconTransform: unlocked ? 'translateY(-3px)' : 'none', hint: ctx.hint });
+    return stripFace({ kind: 'none', icon: 'lock', accent: ctx.accent, active: unlocked, action, actIcon: action.toLowerCase(), armed: ctx.confirm || '', actionColor: unlocked ? 'var(--indigo)' : 'var(--amber)', name: ctx.name, val: off(st) ? stateWord(st, ctx.hass) : [stateWord(st, ctx.hass), extra.replace(/^ \u00b7 /, '')], iconTransform: unlocked ? 'translateY(-3px)' : 'none', hint: ctx.hint });
   },
   more: (ctx) => {
     const a = (ctx.st && ctx.st.attributes) || {};
@@ -696,7 +708,7 @@ const CLIMATE_CSS = `<style>
 .cl-sq::before{content:"";position:absolute;inset:-9px -5px}
 .cl-val.pend{color:var(--muted)}
 .cl-sq:hover{background:var(--chip);color:var(--text)}
-.cl-ctl{display:flex;flex-wrap:nowrap;align-items:center;gap:6px 0;white-space:nowrap;margin-top:12px;padding-top:8px;border-top:1px solid var(--line);container-type:inline-size}
+.cl-ctl{display:flex;flex-wrap:wrap;align-items:center;gap:6px 0;white-space:nowrap;margin-top:12px;padding-top:8px;border-top:1px solid var(--line);container-type:inline-size}
 .cl-seg{display:inline-flex;gap:3px}
 .cl-seg button{position:relative;border:0;margin:0;font:inherit;font-size:13px;font-weight:600;color:var(--muted);background:color-mix(in oklab,var(--text) 5%,transparent);padding:0 8px;min-height:28px;border-radius:999px;white-space:nowrap;cursor:pointer;transition:background-color .2s ease,color .2s ease}
 .cl-seg button:hover{color:var(--text);background:color-mix(in oklab,var(--text) 10%,transparent)}
@@ -706,15 +718,15 @@ const CLIMATE_CSS = `<style>
 .cl-seg button[aria-pressed="true"]{color:var(--c,var(--text));background:color-mix(in oklab,var(--c,var(--text)) 11%,transparent)}
 .cl-div{width:1px;height:14px;background:var(--line2);opacity:.6;margin:0 6px}
 .cl-run{margin-left:auto;padding-left:6px;flex:0 1 auto;min-width:0}
-.cl-run .cl-seg{min-width:0;max-width:100%}
-.cl-run .cl-seg button{display:inline-flex;align-items:center;gap:4px;flex:0 1 auto;min-width:0}
+.cl-run .cl-seg{min-width:0;max-width:100%;flex-wrap:wrap;justify-content:flex-end}
+.cl-run .cl-seg button{display:inline-flex;align-items:center;gap:4px;flex:0 0 auto;min-width:max-content}
 .cl-run .cl-seg button svg{flex:none}
-.cl-txt{display:inline-block;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
+.cl-txt{display:inline-block;min-width:0;max-width:100%;vertical-align:bottom}
 .cl-seglab{font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--quiet);margin:0 2px 0 4px}
-/* The row never wraps (house rule), so it tightens as the card narrows: the
+/* The row tightens as the card narrows: the
    Fan word goes first, then an action with a short word takes it, then an
-   action with an icon is its icon alone; past that an action's word ends in
-   an ellipsis (it is the one part of the row that shrinks). */
+   action with an icon is its icon alone; past that the routines drop to a line
+   of their own, whole: a word is never cut to fit. */
 @container (max-width:470px){.cl-seglab{display:none}.cl-seg button{padding:0 7px}.cl-div{margin:0 4px}}
 @container (max-width:420px){.cl-run .cl-long{display:none}.cl-run .cl-short{display:inline-block}}
 @container (max-width:370px){.cl-run button.cl-hasic .cl-txt{display:none}}

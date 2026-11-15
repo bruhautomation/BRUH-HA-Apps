@@ -124,6 +124,7 @@ def install_docs() -> None:
 
 async def bootstrap() -> None:
     await asyncio.to_thread(gitrepo.ensure)
+    await asyncio.to_thread(learning.restore_clipped_lessons)
     await asyncio.to_thread(install_docs)
     if not paths.DASHBOARD.exists():
         house = await ha.house()
