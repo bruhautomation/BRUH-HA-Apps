@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.14.7
+
+### Changed
+
+- History shows each print on two lines with Print again and Open side by side, and prints made in one run of the same label are one row ("Lesson 47–57 · 11 labels"), so a phone shows about ten at a glance (#939).
+- Quick says which roll it prints on ("Prints on: Address Labels (right)"), shows a sample on the real-size label before you type, and the header chip marks the roll in use (#938).
+- The Printer tab folds into sections (Printer, What is loaded, Label stock, Settings), so it is a quarter of its old length on a phone; the printer in use says "Printing now" instead of a greyed button, and "Add a stock" is a full-size target (#940).
+
+### Fixed
+
+- Grey helper text, placeholders, dates and the green "lined up" pill are readable on every tab, in light and dark (#937).
+
 ## 0.14.6
 
 ### Fixed
