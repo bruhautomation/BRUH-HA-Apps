@@ -1008,6 +1008,17 @@ async def collect(now: float | None = None) -> dict:
         snap["answers"] = findings_store.answered_checks()
     except Exception as exc:  # noqa: BLE001
         log.debug("could not read the settled answers: %s", exc)
+    # Each check's own record, counted from the endings' status
+    # (`findings_store.scorecard`): `House.stand_down` reads it. Left out on
+    # failure, which stands nothing down.
+    try:
+        import findings_store  # noqa: PLC0415
+        snap["record"] = {str(r.get("source")): r
+                          for r in findings_store.scorecard()
+                          if isinstance(r, dict) and str(
+                              r.get("source") or "").startswith("check:")}
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not read the checks' record: %s", exc)
     # Every device somebody said is finished with or broken, on whichever
     # card they said it (`House.answered_off`).
     try:

@@ -1048,6 +1048,44 @@ def _wrong_on_same_wait(house: House, config: dict, check_id: str) -> str:
     return ""
 
 
+# What fires only when somebody does something or something rare happens:
+# a helper a person sets by hand, a button, an event entity (a remote's
+# press), a scene, an update, a timer or counter somebody starts.
+RARE_STATE_DOMAINS = frozenset({
+    "input_boolean", "input_select", "input_number", "input_text",
+    "input_datetime", "input_button", "button", "event", "scene", "update",
+    "timer", "counter"})
+
+
+def _rare_trigger(house: House, trig: dict) -> bool:
+    """Whether one trigger waits on something that may rightly not happen
+    for months: an event of any kind (`RARE_TRIGGERS`), a calendar, a
+    device trigger that is an integration's event (a remote's button, not
+    an entity's state: its `domain` is the integration, not an entity
+    domain the house has), or a state of a helper, button or event entity
+    (`RARE_STATE_DOMAINS`) — by the trigger's structure, never its name."""
+    kind = _trigger_kind(trig)
+    if kind in RARE_TRIGGERS or kind == "calendar":
+        return True
+    if kind == "device":
+        domain = str(trig.get("domain") or "").lower()
+        return bool(domain) and domain not in house.known_domains
+    if "." in kind:
+        # HA 2026's purpose-built triggers (`button.pressed`, `light.turned_on`).
+        return kind.split(".", 1)[0] in RARE_STATE_DOMAINS
+    if kind in ("state", "numeric_state"):
+        watched = _watched(house, trig)
+        return bool(watched) and all(domain_of(e) in RARE_STATE_DOMAINS
+                                     for e in watched)
+    return False
+
+
+def _waits_on_rare_things(house: House, config) -> bool:
+    """Every trigger of this automation is a rare one (`_rare_trigger`)."""
+    triggers = _triggers(config) if isinstance(config, dict) else []
+    return bool(triggers) and all(_rare_trigger(house, t) for t in triggers)
+
+
 def _needs_a_year(config) -> bool:
     text = json.dumps(config, default=str)
     return bool(_SEASONAL_RE.search(text)) or "calendar" in _trigger_platforms(
@@ -1056,6 +1094,10 @@ def _needs_a_year(config) -> bool:
 
 def never_fired(snap: dict, now: float) -> list[dict]:
     house = House(snap)
+    # Marked Wrong twice, the latest a Wrong: the check stands down whole
+    # (`House.stand_down`), each automation it would have named said on
+    # the trail with the count.
+    stood = house.stand_down("auto.never_fired")
     out = []
     for item in _automations(house):
         eid = item["entity_id"]
@@ -1081,8 +1123,7 @@ def never_fired(snap: dict, now: float) -> list[dict]:
             continue
         if _needs_a_year(item["config"]) and age < SEASONAL_DAYS:
             continue
-        kinds = _trigger_platforms(item["config"])
-        if kinds and kinds <= RARE_TRIGGERS:
+        if _waits_on_rare_things(house, item["config"]):
             continue
         if not house.should_report(eid, "auto.never_fired"):
             continue
@@ -1091,6 +1132,10 @@ def never_fired(snap: dict, now: float) -> list[dict]:
             house.gave_up("auto.never_fired", [{"entity_id": eid}],
                           f"you marked “{other}” wrong, and this waits on the "
                           "same kind of thing", kind="explained")
+            continue
+        if stood:
+            house.gave_up("auto.never_fired", [{"entity_id": eid}],
+                          stood["reason"], kind="stand_down")
             continue
         out.append({
             "text": f"{_label('Automation', item)} has never fired",
@@ -1736,6 +1781,19 @@ def conflicting(snap: dict, now: float) -> list[dict]:
         # asking only that one let the rule somebody keeps answering about
         # come back under every new partner it was filed beside.
         if any(not house.should_report(r, "auto.conflict") for r in rules):
+            continue
+        # What the two rules fight over, explained by the household: a Wrong
+        # with a reason, or a correction, stored against that entity or its
+        # device under any check (a lamp left unplugged on purpose, a
+        # remote that sleeps). Two rules "undoing" a device the household
+        # has explained is that device doing what they said.
+        explained = next(((e, said) for e in sorted(p["entities"])
+                          for said in [house.owner_explained(e)] if said),
+                         None)
+        if explained:
+            house.gave_up("auto.conflict", [{"entity_id": subject}],
+                          f"you explained {house.label(explained[0])}: "
+                          f"{explained[1]['text']}", kind="explained")
             continue
         a, b = (p["names"].get(k, k) for k in key)
         out.append({

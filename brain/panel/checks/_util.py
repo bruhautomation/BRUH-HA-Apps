@@ -382,6 +382,36 @@ WRONG_LIMIT = 2
 # a correction's lifetime ends one).
 ANSWERED_ONCE = frozenset({"auto.never_fired", "auto.forgotten_off",
                            "auto.condition_never_passes"})
+# "That reading is not impossible" is the same fact on the next pass too:
+# the sensor measures a heater, or the household knows it is broken. So one
+# Wrong about an entity closes `dev.implausible` for it, counted from the
+# answer's status; a rule's explained range used to let the next, further-out
+# reading file it again. Kept apart from `ANSWERED_ONCE`, whose checks also
+# refuse "Don't remind me" (`server._for_now`): a snooze stays a snooze here.
+ONE_WRONG = ANSWERED_ONCE | {"dev.implausible"}
+# The checks that report one sensor's READINGS: out of its usual range,
+# impossible, drifting. A Wrong under one of them is the household saying
+# the sensor's readings are not news, so the Wrongs about one entity are
+# counted across the three: `WRONG_LIMIT` of them closes all three for that
+# entity, whichever check each was given under.
+READING_CHECKS = frozenset({"base.unusual", "dev.implausible",
+                            "forecast.decline"})
+# The checks that stand down by their own record (`House.stand_down`): the
+# reading checks, while their record is held (`rule_record.holds`: the
+# latest answers Wrong with no agreement among them), raise each entity
+# only once; `auto.never_fired`, once marked Wrong twice with the latest a
+# Wrong, raises nothing.
+STAND_DOWN_ONCE = READING_CHECKS
+STAND_DOWN_SILENT = frozenset({"auto.never_fired"})
+SILENT_MIN_WRONG = 2
+# The chore checks that answer for one machine: an explanation given under
+# either is about the machine (`House.owner_explained`).
+CHORE_CHECKS = frozenset({"chore.waiting", "chore.dehumidifier"})
+# How long an explanation given with a Wrong on a device check keeps holding
+# across the device's later stretches (`House.owner_explained`): a knob that
+# sleeps sleeps again, and a reason that turns out to be about a repair
+# still lapses.
+EXPLAINED_HOLD_S = 90 * 86400
 
 
 
@@ -726,7 +756,7 @@ class House:
         this entity, read off the settled ledger (`snap["answers"]`), or None.
 
         Two things close it, both read before a card is made: the same row
-        marked Wrong `WRONG_LIMIT` times (once for `ANSWERED_ONCE`'s standing
+        marked Wrong `WRONG_LIMIT` times (once for `ONE_WRONG`'s standing
         facts about an automation; a rule that was written and still
         did not hold is not a reason to ask a third time), and a reason that
         says the device is finished with — retired, not used, broken
@@ -752,12 +782,24 @@ class House:
         except Exception:  # noqa: BLE001
             pass
         own = (answers.get(entity_id) or {}).get(check_id)
-        limit = 1 if check_id in ANSWERED_ONCE else WRONG_LIMIT
+        limit = 1 if check_id in ONE_WRONG else WRONG_LIMIT
         if isinstance(own, dict) and int(own.get("wrong") or 0) >= limit:
             times = int(own["wrong"])
             return {"text": "you marked this wrong" + (
                         "" if times == 1 else f" {times} times"),
                     "scope": "answers"}
+        if check_id in READING_CHECKS:
+            # Counted by status across the three reading checks (above).
+            times = sum(int(((answers.get(entity_id) or {}).get(cid) or {})
+                            .get("wrong") or 0) for cid in READING_CHECKS)
+            stood = self.stand_down(check_id)
+            if times >= (1 if stood else WRONG_LIMIT):
+                said = ("you marked this sensor's readings wrong"
+                        + ("" if times == 1 else f" {times} times"))
+                if stood:
+                    return {"text": f"{said}, and {stood['reason']}",
+                            "scope": "answers", "kind": "stand_down"}
+                return {"text": said, "scope": "answers"}
         # Said on any card, not only this check's: "I don't use that remote
         # any more" on a Resident case or an overnight card is the same
         # device finished with (`corrections.known_faulty`, #697).
@@ -780,6 +822,17 @@ class House:
             said = self._answered_this_stretch(entity_id, check_id, answers)
             if said:
                 return said
+        if check_id == "dev.unavailable":
+            # An explanation the household gave about this device going
+            # quiet — a remote that sleeps, a lamp left unplugged — covers
+            # its next stretch too: the stretch rule above lifts when the
+            # device comes back and goes again, which is exactly what a
+            # sleeping knob does every day (`owner_explained`).
+            said = self.owner_explained(entity_id, DEVICE_QUIET)
+            if said:
+                return {"text": said["text"] + " (your explanation of this "
+                        "device)", "scope": "answers"
+                        if said["via"] == entity_id else "device"}
         if not (finished and gone):
             return None
         for eid in [entity_id, *self.siblings(entity_id)]:
@@ -900,7 +953,8 @@ class House:
         if rule.get("noted"):
             # Its own trail entry is written (`corrections.broken_answer`).
             return False
-        self._note({"kind": "exception", "subject": entity_id,
+        self._note({"kind": str(rule.get("kind") or "exception"),
+                    "subject": entity_id,
                     "check": check_id,
                     "reason": str(rule.get("text") or
                                   "you said this is not a problem here"),
@@ -908,6 +962,113 @@ class House:
                             + (f", until {rule['until']}"
                                if rule.get("until") else "")})
         return False
+
+    def stand_down(self, check_id: str) -> dict | None:
+        """This check's own record, when it stands the check down, else None.
+
+        ``{"wrong", "total", "streak", "reason"}``, read off the producer
+        scorecard the collector loads (`snap["record"]`, `{source: row}`,
+        counted from the endings' status, never their words). A reading
+        check (`STAND_DOWN_ONCE`) stands down while `rule_record.holds` —
+        its latest answers Wrong with no agreement among them — and then
+        raises each entity once (`answered_off`); `auto.never_fired`
+        (`STAND_DOWN_SILENT`) stands down once marked Wrong
+        `SILENT_MIN_WRONG` times, the latest a Wrong, and raises nothing.
+        Any agreement given later lifts both. No record, or one that cannot
+        be read, stands nothing down.
+        """
+        if check_id not in STAND_DOWN_ONCE | STAND_DOWN_SILENT:
+            return None
+        table = self.snap.get("record")
+        row = (table or {}).get(f"check:{check_id}") \
+            if isinstance(table, dict) else None
+        if not isinstance(row, dict):
+            return None
+        try:
+            import rule_record  # noqa: PLC0415 — a leaf, the one arithmetic
+            wrong = int(row.get("wrong") or 0)
+            total = int(row.get("total") or 0)
+            streak = int(row.get("streak") or 0)
+        except Exception:  # noqa: BLE001 — unreadable holds nothing back
+            return None
+        if check_id in STAND_DOWN_SILENT:
+            if wrong < SILENT_MIN_WRONG or row.get("last") != "wrong":
+                return None
+            reason = (f"you marked {wrong} of this rule's {total} reports "
+                      "wrong, the latest among them, so brAIn has stopped "
+                      "raising it until you agree with one")
+        else:
+            if not rule_record.holds({**row, "source": f"check:{check_id}"}):
+                return None
+            said = (f"the last {streak} of this rule's reports in a row"
+                    if streak >= rule_record.HOLD_STREAK else
+                    f"{wrong} of this rule's {total} reports, the latest "
+                    "among them")
+            reason = (f"you marked {said} wrong, so brAIn raises each "
+                      "sensor only once until you agree with one")
+        return {"wrong": wrong, "total": total, "streak": streak,
+                "reason": reason}
+
+    def owner_explained(self, entity_id: str, checks=None,
+                        now: float | None = None) -> dict | None:
+        """The household's own explanation stored against this entity or
+        another entity of its device, or None.
+
+        Read from structure, never from the words: a correction rule
+        written against the entity (any check, or one of ``checks``), or a
+        Wrong that came WITH a reason (`snap["answers"]`' notes) under one
+        of ``checks`` (any check when None). A reason that says "for now"
+        (`corrections.temporary`) is a snooze, not an explanation, and an
+        explanation given more than `EXPLAINED_HOLD_S` ago no longer covers
+        a NEW stretch on its own. Never a pair `_never_covered` names: a
+        smoke, leak or gas sensor, a lock, an alarm or a protected entity
+        is reported whatever was said about it.
+        """
+        want = set(checks) if checks else None
+        probe = sorted(want)[0] if want else "*"
+        if self._never_covered(entity_id, probe):
+            return None
+        try:
+            import corrections  # noqa: PLC0415 — lazy: it imports the stores
+            temporary = corrections.temporary
+        except Exception:  # noqa: BLE001
+            def temporary(_note):
+                return False
+        import time as _time  # noqa: PLC0415
+        now = _time.time() if now is None else float(now)
+        table = self.snap.get("corrections")
+        rules_of = ((table.get("entity") or {}) if isinstance(table, dict)
+                    else {})
+        facts = self.snap.get("facts")
+        answers = self.snap.get("answers")
+        answers = answers if isinstance(answers, dict) else {}
+        for eid in [entity_id, *self.siblings(entity_id)]:
+            if self._never_covered(eid, probe):
+                continue
+            rules = rules_of.get(eid) or {}
+            if not rules and isinstance(facts, dict):
+                rules = {c: {} for c in (facts.get(eid) or ())}
+            for cid, rule in sorted(rules.items()):
+                if want is None or cid in want:
+                    text = str((rule or {}).get("text") or "") \
+                        if isinstance(rule, dict) else ""
+                    if text and temporary(text):
+                        continue
+                    return {"text": text or "you said this is not a "
+                            "problem here", "via": eid, "check": cid}
+            for cid, row in sorted((answers.get(eid) or {}).items()):
+                if want is not None and cid not in want:
+                    continue
+                if not isinstance(row, dict) or int(row.get("wrong") or 0) < 1:
+                    continue
+                notes = [str(n) for n in row.get("notes") or () if str(n)]
+                if not notes or temporary(notes[-1]):
+                    continue
+                at = int(row.get("wrong_at") or row.get("at") or 0)
+                if at and now - at > EXPLAINED_HOLD_S:
+                    continue
+                return {"text": notes[-1], "via": eid, "check": cid}
+        return None
 
     def gave_up(self, check_id: str, rows: list[dict], reason: str,
                 kind: str = "cap") -> None:

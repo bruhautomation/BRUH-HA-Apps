@@ -2,6 +2,17 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.6
+
+### Fixed
+
+- What you told brAIn about a device now counts for every house check, not only the one you answered: a reason you gave when marking a finding Wrong, or a correction you wrote, keeps the unavailable, conflict and dehumidifier checks quiet about it. A reason marked "for now" and anything about locks, alarms, smoke, leaks or gas never quiets a check (#974, #973).
+- The unusual-reading, impossible-reading and forecast checks stand down on their own record: after a run of Wrong answers with none agreed, each raises a sensor only once until you agree with one, and the decision trail says so with the count. Two Wrong answers on one sensor end the unusual-reading check for it unless the reading crosses freezing (#910, #975).
+- The impossible-reading check no longer judges a device's own temperature (a printer's nozzle or bed, a computer's processor, a plug's internal sensor) against room limits, and skips a sensor you said is broken (#996, #971).
+- The forecast check compares a drift with the same weeks a year earlier and stays quiet with less than a year of history or when last year did the same (#971).
+- The never-fired check leaves alone automations that wait for an event, a calendar, a button or a helper, and stands down after two Wrong answers (#972).
+- Room heat-loss and other room checks use only sensors that read the room's air, never a manifold, coil, pipe or surface probe (#914).
+
 ## 5.3.5
 
 ### Changed

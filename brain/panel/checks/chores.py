@@ -41,7 +41,7 @@ import re
 import numfmt
 
 from . import _util
-from ._util import (CouldNotLook, House, clock, domain_of, parse_ts,
+from ._util import (CHORE_CHECKS, CouldNotLook, House, clock, domain_of, parse_ts,
                     state_words)
 
 # The three machines that finish and then wait for somebody. Matched
@@ -175,17 +175,24 @@ def _governed(house: House, eid: str, shape: dict) -> str:
 
 
 def _answered_on_device(house: House, eid: str, check_id: str) -> str:
-    """A Wrong given to this check about another entity of the same device
-    (the plug, the humidity reading, the machine's own sensor): the reason
-    was about the machine, whichever entity the row led with."""
+    """What the household said about this machine, or "": a Wrong given to
+    either chore check (`CHORE_CHECKS`) about another entity of the same
+    device (the plug, the humidity reading, the machine's own sensor) — the
+    reason was about the machine, whichever entity the row led with — or an
+    explanation stored against this entity itself (a Wrong that came with a
+    reason, or a correction: "it only runs when that sensor reads over
+    60%"), read by `House.owner_explained`. A machine the household has
+    explained is not a chore, whatever its sensor reads now."""
     answers = house.snap.get("answers")
-    if not isinstance(answers, dict):
-        return ""
-    for other in house.siblings(eid):
-        row = (answers.get(other) or {}).get(check_id)
-        if isinstance(row, dict) and int(row.get("wrong") or 0) >= 1:
-            return str((row.get("notes") or ["you marked this wrong"])[-1])
-    return ""
+    if isinstance(answers, dict):
+        for other in house.siblings(eid):
+            for cid in sorted(CHORE_CHECKS | {check_id}):
+                row = (answers.get(other) or {}).get(cid)
+                if isinstance(row, dict) and int(row.get("wrong") or 0) >= 1:
+                    return str((row.get("notes")
+                                or ["you marked this wrong"])[-1])
+    said = house.owner_explained(eid, CHORE_CHECKS | {check_id})
+    return str(said["text"]) if said else ""
 
 
 def waiting(snap: dict, now: float) -> list[dict]:
@@ -915,6 +922,12 @@ def dehumidifier(snap: dict, now: float) -> list[dict]:
         plug = next((o for o in switches
                      if (house.states.get(o) or {}).get("state") == "on"), "")
         if _rule_waits(house, snap, eid, "chore.dehumidifier"):
+            continue
+        said = _answered_on_device(house, eid, "chore.dehumidifier")
+        if said:
+            house.gave_up("chore.dehumidifier", [{"entity_id": eid}],
+                          f"you explained this machine: {said}",
+                          kind="explained")
             continue
         points = recent.get(eid) or []
         reading = appliances.state_at(shape, points, now)
