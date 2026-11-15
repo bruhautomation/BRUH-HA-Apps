@@ -782,6 +782,63 @@ class SaidLog:
         return row
 
 
+# -- a message in parts --------------------------------------------------------
+# The game caps a chat line at 256 characters, so a long request is typed
+# as numbered lines: "1 …" opens it, "2 …", "3 …" add to it, "end" sends
+# the whole thing to the companion as one line and "cancel" drops it. Only
+# "1" opens one, so "10 creepers" said out of the blue is just chat.
+PARTS_IDLE = 300              # seconds without a part before a message is let go
+PARTS_MAX = 20                # numbered parts one message may have
+PARTS_CAP = 4000              # characters of the whole message
+_PART = re.compile(r"\s*(\d{1,2})[.):]?\s+(\S.*)", re.S)
+
+
+class ChatParts:
+    """Each player's message in parts while it is being typed (in memory:
+    a restart drops an unsent one, as a timeout would)."""
+
+    def __init__(self, clock: Callable[[], float] = time.time):
+        self.clock = clock
+        self.open: dict[str, dict[str, Any]] = {}
+        self._lock = threading.Lock()
+
+    def hear(self, player: str, said: str) -> tuple[str, Any]:
+        """What one chat line does: ("pass", None) when it is ordinary chat,
+        ("held", part number), ("send", (message, parts)) or
+        ("cancelled", parts)."""
+        said = str(said or "")
+        m = _PART.fullmatch(said)
+        word = re.sub(r"\W", "", said).lower()
+        with self._lock:
+            buf = self.open.get(player)
+            if buf is None:
+                if m and int(m.group(1)) == 1:
+                    self.open[player] = {"parts": {1: m.group(2).strip()}, "at": self.clock()}
+                    return "held", 1
+                return "pass", None
+            if m and 1 <= int(m.group(1)) <= PARTS_MAX:
+                n = int(m.group(1))
+                buf["parts"][n] = m.group(2).strip()
+                buf["at"] = self.clock()
+                return "held", n
+            if word == "end":
+                del self.open[player]
+                parts = buf["parts"]
+                text = " ".join(" ".join(parts[k].split()) for k in sorted(parts))
+                return "send", (text[:PARTS_CAP], len(parts))
+            if word == "cancel":
+                del self.open[player]
+                return "cancelled", len(buf["parts"])
+            return "pass", None
+
+    def expired(self) -> list[tuple[str, int]]:
+        """The messages nobody added to for PARTS_IDLE, let go: (player, parts)."""
+        now = self.clock()
+        with self._lock:
+            gone = [p for p, b in self.open.items() if now - b["at"] > PARTS_IDLE]
+            return [(p, len(self.open.pop(p)["parts"])) for p in gone]
+
+
 def _runs(cells: dict[tuple[int, int, int], Any]) -> list[tuple[int, int, int, int, Any]]:
     """Cells as runs along +x of one value: (x1, x2, y, z, value)."""
     out: list[list[Any]] = []
@@ -931,6 +988,7 @@ class Companion:
         self.actions = ActionLog(self.root / "actions.json", clock)
         self.questions = Questions(self.root / "questions.json", clock)
         self.said = SaidLog(self.root / "said.json", clock)
+        self.parts = ChatParts(clock)
         self.identity_path = self.root / "companion.json"
         self.epoch = f"{TAG}_e" + secrets.token_hex(3)
         self._lock = threading.RLock()
@@ -1060,6 +1118,7 @@ class Companion:
     def _step(self) -> None:
         now = self.clock()
         online = list(self.col.sessions)
+        self._let_go_parts()
         if not online:
             if self.live or self.asking:
                 self._wind_down("Everyone left.")
@@ -1078,6 +1137,18 @@ class Companion:
         self._run_live(now)
         self._run_questions(online, now)
         self.state = "asking" if self.asking else "acting" if self.live else "idle"
+
+    def _let_go_parts(self) -> None:
+        """A message in parts nobody finished is dropped, and its player told
+        in chat (it was theirs, and they may be waiting on an answer)."""
+        mins = PARTS_IDLE // 60
+        for player, n in self.parts.expired():
+            try:
+                self.say(player, f"I let go of your unfinished message ({n} "
+                         f"part{'s' if n != 1 else ''}): nothing more came for {mins} minutes. "
+                         "Start again with 1.")
+            except CompanionError:
+                pass  # they left: there is nobody to tell
 
     # -- words ---------------------------------------------------------------
     def say(self, to: Any, text: Any, name: Any = None, colour_: Any = None,

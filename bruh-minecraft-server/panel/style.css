@@ -17,6 +17,10 @@
   --danger-ink: #f07070;
   --danger-btn: #c53030;
   --primary: #4ea2ff;
+  /* The primary button's ground under white text: --primary is a text and
+     outline colour, and white on it was 2.65:1. */
+  --primary-btn: #1a66d6;
+  --primary-btn-hover: #1758bb;
   --mono: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: light) {
@@ -153,10 +157,12 @@ body {
   /* Momentum scrolling on iOS so the horizontal tab row feels native */
   -webkit-overflow-scrolling: touch;
   scroll-snap-type: x proximity;
-  /* Subtle right-edge fade tells users there's more to scroll to */
-  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%);
-  -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%);
 }
+/* A fade on the side that has more tabs (app.js sets the classes from the
+   scroll position), so a row cut at the edge reads as one that scrolls. */
+.tabs.more-right { mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent); -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent); }
+.tabs.more-left { mask-image: linear-gradient(to left, #000 calc(100% - 48px), transparent); -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 48px), transparent); }
+.tabs.more-left.more-right { mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent); -webkit-mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent); }
 .tab {
   background: transparent;
   border: none;
@@ -171,7 +177,7 @@ body {
   min-height: 44px;
 }
 .tab:hover { color: var(--fg); }
-.tab.active { color: var(--fg); border-bottom-color: var(--accent); }
+.tab.active { color: var(--fg); border-bottom-color: var(--accent-ink); }
 /* Hide scrollbar on the tab row for cleaner look (still scrollable). */
 .tabs::-webkit-scrollbar { height: 2px; }
 .tabs::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
@@ -216,7 +222,7 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
 
 .metric { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 16px; }
 .dot { font-size: 14px; color: var(--muted); }
-.dot.running { color: var(--accent); }
+.dot.running { color: var(--accent-ink); }
 .dot.stopped { color: var(--danger); }
 .dot.starting { color: var(--warn); }
 .big-number { font-size: 36px; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -247,8 +253,8 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
   min-width: 40px;
 }
 .btn:hover { background: var(--border); }
-.btn-primary { background: var(--primary); color: #fff; border-color: transparent; }
-.btn-primary:hover { filter: brightness(1.1); }
+.btn-primary { background: var(--primary-btn); color: #fff; border-color: transparent; }
+.btn-primary:hover { background: var(--primary-btn-hover); }
 .btn-warn { background: var(--warn); color: #111; border-color: transparent; }
 .btn-danger { background: var(--danger-btn); color: #fff; border-color: transparent; }
 .btn-ghost { background: transparent; }
@@ -270,7 +276,9 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
   border-radius: 6px;
   padding: 8px 10px;
   font: inherit;
+  min-height: 40px;
 }
+.reply:empty { display: none; }
 .reply {
   background: var(--bg-raise);
   border: 1px solid var(--border);
@@ -361,13 +369,39 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
   letter-spacing: .04em;
 }
 .table tr:last-child td { border-bottom: none; }
+.table[hidden] { display: none; }
 .table td.actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .table code { font-family: var(--mono); font-size: 12px; }
 
 .muted { color: var(--muted); }
 
-/* Backups panel */
+/* Backups panel: one short row per snapshot, Restore inside the row. */
 #backups-panel h3 { margin: 18px 0 6px; font-size: 14px; color: var(--muted); }
+.snap-list { list-style: none; margin: 8px 0 12px; padding: 0; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; }
+.snap { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.snap:last-child { border-bottom: none; }
+.snap-text { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; min-width: 0; }
+.snap .btn { flex: none; }
+
+/* Worlds: the list first, the explanation folded under it. */
+.world-active { color: var(--accent-ink); font-weight: 600; white-space: nowrap; }
+.explain { margin: 4px 0 16px; color: var(--muted); }
+.explain summary { cursor: pointer; color: var(--fg); padding: 10px 0; }
+.explain[open] summary { margin-bottom: 4px; }
+.explain summary::marker { color: var(--muted); }
+
+/* Server Properties: every control a touch target, text no smaller than 16px on a phone. */
+#props-table input, #props-table select {
+  min-height: 40px;
+  width: 100%;
+  max-width: 360px;
+  background: var(--bg-raise);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: inherit;
+}
 
 footer {
   flex: 0 0 auto;
@@ -430,6 +464,32 @@ footer {
      <main>'s vertical scroll axis — no conflict. */
   .table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .table td.actions { flex-wrap: wrap; }
+
+  /* Server Properties stacks: the key on its own line, then its value and
+     Save side by side, so the value fits inside the window. */
+  #props-table { overflow-x: visible; }
+  #props-table thead { display: none; }
+  #props-table tbody { display: block; }
+  #props-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  #props-table tr:last-child { border-bottom: none; }
+  #props-table td { display: block; padding: 0; border: none; min-width: 0; }
+  #props-table td:first-child { grid-column: 1 / -1; }
+  #props-table td:nth-child(2) { overflow-wrap: anywhere; }
+  #props-table input, #props-table select { max-width: none; font-size: 16px; }
+
+  /* Worlds stack too: name and whether it is running, then its settings
+     and size, then its buttons, all inside the window. */
+  #worlds-table { overflow-x: visible; }
+  #worlds-table thead { display: none; }
+  #worlds-table tbody { display: block; }
+  #worlds-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name active" "settings size" "actions actions"; gap: 6px 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  #worlds-table tr:last-child { border-bottom: none; }
+  #worlds-table td { display: block; padding: 0; border: none; min-width: 0; }
+  #worlds-table td:nth-child(1) { grid-area: name; }
+  #worlds-table td:nth-child(2) { grid-area: size; color: var(--muted); }
+  #worlds-table td:nth-child(3) { grid-area: settings; }
+  #worlds-table td:nth-child(4) { grid-area: active; }
+  #worlds-table td.actions { grid-area: actions; display: flex; }
 
   /* Grid collapses to a single column on narrow widths. */
   .grid { grid-template-columns: 1fr; gap: 10px; }
@@ -506,7 +566,7 @@ footer {
 .setup-card h3 { margin: 20px 0 8px; color: var(--fg); }
 .setup-card p { margin: 4px 0 10px; color: var(--fg); }
 .setup-card .muted { color: var(--muted); }
-.setup-card a { color: var(--accent); }
+.setup-card a { color: var(--accent-ink); }
 .setup-card a:hover { color: var(--accent-hover); }
 .setup-card code {
   font-family: var(--mono);
@@ -558,13 +618,13 @@ footer {
   color: var(--fg);
   transition: border-color 0.15s, background 0.15s;
 }
-.setup-pick:hover { border-color: var(--accent); background: var(--bg-raise); }
+.setup-pick:hover { border-color: var(--accent-ink); background: var(--bg-raise); }
 .setup-pick > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; color: var(--fg); }
 .setup-pick strong { color: var(--fg); }
 .setup-pick .muted { font-size: 0.92em; color: var(--muted); }
-.setup-pick input[type="radio"] { margin-top: 3px; accent-color: var(--accent); }
-.setup-pick:has(input:checked) { border-color: var(--accent); background: var(--bg-raise); }
-.setup-pick.recommended { border-color: var(--accent); }
+.setup-pick input[type="radio"] { margin-top: 3px; accent-color: var(--accent-ink); }
+.setup-pick:has(input:checked) { border-color: var(--accent-ink); background: var(--bg-raise); }
+.setup-pick.recommended { border-color: var(--accent-ink); }
 
 .setup-tag {
   display: inline-block;
@@ -607,7 +667,7 @@ footer {
 }
 .setup-check input[type="checkbox"] {
   width: 18px; height: 18px; margin-top: 2px;
-  accent-color: var(--accent);
+  accent-color: var(--accent-ink);
 }
 .setup-check strong { color: var(--fg); }
 .setup-check .muted { font-size: 0.92em; color: var(--muted); }
@@ -627,7 +687,7 @@ footer {
   color: var(--fg);
 }
 .setup-plugin:has(input:checked) {
-  border-color: var(--accent);
+  border-color: var(--accent-ink);
   background: var(--bg-raise);
 }
 
@@ -716,7 +776,7 @@ footer {
   background: var(--bg-raise);
   color: var(--fg);
 }
-.setup-preview-emph { color: var(--accent); font-weight: 600; }
+.setup-preview-emph { color: var(--accent-ink); font-weight: 600; }
 .setup-preview-warn {
   list-style: none; padding: 0; margin: 8px 0 0;
 }
@@ -756,7 +816,7 @@ footer {
   color: var(--fg);
   margin: 0 0 12px;
 }
-.props-context code { color: var(--accent); font-family: var(--mono); }
+.props-context code { color: var(--accent-ink); font-family: var(--mono); }
 
 /* World-generation-only badge in the Server Properties table — these keys
    only take effect at world creation time, editing them on an existing
@@ -765,11 +825,11 @@ footer {
   display: inline-block;
   margin-left: 8px;
   padding: 1px 7px;
-  font-size: 0.7em;
+  font-size: 12px;
   font-weight: 600;
   border-radius: 999px;
   background: var(--warn);
-  color: var(--bg);
+  color: #111;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   vertical-align: middle;
@@ -815,7 +875,7 @@ footer {
   color: var(--muted);
 }
 .curated-actions { margin-top: 10px; }
-.curated-installed { color: var(--accent); font-size: 0.92em; }
+.curated-installed { color: var(--accent-ink); font-size: 0.92em; }
 .curated-badge {
   display: inline-block;
   font-size: 10px;
@@ -824,13 +884,13 @@ footer {
   border-radius: 999px;
   background: rgba(111, 191, 67, 0.15);
   border: 1px solid var(--accent);
-  color: var(--accent);
+  color: var(--accent-ink);
   vertical-align: middle;
 }
 .curated-progress { margin: 10px 0; }
 .curated-status { font-weight: 600; margin: 4px 0; }
-.curated-status-running { color: var(--accent); }
-.curated-status-done { color: var(--accent); }
+.curated-status-running { color: var(--accent-ink); }
+.curated-status-done { color: var(--accent-ink); }
 .curated-status-error { color: var(--warn, #e05252); }
 
 /* ---------------------------------------------------------------------
@@ -842,7 +902,7 @@ footer {
   border: 1px solid var(--border); background: var(--bg-raise); color: var(--fg);
   font: inherit; cursor: pointer;
 }
-.addon-kinds .chip.active { border-color: var(--accent); color: var(--accent); }
+.addon-kinds .chip.active { border-color: var(--accent-ink); color: var(--accent-ink); }
 .addon-search input[type="search"] { flex: 1 1 220px; min-width: 0; font-size: 16px; }
 .addon-reach { margin: 4px 0 12px; }
 .addon-grid {
@@ -863,7 +923,7 @@ footer {
 .addon-desc { margin: 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .addon-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
 .addon-actions .btn { min-height: 40px; }
-.addon-added { color: var(--accent); font-weight: 600; align-self: center; }
+.addon-added { color: var(--accent-ink); font-weight: 600; align-self: center; }
 .addon-note { font-size: 12px; color: var(--muted); }
 .addon-note:empty { display: none; }
 .addon-note.bad, .bad { color: var(--danger); }
@@ -890,7 +950,7 @@ footer {
   justify-self: end; white-space: nowrap; font-size: 12px; font-weight: 600;
   padding: 3px 10px; border-radius: 999px; border: 1px solid currentColor;
 }
-.addon-status-active { color: var(--accent); }
+.addon-status-active { color: var(--accent-ink); }
 .addon-status-restart { color: var(--warn); }
 .addon-status-next_start { color: var(--muted); }
 .addon-status-unused { color: var(--muted); border-style: dashed; }
@@ -917,8 +977,8 @@ footer {
 .addon-own { margin: 8px 0 24px; }
 .addon-own summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; font-weight: 600; }
 .addon-own h3 { font-size: 15px; margin: 12px 0 6px; }
-.addon-card.selected { border-color: var(--accent); }
-.addon-actions .btn.is-selected { border-color: var(--accent); color: var(--accent); }
+.addon-card.selected { border-color: var(--accent-ink); }
+.addon-actions .btn.is-selected { border-color: var(--accent-ink); color: var(--accent-ink); }
 /* The batch tray: sticky so "Add all" stays in reach while you keep
    searching and selecting further down the list. */
 .addon-tray {
@@ -982,7 +1042,7 @@ footer {
   content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px;
   border-radius: 50%; background: var(--muted); transition: transform .15s, background .15s;
 }
-.companion-switch input:checked + .companion-switch-track { background: var(--accent); border-color: var(--accent); }
+.companion-switch input:checked + .companion-switch-track { background: var(--accent); border-color: var(--accent-ink); }
 .companion-switch input:checked + .companion-switch-track::after { transform: translateX(20px); background: #fff; }
 .companion-switch input:focus-visible + .companion-switch-track { outline: 2px solid var(--primary); outline-offset: 2px; }
 .companion-status {
@@ -990,7 +1050,7 @@ footer {
   background: var(--bg-raise); border-left: 4px solid var(--muted); overflow-wrap: anywhere;
 }
 .companion-status[data-code="ready"], .companion-status[data-code="acting"],
-.companion-status[data-code="asking"], .companion-status[data-code="waiting"] { border-left-color: var(--accent); }
+.companion-status[data-code="asking"], .companion-status[data-code="waiting"] { border-left-color: var(--accent-ink); }
 .companion-status[data-code="off"] { border-left-color: var(--warn); }
 .companion-status.bad { border-left-color: var(--danger); }
 .companion-intro { margin: 0 0 4px; }
@@ -1032,7 +1092,7 @@ footer {
   border: 1px solid var(--border); background: var(--bg-raise); color: var(--fg);
   font: inherit; cursor: pointer; overflow-wrap: anywhere;
 }
-.companion .chip:hover { border-color: var(--accent); }
+.companion .chip:hover { border-color: var(--accent-ink); }
 .companion-msg { margin: 6px 0 0; min-height: 0; width: 100%; overflow-wrap: anywhere; }
 .companion-msg:empty { display: none; }
 .companion-msg.good { color: var(--accent-ink); }

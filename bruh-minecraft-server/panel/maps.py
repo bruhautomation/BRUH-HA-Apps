@@ -6,7 +6,8 @@ maps of the family's builds used to be a tour (the owner: "Is there a
 better way to make these maps? Can you make them for me? Fully hands
 off"). This draws each map here instead, from the region files the panel
 already reads (`mcmap`), exactly as the game draws an explored one, and
-writes it as the game's own map file (`<world>/data/map_<id>.dat`), locked,
+writes it as the game's own map file (`<world>/data/map_<id>.dat`, or
+`<world>/data/minecraft/maps/<id>.dat` from 26.1 on: `MapStore`), locked,
 so the server loads it the first time the map is held and never changes it.
 
 What makes it match an explored map:
@@ -645,32 +646,49 @@ def write_new(path: Path, data: bytes) -> None:
             pass
 
 
-def maps_dir(world: Path) -> Path:
-    """Where this world keeps its maps: beside `idcounts.dat` (the game's
-    map counter), in `<world>/data` before 26.1 and whatever layout keeps
-    them there. A world whose maps are elsewhere is refused, never guessed."""
+class MapStore:
+    """Where this world keeps its maps and what it calls a map's file.
+
+    Before 26.1: `<world>/data/map_<id>.dat`, beside `idcounts.dat`.
+    26.1 and later: `<world>/data/minecraft/maps/<id>.dat`, the counter
+    renamed `data/minecraft/last_id.dat` (the file inside unchanged), the
+    same release that moved every dimension under `dimensions/`.
+    """
+
+    def __init__(self, folder: Path, prefix: str):
+        self.folder = Path(folder)
+        self.prefix = prefix
+
+    def path(self, map_id: int) -> Path:
+        return self.folder / f"{self.prefix}{int(map_id)}.dat"
+
+    def ids(self) -> list[int]:
+        pattern = re.compile(re.escape(self.prefix) + r"(\d+)\.dat")
+        return [int(m.group(1)) for f in self.folder.glob("*.dat")
+                if (m := pattern.fullmatch(f.name))]
+
+
+def maps_dir(world: Path) -> MapStore:
+    """Where this world keeps its maps: the layout whose files are there,
+    else the one this world's layout says (26.1's when it has a
+    `dimensions` folder, the older one when it does not)."""
     world = Path(world)
-    plain = world / "data"
-    if (plain / "idcounts.dat").exists() or not (world / "dimensions").is_dir():
-        return plain
-    for found in sorted(world.rglob("idcounts.dat")):
-        if any(found.parent.glob("map_*.dat")):
-            return found.parent
-    raise MapError("This server version keeps its maps somewhere this add-on does not know "
-                   "yet, so it cannot make maps for it.")
+    old = MapStore(world / "data", "map_")
+    new = MapStore(world / "data" / "minecraft" / "maps", "")
+    if (world / "data" / "minecraft" / "last_id.dat").exists() or new.folder.is_dir():
+        return new
+    if (old.folder / "idcounts.dat").exists():
+        return old
+    return new if (world / "dimensions").is_dir() else old
 
 
-def next_ids(folder: Path, count: int, last: int = 0) -> list[int]:
+def next_ids(store: MapStore, count: int, last: int = 0) -> list[int]:
     """`count` map ids nobody has: above the band's start, the last one this
     add-on gave, and every map file already in the folder."""
-    top = max(ID_BAND - 1, int(last or 0))
-    for f in Path(folder).glob("map_*.dat"):
-        m = re.fullmatch(r"map_(\d+)\.dat", f.name)
-        if m:
-            top = max(top, int(m.group(1)))
+    top = max([ID_BAND - 1, int(last or 0), *store.ids()])
     return list(range(top + 1, top + 1 + count))
 
 
 __all__ = ["MAP_COLOURS", "block_colour", "rgb", "render", "cell_of", "cell_centre",
            "cell_box", "cells_for", "sheets", "frame_label", "map_file_bytes", "write_new",
-           "maps_dir", "next_ids", "MapError", "span", "nether_noise"]
+           "maps_dir", "next_ids", "MapStore", "MapError", "span", "nether_noise"]
