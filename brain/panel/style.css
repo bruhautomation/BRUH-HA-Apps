@@ -1703,6 +1703,7 @@ body.modal-open {
 .testshead .btn { flex: none; }
 .testssum { margin: 10px 0 0; font-size: var(--fs-body); font-weight: 600; color: var(--good-ink); }
 .testssum.bad { color: var(--critical-ink); }
+.testssum.old { color: var(--ink-2); }
 .testlist { margin-top: 8px; }
 .testrow {
   display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; gap: 4px 10px;
@@ -1712,6 +1713,7 @@ body.modal-open {
 .testword { font-size: var(--fs-meta); font-weight: 700; color: var(--ink-3); }
 .testrow.ok .testword { color: var(--good-ink); }
 .testrow.failed .testword { color: var(--critical-ink); }
+.testrow.old .testword { color: var(--ink-3); }
 .testtitle { font-weight: 600; color: var(--ink); }
 .testreason { color: var(--ink-2); line-height: 1.4; }
 .testrow.skipped .testtitle, .testrow.waiting .testtitle { color: var(--ink-2); }
