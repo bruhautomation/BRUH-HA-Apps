@@ -6,7 +6,7 @@
 "use strict";
 
 const $ = (sel, root = document) => root.querySelector(sel);
-const state = { data: null, files: [], view: "studio", busy: new Set(), armed: null };
+const state = { data: null, files: [], fileQuery: "", fileSort: "new", view: "studio", busy: new Set(), armed: null };
 
 function api(path, opts = {}) {
   const init = { ...opts, headers: { ...(opts.headers || {}) } };
@@ -504,24 +504,27 @@ function spool(t, active, p) {
   active ? el("span", { class: "feeding" }, "in use") : null);
 }
 
-const TICK_GAP = 18;
+// Each look's button is a whole finger wide (40px), so neighbours are spaced
+// 40px apart and never narrowed. Only when there are more looks than the track
+// holds do they close up, and a tap on the track then picks the nearest.
+const TICK_SIZE = 40;
 
 function spaceTicks(track) {
   const width = track.clientWidth;
   const ticks = [...track.querySelectorAll(".wtick")];
   if (!width || !ticks.length) return;
+  const gap = ticks.length > 1 ? Math.min(TICK_SIZE, width / (ticks.length - 1)) : TICK_SIZE;
   const x = ticks.map((t) => parseFloat(t.dataset.at) / 100 * width);
-  for (let i = 1; i < x.length; i += 1) x[i] = Math.max(x[i], x[i - 1] + TICK_GAP);
+  for (let i = 1; i < x.length; i += 1) x[i] = Math.max(x[i], x[i - 1] + gap);
   const over = x[x.length - 1] - width;
   if (over > 0) {
     x[x.length - 1] = width;
-    for (let i = x.length - 2; i >= 0; i -= 1) x[i] = Math.min(x[i], x[i + 1] - TICK_GAP);
+    for (let i = x.length - 2; i >= 0; i -= 1) x[i] = Math.min(x[i], x[i + 1] - gap);
   }
   ticks.forEach((t, i) => {
-    const room = Math.min(40, (i ? x[i] - x[i - 1] : 40), (i < x.length - 1 ? x[i + 1] - x[i] : 40));
     t.style.left = `${x[i]}px`;
-    t.style.width = `${room}px`;
-    t.style.marginLeft = `${-room / 2}px`;
+    t.style.width = `${TICK_SIZE}px`;
+    t.style.marginLeft = `${-TICK_SIZE / 2}px`;
   });
 }
 
@@ -587,6 +590,11 @@ function storageBlock(p) {
   return box;
 }
 
+// A size to one decimal; a small file says "<0.1 MB", not "0.0 MB".
+function megabytes(bytes) {
+  return bytes > 0 && bytes < 1e5 ? "<0.1 MB" : `${(bytes / 1e6).toFixed(1)} MB`;
+}
+
 function fileWhen(f) {
   if (!f.mtime) return f.date || "";
   const d = new Date(f.mtime * 1000);
@@ -622,7 +630,7 @@ async function loadStorage(p, all = false) {
       return el("li", {},
         el("div", { class: "grow" },
           el("b", { title: f.name }, f.name.replace(/(\.gcode)?\.3mf$/i, "")),
-          el("span", { class: "hint" }, [fileWhen(f), f.size ? `${(f.size / 1e6).toFixed(1)} MB` : null].filter(Boolean).join(" · "))),
+          el("span", { class: "hint" }, [fileWhen(f), f.size ? megabytes(f.size) : null].filter(Boolean).join(" · "))),
         el("button", { type: "button", disabled: p.printing, title: p.printing ? "It is printing" : "Print it again",
           onclick: () => printStored(p, f) }, "Print"),
         menu);
@@ -934,10 +942,16 @@ function watchBlock(p) {
   // The last look is the alert's own while one is open: said once, not twice.
   const repeats = last && w.alert && w.alert.open && w.alert.check === last.n;
   const lastDecision = last ? lookDecision(last) : null;
-  const blind = lastDecision === "blind"
+  // A blind look is a warning only while a print runs and can still be helped;
+  // after it, it is a note about what happened.
+  const blindLook = lastDecision === "blind";
+  const blind = blindLook && p.printing
     ? el("div", { class: "wblind", role: "status" }, el("b", {}, "The camera couldn't see this print."),
       el("p", {}, "Check that the lens is clean, the chamber light is on and the camera is pointing at the plate. It looks again at the next planned look, or press Check now.")) : null;
-  const lastRow = last && !repeats ? el("div", { class: "wlast" },
+  const blindNote = blindLook && !p.printing
+    ? el("p", { class: "hint wblindnote" }, `Last look: camera could not see${p.chamber_light === false ? " (light off)" : ""}`
+      + `${last.at ? ` · ${ago(last.at)}` : ""}`) : null;
+  const lastRow = last && !repeats && !blindNote ? el("div", { class: "wlast" },
     last.image_url ? el("img", { src: last.image_url, alt: "", loading: "lazy" }) : null,
     el("div", { class: "grow" },
       el("div", { class: "row wcheckhead" },
@@ -950,6 +964,7 @@ function watchBlock(p) {
     lastRow && blind ? lastRow : null,
     watchTimeline(p, w),
     lastRow && !blind ? lastRow : null,
+    blindNote,
     el("div", { class: "row wrap" },
       el("button", { type: "button", disabled: !(p.printing || p.state === "finish") || w.status === "looking",
         title: "Have brAIn look at the print now", onclick: () => watchAct(p, "check") }, icon("eye"), "Check now")),
@@ -1309,16 +1324,19 @@ async function importLink(e) {
   } catch (err) { toast(err.message, true); }
 }
 
+// A file with no picture says what kind of file it is: its extension in a
+// quiet plate, which tells an STL from a STEP from a project at a glance.
+function fileKind(f) {
+  if (f.design) return "PART";
+  const m = /\.(gcode\.3mf|3mf|stl|step|stp|obj|amf)$/i.exec(f.name || f.path || "");
+  return m ? m[1].replace(/^gcode\./i, "").toUpperCase() : "FILE";
+}
+
 function filePicture(f) {
   const src = f.design ? `api/design/parts/${encodeURIComponent(f.design)}/thumb`
     : `api/thumb?path=${encodeURIComponent(f.path)}`;
-  // A file with no picture gets the same quiet plate as one on a printer.
   return el("img", { class: "fthumb", src, alt: "", loading: "lazy",
-    onerror: (e) => {
-      const box = el("div", { class: "fthumb nopic", "aria-hidden": "true" });
-      box.innerHTML = PLATE_SVG;
-      e.target.replaceWith(box);
-    } });
+    onerror: (e) => e.target.replaceWith(el("div", { class: "fthumb nopic kind", "aria-hidden": "true" }, fileKind(f))) });
 }
 
 function filamentChips(f) {
@@ -1329,15 +1347,34 @@ function filamentChips(f) {
   el("i", { style: `background:${u.colour || "transparent"}` }), `${u.type || ""}${u.grams ? ` ${u.grams} g` : ""}`)));
 }
 
+function visibleFiles() {
+  const q = state.fileQuery.trim().toLowerCase();
+  const list = state.files.filter((f) => !q || `${f.name} ${f.path}`.toLowerCase().includes(q));
+  const byName = (f) => (f.design ? f.name : f.path).toLowerCase();
+  return state.fileSort === "name"
+    ? list.sort((a, b) => byName(a).localeCompare(byName(b), undefined, { numeric: true }))
+    : list.sort((a, b) => b.modified - a.modified);
+}
+
+// What Print will do with the file, said on the row: its slice's time,
+// weight and colours, or that it is sliced first.
+function sliceFacts(f) {
+  if (f.sliced || f.sliced_path) {
+    const own = [f.seconds ? duration(Math.round(f.seconds / 60)) : null, f.grams ? `${f.grams} g` : null].filter(Boolean);
+    return own.length ? own.join(" · ") : f.sliced ? null : "Sliced copy ready";
+  }
+  return "Not sliced yet — Print will slice first";
+}
+
 function renderFiles() {
-  const rows = state.files.map((f) => {
+  const shown = visibleFiles();
+  const rows = shown.map((f) => {
     const designed = Boolean(f.design);
     const badges = [el("span", { class: `pill ${f.sliced ? "done" : ""}` }, f.sliced ? "Sliced" : f.project ? "Project" : "Model")];
     if (f.plates && f.plates.length > 1) badges.push(el("span", { class: "pill" }, `${f.plates.length} plates`));
     if (designed) badges.push(el("span", { class: "pill ghost" }, `Designed with brAIn · v${f.version}`));
-    const facts = [f.seconds ? duration(Math.round(f.seconds / 60)) : null,
-      f.grams ? `${f.grams} g` : null, `${(f.size / 1e6).toFixed(1)} MB`,
-      new Date(f.modified * 1000).toLocaleDateString()].filter(Boolean).join(" · ");
+    const facts = [megabytes(f.size), new Date(f.modified * 1000).toLocaleDateString()].join(" · ");
+    const slice = sliceFacts(f);
     const menu = el("details", { class: "pmenu" }, el("summary", { "aria-label": `More for ${f.name}` }, "⋯"),
       el("div", { class: "pmenupop" },
         !f.sliced && f.path.toLowerCase().endsWith(".3mf") ? el("button", { type: "button", onclick: () => slice(f) }, "Slice") : null,
@@ -1350,12 +1387,14 @@ function renderFiles() {
         } }, icon("close"), "Delete")));
     return el("div", { class: "frow" }, filePicture(f),
       el("div", { class: "grow" }, el("b", { class: "fname", title: f.path }, designed ? f.name : f.path),
-        el("div", { class: "badges" }, badges), el("p", { class: "hint" }, facts), filamentChips(f)),
+        el("div", { class: "badges" }, badges),
+        slice ? el("p", { class: `fslice${f.sliced || f.sliced_path ? "" : " hint"}` }, slice) : null,
+        el("p", { class: "hint" }, facts), filamentChips(f)),
       el("div", { class: "factions" },
         el("button", { class: "primary", onclick: () => openPrint(f) }, "Print"), menu));
   });
   $("#fileList").replaceChildren(...(rows.length ? rows : [el("p", { class: "hint" },
-    "No models yet. Upload one, or save a project from Bambu Studio into this folder.")]));
+    state.files.length ? "No file matches that." : "No models yet. Upload one, or save a project from Bambu Studio into this folder.")]));
   renderJobs();
 }
 
@@ -1567,6 +1606,8 @@ $("#printForm").addEventListener("submit", submitPrint);
 $("#printCancel").addEventListener("click", () => $("#printDialog").close());
 $("#upload").addEventListener("change", upload);
 $("#importForm").addEventListener("submit", importLink);
+$("#fileSearch").addEventListener("input", (e) => { state.fileQuery = e.target.value; renderFiles(); });
+$("#fileSort").addEventListener("change", (e) => { state.fileSort = e.target.value; renderFiles(); });
 $("#brainSettings").addEventListener("submit", saveBrainSettings);
 api("api/printers").then((r) => {
   $("#modelSelect").replaceChildren(el("option", { value: "" }, "Not sure"), ...r.models.map((m) => el("option", { value: m }, m)));
