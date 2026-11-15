@@ -62,10 +62,25 @@ never prose to us: `apply(strict=True)` (the `owner_words` and
 inside a ``` fence keep the whole-word rule for every name. A person's
 name is aliased however it is written ("will grace the hall" loses its
 verb rather than risk a name).
+
+**A first name is learnt where the house defines it, not guessed from
+the text** (`name_parts`, `dashboard_names`). Morph draws a people tile,
+a room's sleeper or a door by a name that is often no entity's whole
+name: a card given `name:` in dashboard.yaml, "Ben" out of "Ben's room",
+the first word of the person "Ben Smith", or the word left of "Ben door"
+once the device words are gone; and brAIn's brief writes the same name
+in free text ("ben's door is open"). So the map also holds every word of
+a person's name, the owner in a possessive name, the words of a sleep,
+door, window or room-presence sensor's name that are neither Home
+Assistant's vocabulary nor common English, and the names Morph's own
+configuration gives (a card's or a section's name, a group's label, and
+any `person`/`sleeper`/`people` value). A common English word is never
+learnt from these, so "Doors", "People" and "Kids" stay readable.
 """
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -171,6 +186,113 @@ def is_ordinary(name: str, kind: str) -> bool:
     name = str(name or "")
     return (kind not in _NEVER_ORDINARY and bool(_ASCII_WORD_RE.fullmatch(name))
             and name.lower() in ordinary_words())
+
+
+# The classes whose entity is named after the person or room it watches
+# ("Ben door", "Ben sleep"), so what is left of its name once Home
+# Assistant's and English's words are gone is that person or room.
+_ABOUT_CLASSES = frozenset({"door", "window", "opening", "garage_door",
+                            "occupancy", "presence", "motion"})
+_SLEEP_RE = re.compile(r"(?i)(?:^|[\s_.])(?:a?sleep\w*|bed(?:time)?|in_bed)(?:$|[\s_.])")
+_POSSESSIVE_RE = re.compile(r"([^\W\d_]{3,})['’]s\b")
+_PART_RE = re.compile(r"[^\W\d_]{3,}")
+
+
+def _common(word: str) -> bool:
+    """A word that names nothing in particular: Home Assistant's own
+    vocabulary or a common English word."""
+    return is_generic(word, "thing") or is_ordinary(word, "thing")
+
+
+def name_parts(name: str, kind: str, eid: str = "", klass: str = "") -> list[tuple[str, str]]:
+    """The words inside a name that are a person's or a room's own, as
+    ``(word, kind)``: every word of a person's name; the owner of a
+    possessive ("Ben" in "Ben's room"); and what a sleep, door, window or
+    presence sensor's name says beyond the device ("Ben" in "Ben door").
+    Never a common English word or Home Assistant's vocabulary."""
+    name = str(name or "")
+    out: list[tuple[str, str]] = []
+    if kind == "person":
+        out += [(w, "person") for w in _PART_RE.findall(name) if not is_generic(w, "thing")]
+    out += [(w, "person") for w in _POSSESSIVE_RE.findall(name) if not _common(w)]
+    if klass in _ABOUT_CLASSES or _SLEEP_RE.search(f"{eid} {name}"):
+        out += [(w, "name") for w in _PART_RE.findall(_POSSESSIVE_RE.sub("", name))
+                if not _common(w)]
+    return [(w, k) for w, k in out if w.casefold() != name.casefold()]
+
+
+# Morph's configuration: which keys hold a name the dashboard draws, and
+# which of them always hold a person's.
+_CONFIG_NAME_KEYS = frozenset({"name", "title", "label"})
+_CONFIG_PERSON_KEYS = frozenset({"person", "people", "sleeper", "sleepers", "who",
+                                 "owner", "child", "children", "kid", "kids"})
+_CONFIG_SKIP_RE = re.compile(r"[{}\[\]<>]|^[a-z_]+\.[a-z0-9_]+$|^(?:mdi|hass|custom):")
+_CONFIG_MAX = 400
+
+
+def _config_entities(node: dict) -> list[str]:
+    ents = node.get("entities") if isinstance(node.get("entities"), list) else [node.get("entity")]
+    return [e if isinstance(e, str) else str((e or {}).get("entity") or "")
+            for e in ents if isinstance(e, (str, dict))]
+
+
+def dashboard_names(data, found: list | None = None, person: bool = False,
+                    depth: int = 0) -> list[tuple[str, str]]:
+    """Every name Morph's configuration gives (a card's or a section's
+    name, a group's label, any `person`/`sleeper`/`people` value), as
+    ``(name, kind)``. A dashboard's or a floor's title is the page's, not
+    the household's ("Home"), and a common word is no household's name."""
+    found = [] if found is None else found
+    if depth > 12 or len(found) >= _CONFIG_MAX:
+        return found
+    if isinstance(data, list):
+        for item in data:
+            dashboard_names(item, found, person, depth + 1)
+        return found
+    if isinstance(data, str):
+        if person:
+            found.append((data, "person"))
+        return found
+    if not isinstance(data, dict):
+        return found
+    domains = {e.split(".", 1)[0] for e in _config_entities(data) if "." in e}
+    personal = person or bool(domains & PERSONAL_KINDS)
+    for key, value in data.items():
+        key = str(key)
+        if key in _CONFIG_PERSON_KEYS:
+            dashboard_names(value, found, True, depth + 1)
+        elif key in _CONFIG_NAME_KEYS and isinstance(value, str):
+            if key == "title" and ("sections" in data or "floors" in data):
+                continue
+            section = key == "title" and ("groups" in data or "cards" in data)
+            kind = "person" if personal else ("room" if section else "name")
+            found.append((value, kind))
+        elif isinstance(value, (dict, list)):
+            dashboard_names(value, found, False, depth + 1)
+    return found
+
+
+def house_config_names() -> list[tuple[str, str]]:
+    """The names Morph's dashboard.yaml and its kept copies of Home
+    Assistant's dashboards (`dashboards/*.yaml`) give, read off the box.
+    A file that is missing or does not parse gives none."""
+    try:
+        import yaml  # noqa: PLC0415 — the image ships py3-yaml
+    except ImportError:
+        return []
+    main = Path(os.environ.get("BRAIN_MORPH_DASHBOARD", "/config/morph/dashboard.yaml"))
+    files = [main]
+    try:
+        files += sorted((main.parent / "dashboards").glob("*.yaml"))[:40]
+    except OSError:
+        pass
+    found: list[tuple[str, str]] = []
+    for path in files:
+        try:
+            dashboard_names(yaml.safe_load(path.read_text(encoding="utf-8")), found)
+        except (OSError, ValueError, yaml.YAMLError):
+            continue
+    return found
 
 
 def _typed_words(text: str, start: int) -> bool:
@@ -285,6 +407,30 @@ class Aliases:
             area = str(row.get("area") or "").strip()
             if len(area) >= MIN_NAME:
                 self.name(area, "room")
+        # The words inside those names that are a person's or a room's,
+        # and the names Morph's configuration draws: after every whole
+        # name, so a word that is already one keeps its own alias.
+        known = {k.split(":", 1)[1].casefold() for k in self.names}
+        found: list[tuple[str, str]] = []
+        for eid in sorted(names or {}):
+            row = names.get(eid) or {}
+            if isinstance(row, dict):
+                domain = eid.split(".", 1)[0]
+                found += name_parts(str(row.get("name") or ""),
+                                    "person" if domain in PERSONAL_KINDS else domain,
+                                    eid, str(row.get("class") or ""))
+                found += name_parts(str(row.get("area") or ""), "room")
+        for real, kind in house_config_names():
+            real = " ".join(str(real).split())[:60]
+            if kind != "person" and _common(real):
+                continue
+            found.append((real, kind))
+            found += name_parts(real, kind)
+        for real, kind in found:
+            if len(real) >= MIN_NAME and real.casefold() not in known \
+                    and not is_generic(real, kind):
+                known.add(real.casefold())
+                self.name(real, kind)
 
     # -- applying ----------------------------------------------------------
 

@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.9
+
+### Security
+
+- Development-loop reports and their screen pictures now alias first names the house defines anywhere, not only whole entity names: every word of a person's name, the owner in a possessive name ("X's Room"), the names on sleep, door and presence sensors, and the names, sleepers and people set in Morph's dashboard. The same map cleans the brief's free text and log excerpts, so a child's name on a people tile or in the morning brief no longer leaves the house. Common words stay as they are (#1001).
+
 ## 5.3.8
 
 ### Added
