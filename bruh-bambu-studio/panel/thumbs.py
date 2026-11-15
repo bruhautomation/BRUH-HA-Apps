@@ -58,10 +58,16 @@ def png_member(names: list[str], plate: int = 1) -> str | None:
     # Other slicers and sites name their picture otherwise (a leading slash,
     # Thumbnails/, Metadata/thumbnail_N.png): any picture called a thumbnail,
     # or sitting in Metadata, is better than the placeholder.
-    for name in sorted(names):
+    # A picture called a thumbnail first; then any other picture in Metadata/
+    # or Thumbnails/, but never Bambu's object-colour map (pick_N.png).
+    pngs = [n for n in sorted(names) if n.lower().endswith(".png")
+            and "no_light" not in n.lower()]
+    for name in pngs:
+        if "thumbnail" in name.lower():
+            return name
+    for name in pngs:
         low = name.lower().lstrip("/")
-        if low.endswith(".png") and "no_light" not in low and (
-                "thumbnail" in low or low.startswith(("metadata/", "thumbnails/"))):
+        if low.startswith(("metadata/", "thumbnails/")) and "/pick_" not in low:
             return name
     return None
 
