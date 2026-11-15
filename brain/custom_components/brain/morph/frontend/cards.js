@@ -708,7 +708,7 @@ const CLIMATE_CSS = `<style>
 .cl-sq::before{content:"";position:absolute;inset:-9px -5px}
 .cl-val.pend{color:var(--muted)}
 .cl-sq:hover{background:var(--chip);color:var(--text)}
-.cl-ctl{display:flex;flex-wrap:wrap;align-items:center;gap:6px 0;white-space:nowrap;margin-top:12px;padding-top:8px;border-top:1px solid var(--line);container-type:inline-size}
+.cl-ctl{display:flex;flex-wrap:nowrap;align-items:center;gap:6px 0;white-space:nowrap;margin-top:12px;padding-top:8px;border-top:1px solid var(--line);container-type:inline-size}
 .cl-seg{display:inline-flex;gap:3px}
 .cl-seg button{position:relative;border:0;margin:0;font:inherit;font-size:13px;font-weight:600;color:var(--muted);background:color-mix(in oklab,var(--text) 5%,transparent);padding:0 8px;min-height:28px;border-radius:999px;white-space:nowrap;cursor:pointer;transition:background-color .2s ease,color .2s ease}
 .cl-seg button:hover{color:var(--text);background:color-mix(in oklab,var(--text) 10%,transparent)}
@@ -718,15 +718,15 @@ const CLIMATE_CSS = `<style>
 .cl-seg button[aria-pressed="true"]{color:var(--c,var(--text));background:color-mix(in oklab,var(--c,var(--text)) 11%,transparent)}
 .cl-div{width:1px;height:14px;background:var(--line2);opacity:.6;margin:0 6px}
 .cl-run{margin-left:auto;padding-left:6px;flex:0 1 auto;min-width:0}
-.cl-run .cl-seg{min-width:0;max-width:100%;flex-wrap:wrap;justify-content:flex-end}
-.cl-run .cl-seg button{display:inline-flex;align-items:center;gap:4px;flex:0 0 auto;min-width:max-content}
+.cl-run .cl-seg{min-width:0;max-width:100%}
+.cl-run .cl-seg button{display:inline-flex;align-items:center;gap:4px;flex:0 1 auto;min-width:0}
 .cl-run .cl-seg button svg{flex:none}
-.cl-txt{display:inline-block;min-width:0;max-width:100%;vertical-align:bottom}
+.cl-txt{display:inline-block;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
 .cl-seglab{font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--quiet);margin:0 2px 0 4px}
-/* The row tightens as the card narrows: the
+/* The row never wraps (house rule), so it tightens as the card narrows: the
    Fan word goes first, then an action with a short word takes it, then an
-   action with an icon is its icon alone; past that the routines drop to a line
-   of their own, whole: a word is never cut to fit. */
+   action with an icon is its icon alone; past that an action's word ends in
+   an ellipsis (it is the one part of the row that shrinks). */
 @container (max-width:470px){.cl-seglab{display:none}.cl-seg button{padding:0 7px}.cl-div{margin:0 4px}}
 @container (max-width:420px){.cl-run .cl-long{display:none}.cl-run .cl-short{display:inline-block}}
 @container (max-width:370px){.cl-run button.cl-hasic .cl-txt{display:none}}
