@@ -491,13 +491,16 @@ function readings(p) {
 function spool(t, active, p) {
   const level = t.remaining != null ? t.remaining : 100;
   const colour = t.colour || "#c9d2da";
+  // The colour's name comes from design.js's table (the printer sends a hex).
+  const named = t.colour ? colourName(t.colour).replace(/^./, (c) => c.toUpperCase()) : "";
+  const words = [named, t.type].filter(Boolean).join(" ") || "Empty";
   return el("button", { type: "button", class: `spool${active ? " active" : ""}`,
-    title: `${t.name || t.type}${t.remaining != null ? ` · ${t.remaining}% left` : ""}. Press to read the tray's tag again.`,
+    title: `${words}${t.name && t.name !== t.type ? ` (${t.name})` : ""}${t.remaining != null ? ` · ${t.remaining}% left` : ""}. Press to read the tray's tag again.`,
     onclick: () => (t.slot === "external" ? command(p, "refresh") : command(p, "ams_refresh", { value: t.slot })) },
   el("span", { class: "reel", style: `--c:${colour};--l:${level}` }, el("i", {})),
   el("b", {}, t.slot === "external" ? "Ext" : `${(t.slot % 4) + 1}`),
-  el("span", { class: "mat" }, t.type || "?"),
-  el("span", { class: "tsub" }, t.name && t.name !== t.type ? t.name : t.remaining != null ? `${t.remaining}%` : "level unknown"),
+  el("span", { class: "mat" }, words),
+  t.remaining != null ? el("span", { class: "tsub" }, `${t.remaining}%`) : null,
   active ? el("span", { class: "feeding" }, "in use") : null);
 }
 
@@ -690,6 +693,9 @@ const DECISION_WORDS = { ok: "Looks fine", watch: "Unsure — looking again soon
 const KIND_WORDS = { first_layer: "First layer", early: "Early adhesion", narrowing: "Narrows",
   bridge: "Bridges", overhang: "Overhangs", support: "Supports", colour: "Colour change", tall: "Tall and thin",
   taller: "Taller", last: "Last layers", fill: "Routine", spread: "Routine" };
+// What a look was, from its stored fields: a look whose verdict was
+// "cannot_see" was blind whatever decision it was filed under.
+const lookDecision = (c) => (c.verdict === "cannot_see" ? "blind" : c.decision);
 const watchHist = {};
 const watchTargets = { list: null };
 
@@ -757,6 +763,20 @@ function watchTimeline(p, w) {
       onclick: () => { track.querySelectorAll(".wtick.on").forEach((t) => t.classList.remove("on")); tick.classList.add("on"); say(c); } });
     track.append(tick);
   }
+  // Dots a few layers apart are too close for a finger: the whole track is
+  // the control, and a tap on it picks the nearest dot (the dots stay
+  // buttons for the keyboard).
+  track.addEventListener("click", (e) => {
+    if (e.target.closest(".wtick")) return;
+    const x = e.clientX - track.getBoundingClientRect().left;
+    let best = null;
+    let bestD = Infinity;
+    for (const t of track.querySelectorAll(".wtick")) {
+      const d = Math.abs(t.offsetLeft + t.offsetWidth / 2 - x);
+      if (d < bestD) { best = t; bestD = d; }
+    }
+    if (best) best.click();
+  });
   // Looks a few layers apart would sit on top of each other (and their
   // buttons would overlap): once the track has a width, space the dots at
   // least a dot apart and cut each button off where its neighbour starts.
@@ -788,7 +808,7 @@ function watchTimeline(p, w) {
       el("li", {}, el("i", { class: "k-warn" }), "Doubt"), el("li", {}, el("i", { class: "k-bad" }), "Failure"),
       el("li", {}, el("i", { class: "k-missed" }), "Missed")),
     reason,
-    w.plan.source === "gcode" ? null : el("p", { class: "hint" }, "Spread by layer: the print's file could not be read."));
+    w.plan.source === "gcode" ? null : el("p", { class: "hint" }, "Looks are spread evenly over the layers."));
 }
 
 // When it looks, and what it does about a moving bed: said by the ⓘ. One
@@ -853,7 +873,7 @@ function watchHistory(p) {
         el("img", { src: c.image_url, alt: "", loading: "lazy" })) : el("div", { class: "nopic" }),
       el("div", { class: "grow" },
         el("div", { class: "row wcheckhead" },
-          el("span", { class: `pill ${DECISION_TONE[c.decision] || ""}` }, el("i", { class: "dot" }), DECISION_WORDS[c.decision] || c.decision),
+          el("span", { class: `pill ${DECISION_TONE[lookDecision(c)] || ""}` }, el("i", { class: "dot" }), DECISION_WORDS[lookDecision(c)] || lookDecision(c)),
           el("b", {}, c.layer != null ? `Layer ${c.layer}` : "Finished"),
           el("span", { class: "hint" }, ago(c.at))),
         el("p", {}, c.summary),
@@ -913,17 +933,23 @@ function watchBlock(p) {
   const last = w.last;
   // The last look is the alert's own while one is open: said once, not twice.
   const repeats = last && w.alert && w.alert.open && w.alert.check === last.n;
+  const lastDecision = last ? lookDecision(last) : null;
+  const blind = lastDecision === "blind"
+    ? el("div", { class: "wblind", role: "status" }, el("b", {}, "The camera couldn't see this print."),
+      el("p", {}, "Check that the lens is clean, the chamber light is on and the camera is pointing at the plate. It looks again at the next planned look, or press Check now.")) : null;
   const lastRow = last && !repeats ? el("div", { class: "wlast" },
     last.image_url ? el("img", { src: last.image_url, alt: "", loading: "lazy" }) : null,
     el("div", { class: "grow" },
       el("div", { class: "row wcheckhead" },
-        el("span", { class: `pill ${DECISION_TONE[last.decision] || ""}` }, el("i", { class: "dot" }), DECISION_WORDS[last.decision] || last.decision),
+        el("span", { class: `pill ${DECISION_TONE[lastDecision] || ""}` }, el("i", { class: "dot" }), DECISION_WORDS[lastDecision] || lastDecision),
         el("span", { class: "hint" }, [last.layer != null ? `layer ${last.layer}` : null, ago(last.at)].filter(Boolean).join(" · "))),
       el("p", {}, last.summary))) : null;
   return el("section", { class: `watch ${tone}` }, head,
+    blind,
     watchAlert(p, w),
+    lastRow && blind ? lastRow : null,
     watchTimeline(p, w),
-    lastRow,
+    lastRow && !blind ? lastRow : null,
     el("div", { class: "row wrap" },
       el("button", { type: "button", disabled: !(p.printing || p.state === "finish") || w.status === "looking",
         title: "Have brAIn look at the print now", onclick: () => watchAct(p, "check") }, icon("eye"), "Check now")),
