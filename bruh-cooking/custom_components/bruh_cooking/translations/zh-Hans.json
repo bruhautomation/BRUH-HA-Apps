@@ -371,7 +371,6 @@
   "issues": {
     "entity_ids_old_name": {
       "title": "{name}: entity IDs use an older name",
-      "description": "The entities of {name} were created under an earlier name, so their IDs no longer match it (their displayed names do). Nothing is renamed unless you choose Fix: automations, scripts and dashboards use the IDs, so check them afterwards.",
       "fix_flow": {
         "step": {
           "confirm": {
