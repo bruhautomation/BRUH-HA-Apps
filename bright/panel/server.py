@@ -3055,19 +3055,27 @@ async def h_cal_adjust(request: web.Request) -> web.Response:
     return web.json_response({"profile": profile})
 
 
+_SPEAKER_NAMES: dict[str, str] = {}
+
+
 async def h_cal_profiles(request: web.Request) -> web.Response:
     profiles = calibration_store.all_profiles()
     # The speaker's own name beside its id, so a picker reads as a room and
-    # not an entity. Best effort: Home Assistant being unreachable leaves
-    # the names out, and the panel falls back to the id.
-    states, error = await ha_client.async_states_or_error("media_player")
+    # not an entity. Best effort and never a wait: Shows, Party and
+    # Calibrate all draw from this, so the lookup gets two seconds, and the
+    # last names it got are used when Home Assistant is slow or away.
+    states, error = await ha_client.async_states_or_error(
+        "media_player", timeout=2.0)
     if not error:
-        names = {s.get("entity_id"): (s.get("attributes") or {}).get("friendly_name")
-                 for s in states}
-        for profile in profiles:
-            name = names.get(profile.get("entity_id"))
-            if name:
-                profile["name"] = name
+        _SPEAKER_NAMES.clear()
+        _SPEAKER_NAMES.update(
+            {s.get("entity_id"): (s.get("attributes") or {}).get("friendly_name")
+             for s in states
+             if (s.get("attributes") or {}).get("friendly_name")})
+    for profile in profiles:
+        name = _SPEAKER_NAMES.get(profile.get("entity_id"))
+        if name:
+            profile["name"] = name
     return web.json_response({"profiles": profiles})
 
 

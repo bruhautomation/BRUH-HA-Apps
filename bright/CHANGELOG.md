@@ -5,6 +5,14 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.23.7
+
+### Fixed
+
+- Shows, Party, Calibrate and the bulb checks no longer wait up to 15 seconds on a slow Home Assistant for speaker names: the lookup gives up after 2 seconds and uses the names it last saw, or the entity ids (#1004).
+- Tapping ⋯ on a track opens only its menu, no longer the track in the show editor, and a tap outside closes any open ⋯ menu (#1004).
+- "Probe all unprobed" becomes Stop while it runs, and does not start while a show is playing (#1004).
+
 ## 0.23.6
 
 ### Changed

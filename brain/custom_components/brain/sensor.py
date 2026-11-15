@@ -15,6 +15,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import aiohttp
+
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -39,7 +41,7 @@ from .const import (
 )
 from .house_state import SITUATION_FILENAME
 from .house_state import read as read_house_state
-from . import status_mirror
+from . import browser_status, status_mirror
 from .insight_format import build_card_yaml, make_preview
 
 _LOGGER = logging.getLogger(__name__)
@@ -168,6 +170,12 @@ async def async_setup_entry(
     # Assistant — Watching / Paused / Needs restart / Signed out /
     # Degraded. Same rule again, and stale is `unknown`.
     entities.append(BrainStatusSensor(config_entry))
+
+    # BRUH Browser's status, only where the add-on has run here (it wrote
+    # its token). A first install needs brAIn reloaded to add it.
+    if await hass.async_add_executor_job(
+            os.path.exists, browser_token_path(hass)):
+        entities.append(BrowserStatusSensor(config_entry))
 
     async_add_entities(entities, update_before_add=True)
 
@@ -1062,3 +1070,95 @@ class BrainLastLearnedSensor(SensorEntity):
             self._facts = facts
         except Exception:  # noqa: BLE001
             _LOGGER.debug("could not read the memory change log", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# BRUH Browser: idle, running, waiting on you, done, failed
+# ---------------------------------------------------------------------------
+
+BROWSER_DEVICE = DeviceInfo(
+    identifiers={(DOMAIN, "bruh_browser")}, name="BRUH Browser",
+    manufacturer="BRUH Automation", model="BRUH Browser add-on")
+BROWSER_TTL_S = 20
+
+
+def browser_token_path(hass: HomeAssistant) -> str:
+    return hass.config.path(browser_status.TOKEN_DIR,
+                            browser_status.TOKEN_FILENAME)
+
+
+def _read_token(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+async def async_browser_snapshot(hass: HomeAssistant) -> tuple[str, dict]:
+    """One read of BRUH Browser's errand list, shared by its two entities
+    for a few seconds. Never raises; a failure is `unknown` and why."""
+    cache = hass.data.setdefault(DOMAIN, {}).setdefault("_browser_snapshot", {})
+    if cache.get("at") and time.monotonic() - cache["at"] < BROWSER_TTL_S:
+        return cache["value"]
+    try:
+        from homeassistant.components.hassio import get_addons_info
+        from homeassistant.helpers.aiohttp_client import async_get_clientsession
+        base, why = browser_status.base_url(get_addons_info(hass))
+        token = await hass.async_add_executor_job(
+            _read_token, browser_token_path(hass))
+        if base is None:
+            value = browser_status.unknown(why)
+        elif not token:
+            value = browser_status.unknown("BRUH Browser has not written its token yet")
+        else:
+            async with async_get_clientsession(hass).get(
+                    f"{base}/api/tasks",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    value = browser_status.unknown(
+                        f"BRUH Browser answered {resp.status}")
+                else:
+                    body = await resp.json(content_type=None)
+                    rows = body.get("tasks") if isinstance(body, dict) else None
+                    value = (browser_status.derive(rows) if isinstance(rows, list)
+                             else browser_status.unknown(
+                                 "BRUH Browser's answer could not be read"))
+    except Exception:  # noqa: BLE001 — never take HA down over a sensor
+        _LOGGER.debug("could not read BRUH Browser's status", exc_info=True)
+        value = browser_status.unknown("BRUH Browser could not be reached")
+    cache.update(at=time.monotonic(), value=value)
+    return value
+
+
+class BrowserStatusSensor(SensorEntity):
+    """`sensor.bruh_browser_status`: idle / running / needs_you / done /
+    failed (or unknown, with a reason). Attributes: when the last errand
+    finished, its step count, and whether it bought anything. Read-only,
+    and nothing of the errand's own content."""
+
+    _attr_has_entity_name = False
+    _attr_should_poll = True
+    _attr_name = "BRUH Browser status"
+    _attr_icon = "mdi:web"
+    _attr_device_info = BROWSER_DEVICE
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        self._entry = config_entry
+        self._attr_unique_id = f"{DOMAIN}_browser_status"
+        self.entity_id = "sensor.bruh_browser_status"
+        enum = getattr(SensorDeviceClass, "ENUM", None)
+        if enum is not None:
+            self._attr_device_class = enum
+            self._attr_options = list(browser_status.STATES)
+        self._attr_native_value = "unknown"
+        self._attrs: dict[str, Any] = {"reason": "not read yet"}
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return self._attrs
+
+    async def async_update(self) -> None:
+        self._attr_native_value, self._attrs = await async_browser_snapshot(
+            self.hass)

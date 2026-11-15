@@ -94,7 +94,8 @@ def ha_api_request(endpoint: str, method: str = "GET", data: dict | None = None,
 
 
 def states_or_error(domain: str | None = None, *,
-                    opener=urllib.request.urlopen) -> tuple[list[dict], str]:
+                    opener=urllib.request.urlopen,
+                    timeout: float = 15.0) -> tuple[list[dict], str]:
     """Every state, or the reason there are none.
 
     `get_states` answers `[]` for an unreachable Home Assistant and for a
@@ -103,7 +104,7 @@ def states_or_error(domain: str | None = None, *,
     truth was "I could not ask". Two different sentences, and only one of
     them is about the speakers.
     """
-    states = ha_api_request("/states", opener=opener)
+    states = ha_api_request("/states", opener=opener, timeout=timeout)
     if isinstance(states, dict) and states.get("error"):
         return [], str(states["error"])
     if not isinstance(states, list):
@@ -256,8 +257,10 @@ async def async_get_states(domain: str | None = None) -> list[dict]:
     return await asyncio.to_thread(get_states, domain)
 
 
-async def async_states_or_error(domain: str | None = None) -> tuple[list[dict], str]:
-    return await asyncio.to_thread(states_or_error, domain)
+async def async_states_or_error(domain: str | None = None, *,
+                                timeout: float = 15.0) -> tuple[list[dict], str]:
+    return await asyncio.to_thread(
+        lambda: states_or_error(domain, timeout=timeout))
 
 
 async def async_latency_probe(entity_id: str, rounds: int = 6) -> dict:
