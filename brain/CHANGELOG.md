@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.7
+
+### Fixed
+
+- An insight card that says what is normal here no longer wears a "Worth a look" pill. Two causes: brAIn read a date in a comparison ("2 Nov compared with 1 Nov") as a rise, and a card whose verdict field said worth a look while its own opening said "Normal, because …" kept the pill. A card calms only when its opening says normal and nothing on it (a step, a finding, a warning tile, a figure well off its norm) says otherwise. A card that opens "Worth a look" in any punctuation keeps the pill (#964, #925).
+- A card more than an hour old says how old a reading is ("Indoor 9 h ago") instead of "now", on Insights, the shared picture and the dashboard page (#964).
+
 ## 5.3.6
 
 ### Fixed
