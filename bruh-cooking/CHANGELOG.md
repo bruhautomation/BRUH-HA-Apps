@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.4
+
+### Added
+
+- The log says when BRUH Cooking signs in to Breville, when an appliance comes online or goes offline, and when a cook starts or stops. The status sensor and brAIn's cooking status carry the last contact and the last cook (#953).
+- If an appliance's entity ids still use an older name than the appliance has now, Home Assistant's Repairs says so and points to the device page's own Recreate entity IDs; nothing is renamed for you, so automations keep working (#955).
+
+### Fixed
+
+- In a Fahrenheit home the built-in presets show whole degrees (133 °F, not 132.8 °F), and the Joule cooks at exactly the temperature shown (#952).
+- An offline appliance says how long it has been offline and why — the Breville sign-in failing, the cloud connection being down, or the appliance not answering — with one thing to try, on the status sensor and in brAIn's cooking status, instead of a bare "offline" (#954).
+
 ## 0.1.3
 
 ### Security
