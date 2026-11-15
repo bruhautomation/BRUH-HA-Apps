@@ -678,14 +678,15 @@
     <!-- Players -->
     <section id="tab-players" class="tab-panel">
       <h2>Online players</h2>
-      <table class="table" id="players-table">
+      <p id="players-empty" class="muted" hidden>No one is online right now</p>
+      <table class="table" id="players-table" hidden>
         <thead><tr><th>Name</th><th>Actions</th></tr></thead>
         <tbody></tbody>
       </table>
       <h2>Manage by name</h2>
       <form id="f-player-action" class="inline-form">
-        <input id="player-name" type="text" placeholder="PlayerName" maxlength="16" />
-        <select id="player-action">
+        <input id="player-name" type="text" placeholder="PlayerName" maxlength="16" aria-label="Player name" />
+        <select id="player-action" aria-label="What to do">
           <option value="op">Op</option>
           <option value="deop">De-op</option>
           <option value="kick">Kick</option>
@@ -802,20 +803,25 @@
     <!-- Worlds (switchable server profiles, new in 1.3.0) -->
     <section id="tab-worlds" class="tab-panel">
       <h2>Worlds</h2>
-      <p class="muted">
-        Each world is a self-contained server root under <code>/config/minecraft-worlds/&lt;name&gt;/</code> with its own save files, <code>plugins/</code> folder, <code>server.properties</code>, ops/whitelist/bans, and backup history. Only one is active at a time.
-      </p>
-      <p class="muted">
-        <strong>What's per-world:</strong> all gameplay settings (gamemode, difficulty, PVP, world-gen, whitelist, MOTD, …) in this world's <code>server.properties</code> — edit them on the <strong>Server Properties</strong> tab. Plus save files, plugins on disk, ops/whitelist/bans, and backup history. So one world can be creative and another survival.<br />
-        <strong>What's shared (add-on <strong>Configuration</strong> tab):</strong> install-level only — <code>memory_mb</code> + JVM, server type/version, backups, the <code>plugins:</code> URL list (copied into each world's <code>plugins/</code> on boot), RCON password, and Bedrock/Geyser.
-      </p>
-      <p class="muted">
-        <strong>Switching is a one-click operation</strong> (since 1.2.9): hit <strong>Switch</strong> below and the add-on restarts itself so the new world's plugins, world files, and <code>server.properties</code> are loaded. The panel is unreachable for ~30 s while the container comes back up — refresh after that. The header's <strong>Restart</strong> button only kicks the JVM, which is faster but does NOT re-point the world symlink, so it won't switch worlds on its own.
-      </p>
+      <p class="muted">One world runs at a time. <strong>Switch</strong> restarts the add-on to load another; the panel is back in about 30 seconds.</p>
       <table class="table" id="worlds-table">
         <thead><tr><th>Name</th><th>Size</th><th>Settings</th><th>Active?</th><th>Actions</th></tr></thead>
         <tbody></tbody>
       </table>
+
+      <details class="explain">
+        <summary>How worlds work</summary>
+        <p>
+          Each world is a self-contained server root under <code>/config/minecraft-worlds/&lt;name&gt;/</code> with its own save files, <code>plugins/</code> folder, <code>server.properties</code>, ops/whitelist/bans, and backup history.
+        </p>
+        <p>
+          <strong>What's per-world:</strong> all gameplay settings (gamemode, difficulty, PVP, world-gen, whitelist, MOTD, …) in this world's <code>server.properties</code> — edit them on the <strong>Server Properties</strong> tab. Plus save files, plugins on disk, ops/whitelist/bans, and backup history. So one world can be creative and another survival.<br />
+          <strong>What's shared (add-on <strong>Configuration</strong> tab):</strong> install-level only — <code>memory_mb</code> + JVM, server type/version, backups, the <code>plugins:</code> URL list (copied into each world's <code>plugins/</code> on boot), RCON password, and Bedrock/Geyser.
+        </p>
+        <p>
+          The header's <strong>Restart</strong> button only restarts the game server, which is faster but does not change which world is loaded: use <strong>Switch</strong> for that.
+        </p>
+      </details>
 
       <h3>Featured worlds</h3>
       <p class="muted">

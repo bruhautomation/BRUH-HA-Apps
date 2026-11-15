@@ -120,6 +120,7 @@
       $$('.tab-panel').forEach((p) => p.classList.remove('active'));
       tab.classList.add('active');
       $(`#tab-${tab.dataset.tab}`).classList.add('active');
+      if (tab.dataset.tab === 'players')    refreshPlayersTab();
       if (tab.dataset.tab === 'properties') loadProperties();
       if (tab.dataset.tab === 'addons')     loadAddons();
       if (tab.dataset.tab === 'backups')    loadBackups();
@@ -131,8 +132,21 @@
       // scroll under this layout.
       const m = document.querySelector('main');
       if (m) m.scrollTop = 0;
+      tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     });
   });
+
+  // The tab row scrolls sideways on a phone: a fade on the side that has
+  // more tabs says so, and nothing fades when every tab fits.
+  const tabRow = $('.tabs');
+  const tabCue = () => {
+    const more = tabRow.scrollWidth - tabRow.clientWidth;
+    tabRow.classList.toggle('more-left', more > 1 && tabRow.scrollLeft > 1);
+    tabRow.classList.toggle('more-right', more > 1 && tabRow.scrollLeft < more - 1);
+  };
+  tabRow.addEventListener('scroll', tabCue, { passive: true });
+  window.addEventListener('resize', tabCue);
+  tabCue();
 
   // ------------------------------------------------------------------
   // Dashboard refresh loop
@@ -652,7 +666,10 @@
     const data = await api('api/players');
     const tbody = $('#players-table tbody');
     tbody.innerHTML = '';
-    (data.players || []).forEach((name) => {
+    const online = data.players || [];
+    $('#players-empty').hidden = online.length > 0;
+    $('#players-table').hidden = online.length === 0;
+    online.forEach((name) => {
       const tr = document.createElement('tr');
       const actions = ['op', 'kick', 'ban', 'whitelist_add']
         .map((a) => `<button class="btn btn-ghost" data-name="${esc(name)}" data-action="${a}">${a}</button>`)
@@ -811,8 +828,8 @@
     (data.worlds || []).forEach((w) => {
       const tr = document.createElement('tr');
       const activeBadge = w.active
-        ? '<span style="color: var(--accent); font-weight: 600;">● active</span>'
-        : '—';
+        ? '<span class="world-active">● active</span>'
+        : '';
       // Surface each world's per-world gameplay settings so the user can see
       // at a glance that switching loads THAT world's mode — not whatever
       // they last edited on a different world. This is the "settings don't
@@ -1124,36 +1141,26 @@
     const git = data.git || [];
     const arc = data.archives || [];
 
+    // One short row per snapshot: when (local time) and what it is. The
+    // commit's own subject is "backup <UTC stamp>" for every scheduled or
+    // manual backup, which only repeats the time in another zone.
+    const when = (ts) => new Date(ts * 1000).toLocaleString([], {
+      weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    });
+    const row = (ts, label, ref) => `
+      <li class="snap">
+        <div class="snap-text"><strong>${esc(when(ts))}</strong><span class="muted">${esc(label)}</span></div>
+        <button class="btn btn-warn" data-restore="${esc(ref)}" data-when="${esc(when(ts))}">Restore</button>
+      </li>`;
+    const gitLabel = (subject) => (/^backup \S+$/.test(subject || '') ? 'Backup' : (subject || 'Backup'));
     const renderGit = () => {
       if (!git.length) return '<p class="muted">No git snapshots yet.</p>';
-      const rows = git.map((c) => `
-        <tr>
-          <td><code>${esc(c.sha.substring(0, 8))}</code></td>
-          <td>${new Date(c.ts * 1000).toLocaleString()}</td>
-          <td>${esc(c.subject)}</td>
-          <td><button class="btn btn-warn" data-restore="${esc(c.sha)}">Restore</button></td>
-        </tr>
-      `).join('');
-      return `<table class="table">
-        <thead><tr><th>SHA</th><th>When</th><th>Subject</th><th></th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
+      return `<ul class="snap-list">${git.map((c) => row(c.ts, gitLabel(c.subject), c.sha)).join('')}</ul>`;
     };
 
     const renderArchives = () => {
       if (!arc.length) return '<p class="muted">No archive backups yet.</p>';
-      const rows = arc.map((a) => `
-        <tr>
-          <td><code>${esc(a.name)}</code></td>
-          <td>${fmtSize(a.size)}</td>
-          <td>${new Date(a.ts * 1000).toLocaleString()}</td>
-          <td><button class="btn btn-warn" data-restore="${esc(a.name)}">Restore</button></td>
-        </tr>
-      `).join('');
-      return `<table class="table">
-        <thead><tr><th>File</th><th>Size</th><th>When</th><th></th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
+      return `<ul class="snap-list">${arc.map((a) => row(a.ts, `Archive · ${fmtSize(a.size)}`, a.name)).join('')}</ul>`;
     };
 
     host.innerHTML = `
@@ -1163,7 +1170,7 @@
     host.querySelectorAll('button[data-restore]').forEach((b) => {
       b.addEventListener('click', async () => {
         const ref = b.dataset.restore;
-        if (!confirm(`Restore worlds from ${ref}? The server will be stopped; run.sh will start it back up.`)) return;
+        if (!confirm(`Restore the world as it was on ${b.dataset.when}? The server stops and starts again on that snapshot.`)) return;
         const data = await api(`api/restore/${encodeURIComponent(ref)}`, { method: 'POST' });
         alert(data.ok ? 'Restore staged; server restarting.' : `Restore failed:\n${data.output || data.error}`);
       });

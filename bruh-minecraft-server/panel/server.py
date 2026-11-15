@@ -3404,9 +3404,12 @@ def game_event(ev: dict, verified=None, world: str = "") -> tuple[str, dict] | N
                   "time": datetime.fromtimestamp(t, timezone.utc).isoformat(),
                   "world": world}
     if kind == "chat":
+        cap = companion.PARTS_CAP if ev.get("parts") else mcworld.CHAT_CAP
         data["text"] = str(ev.get("said") if ev.get("said") is not None
-                           else str(ev.get("text") or "").split(": ", 1)[-1])[:mcworld.CHAT_CAP]
+                           else str(ev.get("text") or "").split(": ", 1)[-1])[:cap]
         data["name"] = ev.get("shown") or ev.get("player")
+        if ev.get("parts"):
+            data["parts"] = int(ev["parts"])     # one message typed as numbered lines
     elif kind == "leave":
         data["seconds"] = ev.get("seconds")
     elif kind == "death":
@@ -3442,10 +3445,46 @@ def game_event(ev: dict, verified=None, world: str = "") -> tuple[str, dict] | N
     return f"bruh_minecraft_{kind}", data
 
 
+def _parts_thought(hands, player: str, state: str, text: str) -> None:
+    """A message in parts, acknowledged where the companion's thoughts go
+    (the bubble, else the action bar): never a chat line per part."""
+    ident = hands.identity()
+    try:
+        companion_thought({"player": player, "state": state, "text": text, "key": "talk",
+                           "name": ident["name"], "colour": ident["colour"]})
+    except Exception:  # noqa: BLE001 — an acknowledgement that did not show changes nothing
+        pass
+
+
+def _hear_parts(ev: dict, hands) -> dict | None:
+    """A chat line through the player's message in parts (companion.ChatParts):
+    the line as it was, the whole message on "end", or None while it is held."""
+    player = str(ev.get("player") or "")
+    said = ev.get("said") if ev.get("said") is not None \
+        else str(ev.get("text") or "").split(": ", 1)[-1]
+    what, got = hands.parts.hear(player, str(said or ""))
+    if what == "held":
+        _parts_thought(hands, player, "working",
+                       f"Got part {got}. Say end when you're done, or cancel.")
+        return None
+    if what == "cancelled":
+        _parts_thought(hands, player, "done", "Dropped that message.")
+        return None
+    if what == "send":
+        text, n = got
+        return {**ev, "said": text, "text": f"{player}: {text}", "parts": n}
+    return ev
+
+
 def _on_world_event(ev: dict) -> None:
     if not _ha_events_on():
         return
     hands = _COMPANION["hands"]
+    if (ev.get("kind") == "chat" and ev.get("player") and hands is not None
+            and hands.identity().get("active")):
+        ev = _hear_parts(ev, hands)
+        if ev is None:
+            return
     out = game_event(ev, hands.verified if hands is not None else None,
                      world=_world().level_name())
     if out is not None:
@@ -3995,7 +4034,7 @@ def render_maps(body: dict) -> dict:
     except Exception:  # noqa: BLE001 — no level.dat, or one we cannot read
         raise maps_mod.MapError("The world's level.dat could not be read, so the maps "
                                 "would not know which version to be.") from None
-    folder = maps_mod.maps_dir(world)
+    store = maps_mod.maps_dir(world)
     fresh_read()
     save_world()
     # The map rows are named by the builds in them, west to east, north first.
@@ -4005,8 +4044,8 @@ def render_maps(body: dict) -> dict:
         state_path = _world().data_dir / "maps.json"
         state = _read_json(state_path, {})
         last = state.get("last_id") if isinstance(state, dict) else 0
-        folder.mkdir(parents=True, exist_ok=True)
-        ids = iter(maps_mod.next_ids(folder, len(cells), last or 0))
+        store.folder.mkdir(parents=True, exist_ok=True)
+        ids = iter(maps_mod.next_ids(store, len(cells), last or 0))
         for group in sheets:
             names = []
             for w in wanted:
@@ -4035,7 +4074,7 @@ def render_maps(body: dict) -> dict:
                     blank.append(row)          # never generated: nothing to draw
                     continue
                 map_id = next(ids)
-                maps_mod.write_new(folder / f"map_{map_id}.dat", maps_mod.map_file_bytes(
+                maps_mod.write_new(store.path(map_id), maps_mod.map_file_bytes(
                     colours, cx, cz, scale, dim, version))
                 made.append({**row, "id": map_id, "drawn": round(drawn / 16384, 3)})
                 wall["_drawn"].add(label)
