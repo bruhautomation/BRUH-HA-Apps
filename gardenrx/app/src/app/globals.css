@@ -166,7 +166,7 @@
   --card: oklch(1 0 0);
   --ink: oklch(0.205 0.021 168);
   --ink-2: oklch(0.4 0.018 195);
-  --ink-3: oklch(0.55 0.014 205);
+  --ink-3: oklch(0.52 0.014 205);
   --line: oklch(0.915 0.005 210);
   --line-2: oklch(0.88 0.006 210);
 
@@ -178,18 +178,18 @@
   --danger: oklch(0.55 0.21 27);
   --danger-bg: oklch(0.955 0.028 27);
   --danger-line: oklch(0.88 0.06 27);
-  --warn: oklch(0.62 0.13 62);
+  --warn: oklch(0.52 0.12 62);
   --warn-bg: oklch(0.96 0.045 80);
   --warn-line: oklch(0.88 0.07 80);
-  --water: oklch(0.55 0.11 245);
+  --water: oklch(0.52 0.11 245);
   --water-bg: oklch(0.955 0.03 240);
   --water-line: oklch(0.88 0.05 240);
-  --terra: oklch(0.57 0.13 40);
+  --terra: oklch(0.52 0.13 40);
   --terra-bg: oklch(0.955 0.03 45);
   --terra-line: oklch(0.87 0.07 42);
   --safe: oklch(0.46 0.115 160);
   --safe-bg: oklch(0.93 0.035 158);
-  --bloom: oklch(0.62 0.13 350);
+  --bloom: oklch(0.54 0.13 350);
   --bloom-bg: oklch(0.955 0.03 350);
   --on-leaf: oklch(0.99 0.005 160);
   --on-danger: oklch(0.99 0.01 27);
@@ -3011,6 +3011,15 @@
   .topbar {
     gap: 10px;
   }
+  /* Header controls are touch targets here: 40px at least. */
+  .topbar .mode-seg button {
+    width: 40px;
+    height: 40px;
+  }
+  .topbar .topbar-ctl {
+    width: 40px;
+    height: 40px;
+  }
   .topbar .wx-loc {
     display: none;
   }
@@ -3124,9 +3133,6 @@
   }
   .topbar {
     gap: 8px;
-  }
-  .topbar .mode-seg button {
-    width: 26px;
   }
 }
 
@@ -3279,5 +3285,18 @@
   }
   .skeleton::after {
     animation: none;
+  }
+}
+
+/* Text fields stay at 16px on phones: below that iOS zooms the page when one
+   is focused. Unlayered on purpose, so it wins over the size utilities and
+   the component classes alike, whatever screen the field is on. */
+@media (max-width: 880px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not(
+      [type='file']
+    ),
+  select,
+  textarea {
+    font-size: 16px;
   }
 }

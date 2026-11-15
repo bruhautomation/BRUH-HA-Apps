@@ -76,7 +76,7 @@ function NumberCell({ value, onCommit }: { value: number; onCommit: (v: number) 
       onKeyDown={(e) => {
         if (e.key === 'Enter') e.currentTarget.blur();
       }}
-      className="w-14 h-7 text-right text-sm tabular-nums rounded-md ring-1 ring-border/60 bg-card px-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+      className="w-16 h-10 sm:w-14 sm:h-7 text-right text-base sm:text-sm tabular-nums rounded-md ring-1 ring-border/60 bg-card px-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
     />
   );
 }
@@ -339,7 +339,7 @@ export function HarvestTracker({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-24">
       {/* ── Season total ── */}
       {(() => {
         const net = grandValue - sprayCost;
@@ -433,8 +433,8 @@ export function HarvestTracker({
         ) : (
           <div className="rounded-xl bg-card ring-1 ring-black/[0.05] overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
+              <table className="block w-full text-sm sm:table">
+                <thead className="hidden sm:table-header-group">
                   <tr className="text-left text-[10px] font-medium tracking-widest uppercase text-muted-foreground/60 border-b border-border/50">
                     <th className="px-3 py-2 font-medium">Crop</th>
                     <th className="px-2 py-2 font-medium">Date</th>
@@ -443,15 +443,18 @@ export function HarvestTracker({
                     <th className="px-2 py-2 font-medium w-8"></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-border/40">
+                <tbody className="block divide-y divide-border/40 sm:table-row-group">
                   {sortedRows.map((h) => {
                     const c = cropForHarvest(h);
                     const v = h.variety_id ? varietyMap.get(h.variety_id) : null;
                     const val = harvestValue(h);
                     const phi = phiViolation(c?.id, h.harvested_at);
                     return (
-                      <tr key={h.id} className="hover:bg-muted/20">
-                        <td className="px-3 py-1.5 whitespace-nowrap">
+                      <tr
+                        key={h.id}
+                        className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 px-3 py-2.5 hover:bg-muted/20 sm:table-row sm:p-0"
+                      >
+                        <td className="col-start-1 row-start-1 min-w-0 sm:table-cell sm:px-3 sm:py-1.5 sm:whitespace-nowrap">
                           <div className="flex items-center gap-2">
                             <CropAvatar
                               name={c?.name ?? ''}
@@ -471,7 +474,7 @@ export function HarvestTracker({
                             )}
                           </div>
                         </td>
-                        <td className="px-2 py-1.5">
+                        <td className="col-start-1 row-start-2 sm:table-cell sm:px-2 sm:py-1.5">
                           <input
                             type="date"
                             value={dateInputValue(h.harvested_at)}
@@ -483,10 +486,10 @@ export function HarvestTracker({
                                   patchHarvest(h.id, { harvested_at: isoFromDate(val) });
                               }
                             }}
-                            className="h-7 text-xs rounded-md ring-1 ring-border/50 bg-card px-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+                            className="h-10 sm:h-7 text-base sm:text-xs rounded-md ring-1 ring-border/50 bg-card px-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
                           />
                         </td>
-                        <td className="px-2 py-1.5">
+                        <td className="col-start-2 row-start-2 sm:table-cell sm:px-2 sm:py-1.5">
                           <div className="flex items-center justify-end gap-1">
                             <NumberCell
                               value={Number(h.weight)}
@@ -495,7 +498,7 @@ export function HarvestTracker({
                             <select
                               value={h.unit}
                               onChange={(e) => patchHarvest(h.id, { unit: e.target.value })}
-                              className="h-7 text-xs rounded-md ring-1 ring-border/50 bg-card pl-1 pr-0.5 focus:outline-none"
+                              className="h-10 sm:h-7 text-base sm:text-xs rounded-md ring-1 ring-border/50 bg-card pl-1 pr-0.5 focus:outline-none"
                             >
                               {UNITS.map((u) => (
                                 <option key={u} value={u}>
@@ -505,14 +508,21 @@ export function HarvestTracker({
                             </select>
                           </div>
                         </td>
-                        <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
+                        <td
+                          className={`col-span-2 row-start-3 text-left tabular-nums sm:table-cell sm:px-2 sm:py-1.5 sm:text-right sm:whitespace-nowrap ${val > 0 ? '' : 'max-sm:hidden'}`}
+                        >
                           {val > 0 ? (
-                            <span className="font-medium text-emerald-700">{fmtMoney(val)}</span>
+                            <span className="font-medium text-emerald-700">
+                              <span className="mr-1 text-xs font-normal text-muted-foreground sm:hidden">
+                                Value
+                              </span>
+                              {fmtMoney(val)}
+                            </span>
                           ) : (
                             <span className="text-muted-foreground/40">—</span>
                           )}
                         </td>
-                        <td className="px-2 py-1.5 text-right">
+                        <td className="col-start-2 row-start-1 text-right sm:table-cell sm:px-2 sm:py-1.5">
                           <button
                             onClick={() =>
                               setDeleteConfirm({
@@ -520,7 +530,7 @@ export function HarvestTracker({
                                 label: `${c?.name ?? 'harvest'} (${fmtAmount(Number(h.weight), h.unit)})`,
                               })
                             }
-                            className="text-muted-foreground/40 hover:text-terra-500 transition-colors p-1"
+                            className="grid size-10 place-items-center text-muted-foreground/60 hover:text-terra-500 transition-colors sm:size-auto sm:p-1"
                             title="Delete"
                           >
                             <Trash2 className="w-3.5 h-3.5" />

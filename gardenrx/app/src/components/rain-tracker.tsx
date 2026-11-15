@@ -9,15 +9,18 @@ export function RainTracker({
   summary,
   avgHighF,
   humidityPct,
+  dormant,
 }: {
   daily: DailyRain[];
   summary: RainSummary;
   avgHighF?: number | null;
   humidityPct?: number | null;
+  /** Most of the garden is dormant or past harvest. */
+  dormant?: boolean;
 }) {
   if (daily.length === 0) return null;
   const meta = DROUGHT_META[summary.status];
-  const advice = wateringAdvice(daily, { avgHighF, humidityPct });
+  const advice = wateringAdvice(daily, { avgHighF, humidityPct, dormant });
   const adviceMeta = WATERING_META[advice.status];
   const scaleMax = Math.max(0.25, ...daily.map((d) => d.inches));
   const fmtDay = (key: string) =>

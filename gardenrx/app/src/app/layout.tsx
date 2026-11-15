@@ -76,13 +76,13 @@ export default async function RootLayout({
                 </div>
                 <Link
                   href="/"
-                  className="flex items-center gap-2 min-[881px]:hidden"
+                  className="flex min-h-10 items-center gap-2 min-[881px]:hidden"
                   aria-label="GardenRX — Today"
                 >
-                  <span className="brand-mark size-8">
+                  <span className="brand-mark size-10">
                     <Leaf className="size-[18px]" />
                   </span>
-                  <span className="brand-name text-base max-[379px]:hidden">GardenRx</span>
+                  <span className="brand-name text-base max-[499px]:hidden">GardenRx</span>
                 </Link>
                 <div className="topbar-spacer" />
                 {settings.weather_bar && <WeatherChip />}
@@ -92,9 +92,9 @@ export default async function RootLayout({
                 <Link
                   href="/settings"
                   aria-label="Settings"
-                  className="grid size-9 place-items-center rounded-full text-ink-2 transition-colors hover:bg-paper-2 min-[881px]:hidden"
+                  className="topbar-ctl grid size-10 place-items-center rounded-full text-ink-2 transition-colors hover:bg-paper-2 min-[881px]:hidden"
                 >
-                  <Settings className="size-[18px]" />
+                  <Settings className="size-5" />
                 </Link>
                 <div className="min-[881px]:hidden">
                   <ThemeSwitcher settings={settings} />

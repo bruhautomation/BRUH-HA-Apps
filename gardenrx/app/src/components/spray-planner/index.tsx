@@ -728,7 +728,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                                                       modeOfAction: moa,
                                                     })
                                                   }
-                                                  className="inline-flex items-center gap-0.5 text-[10px] font-medium text-emerald-700/70 tabular-nums rounded-full px-1.5 py-0.5 ring-1 ring-emerald-200/50 hover:bg-emerald-50 hover:text-emerald-800 transition-colors"
+                                                  className="inline-flex items-center gap-0.5 text-[10px] font-medium text-emerald-700 tabular-nums rounded-full px-1.5 py-0.5 ring-1 ring-emerald-200/50 hover:bg-emerald-50 hover:text-emerald-800 transition-colors"
                                                   aria-label={`What is ${scheme} group ${fracGroup}?`}
                                                   title={`Tap: what does ${scheme} ${fracGroup} mean?`}
                                                 >
@@ -873,7 +873,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                                       <span className="font-semibold text-amber-700">
                                         {w.rule}.
                                       </span>
-                                      <span className="text-amber-600/80"> {w.explanation}</span>
+                                      <span className="text-warn"> {w.explanation}</span>
                                     </div>
                                   </div>
                                 ))}

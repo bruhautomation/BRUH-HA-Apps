@@ -91,7 +91,7 @@ export function SprayTimingPanel({
       <dl className="space-y-2.5 text-[12px]">
         <div className="flex items-baseline gap-2">
           <CloudRain
-            className={`w-3.5 h-3.5 shrink-0 self-center ${rainFastOk ? 'text-emerald-600' : 'text-amber-600'}`}
+            className={`w-3.5 h-3.5 shrink-0 self-center ${rainFastOk ? 'text-emerald-600' : 'text-warn'}`}
           />
           <dt className="font-medium text-foreground shrink-0">Rain-fast</dt>
           <dd className="text-muted-foreground leading-snug">
