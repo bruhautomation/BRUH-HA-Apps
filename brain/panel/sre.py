@@ -60,6 +60,7 @@ import re
 
 import atomic_write
 import house_words
+import numfmt
 import prompt_kit
 import textclip
 from checks._util import spell_integration
@@ -1862,9 +1863,7 @@ def _hours_said(hours) -> str:
         h = float(hours)
     except (TypeError, ValueError):
         return ""
-    if h >= 48:
-        return f"{round(h / 24)} days"
-    return "an hour" if round(h) <= 1 else f"{round(h)} hours"
+    return numfmt.span(h * 3600)
 
 
 def _zigbee_title(rec: dict) -> str:
@@ -1876,7 +1875,8 @@ def _zigbee_title(rec: dict) -> str:
     lqi = rec.get("lqi")
     since = _hours_said(seen) if isinstance(seen, (int, float)) \
         and seen > UNSEEN_HOURS else ""
-    if rec.get("available") is False:
+    # Silent for days is offline, whatever the record's flag says.
+    if rec.get("available") is False or (since and seen >= 48):
         return (f"{name} has been offline on the Zigbee network for {since}"
                 if since else f"{name} is offline on the Zigbee network")
     if since:

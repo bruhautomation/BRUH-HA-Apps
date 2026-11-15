@@ -539,6 +539,17 @@ def review(obj: dict, previous: dict | None = None,
             "no fine verdict over an open finding", "no fine verdict over a rise",
             "a figure that disagrees with an open finding")):
         verdict = LOOK
+    # "Worth a look" is a pointer to something. A card that gives nothing to
+    # look at (no step, no finding, no suggestion, no tile with a status, no
+    # open row, and no rise or disagreement the checks above found) found
+    # nothing: it is calm, not a look.
+    if (verdict == LOOK and not out.get("next") and not card_claims._acts(out)
+            and open_row_named(out, open_rows) is None
+            and not any(c in changed for c in (
+                "no fine verdict over an open finding",
+                "no fine verdict over a rise",
+                "a figure that disagrees with an open finding"))):
+        verdict = FINE
     if verdict:
         out["verdict"] = verdict
     else:

@@ -14,6 +14,8 @@ from __future__ import annotations
 import json
 import re
 
+import prompt_kit
+
 # ---------------------------------------------------------------------------
 # Categories
 # ---------------------------------------------------------------------------
@@ -462,7 +464,7 @@ CARD_SCHEMA = {
         "next": {"type": "string",
                  "description": "One thing to do when the verdict is not all fine; empty when it is."},
         "summary": {"type": "string",
-                    "description": "Opens with the finding itself: the reason, comparison or next step, never the title's figures again and never a verdict (that is `verdict`); a no-action verdict only where the reader would otherwise worry."},
+                    "description": "First sentence: 'Normal, because X compared with Y' or 'Worth a look, because X compared with Y' against this house's own norm; never the title's figures again."},
         "highlights": {
             "type": "array",
             "items": {
@@ -525,12 +527,12 @@ CARD_SCHEMA = {
 }
 
 
-_CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The highlights ARE the product: concrete numbers with names and times. The title holds the conclusion; the summary opens with the finding itself — the reason, the comparison or the next step — never the title's figures again. "Nothing to do" only where the reader would otherwise worry, never as the opener. When all is normal, title and summary both say so in one short sentence, with at most two highlights, none with a status, and "html": "".
+_CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The highlights ARE the product: concrete numbers with names and times. The title holds the conclusion. The summary's FIRST sentence is the verdict and its reason against this house's own norm: "Normal, because X compared with Y" or "Worth a look, because X compared with Y" (the same judgement as `verdict`; never the title's figures again). A change the season explains (cooling stopping in November, heating starting) is normal. When all is normal, title and summary both say so in one short sentence, with at most two highlights, none with a status, and "html": "".
 
 A CARD EXISTS FOR A CHANGE OR A DECISION. If the honest conclusion is "nothing unusual", "nothing happened" or "no comparison possible", the card is not worth showing: brAIn drops it. A card worth keeping names ONE thing to do, or says everything is normal in a single sentence. Every number is given against a normal the reader can see ("62 °F, usually 68 °F"). A term only a specialist knows (aux heat, defrost, stage, setpoint, differential) is said in everyday words ("the backup heater", "the outdoor unit melting frost") or left out.
 
 OUTPUT CONTRACT (strict JSON; title, summary, highlights and html are required):
-{"title": "max 60 chars", "verdict": "all fine|worth a look|needs action", "next": "a step", "summary": "1-2 sentences, max ~220 chars, one usual-vs-now comparison",
+{"title": "max 60 chars", "verdict": "all fine|worth a look|needs action", "next": "a step", "summary": "1-2 sentences, max ~220 chars, the first 'Normal|Worth a look, because X compared with Y'",
  "highlights": [{"label": "Metric", "value": "42 kWh", "delta": "+12% vs avg (optional)", "status": "good|warning|serious|critical (optional)"}],
  "hypotheses": ["optional, usually none"], "learned": ["optional, max 3"],
  "findings": [{"text": "ONE sentence, under 120 chars", "detail": "the evidence", "fix": "the specific change", "severity": "info|warning|serious|critical", "fixable": true, "entity_id": "sensor.example (optional)"}],
@@ -559,6 +561,7 @@ ANALYSIS RULES:
 - RUTHLESSLY CONCISE and specific to this home: every sentence carries a real name, number or time; no hedging, no invented number. Convert entity_ids to friendly names.
 - Read every number against this house's own normal (its usual, last week) and say which side it is on. Never call it fine with your own figures rising by more than half.
 - Plain words: never a tool or its cap, "baseline", "readings window", "this hour of the week" or a field name; a limit that matters is "at least 10". No unit to look up or made up (°F·h, degree-hours, "2.4x", "min per °F per hour", "kWh of one per kWh of another"): compare like with like in everyday units (minutes, °F, kWh per load), "twice the usual", with the raw value beside any claim about it. No coined measure ("lit spells", "door swings", "safety gap", "coasted"): say what happened ("the light came on 13 times"). A threshold says whose it is ("your usual limit is 350 gal between cycles"), never a bare "flag". A partial day is compared with the same hours of other days.
+- A reading carries the time it was taken ("at 12:31"), never "now": the card is read hours later. "Now" only for what `live` keeps current.
 - One style: times of day in the house's clock (the prompt says which; data times are local unless suffixed Z), dates "Tue 13 Oct", ranges "13–19 Oct", durations "6 h 42 min", temperatures "66 °F" in whole degrees.
 - REASON LIKE A DETECTIVE: cross-reference related entities to reach what no single sensor states, and cite the chain; "device_context" holds clues.
 - KNOWN FACTS and ANSWERED QUESTIONS in the prompt are established truth: use them, never rediscover or contradict them without new evidence, never re-ask.
@@ -568,8 +571,8 @@ ANALYSIS RULES:
 - Anything that could have done harm (a door or freezer left open, a device dropping off, a leak, a temperature excursion) ends with the consequence, checked in readings you have, or one clear thing to do.
 - Calling a reading unusual names the cause you checked, or says none was found and gives one next step; "not a leak" needs its evidence. Before describing a missing or odd event, check its sensor's availability and battery; if it was offline, the sensor is the story.
 - Idle is not broken: a machine an automation starts waits until that automation's sensor passes its threshold; read both first.
-- Write about brAIn as "brAIn", never "I", and never name its internal parts (the Resident, the first look, an investigation).
-- Thin data: visualize what IS there. Never mention the recorder, its retention, missing history or a comparison it could not make; make the comparison the data does allow. A blind spot or nothing happening is never the headline.
+- """ + prompt_kit.ADDRESS + """
+- Thin data: visualize what IS there. Never mention the recorder, its retention, missing history or a comparison it could not make; make the comparison the data does allow. No guess ("may", "might", "could be") and no "could not check" sentence in the summary or findings: leave it out, or put the belief in `hypotheses`. A blind spot or nothing happening is never the headline.
 - A day or hour with NO samples is missing data, never zero: leave it out of BOTH sides of any comparison, draw it as a gap; too little left means no comparison.
 - Before saying "nothing for N h", check related sensors and history_incomplete; if they disagree, report that, not silence.
 - OPEN QUESTIONS are unconfirmed; name one as the possible cause when it could explain the card.
