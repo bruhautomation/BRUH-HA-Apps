@@ -975,10 +975,17 @@ async def collect(now: float | None = None) -> dict:
         snap["forecast"] = {"hourly": hours if fresh else [],
                             "unit": str(told.get("unit") or "°C"),
                             "built_at": told.get("built_at") or 0}
-        _mark("forecast", bool(hours and fresh),
-              "" if hours and fresh else
-              "no hourly weather forecast has been read in the last day "
-              "and a half")
+        # A read that ran and was not refused is a read, even when this
+        # house's weather gives no hours (a daily-only provider, or none at
+        # all): the frost check then has nothing to look at, which is not a
+        # failure to look. Only a read that is stale, never made, or that
+        # the weather entity refused is reported.
+        refused = str(((told.get("errors") or {}).get("weather")
+                       if told.get("weather") else "") or "")
+        ok = fresh and not refused
+        _mark("forecast", ok,
+              "" if ok else refused if fresh else
+              "no weather forecast has been read in the last day and a half")
     except Exception as exc:  # noqa: BLE001
         snap["forecast"] = {"hourly": [], "unit": "°C", "built_at": 0}
         _mark("forecast", False, str(exc))

@@ -17762,7 +17762,7 @@ async def _occasions_read(reason: str, pressed: bool,
                  # The next two nights hour by hour, for the frost check
                  # (`checks.thermal.frost_ahead`), which reads this store.
                  "hourly": occasions.forecast_hours(hourly, now=now, tz=tz,
-                                                    unit=unit),
+                                                    unit=unit, daily=daily),
                  "unit": "°F" if "f" in str(unit or "").lower() else "°C"}
     await asyncio.to_thread(occasions.save, new_store)
     OCCASIONS_STATE["last"] = {k: new_store[k] for k in
@@ -21071,7 +21071,12 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
             "error": (f"{body.get('addon')} cannot be photographed: {why}" if why
                       else f"no BRUH add-on called {body.get('addon')!r} is here"),
             "addons": sorted({t["product"] for t in targets})}, status=404)
-    listing = [{"screen": scr["slug"], "label": scr["label"]} for scr in target["screens"]]
+    # One product can be drawn in more than one place (a panel of its own
+    # AND its Lovelace card in the harness page): its screens are all of
+    # them, and a picture is taken from the target the screen belongs to.
+    family = [t for t in targets if t["product"].lower() == target["product"].lower()]
+    listing = [{"screen": scr["slug"], "label": scr["label"]}
+               for t in family for scr in t["screens"]]
     # "morph-dashboard#c_lamp", or `element` beside the screen: one card or
     # section, scrolled into view and cropped to, tapped or held open first.
     want, focus, why = screens.parse_focus(body.get("screen"), body.get("element"),
@@ -21089,13 +21094,17 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
         # the tool listed brAIn's own, and the chat concluded Morph's
         # dashboard and the cards could not be photographed.
         return web.json_response({"addon": target["product"], "screens": listing,
-                                  "addons": [{"addon": t["product"], "screens": [
-                                      scr["slug"] for scr in t["screens"]]} for t in targets]})
-    scr = next((x for x in target["screens"]
+                                  "addons": [{"addon": p, "screens": [
+                                      scr["slug"] for t in targets if t["product"] == p
+                                      for scr in t["screens"]]}
+                                      for p in dict.fromkeys(t["product"] for t in targets)]})
+    scr = next((x for t in family for x in t["screens"]
                 if want in (x["slug"].lower(), x["label"].lower())
                 or (x.get("dashboard") and want.strip("/") == f"{x['dashboard']}/{x['view']}".lower())
                 or x["slug"].lower().endswith("-" + want)
                 or x["label"].lower().endswith("› " + want)), None)
+    if scr is not None:
+        target = next(t for t in family if scr in t["screens"])
     if scr is None:
         return web.json_response({"error": f"{target['product']} has no screen {want!r}",
                                   "screens": listing}, status=404)
