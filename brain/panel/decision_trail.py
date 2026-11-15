@@ -90,6 +90,10 @@ KINDS = {
     # that record as its reason when no look kept it (`rule_record.holds`).
     "record": "you marked most of this rule's reports wrong, so brAIn held "
               "this one back until it gets worse or names something new",
+    # A check whose own record stands it down (`House.stand_down`): the
+    # reason carries the count of Wrongs that did it.
+    "stand_down": "you marked this rule's recent reports wrong and agreed "
+                  "with none, so brAIn raises it less",
     # "Don't remind me" on a check's card: held until its report changes.
     "hold": "you asked not to be reminded, so brAIn holds it until "
             "something about it changes",
@@ -118,7 +122,7 @@ KINDS = {
 # look's verdict or a notification decision is an event at a time and is
 # written again past the window, as before.
 FOLD_KINDS = frozenset({"dedupe", "exception", "mute", "shadow", "cap",
-                        "hold",
+                        "hold", "stand_down",
                         "drift", "claimed", "explained", "checked",
                         "unchecked", "transient"})
 

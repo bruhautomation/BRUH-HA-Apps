@@ -669,6 +669,32 @@ def recent_level(baseline: dict, found: dict, unit: str | None) -> str:
             "season or the weather moving the range, not the device")
 
 
+# The one limit past which a reading the household has answered about is
+# raised again (`unusual`): a temperature at or under freezing on a sensor
+# whose usual sits clearly above it — a pipe, a pump or a room about to
+# freeze. A freezer, whose usual is below it, never crosses it.
+FREEZE_AT = {"°C": 0.0, "°F": 32.0}
+FREEZE_USUAL_MARGIN = {"°C": 3.0, "°F": 5.4}
+
+
+def crosses_safety_limit(st: dict, baseline: dict) -> bool:
+    attrs = (st or {}).get("attributes") or {}
+    if str(attrs.get("device_class") or "") != "temperature":
+        return False
+    unit = str(attrs.get("unit_of_measurement") or "")
+    if unit not in FREEZE_AT:
+        return False
+    try:
+        value = float((st or {}).get("state"))
+    except (TypeError, ValueError):
+        return False
+    usual = ((baseline or {}).get("overall") or {}).get("median")
+    if not isinstance(usual, (int, float)) or isinstance(usual, bool):
+        return False
+    return (value <= FREEZE_AT[unit]
+            and float(usual) >= FREEZE_AT[unit] + FREEZE_USUAL_MARGIN[unit])
+
+
 def unusual(snap: dict, now: float) -> list[dict]:
     """Readings well outside what this house normally does at this hour."""
     import baselines  # noqa: PLC0415 — the package stays importable without it
@@ -697,7 +723,15 @@ def unusual(snap: dict, now: float) -> list[dict]:
             continue
         if not eligible(house, eid, st):
             continue
-        if not house.should_report(eid, "base.unusual"):
+        # The household's Wrongs about this sensor (`House.answered_off`)
+        # end it, unless the reading has crossed a safety limit: a pipe or a
+        # room about to freeze is raised whatever was said about the band.
+        # A correction the household wrote still holds either way.
+        if crosses_safety_limit(st, baseline):
+            if house.withheld_by(eid, "base.unusual") is not None:
+                house.should_report(eid, "base.unusual")  # its trail line
+                continue
+        elif not house.should_report(eid, "base.unusual"):
             continue
         # A reading far from normal on a sensor that has been walking one
         # way for a month is the walk, and `forecast.decline` says so with
