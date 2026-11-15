@@ -159,7 +159,8 @@ class Conductor:
         # The one place every playing show passes: a party, a single Play
         # and an automation all land here. The beat test is not a show.
         if counts_as_played and track_hash:
-            await asyncio.to_thread(plays_store.mark, track_hash)
+            asyncio.get_running_loop().run_in_executor(
+                None, plays_store.mark, track_hash)
         # `track` is the title, for a person; `track_hash` is the identity,
         # for anything that has to decide whether the show it is looking at
         # is the one that is running. Two tracks can share a title.

@@ -1283,7 +1283,8 @@
       .replace(/\(\d+\)|\bcopy\b|\bcopy \d+\b/g, "")
       .replace(/[^a-z0-9]+/g, " ").trim();
     const keysOf = (track) => {
-      const keys = ["n:" + tidy(track.name)];
+      const keys = [];
+      if (tidy(track.name)) keys.push("n:" + tidy(track.name));
       const s = track.summary;
       if (s && s.bpm && s.duration) {
         keys.push("t:" + Math.round(s.bpm) + "|" + Math.round(s.duration));
@@ -1311,18 +1312,21 @@
     const counts = folders.map((f) => tracks.filter(
       (t) => folderOf(t, folders) === f.path.replace(/\/$/, "") + "/").length);
     const inUse = counts.filter((n) => n > 0).length;
-    const idle = folders.length - inUse;
-    const broken = !tracks.length && folders.some((f) => !f.exists);
+    // A missing folder is a fault with a fix, never a folder "not in use".
+    const missing = folders.filter((f) => !f.exists).length;
+    const idle = folders.length - inUse - missing;
     const details = document.createElement("details");
     details.className = "info-toggle folder-summary";
-    details.open = broken;
+    details.open = missing > 0;
     const line = document.createElement("summary");
+    const bits = [];
+    if (idle > 0) bits.push(idle + " not in use");
+    if (missing > 0) bits.push("⚠ " + missing + " missing");
     line.textContent = tracks.length
       ? tracks.length + (tracks.length === 1 ? " track" : " tracks") +
         " in " + inUse + (inUse === 1 ? " folder" : " folders") +
-        (idle ? ", " + idle + " not in use" : "")
-      : "No music found" + (folders.some((f) => !f.exists)
-        ? " — a folder is missing" : "");
+        (bits.length ? ", " + bits.join(", ") : "")
+      : "No music found" + (missing ? " — " + missing + " missing" : "");
     details.appendChild(line);
     for (const folder of folders) details.appendChild(folderRow(folder, tracks));
     box.appendChild(details);
