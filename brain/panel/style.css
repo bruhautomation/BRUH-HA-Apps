@@ -7640,3 +7640,7 @@ select.choicesrc { display: none; }
 .choicelist .choicegroup:first-child { border-top: 0; }
 .choicelist.off { opacity: 0.55; }
 .choicelist.off .choice { cursor: not-allowed; }
+
+/* Knowledge › Not watched: the row's undo is a word, "Watch again". */
+.factwatch { flex: none; align-self: center; min-height: 40px; }
+@media (pointer: coarse) { .factwatch { min-height: 44px; } }
