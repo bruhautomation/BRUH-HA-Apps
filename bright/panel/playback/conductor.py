@@ -32,6 +32,7 @@ from lifx import packets
 from playback.clock import ShowClock
 from playback.drift import DriftEstimator
 from stores import calibration as calibration_store
+from stores import plays as plays_store
 
 log = logging.getLogger("bright.conductor")
 
@@ -121,7 +122,8 @@ class Conductor:
                         duration_s: float, offset_ms: float,
                         status: str = "playing",
                         track_hash: str = "",
-                        scene_on_end: bool = True) -> None:
+                        scene_on_end: bool = True,
+                        counts_as_played: bool = True) -> None:
         """One track, start to restored lights. Awaited inline by the party
         loop; wrapped in a task by single-show start().
 
@@ -154,6 +156,10 @@ class Conductor:
         # where the last one had been dialed.
         self.clock.anchor(play_call,
                           (offset_ms - self._session_nudge_ms) / 1000.0)
+        # The one place every playing show passes: a party, a single Play
+        # and an automation all land here. The beat test is not a show.
+        if counts_as_played and track_hash:
+            await asyncio.to_thread(plays_store.mark, track_hash)
         # `track` is the title, for a person; `track_hash` is the identity,
         # for anything that has to decide whether the show it is looking at
         # is the one that is running. Two tracks can share a title.
@@ -211,7 +217,8 @@ class Conductor:
     async def start(self, cues: list[dict], *, media_player: str,
                     media_content_id: str, title: str,
                     duration_s: float, end_scene: str | None = None,
-                    track_hash: str = "") -> dict:
+                    track_hash: str = "",
+                    counts_as_played: bool = True) -> dict:
         await self.stop(restore=True)
         self.set_end_scene(end_scene)
         offset_ms = self._calibrated_offset(media_player)
@@ -233,7 +240,7 @@ class Conductor:
             cues, media_player=media_player,
             media_content_id=media_content_id, title=title,
             duration_s=duration_s, offset_ms=offset_ms,
-            track_hash=track_hash))
+            track_hash=track_hash, counts_as_played=counts_as_played))
         self._task.add_done_callback(self._show_ended)
         return {"ok": True, "offset_ms": offset_ms, "cues": len(cues)}
 
