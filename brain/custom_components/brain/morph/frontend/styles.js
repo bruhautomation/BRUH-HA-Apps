@@ -11,7 +11,7 @@ export const FONTS_URL = 'https://fonts.googleapis.com/css2?family=Bricolage+Gro
 // that wide, so a narrow tile says the first fact whole and never the first
 // half of two.
 export const STATUS = { min: 120, max: 600, step: 24, charPx: 7, linePx: 40, actionPx: 84 };
-const STATUS_RULES = Array.from({ length: (STATUS.max - STATUS.min) / STATUS.step + 1 }, (_, i) => { const w = STATUS.min + i * STATUS.step; return `@container (min-width:${w}px){.nv .vs i.w${w}{display:inline}}`; }).join('');
+const STATUS_RULES = Array.from({ length: (STATUS.max - STATUS.min) / STATUS.step + 1 }, (_, i) => { const w = STATUS.min + i * STATUS.step; return `@container (min-width:${w}px){.nv .vs i.w${w}{display:inline}.nv .vs i.sh.h${w}{display:none}}`; }).join('');
 
 export const CSS = `
 :host{display:block;height:100%;--ease:cubic-bezier(.22,1,.36,1);--ease-io:cubic-bezier(.65,0,.35,1)}
@@ -286,7 +286,7 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}.s
 /* "Unavailable · last seen Tue 3:58 AM" is one fact a person needs whole (#764): it takes two lines under a one-line name, which a 56px strip holds. */
 .strip .nv.two>span{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;text-overflow:ellipsis}
 .strip .nv.two b{display:block;white-space:nowrap;-webkit-line-clamp:unset;line-clamp:unset}
-.nv .vs i{font-style:normal}.nv .vs i[class]{display:none}
+.nv .vs i{font-style:normal}.nv .vs i[class]{display:none}.nv .vs i.sh{display:inline}
 ${STATUS_RULES}
 @media (max-width:520px){.sline{gap:8px;padding:0 11px}.nv b{font-size:13px}}
 .sline>.flex1{display:none}.sline>.track,.sline>.actword{margin-left:auto}
@@ -576,6 +576,8 @@ ${STATUS_RULES}
 /* A row of chips (rooms, a chart's legend, a note's words) is a row of targets on touch: 40px, like every other chip (#786). */
 @media (pointer:coarse){.morph .roomw,.morph .legend .wd,.morph .bnote .wd{min-height:40px}}
 /* Every button is a 40px target on a phone, in both directions (the audit counts width too): a room's jump word, the sidebar button and a coming-up title were 26-30px. The height is taken from the margin, so the page's layout does not move. */
+/* A scene segment and the Edit pencil are 40px tall under a finger (the pencil's extra height is borrowed back from its row). */
+@media (pointer:coarse){.morph .secline .secscenes .wd,.morph .secscenes .wd{min-height:40px}.morph .toastline .editq{min-height:40px;margin-block:-4px}.morph .bar>.editq{min-width:40px;min-height:40px;display:inline-flex;align-items:center;justify-content:center}}
 @media (pointer:coarse){.morph .roomw,.morph .menu{min-width:40px;justify-content:center}.morph .cu-name.go{min-height:40px;margin-block:-6px;display:inline-flex;align-items:center}}
 .morph input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=color]),.morph textarea,.morph select{font-size:16px}
 `;

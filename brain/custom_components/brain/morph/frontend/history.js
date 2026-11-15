@@ -218,6 +218,13 @@ export function lineChart(series, t0, t1, opts) {
   const all = shown.flatMap((s) => s.pts.filter((p) => p[0] >= t0 && p[0] <= t1).map((p) => p[1])).filter((v) => isFinite(v));
   if (!all.length) return `<p class="sm">Nothing recorded for this stretch.</p>${z ? ZCSS + resetChip(key) : ''}`;
   let lo = Math.min(...all), hi = Math.max(...all);
+  // One line that never moved is a flat stroke with no scale: say so, with the value, instead.
+  if (shown.length === 1 && lo === hi && !o.band) {
+    const hrs = Math.round((t1 - t0) / 3600000);
+    const span = hrs >= 48 ? Math.round(hrs / 24) + ' days' : hrs >= 1 ? hrs + 'h' : Math.max(1, Math.round((t1 - t0) / 60000)) + ' min';
+    const u = o.unit ? (/^[a-z]/i.test(o.unit) ? ' ' : '') + o.unit : '';
+    return `<p class="sm">No movement in ${esc(span)} \u00b7 steady at ${esc((Math.round(lo * 10) / 10) + u)}</p>${z ? ZCSS + resetChip(key) : ''}`;
+  }
   const m = (hi - lo) * 0.15 || 1; lo -= m; hi += m;
   if (o.band) { lo = Math.min(lo, o.band[0] - 1); hi = Math.max(hi, o.band[1] + 1); }
   const H = o.height || 120, W = 600;

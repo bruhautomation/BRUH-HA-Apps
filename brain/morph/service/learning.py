@@ -759,25 +759,23 @@ def read_lessons(tagged: bool = False) -> list[str]:
     return [f"{r['text']} ({r['source']})" if tagged else r["text"] for r in read_lesson_rows()]
 
 
-# How long a lesson may be, by who wrote it. A household's line is theirs and
-# is never shortened (the cap is only a guard against a pasted file); every
-# rewrite of LEARNED.md runs through ``_rows_of``, so a cap here applies on
-# every pass, and a flat 300 cut 45 of one house's 79 lines mid-word.
-LESSON_CAP = {"you": 4000, "tell": 1200, "learned": 600}
+# A lesson is never shortened: every rewrite of LEARNED.md runs through
+# ``_rows_of``, and a cut here (a flat 300, then a cap by writer) left rules
+# that stopped mid-sentence. The file is bounded by ``MAX_LESSONS``, not by
+# the length of a line.
 
 
-def _cap_lesson(text: str, source: str) -> str:
-    """A lesson within its writer's cap, cut at the last whole sentence (or
-    word, with "…") that fits; never mid-word."""
-    text = " ".join(str(text or "").split())
-    cap = LESSON_CAP.get(source, LESSON_CAP["learned"])
-    if len(text) <= cap:
+# A machine-written line is held to a generous length so a runaway one cannot
+# bloat every prompt; a household's line and a Tell's are never cut.
+LEARNED_CAP = 2000
+
+
+def _cap_learned(text: str) -> str:
+    if len(text) <= LEARNED_CAP:
         return text
-    head = text[:cap]
-    stop = max(head.rfind(". "), head.rfind("! "), head.rfind("? "), head.rfind(".)"))
-    if stop >= cap // 2:
-        return head[:stop + 1].rstrip()
-    return head[:head.rfind(" ")].rstrip(" ,;:—-") + "…" if " " in head else head
+    head = text[:LEARNED_CAP]
+    stop = max(head.rfind(". "), head.rfind("! "), head.rfind("? "))
+    return head[:stop + 1] if stop > 0 else head[:head.rfind(" ")].rstrip(" ,;:") + "…" if " " in head else head
 
 
 def _rows_of(lessons) -> list[dict]:
@@ -789,13 +787,14 @@ def _rows_of(lessons) -> list[dict]:
             source = source if source in SOURCES else tagged
         else:
             text, source = split_lesson(str(x))
-        text = _cap_lesson(text, source)
+        if source == "learned":
+            text = _cap_learned(text)
         if text:
             rows.append({"text": text, "source": source})
     return rows
 
 
-def write_lessons(lessons, commit: bool = True) -> None:
+def write_lessons(lessons, commit: bool = True, message: str = "") -> None:
     """Write LEARNED.md from lines (marks parsed; an unmarked line is the
     household's) or ``{text, source}`` rows. Over ``MAX_LESSONS`` the oldest
     line a machine wrote goes first; a household's own line is never cut to
@@ -829,9 +828,75 @@ def write_lessons(lessons, commit: bool = True) -> None:
     if not commit:
         return
     try:
-        gitrepo.commit("Learned: revised what Morph knows about this household", "learning")
+        gitrepo.commit(message or "Learned: revised what Morph knows about this household", "learning")
     except Exception:  # noqa: BLE001 — a lesson is still on disk without its commit
         log.warning("could not commit LEARNED.md")
+
+
+def _past_lessons() -> list[tuple[str, str]]:
+    """Every (text, source) LEARNED.md ever held in Morph's history, newest first."""
+    import gitrepo
+    r = gitrepo._git("log", "-500", "--format=%H", "--", paths.LEARNED.name, check=False)
+    out = []
+    for sha in r.stdout.split():
+        for ln in (gitrepo.file_at(sha, paths.LEARNED.name) or "").splitlines():
+            if ln.startswith("- "):
+                text, source = split_lesson(ln[2:])
+                out.append((text, source))
+    return out
+
+
+# The flat cut that clipped lines before lessons stopped being cut: 300 characters.
+OLD_CUT = 300
+
+
+def restore_clipped_lessons() -> list[str]:
+    """Once: give back the lines the old flat cut left short. A line is
+    taken for cut only when it ends in "…" or is 299-300 characters long;
+    it is restored only from an earlier line with the SAME source mark that
+    begins with exactly its words (a "…" cut fell on a word boundary, so the
+    fuller line must go on at one) and is longer. A line a person shortened
+    on purpose is never touched, and nothing is written that was not once
+    there. Returns the restored lines' openings (for the log and the commit)."""
+    marker = paths.DATA / "lessons-restored"
+    if marker.exists():
+        return []
+    rows, restored = read_lesson_rows(), []
+    try:
+        past = _past_lessons()
+    except Exception:  # noqa: BLE001 — no history now: try again at the next start
+        log.warning("could not read LEARNED.md history", exc_info=True)
+        return []
+    for i, row in enumerate(rows):
+        t = row["text"]
+        ellipsis = t.endswith("…")
+        if not (ellipsis or OLD_CUT - 1 <= len(t) <= OLD_CUT):
+            continue
+        base = t.rstrip("…").rstrip()
+        if not base:
+            continue
+        def goes_on(p: str) -> bool:
+            if len(p) <= len(base) or not p.startswith(base):
+                return False
+            return not ellipsis or not (p[len(base)].isalnum() and base[-1].isalnum())
+        best = max((p for p, src in past if src == row["source"] and goes_on(p)), key=len, default="")
+        if not best:
+            continue
+        k = _key(best)
+        if any(j != i and _key(o["text"]) == k for j, o in enumerate(rows)):
+            continue
+        row["text"] = best
+        restored.append(base[:60])
+    try:
+        paths.DATA.mkdir(parents=True, exist_ok=True)
+        marker.write_text(f"{len(restored)} restored\n", encoding="utf-8")
+    except OSError:
+        pass
+    if restored:
+        log.info("restored %d clipped LEARNED.md lines from history: %s", len(restored), "; ".join(restored))
+        write_lessons(rows, message="Learned: restored %d clipped lines from history\n\n%s" % (
+            len(restored), "\n".join("- " + x + "…" for x in restored)))
+    return restored
 
 
 def add_lesson(text: str, source: str = "tell") -> None:
@@ -897,7 +962,7 @@ def merge_pass_lessons(returned, notes=()) -> dict:
             unsupported += 1
             continue
         keep.add(k)
-        new.append({"text": _cap_lesson(body, "learned"), "source": "learned"})
+        new.append({"text": _cap_learned(body), "source": "learned"})
     rows = [r for r in current if _key(r["text"]) in keep] + new
     write_lessons(rows)
     return {"added": len(new), "unsupported": unsupported}

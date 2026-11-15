@@ -2,6 +2,15 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.3
+
+### Fixed
+
+- A light group tile on a phone kept its count but dropped its brightness ("13 of 31 on" with no "avg 43%"). A narrow tile now says both in fewer words ("13 of 31 · 43%"), and a lock's state ("Locked") is never cut to make room for its detail (#991).
+- Morph never shortens a lesson in LEARNED.md, however long. Once, on start, lines that an older release had cut mid-sentence are restored from Morph's own history wherever a fuller version of the same line exists; the log and the commit say which lines came back (#984).
+- A history chart of something that never moved in the window drew a flat line with no scale; it now says "No movement in 24h · steady at" its value (#968).
+- On a phone, a room's scene buttons and the Edit button are 40px tall to a finger; they look the same (#1000).
+
 ## 5.3.2
 
 ### Changed
