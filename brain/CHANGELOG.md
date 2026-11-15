@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.12
+
+### Fixed
+
+- A house whose weather gives only a daily forecast no longer reports "the forecast could not be fetched" on every pass: each day's forecast low stands in for the night's hours, so the frost check runs on it, and a weather read that ran is a read even when it has no hours. A read that is stale or refused is still reported (#1007).
+- The development loop can photograph the Lovelace cards of BRUH Print, BRUH Bambu Studio and GardenRX again: an add-on drawn both in its own panel and as a card is one add-on with all of its screens, and the picture is taken from wherever the asked-for screen lives (#1029).
+
 ## 5.3.11
 
 ### Fixed
