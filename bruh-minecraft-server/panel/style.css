@@ -951,7 +951,7 @@ footer {
   padding: 3px 10px; border-radius: 999px; border: 1px solid currentColor;
 }
 .addon-status-active { color: var(--accent-ink); }
-.addon-status-restart { color: var(--warn); }
+.addon-status-restart { color: var(--warn-ink); }
 .addon-status-next_start { color: var(--muted); }
 .addon-status-unused { color: var(--muted); border-style: dashed; }
 .addon-actions .addon-status { align-self: center; white-space: normal; }
@@ -1107,4 +1107,41 @@ footer {
 @media (pointer: coarse) {
   .companion input[type="text"], .companion input[type="number"], .companion select { font-size: 16px; min-height: 44px; }
   .companion .chip, .companion .btn { min-height: 44px; }
+}
+
+/* Header: Stop sits apart from Restart; Update only exists when there is one. */
+.actions .btn[hidden] { display: none; }
+.actions .btn-danger { margin-left: 14px; }
+
+/* Backups: older snapshots fold under their day; Restore is a quiet button. */
+.snap-day { margin: 6px 0; }
+.snap-day summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: 6px; }
+.snap-restore { min-height: 44px; }
+
+/* Players */
+.player-list { list-style: none; margin: 8px 0 16px; padding: 0; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; }
+.player-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.player-row:last-child { border-bottom: none; }
+.player-who { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; min-width: 0; overflow-wrap: anywhere; }
+.ptag { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+.ptag-on { color: var(--accent-ink); border-color: currentColor; }
+.ptag-bad { color: var(--danger-ink); border-color: currentColor; }
+.player-pick, #player-action {
+  min-height: 44px; font: inherit; font-size: 16px; flex: none; max-width: 100%;
+  background: var(--bg-raise); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+}
+@media (max-width: 520px) {
+  .player-row { flex-direction: column; align-items: stretch; }
+  .player-pick { width: 100%; }
+}
+
+/* File pickers read as one button, at least 44px tall, 16px text (no iOS zoom). */
+input[type="file"] {
+  font: inherit; font-size: 16px; color: var(--muted);
+  min-height: 44px; flex: 1; min-width: 0; max-width: 100%;
+  display: flex; align-items: center;
+}
+input[type="file"]::file-selector-button {
+  font: inherit; font-size: 16px; min-height: 44px; padding: 8px 16px; margin-right: 12px;
+  background: var(--bg-raise); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
 }

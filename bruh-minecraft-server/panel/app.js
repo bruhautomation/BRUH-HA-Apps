@@ -531,6 +531,20 @@
     loadBackups();
   });
 
+  // Update is only offered when the check found something newer.
+  function showHeaderUpdate(sw) {
+    const b = $('#btn-update');
+    const newer = !!(sw && !sw.upgrade_pending && (sw.build_update_available || sw.upgrade_available));
+    b.hidden = !newer;
+    if (newer) b.title = sw.upgrade_available
+      ? `Minecraft ${sw.newest_version} is out`
+      : `${typeName(sw.server_type)} build ${sw.newest_build} is available`;
+  }
+  api('api/server/software').then((sw) => { if (!sw.error) showHeaderUpdate(sw); }).catch(() => {});
+  setInterval(() => {
+    if (!document.hidden) api('api/server/software').then((sw) => { if (!sw.error) showHeaderUpdate(sw); }).catch(() => {});
+  }, 600000);
+
   $('#btn-update').addEventListener('click', async () => {
     if (!confirmAction('Download the latest server jar for the configured type/version? Requires a restart to take effect.')) return;
     const data = await api('api/server/update', { method: 'POST' });
@@ -662,23 +676,47 @@
   // ------------------------------------------------------------------
   // Players tab
   // ------------------------------------------------------------------
+  // Each row's menu offers only what makes sense for that person's roles.
+  const PLAYER_CHOICES = (p) => [
+    p.op ? ['deop', 'Remove operator'] : ['op', 'Make operator'],
+    p.whitelisted ? ['whitelist_remove', 'Remove from whitelist'] : ['whitelist_add', 'Add to whitelist'],
+    ...(p.online ? [['kick', 'Kick']] : []),
+    p.banned ? ['pardon', 'Pardon (unban)'] : ['ban', 'Ban'],
+  ];
+  const PLAYER_ASK = {
+    op: (n) => `Make ${n} an operator? Operators can run any command.`,
+    ban: (n) => `Ban ${n}? They will not be able to join until pardoned.`,
+    kick: (n) => `Kick ${n} off the server now?`,
+  };
+
   async function refreshPlayersTab() {
     const data = await api('api/players');
-    const tbody = $('#players-table tbody');
-    tbody.innerHTML = '';
-    const online = data.players || [];
-    $('#players-empty').hidden = online.length > 0;
-    $('#players-table').hidden = online.length === 0;
-    online.forEach((name) => {
-      const tr = document.createElement('tr');
-      const actions = ['op', 'kick', 'ban', 'whitelist_add']
-        .map((a) => `<button class="btn btn-ghost" data-name="${esc(name)}" data-action="${a}">${a}</button>`)
-        .join('');
-      tr.innerHTML = `<td>${esc(name)}</td><td class="actions">${actions}</td>`;
-      tbody.appendChild(tr);
-    });
-    tbody.querySelectorAll('button').forEach((b) => {
-      b.addEventListener('click', () => runPlayerAction(b.dataset.name, b.dataset.action));
+    const list = $('#players-list');
+    // Don't rebuild under a finger that has the menu open.
+    if (list.contains(document.activeElement) && document.activeElement.tagName === 'SELECT') return;
+    const known = data.known || (data.players || []).map((name) => ({ name, online: true }));
+    $('#players-empty').hidden = known.length > 0;
+    list.hidden = known.length === 0;
+    list.innerHTML = known.map((p) => {
+      const tags = [
+        p.online ? '<span class="ptag ptag-on">Online</span>' : '',
+        p.op ? '<span class="ptag">Operator</span>' : '',
+        p.whitelisted ? '<span class="ptag">Whitelisted</span>' : '',
+        p.banned ? '<span class="ptag ptag-bad">Banned</span>' : '',
+      ].join('');
+      const opts = PLAYER_CHOICES(p).map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
+      return `<li class="player-row"><div class="player-who"><strong>${esc(p.name)}</strong>${tags}</div>
+        <select class="player-pick" data-name="${esc(p.name)}" aria-label="Change ${esc(p.name)}">
+          <option value="" selected disabled>Choose…</option>${opts}</select></li>`;
+    }).join('');
+    list.querySelectorAll('select.player-pick').forEach((sel) => {
+      sel.addEventListener('change', async () => {
+        const name = sel.dataset.name;
+        const action = sel.value;
+        const ask = PLAYER_ASK[action];
+        if (ask && !confirm(ask(name))) { sel.value = ''; return; }
+        await runPlayerAction(name, action);
+      });
     });
   }
 
@@ -695,6 +733,9 @@
     const name = $('#player-name').value.trim();
     const action = $('#player-action').value;
     if (!name) return;
+    if (!action) { $('#player-reply').textContent = 'Choose what to do first.'; return; }
+    const ask = PLAYER_ASK[action];
+    if (ask && !confirm(ask(name))) return;
     await runPlayerAction(name, action);
   });
   setInterval(() => {
@@ -1142,20 +1183,34 @@
     const arc = data.archives || [];
 
     // One short row per snapshot: when (local time) and what it is. The
-    // commit's own subject is "backup <UTC stamp>" for every scheduled or
-    // manual backup, which only repeats the time in another zone.
+    // commit's subject is "backup <UTC stamp>", which only repeats the time in
+    // another zone; what it is comes from the kind the add-on writes beside it.
     const when = (ts) => new Date(ts * 1000).toLocaleString([], {
       weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
     });
-    const row = (ts, label, ref) => `
+    const clock = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const dayOf = (ts) => new Date(ts * 1000).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+    const row = (ts, label, ref, short) => `
       <li class="snap">
-        <div class="snap-text"><strong>${esc(when(ts))}</strong><span class="muted">${esc(label)}</span></div>
-        <button class="btn btn-warn" data-restore="${esc(ref)}" data-when="${esc(when(ts))}">Restore</button>
+        <div class="snap-text"><strong>${esc(short ? clock(ts) : when(ts))}</strong><span class="muted">${esc(label)}</span></div>
+        <button class="btn btn-ghost snap-restore" data-restore="${esc(ref)}" data-when="${esc(when(ts))}">Restore</button>
       </li>`;
-    const gitLabel = (subject) => (/^backup \S+$/.test(subject || '') ? 'Backup' : (subject || 'Backup'));
+    const KINDS = { scheduled: 'Scheduled backup', manual: 'Manual backup', 'before a world change': 'Before a world change' };
+    const gitLabel = (c) => KINDS[c.kind] || 'Backup';
     const renderGit = () => {
       if (!git.length) return '<p class="muted">No git snapshots yet.</p>';
-      return `<ul class="snap-list">${git.map((c) => row(c.ts, gitLabel(c.subject), c.sha)).join('')}</ul>`;
+      // The last day stays a plain list; older snapshots fold under their day.
+      const cut = Date.now() / 1000 - 86400;
+      const recent = git.filter((c) => c.ts >= cut);
+      const days = new Map();
+      git.filter((c) => c.ts < cut).forEach((c) => {
+        const d = dayOf(c.ts);
+        if (!days.has(d)) days.set(d, []);
+        days.get(d).push(c);
+      });
+      const list = (items, short) => `<ul class="snap-list">${items.map((c) => row(c.ts, gitLabel(c), c.sha, short)).join('')}</ul>`;
+      return (recent.length ? list(recent, false) : '')
+        + [...days].map(([d, items]) => `<details class="snap-day"><summary>${esc(d)} <span class="muted">· ${items.length} snapshot${items.length === 1 ? '' : 's'}</span></summary>${list(items, true)}</details>`).join('');
     };
 
     const renderArchives = () => {
@@ -1170,7 +1225,7 @@
     host.querySelectorAll('button[data-restore]').forEach((b) => {
       b.addEventListener('click', async () => {
         const ref = b.dataset.restore;
-        if (!confirm(`Restore the world as it was on ${b.dataset.when}? The server stops and starts again on that snapshot.`)) return;
+        if (!confirm(`Roll the world back to ${b.dataset.when}?\n\nEverything that changed after that time will be lost. The server stops and starts again on that snapshot.`)) return;
         const data = await api(`api/restore/${encodeURIComponent(ref)}`, { method: 'POST' });
         alert(data.ok ? 'Restore staged; server restarting.' : `Restore failed:\n${data.output || data.error}`);
       });
@@ -1962,7 +2017,7 @@
       status = `<span class="addon-status addon-status-restart">Minecraft ${esc(sw.newest_version)} is out</span>`;
       action = `<button class="btn btn-primary" id="software-upgrade" data-version="${esc(sw.newest_version)}">Upgrade this world to ${esc(sw.newest_version)}</button>`;
     } else if (sw.build_update_available) {
-      status = `<span class="addon-status addon-status-restart">Build ${esc(sw.newest_build)} available</span>`;
+      status = `<span class="addon-status addon-status-restart">Update to ${esc(typeName(sw.server_type))} ${esc(sw.version)} build ${esc(sw.newest_build)}</span>`;
     } else if (!sw.checked) {
       status = `<span class="addon-status addon-status-next_start">${esc(sw.check_error || 'Not checked for this server type')}</span>`;
     }
@@ -1990,6 +2045,7 @@
     const sw = await api(`api/server/software${force ? '?refresh=1' : ''}`);
     if (sw.error) { $('#software-rows').innerHTML = `<p class="muted bad">${esc(sw.error)}</p>`; return; }
     renderSoftware(sw);
+    showHeaderUpdate(sw);
   }
 
   async function softwareUpdate(version) {

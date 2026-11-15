@@ -5,6 +5,19 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.19.12
+
+### Changed
+
+- Players lists everyone who has joined, is whitelisted, is an operator or is banned, each with their roles and a menu offering only the changes that fit them. Making someone an operator, banning and kicking ask first. The by-name form starts on "Choose…", never on Op, and explains the "." in front of Bedrock names (#1036).
+- Backups say what each snapshot is (scheduled, manual, or before a world change), and older snapshots fold under their day. Restore is a quieter button whose question names the time it goes back to and says newer changes are lost. Snapshots made before this release still read "Backup" (#1038).
+- The header shows Update only when a newer server build is waiting, and Stop sits apart from Restart (#1040).
+
+### Fixed
+
+- The pack upload on Add-ons and the world import on Worlds are 44px buttons with 16px text, so a phone no longer zooms in on them (#1037).
+- The "update available" badge is readable in light and dark, and says which version it updates to (#1039).
+
 ## 1.19.11
 
 ### Added
