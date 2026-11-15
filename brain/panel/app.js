@@ -365,6 +365,20 @@ function timeAgo(iso) {
   return `${Math.round(secs / 86400)} d ago`;
 }
 
+// A tile is a reading taken when the card was written, so a tile that
+// says "now" stops being true as the card ages: an hour on, the word is
+// the reading's age instead ("9 h ago"). The prompt already asks for the
+// time a reading was taken; this is a card that said "now" anyway, and
+// every card stored before.
+const TILE_NOW = /\b(?:right\s+|just\s+)?now\b/gi;
+const TILE_NOW_AFTER_MS = 60 * 60 * 1000;
+function tileNow(text, madeIso) {
+  const s = String(text);
+  const made = madeIso ? new Date(madeIso).getTime() : NaN;
+  if (isNaN(made) || Date.now() - made < TILE_NOW_AFTER_MS) return s;
+  return s.replace(TILE_NOW, timeAgo(madeIso));
+}
+
 // The other direction, for the scheduler's next_due (epoch seconds).
 function timeUntil(epochS) {
   const mins = Math.round((epochS * 1000 - Date.now()) / 60000);
@@ -1824,9 +1838,10 @@ function makeCard(catInfo, insight, fallbackId) {
       shown.highlights.forEach((h) => {
         if (!h || !h.label) return;
         const box = el("div", "hl" + (h.status ? ` status-${h.status}` : ""));
-        box.appendChild(el("div", "l", String(h.label)));
-        box.appendChild(el("div", "v", String(h.value != null ? h.value : "—")));
-        if (h.delta) box.appendChild(el("div", "d", String(h.delta)));
+        const made = shown.generated_at;
+        box.appendChild(el("div", "l", tileNow(h.label, made)));
+        box.appendChild(el("div", "v", tileNow(h.value != null ? h.value : "—", made)));
+        if (h.delta) box.appendChild(el("div", "d", tileNow(h.delta, made)));
         const prev = prevHls.find((p) => p && p.label === h.label);
         if (prev && prev.value != null) {
           box.appendChild(el("div", "prev", `prev: ${prev.value}`));
@@ -16730,10 +16745,11 @@ async function composeCardImage(insight, chart) {
     hls.forEach((h) => {
       const t = add(grid, "div", `background:${tile};border-radius:10px;padding:10px 12px;`
         + "display:flex;flex-direction:column;gap:3px");
-      add(t, "div", `font-size:12px;color:${ink3}`, String(h.label));
+      const made = insight.generated_at;
+      add(t, "div", `font-size:12px;color:${ink3}`, tileNow(h.label, made));
       add(t, "div", "font-size:20px;font-weight:600;line-height:1.2",
-        String(h.value != null ? h.value : "—"));
-      if (h.delta) add(t, "div", `font-size:12px;color:${ink2}`, String(h.delta));
+        tileNow(h.value != null ? h.value : "—", made));
+      if (h.delta) add(t, "div", `font-size:12px;color:${ink2}`, tileNow(h.delta, made));
     });
   }
   // The chart is NOT an <img> in the markup. Its PNG arrives in a message

@@ -11386,7 +11386,10 @@ _WHOLE_CARD_AGE = (
     'e=document.getElementById("age");if(!u||!e)return;'
     'var t=Date.parse(e.getAttribute("data-made")||"");'
     'if(isNaN(t))return;var s=Math.max(0,(Date.now()-t)/1000);'
-    'u.textContent="Updated "+ago(s);var d=Math.floor(s/86400);'
+    'u.textContent="Updated "+ago(s);if(s>=3600){'
+    'var n=document.querySelectorAll("[data-now]");'
+    'for(var i=0;i<n.length;i++)n[i].textContent=ago(s);}'
+    'var d=Math.floor(s/86400);'
     'if(d<' + str(CARD_STALE_DAYS) + '){e.hidden=true;return;}'
     'e.textContent="This card is "+d+" days old \u2014 it shows the house '
     'as it was then, not now.";e.hidden=false;}'
@@ -11445,6 +11448,9 @@ _VERDICT_CHIP = {card_verdict.FINE: "fine", card_verdict.LOOK: "look",
                  card_verdict.ACTION: "act"}
 
 
+_TILE_NOW = re.compile(r"\b(?:right\s+|just\s+)?now\b", re.I)
+
+
 def _whole_card_page(insight: dict) -> str:
     esc = html_lib.escape
     # One verdict, as the panel shows it: the chip, and a card stored
@@ -11457,14 +11463,22 @@ def _whole_card_page(insight: dict) -> str:
     lead, rest = _lead_split(str(insight.get("summary") or ""))
     summary = (f"<b>{esc(lead)}</b> {esc(rest)}" if lead else esc(rest))
     tiles = []
+
+    def tile(text) -> str:
+        # A tile's "now" was true when the card was written: the page's
+        # clock says the reading's age in its place an hour on, as the
+        # panel does (`tileNow`).
+        return _TILE_NOW.sub(lambda m: f"<span data-now>{m.group(0)}</span>",
+                             esc(str(text)))
+
     for h in insight.get("highlights") or []:
         if not isinstance(h, dict) or not h.get("label"):
             continue
-        delta = (f'<div class="d">{esc(str(h["delta"]))}</div>'
+        delta = (f'<div class="d">{tile(h["delta"])}</div>'
                  if h.get("delta") else "")
         tiles.append(
-            f'<div class="t"><div class="l">{esc(str(h["label"]))}</div>'
-            f'<div class="v">{esc(str(h.get("value", "—")))}</div>{delta}</div>')
+            f'<div class="t"><div class="l">{tile(h["label"])}</div>'
+            f'<div class="v">{tile(h.get("value", "—"))}</div>{delta}</div>')
     when = str(insight.get("generated_at") or "").replace("T", " ")[:16]
     # The chart takes whatever height the card's frame has left (`flex: 1`
     # on the iframe, the page itself exactly the frame's height with its

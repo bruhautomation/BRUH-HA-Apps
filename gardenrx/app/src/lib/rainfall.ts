@@ -117,6 +117,9 @@ export const DROUGHT_META: Record<
 
 // ── Watering recommendation ──
 
+/** Highs below this, with the garden resting, mean no watering call. */
+const DORMANT_COOL_F = 60;
+
 export type WateringStatus = 'soak' | 'water-soon' | 'ok' | 'wet';
 
 export interface WateringAdvice {
@@ -137,7 +140,7 @@ export interface WateringAdvice {
  */
 export function wateringAdvice(
   daily: DailyRain[],
-  opts: { avgHighF?: number | null; humidityPct?: number | null } = {}
+  opts: { avgHighF?: number | null; humidityPct?: number | null; dormant?: boolean } = {}
 ): WateringAdvice {
   const n = daily.length;
   const rain7 = round2(daily.slice(Math.max(0, n - 7)).reduce((s, d) => s + d.inches, 0));
@@ -173,7 +176,19 @@ export function wateringAdvice(
 
   let status: WateringStatus;
   let headline: string;
-  if (rain7 >= target * 1.4) {
+  if (opts.dormant && high != null && high < DORMANT_COOL_F && rain7 < target * 1.4) {
+    // Resting plants in cool weather barely draw on the soil: no call to water.
+    status = 'ok';
+    headline = 'No watering needed';
+    return {
+      status,
+      rain7,
+      targetWeekly: target,
+      deficit,
+      headline,
+      detail: `Most of the garden is dormant and highs are near ${Math.round(high)}°, so it needs little water. ${rain7.toFixed(2)}″ of rain in the last 7 days.`,
+    };
+  } else if (rain7 >= target * 1.4) {
     status = 'wet';
     headline = 'Skip watering';
   } else if (deficit <= 0.2) {

@@ -42,6 +42,10 @@ export type CropCardModel = {
   phiActive: boolean;
   phiDaysLeft: number;
   protection: 'green' | 'yellow' | 'red' | 'untracked';
+  /** Every variety dormant or past harvest: coverage is not asked of it. */
+  resting: boolean;
+  /** Fungicide or insecticide lapsed (the same rule Today's attention list uses). */
+  due: boolean;
 };
 
 const CATEGORY_ORDER = ['Orchard', 'Garden', 'Landscape'];
@@ -65,7 +69,7 @@ function urgency(c: CropCardModel): number {
   return 4;
 }
 function covSoonest(c: CropCardModel): number {
-  const vals = [c.fung, c.inBloom ? null : c.ins]
+  const vals = (c.resting ? [] : [c.fung, c.inBloom ? null : c.ins])
     .filter(Boolean)
     .map((x) => (x!.status === 'red' ? 0 : x!.daysRemaining));
   return vals.length ? Math.min(...vals) : 9999;
@@ -157,7 +161,7 @@ export function CropsBoard({
           const list = filtered.filter((c) => c.category === category);
           if (!list.length) return null;
           const Icon = CATEGORY_ICON[category] ?? Leaf;
-          const due = list.filter((c) => c.protection === 'red').length;
+          const due = list.filter((c) => c.due).length;
           const phi = list.filter((c) => c.phiActive).length;
           const meta = [due ? `${due} due` : '', phi ? `${phi} under PHI` : '']
             .filter(Boolean)
@@ -243,8 +247,14 @@ function CropCard({ c }: { c: CropCardModel }) {
       </div>
 
       <div className="cc-covs">
-        <CovChip label="Fung" cov={c.fung} manual={!c.trackFung} />
-        <CovChip label="Ins" cov={c.ins} suppressed={c.inBloom} manual={!c.trackIns} />
+        <CovChip label="Fungicide" cov={c.fung} manual={!c.trackFung} resting={c.resting} />
+        <CovChip
+          label="Insecticide"
+          cov={c.ins}
+          suppressed={c.inBloom}
+          manual={!c.trackIns}
+          resting={c.resting}
+        />
       </div>
     </Link>
   );
@@ -255,11 +265,13 @@ function CovChip({
   cov,
   suppressed,
   manual,
+  resting,
 }: {
   label: string;
   cov: CovCell;
   suppressed?: boolean;
   manual?: boolean;
+  resting?: boolean;
 }) {
   if (manual) {
     return (
@@ -271,6 +283,17 @@ function CovChip({
         <span className="cc-cov-k">{label}</span>
         <span className="cc-cov-v" style={{ color: 'var(--ink-3)' }}>
           as needed
+        </span>
+      </span>
+    );
+  }
+  if (resting) {
+    return (
+      <span className="cc-cov">
+        <CovDot status="untracked" size={7} />
+        <span className="cc-cov-k">{label}</span>
+        <span className="cc-cov-v" style={{ color: 'var(--ink-3)' }}>
+          resting
         </span>
       </span>
     );

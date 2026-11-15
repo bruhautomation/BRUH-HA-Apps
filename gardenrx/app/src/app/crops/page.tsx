@@ -17,6 +17,7 @@ import { harvestSeason } from '@/lib/harvest-windows';
 import { applyPhenology } from '@/lib/phenology';
 import { stageIndex, stageVarColor, stageLabel } from '@/lib/stage-color';
 import { CropsBoard, type CropCardModel, type CovCell } from '@/components/crops/crops-board';
+import { needsCoverageNow, dueTypes } from '@/lib/coverage-season';
 import type { PhenologicalStage } from '@/lib/database.types';
 
 export const dynamic = 'force-dynamic';
@@ -117,7 +118,12 @@ export default async function CropsPage() {
     // A PHI is only worth flagging when the fruit is actually in season.
     const phiActive = phi.active && harvestSeason(crop.id, cropVarieties, now).inSeason;
 
-    const statuses = [fung?.status, inBloom ? undefined : ins?.status].filter(Boolean) as string[];
+    // Dormant and post-harvest crops are resting: no lapsed or due flags.
+    const resting = !needsCoverageNow(stages.map((stage) => ({ stage })));
+    const due = dueTypes({ active: !resting, inBloom, fung, ins });
+    const statuses = resting
+      ? []
+      : ([fung?.status, inBloom ? undefined : ins?.status].filter(Boolean) as string[]);
     const protection: CropCardModel['protection'] =
       statuses.length === 0
         ? 'untracked'
@@ -147,6 +153,8 @@ export default async function CropsPage() {
       phiActive,
       phiDaysLeft: phi.daysLeft,
       protection,
+      resting,
+      due: due.length > 0,
     };
   });
 

@@ -130,6 +130,8 @@ _VS = re.compile(_NUM + r"[^\d.;]{0,14}?\b(?:vs\.?|versus|against|compared with)
                  r"\b[^\d;]{0,25}?" + _NUM, re.I)
 _ARROW = re.compile(_NUM + r"[^\d;]{0,10}?(?:→|->)[^\d;]{0,10}?" + _NUM)
 _FROM_TO = re.compile(r"\bfrom\s+" + _NUM + r"[^\d;]{0,12}?\bto\s+" + _NUM, re.I)
+_USUALLY = re.compile(_NUM + r"[^;]{0,24}?\b(?:usually|normally|typically)\s+"
+                      r"(?:about\s+|around\s+)?" + _NUM, re.I)
 _PCT_UP = re.compile(r"(?:\+|\bup\s+|\brose\s+|\brisen\s+)" + _NUM + r"\s?%", re.I)
 _DOUBLED = re.compile(r"\b(?:doubled|tripled|twice (?:the|its|as)|"
                       r"three times (?:the|its|as))\b", re.I)
@@ -235,6 +237,11 @@ def legacy(card: dict) -> dict:
     out = {"title": plain_title if title_said else title,
            "summary": body if stripped else summary,
            "verdict": given or said or title_said}
+    if out["verdict"] == LOOK and calm_lead(card):
+        # Stored with a "worth a look" its own "Normal, because …" lead
+        # and everything typed on it contradict (`review` now settles
+        # this when the card is made; this is the card made before).
+        out["verdict"] = FINE
     if not given and not said and not title_said:
         clause, after = lead_clause(summary)
         if after.strip() and is_reassurance(clause):
@@ -270,18 +277,53 @@ def says_fine(clause: str) -> bool:
     return bool(_FINE.search(clause or "")) and not _NEGATED.search(clause or "")
 
 
+# A day of the month is a date, not a figure: "2 Nov compared with 1 Nov"
+# is two days, and read as figures it was a rise of a half.
+_DATE_AFTER = re.compile(r"\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|"
+                         r"nov|dec)[a-z]*\b", re.I)
+_DATE_BEFORE = re.compile(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|"
+                          r"nov|dec)[a-z]*\.?\s*$", re.I)
+
+
+def _is_date(text: str, m: re.Match, group: int) -> bool:
+    day = _num(m.group(group))
+    if day is None or day != int(day) or not 1 <= day <= 31:
+        return False
+    return bool(_DATE_AFTER.match(text, m.end(group))
+                or _DATE_BEFORE.search(text[:m.start(group)]))
+
+
+def _pairs(text: str):
+    """`(then, now)` for every comparison a text states: "A vs B",
+    "B → A", "from B to A" and "A, usually B". Dates are not figures."""
+    for rx, now_g, then_g in ((_VS, 1, 2), (_ARROW, 2, 1), (_FROM_TO, 2, 1),
+                              (_USUALLY, 1, 2)):
+        for m in rx.finditer(text or ""):
+            if _is_date(text, m, 1) or _is_date(text, m, 2):
+                continue
+            now, then = _num(m.group(now_g)), _num(m.group(then_g))
+            if now is not None and then is not None:
+                yield then, now
+
+
+def departs(obj: dict) -> bool:
+    """Whether a figure the card states is half as much again as the norm
+    it gives beside it, or that norm half as much again as the figure:
+    the rise `rises` reads, read both ways ("15 °F, usually 0 °F")."""
+    for text in _texts(obj):
+        for then, now in _pairs(text):
+            low, high = sorted((abs(now), abs(then)))
+            if high and (not low or high / low >= RISE or now * then < 0):
+                return True
+    return False
+
+
 def rises(obj: dict) -> bool:
     """Whether the card's own figures show a rise of more than half."""
     for text in _texts(obj):
-        for m in _VS.finditer(text):
-            now, then = _num(m.group(1)), _num(m.group(2))
-            if now is not None and then and now / then >= RISE:
+        for then, now in _pairs(text):
+            if then and now / then >= RISE:
                 return True
-        for rx in (_ARROW, _FROM_TO):
-            for m in rx.finditer(text):
-                then, now = _num(m.group(1)), _num(m.group(2))
-                if now is not None and then and now / then >= RISE:
-                    return True
         for m in _PCT_UP.finditer(text):
             pct = _num(m.group(1))
             if pct is not None and pct >= (RISE - 1) * 100:
@@ -478,6 +520,37 @@ def open_row_named(obj: dict, open_rows) -> dict | None:
     return None
 
 
+def _opening(summary: str) -> tuple[str, str]:
+    """`(verdict, rest)`: the verdict the summary's opening clause is
+    ("Worth a look", "Normal", "Needs action", in any punctuation), and
+    what follows it in that sentence."""
+    first = _SENTENCE_END.split(str(summary or "").strip(), maxsplit=1)[0]
+    clause, after = lead_clause(first)
+    return verdict_of_sentence(clause), after
+
+
+def calm_lead(obj: dict, open_rows=()) -> bool:
+    """The card's own contract lead says normal ("Normal, because X
+    compared with Y") and nothing on the card says otherwise: no finding,
+    offer or tile marked for attention, no step to take, no open finding
+    about what it names, no figure more than half away from the norm it
+    cites, and no figure an open finding counts differently.
+
+    A `worth a look` beside that lead is the reply contradicting itself,
+    and its reasoned sentence is the judgement it showed its work for. Any
+    other opening (one that says worth a look or needs action, or none
+    that is a verdict) decides nothing here."""
+    obj = obj or {}
+    said, after = _opening(str(obj.get("summary") or ""))
+    if said != FINE or not _because(after):
+        return False
+    if not nothing_to_act(obj) or " ".join(str(obj.get("next") or "").split()):
+        return False
+    if open_row_named(obj, open_rows) is not None or departs(obj):
+        return False
+    return disagreeing_row(obj, open_rows)[0] is None
+
+
 def initial_verdict(obj: dict) -> str:
     """The verdict a reply carries: its `verdict` field, else the one its
     first sentence, its title's tail or its opening clause wrote."""
@@ -493,7 +566,11 @@ def initial_verdict(obj: dict) -> str:
         return title_said
     if is_reassurance(lead_clause(str(obj.get("summary") or ""))[0]):
         return FINE
-    return ""
+    # The contract's own lead with no field beside it: "Worth a look,
+    # because …" (or after a colon or a dash) is the card's judgement.
+    # Only the two that raise: an all-clear is read by the lines above.
+    said = _opening(str(obj.get("summary") or ""))[0]
+    return said if said in (LOOK, ACTION) else ""
 
 
 def review(obj: dict, previous: dict | None = None,
@@ -511,7 +588,14 @@ def review(obj: dict, previous: dict | None = None,
     # ``asked``: a card somebody asked for. Its claim is the answer to
     # their question, so a blind spot or a non-event is never folded.
     verdict = initial_verdict(obj)
+    calmed = verdict == LOOK and calm_lead(obj, open_rows)
+    if calmed:
+        # Into the reply too, so a card held or stored on any path below
+        # carries the judgement its own lead gave.
+        verdict, obj = FINE, {**obj, "verdict": FINE}
     got = _review(obj, previous, open_rows, verdict)
+    if calmed:
+        got["changed"].append("worth a look over its own normal lead")
     fixed = claims_fixed(obj, open_rows)
     if fixed:
         # Only when there are some: the answer stays the three keys it
@@ -830,7 +914,10 @@ def _review(obj: dict, previous: dict | None = None,
             for h in out.get("highlights") or []]
         changed.append("no verdict over nothing new")
         return {"obj": out, "hold": "", "changed": changed}
-    if previous and verdict not in (LOOK, ACTION) and quiet(out):
+    if (previous and verdict not in (LOOK, ACTION) and quiet(out)
+            and legacy(previous)["verdict"] not in (LOOK, ACTION)):
+        # A quiet card does not keep a last card that said worth a look
+        # or needs action: the judgement changing is the news.
         return {"obj": out, "hold": HOLD_WHY, "changed": []}
     if (fine or title_fine) and rises(out):
         if fine and body:
@@ -843,8 +930,8 @@ def _review(obj: dict, previous: dict | None = None,
 
 
 __all__ = ["ACTION", "FINE", "HOLD_WHY", "LOOK", "NEXT_MAX", "QUIET_WHY", "RISE",
-           "VERDICTS", "claims_fixed", "clean_verdict", "disagreeing_row",
-           "drop_title_echo", "folds_quiet", "initial_verdict",
+           "VERDICTS", "calm_lead", "claims_fixed", "clean_verdict", "disagreeing_row",
+           "departs", "drop_title_echo", "folds_quiet", "initial_verdict",
            "is_reassurance", "lead_verdict", "legacy", "no_change",
            "nothing_to_act", "quiet_now", "verdict_of_sentence",
            "lead_clause", "next_step", "nothing_new", "open_row_named", "quiet",

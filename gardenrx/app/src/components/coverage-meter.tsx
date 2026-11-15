@@ -12,10 +12,13 @@ export function CoverageMeter({
   cov,
   type,
   suppressed,
+  resting,
 }: {
   cov: CoverageInfo | null;
   type: 'fungicide' | 'insecticide';
   suppressed?: boolean;
+  /** Crop is dormant or past harvest: a lapsed interval is not flagged. */
+  resting?: boolean;
 }) {
   const Icon = type === 'fungicide' ? Beaker : Bug;
   const label = type === 'fungicide' ? 'Fungicide' : 'Insecticide';
@@ -59,7 +62,8 @@ export function CoverageMeter({
     );
   }
 
-  const color = covColor(cov.status);
+  const lapsed = cov.status === 'red' && resting;
+  const color = lapsed ? 'var(--ink-3)' : covColor(cov.status);
   const interval = cov.product.cover_spray_interval_days ?? 14;
   const pct =
     cov.status === 'red' ? 100 : Math.max(6, Math.min(100, (cov.daysRemaining / interval) * 100));
@@ -71,7 +75,7 @@ export function CoverageMeter({
           <Icon className="size-3.5" /> {label}
         </span>
         <span className="cov-stat" style={{ color }}>
-          {covLabel(cov.status)}
+          {lapsed ? 'Resting' : covLabel(cov.status)}
           {cov.status !== 'red' ? ` · ${cov.daysRemaining}d` : ''}
         </span>
       </div>
