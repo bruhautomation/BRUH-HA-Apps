@@ -126,7 +126,7 @@ body {
    third of the 44px floor this panel claims, on the tab most likely to be
    used one-handed on a phone while standing in the room. A floor set once
    covers the control somebody adds next; a floor set per block does not. */
-input, select {
+input, select, textarea {
   background: var(--bg);
   color: var(--ink);
   border: 1px solid var(--line);
@@ -200,6 +200,7 @@ select { max-width: 100%; min-width: 0; }
    circle and found out afterwards what you had moved. */
 .map-dot { flex-direction: column; gap: 0; }
 .dot-glyph { line-height: 1; }
+.dot-name.above { top: auto; bottom: 100%; margin: 0 0 2px; }
 .dot-name {
   position: absolute;
   top: 100%;
@@ -232,8 +233,8 @@ select { max-width: 100%; min-width: 0; }
 .map-dot.selected .dot-name { background: #0b5f93; color: #fff; font-weight: 600; }
 /* Lights that share a spot are one dot with a count; tapping it opens the
    pick list in the bar under the floor. */
-.map-dot.cluster { background: rgba(30, 159, 224, 0.45); font-weight: 700; font-size: 18px; color: #f4f8fb; }
-.map-dot.cluster .dot-glyph { text-shadow: 0 0 3px #0b1016; }
+.map-dot.cluster { background: #0b5f93; border-color: #f4f8fb; font-weight: 700; font-size: 18px; color: #fff; }
+.map-dot.cluster.open { box-shadow: 0 0 0 4px rgba(90, 196, 242, 0.55); z-index: 2; }
 .cluster-pick { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
 .cluster-pick .btn { font-size: 16px; }
 
@@ -1139,30 +1140,38 @@ body.mn-open .foot { display: none; }
    at 16px and every control at 44px. */
 .row-note { font-size: 16px; color: var(--azure-light); overflow-wrap: anywhere; }
 .row-note.muted { color: var(--muted); }
+.row.slim { flex-wrap: wrap; }
 .row.slim .row-main { flex: 1 1 140px; min-width: 0; }
-.row.slim .row-actions { flex-wrap: nowrap; align-items: center; }
+.row.slim .row-actions { flex-wrap: nowrap; align-items: center; flex: none; }
 .row.slim .btn { min-height: 44px; font-size: 16px; }
-details.more { position: relative; }
-details.more > summary {
-  list-style: none; cursor: pointer; min-height: 44px; min-width: 44px;
-  display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid var(--line); border-radius: 8px; font-size: 20px;
-  background: var(--panel); color: var(--ink);
+.more-toggle { min-width: 44px; font-size: 20px; }
+/* The ⋯ menu is a line of the row, below the row's own controls and above
+   the next row, in the flow: a floating box covered the next row's buttons. */
+.more-menu {
+  flex: 1 1 100%; display: flex; flex-direction: column; gap: 6px;
+  padding: 8px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px;
 }
-details.more > summary::-webkit-details-marker { display: none; }
-details.more .more-menu {
-  position: absolute; right: 0; top: 48px; z-index: 5; min-width: 200px;
-  display: flex; flex-direction: column; gap: 6px; padding: 8px;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
-}
-details.more .more-menu .btn { text-align: left; white-space: nowrap; }
+.more-menu[hidden] { display: none; }
+.more-menu .btn { text-align: left; white-space: normal; width: 100%; }
 .info-toggle { margin: 8px 0; }
 .info-toggle > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; font-size: 16px; color: var(--azure-light); }
 .info-toggle p { font-size: 16px; }
 .folder-row .row-actions { flex-wrap: wrap; }
+#btnSetAll, #btnSetNone, #btnSyncAll, #btnSyncNone, #btnFxAll, #btnFxNone { min-width: 56px; }
+#showVibe { width: 100%; }
+.demo-controls .btn.small { font-size: 16px; min-height: 44px; }
 .folder-row .path { overflow-wrap: anywhere; }
 .form-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
 .form-row input[type="text"] { flex: 1 1 100%; min-width: 0; }
 #showPlayer { width: 100%; max-width: 100%; }
 #pane-shows .card-head > span { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; min-width: 0; }
+
+/* Name and Save are two lines of their own below the list. The list
+   scrolls inside its box, so it is painted inside it and can never sit
+   over what follows. */
+.party-set { contain: paint; }
+.party-save { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin: 12px 0 0; clear: both; }
+.party-save input { width: 100%; }
+.menu-info { margin: 2px 4px 4px; font-size: 16px; overflow-wrap: anywhere; }
+.folder-summary > summary::after { content: "▾"; margin-left: 8px; }
