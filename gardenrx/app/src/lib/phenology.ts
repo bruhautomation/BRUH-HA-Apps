@@ -285,7 +285,8 @@ export function applyPhenology(
       const derivedNow = name ? derivedFor(name) : null;
       if (!name || !derivedNow || !RESTING_STAGES.includes(derivedNow)) return vs;
       const days = daysIntoCurrentWindow(name, now);
-      const setAt = Date.parse(vs.updated_at.includes('T') ? vs.updated_at : vs.updated_at.replace(' ', 'T') + 'Z');
+      const stamp = String(vs.updated_at ?? '');
+      const setAt = Date.parse(stamp.includes('T') ? stamp : stamp.replace(' ', 'T') + 'Z');
       const windowStart = now.getTime() - (days ?? 0) * 86400000;
       if (!Number.isFinite(setAt) || setAt >= windowStart) return vs;
       return { ...vs, stage: derivedNow, is_manual_override: false };
