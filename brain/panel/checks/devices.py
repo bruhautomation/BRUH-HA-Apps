@@ -383,6 +383,22 @@ def heat_context(house, eid: str) -> tuple[str, tuple[str, ...]]:
     return str(reg.get("platform") or ""), names
 
 
+# What the registry says a reading IS for. A temperature its integration
+# files as `diagnostic` is the device's own: a plug's relay, a hub's board,
+# a light's driver, a printer's mainboard, a computer's chip. That is a
+# claim the integration makes about the entity, not a guess from its name,
+# and none of those is the air of a room.
+OWN_DEVICE_CATEGORIES = frozenset({"diagnostic"})
+
+
+def reads_its_own_device(house, eid: str) -> bool:
+    """Whether the registry files this reading as the device's own."""
+    if house is None or not eid:
+        return False
+    reg = house.registry.get(eid) or {}
+    return str(reg.get("entity_category") or "") in OWN_DEVICE_CATEGORIES
+
+
 def measures_something_hot(eid: str, name: str, world=None,
                            house=None) -> bool:
     """Whether this sensor plainly measures something other than room air.
@@ -406,6 +422,8 @@ def measures_something_hot(eid: str, name: str, world=None,
 
     platform, device_names = heat_context(house, eid)
     if platform in HOT_PLATFORMS or machine_of(house, eid):
+        return True
+    if reads_its_own_device(house, eid):
         return True
     return world_model.measures_heat(
         world, eid, lambda: _hot_by_name(eid, name, device_names))

@@ -167,6 +167,35 @@ def _rooms(snap: dict) -> tuple[dict, dict]:
     return store, (store.get("rooms") or {})
 
 
+def _room_air(house: House, rooms: dict, check_id: str) -> dict:
+    """The measured rooms whose thermometer reads the room's air.
+
+    The nightly build leaves out what an entity's own name says is a
+    machine (`thermal.room_candidates`); this reads the registries too, at
+    the check, so a store built before cannot carry one in: a reading filed
+    as the device's own, or one on a device that is a manifold, a coil, a
+    pipe or a tank (`thermal.on_a_machine`), or a printer's or a computer's
+    (`devices.machine_of`). Each left out is one `explained` trail line.
+    Not read by `climate.freeze`: a pipe heading for freezing is still news.
+    """
+    import thermal  # noqa: PLC0415 — panel-local, like every other check
+
+    from . import devices  # noqa: PLC0415 — it imports this package's util
+
+    out = {}
+    for eid, entry in rooms.items():
+        why = thermal.on_a_machine(house.registry.get(eid),
+                                   house.device_of(eid))
+        if not why and devices.machine_of(house, eid):
+            why = "it is a printer's or a computer's temperature"
+        if why:
+            house.gave_up(check_id, [{"entity_id": eid}],
+                          f"{why}, not the air of a room", kind="explained")
+            continue
+        out[eid] = entry
+    return out
+
+
 def _target_for(house: House, area: str) -> tuple[float, str] | None:
     """The setpoint asked for in this area, and the entity that asks it.
 
@@ -218,6 +247,7 @@ def underheated_rooms(snap: dict) -> list[dict]:
         return []
 
     house = House(snap)
+    rooms = _room_air(house, rooms, "climate.underheated")
     margin = _deg(UNDER_MARGIN_C, unit)
     out = []
     for eid, entry in sorted(rooms.items()):
@@ -406,6 +436,7 @@ def heat_loss(snap: dict, now: float) -> list[dict]:
 
     store, rooms = _rooms(snap)
     house = House(snap)
+    rooms = _room_air(house, rooms, "climate.heat_loss")
     heated = conditioned_areas(house)
     measured = {eid: e for eid, e in rooms.items()
                 if e.get("k") and house.area_id_of(eid) in heated}
@@ -534,6 +565,7 @@ def preheat(snap: dict, now: float) -> list[dict]:
         return []
 
     house = House(snap)
+    rooms = _room_air(house, rooms, "climate.preheat")
     claimed = {h["entity_id"] for h in underheated_rooms(snap)}
     margin = _deg(PREHEAT_SHORTFALL_C, unit)
     hits = []
@@ -705,6 +737,7 @@ def window(snap: dict, now: float) -> list[dict]:
     min_excess = _deg(WINDOW_MIN_EXCESS, unit)
 
     house = House(snap)
+    rooms = _room_air(house, rooms, "climate.window")
     hits = []
     for eid, entry in sorted(rooms.items()):
         if eid in claimed or not entry.get("k"):

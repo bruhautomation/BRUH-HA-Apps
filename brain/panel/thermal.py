@@ -180,7 +180,11 @@ NOT_ROOM_AIR_WORDS = NOT_AIR_WORDS + ("duct", "ducts", "plenum",
                                       "refrigerant", "line", "lineset",
                                       "line set", "suction", "flue",
                                       "furnace", "heat exchanger",
-                                      "exhaust")
+                                      "exhaust",
+                                      # A probe on a heating loop's
+                                      # manifold or on a surface reads the
+                                      # metal, not the air.
+                                      "manifold", "surface")
 # The same claim made by what a reading DOES rather than what it is called:
 # a probe on a heat pump's coil reads a room's temperature until the machine
 # starts, then jumps by twenty degrees inside the hour, at the same clock
@@ -770,6 +774,42 @@ def _measures_a_machine(eid: str, st: dict, world=None) -> bool:
     if measures is not None:
         return measures in NOT_AIR_READINGS
     return bool(_NOT_ROOM_AIR_RE.search(_name_of(eid, st)))
+
+
+# What a DEVICE that carries only probes is called: a sensor whose device
+# is a manifold, a coil, a pipe or a tank reads that, whatever the entity
+# itself is called ("Temperature" on a device named for the heating
+# manifold). Device-level on purpose and narrower than the entity's words:
+# a heat pump or a boiler also publishes the room it serves, so neither is
+# here; a device that IS a probe on a machine's metal or water is.
+PROBE_DEVICE_WORDS = ("manifold", "coil", "pipe", "pipes", "pipework",
+                      "probe", "tank", "cylinder", "duct", "plenum",
+                      "compressor", "condenser", "evaporator", "flue",
+                      "pool", "water heater", "heat exchanger")
+_PROBE_DEVICE_RE = re.compile(
+    r"(?<![a-z0-9])(?:" + "|".join(
+        re.escape(w).replace(r"\ ", r"[\s_]+") for w in PROBE_DEVICE_WORDS)
+    + r")(?![a-z0-9])")
+
+
+def on_a_machine(entity_row: dict | None, device_row: dict | None) -> str:
+    """Why the registries say this thermometer is not a room's air, or "".
+
+    Structure first: a reading its integration files as `diagnostic` is the
+    device's own (a plug's relay, a hub's board); then the device it sits
+    on, by its own name and model (`PROBE_DEVICE_WORDS`). Shared by the
+    room-physics checks (`checks/thermal`), so a coil, manifold, pipe or
+    surface probe never becomes a room however its entity is named.
+    """
+    reg = entity_row or {}
+    if str(reg.get("entity_category") or "") == "diagnostic":
+        return "its integration files it as the device's own reading"
+    dev = device_row or {}
+    words = " ".join(str(dev.get(k) or "") for k in
+                     ("name_by_user", "name", "model")).lower()
+    if words.strip() and _PROBE_DEVICE_RE.search(words):
+        return "it sits on a probe on a machine or its pipework"
+    return ""
 
 
 def equipment_jumps(rows: list, tz: dt.tzinfo, unit: str) -> str:

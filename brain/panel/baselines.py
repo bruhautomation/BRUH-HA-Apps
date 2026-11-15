@@ -693,6 +693,87 @@ async def fetch_hourly(session, ids: list[str], now: float,
     return out if answered else None
 
 
+# --- the same weeks a year ago, for a drift that may be the season -------
+# A month of steady drift in November is, for most of what a house reads,
+# the season: the cellar cools, the boiler's flow warms, the humidity falls.
+# The trend alone cannot tell that from a failing freezer, and the house's
+# own history can: the same weeks one year earlier, read off Home
+# Assistant's long-term statistics (kept indefinitely, one row a day).
+# `forecast.decline` speaks only about a drift those weeks did not also show.
+YEAR_S = 365 * 86400
+# Daily rows the same weeks last year need before a line through them is
+# a measurement: under this the sensor has less than a year of history.
+YEAR_MIN_DAYS = 7
+
+
+async def fetch_year_ago(session, ids: list[str], now: float,
+                         days: float) -> dict | None:
+    """``{entity: [daily rows]}`` for the ``days`` that ended one year ago,
+    or None when the recorder would not answer. The same statistics command
+    `fetch_hourly` sends, a year back and a day at a time."""
+    import ha_data  # noqa: PLC0415 — see the checks snapshot's own note
+
+    if not ids:
+        return {}
+    end = dt.datetime.fromtimestamp(now - YEAR_S, tz=dt.timezone.utc)
+    start = end - dt.timedelta(days=max(1.0, float(days)))
+    out: dict[str, list] = {}
+    answered = 0
+    for i in range(0, len(ids), BATCH):
+        batch = ids[i:i + BATCH]
+        try:
+            results = await ha_data._ws_commands(session, [{
+                "type": "recorder/statistics_during_period",
+                "start_time": start.isoformat(),
+                "end_time": end.isoformat(),
+                "statistic_ids": batch,
+                "period": "day",
+                "types": ["mean"],
+            }])
+        except Exception as exc:  # noqa: BLE001 — a batch, not the pass
+            log.info("baseline year-ago batch failed: %s", exc)
+            continue
+        rows_by_id = results[0] if results else None
+        if not isinstance(rows_by_id, dict):
+            continue
+        answered += 1
+        for sid in batch:
+            clean = []
+            for row in rows_by_id.get(sid) or []:
+                if not isinstance(row, dict):
+                    continue
+                start_ts = row.get("start")
+                if isinstance(start_ts, (int, float)) and start_ts > 1e11:
+                    start_ts = start_ts / 1000.0
+                clean.append({"start": start_ts, "mean": row.get("mean")})
+            out[sid] = clean
+    return out if answered else None
+
+
+def year_ago_move(rows: list) -> dict:
+    """How far a reading travelled across the same weeks a year ago:
+    ``{"move", "days"}`` from a line through the daily means, or
+    ``{"move": None, "days": n}`` when there are fewer than `YEAR_MIN_DAYS`
+    of them — less than a year of history."""
+    points = []
+    for row in rows or ():
+        if not isinstance(row, dict):
+            continue
+        start, value = row.get("start"), row.get("mean")
+        if (isinstance(start, (int, float)) and not isinstance(start, bool)
+                and isinstance(value, (int, float))
+                and not isinstance(value, bool)):
+            points.append((float(start) / 86400.0, float(value)))
+    if len(points) < YEAR_MIN_DAYS:
+        return {"move": None, "days": len(points)}
+    points.sort()
+    fit = least_squares(points)
+    span = points[-1][0] - points[0][0]
+    if fit is None:
+        return {"move": 0.0, "days": len(points)}
+    return {"move": round(fit[0] * span, 4), "days": len(points)}
+
+
 # How many machines' status histories one nightly pass asks for. A house
 # has a printer, a dishwasher, a washer; past this it is a house full of
 # statuses, and the sensors beyond it keep the one band they always had.
@@ -1032,6 +1113,21 @@ async def build(session, states: dict, now: float | None = None,
                 built["by_state"] = bands
                 built["status"] = status
         payload["entities"][eid] = built
+    # The same weeks a year ago, for every drift `forecast.decline` might
+    # speak about. A recorder that does not answer leaves no figure, which
+    # the check reads as "not compared yet" and stays quiet.
+    drifting = {eid: b["trend"] for eid, b in payload["entities"].items()
+                if (b.get("trend") or {}).get("consistent")}
+    if drifting:
+        span = max(float(t.get("days") or 0) for t in drifting.values())
+        try:
+            past = await fetch_year_ago(session, sorted(drifting), now, span)
+        except Exception as exc:  # noqa: BLE001 — a fetch, not the pass
+            log.info("baseline year-ago fetch failed: %s", exc)
+            past = None
+        for eid, moved in drifting.items():
+            if past is not None:
+                moved["year_ago"] = year_ago_move(past.get(eid) or [])
     save(payload, path)
     log.info("baselines: %d of %d entities measured over %d days (%s)",
              len(payload["entities"]), len(ids), HISTORY_DAYS, tz_name)

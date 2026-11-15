@@ -123,6 +123,37 @@ def battery_runway(snap: dict, now: float) -> list[dict]:
     return out
 
 
+# A drift the same weeks of last year also showed, in the same direction
+# and at least this share of the size, is the season.
+SEASON_SHARE = 0.5
+
+
+def same_weeks_last_year(moved: dict, unit) -> str:
+    """Why a drift is not news by the house's own calendar, or "" when it is.
+
+    The nightly pass reads the same weeks one year earlier
+    (`baselines.year_ago_move`, the trend's ``year_ago``). No figure (an
+    older store, a recorder that did not answer) and less than a year of
+    history are both quiet: a month of drift in a house brAIn has not seen
+    through a year cannot be told from the season. A drift last year's
+    weeks also made, the same way and at least `SEASON_SHARE` as far, is
+    the season."""
+    past = moved.get("year_ago")
+    if not isinstance(past, dict):
+        return ("brAIn has not yet compared this drift with the same weeks "
+                "last year, so it cannot tell it from the season")
+    then = past.get("move")
+    if not isinstance(then, (int, float)) or isinstance(then, bool):
+        return ("brAIn has less than a year of this sensor's history, so it "
+                "cannot tell a drift from the season")
+    now_move = float(moved.get("move") or 0.0)
+    if then * now_move > 0 and abs(then) >= SEASON_SHARE * abs(now_move):
+        return ("it moved the same way over the same weeks last year ("
+                + numfmt.quantity(then, unit or "", signed=True)
+                + ") — that is the season, not the sensor")
+    return ""
+
+
 def decline(snap: dict, now: float) -> list[dict]:
     """A reading that has been walking in one direction for weeks.
 
@@ -162,6 +193,11 @@ def decline(snap: dict, now: float) -> list[dict]:
                 unit, DECLINE_MIN_MOVE):
             continue
         if outside_cause(house, eid, st, unit):
+            continue
+        season = same_weeks_last_year(moved, unit)
+        if season:
+            house.gave_up("forecast.decline", [{"entity_id": eid}], season,
+                          kind="drift")
             continue
         attrs = st.get("attributes") or {}
         hits.append((abs(moved["spreads"]), eid, moved,
@@ -208,7 +244,9 @@ def decline(snap: dict, now: float) -> list[dict]:
                 f"{numfmt.quantity(moved['noise'], unit)} — "
                 f"{numfmt.times(abs(moved['spreads']))} "
                 "it. Every single reading has been inside its usual range "
-                "the whole time, which is why nothing else has said so."
+                "the whole time, which is why nothing else has said so. "
+                "Over the same weeks last year it moved "
+                f"{numfmt.quantity(moved['year_ago']['move'], unit, signed=True)}."
                 + house.placed(eid)),
             "fix": ("Look at what it is measuring before it reaches a "
                     "number that matters."),
