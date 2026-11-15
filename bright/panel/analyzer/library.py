@@ -785,6 +785,7 @@ def scan(folder: Path, cache: "_HashCache | None" = None) -> list[dict]:
                     "tier": show.get("tier"),
                     "palette": show.get("palette_name"),
                     "cues": (show.get("stats") or {}).get("cues"),
+                    "compiled_at": show.get("compiled_at"),
                 }
         tracks.append(entry)
     if owned:
