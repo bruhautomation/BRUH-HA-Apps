@@ -792,10 +792,35 @@ def _detect_crash(state: dict) -> dict | None:
     return {"excerpt": excerpt, "log_size": log_path.stat().st_size}
 
 
+def _known_players(online: list) -> list[dict]:
+    """Everyone the server's own files know: who has joined (usercache.json),
+    is whitelisted, is an operator or is banned, each with their current roles."""
+    def names(fname: str) -> list[str]:
+        data = _read_json(MC_SERVER_DIR / fname, [])
+        return [str(e["name"]) for e in data
+                if isinstance(e, dict) and isinstance(e.get("name"), str)] \
+            if isinstance(data, list) else []
+
+    ops, white, banned = set(names("ops.json")), set(names("whitelist.json")), \
+        set(names("banned-players.json"))
+    seen = set(names("usercache.json"))
+    online_set = {str(n) for n in online}
+    everyone = {*seen, *ops, *white, *banned, *online_set}
+    out = [{
+        "name": n, "op": n in ops, "whitelisted": n in white,
+        "banned": n in banned, "online": n in online_set,
+    } for n in everyone if VALID_PLAYER_NAME.match(n)]
+    out.sort(key=lambda p: (not p["online"], p["name"].lower()))
+    return out
+
+
 async def api_players(_: web.Request) -> web.Response:
-    return web.json_response(_read_json(MC_PANEL_STATE / "players.json", {
+    data = _read_json(MC_PANEL_STATE / "players.json", {
         "players": [], "online": 0, "max": 0,
-    }))
+    })
+    if isinstance(data, dict):
+        data["known"] = await asyncio.to_thread(_known_players, data.get("players") or [])
+    return web.json_response(data)
 
 
 # Keys whose value is BAKED INTO the world at generation time — changing
@@ -1301,6 +1326,7 @@ async def api_backup(_: web.Request) -> web.Response:
         str(SCRIPTS_DIR / "backup.sh"),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
+        env={**os.environ, "BACKUP_KIND": "manual"},
     )
     out_bytes, _ = await proc.communicate()
     text = out_bytes.decode("utf-8", "replace")[-4096:]
@@ -1320,16 +1346,20 @@ async def api_backups_list(_: web.Request) -> web.Response:
     if (git_dir / ".git").is_dir():
         proc = await asyncio.create_subprocess_exec(
             "git", "-C", str(git_dir), "log",
-            "--pretty=format:%H%x1f%ct%x1f%s",
+            "--pretty=format:%x1e%H%x1f%ct%x1f%s%x1f%b",
             "-n", "100",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
         )
         out_b, _ = await proc.communicate()
-        for line in out_b.decode("utf-8", "replace").splitlines():
-            parts = line.split("\x1f")
-            if len(parts) == 3:
+        for rec in out_b.decode("utf-8", "replace").split("\x1e"):
+            parts = rec.strip("\n").split("\x1f")
+            if len(parts) == 4:
+                # The commit body carries "Kind: scheduled | manual | before a
+                # world change" (older snapshots have none: kind stays "").
+                kind = re.search(r"^Kind: (.{1,40})$", parts[3], re.M)
                 result["git"].append({
                     "sha": parts[0], "ts": int(parts[1]), "subject": parts[2],
+                    "kind": kind.group(1) if kind else "",
                 })
 
     archives_dir = MC_BACKUP_DIR / "archives"
@@ -2459,7 +2489,8 @@ async def api_server_software_update(request: web.Request) -> web.Response:
                 status=409)
         proc = await asyncio.create_subprocess_exec(
             str(SCRIPTS_DIR / "backup.sh"),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            env={**os.environ, "BACKUP_KIND": "before a world change"})
         out_b, _ = await proc.communicate()
         if proc.returncode != 0:
             tail = out_b.decode("utf-8", "replace").strip().splitlines()[-1:] or [""]
