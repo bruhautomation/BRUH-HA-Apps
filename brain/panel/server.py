@@ -2045,6 +2045,17 @@ async def _brief_overnight(now: float) -> dict:
     return out
 
 
+def _house_clock(ts: float, style: str | None = None) -> str:
+    """A time on the house's clock, in the house's style: "11:20 PM", and
+    "Tue 9:00 AM" when it is not today (a weekly limit's reset)."""
+    local = _local_now(ts)
+    said = brief.format_clock(local.hour, local.minute,
+                              style or _clock_style())
+    if local.date() != _local_now(time.time()).date():
+        said = f"{local:%a} {said}"
+    return said
+
+
 def _clock_style() -> str:
     """'12h' or '24h': the house's country off Core's config, else its
     timezone. Best effort — an unreadable config is the zone's answer."""
@@ -8925,8 +8936,18 @@ def _journal_rate_listener(row: dict) -> None:
     if journal.outcome_of(row) == "rate_limited":
         streak = int(RATE_LIMIT_STATE.get("streak") or 0) + 1
         ts = float(row.get("ts") or time.time())
+        # The refusal's own "resets 11:20pm" is the answer when it says
+        # one: the pause runs to it and no further, so runs resume when
+        # the account does rather than on the ladder's next rung. The
+        # ladder is for a refusal that names no time.
+        try:
+            house_tz = baselines.house_timezone()[0]
+        except Exception:  # noqa: BLE001 — the process's zone, then
+            house_tz = None
+        said = journal.limit_resets_at(str(row.get("error") or ""), now=ts,
+                                       house_tz=house_tz)
         wait = min(RATE_LIMIT_PAUSE_S * 2 ** (streak - 1), RATE_LIMIT_MAX_S)
-        until = max(ts + wait, _account_reset_after(ts))
+        until = max(said or ts + wait, _account_reset_after(ts))
         RATE_LIMIT_STATE.update(
             streak=streak, until=until, tier=tier,
             detail=str(row.get("error") or "")[:160])
@@ -9743,8 +9764,7 @@ def _brain_status(settings: dict | None = None, budget: dict | None = None,
         style = _clock_style()
 
         def clock(ts: float) -> str:
-            local = _local_now(ts)
-            return brief.format_clock(local.hour, local.minute, style)
+            return _house_clock(ts, style)
 
         return brain_status.derive(
             signed_in=bool(auth),
@@ -19925,6 +19945,10 @@ def _diagnostics_payload() -> dict:
                                          "week_resets_at")},
             "rate_limit": {
                 "until": int(RATE_LIMIT_STATE.get("until") or 0) or None,
+                # The same time the status line says, for the health
+                # verdict's "resting until" line (`health` has no clock).
+                "until_clock": (_house_clock(_rate_limited_now())
+                                if _rate_limited_now() else ""),
                 "streak": int(RATE_LIMIT_STATE.get("streak") or 0),
                 "detail": journal.scrub(RATE_LIMIT_STATE.get("detail") or ""),
             },

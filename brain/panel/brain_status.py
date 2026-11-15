@@ -14,7 +14,8 @@ Five states, most pressing first — the first that applies wins:
 ``needs_restart``  the add-on deployed a newer integration than Home
                    Assistant has loaded.
 ``paused``         brAIn is deliberately not looking: switched off by the
-                   owner, the account's usage limit, or the budget.
+                   owner, the account's usage limit ("Resting until
+                   <time>"), or the budget.
 ``degraded``       the health verdict is not ok.
 ``watching``       none of the above.
 
@@ -106,11 +107,13 @@ def derive(*, signed_in: bool, auth_state: str = "", auth_checked_at: float = 0,
                         since=restart_since)
         if not auto_enabled:
             return done("paused", "Paused: automatic looks are switched off")
+        # The account's usage limit is a rest with an end, said as one:
+        # nothing is broken and nothing is asked of anybody.
         until = float(rate_limit_until or 0)
         if until > now:
             return done("paused",
-                        f"Paused: Claude limit reached, back at {clock(until)}",
-                        back_at=until)
+                        f"Resting until {clock(until)}: Claude's usage "
+                        "limit is reached", back_at=until)
         budget = budget or {}
         if budget.get("blocked"):
             back = float(budget.get("resets_at") or 0)
@@ -118,10 +121,14 @@ def derive(*, signed_in: bool, auth_state: str = "", auth_checked_at: float = 0,
             # In "No limit" mode the only thing that blocks is the account's
             # own figure saying the session is spent: Claude's limit, not a
             # budget anybody set.
-            text = ("Paused: Claude limit reached" if budget.get("no_limit")
-                    else "Paused: usage budget reached")
-            if back:
-                text += f", back at {clock(back)}"
+            if budget.get("no_limit"):
+                text = (f"Resting until {clock(back)}: Claude's usage limit "
+                        "is reached" if back
+                        else "Resting: Claude's usage limit is reached")
+            else:
+                text = "Paused: usage budget reached"
+                if back:
+                    text += f", back at {clock(back)}"
             return done("paused", text, back_at=back or None)
         health = health or {}
         if health.get("state") in ("degraded", "failed"):

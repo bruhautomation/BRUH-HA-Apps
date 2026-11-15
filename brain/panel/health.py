@@ -233,7 +233,10 @@ def _resident_problems(diag: dict, now: float) -> list[dict]:
         return []
     found = []
     since = _num(res.get("held_since"))
-    if since and now - since > RESIDENT_HELD_DEGRADED_S:
+    # Held by the account's usage limit is resting, and the verdict says
+    # that instead, with when it ends (`resting`): an hour of it is not a
+    # fault and has nothing for anybody to do.
+    if since and now - since > RESIDENT_HELD_DEGRADED_S and not resting(diag, now):
         why = str(res.get("last_error") or "").strip() or "an allowance is spent"
         found.append(_problem(
             "degraded",
@@ -398,6 +401,30 @@ def _restart_owed(diag: dict) -> list[dict]:
         running + "Restart Home Assistant (Settings → System → Restart, "
         "or the brAIn entry under Settings → System → Repairs).",
         "restart")]
+
+
+def resting(diag: dict, now: float | None = None) -> str:
+    """"brAIn is resting until 11:20 pm …" while the account's usage limit
+    holds its runs, or "" when it does not.
+
+    A usage limit is not a problem (`journal.FAILURE_OUTCOMES` leaves it
+    out) and the verdict stays `ok` over it, but "everything brAIn runs is
+    running" while nothing can run is not true either. The pause and its
+    end are the panel's (`server.RATE_LIMIT_STATE`, the refusal's own
+    "resets" time where it named one); the time comes pre-formatted
+    because this module has no clock of its own."""
+    now = time.time() if now is None else now
+    held = ((diag.get("usage") or {}).get("rate_limit") or {}) \
+        if isinstance(diag.get("usage"), dict) else {}
+    if not isinstance(held, dict):
+        return ""
+    until = _num(held.get("until"))
+    if not until or until <= now:
+        return ""
+    when = str(held.get("until_clock") or "").strip()
+    return ((f"brAIn is resting until {when}" if when else "brAIn is resting")
+            + ": Claude's usage limit is reached, and its runs resume by "
+              "themselves")
 
 
 def _quiet_reason(diag: dict, options: dict) -> str:
@@ -607,12 +634,14 @@ def verdict(diag: dict, options: dict | None = None,
     """
     found = problems(diag, options, now)
     state = found[0]["state"] if found else "ok"
+    rest = resting(diag, now)
     return {
         "state": state,
-        "reason": found[0]["what"] if found else _quiet_reason(
+        "reason": found[0]["what"] if found else rest or _quiet_reason(
             diag, options or diag.get("options") or {}),
         "fix": found[0]["fix"] if found else "",
         "problems": found,
+        "resting": rest,
         "checked_at": int(time.time() if now is None else now),
         # How long this answer is good for, published rather than agreed:
         # the integration reads it out of a file and has to know when to
