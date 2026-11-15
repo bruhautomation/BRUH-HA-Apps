@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.8
+
+### Removed
+
+- Everything in 0.1.7 is taken back out, and BRUH Cooking is again as it was in 0.1.6. The development loop's transcript monitor flagged the run that wrote 0.1.7, though nothing it flagged reached the release: a scratch copy of the test suite outside the repository, and test runs with pytest's cache turned off. The monitor's rule is to revert any batch it flags and redo it, so the same fixes (#1041, #1042, #1043, #1044) come back in the next release. Entity ids already renamed through Repairs keep their new names.
+
 ## 0.1.7
 
 ### Added

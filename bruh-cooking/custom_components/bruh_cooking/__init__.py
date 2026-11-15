@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import contextlib
 from datetime import timedelta
 import logging
-import os
 
 import voluptuous as vol
 
@@ -33,7 +31,7 @@ from .const import (
     DOMAIN,
     SERVICE_START_COOK,
 )
-from .coordinator import BrevilleCoordinator, account_file, account_identifier
+from .coordinator import BrevilleCoordinator
 from .entity_ids import async_check_entity_ids
 from .fingerprint import record_loaded
 from .frontend import (
@@ -122,7 +120,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: BrevilleConfigEntry) -> 
         on_tokens_updated=save_tokens,
     )
     coordinator = BrevilleCoordinator(hass, entry, client)
-    await coordinator.async_load_remembered()
     await coordinator.async_config_entry_first_refresh()
     _LOGGER.info("Signed in to Breville; %d appliance(s) on the account", len(coordinator.appliances))
     entry.runtime_data = coordinator
@@ -149,7 +146,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: BrevilleConfigEntry) ->
     """Unload a config entry."""
     if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         return False
-    await entry.runtime_data.async_save_remembered()
     # Usually to reload: the panel keeps the appliances, unavailable, until they're back.
     async_panel_entry_unloaded(hass, entry)
     await async_remove_entry_panel(hass, entry)
@@ -160,13 +156,6 @@ async def async_remove_entry(hass: HomeAssistant, entry: BrevilleConfigEntry) ->
     """Let the panel forget a removed entry, and the presets go with the last one."""
     async_panel_entry_removed(hass, entry.entry_id)
     await async_forget_entry_panel(hass, entry.entry_id)
-    path = account_file(hass, entry.entry_id)
-
-    def forget_account() -> None:
-        with contextlib.suppress(OSError):
-            os.remove(path)
-
-    await hass.async_add_executor_job(forget_account)
     if not any(
         other.entry_id != entry.entry_id for other in hass.config_entries.async_entries(DOMAIN)
     ):
@@ -177,8 +166,6 @@ async def async_remove_config_entry_device(
     hass: HomeAssistant, entry: BrevilleConfigEntry, device: dr.DeviceEntry
 ) -> bool:
     """Allow deleting a device once its appliance has left the account."""
-    if account_identifier(entry.entry_id) in device.identifiers:
-        return False  # the account's own device goes with the entry
     coordinator = entry.runtime_data
     serials = [ident for domain, ident in device.identifiers if domain == DOMAIN]
     if any(
