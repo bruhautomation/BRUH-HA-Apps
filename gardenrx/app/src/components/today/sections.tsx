@@ -26,7 +26,7 @@ export function NeedsAttention({ items }: { items: AttentionItem[] }) {
       </div>
       <div className="row-list">
         {shown.map((it) => (
-          <Link key={it.cropId} href={`/crops/${it.cropId}`} className="row-item">
+          <Link key={it.cropId} href={`/tank?crops=${it.cropId}`} className="row-item">
             <CropAvatar name={it.cropName} group={it.cropGroup} size={38} />
             <div className="ri-body">
               <div className="ri-name">{it.cropName}</div>

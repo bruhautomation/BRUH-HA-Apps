@@ -190,6 +190,96 @@ export function findBestSprayWindows(
     .slice(0, maxResults);
 }
 
+/** "YYYY-MM-DDTHH:MM" for `now` on the garden's own clock (the forecast's clock). */
+function localStamp(now: Date): string {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: LOCATION.timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    })
+      .formatToParts(now)
+      .map((x) => [x.type, x.value])
+  );
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+}
+
+function clock12(h: number): { n: number; ap: 'am' | 'pm' } {
+  return { n: h % 12 === 0 ? 12 : h % 12, ap: h < 12 || h === 24 ? 'am' : 'pm' };
+}
+
+/** "6–7 pm" or "11 am–1 pm" for a window from hour `a` to hour `b` (24h clock). */
+function hourRange(a: number, b: number): string {
+  const x = clock12(a);
+  const y = clock12(b);
+  return x.ap === y.ap ? `${x.n}–${y.n} ${y.ap}` : `${x.n} ${x.ap}–${y.n} ${y.ap}`;
+}
+
+/**
+ * The next stretch of good spray weather still ahead, in the words Today and
+ * Weather both show: "today 6–7 pm", "tomorrow 8–11 am", "Sat 9 am–1 pm".
+ * Good means a GOOD or EXCELLENT daytime hour (6 am to 9 pm) starting after the
+ * current one: it is asked only when right now is not good, so the hour under
+ * way is never offered as the opening. Null when nothing in the forecast qualifies.
+ */
+export function nextSprayOpening(
+  hourly: HourlyForecast[],
+  now: Date = new Date()
+): { label: string; start: string; end: string } | null {
+  const nowStamp = localStamp(now);
+  const today = nowStamp.slice(0, 10);
+  const tomorrow = new Date(today + 'T12:00:00Z');
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  const tomorrowStr = tomorrow.toISOString().slice(0, 10);
+  const good = hourly.map((h, i) => {
+    let until: number | null = null;
+    for (let j = i + 1; j < hourly.length; j++) {
+      if (hourly[j].precipitation > 0.01) {
+        until = j - i;
+        break;
+      }
+    }
+    const hour = Number(h.time.slice(11, 13));
+    const r = rateSprayWindow(h.temp, h.windSpeed, until);
+    return {
+      date: h.time.slice(0, 10),
+      hour,
+      ok: (r === 'GOOD' || r === 'EXCELLENT') && hour >= 6 && hour <= 20,
+      over: h.time.slice(0, 13) <= nowStamp.slice(0, 13),
+    };
+  });
+  const first = good.findIndex((g) => g.ok && !g.over);
+  if (first < 0) return null;
+  const g0 = good[first];
+  let last = first;
+  while (
+    last + 1 < good.length &&
+    good[last + 1].ok &&
+    good[last + 1].date === g0.date &&
+    good[last + 1].hour === good[last].hour + 1
+  )
+    last++;
+  const endHour = good[last].hour + 1;
+  const day =
+    g0.date === today
+      ? 'today'
+      : g0.date === tomorrowStr
+        ? 'tomorrow'
+        : new Date(g0.date + 'T12:00:00Z').toLocaleDateString('en-US', {
+            weekday: 'short',
+            timeZone: 'UTC',
+          });
+  return {
+    label: `${day} ${hourRange(g0.hour, endHour)}`,
+    start: hourly[first].time,
+    end: hourly[last].time,
+  };
+}
+
 /**
  * Get current spray-ability rating.
  */
