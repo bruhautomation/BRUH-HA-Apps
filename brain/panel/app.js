@@ -8867,7 +8867,33 @@ function renderHistory() {
     const first = filters.find((f) => f.count > 0);
     if (first) todayState.histFilter = first.id;
   }
-  filters.forEach((f) => {
+  // The decisions are the filters. The log of what brAIn changed is a count
+  // in the thousands on a long-running house and is not a decision: it has
+  // its own line under them.
+  const logBox = $("#histChanges");
+  if (logBox) {
+    logBox.textContent = "";
+    const log = filters.find((f) => f.id === "changes");
+    logBox.hidden = !log;
+    if (log) {
+      const on = todayState.histFilter === "changes";
+      const open = el("button", "btn-tertiary histlogbtn", on
+        ? "\u2039 Back to what you decided"
+        : `${log.label}: ${log.count.toLocaleString()} \u203a`);
+      open.type = "button";
+      open.setAttribute("aria-pressed", on ? "true" : "false");
+      open.addEventListener("click", () => {
+        todayState.histFilter = on
+          ? ((filters.find((f) => f.id !== "changes" && f.count > 0)
+              || filters.find((f) => f.id !== "changes") || {}).id || "snoozed")
+          : "changes";
+        todayState.histPicked = true;
+        renderHistory();
+      });
+      logBox.appendChild(open);
+    }
+  }
+  filters.filter((f) => f.id !== "changes").forEach((f) => {
     const on = todayState.histFilter === f.id;
     const b = el("button", "pill" + (on ? " active" : ""));
     b.type = "button";

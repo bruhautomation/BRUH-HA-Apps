@@ -6477,6 +6477,8 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 /* History's rows (the pane itself is styled under Sections, below). */
 .histfilters { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
 .histlist { display: grid; gap: var(--sp-2); }
+.histchanges { margin: 0 0 var(--sp-2); }
+.histchanges[hidden] { display: none; }
 .histrow {
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3);
   padding: var(--sp-2) 0; border-bottom: 1px solid var(--hairline);
