@@ -411,3 +411,13 @@ async def test_a_sous_vide_preset_cooks_the_whole_degree_it_shows(
     assert (await command(ws, "apply_preset", device_id=joule, preset_id="steak_medium_rare"))["success"]
     # 56 °C is 132.8 °F, shown as 133 °F: 133 °F is what is sent.
     assert round(entry.runtime_data.appliances[JOULE].settings.temperature_c * 9 / 5 + 32, 1) == 133.0
+
+
+async def test_a_custom_sous_vide_preset_is_sent_as_saved_in_fahrenheit() -> None:
+    from custom_components.bruh_cooking.appliance import CookSettings
+    from custom_components.bruh_cooking.presets import Preset, applied_settings
+    from custom_components.bruh_cooking.appliance import Kind
+
+    custom = Preset("c1", Kind.SOUS_VIDE, {"temperature_c": 55.5, "duration_s": 3600}, name="Mine")
+    settings = applied_settings(custom, "CSJ100", CookSettings(temperature_c=60), fahrenheit=True)
+    assert settings.temperature_c == 55.5

@@ -163,7 +163,7 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         will not connect), or the connection being fine while the appliance
         reports itself offline.
         """
-        if self.connected and not self.auth_failed and appliance.status.online:
+        if self.connected and appliance.status.online:
             return None
         if self.auth_failed:
             cause = "sign_in"
@@ -461,7 +461,7 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
 
     async def _call(self, request: Awaitable[_T]) -> _T:
         try:
-            return await request
+            result = await request
         except BrevilleAuthError as err:
             self._set_auth_failed(True)
             self.config_entry.async_start_reauth(self.hass)
@@ -474,6 +474,8 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
                 translation_key="request_failed",
                 translation_placeholders={"error": str(err)},
             ) from err
+        self._set_auth_failed(False)
+        return result
 
     def _locale(self) -> str:
         language = self.hass.config.language or "en"

@@ -320,7 +320,14 @@
           "updating"
         ],
         "device_class": "enum",
-        "friendly_name": "Kitchen Oven Status"
+        "friendly_name": "Kitchen Oven Status",
+        "last_contact": "2026-10-25T18:00:00+00:00",
+        "last_cook": {
+          "started_at": "2026-10-25T18:00:00+00:00",
+          "ended_at": null,
+          "target_temperature_c": 176.66666666666666,
+          "duration_s": null
+        }
       },
       "last_changed": "2026-10-25T18:00:00+00:00",
       "last_updated": "2026-10-25T18:00:00+00:00"
