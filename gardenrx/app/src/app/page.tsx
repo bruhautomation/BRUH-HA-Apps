@@ -135,7 +135,7 @@ export default async function TodayPage() {
   const currentRating = weather ? getCurrentSprayRating(weather.current, weather.hourly) : null;
   const bloomCrops = cropData.filter((c) => c.inBloom).map((c) => c.crop.name);
   // Only count crops whose fruit is in season — a PHI is irrelevant otherwise.
-  const phiCount = cropData.filter((c) => c.phi.active && c.inSeason && c.active).length;
+  const phiCount = cropData.filter((c) => c.phi.active && c.inSeason).length;
 
   let weatherBlocker: string | null = null;
   if (weather) {

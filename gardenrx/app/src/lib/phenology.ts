@@ -205,8 +205,6 @@ function dayOfYear(md: number): number {
   return lengths.slice(0, month - 1).reduce((a, b) => a + b, 0) + (md % 100);
 }
 
-const RESTING_STAGES: PhenologicalStage[] = ['dormant', 'post_harvest'];
-
 /**
  * How many days ago the group's current stage began, or null when it has no
  * calendar. Used to tell whether a hand-set stage predates the current window.
@@ -278,12 +276,12 @@ export function applyPhenology(
 
   return varietyStages.map((vs) => {
     if (vs.is_manual_override) {
-      // A hand-set stage holds until the season ends: once the group is resting
-      // (dormant or past harvest) and the pin was set before that window began,
+      // A hand-set stage holds until the season ends: once the calendar says the
+      // group is dormant (not merely past harvest: picking can run on) and the pin was set before that window began,
       // it is last season's and the calendar takes over again.
       const name = groupByVariety.get(vs.variety_id) ?? null;
       const derivedNow = name ? derivedFor(name) : null;
-      if (!name || !derivedNow || !RESTING_STAGES.includes(derivedNow)) return vs;
+      if (!name || !derivedNow || derivedNow !== 'dormant') return vs;
       const days = daysIntoCurrentWindow(name, now);
       const stamp = String(vs.updated_at ?? '');
       const setAt = Date.parse(stamp.includes('T') ? stamp : stamp.replace(' ', 'T') + 'Z');

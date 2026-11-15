@@ -134,7 +134,6 @@ export default async function HarvestPage() {
       now
     );
     const w = harvestWindow(crop.id);
-    if (isResting(crop.id)) w.ready = false;
     // A PHI is only worth flagging in season — out of season the crop is just developing.
     if (phi.active && w.ready) {
       doNotHarvest.push({
@@ -145,8 +144,11 @@ export default async function HarvestPage() {
       });
       continue;
     }
-    if (w.ready) ready.push({ id: crop.id, name: crop.name, group, note: w.phrase ?? 'In season' });
-    else if (w.hasWindow)
+    // Resting crops are never "ready"; the safe-interval warning above is not gated on it.
+    if (w.ready) {
+      if (!isResting(crop.id))
+        ready.push({ id: crop.id, name: crop.name, group, note: w.phrase ?? 'In season' });
+    } else if (w.hasWindow)
       developing.push({ id: crop.id, name: crop.name, group, note: w.phrase ?? 'Upcoming' });
   }
 
