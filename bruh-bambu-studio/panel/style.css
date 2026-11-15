@@ -1,6 +1,6 @@
 :root {
   --bg: #f3f5f7; --surface: #ffffff; --ink: #14202b; --muted: #5b6b79;
-  --line: #e1e6eb; --accent: #1e9fe0; --accent-ink: #ffffff;
+  --line: #e1e6eb; --accent: #0b6fa8; --accent-ink: #ffffff;
   --live: #1f9d55; --bad: #c62828; --warn-bg: #fff4e5; --warn-ink: #7a4a00;
   --sunk: #eef2f5; --done: #3d7bd9; --warn: #c77700;
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s6: 24px;
@@ -144,7 +144,7 @@ dialog::backdrop { background: rgba(5, 8, 11, .45); }
   min-height: 0; padding: 0; border-radius: var(--r-sm); font-size: 20px; line-height: 1; color: var(--muted); }
 .pmenu > summary::-webkit-details-marker { display: none; }
 .pmenu[open] > summary, .pmenu > summary:hover { background: var(--sunk); color: var(--ink); }
-.pmenupop { position: absolute; right: 0; top: calc(100% + 4px); z-index: 8; display: grid; gap: 2px;
+.pmenupop { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; display: grid; gap: 2px;
   min-width: 210px; padding: 6px; border-radius: var(--r-md); background: var(--surface);
   border: 1px solid var(--line); box-shadow: var(--shadow); }
 .pmenupop button, .pmenupop .button { justify-content: flex-start; background: transparent; }
@@ -397,7 +397,7 @@ fieldset.trays { border: 1px solid var(--line); border-radius: var(--r-sm); disp
 }
 
 /* ---- Printers --------------------------------------------------------- */
-.printers { display: grid; gap: var(--s4); }
+.printers { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s4); }
 /* A printer: its name across the top, then what it is doing now (the
    picture, the job, its controls, temperatures and filament) beside what
    watches it and what is stored on it. */
@@ -426,7 +426,7 @@ fieldset.trays { border: 1px solid var(--line); border-radius: var(--r-sm); disp
 .cam.has-frame .camnote:not([hidden]) { bottom: 44px; padding: 6px 12px; border-radius: 8px;
   background: rgba(5, 8, 11, .7); color: #e8eef3; }
 .camnote[hidden] { display: none; }
-.camover { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 6px;
+.camover { position: absolute; z-index: 1; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 6px;
   padding: 8px; background: linear-gradient(rgba(5, 8, 11, .6), transparent); }
 .camover .iconbtn { border-radius: 50%; border: 0; background: rgba(5, 8, 11, .5); color: #e8eef3; backdrop-filter: blur(6px); }
 .camover .iconbtn:hover:not(:disabled) { background: rgba(5, 8, 11, .7); }
@@ -486,7 +486,7 @@ fieldset.trays { border: 1px solid var(--line); border-radius: var(--r-sm); disp
 .humid .ic { width: 14px; height: 14px; color: var(--accent); }
 .humid.h4, .humid.h5 { color: var(--warn); }
 .humid.h4 .ic, .humid.h5 .ic { color: var(--warn); }
-.spools { display: grid; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); gap: 6px; }
+.spools { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 6px; }
 .spool { position: relative; display: grid; justify-items: center; gap: 1px; padding: 8px 4px 6px; min-width: 0;
   min-height: 0; border-radius: var(--r-sm); background: var(--surface); border: 1px solid var(--line);
   text-align: center; white-space: normal; font-weight: 400; }
@@ -498,8 +498,8 @@ fieldset.trays { border: 1px solid var(--line); border-radius: var(--r-sm); disp
 .reel i { position: absolute; inset: 11px; border-radius: 50%; background: var(--surface);
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .12); }
 .spool b { font-size: 12px; }
-.spool .mat { font-size: 12px; font-weight: 600; }
-.spool .tsub { max-width: 100%; }
+.spool .mat { font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.spool .tsub { max-width: 100%; white-space: normal; overflow: visible; text-overflow: clip; }
 .feeding { position: absolute; top: -8px; padding: 1px 8px; border-radius: 999px; font-size: 11px;
   font-weight: 700; background: var(--live); color: #fff; }
 .alert { padding: 10px 14px; border-radius: var(--r-md); background: var(--warn-bg); color: var(--warn-ink); }
@@ -563,7 +563,14 @@ details.more > summary { list-style: none; }
 .frow { display: flex; align-items: center; gap: var(--s3); padding: 10px 0; border-top: 1px solid var(--line); }
 .fthumb { flex: none; width: 64px; height: 64px; border-radius: var(--r-sm); object-fit: contain; background: var(--sunk); }
 .fthumb.nopic { font-size: 12px; }
-.fname { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fname { display: block; overflow-wrap: anywhere; }
+.frow .grow { min-width: 0; }
+@media (max-width: 560px) {
+  .frow { flex-wrap: wrap; }
+  .frow .grow { flex: 1 1 calc(100% - 64px - var(--s3)); }
+  .frow .factions { margin-left: calc(64px + var(--s3)); }
+  .badges .pill { white-space: normal; }
+}
 .badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
 .fchips { display: flex; flex-wrap: wrap; gap: 6px; }
 .fchip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 8px;
@@ -594,7 +601,7 @@ label[hidden], [hidden] { display: none !important; }
   color: var(--muted); padding-right: 8px; }
 
 @media (max-width: 900px) {
-  .printer { grid-template-columns: 1fr; grid-template-areas: "head" "now" "more"; padding: var(--s3); }
+  .printer { grid-template-columns: minmax(0, 1fr); grid-template-areas: "head" "now" "more"; padding: var(--s3); }
   .pmore { margin-top: var(--s3); }
 }
 @media (max-width: 560px) {
@@ -705,7 +712,7 @@ label[hidden], [hidden] { display: none !important; }
 .wplan { display: grid; gap: 6px; }
 .wplanhead { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .wplanhead .hint { margin: 0; }
-.wtrack { position: relative; height: 50px; margin: 0 10px; }
+.wtrack { position: relative; height: 50px; margin: 0 10px; cursor: pointer; }
 .wline { position: absolute; left: 0; right: 0; top: 22px; height: 6px; border-radius: 3px;
   background: color-mix(in srgb, var(--muted) 22%, transparent); }
 .wfill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px;
@@ -756,3 +763,6 @@ label[hidden], [hidden] { display: none !important; }
 @media (prefers-reduced-motion: reduce) { .wtick.looking::after { animation: none; } }
 /* On a phone the sentence under the title says what the pill would. */
 @media (max-width: 560px) { .whead .pill { display: none; } }
+
+.wblind { padding: 10px 12px; border-radius: var(--r-sm); background: var(--warn-bg); color: var(--warn-ink); }
+.wblind p { margin: 4px 0 0; font-size: 14px; }
