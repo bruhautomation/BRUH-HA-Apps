@@ -5898,12 +5898,18 @@ $("#setPermLevel").addEventListener("change", async () => {
   const was = sel.dataset.level || "ask";
   const level = sel.value;
   if (level === was) return;
-  const revert = () => { sel.value = was; paintChoices("setPermLevel"); };
+  // After a refusal, show what is actually stored: ask the server, and fall
+  // back to the previous value only if it cannot be read.
+  const revert = async () => {
+    try { renderSettingsForm(await api("api/settings")); return; } catch (e) { /* offline */ }
+    sel.value = was;
+    paintChoices("setPermLevel");
+  };
   if (level === "free" && !window.confirm(
       "Turn on No limits? brAIn will be able to do " +
       "anything in your home and Home Assistant without asking, protected " +
       "entities and house rules included.")) {
-    revert();
+    await revert();
     return;
   }
   const change = level === "ask" ? { dangerously_skip_permissions: false, yolo_mode: false }
@@ -5912,7 +5918,7 @@ $("#setPermLevel").addEventListener("change", async () => {
   const data = await saveSettings(change, (saved) => level === "free"
     ? "No limits is on: brAIn may do anything"
     : skipPermsToast(level === "act", saved));
-  if (!data) { revert(); return; }
+  if (!data) { await revert(); return; }
 });
 $("#setTalkFirst").addEventListener("change", async () => {
   const box = $("#setTalkFirst");
@@ -8320,13 +8326,19 @@ function waitingNote(n) {
 // now (problems and questions) and that the chores come after them. A
 // pending restart is the one thing here that is not a card, so it is its own
 // row with a press that goes to where Home Assistant restarts.
-function todayLead(groups) {
+function todayLead(groups, chores = 0) {
   const box = el("div", "qlead");
   const urgent = groups.problems.filter((c) => c.urgent).length;
   const now = groups.problems.length + groups.questions.length;
   const later = groups.chores.length + groups.tidy.length;
   let text;
-  if (!now) {
+  if (!now && !later && chores) {
+    text = chores === 1
+      ? "Nothing new to decide. The one chore on your To Do list below is waiting for you."
+      : `Nothing new to decide. The ${chores} chores on your To Do list below are waiting for you.`;
+  } else if (!now && !later) {
+    text = "Nothing needs you.";
+  } else if (!now) {
     text = later ? "Nothing needs you right now. The chores and suggestions below can wait."
       : "Nothing needs you right now.";
   } else {
@@ -8334,7 +8346,7 @@ function todayLead(groups) {
       + (urgent ? ` (${urgent} urgent)` : "")
       + (later ? ". The chores and suggestions below can wait." : ".");
   }
-  box.appendChild(el("p", "qleadline", text));
+  box.appendChild(el("p", "qleadline" + (!now && !later ? " empty-line tight" : ""), text));
   const integ = (state.status || {}).integration || {};
   if (integ.restart_pending === true) {
     const row = el("div", "qleadrow");
@@ -8435,12 +8447,8 @@ function renderFindings() {
     if (!cards.length) {
       // The To Do list under the queue is the person's too: chores that
       // need their hands. An empty queue over a full list said two things.
-      const chores = todoRows().length;
-      list.appendChild(el("p", "empty-line tight", !chores
-        ? "Nothing needs you."
-        : chores === 1
-          ? "Nothing new to decide. The one chore on your To Do list below is waiting for you."
-          : `Nothing new to decide. The ${chores} chores on your To Do list below are waiting for you.`));
+      // The lead line (and a pending restart) is still the first thing said.
+      list.appendChild(todayLead(todayGroups(cards), todoRows().length));
     } else {
       const groups = todayGroups(cards);
       list.appendChild(todayLead(groups));
@@ -17775,6 +17783,14 @@ const HOUSE_MODE_WORDS = {
 // is not overwritten while it has focus: `refreshOpenSettings` already
 // skips a dialog with focus inside it, and a save re-renders only after
 // the change that triggered it has landed.
+// The severity floor the house set, in words: what reaches a phone.
+const NOTIFY_FLOOR_WORDS = {
+  critical: "urgent alerts only",
+  serious: "serious problems and urgent alerts",
+  warning: "warnings, serious problems and urgent alerts",
+  info: "every finding",
+};
+
 function renderNotifyPolicy(settings) {
   // Speaking first is strictly opt-in, so only an explicit true ticks it:
   // a setting that arrived missing or malformed reads as off.
@@ -17791,7 +17807,7 @@ function renderNotifyPolicy(settings) {
       ? settings.notify_policy_learned.length : 0;
     let said = policy
       ? `Right now: brAIn follows your sentence, \u201c${policy}\u201d.`
-      : "Right now: urgent alerts only.";
+      : `Right now: ${NOTIFY_FLOOR_WORDS[settings.notify_min_severity] || NOTIFY_FLOOR_WORDS.critical}.`;
     if (extra) said += ` ${extra === 1 ? "1 line" : `${extra} lines`} added from your answers also apply.`;
     if (settings.speak_first === true) said += " Urgent problems are also said aloud.";
     now.textContent = said;

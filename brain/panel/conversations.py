@@ -351,20 +351,51 @@ def clip_title(text: str) -> str:
     return textclip.clip(" ".join(str(text or "").split()), MAX_TITLE_CHARS)
 
 
-SHORT_TITLE_WORDS = 6
+SHORT_TITLE_WORDS = 7
+
+# How a request opens before it says what it is about: greetings and polite
+# frames ("Can you tell me why ..."). Taken off the front, so the title is
+# the subject and not the manners.
+_LEAD_IN_RE = re.compile(
+    r"^(?:(?:hey|hi|hello|ok|okay|so|and|please|brain|brAIn)[\s,:!.-]+"
+    r"|(?:can|could|would|will)\s+you(?:\s+please)?\s+"
+    r"|(?:i(?:'d| would)? (?:like|want|need)(?: you)? to|i'd like to know|i want to know)\s+"
+    r"|(?:tell|show|help) me(?: (?:to|how|why|what|about))?\s+"
+    r"|(?:let me know|do you know|i wonder|i was wondering)\s+(?:if |why |how |what )?)",
+    re.I)
 
 
 def short_title(text: str) -> str:
-    """A person's own opener as a list row reads it: its first line, up to
-    its first sentence end, in at most `SHORT_TITLE_WORDS` words, "…" where
-    it was cut. Their words and their spelling, only fewer of them: the
-    whole message is one press away in the transcript."""
+    """A short summary title for a chat's opener, built from the request
+    itself (no model run): its first line and first sentence, the polite
+    lead-in taken off, cut at the first clause when that still has a few
+    words, at most `SHORT_TITLE_WORDS` words, "\u2026" where it was cut, the
+    first letter capital. The whole message is one press away."""
     line = next((ln.strip() for ln in str(text or "").splitlines() if ln.strip()), "")
     line = re.split(r"(?<=[.?!])\s", line, maxsplit=1)[0]
+    for _ in range(4):
+        trimmed = _LEAD_IN_RE.sub("", line, count=1).lstrip()
+        if trimmed == line or not trimmed:
+            break
+        line = trimmed
+    clause = re.split(r"[,;:\u2014]\s", line, maxsplit=1)[0]
+    if len(clause.split()) >= 3:
+        line = clause
     words = line.split()
     cut = len(words) > SHORT_TITLE_WORDS
     head = " ".join(words[:SHORT_TITLE_WORDS]).rstrip(".,;:!?-\u2013\u2014 ")
-    return clip_title(head + ("\u2026" if cut else "")) if head else clip_title(text)
+    if not head:
+        return clip_title(text)
+    head = head[0].upper() + head[1:]
+    return clip_title(head + ("\u2026" if cut else ""))
+
+
+def _request_after_context(raw: str) -> str:
+    """What the person asked when brAIn put a context block in front of it:
+    the last paragraph, since the block is a run of lines and the request
+    follows it after a blank line."""
+    paras = [p.strip() for p in re.split(r"\n\s*\n", str(raw or "")) if p.strip()]
+    return paras[-1] if len(paras) > 1 else ""
 
 
 def _ask_about_title(raw: str) -> str:
@@ -470,6 +501,9 @@ def title_for(raw: str, source: str = "you", recorded: str = "",
         # A task an automation sent with memory in front: what follows the
         # block is the automation's prompt, and where the block ends is not
         # marked, so the title is what it is rather than a guess at it.
+        asked = _request_after_context(raw)
+        if asked:
+            return short_title(asked)
         return ("An automation ran a task" if source == "automation"
                 else "A conversation an automation started")
     if source not in ("you", "", "morph", "voice", "automation"):
@@ -480,8 +514,9 @@ def title_for(raw: str, source: str = "you", recorded: str = "",
     if str(raw or "").lstrip().startswith((_MEMORY_LEAD, categories.MEMORY_HEAD)):
         # brAIn's own context block, put in front of a prompt by the code
         # that sent it: never a person's words, whoever the registry says
-        # started the conversation.
-        return "A conversation brAIn started"
+        # started the conversation. It is named by what follows the block.
+        asked = _request_after_context(raw)
+        return short_title(asked) if asked else "A conversation brAIn started"
     return short_title(raw)
 
 
