@@ -149,7 +149,8 @@ export function rateSprayWindow(
  */
 export function findBestSprayWindows(
   hourly: HourlyForecast[],
-  maxResults: number = 3
+  maxResults: number = 3,
+  now: Date = new Date()
 ): Array<{
   time: string;
   rating: SprayRating;
@@ -179,7 +180,10 @@ export function findBestSprayWindows(
   const ratingOrder: Record<SprayRating, number> = { EXCELLENT: 0, GOOD: 1, FAIR: 2, POOR: 3 };
   return rated
     .filter((w) => {
-      const hour = new Date(w.time).getHours();
+      const start = new Date(w.time);
+      // The forecast starts at midnight: skip hours that are already over.
+      if (start.getTime() + 3600000 <= now.getTime()) return false;
+      const hour = start.getHours();
       return hour >= 6 && hour <= 20;
     })
     .sort((a, b) => ratingOrder[a.rating] - ratingOrder[b.rating])

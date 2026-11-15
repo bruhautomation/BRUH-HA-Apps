@@ -85,7 +85,7 @@ function StockSlider({
     : shown > 50
       ? 'text-emerald-700'
       : shown > 20
-        ? 'text-amber-600'
+        ? 'text-warn'
         : 'text-terra-600';
 
   function commit(v: number) {

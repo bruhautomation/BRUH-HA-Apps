@@ -5,6 +5,9 @@ import {
   findBestSprayWindows,
   type SprayRating,
 } from '@/lib/weather';
+import { fetchCrops, fetchVarieties, fetchVarietyStages, fetchCropGroups } from '@/lib/queries';
+import { applyPhenology } from '@/lib/phenology';
+import { mostlyResting } from '@/lib/coverage-season';
 import { dailyRainfall, rainfallSummary } from '@/lib/rainfall';
 import { RatingPill } from '@/components/status';
 import { SprayWindow3Day } from '@/components/today/spray-window-3day';
@@ -32,8 +35,25 @@ function pill(r: SprayRating): { cls: string; txt: string } {
   return { cls: 'no', txt: 'Hold' };
 }
 
+function windowLabel(d: Date): string {
+  const now = new Date();
+  const day =
+    d.toDateString() === now.toDateString()
+      ? 'today'
+      : d.toLocaleDateString('en-US', { weekday: 'short' });
+  const h = d.getHours();
+  const part = h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening';
+  return `${day} ${part}`;
+}
+
 export default async function WeatherPage() {
-  const weather = await fetchWeather().catch(() => null);
+  const [weather, crops, varieties, varietyStages, cropGroups] = await Promise.all([
+    fetchWeather().catch(() => null),
+    fetchCrops().catch(() => []),
+    fetchVarieties().catch(() => []),
+    fetchVarietyStages().catch(() => []),
+    fetchCropGroups().catch(() => []),
+  ]);
   if (!weather) {
     return (
       <div className="page">
@@ -87,10 +107,22 @@ export default async function WeatherPage() {
     ? daily.slice(0, 7).reduce((s, d) => s + d.tempHigh, 0) / Math.min(7, daily.length)
     : null;
 
+  // Most of the garden resting (dormant or past harvest) today, by the same
+  // stage calendar Today and Crops use.
+  const effectiveStages = applyPhenology(varietyStages, varieties, crops, cropGroups, new Date());
+  const dormant = mostlyResting(
+    crops.map((c) =>
+      varieties
+        .filter((v) => v.crop_id === c.id)
+        .map((v) => ({
+          stage: effectiveStages.find((s) => s.variety_id === v.id)?.stage ?? 'dormant',
+        }))
+    )
+  );
+
   const goodNow = rating === 'EXCELLENT' || rating === 'GOOD';
-  const bestTime = best
-    ? new Date(best.time).toLocaleString('en-US', { weekday: 'short', hour: 'numeric' })
-    : null;
+  // Only a slot still ahead is named; the next one is "Sat afternoon", never a time gone by.
+  const bestTime = best ? windowLabel(new Date(best.time)) : null;
 
   return (
     <div className="page animate-stagger">
@@ -218,6 +250,7 @@ export default async function WeatherPage() {
             summary={rainSummary}
             avgHighF={avgHigh7}
             humidityPct={current.humidity}
+            dormant={dormant}
           />
         </div>
       )}

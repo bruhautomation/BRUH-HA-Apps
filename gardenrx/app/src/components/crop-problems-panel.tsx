@@ -24,7 +24,7 @@ const typeConfig = {
   },
   cultural: {
     icon: AlertTriangle,
-    color: 'text-amber-600',
+    color: 'text-warn',
     bg: 'bg-amber-50',
     ring: 'ring-amber-200/50',
     label: 'Cultural',

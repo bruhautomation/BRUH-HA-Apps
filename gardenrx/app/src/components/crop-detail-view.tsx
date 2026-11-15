@@ -48,6 +48,7 @@ import { CropAvatar } from '@/components/crop-glyph';
 import { CoverageMeter } from '@/components/coverage-meter';
 import { StageTimeline } from '@/components/stage-timeline';
 import { covLabel, covColor } from '@/components/status';
+import { needsCoverageNow } from '@/lib/coverage-season';
 import { calculateDose } from '@/lib/dose';
 import { useSprayerGallons } from '@/lib/use-sprayer-gallons';
 import { productLabel } from '@/lib/product-label';
@@ -257,10 +258,13 @@ export function CropDetailView({
   const currentIndex = topStage ? stageInfos.findIndex((si) => si.stage === topStage) : -1;
 
   // Only monitored types drive the protection verdict; as-needed ones are manual.
-  const protStatuses = [
-    trackFung ? fungCoverage?.status : undefined,
-    trackIns && !inBloom ? insCoverage?.status : undefined,
-  ].filter(Boolean) as string[];
+  const resting = !needsCoverageNow(stages.map((stage) => ({ stage })));
+  const protStatuses = resting
+    ? []
+    : ([
+        trackFung ? fungCoverage?.status : undefined,
+        trackIns && !inBloom ? insCoverage?.status : undefined,
+      ].filter(Boolean) as string[]);
   const worst = protStatuses.includes('red')
     ? 'red'
     : protStatuses.includes('yellow')
@@ -422,24 +426,26 @@ export function CropDetailView({
           >
             {bothManual
               ? 'As needed'
-              : worst === 'untracked'
-                ? 'Untracked'
-                : covLabel(worst as 'red' | 'yellow' | 'green')}
+              : resting
+                ? 'Resting'
+                : worst === 'untracked'
+                  ? 'Untracked'
+                  : covLabel(worst as 'red' | 'yellow' | 'green')}
           </div>
           <div className="m-sub">
             {!trackFung
-              ? 'Fung manual'
+              ? 'Fungicide manual'
               : fungCoverage
-                ? `Fung ${fungCoverage.status === 'red' ? 'lapsed' : `${fungCoverage.daysRemaining}d`}`
-                : 'Fung —'}
+                ? `Fungicide ${resting ? 'resting' : fungCoverage.status === 'red' ? 'lapsed' : `${fungCoverage.daysRemaining}d`}`
+                : 'Fungicide —'}
             {' · '}
             {!trackIns
-              ? 'Ins manual'
+              ? 'Insecticide manual'
               : inBloom
-                ? 'Ins held'
+                ? 'Insecticide held'
                 : insCoverage
-                  ? `Ins ${insCoverage.status === 'red' ? 'lapsed' : `${insCoverage.daysRemaining}d`}`
-                  : 'Ins —'}
+                  ? `Insecticide ${resting ? 'resting' : insCoverage.status === 'red' ? 'lapsed' : `${insCoverage.daysRemaining}d`}`
+                  : 'Insecticide —'}
           </div>
         </div>
         <div className="metric">
@@ -477,9 +483,11 @@ export function CropDetailView({
           <span className="ph-meta">
             {bothManual
               ? 'manual'
-              : worst === 'untracked'
-                ? 'no spray history'
-                : covLabel(worst as 'red' | 'yellow' | 'green')}
+              : resting
+                ? 'resting'
+                : worst === 'untracked'
+                  ? 'no spray history'
+                  : covLabel(worst as 'red' | 'yellow' | 'green')}
           </span>
         </div>
 
@@ -509,12 +517,17 @@ export function CropDetailView({
 
         <div className="grid grid-cols-1 gap-[22px] sm:grid-cols-2">
           {trackFung ? (
-            <CoverageMeter cov={fungCoverage} type="fungicide" />
+            <CoverageMeter cov={fungCoverage} type="fungicide" resting={resting} />
           ) : (
             <AsNeededMeter type="fungicide" />
           )}
           {trackIns ? (
-            <CoverageMeter cov={insCoverage} type="insecticide" suppressed={inBloom} />
+            <CoverageMeter
+              cov={insCoverage}
+              type="insecticide"
+              suppressed={inBloom}
+              resting={resting}
+            />
           ) : (
             <AsNeededMeter type="insecticide" />
           )}
@@ -808,7 +821,7 @@ export function CropDetailView({
                         <p className="text-muted-foreground">
                           {lp.ingredients.map((ing) => ing.name).join(', ')}
                           {lp.ingredients[0]?.frac_irac_hrac_group && (
-                            <span className="text-muted-foreground/50">
+                            <span className="text-muted-foreground">
                               {' '}
                               · Group {lp.ingredients[0].frac_irac_hrac_group}
                             </span>

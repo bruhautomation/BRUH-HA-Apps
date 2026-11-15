@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.7
+
+### Fixed
+
+- Crops resting for the season (dormant or after harvest) no longer show a red "lapsed" or count as due, and the Crops counts and Today's Needs attention agree, because both ask one rule what is due. "Fung" and "Ins" are written out as Fungicide and Insecticide (#931).
+- The picks log on Harvest shows each pick as a small card on a phone instead of a table running off the right edge, and the last row clears the Log Harvest button (#930).
+- The rainfall card no longer says to water now when most of the garden is resting and highs are under about 60°F, and the best spray window only ever names a time still to come (#929).
+- The amber FAIR pill, "Hold off", Inventory percentages, FRAC codes and section tabs are readable in light mode (#928).
+- The header's theme, search and settings buttons are 40px on a phone, and fields use 16px text so the phone no longer zooms in when one is tapped (#927).
+
 ## 0.1.6
 
 ### Security

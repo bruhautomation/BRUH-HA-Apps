@@ -3,7 +3,7 @@ import { SPRAY_RATING, LOCATION } from '@/config/thresholds';
 import { getSprayRecordsForCrop, computeCoverage } from '@/lib/protection';
 import { buildPhiByProductGroup, computeCropPhi } from '@/lib/phi';
 import { harvestSeason } from '@/lib/harvest-windows';
-import { needsCoverageNow } from '@/lib/coverage-season';
+import { needsCoverageNow, dueTypes, mostlyResting } from '@/lib/coverage-season';
 import { applyPhenology } from '@/lib/phenology';
 import {
   fetchCrops,
@@ -210,16 +210,18 @@ export default async function TodayPage() {
   const attention: AttentionItem[] = [];
   for (const c of cropData) {
     if (!c.active) continue;
-    const due: string[] = [];
     const soon: string[] = [];
     const fc = c.fungicideCoverage,
       ic = c.insecticideCoverage;
-    if (fc?.status === 'red') due.push('Fungicide');
-    else if (fc?.status === 'yellow') soon.push('Fungicide');
-    if (!c.inBloom) {
-      if (ic?.status === 'red') due.push('Insecticide');
-      else if (ic?.status === 'yellow') soon.push('Insecticide');
-    }
+    const dueNow = dueTypes({
+      active: c.active,
+      inBloom: c.inBloom,
+      fung: fc,
+      ins: ic,
+    });
+    const due = dueNow.map((t) => (t === 'fungicide' ? 'Fungicide' : 'Insecticide'));
+    if (fc?.status === 'yellow') soon.push('Fungicide');
+    if (!c.inBloom && ic?.status === 'yellow') soon.push('Insecticide');
     if (due.length || soon.length) {
       attention.push({
         cropId: c.crop.id,
@@ -396,6 +398,7 @@ export default async function TodayPage() {
                 summary={rainSummary}
                 avgHighF={avgHigh7}
                 humidityPct={weather?.current?.humidity ?? null}
+                dormant={mostlyResting(cropData.map((c) => c.stages))}
               />
             </section>
           )}
