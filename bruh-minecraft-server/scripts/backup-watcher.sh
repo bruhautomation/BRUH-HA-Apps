@@ -13,7 +13,7 @@ SLEEP_SEC=$(( INTERVAL_MIN * 60 ))
 sleep "${SLEEP_SEC}"
 
 while true; do
-    if ! "${SCRIPTS_DIR}/backup.sh"; then
+    if ! BACKUP_KIND=scheduled "${SCRIPTS_DIR}/backup.sh"; then
         echo "[backup-watcher] backup failed" >&2
     fi
     sleep "${SLEEP_SEC}"

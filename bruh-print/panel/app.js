@@ -61,7 +61,30 @@ window.__bruhPrintState = S;
  * `api()` has, for the same reason. */
 const relative = (path) => String(path).replace(/^\//, "");
 
+/* Whether a print is in flight. The printer cannot be asked mid-job and a
+ * print is one request that returns when the bytes are sent, so "Printing
+ * now" is true exactly while one of those requests is open — never merely
+ * because the printer is the one selected. */
+let printsOpen = 0;
+const PRINT_PATH = /^\/api\/(print|printer\/(calibrate|check|feed)|template\/[^/]+\/print|history\/[^/]+\/reprint)$/;
+function isPrintCall(path, options) {
+  if (options.method !== 'POST') return false;
+  if (PRINT_PATH.test(path)) return true;
+  return path === '/api/quick' && /"print":\s*true/.test(options.body || '');
+}
+function showBusy() {
+  document.querySelectorAll('.inuse').forEach((n) => {
+    n.textContent = printsOpen ? 'Printing now' : 'Idle';
+    n.classList.toggle('busy', printsOpen > 0);
+  });
+}
 async function api(path, options = {}) {
+  const counted = isPrintCall(path, options);
+  if (counted) { printsOpen++; showBusy(); }
+  try { return await apiCall(path, options); }
+  finally { if (counted) { printsOpen--; showBusy(); } }
+}
+async function apiCall(path, options) {
   const response = await fetch(relative(path), {
     headers: options.body ? { 'Content-Type': 'application/json' } : {},
     ...options,
@@ -1534,9 +1557,15 @@ function renderTemplates() {
         : 'no fields'));
     if (template.use_count) foot.append(el('span', 'sub', `· used ${template.use_count}×`));
     card.append(foot);
+    /* Tappable when there is something to choose between. */
+    if (S.templates.length > 1)
+      foot.append(el('span', 'tap', S.template?.id === template.id ? 'Showing' : 'Tap to open \u203a'));
     card.onclick = () => pickTemplate(template);
     cards.append(card);
   }
+  /* One template is not a choice: it opens itself. */
+  if (S.templates.length === 1 && S.template?.id !== S.templates[0].id)
+    pickTemplate(S.templates[0]);
 }
 
 function pickTemplate(template) {
@@ -1546,6 +1575,8 @@ function pickTemplate(template) {
   form.hidden = false;
   form.innerHTML = '';
   form.append(el('h3', null, template.name));
+  form.append(el('p', 'muted tname',
+    `Automations and the Lovelace card print this as \u201c${template.name}\u201d.`));
 
   const inputs = {};
   for (const field of template.fields) {
@@ -1669,17 +1700,18 @@ function renderPrinter() {
      * button said "In use" and could not be pressed. Another printer gets
      * the button that moves printing to it. */
     const use = mine
-      ? el('span', 'inuse', 'Printing now')
+      ? el('span', 'inuse' + (printsOpen ? ' busy' : ''),
+           printsOpen ? 'Printing now' : 'Idle')
       : el('button', 'btn tiny', 'Use this one');
     use.setAttribute('data-tip', mine
-      ? 'Everything prints to this printer.'
+      ? 'Everything prints to this printer. Says Printing now only while a label is being sent.'
       : 'Send every print to this printer instead. Remembered by serial, so '
         + 'it survives a reboot that renumbers the USB bus.');
     if (!mine) use.onclick = async () => {
       try { await post('/api/printer/select', { printer: printer.key }); await loadState(); renderPrinter(); }
       catch (error) { fail(error); }
     };
-    const status = el('button', 'btn tiny', 'Ask the printer');
+    const status = el('button', 'btn tiny', 'Check paper and lid');
     status.setAttribute('data-tip',
       'Asks the printer how it is, right now — paper out, lid open, busy, '
       + 'or ready. It prints nothing.');
@@ -1804,19 +1836,24 @@ function renderPrinter() {
       };
       const foot = el('div', 'foot'); foot.append(reset);
       bay.append(foot);
-    } else if (stock) {
-      bay.append(el('div', 'est',
-        'Not counting what is left. Turn it back on under Settings below.'));
     }
     bay.append(lineUpBlock(roll, stock));
     bays.append(bay);
   }
 
+  /* Said once under both rolls, not once per roll. */
+  document.querySelectorAll('.baynote').forEach((n) => n.remove());
+  if (S.settings.track_remaining === false && S.rolls.some((r) => stockById(r.stock)))
+    bays.after(el('p', 'est baynote',
+      'Not counting what is left. Turn it back on under Settings below.'));
+
   const table = $('stockTable');
   table.innerHTML = '';
   for (const stock of S.stocks) {
     const row = el('div', 'strow');
-    row.append(el('span', 'nm', stock.name));
+    const head = el('div', 'sthead');
+    row.append(head);
+    head.append(el('span', 'nm', stock.name));
     /* The two numbers, in words. "2.25" × 1.25"" is the vendor's order and
      * says nothing about which one the head covers — which is the single
      * most common way a label comes out sideways, and it was written here in
@@ -1826,11 +1863,11 @@ function renderPrinter() {
      * nowhere on this screen — a roll somebody had given a 5mm border to
      * printed small labels floating in white with nothing on the panel
      * saying why. */
-    row.append(el('span', 'dim',
+    head.append(el('span', 'dim',
       `${stock.across_in}\u2033 across \u00b7 ${stock.feed_in || '\u2014'}`
       + `${stock.feed_in ? '\u2033 along the roll' : ' (continuous)'}`
       + ` \u00b7 ${stock.margin_mm}mm border`));
-    if (stock.sku) row.append(el('span', 'sku', stock.sku));
+    if (stock.sku) head.append(el('span', 'sku', stock.sku));
     /* One pill where three used to be, and it says a state rather than a
      * number: what a lined-up roll does is a sentence, and the sentence is
      * on the bay above where the roll actually is. Three pills carrying
@@ -1843,12 +1880,14 @@ function renderPrinter() {
         'Somebody has printed the calibration labels for this roll and typed '
         + 'what they read. Press "Line up this roll" on its bay above to do '
         + 'it again, or Forget to go back to what the add-on shipped with.');
-      row.append(pill);
+      head.append(pill);
     }
     if (stock.loaded)
-      row.append(el('span', 'pill in', `in the ${stock.loaded_side} roll`));
-    row.append(el('span', 'spacer'));
-    // Everything after the spacer is a control, right-aligned together.
+      head.append(el('span', 'pill in', `in the ${stock.loaded_side} roll`));
+    // Everything below is a control, on a row of its own so nothing can
+    // sit on top of the facts above it.
+    const ctl = el('div', 'stctl');
+    row.append(ctl);
 
     /* ONE setting for which way text sits, and this is where it lives. It
      * used to be asked in three places — here, on the Quick tab and in the
@@ -1893,7 +1932,7 @@ function renderPrinter() {
       } catch (error) { fail(error); }
     };
     turnWrap.append(turn);
-    row.append(turnWrap);
+    ctl.append(turnWrap);
 
     /* "Edit" is a verb with no object, which is the pattern that already
      * cost this panel two controls nobody could name — and the object here
@@ -1913,7 +1952,7 @@ function renderPrinter() {
       try { await del(`/api/stock/${stock.id}`); await loadState(); renderPrinter(); }
       catch (error) { fail(error); }
     };
-    row.append(edit, remove);
+    ctl.append(edit, remove);
     table.append(row);
   }
 
@@ -2132,14 +2171,30 @@ function lineUpBlock(roll, stock) {
    * printed labels and a refusal about a number that was never on the
    * paper. */
   const rollable = !!stock && !!stock.feed_in;
-  wrap.append(el('p', 'calstate', rollable
-    ? calibrationSentence(stock)
-    : (stock
-        ? 'Continuous paper has no die cuts, so there is no top of form to '
-          + 'line up to.'
-        : calibrationSentence(stock))));
+  /* A lined-up roll is a verdict and a tap away from the millimetres: the
+   * person asking "is this roll done?" needs one line, and the numbers are
+   * for the person who wants to check them. */
+  const state = el('div', 'calstate');
+  const done = rollable && !!stock && !!stock.calibrated;
+  if (done) {
+    state.append(el('p', 'calverdict good', 'Lined up \u2713'));
+    const more = el('details', 'caldetail');
+    more.append(el('summary', null, 'What it measured'),
+                el('p', null, calibrationSentence(stock)));
+    state.append(more);
+  } else {
+    state.append(el('p', 'calverdict', rollable
+      ? calibrationSentence(stock)
+      : (stock
+          ? 'Continuous paper has no die cuts, so there is no top of form to '
+            + 'line up to.'
+          : calibrationSentence(stock))));
+  }
+  wrap.append(state);
 
-  const go = el('button', 'btn primary wide', 'Line up this roll');
+  /* The main action until it has been done, then a quiet one. */
+  const go = el('button', done ? 'btn wide' : 'btn primary wide',
+    done ? 'Line up again' : 'Line up this roll');
   go.id = `lineUp-${roll.side}`;
   go.disabled = !rollable;
   go.setAttribute('data-tip', rollable
@@ -2199,11 +2254,12 @@ function lineUpBlock(roll, stock) {
     foot.append(feed);
   }
 
+  wrap.append(foot);
   /* Only where there is something to forget. A button that clears nothing
    * is a control asking to be understood, and the answer would be "it does
    * what has already happened". */
   if (stock && stock.calibrated) {
-    const forget = el('button', 'btn tiny danger', 'Forget');
+    const forget = el('button', 'btn tiny danger forgetcal', 'Forget the lining up');
     forget.id = `forgetCal-${roll.side}`;
     forget.setAttribute('data-tip',
       'Throws the measurement away and prints exactly what the add-on '
@@ -2215,9 +2271,8 @@ function lineUpBlock(roll, stock) {
         toast('Forgotten. This roll prints as it did before.', 'good');
       } catch (error) { fail(error); }
     };
-    foot.append(forget);
+    wrap.append(forget);
   }
-  wrap.append(foot);
   return wrap;
 }
 
@@ -3162,8 +3217,8 @@ function renderHistory() {
     const when = (e) => new Date(e.at * 1000).toLocaleString([],
       { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
     text.append(el('span', 'meta',
-      `${when(entry)} \u00b7 ${group.length > 1 ? `${count} labels` : `${count}\u00d7`}`
-      + ` ${entry.side} \u00b7 ${stock ? stock.name : entry.stock}`));
+      `${when(entry)} \u00b7 ${count === 1 ? '1 label' : `${count} labels`}`
+      + ` \u00b7 ${entry.side} roll \u00b7 ${stock ? stock.name : entry.stock}`));
     const buttons = el('div', 'hbtns');
     const again = el('button', 'btn tiny', 'Print again');
     /* The Printed tab's lede used to say this and nothing else. A sentence
@@ -3202,38 +3257,53 @@ function renderHistory() {
   }
 }
 
-/* Prints made in one go are one row, but only where that is certain: the
- * history stores no batch id, so a batch is a run of template prints (never
- * a reprint, never a quick print, never one grouped by title) of the same
- * template on the same stock and roll, each within ten minutes of the one
- * before it. Anything else stays a row of its own, because a grouped row's
- * Print again spends labels for every member. Newest first, as the store
- * keeps them. */
+/* Prints made in one go are one row, but only where that is certain from
+ * what the entry itself says: the history stores no batch id, so a batch is
+ * a run of prints of the same template, or of labels whose titles differ
+ * only in a trailing number ("Lesson 32", "Lesson 33"), on the same stock
+ * and roll and from the same source, each within ten minutes of the one
+ * before it. A reprint is never grouped, and nothing is grouped on its
+ * text alone, because a grouped row's Print again spends labels for every
+ * member. (The first version asked for source === "template", which is
+ * what the panel's own Print sends and no automation ever does: Home
+ * Assistant tags a print "ha:print_template" or "ha:print_text", so the
+ * lessons printed from an automation never grouped.) Newest first, as the
+ * store keeps them. */
 const BATCH_GAP_S = 600;
+const numbered = (e) => /^(.*?)(\d+)\s*$/.exec(String(e.title));
+function batchKey(e) {
+  if (e.source === 'reprint') return null;
+  const where = `${e.stock}|${e.side}|${e.source}`;
+  if (e.template) return `t|${e.template}|${where}`;
+  const m = numbered(e);
+  return m ? `n|${m[1]}|${where}` : null;
+}
 function historyGroups(entries) {
-  const groupable = (e) => e.source === 'template' && !!e.template;
-  const key = (e) => `${e.template}|${e.stock}|${e.side}`;
   const groups = [];
   for (const entry of entries) {
     const last = groups[groups.length - 1];
     const prev = last && last[last.length - 1];
-    if (prev && groupable(prev) && groupable(entry) && key(prev) === key(entry)
-        && prev.at - entry.at <= BATCH_GAP_S) last.push(entry);
+    const key = batchKey(entry);
+    if (prev && key && key === batchKey(prev) && prev.at - entry.at <= BATCH_GAP_S)
+      last.push(entry);
     else groups.push([entry]);
   }
   return groups;
 }
 
-/* "Lesson 47\u201357" when the titles differ only in a trailing number, the
+/* "Lessons 32\u201357" when the titles differ only in a trailing number, the
  * template's name otherwise. */
 function historyTitle(group) {
   const entry = group[0];
   if (group.length < 2) return entry.title;
-  const parts = group.map((e) => /^(.*?)(\d+)\s*$/.exec(String(e.title)));
+  const parts = group.map(numbered);
   if (parts.every((m) => m && m[1] === parts[0][1])) {
     const nums = parts.map((m) => Number(m[2]));
     const low = Math.min(...nums), high = Math.max(...nums);
-    return low === high ? entry.title : `${parts[0][1]}${low}\u2013${high}`;
+    if (low === high) return entry.title;
+    const stem = /^(.*\p{L})\s*$/u.exec(parts[0][1]);
+    const head = stem ? `${stem[1]}${/s$/i.test(stem[1]) ? '' : 's'} ` : parts[0][1];
+    return `${head}${low}\u2013${high}`;
   }
   return entry.template || entry.title;
 }

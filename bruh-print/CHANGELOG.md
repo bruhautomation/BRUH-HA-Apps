@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.14.8
+
+### Fixed
+
+- A lined-up roll says "Lined up ✓", with what it measured behind a tap. Its button turns into a quiet "Line up again", and "Forget the lining up" sits on its own line away from "Print a check label". "Not counting what is left" is said once, not on every roll (#1024).
+- Label stock is laid out so its controls cannot overlap at any width: each stock is a line of facts above a line of controls, and Add a stock is a grid. Its help names the button by its real name (#1025).
+- History groups a run of labels printed from Home Assistant too, such as "Lessons 32–57 · 26 labels". Titles and dates wrap instead of being cut off (#1026).
+- The printer card says "Idle" unless this panel is printing, when it says "Printing now". "Ask the printer" is now "Check paper and lid" (#1027).
+- With one template, Templates opens it with its preview, its fields and the name automations use for it. With several, the cards say they can be opened (#1028).
+
 ## 0.14.7
 
 ### Changed

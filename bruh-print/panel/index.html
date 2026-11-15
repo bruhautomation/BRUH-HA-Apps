@@ -238,7 +238,7 @@
       <div id="templateForm" class="tform" hidden></div>
       <div class="preview-frame">
         <img id="templatePreview" alt="Label preview">
-        <p class="placeholder" id="templatePlaceholder">Pick a template.</p>
+        <p class="placeholder" id="templatePlaceholder">Tap a template to see its label and fill it in.</p>
       </div>
       <ul class="notes" id="templateNotes"></ul>
     </div>
@@ -267,7 +267,7 @@
        block on a phone above the table they are about. One line stays out
        (it is the one that tells you a label came out sideways is fixable)
        and the rest is one press away. -->
-  <p class="lede">If a label comes out sideways, press <strong>Edit</strong>
+  <p class="lede">If a label comes out sideways, press <strong>Rename or resize</strong>
      and then "These are the wrong way round".</p>
   <details class="stockhelp">
     <summary>Which measurement is which?</summary>
@@ -288,11 +288,9 @@
   <div class="stocktable" id="stockTable"></div>
   <details class="addstock">
     <summary>Add a stock</summary>
-    <div class="row">
-      <label class="field grow"><span>Name</span><input id="newStockName" placeholder="Storage box lids"></label>
+    <div class="addgrid">
+      <label class="field"><span>Name</span><input id="newStockName" placeholder="Storage box lids"></label>
       <label class="field"><span>SKU</span><input id="newStockSku" placeholder="EDCC-082WH"></label>
-    </div>
-    <div class="row">
       <label class="field"><span>Across the head (in)</span><input type="number" step="0.01" id="newStockAcross" placeholder="2.25"></label>
       <label class="field"><span>Along the roll (in)</span><input type="number" step="0.01" id="newStockFeed" placeholder="1.25"></label>
       <label class="field"><span>Labels per roll</span><input type="number" id="newStockCount" placeholder="1000"></label>

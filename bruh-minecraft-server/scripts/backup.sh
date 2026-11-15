@@ -136,7 +136,8 @@ backup_worlds_git() {
         return 0
     fi
     if ! git -C "${repo}" commit -q -m "backup ${TIMESTAMP}" \
-            -m "Players online at backup: $(get_player_count)"; then
+            -m "Kind: ${BACKUP_KIND:-manual}
+Players online at backup: $(get_player_count)"; then
         log "ERROR: could not commit the snapshot to the backup repository"
         return 1
     fi
