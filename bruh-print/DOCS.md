@@ -784,13 +784,13 @@ neither command, leaving the printer exactly where it was before any of this.
 
 ## When something goes wrong
 
-**"Ask the printer" says it cannot be asked.** That is about the add-on, not
+**"Check paper and lid" says it cannot be asked.** That is about the add-on, not
 the printer: this LabelWriter's interface exposes no bulk IN endpoint, so
 there is nothing to read a reply from. Printing is unaffected — a
 unidirectional printer prints perfectly well. Press **USB details** to see
 which interfaces and endpoints it does expose.
 
-**"Ask the printer" says it did not answer.** That one is about the printer,
+**"Check paper and lid" says it did not answer.** That one is about the printer,
 and it is ordinary: a LabelWriter mid-feed does not reply, and neither does
 one whose firmware predates the status command.
 
@@ -852,7 +852,7 @@ by sending a real top-of-form search budget; make sure you are not on an older
 version.
 
 **Nothing prints and there is no error.** Check the roll is seated and the
-lid is closed, then press **Ask the printer** on the printer's card — a LabelWriter
+lid is closed, then press **Check paper and lid** on the printer's card — a LabelWriter
 reports an open lid and an empty roll, and "no status reported" is itself an
 answer (it is what a printer mid-feed says).
 
