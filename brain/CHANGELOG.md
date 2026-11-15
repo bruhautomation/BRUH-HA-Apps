@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.10
+
+### Added
+
+- BRUH Browser shows up in Home Assistant: a status sensor (idle, running, needs you, done, failed) with when the last errand finished, how many steps it took and whether it bought anything, and a "waiting on you" binary sensor for automations. brAIn reads the add-on's own errand list with its existing key; nothing about what an errand looked at or bought leaves the add-on. They appear once BRUH Browser has started and brAIn is reloaded (#958).
+
 ## 5.3.9
 
 ### Security
