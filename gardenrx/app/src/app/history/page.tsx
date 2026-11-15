@@ -304,7 +304,7 @@ export default async function HistoryPage({
                                         : 'Estimated cost from inventory pricing'
                                     }
                                   >
-                                    <span className="text-[10px] text-emerald-600/70">$</span>
+                                    <span className="text-[10px] text-ink-3">$</span>
                                     {totalCost.toFixed(2)}
                                     {partialCost && (
                                       <span className="text-[9px] text-emerald-600/60 ml-0.5">

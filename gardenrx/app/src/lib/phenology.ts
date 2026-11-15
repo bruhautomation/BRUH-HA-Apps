@@ -95,7 +95,7 @@ export const PHENOLOGY_CALENDAR: Record<string, StageWindow[]> = {
     { stage: 'bloom', start: '04-10' },
     { stage: 'fruit_set', start: '05-01' },
     { stage: 'green_fruit', start: '06-01' },
-    { stage: 'dormant', start: '11-15' },
+    { stage: 'dormant', start: '10-25' },
   ],
 
   // ── Warm-season fruiting vegetables (no bloom: flower + fruit run together) ──
@@ -152,7 +152,7 @@ export const PHENOLOGY_CALENDAR: Record<string, StageWindow[]> = {
     { stage: 'bud_break', start: '03-01' },
     { stage: 'green_tip', start: '04-01' },
     { stage: 'green_fruit', start: '09-15' },
-    { stage: 'dormant', start: '11-20' },
+    { stage: 'dormant', start: '11-01' },
   ],
   'Turf Grass': [
     { stage: 'bud_break', start: '03-15' },
@@ -180,16 +180,47 @@ function mdNum(md: string): number {
   return Number(md.slice(0, dash)) * 100 + Number(md.slice(dash + 1));
 }
 
-/** Today's month/day in the orchard's local timezone (server runs in UTC). */
+/**
+ * Today's month/day on the calendar the tables above are written for. The server
+ * runs in UTC, so the date is read in the garden's own timezone; a garden in the
+ * southern hemisphere (negative latitude) is moved half a year, so its spring
+ * reads against the northern table's spring.
+ */
 function localMdNum(now: Date): number {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: LOCATION.timezone,
     month: '2-digit',
     day: '2-digit',
   }).formatToParts(now);
-  const month = Number(parts.find((p) => p.type === 'month')?.value ?? '1');
+  let month = Number(parts.find((p) => p.type === 'month')?.value ?? '1');
   const day = Number(parts.find((p) => p.type === 'day')?.value ?? '1');
+  if (LOCATION.lat < 0) month = ((month + 5) % 12) + 1;
   return month * 100 + day;
+}
+
+/** Day of a non-leap year for a month*100+day number (for gaps between dates). */
+function dayOfYear(md: number): number {
+  const lengths = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const month = Math.floor(md / 100);
+  return lengths.slice(0, month - 1).reduce((a, b) => a + b, 0) + (md % 100);
+}
+
+const RESTING_STAGES: PhenologicalStage[] = ['dormant', 'post_harvest'];
+
+/**
+ * How many days ago the group's current stage began, or null when it has no
+ * calendar. Used to tell whether a hand-set stage predates the current window.
+ */
+function daysIntoCurrentWindow(groupName: string, now: Date): number | null {
+  const windows = PHENOLOGY_CALENDAR[groupName];
+  if (!windows || windows.length === 0) return null;
+  const today = localMdNum(now);
+  let start = mdNum(windows[windows.length - 1].start);
+  for (const w of windows) {
+    if (mdNum(w.start) <= today) start = mdNum(w.start);
+    else break;
+  }
+  return (dayOfYear(today) - dayOfYear(start) + 365) % 365;
 }
 
 /**
@@ -246,7 +277,19 @@ export function applyPhenology(
   };
 
   return varietyStages.map((vs) => {
-    if (vs.is_manual_override) return vs;
+    if (vs.is_manual_override) {
+      // A hand-set stage holds until the season ends: once the group is resting
+      // (dormant or past harvest) and the pin was set before that window began,
+      // it is last season's and the calendar takes over again.
+      const name = groupByVariety.get(vs.variety_id) ?? null;
+      const derivedNow = name ? derivedFor(name) : null;
+      if (!name || !derivedNow || !RESTING_STAGES.includes(derivedNow)) return vs;
+      const days = daysIntoCurrentWindow(name, now);
+      const setAt = Date.parse(vs.updated_at.includes('T') ? vs.updated_at : vs.updated_at.replace(' ', 'T') + 'Z');
+      const windowStart = now.getTime() - (days ?? 0) * 86400000;
+      if (!Number.isFinite(setAt) || setAt >= windowStart) return vs;
+      return { ...vs, stage: derivedNow, is_manual_override: false };
+    }
     // Variety not in the supplied list (e.g. other crops on a single-crop page):
     // leave it alone rather than guess.
     if (!groupByVariety.has(vs.variety_id)) return vs;

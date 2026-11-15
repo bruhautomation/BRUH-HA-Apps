@@ -1,4 +1,4 @@
-import { fetchWeather, getCurrentSprayRating } from '@/lib/weather';
+import { fetchWeather, getCurrentSprayRating, nextSprayOpening } from '@/lib/weather';
 import { SPRAY_RATING, LOCATION } from '@/config/thresholds';
 import { getSprayRecordsForCrop, computeCoverage } from '@/lib/protection';
 import { buildPhiByProductGroup, computeCropPhi } from '@/lib/phi';
@@ -135,7 +135,7 @@ export default async function TodayPage() {
   const currentRating = weather ? getCurrentSprayRating(weather.current, weather.hourly) : null;
   const bloomCrops = cropData.filter((c) => c.inBloom).map((c) => c.crop.name);
   // Only count crops whose fruit is in season — a PHI is irrelevant otherwise.
-  const phiCount = cropData.filter((c) => c.phi.active && c.inSeason).length;
+  const phiCount = cropData.filter((c) => c.phi.active && c.inSeason && c.active).length;
 
   let weatherBlocker: string | null = null;
   if (weather) {
@@ -351,6 +351,7 @@ export default async function TodayPage() {
         dueCropIds={dueCropIds}
         bloomCrops={bloomCrops}
         weatherBlocker={weatherBlocker}
+        nextOpening={weather ? (nextSprayOpening(weather.hourly, now)?.label ?? null) : null}
         weatherUnavailable={!weather}
         upcoming={upcoming}
         unprotectedCount={unprotectedCount}
