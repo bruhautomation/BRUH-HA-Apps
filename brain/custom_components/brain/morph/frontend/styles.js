@@ -579,6 +579,8 @@ ${STATUS_RULES}
 /* A scene segment and the Edit pencil are 40px tall under a finger (the pencil's extra height is borrowed back from its row). */
 @media (pointer:coarse){.morph .secline .secscenes .wd,.morph .secscenes .wd{min-height:40px}.morph .toastline .editq{min-height:40px;margin-block:-4px}.morph .bar>.editq{min-width:40px;min-height:40px;display:inline-flex;align-items:center;justify-content:center}}
 @media (pointer:coarse){.morph .roomw,.morph .menu{min-width:40px;justify-content:center}.morph .cu-name.go{min-height:40px;margin-block:-6px;display:inline-flex;align-items:center}}
+/* Coming up's zoom and fold are 40px a side on a phone, centred where the smaller marks were drawn, so they sit as before and are not mis-hit for each other. */
+@media (pointer:coarse){.morph .cu-zb{min-width:40px;height:40px;top:-2px;justify-content:center}.morph .cu-zb:not(.solo){right:40px}.morph .cu-fold{width:40px;height:40px;top:-2px}}
 .morph input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=color]),.morph textarea,.morph select{font-size:16px}
 `;
 /* The 16px text floor, on every screen (a phone with a desktop-width page or a pointer that says it is fine still zooms): below it iOS zooms the page when a field takes focus (#677). Every field Morph draws, and the same floor handed to a card's own shadow root by morph-panel.js (FIELD_FLOOR). */
