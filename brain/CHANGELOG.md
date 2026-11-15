@@ -2,6 +2,17 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.4
+
+### Changed
+
+- When Claude's usage limit is reached, brAIn says it is resting and until when ("Resting until 11:20 PM: Claude's usage limit is reached") on Today's status line, the status sensor and ⚙ › Diagnostics, instead of a fault. A chat turn refused for the limit says when to ask again. Runs pick up again at the time the message names, without a report (#920).
+
+### Fixed
+
+- A run refused with "You've hit your 5-hour limit · resets …" was counted as an error and filed as a fault: the limit is now read by the message's shape, whatever the window is called (#895).
+- The sign-in check read the same message as a sign-out, so Health said "Claude is not signed in" and asked for a new sign-in while the account was only at its limit (#896, #897).
+
 ## 5.3.3
 
 ### Fixed
