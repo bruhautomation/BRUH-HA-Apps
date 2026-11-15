@@ -13,7 +13,7 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ### Fixed
 
-- A card that found nothing to do, no finding and no warning is shown as all fine rather than "Worth a look", and a card says when a reading was taken instead of calling an old one "now" (#964, #925).
+- A card says when a reading was taken instead of calling an old one "now".
 - A run that read nothing about the house (only brAIn's own memory or health) no longer publishes an insight card (#976).
 
 ## 5.3.4

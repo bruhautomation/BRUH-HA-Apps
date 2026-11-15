@@ -194,20 +194,6 @@ def verdict_of_sentence(sentence: str) -> str:
     return ""
 
 
-_CONTRACT_LEAD = re.compile(
-    r"\s*(normal|worth a look|needs action)\s*,\s*because\b", re.I)
-
-
-def contract_lead(summary: str) -> str:
-    """The verdict the card contract's own first sentence gives ("Normal,
-    because X compared with Y", "Worth a look, because …"), or ""."""
-    m = _CONTRACT_LEAD.match(str(summary or ""))
-    if not m:
-        return ""
-    return {"normal": FINE, "worth a look": LOOK,
-            "needs action": ACTION}[m.group(1).lower()]
-
-
 def _because(after: str) -> bool:
     """A clause followed by its reason: the sentence is kept whole."""
     return bool(re.match(r"\s*because\b", after or "", re.I))
@@ -559,19 +545,6 @@ def review(obj: dict, previous: dict | None = None,
             "no fine verdict over an open finding", "no fine verdict over a rise",
             "a figure that disagrees with an open finding")):
         verdict = LOOK
-    # "Worth a look" is a pointer to something. A card that gives nothing to
-    # look at (no step, no finding, no suggestion, no tile with a status, no
-    # open row, no rise or disagreement the checks above found) found
-    # nothing: calm. Its own lead sentence settles it first: one that says
-    # worth a look or needs action is never taken back.
-    if (verdict == LOOK and not out.get("next") and not card_claims._acts(out)
-            and contract_lead(out.get("summary")) in ("", FINE)
-            and open_row_named(out, open_rows) is None
-            and not any(c in changed for c in (
-                "no fine verdict over an open finding",
-                "no fine verdict over a rise",
-                "a figure that disagrees with an open finding"))):
-        verdict = FINE
     if verdict:
         out["verdict"] = verdict
     else:
