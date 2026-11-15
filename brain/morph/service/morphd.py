@@ -182,7 +182,10 @@ def publish_state() -> None:
         "learning": {**learning.state(), "scorecard": learning.scorecard(),
                      # Marked with who wrote each, so the Settings editor
                      # saves a line back with the source it had.
-                     "lessons": learning.read_lessons(tagged=True)},
+                     "lessons": learning.read_lessons(tagged=True),
+                     # What the household kept as it is (a No, an undo or a
+                     # restore), each with Forget in ⚙ › Dashboard.
+                     "keeps": learning.keeps_listing()},
         "suggestions": learning.listing(),
         # What brAIn is doing for Morph right now, so a tell that is still
         # running is visible after its box was closed or the page reloaded.
@@ -393,6 +396,11 @@ async def handle(kind: str, p: dict) -> dict:
             return {"ok": False, "error": "Nothing to write."}
         body, source = learning.split_lesson(text)
         await asyncio.to_thread(learning.add_lesson, body, source or "you")
+        await asyncio.to_thread(publish_state)
+        return {"ok": True}
+    if kind == "keep_clear":
+        if not await asyncio.to_thread(learning.clear_keep, str(p.get("key") or "")[:200]):
+            return {"ok": False, "error": "That is not kept any more."}
         await asyncio.to_thread(publish_state)
         return {"ok": True}
     if kind == "lessons":

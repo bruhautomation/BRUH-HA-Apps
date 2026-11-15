@@ -6441,18 +6441,23 @@ function openNoteForm(card, actions, onSend, opts) {
     form.appendChild(chips);
   }
   form.appendChild(ta);
-  // An optional box beside the note, for the one ending that has a second
-  // thing to say: "Wrong — and stop raising these". `opts.check` is its
-  // label; what it sends rides back to `onSend` as the third argument.
-  let check = null;
-  if (opts.check) {
+  // Optional boxes beside the note, for the one ending that has more to
+  // say: "Ignore all like this" (the rule, for every thing) and "Stop
+  // watching <it>" (the thing, for every rule). `opts.check` and
+  // `opts.watch` are their labels; what they send ride back to `onSend` as
+  // the third and fourth arguments.
+  const tick = (label) => {
+    if (!label) return null;
     const line = el("label", "findnotecheck");
-    check = document.createElement("input");
-    check.type = "checkbox";
-    line.appendChild(check);
-    line.appendChild(el("span", null, opts.check));
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    line.appendChild(box);
+    line.appendChild(el("span", null, label));
     form.appendChild(line);
-  }
+    return box;
+  };
+  const check = tick(opts.check);
+  const watch = tick(opts.watch);
   const row = el("div", "findnoteactions");
   const send = el("button", "btn small primary", opts.send);
   const cancel = el("button", "btn small ghost", "Cancel");
@@ -6466,7 +6471,8 @@ function openNoteForm(card, actions, onSend, opts) {
 
   send.addEventListener("click", () => {
     send.disabled = cancel.disabled = true;
-    onSend(ta.value.trim(), [send, cancel], !!(check && check.checked));
+    onSend(ta.value.trim(), [send, cancel], !!(check && check.checked),
+      !!(watch && watch.checked));
   });
   cancel.addEventListener("click", () => {
     form.remove();
@@ -7310,7 +7316,7 @@ async function refreshToday() {
                      refreshProposalData(), refreshTodayExtras()]);
 }
 
-async function runAnswer(row, answer, btns, note, ignoreAll, change) {
+async function runAnswer(row, answer, btns, note, ignoreAll, change, stopWatching) {
   const finding = caseAsFinding(row);
   if (answer.verb === "recheck" && finding) {
     return recheckFinding(finding, btns, btns.find((b) => b.dataset.verb === "recheck"));
@@ -7318,6 +7324,14 @@ async function runAnswer(row, answer, btns, note, ignoreAll, change) {
   if (answer.verb === "discuss" && finding) return discussFinding(finding, btns);
   btns.forEach((b) => { b.disabled = true; });
   try {
+    // "Stop watching <it>" first: the rule is written against the report,
+    // which the Ignore below takes off the list. A refusal stops the press
+    // before anything is ended, so nothing is half done.
+    let watched = "";
+    if (stopWatching && finding) {
+      const got = await api(`api/finding/${finding.ts}/stop_watching`, { method: "POST" });
+      watched = ` — and brAIn has stopped watching ${got.name || "it"}`;
+    }
     const data = await api(answer.route.replace(/^\//, ""), {
       method: answer.method || "POST",
       // A Fix box sends the change and never a note, so at most one of
@@ -7343,7 +7357,7 @@ async function runAnswer(row, answer, btns, note, ignoreAll, change) {
     const when = data && data.snoozed_until;
     toast(data && data.held ? "Muted until something about it changes"
           : when ? `Snoozed until ${untilWords(when)}`
-               : (answer.done || answer.label) + muted, data && data.undo);
+               : (answer.done || answer.label) + muted + watched, data && data.undo);
     if (answer.verb === "fix" || answer.verb === "apply") {
       refreshStatus().catch(() => {}); fastPoll();
     }
@@ -7353,10 +7367,16 @@ async function runAnswer(row, answer, btns, note, ignoreAll, change) {
   }
 }
 
+// What a card is about, by the house's name: the entity's, else "this".
+function caseThingName(row) {
+  return String(row.entity_name || "").trim() || "this";
+}
+
 function askThenRun(row, answer, btns) {
   const ignore = IGNORE_VERBS.has(answer.verb) && answer.verb !== "no";
   openNoteForm(btns.card, btns.actions,
-    (text, formBtns, all) => runAnswer(row, answer, btns.concat(formBtns), text, all), {
+    (text, formBtns, all, watch) => runAnswer(row, answer, btns.concat(formBtns), text, all,
+      undefined, watch), {
       hint: answer.ask || (ignore ? "Why? (helps brAIn learn)"
         : answer.verb === "no" ? "Why not? (helps brAIn learn)" : "Optional."),
       placeholder: answer.placeholder || answer.prefill
@@ -7365,6 +7385,9 @@ function askThenRun(row, answer, btns) {
       prefill: answer.prefill || "",
       check: ignore && answer.verb === "wrong" && row.mutable
         ? "Ignore all like this" : "",
+      // Absent on safety, security and protected things (`watch_off`).
+      watch: ignore && answer.verb === "wrong" && row.watch_off
+        ? `Stop watching ${caseThingName(row)}: no check looks at it again` : "",
       chips: ignore ? answer.chips || [] : [],
     });
 }
@@ -9347,11 +9370,11 @@ function factSubjectText(f) {
 
 const FACT_KIND_WORDS = {
   "": "All", house: "House", area: "Rooms", entity: "Devices",
-  person: "People", rule: "Rules you set",
+  person: "People", rule: "Rules you set", unwatched: "Not watched",
 };
 // What a person narrows by. "All" is the chip that clears the others, and a
 // kind this house holds nothing of is left out.
-const FACT_CHIPS = ["", "area", "entity", "house", "rule"];
+const FACT_CHIPS = ["", "area", "entity", "house", "rule", "unwatched"];
 
 function makeFactRow(f) {
   // The fact, and what it is about. Who taught it, when, and the run it
@@ -9411,7 +9434,9 @@ function makeFactRow(f) {
   if (f.subject && factSubjectText(f) !== f.subject) bits.push(f.subject);
   if (f.subject_room) bits.push(f.subject_room);
   if (f.predicate && String(f.predicate).startsWith("exception:")) {
-    bits.push("stands " + String(f.predicate).slice(10) + " down");
+    const rule = String(f.predicate).slice(10);
+    bits.push(rule === "*" ? "no house check looks at it or its device"
+      : "stands " + rule + " down");
   }
   detail.appendChild(el("span", null, bits.filter(Boolean).join(" · ")));
   if (f.run_id && f.run_source) {
@@ -9429,8 +9454,14 @@ function makeFactRow(f) {
     open.setAttribute("aria-expanded", shut ? "false" : "true");
   });
   row.appendChild(txt);
+  // A thing brAIn was told to stop watching: the undo is "Watch again",
+  // said as what it does, on the row (Knowledge › Not watched).
+  const unwatched = f.kind === "unwatched";
   const forget = async () => {
-    if (!window.confirm(`Delete this fact?\n\n“${f.text}”\n\nbrAIn stops `
+    if (!window.confirm(unwatched
+      ? `Watch ${factSubjectText(f)} again?\n\nEvery house check looks at it `
+        + "and its device again from the next pass."
+      : `Delete this fact?\n\n“${f.text}”\n\nbrAIn stops `
       + "using it. Anything already written in the memory document stays "
       + "there until you edit it.")) return;
     try {
@@ -9440,7 +9471,7 @@ function makeFactRow(f) {
       factsView.total = Math.max(0, factsView.total - 1);
       factsView.all = Math.max(0, factsView.all - 1);
       paintFacts();
-      toast("Deleted");
+      toast(unwatched ? "Watching it again" : "Deleted");
     } catch (e) {
       toast(e.message);
     }
@@ -9452,6 +9483,12 @@ function makeFactRow(f) {
   del.setAttribute("aria-label", "Delete this fact");
   tip(del, "Delete — brAIn stops using this fact");
   del.innerHTML = '<svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>';
+  if (unwatched) {
+    del.className = "btn small factwatch";
+    del.textContent = "Watch again";
+    del.setAttribute("aria-label", `Watch ${factSubjectText(f)} again`);
+    tip(del, "Every house check looks at it and its device again");
+  }
   del.addEventListener("click", forget);
   row.appendChild(del);
   return row;
@@ -19778,7 +19815,8 @@ function renderDashboard() {
     + `<label for="dashLessons">What brAIn has learned about this household</label>`
     + `<textarea id="dashLessons" rows="6" spellcheck="false">${esc((L.lessons || []).map((x) => "- " + (typeof x === "string" ? x : (x && x.text) || "")).join("\n"))}</textarea>`
     + `<p class="hint tight">One per line, yours to edit. Every change brAIn makes to the dashboard reads them.</p>`
-    + `<div class="row"><button type="button" class="btn" data-dash-act="lessons">Save lessons</button></div>`);
+    + `<div class="row"><button type="button" class="btn" data-dash-act="lessons">Save lessons</button></div>`
+    + dashKeepsHtml(L.keeps || []));
   const codeRows = code.length ? code.map((r) => `<div class="drow"><span><b>${esc(r.name)}</b>${r.kind === "new" ? " (new)" : ""} · ${esc(r.status === "paused" ? "paused by an update: Morph's own is running" : "in use")}</span>`
     + `<button type="button" class="btn small" data-dash-act="code_reset" data-v="${esc(r.name)}">Remove my change</button></div>`).join("")
     : `<p class="hint tight">None. brAIn can change any part of the dashboard's own code; ask in Edit.</p>`;
@@ -19796,6 +19834,19 @@ function renderDashboard() {
   const keepLessons = active && active.id === "dashLessons" ? active.value : null;
   body.innerHTML = parts.join("");
   if (keepLessons != null) { const ta = $("#dashLessons"); ta.value = keepLessons; ta.focus(); }
+}
+
+// What the learning loop will not propose moving, hiding or removing: each
+// card or section the household said No to changing, or put back by Undo or
+// Restore, with Forget to let it be proposed again (`learning.keeps`).
+function dashKeepsHtml(keeps) {
+  const rows = keeps.map((k) => `<div class="dashkeep"><span><b>${esc(k.name)}</b> · `
+    + `${esc(k.how === "undone" ? "you put it back after" : "you said No to")} `
+    + `“${esc(k.said)}”</span>`
+    + `<button type="button" class="btn small" data-dash-act="keep_clear" data-v="${esc(k.key)}">Forget</button></div>`).join("");
+  return `<p class="dashkeephead">Kept as they are</p>`
+    + (rows || `<p class="hint tight">Nothing yet. Say No to moving or removing a card, or put one back, and brAIn stops suggesting it.</p>`)
+    + (rows ? `<p class="hint tight">brAIn won't suggest moving, hiding or removing these. Forget lets it suggest again.</p>` : "");
 }
 
 async function dashRequest(kind, payload) {
@@ -19853,11 +19904,13 @@ $("#dashBody").addEventListener("click", async (ev) => {
     r = await dashRequest("lessons", { lessons });
   } else if (act === "code_reset") r = await dashRequest("code_reset", { name: v });
   else if (act === "undo_commit" || act === "restore") r = await dashRequest(act, { sha: v });
+  else if (act === "keep_clear") r = await dashRequest(act, { key: v });
   else if (act === "regenerate") { dashRegenSure = false; r = await dashRequest("regenerate"); }
   b.disabled = false;
   const said = { learn: "Learning pass started — suggestions appear on the dashboard when it answers.",
     lessons: "Lessons saved.", code_reset: "The dashboard's own copy is back. Reload the dashboard to see it.",
-    undo_commit: "Put back.", restore: "Restored that version. Undo is in History.", regenerate: "Rebuilt from the house." };
+    undo_commit: "Put back.", restore: "Restored that version. Undo is in History.",
+    keep_clear: "Forgotten. brAIn may suggest changing it again.", regenerate: "Rebuilt from the house." };
   toast(r && r.ok ? said[act] : (r && r.error) || "That did not work.");
   loadDashboard();
 });

@@ -802,6 +802,181 @@ def window(snap: dict, now: float) -> list[dict]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# climate.frost_ahead — a near-freezing night, and what holds water outside
+# ---------------------------------------------------------------------------
+#
+# `climate.freeze` watches a room already falling and is a safety check no
+# answer may quiet. This one reads the FORECAST (`snap["forecast"]`, the
+# occasions read's hourly temperatures) and names what in this house holds
+# water where the heating does not reach: irrigation and outdoor taps, a
+# pool, a space the household said nothing heats (or a garage, crawl space
+# or shed with a thermometer and no heating). One row per cold night,
+# naming them all, so a house with six valves is told once; the night's
+# date is in the text, so it is not filed again each pass and the next cold
+# night is a new row. Kept apart from `climate.freeze` because the owner
+# may quiet this one — a thing they stopped watching or explained is left
+# out (`House.should_report`, `owner_explained` on this check).
+FROST_CHECK = "climate.frost_ahead"
+# Within this of freezing is "near freezing": a forecast low is a regional
+# figure and a hose bib against a north wall reads colder than it.
+FROST_WARN_C = 2.0
+# How far ahead: tonight, from any pass made during the day.
+FROST_AHEAD_H = 24
+# Integrations that run irrigation or a pool, read off the registry's
+# platform: what the device IS, where a name is only what it is called.
+IRRIGATION_PLATFORMS = frozenset({
+    "rachio", "hydrawise", "rainbird", "opensprinkler", "bhyve",
+    "orbit_bhyve", "linktap", "gardena_bluetooth", "melnor", "rain_bird",
+    "hunter_hydrawise", "b_hyve", "netro_watering", "rainmachine"})
+POOL_PLATFORMS = frozenset({
+    "screenlogic", "omnilogic", "iaqualink", "intellicenter", "pentair",
+    "poolsync", "aqualink", "fluidra"})
+_IRRIGATION_WORDS = re.compile(
+    r"\b(irrigation|sprinklers?|drip|hose ?bibs?|spigots?|garden taps?|"
+    r"outdoor (?:taps?|faucets?|water)|outside (?:taps?|faucets?)|"
+    r"yard hydrants?)\b", re.I)
+_POOL_WORDS = re.compile(r"\b(pool|spa|hot ?tub|jacuzzi)\b", re.I)
+_COLD_SPACE_WORDS = re.compile(
+    r"\b(garage|crawl ?space|crawlspace|shed|barn|pump ?house|well ?house|"
+    r"outbuilding|workshop|greenhouse)\b", re.I)
+FROST_KINDS = ("irrigation", "pool", "space")
+MAX_FROST_NAMES = 8
+
+
+def _frost_night(forecast: dict, now: float) -> dict | None:
+    """The coldest hour in the next `FROST_AHEAD_H`, when it is within
+    `FROST_WARN_C` of freezing: ``{"temp", "unit", "hm", "date", "night"}``
+    where ``night`` is the date of the evening it belongs to (an hour
+    before noon is the night before's)."""
+    import datetime as _dt  # noqa: PLC0415
+
+    unit = str((forecast or {}).get("unit") or "°C")
+    fahrenheit = unit == "°F"
+    rows = [r for r in (forecast or {}).get("hourly") or ()
+            if isinstance(r, dict) and num(r.get("temp")) is not None
+            and now - 3600 <= float(r.get("t") or 0) <= now + FROST_AHEAD_H * 3600]
+    if not rows:
+        return None
+    low = min(rows, key=lambda r: (float(r["temp"]), float(r["t"])))
+    celsius = (float(low["temp"]) - 32.0) * 5.0 / 9.0 if fahrenheit \
+        else float(low["temp"])
+    if celsius > FROST_WARN_C:
+        return None
+    night = str(low.get("date") or "")
+    try:
+        if int(low.get("hour", 12)) < 12:
+            night = (_dt.date.fromisoformat(night)
+                     - _dt.timedelta(days=1)).isoformat()
+        label = _dt.date.fromisoformat(night)
+        night_words = f"{label:%a} {label.day} {label:%b}"
+        day = _dt.date.fromisoformat(str(low.get("date") or ""))
+        day_words = f"on {day:%a} {day.day} {day:%b}"
+    except (TypeError, ValueError):
+        night_words, day_words = night, ""
+    return {"temp": float(low["temp"]), "unit": unit,
+            "hm": str(low.get("hm") or ""), "date": str(low.get("date") or ""),
+            "night": night, "night_words": night_words,
+            "day_words": day_words}
+
+
+def _frost_kind(house: House, eid: str, conditioned: set[str],
+                said_cold: dict) -> str:
+    """Which of `FROST_KINDS` this entity is at risk as, or ""."""
+    reg = house.registry.get(eid) or {}
+    platform = str(reg.get("platform") or "")
+    domain = domain_of(eid)
+    device = house.device_of(eid) or {}
+    names = " ".join([house.name(eid), eid.replace("_", " "),
+                      str(device.get("name_by_user") or ""),
+                      str(device.get("name") or "")])
+    area = house.area_of(eid)
+    if domain in ("switch", "valve") and (
+            platform in IRRIGATION_PLATFORMS or _IRRIGATION_WORDS.search(names)):
+        return "irrigation"
+    if platform in POOL_PLATFORMS or (
+            domain in ("switch", "sensor", "water_heater", "climate", "pump")
+            and (_POOL_WORDS.search(names) or _POOL_WORDS.search(area))):
+        return "pool"
+    if domain == "sensor":
+        attrs = (house.states.get(eid) or {}).get("attributes") or {}
+        if str(attrs.get("device_class") or reg.get("device_class")
+               or reg.get("original_device_class") or "") != "temperature":
+            return ""
+        area_id = house.area_id_of(eid)
+        if eid in said_cold["entities"] or (area_id and area_id in said_cold["areas"]):
+            return "space"
+        if area_id and area_id not in conditioned and _COLD_SPACE_WORDS.search(area):
+            return "space"
+    return ""
+
+
+def frost_ahead(snap: dict, now: float) -> list[dict]:
+    """A near-freezing night in the forecast, and what here holds water
+    where the heating does not reach. One row a night."""
+    night = _frost_night(snap.get("forecast") or {}, now)
+    if night is None:
+        return []
+    house = House(snap)
+    conditioned = conditioned_areas(house)
+    said_cold = snap.get("unconditioned") or {"areas": [], "entities": []}
+    said_cold = {"areas": set(said_cold.get("areas") or ()),
+                 "entities": set(said_cold.get("entities") or ())}
+    found: dict[str, list[str]] = {k: [] for k in FROST_KINDS}
+    seen: set[str] = set()
+    for eid in sorted(set(house.states) | set(house.registry)):
+        if not house.enabled(eid):
+            continue
+        kind = _frost_kind(house, eid, conditioned, said_cold)
+        if not kind:
+            continue
+        if not house.should_report(eid, FROST_CHECK):
+            continue
+        said = house.owner_explained(eid, {FROST_CHECK})
+        if said:
+            house.gave_up(FROST_CHECK, [{"entity_id": eid}],
+                          f"you explained it: {said['text']}", kind="explained")
+            continue
+        # A space is named by its room, a device by its device: six zones
+        # of one controller are one thing to drain.
+        if kind == "space":
+            what = house.area_of(eid) or house.label(eid)
+        else:
+            device = house.device_of(eid)
+            what = house.device_name(device) if device else house.label(eid)
+        if what and what.lower() not in seen:
+            seen.add(what.lower())
+            found[kind].append(what)
+    names = [n for k in FROST_KINDS for n in found[k]]
+    if not names:
+        return []
+    temp, unit = night["temp"], night["unit"]
+    low = f"{temp:.0f}{unit}".replace("-", "−")
+    steps = []
+    if found["irrigation"]:
+        steps.append("shut off and drain the outdoor taps and irrigation")
+    if found["pool"]:
+        steps.append("keep the pool pump running or drain its lines")
+    if found["space"]:
+        steps.append("keep the unheated spaces above freezing (a heater, or "
+                     "leave a tap dripping)")
+    fix = "; ".join(steps)
+    return [{
+        "text": f"Near freezing the night of {night['night_words']}: protect "
+                "what holds water outside",
+        "detail": (f"The forecast low is {low} around {night['hm']} "
+                   f"{night['day_words']}. At risk here: "
+                   + join_names(names[:MAX_FROST_NAMES]) + "."),
+        "fix": fix[:1].upper() + fix[1:] + ".",
+        "severity": "warning",
+        "fixable": False,
+        "entity_id": "",
+        "items": names[:MAX_FROST_NAMES],
+        "evidence": [{"entity": "", "value": f"forecast low {low}",
+                      "when": f"{night['date']} {night['hm']}"}],
+    }]
+
+
 CHECKS = [
     {"id": "climate.underheated", "area": "devices",
      "title": "Asked for a temperature it never reaches",
@@ -818,6 +993,9 @@ CHECKS = [
     {"id": "climate.window", "area": "devices",
      "title": "Losing heat faster than it can",
      "needs": ("states", "registry", "thermal"), "run": window},
+    {"id": FROST_CHECK, "area": "devices",
+     "title": "Near-freezing night for outdoor water",
+     "needs": ("states", "registry", "forecast"), "run": frost_ahead},
 ]
 
 __all__ = ["CHECKS", "freezing_rooms", "underheated_rooms"]

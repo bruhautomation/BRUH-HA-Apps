@@ -245,6 +245,60 @@ def humidity_for(eid: str, states: dict, entities=None, devices=None) -> str:
     return same_area[0] if same_area else ""
 
 
+def room_humidity(eid: str, states: dict, entities=None, devices=None) -> list[str]:
+    """Every humidity sensor on the dehumidifier's device or in its room,
+    by id: what an owner's "it runs when <that sensor> reads over 60%" can
+    name, so the week below holds the sensor they meant."""
+    states = states or {}
+    rows = {r.get("entity_id"): r for r in entities or [] if isinstance(r, dict)}
+    by_id = {d.get("id"): d for d in devices or [] if isinstance(d, dict)}
+
+    def area(e: str) -> str:
+        row = rows.get(e) or {}
+        return str(row.get("area_id")
+                   or (by_id.get(row.get("device_id")) or {}).get("area_id") or "")
+
+    def humid(e: str) -> bool:
+        attrs = (states.get(e) or {}).get("attributes") or {}
+        return (str(e).startswith("sensor.")
+                and str(attrs.get("device_class") or "") == "humidity")
+
+    mine = rows.get(eid) or {}
+    where = area(eid)
+    return sorted(e for e, r in rows.items() if humid(e) and (
+        (mine.get("device_id") and r.get("device_id") == mine.get("device_id"))
+        or (where and area(e) == where)))
+
+
+# The week a dehumidifier's summary is read over (`checks.chores.
+# humidity_week`): hour by hour, how much of it the machine ran and what
+# each humidity sensor in its room read.
+WEEK_HOURS = 7 * 24
+
+
+def week_hours(power_points: list, threshold: float, humidity: dict,
+               now: float) -> dict:
+    """``{"hours": [[hour, run share]], "humidity": {sensor: [[hour,
+    mean]]}}`` for the last `WEEK_HOURS`, hours as epochs. An hour with no
+    power reading is left out, never counted as off."""
+    since = (int(now) // 3600) * 3600 - WEEK_HOURS * 3600
+
+    def by_hour(points):
+        buckets: dict[int, list[float]] = {}
+        for when, value in _readings(points):
+            hour = int(when) // 3600 * 3600
+            if since <= hour < now:
+                buckets.setdefault(hour, []).append(value)
+        return buckets
+
+    runs = [[h, round(sum(1 for v in vs if v >= threshold) / len(vs), 2)]
+            for h, vs in sorted(by_hour(power_points).items())]
+    rh = {sensor: [[h, round(sum(vs) / len(vs), 1)]
+                   for h, vs in sorted(by_hour(points).items())]
+          for sensor, points in sorted((humidity or {}).items())}
+    return {"hours": runs, "humidity": rh}
+
+
 def runs_from_rh(power_points: list, humidity_points: list,
                  shape: dict) -> tuple[float, int] | None:
     """The humidity this machine measurably starts running at: a low
@@ -739,6 +793,7 @@ async def _note_dehumidifiers(session, payload: dict, series: dict,
     say."""
     dry = dehumidifiers(states, entities, devices) & set(payload["entities"])
     rooms = {}
+    sensors: dict[str, list[str]] = {}
     for eid in sorted(dry):
         shape = payload["entities"][eid]
         shape["kind"] = DEHUMIDIFIER
@@ -746,10 +801,12 @@ async def _note_dehumidifiers(session, payload: dict, series: dict,
         if rh:
             shape["humidity_entity"] = rh
             rooms[eid] = rh
-    if not rooms:
+        sensors[eid] = room_humidity(eid, states, entities, devices)
+    wanted = sorted(set(rooms.values()) | {s for v in sensors.values() for s in v})
+    if not wanted:
         return
     try:
-        humid = await fetch(session, sorted(set(rooms.values())), start)
+        humid = await fetch(session, wanted, start)
     except Exception as exc:  # noqa: BLE001 — a level is a nicety
         log.info("dehumidifier humidity history failed: %s", exc)
         return
@@ -759,6 +816,12 @@ async def _note_dehumidifiers(session, payload: dict, series: dict,
         if level:
             payload["entities"][eid]["runs_from_rh"] = level[0]
             payload["entities"][eid]["rh_runs"] = level[1]
+    now = start.timestamp() + HISTORY_DAYS * 86400
+    for eid in sorted(dry):
+        shape = payload["entities"][eid]
+        shape["week"] = week_hours(
+            series.get(eid) or [], float(shape.get("threshold_w") or 0),
+            {s: (humid or {}).get(s) or [] for s in sensors.get(eid) or ()}, now)
 
 
 __all__ = [
@@ -766,7 +829,8 @@ __all__ = [
     "MAX_ENTITIES", "MAX_SETTLE_MIN", "MIN_DRAWS", "MIN_RUN_MIN",
     "MIN_SETTLE_MIN", "MIN_SPAN_RATIO", "MIN_SPAN_W", "RUNNING", "STORE",
     "THRESHOLD_FRACTION", "age_days", "build", "candidates", "fetch",
-    "DEHUMIDIFIER", "dehumidifiers", "humidity_for", "runs_from_rh",
+    "DEHUMIDIFIER", "dehumidifiers", "humidity_for", "room_humidity",
+    "runs_from_rh", "week_hours", "WEEK_HOURS",
     "is_power", "load", "noise_floor", "percentile", "profile", "progress",
     "save", "segments", "select", "settle_minutes", "state_at",
 ]

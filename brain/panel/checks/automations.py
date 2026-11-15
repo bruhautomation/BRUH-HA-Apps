@@ -1353,6 +1353,11 @@ RATE_MIN_RUNS = 8
 # simply have changed their mind, while two rules that have disagreed
 # twice will disagree every time their triggers land in that order.
 CONFLICT_MIN = 2
+# What counts as the household explaining a conflict: an answer or a rule
+# given on this check, on `auto.overridden` (who changes the entity's state
+# by hand), or a rule about anything on the entity (`*`, which "Stop
+# watching this" writes). Never a reason given on an unrelated check.
+CONFLICT_EXPLAINS = frozenset({"auto.conflict", "auto.overridden", "*"})
 # A second rule landing this soon after the first is a RACE: both answered
 # the same moment (two automations on one trigger), and which one wins is
 # the order Core happened to run them in. Anything slower in one direction
@@ -1783,12 +1788,14 @@ def conflicting(snap: dict, now: float) -> list[dict]:
         if any(not house.should_report(r, "auto.conflict") for r in rules):
             continue
         # What the two rules fight over, explained by the household: a Wrong
-        # with a reason, or a correction, stored against that entity or its
-        # device under any check (a lamp left unplugged on purpose, a
-        # remote that sleeps). Two rules "undoing" a device the household
-        # has explained is that device doing what they said.
-        explained = next(((e, said) for e in sorted(p["entities"])
-                          for said in [house.owner_explained(e)] if said),
+        # with a reason, or a correction, given about THIS — on a conflict
+        # report, on a hand-override report, or a rule about anything on
+        # that entity or its device (`CONFLICT_EXPLAINS`). A reason given on
+        # another check (a battery, a reading) is about that report, and
+        # read under any check it quietened a real fight between two rules.
+        explained = next(((e, said) for e in [*sorted(p["entities"]), *rules]
+                          for said in [house.owner_explained(
+                              e, CONFLICT_EXPLAINS)] if said),
                          None)
         if explained:
             house.gave_up("auto.conflict", [{"entity_id": subject}],

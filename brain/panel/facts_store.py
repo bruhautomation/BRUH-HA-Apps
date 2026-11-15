@@ -1359,7 +1359,7 @@ def recall(query: str = "", subject: str = "", subjects=(), limit: int = 20,
 # hundred rows of a store holding two thousand, in an order nobody could
 # name. A person wants every row, searchable, in an order they chose.
 BROWSE_SORTS = ("newest", "oldest", "subject", "certain")
-BROWSE_KINDS = ("house", "area", "entity", "person", "rule")
+BROWSE_KINDS = ("house", "area", "entity", "person", "rule", "unwatched")
 BROWSE_MAX = 200
 
 
@@ -1370,7 +1370,13 @@ def _kind_of(row: dict) -> str:
     it is about: those are the rows that change what brAIn does, and the
     ones a person most needs to be able to find and undo.
     """
-    if str(row.get("predicate") or "").startswith(EXCEPTION_PREFIX):
+    predicate = str(row.get("predicate") or "")
+    # A rule about every check on a thing ("Stop watching", or a reason
+    # read as "anything about it") is the list of what brAIn does not
+    # watch, kept apart so it is one place to find and undo.
+    if predicate == EXCEPTION_PREFIX + "*":
+        return "unwatched"
+    if predicate.startswith(EXCEPTION_PREFIX):
         return "rule"
     kind = subject_kind(str(row.get("subject") or "house"))
     return "area" if kind == "check" else kind

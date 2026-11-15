@@ -844,6 +844,35 @@ def reason_chips(case: dict, urgent: bool = False) -> list[str]:
     return [c for c in REASON_CHIPS if c != BROKEN_CHIP or entity]
 
 
+def can_stop_watching(case: dict, urgent: bool = False) -> bool:
+    """Whether Ignore's box may offer "Stop watching" on this card.
+
+    Only on a house check's report about one entity (a rule about every
+    check on a thing needs a thing), and never where the quick reasons
+    are never offered: a report about safety or security, an urgent or
+    critical one, a protected entity, a lock, an alarm or a siren, or one
+    whose words are about leaks, smoke, gas, freezing or intrusion. The
+    server adds the device's classes and the protected list
+    (`server._cannot_stop_watching`), which this module does not hold.
+    """
+    if not isinstance(case, dict):
+        return False
+    if not str(case.get("source") or "").startswith("check:"):
+        return False
+    entity = str(case.get("entity_id") or "")
+    if "." not in entity or " " in entity:
+        return False
+    if (urgent or case.get("urgent") or case.get("protected")
+            or case.get("safety") or is_security(case)
+            or str(case.get("severity") or "") == "critical"):
+        return False
+    if entity.split(".", 1)[0] in CHIP_NEVER_DOMAINS:
+        return False
+    words = " ".join(str(case.get(k) or "") for k in (
+        "claim", "text", "detail", "entity_id", "source_title")).lower()
+    return not set(_CHIP_WORD_RE.findall(words)) & CHIP_NEVER_WORDS
+
+
 # The groups Needs you is read in, top first. What is broken or at risk
 # comes first and is read worst-first; the decisions that cost a tap (a
 # guess, a house-book gap, "stop raising these?"), the chores and ideas, and
@@ -1016,6 +1045,6 @@ __all__ = ["AUTOMATION_PREFIX", "CHECK_SITUATIONS", "CHIPS", "CHIP_WORDS",
            "CHORE_SITUATIONS", "GROUPS", "GROUP_WORDS", "HANDS", "LEGACY_PLAN_MARK",
            "GO_AHEAD", "MAX_MORE", "MAX_VISIBLE", "MORPH_ASK", "MORPH_SOURCE", "PREFILL", "REASON_CHIPS", "REQUEST_ACTIONS", "RESIDENT_SOURCE", "SEVERITY_RANK",
            "SITUATIONS", "WHO", "WHO_LINES", "WHO_OF_VERB", "REQUEST_LABELS",
-           "answers", "request_view", "who_acts", "who_line", "as_morph_question", "chip", "is_security", "feed_key", "group", "more",
+           "answers", "can_stop_watching", "request_view", "who_acts", "who_line", "as_morph_question", "chip", "is_security", "feed_key", "group", "more",
            "morph_question", "plan_is_legacy", "plan_refused", "reason_chips", "request_answers",
            "situation"]

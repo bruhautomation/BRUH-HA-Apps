@@ -26,7 +26,7 @@ FEED = Path(os.environ.get("BRAIN_MORPH_DIR", "/config/.brain/morph")) / "feed.j
 TIMEOUT_S = 30
 POLL_S = 0.2
 
-KINDS = ("settings", "history", "undo_commit", "restore", "learn_now", "lessons",
+KINDS = ("settings", "history", "undo_commit", "restore", "learn_now", "lessons", "keep_clear",
          "regenerate", "code_reset", "code_redo", "code_merge_all")
 
 

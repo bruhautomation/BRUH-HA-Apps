@@ -2446,7 +2446,8 @@ async def _weekly_state(now: float) -> dict:
     # could spend a run saying so. The brief has always read "live".
     rows = await asyncio.to_thread(findings_store.list_all, "live")
     settled = await asyncio.to_thread(findings_store.settled_listing)
-    return weekly.gather(rows, settled, power, since, now=now)
+    return weekly.gather(rows, settled, power, since, now=now,
+                         humidity=list(_HUMIDITY_WEEK))
 
 
 async def _weekly_pick(state: dict, now: float, *,
@@ -13723,6 +13724,13 @@ def _note_registry(snapshot: dict) -> None:
     except Exception as exc:  # noqa: BLE001
         log.debug("machine-status note failed: %s", exc)
     try:
+        # Each dehumidifier's week, for the weekly report's lines
+        # (`checks.chores.humidity_summaries`).
+        from checks import chores as _chores  # noqa: PLC0415
+        _HUMIDITY_WEEK[:] = _chores.humidity_summaries(snapshot)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("humidity week note failed: %s", exc)
+    try:
         _USED_BY.clear()
         _USED_BY.update(_used_by_map(snapshot))
     except Exception as exc:  # noqa: BLE001
@@ -13751,6 +13759,9 @@ def _note_registry(snapshot: dict) -> None:
 # against (`chores.condition_holds`), so a press with such a reason knows,
 # before writing, whether brAIn can watch the condition or has to ask.
 _MACHINE_STATUS: dict[str, str] = {}
+# "<room> dehumidifier ran X h; humidity above …" per dehumidifier, off the
+# last checks pass, for the weekly report (`weekly.gather(humidity=)`).
+_HUMIDITY_WEEK: list[str] = []
 
 
 def _machine_status_map(snapshot: dict) -> dict[str, str]:
@@ -17747,7 +17758,12 @@ async def _occasions_read(reason: str, pressed: bool,
     new_store = {"built_at": int(now), "reason": reason,
                  "occasions": found, "weather": weather_id,
                  "calendars": calendars, "events": len(events),
-                 "filed": filed, "errors": errors}
+                 "filed": filed, "errors": errors,
+                 # The next two nights hour by hour, for the frost check
+                 # (`checks.thermal.frost_ahead`), which reads this store.
+                 "hourly": occasions.forecast_hours(hourly, now=now, tz=tz,
+                                                    unit=unit),
+                 "unit": "°F" if "f" in str(unit or "").lower() else "°C"}
     await asyncio.to_thread(occasions.save, new_store)
     OCCASIONS_STATE["last"] = {k: new_store[k] for k in
                                ("built_at", "reason", "weather", "events",
@@ -21893,6 +21909,13 @@ def _cases_payload(now: float | None = None) -> dict:
         case["group"] = answers_mod.group(case, case["urgent"])
         case["mutable"] = bool(case.get("source")) and (
             case.get("source") not in cases.UNMUTABLE_SOURCES)
+        # "Stop watching <it>" beside "Ignore all like this" in Ignore's
+        # box: the thing, for every check, where the other is the check,
+        # for every thing. Absent for safety, security and protected ones.
+        try:
+            case["watch_off"] = not _cannot_stop_watching(case)
+        except Exception:  # noqa: BLE001 — unreadable offers nothing
+            case["watch_off"] = False
         # Pretty names: the entity the card is about, and every id the
         # prose mentions, so the panel can render words a person reads
         # rather than ids they translate. Only ids the last snapshot saw
@@ -22883,6 +22906,81 @@ def _record_exception(finding: dict, note: str) -> list[str]:
         if row:
             ids.append(row["id"])
     return ids
+
+
+# ---------------------------------------------------------------------------
+# "Stop watching this" — every check skips one thing, by the owner's press
+# ---------------------------------------------------------------------------
+#
+# The rule it writes is the one the `entity` correction scope already wrote
+# from a reason ("anything about it", `corrections.apply_plan`): an
+# `exception:*` fact on the entity, which `House.withheld_by` reads for
+# every check on it and, through `_device_rule`, on the rest of its device.
+# The press only makes that scope one tap rather than a sentence a model has
+# to read. It carries the report's finding key, so the toast's Undo on the
+# Ignore it rides with takes it back too (`facts_store.forget_exceptions`),
+# and it is listed in Knowledge › Not watched, where Watch again deletes it.
+
+
+def _cannot_stop_watching(finding: dict) -> str:
+    """Why this report cannot offer "Stop watching", or "" when it can.
+
+    The quick reasons' floor (`answers.can_stop_watching`) and then what
+    only the server holds: the classes on the entity's device (a leak
+    sensor's battery is the leak sensor's), the protected list, and the
+    checks no correction may reach (`corrections.never_covered`).
+    """
+    if not answers_mod.can_stop_watching(finding):
+        return "brAIn always watches safety and security devices"
+    eid = str(finding.get("entity_id") or "")
+    if not rule_record.quietable(str(finding.get("source") or "")):
+        return "brAIn always watches safety and security devices"
+    family, classes, _device = _device_family(eid)
+    own = str((_NAMES.get(eid) or {}).get("class") or "")
+    if corrections.never_covered(
+            eid, corrections.check_of(finding), device_class=own,
+            protected=automation_writer.protected_patterns(),
+            device_classes=classes):
+        return "brAIn always watches safety, security and protected devices"
+    return ""
+
+
+def _stop_watching(finding: dict) -> dict:
+    """Write the rule. ``{"ok", "id", "name"}`` or ``{"error"}``."""
+    why = _cannot_stop_watching(finding)
+    if why:
+        return {"error": why}
+    eid = str(finding.get("entity_id") or "")
+    name = str((_NAMES.get(eid) or {}).get("name") or "") or eid
+    report = str(finding.get("claim") or finding.get("text") or "")
+    try:
+        row, _created = facts_store.add(
+            f"Stop watching {name}: you asked brAIn not to check it or its "
+            "device any more", subject=eid, source="correction",
+            predicate=facts_store.EXCEPTION_PREFIX + "*", confidence=0.95,
+            about=report,
+            finding_key=findings_store.normalize(finding.get("text") or ""))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not stop watching %s: %s", log_safe(eid), exc)
+        return {"error": "brAIn could not write that down"}
+    if not row:
+        return {"error": "brAIn could not write that down"}
+    log.info("stopped watching %s at the owner's request: every house "
+             "check skips it and its device", log_safe(eid))
+    decision_trail.note(
+        "exception", eid, "you chose Stop watching: no house check reports "
+        "on it or its device", check="*",
+        source=str(finding.get("source") or ""),
+        text=str(finding.get("text") or ""))
+    return {"ok": True, "id": row["id"], "name": name}
+
+
+async def h_finding_stop_watching(request: web.Request) -> web.Response:
+    finding = _finding_or_404(request)
+    got = await asyncio.to_thread(_stop_watching, finding)
+    if got.get("error"):
+        raise web.HTTPConflict(text=got["error"])
+    return web.json_response(got)
 
 
 # ---------------------------------------------------------------------------
@@ -30456,6 +30554,8 @@ def make_app() -> web.Application:
     # Not an ending either: the chat's sentence onto the card. Before the
     # {verb} catch-all for snooze's reason.
     app.router.add_post("/api/finding/{ts}/advice", h_finding_advice)
+    app.router.add_post("/api/finding/{ts}/stop_watching",
+                        h_finding_stop_watching)
     # The producer, not the row. Registered before /api/finding/{ts}/…
     # only for tidiness; the path does not collide.
     app.router.add_post("/api/findings/mute", h_findings_mute)
