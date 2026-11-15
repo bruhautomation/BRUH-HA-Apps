@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.11
+
+### Changed
+
+- Inventory stock cards on a phone show the whole product name (on up to two lines), the level bar and the amount left. Size, count and cost sit behind a pencil button, with fields wide enough for their full values; the area labels moved inside it too, and filtering by area stays in the chips at the top (#1017).
+
 ## 0.1.10
 
 ### Fixed
