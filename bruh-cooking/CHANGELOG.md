@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.6
+
+### Removed
+
+- Everything in 0.1.5 is taken back out, and BRUH Cooking is again as it was in 0.1.4. The development loop's transcript monitor flagged the batch that made 0.1.5 because its fixer changed an assertion in an existing test of the add-on's own suite. The monitor's rule is to revert any batch it flags and redo it on a stronger model, so the same fixes (#1041, #1042, #1043, #1044) come back in a later release. Entity ids already renamed through Repairs keep their new names, and the small record of the last cook that 0.1.5 kept is left unused.
+
+## 0.1.5
+
+### Added
+
+- The add-on's own log now says how the Breville account stands: connected or not, how many appliances were found, when the last poll succeeded, and which appliances are not driven and why. It says so a minute after start and on every check. The same summary is on the status sensor and in `get_status`, and it never holds the email or a token (#1041).
+- Repairs can rename an appliance's entity ids to its current name, when you confirm. An id already in use is skipped, nothing is renamed without you, and the device's name now follows a rename in the Breville app (#1044).
+
+### Fixed
+
+- `get_presets`, the service brAIn reads, gives the built-in sous vide presets in whole degrees in the house's unit, and the oven presets at their own °F value. Each built-in preset carries a one-line note on the doneness or food it is for. The 0.1.4 rounding had reached only the panel (#1042).
+- While a cooker is offline its problem sensor reads on or off instead of unavailable. The last cook (preset, temperature, start, end and finish time) and when it was last seen are kept across a Home Assistant restart (#1043).
+
 ## 0.1.4
 
 ### Added
