@@ -1307,6 +1307,10 @@ new Set(Object.values(TYPES)).forEach((T) => {
 // A tile's role for a screen reader: a slider when it has a level, a switch
 // when a tap toggles it, a button that opens otherwise.
 export function tileAria(T, ctx, name) {
+  // A hosted card draws its own controls (chips, words, buttons). Its tile is a
+  // named group around them, never a button laid over them: a button around
+  // controls in another shadow tree is read as a control on top of each.
+  if (T.host) return null;
   const slide = T.slide ? T.slide(ctx) : null;
   const tap = T.tap ? T.tap(ctx) : null;
   const word = ctx.st ? stateWord(ctx.st, ctx.hass) : '';
