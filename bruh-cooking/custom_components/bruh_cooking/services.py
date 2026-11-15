@@ -286,14 +286,18 @@ async def _custom_presets(hass: HomeAssistant) -> list[Any]:
 
 
 async def _get_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    accounts = [c.account_summary() for c in _coordinators(hass)]
     if call.data.get(ATTR_APPLIANCE):
-        return {"appliances": [describe(hass, *find_appliance(hass, call.data[ATTR_APPLIANCE]))]}
-    return {"appliances": [describe(hass, c, a) for c, a in _all(hass)]}
+        found = [describe(hass, *find_appliance(hass, call.data[ATTR_APPLIANCE]))]
+    else:
+        found = [describe(hass, c, a) for c, a in _all(hass)]
+    return {"appliances": found, "accounts": accounts}
 
 
 async def _get_presets(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
-    from .presets import BUILTIN_PRESETS, preset_fits
+    from .presets import BUILTIN_PRESETS, describe_preset, display_temperature, preset_fits
 
+    fahrenheit = hass.config.units.temperature_unit == UnitOfTemperature.FAHRENHEIT
     if call.data.get(ATTR_APPLIANCE):
         appliances = [find_appliance(hass, call.data[ATTR_APPLIANCE])[1]]
     else:
@@ -310,8 +314,9 @@ async def _get_presets(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]
                 "name": preset.name or preset.id.replace("_", " "),
                 "kind": preset.kind.value,
                 "builtin": preset.builtin,
-                "note": preset.note,
-                "temperature": _temperature(hass, settings.get("temperature_c")),
+                "note": describe_preset(preset),
+                "temperature": display_temperature(preset, fahrenheit),
+                "temperature_unit": hass.config.units.temperature_unit,
                 "duration_minutes": _minutes(settings.get("duration_s")) or None,
                 "mode": settings.get("mode"),
                 "level": settings.get("level"),
@@ -365,7 +370,13 @@ async def _start(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
         settings = start_settings(hass, preset_appliance, options)
     else:
         settings = start_settings(hass, appliance, options)
-    await coordinator.async_start_cook(appliance, settings)
+    if options.get(ATTR_PRESET):
+        coordinator.note_preset(appliance, str(options[ATTR_PRESET]))
+    try:
+        await coordinator.async_start_cook(appliance, settings)
+    except Exception:
+        coordinator.note_preset(appliance, None)
+        raise
     name = appliance_name(hass, appliance)
     unit = hass.config.units.temperature_unit
     answer: dict[str, Any] = {

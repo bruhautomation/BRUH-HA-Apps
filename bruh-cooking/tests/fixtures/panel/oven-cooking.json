@@ -20,24 +20,6 @@
       "max_cook_s": 259200
     },
     "entities": {
-      "cooking": {
-        "binary_sensor": "binary_sensor.kitchen_oven_cooking"
-      },
-      "door": {
-        "binary_sensor": "binary_sensor.kitchen_oven_door"
-      },
-      "problem": {
-        "binary_sensor": "binary_sensor.kitchen_oven_problem"
-      },
-      "oven_mode": {
-        "select": "select.kitchen_oven_mode"
-      },
-      "convection": {
-        "select": "select.kitchen_oven_convection"
-      },
-      "level": {
-        "select": "select.kitchen_oven_level"
-      },
       "status": {
         "sensor": "sensor.kitchen_oven_status"
       },
@@ -62,6 +44,21 @@
       "continue": {
         "button": "button.kitchen_oven_continue"
       },
+      "cooking": {
+        "binary_sensor": "binary_sensor.kitchen_oven_cooking"
+      },
+      "door": {
+        "binary_sensor": "binary_sensor.kitchen_oven_door"
+      },
+      "problem": {
+        "binary_sensor": "binary_sensor.kitchen_oven_problem"
+      },
+      "oven_mode": {
+        "select": "select.kitchen_oven_mode"
+      },
+      "level": {
+        "select": "select.kitchen_oven_level"
+      },
       "cook": {
         "switch": "switch.kitchen_oven_cook"
       },
@@ -73,6 +70,9 @@
       },
       "frozen": {
         "switch": "switch.kitchen_oven_frozen_food"
+      },
+      "convection": {
+        "select": "select.kitchen_oven_convection"
       },
       "target_temperature": {
         "number": "number.kitchen_oven_target_temperature"
@@ -317,15 +317,28 @@
           "error",
           "updating"
         ],
-        "device_class": "enum",
-        "friendly_name": "Kitchen Oven Status",
         "last_contact": "2026-10-25T18:00:00+00:00",
         "last_cook": {
           "started_at": "2026-10-25T18:00:00+00:00",
           "ended_at": null,
+          "preset": null,
           "target_temperature_c": 204.44444444444446,
-          "duration_s": 600
-        }
+          "duration_s": 600,
+          "finish_at": "2026-10-25T18:08:00+00:00"
+        },
+        "account": {
+          "connection": "connected",
+          "appliances_found": 2,
+          "last_poll": "2026-10-25T18:00:00+00:00",
+          "not_driven": [
+            {
+              "name": "Espresso",
+              "reason": "model BES995 is not one this integration drives (Joule, Joule Turbo, Joule Oven Air Fryer Pro)"
+            }
+          ]
+        },
+        "device_class": "enum",
+        "friendly_name": "Kitchen Oven Status"
       },
       "last_changed": "2026-10-25T18:00:00+00:00",
       "last_updated": "2026-10-25T18:00:00+00:00"
