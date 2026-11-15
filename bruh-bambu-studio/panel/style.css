@@ -140,7 +140,7 @@ dialog::backdrop { background: rgba(5, 8, 11, .45); }
 .toast[hidden] { display: none; }
 /* A ⋯ menu (a printer, a file, a part). */
 .pmenu { position: relative; margin: 0; flex: none; }
-.pmenu > summary { list-style: none; display: grid; place-items: center; width: 38px; height: 38px;
+.pmenu > summary { list-style: none; display: grid; place-items: center; width: 40px; height: 40px;
   min-height: 0; padding: 0; border-radius: var(--r-sm); font-size: 20px; line-height: 1; color: var(--muted); }
 .pmenu > summary::-webkit-details-marker { display: none; }
 .pmenu[open] > summary, .pmenu > summary:hover { background: var(--sunk); color: var(--ink); }
@@ -150,6 +150,13 @@ dialog::backdrop { background: rgba(5, 8, 11, .45); }
 .pmenupop button, .pmenupop .button { justify-content: flex-start; background: transparent; }
 .pmenupop button:hover:not(:disabled), .pmenupop .button:hover { background: var(--sunk); }
 .pmenupop [hidden] { display: none !important; }
+/* A printer's and a file's menu opens in the flow, under its own row, and
+   moves what is below it down: a floating one covered the camera's buttons
+   and ran off the bottom of the list. */
+.phead, .frow .factions { flex-wrap: wrap; }
+.phead .pmenu[open], .frow .pmenu[open] { flex: 1 1 100%; }
+.phead .pmenu[open] > summary, .frow .pmenu[open] > summary { margin-left: auto; }
+.phead .pmenu[open] > .pmenupop, .frow .pmenu[open] > .pmenupop { position: static; margin-top: 4px; min-width: 0; box-shadow: none; }
 /* An ⓘ that opens a short explanation (a phone never shows a title). */
 .info { position: relative; display: inline-flex; margin: 0; }
 .info > summary { list-style: none; display: grid; place-items: center; width: 28px; height: 28px; border: 1.5px solid currentColor;
@@ -428,7 +435,7 @@ fieldset.trays { border: 1px solid var(--line); border-radius: var(--r-sm); disp
 .camnote[hidden] { display: none; }
 .camover { position: absolute; z-index: 1; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 6px;
   padding: 8px; background: linear-gradient(rgba(5, 8, 11, .6), transparent); }
-.camover .iconbtn { border-radius: 50%; border: 0; background: rgba(5, 8, 11, .5); color: #e8eef3; backdrop-filter: blur(6px); }
+.camover .iconbtn { width: 40px; height: 40px; border-radius: 50%; border: 0; background: rgba(5, 8, 11, .5); color: #e8eef3; backdrop-filter: blur(6px); }
 .camover .iconbtn:hover:not(:disabled) { background: rgba(5, 8, 11, .7); }
 .camover .iconbtn[aria-pressed="true"] { background: #f6c945; color: #2a1f00; }
 .camover .iconbtn .ic { width: 18px; height: 18px; }
@@ -563,6 +570,11 @@ details.more > summary { list-style: none; }
 .frow { display: flex; align-items: center; gap: var(--s3); padding: 10px 0; border-top: 1px solid var(--line); }
 .fthumb { flex: none; width: 64px; height: 64px; border-radius: var(--r-sm); object-fit: contain; background: var(--sunk); }
 .fthumb.nopic { font-size: 12px; }
+.fthumb.kind { font-size: 12px; font-weight: 700; letter-spacing: .04em; color: var(--muted); }
+.fslice { margin: 2px 0; font-size: 14px; font-weight: 600; }
+.filebar { display: flex; gap: var(--s2); margin: var(--s3) 0 var(--s2); }
+.filebar input { flex: 1 1 auto; min-width: 0; }
+.filebar select { flex: none; max-width: 45%; }
 .fname { display: block; overflow-wrap: anywhere; }
 .frow .grow { min-width: 0; }
 @media (max-width: 560px) {

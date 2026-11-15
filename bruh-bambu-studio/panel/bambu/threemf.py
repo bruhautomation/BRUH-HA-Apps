@@ -13,6 +13,8 @@ import re
 import zipfile
 import xml.etree.ElementTree as ET
 
+import thumbs  # the panel's picture rule: one definition of what a 3MF's picture is
+
 PLATE_GCODE = re.compile(r"^Metadata/plate_(\d+)\.gcode$")
 # What an archive may hold before we stop trusting it to be a print job.
 MAX_ENTRIES = 5000
@@ -36,8 +38,7 @@ def inspect(path: str) -> dict:
             out["plates"] = plates
             out["sliced"] = bool(plates)
             out["project"] = "Metadata/project_settings.config" in names
-            out["picture"] = any(n.startswith("Metadata/plate_") and n.endswith(".png") for n in names) \
-                or "Auxiliaries/.thumbnails/thumbnail_middle.png" in names
+            out["picture"] = thumbs.png_member(names) is not None
             if "Metadata/slice_info.config" in names:
                 _slice_info(archive.read("Metadata/slice_info.config"), out)
             if out["filaments"] is None and plates:

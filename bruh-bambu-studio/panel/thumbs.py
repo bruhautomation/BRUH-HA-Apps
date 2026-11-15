@@ -55,6 +55,14 @@ def png_member(names: list[str], plate: int = 1) -> str | None:
         low = name.lower()
         if low.startswith("metadata/plate_") and low.endswith(".png") and "no_light" not in low:
             return name
+    # Other slicers and sites name their picture otherwise (a leading slash,
+    # Thumbnails/, Metadata/thumbnail_N.png): any picture called a thumbnail,
+    # or sitting in Metadata, is better than the placeholder.
+    for name in sorted(names):
+        low = name.lower().lstrip("/")
+        if low.endswith(".png") and "no_light" not in low and (
+                "thumbnail" in low or low.startswith(("metadata/", "thumbnails/"))):
+            return name
     return None
 
 
