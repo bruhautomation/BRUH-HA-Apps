@@ -194,3 +194,34 @@ async def test_the_registry_is_not_asked_by_identifiers(
     assert answer["appliances"][0]["device_id"] is not None
     coordinator = entry.runtime_data
     coordinator._update_sw_version(coordinator.appliances[JOULE])
+
+
+async def test_an_offline_appliance_says_how_long_and_why(
+    hass: HomeAssistant, entry: MockConfigEntry, socket: FakeSocket
+) -> None:
+    await push(hass, socket, csj("ACTIVE", 3, bathTemp=55.1))
+    answer = (await ask(hass, "get_status", appliance="countertop"))["appliances"][0]
+    assert "offline_reason" not in answer and answer["last_contact"]
+
+    # The cloud answers but the appliance does not.
+    await push(hass, socket, csj("OFFLINE", 0))
+    answer = (await ask(hass, "get_status", appliance="countertop"))["appliances"][0]
+    assert answer["offline_cause"] == "device"
+    assert answer["offline_reason"].startswith("Offline for ")
+    assert "appliance is not answering" in answer["offline_reason"]
+    state = hass.states.get("sensor.countertop_status")
+    assert state.state == "offline" and state.attributes["offline_cause"] == "device"
+
+    # Breville refusing the sign-in is told apart.
+    entry.runtime_data.auth_failed = True
+    answer = (await ask(hass, "get_status", appliance="countertop"))["appliances"][0]
+    assert answer["offline_cause"] == "sign_in"
+
+
+async def test_an_online_appliance_is_never_reported_offline_for_a_sign_in_flag(
+    hass: HomeAssistant, entry: MockConfigEntry, socket: FakeSocket
+) -> None:
+    await push(hass, socket, csj("ACTIVE", 3, bathTemp=55.1))
+    entry.runtime_data.auth_failed = True
+    answer = (await ask(hass, "get_status", appliance="countertop"))["appliances"][0]
+    assert answer["online"] is True and "offline_reason" not in answer

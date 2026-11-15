@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import logging
 
 import voluptuous as vol
 
@@ -31,6 +32,7 @@ from .const import (
     SERVICE_START_COOK,
 )
 from .coordinator import BrevilleCoordinator
+from .entity_ids import async_check_entity_ids
 from .fingerprint import record_loaded
 from .frontend import (
     async_add_entry_panel,
@@ -47,6 +49,8 @@ from .panel_api import (
     async_remove_presets,
     async_setup_panel_api,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -117,9 +121,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: BrevilleConfigEntry) -> 
     )
     coordinator = BrevilleCoordinator(hass, entry, client)
     await coordinator.async_config_entry_first_refresh()
+    _LOGGER.info("Signed in to Breville; %d appliance(s) on the account", len(coordinator.appliances))
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     coordinator.async_start_websocket()
+    async_check_entity_ids(hass, entry.entry_id)
+    entry.async_on_unload(
+        coordinator.async_add_listener(lambda: async_check_entity_ids(hass, entry.entry_id))
+    )
     # The sidebar panel, best effort: every entity works without it.
     await async_add_entry_panel(hass, entry)
 

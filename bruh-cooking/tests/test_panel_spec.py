@@ -134,7 +134,9 @@ def test_a_sous_vide_preset_keeps_the_timer_choice() -> None:
     current = CookSettings(temperature_c=60, duration_s=None, auto_start_timer=True)
     rare = next(preset for preset in BUILTIN_PRESETS if preset.id == "steak_rare")
     settings = applied_settings(rare, "CSJ100", current, fahrenheit=True)
-    assert (settings.temperature_c, settings.duration_s, settings.auto_start_timer) == (52, 5400, True)
+    # 52 °C is 125.6 °F: shown and cooked as 126 °F.
+    assert round(settings.temperature_c * 9 / 5 + 32, 6) == 126
+    assert (settings.duration_s, settings.auto_start_timer) == (5400, True)
 
 
 @pytest.mark.parametrize(
