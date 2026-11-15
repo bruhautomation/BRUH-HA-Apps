@@ -30,6 +30,9 @@ NONE = b""
 # Printer pictures are cached under this generation: an older release could
 # remember a read that went wrong as "no picture", and those are not trusted.
 PRINTER_CACHE = "printer2"
+# Library pictures likewise: 0.4.6 finds pictures in 3MFs from other slicers,
+# and a "none" an older release remembered for one of them must not stand.
+LIBRARY_CACHE = "library2"
 # One storage session per printer at a time: a list of jobs asks for every
 # picture at once, and a printer's FTPS server serves one session well and
 # refuses or stalls the rest.
@@ -141,7 +144,7 @@ def library(path: Path, plate: int = 1) -> bytes | None:
     except OSError:
         return None
     lower = path.name.lower()
-    cache = CACHE / "library" / f"{_key(path, stat.st_size, int(stat.st_mtime), plate)}.png"
+    cache = CACHE / LIBRARY_CACHE / f"{_key(path, stat.st_size, int(stat.st_mtime), plate)}.png"
     hit = _cached(cache)
     if hit is not None:
         return hit or None
