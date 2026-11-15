@@ -30,7 +30,7 @@ export function LabelViewer({ productId }: { productId: number }) {
       href={`/products/${productId}/label`}
       className="rounded-xl ring-1 ring-black/[0.04] bg-card shadow-sm overflow-hidden w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/30 transition-colors"
     >
-      <FileText className="w-4 h-4 text-leaf shrink-0" />
+      <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
       <span className="text-sm font-medium flex-1">View Label</span>
     </Link>
   );

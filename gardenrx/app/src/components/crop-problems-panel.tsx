@@ -172,7 +172,7 @@ export function CropProblemsPanel({ cropGroupName }: { cropGroupName: string | n
                           ))}
                           <Link
                             href={`/products?q=${encodeURIComponent(problem.products[0])}`}
-                            className="inline-flex items-center gap-0.5 text-[10px] text-leaf font-medium hover:text-leaf ml-1"
+                            className="inline-flex items-center gap-0.5 text-[10px] text-emerald-600 font-medium hover:text-emerald-700 ml-1"
                           >
                             See treatments <ArrowRight className="w-2.5 h-2.5" />
                           </Link>

@@ -85,11 +85,11 @@ export function QueuedSprayCard({ spray }: { spray: QueuedSpray }) {
         {/* Impact summary */}
         <div className="space-y-1.5 text-sm mb-3">
           <div className="flex items-start gap-2">
-            <Shield className="w-3.5 h-3.5 text-leaf mt-0.5 shrink-0" />
+            <Shield className="w-3.5 h-3.5 text-emerald-600 mt-0.5 shrink-0" />
             <div className="text-xs">
               <p className="text-emerald-800">
                 Coverage: <strong>{maxCoverage} days</strong>
-                <span className="text-ink-3 ml-1">
+                <span className="text-emerald-600/70 ml-1">
                   (next spray ~
                   {nextSprayDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})
                 </span>

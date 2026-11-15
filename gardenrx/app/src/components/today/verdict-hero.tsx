@@ -23,8 +23,6 @@ type Props = {
   dueCropIds: number[];
   bloomCrops: string[];
   weatherBlocker: string | null;
-  /** The next good spray window, from the one function Weather uses too. */
-  nextOpening: string | null;
   weatherUnavailable: boolean;
   upcoming: { cropName: string; type: string; daysLeft: number } | null;
   unprotectedCount: number;
@@ -63,7 +61,6 @@ export function VerdictHero(props: Props) {
     dueCropIds,
     bloomCrops,
     weatherBlocker,
-    nextOpening,
     weatherUnavailable,
     upcoming,
     phiCount,
@@ -129,10 +126,8 @@ export function VerdictHero(props: Props) {
       </>
     ) : (
       <>
-        <strong>{weatherBlocker || 'Conditions are poor.'}</strong>{' '}
-        {nextOpening
-          ? `Next opening: ${nextOpening}.`
-          : 'No good window in the next 3 days.'}
+        <strong>{weatherBlocker || 'Conditions are poor.'}</strong> Check the spray window for the
+        next opening.
       </>
     );
   } else if (state === 'bloom-only') {

@@ -78,7 +78,7 @@ export function SprayTimingPanel({
       {weatherHourly.length > 0 && (
         <div>
           <div className="flex items-baseline gap-2 mb-2">
-            <CalendarClock className="w-3.5 h-3.5 text-leaf shrink-0 self-center" />
+            <CalendarClock className="w-3.5 h-3.5 text-emerald-600 shrink-0 self-center" />
             <h3 className="text-[11px] font-semibold tracking-[0.18em] uppercase text-foreground/70">
               Next 72 hours
             </h3>
@@ -91,7 +91,7 @@ export function SprayTimingPanel({
       <dl className="space-y-2.5 text-[12px]">
         <div className="flex items-baseline gap-2">
           <CloudRain
-            className={`w-3.5 h-3.5 shrink-0 self-center ${rainFastOk ? 'text-leaf' : 'text-warn'}`}
+            className={`w-3.5 h-3.5 shrink-0 self-center ${rainFastOk ? 'text-emerald-600' : 'text-warn'}`}
           />
           <dt className="font-medium text-foreground shrink-0">Rain-fast</dt>
           <dd className="text-muted-foreground leading-snug">
@@ -115,7 +115,7 @@ export function SprayTimingPanel({
 
         {coverageDurations.length > 0 && (
           <div className="flex items-baseline gap-2">
-            <Shield className="w-3.5 h-3.5 text-leaf shrink-0 self-center" />
+            <Shield className="w-3.5 h-3.5 text-emerald-600 shrink-0 self-center" />
             <dt className="font-medium text-foreground shrink-0">Covers</dt>
             <dd className="text-muted-foreground flex-1 leading-snug">
               {coverageDurations.map((c, i) => (

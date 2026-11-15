@@ -1915,7 +1915,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
           <button
             onClick={() => setAddZoneOpen(true)}
             title="Add new zone"
-            className="text-[11px] text-leaf hover:text-leaf px-1.5 shrink-0"
+            className="text-[11px] text-emerald-600 hover:text-emerald-700 px-1.5 shrink-0"
           >
             <Plus className="w-3.5 h-3.5" />
           </button>
@@ -2360,7 +2360,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                     return c ? (
                       <Link
                         href={`/crops/${c.id}`}
-                        className="hidden sm:inline-flex items-center gap-1 text-[11px] text-leaf font-medium hover:text-leaf rounded-md bg-emerald-50 ring-1 ring-emerald-200/60 px-1.5 py-0.5 shrink-0"
+                        className="hidden sm:inline-flex items-center gap-1 text-[11px] text-emerald-600 font-medium hover:text-emerald-700 rounded-md bg-emerald-50 ring-1 ring-emerald-200/60 px-1.5 py-0.5 shrink-0"
                       >
                         {v.name}
                         <ExternalLink className="w-2.5 h-2.5" />
@@ -2616,7 +2616,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                   return c ? (
                     <Link
                       href={`/crops/${c.id}`}
-                      className="inline-flex items-center gap-1 text-[11px] text-leaf font-medium hover:text-leaf mt-1"
+                      className="inline-flex items-center gap-1 text-[11px] text-emerald-600 font-medium hover:text-emerald-700 mt-1"
                     >
                       View {c.name} — {v.name}
                       <ExternalLink className="w-2.5 h-2.5" />
@@ -2688,7 +2688,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                   setSelectedBorder(BORDER_PRESETS[0]);
                 }
               }}
-              className="self-start inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-leaf px-2 py-1 rounded-md ring-1 ring-border/40 hover:ring-emerald-300 hover:bg-emerald-50/40 transition-colors"
+              className="self-start inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-emerald-700 px-2 py-1 rounded-md ring-1 ring-border/40 hover:ring-emerald-300 hover:bg-emerald-50/40 transition-colors"
               title={
                 typeSelection.startsWith('crop:')
                   ? 'Reset name and colors to the defaults for this crop'
@@ -2731,7 +2731,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                   type="button"
                   onClick={() => saveAsTemplate(dialogRegion)}
                   disabled={saving}
-                  className="px-3 py-1.5 text-[11px] font-medium text-leaf hover:bg-emerald-50/80 transition-colors disabled:opacity-50"
+                  className="px-3 py-1.5 text-[11px] font-medium text-emerald-600 hover:bg-emerald-50/80 transition-colors disabled:opacity-50"
                   title="Save as reusable template"
                 >
                   {saving ? '...' : 'Save as Template'}
