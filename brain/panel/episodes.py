@@ -420,7 +420,9 @@ def _mass_changes(rows: list[dict], platforms: dict[str, str]
     "unavailable" and "home" twelve seconds later one row.
     """
     buckets: dict[tuple[int, str], dict[str, int]] = {}
+    called: dict[str, str] = {}
     for i, a in enumerate(rows):
+        called.setdefault(str(a["entity_id"]), str(a.get("name") or ""))
         if (a.get("cause") or "unattributed") != "unattributed":
             continue
         key = (int(float(a.get("ts") or 0)), _norm(a.get("state")))
@@ -469,8 +471,13 @@ def _mass_changes(rows: list[dict], platforms: dict[str, str]
         ep["entities"] = ents[:MASS_KEEP]
         ep["devices"] = len(ents)
         ep["integration"] = source
-        ep["name"] = (f"{len(ents)} devices"
-                      + (f" from {source}" if source else ""))
+        # By what the first of them is called, then how many more: "6 devices"
+        # said how many and never which.
+        said = sorted(called.get(e) or e for e in ents)
+        more = len(said) - 1
+        lead = (said[0] if more == 0 else f"{said[0]} and {said[1]}" if more == 1
+                else f"{said[0]} and {more} others")
+        ep["name"] = lead + (f" from {source}" if source else "")
         ep["open"] = False
         ep["duration_s"] = max(0.0, ep["ended"] - ep["started"])
         ep["states"] = list(reversed(ep["states"]))[:MAX_STATES]

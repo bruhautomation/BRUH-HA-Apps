@@ -668,6 +668,28 @@ function fmtDayClock(epoch) {
     + " " + fmtClock(epoch);
 }
 
+// A time in a results list: the clock for today, the day and the clock for
+// anything earlier (a bare "3:12 PM" under a result nine days old reads as
+// this afternoon). Past a week the date alone, with its year when it is not
+// this one.
+const OLD_RESULT_DAYS = 7;
+function resultIsOld(stamp) {
+  return !!stamp && (Date.now() / 1000 - stamp) / 86400 >= OLD_RESULT_DAYS;
+}
+function fmtWhen(epoch) {
+  const d = new Date(epoch * 1000);
+  if (isNaN(d.getTime())) return "";
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return fmtClock(epoch);
+  const opts = { weekday: "short", month: "short", day: "numeric" };
+  if (resultIsOld(epoch)) {
+    delete opts.weekday;
+    if (d.getFullYear() !== now.getFullYear()) opts.year = "numeric";
+    return d.toLocaleDateString([], opts);
+  }
+  return d.toLocaleDateString([], opts) + ", " + fmtClock(epoch);
+}
+
 // Topbar chip: both usage windows — the 5-hour session that gates automatic
 // runs, and the weekly one that a Claude plan really runs you out of. Each
 // number sits behind its own word, because "19% · 100%" is two readings with
@@ -3303,6 +3325,7 @@ function renderSettingsForm(data) {
   $("#setYolo").checked = data.settings.yolo_mode === true;
   $("#setTalkFirst").checked = data.settings.talk_first === true;
   renderSkipPermsNote(data);
+  renderPermsCaptions(data.settings);
   $("#setGatherMode").value = data.settings.gather_mode || "search";
   $("#setRefreshMode").value = data.settings.refresh_mode || "changed";
   $("#setThinking").value = data.settings.thinking || "normal";
@@ -3562,9 +3585,12 @@ function restoreSettingsSections() {
 // what the section is for.
 let setSummaryData = null;
 
-function setSummary(id, text) {
+function setSummary(id, text, flag) {
   const node = document.getElementById(id);
-  if (node && text) { node.textContent = text; node.title = text; }
+  if (node && text) {
+    node.textContent = text; node.title = text;
+    node.classList.toggle("flag", !!flag);
+  }
 }
 
 function renderSetSummaries(data) {
@@ -3583,9 +3609,10 @@ function renderSetSummaries(data) {
     setSummary("setSumUsage", model
       + (Number.isFinite(used) ? ` · ${Math.round(used)}% of this session` : ""));
     setSummary("setSumPermissions", st.yolo_mode === true
-      ? "No restrictions"
+      ? "Acts without asking, no restrictions"
       : st.dangerously_skip_permissions === true
-        ? "Acts without asking" : "Asks before it acts");
+        ? "Acts without asking" : "Asks before it acts",
+      st.yolo_mode === true || st.dangerously_skip_permissions === true);
     const policy = String(st.notify_policy || "").trim();
     setSummary("setSumNotify", (policy ? `“${policy}”` : "Urgent alerts only")
       + (st.speak_first === true ? " · said aloud" : ""));
@@ -3685,6 +3712,26 @@ function skipPermsStale(data) {
       : "The terminal session already open still asks. End it with /exit and the next one won't.";
   }
   return "";
+}
+
+// What the two switches say about themselves while they are on: a caption
+// that says "off by default" under a switch that is on is a caption read as
+// the switch's state. The warning is plain words, never a colour alone.
+function renderPermsCaptions(st) {
+  const skip = (st || {}).dangerously_skip_permissions === true;
+  const yolo = (st || {}).yolo_mode === true;
+  const cap = $("#setYoloCaveat");
+  if (cap) {
+    cap.textContent = yolo ? "Normally off \u2014 it is on now." : "Off by default.";
+    cap.classList.toggle("warn", yolo);
+  }
+  const warn = $("#setPermWarn");
+  if (warn) {
+    warn.hidden = !(skip || yolo);
+    warn.textContent = yolo
+      ? "brAIn is acting without asking, with no restrictions: protected entities, house rules and the action gate are not applied."
+      : "brAIn is acting without asking: the terminal and the chat do not stop before each command, edit or change.";
+  }
 }
 
 function renderSkipPermsNote(data) {
@@ -3876,8 +3923,10 @@ function checkedWords(stamp, staleDays) {
   if (!stamp) return "Not checked yet.";
   const when = timeAgo(new Date(stamp * 1000).toISOString());
   const days = (Date.now() / 1000 - stamp) / 86400;
+  // A week old or more names its date: "9 days ago" is arithmetic to do.
+  const dated = resultIsOld(stamp) ? `${fmtWhen(stamp)}, ${when}` : when;
   return days >= staleDays
-    ? `Checked ${when}, so it may be out of date.` : `Checked ${when}.`;
+    ? `Checked ${dated}, so it may be out of date.` : `Checked ${dated}.`;
 }
 
 // Technical values behind one closed fold, the form ⚙ allows (read-only text,
@@ -5203,8 +5252,7 @@ const DEEP_WORD = { ok: "Passed", failed: "Failed", skipped: "Skipped" };
 let deepPoll = null;
 
 function deepTime(stamp) {
-  if (!stamp) return "";
-  return new Date(stamp * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return stamp ? fmtWhen(stamp) : "";
 }
 
 // What each test is called to a person; the stage's own title is its
@@ -5220,8 +5268,8 @@ const DEEP_TITLES = {
   fixer_dry: "Making a change, and putting it back",
 };
 
-function deepRow(state, word, title, reason, detail, time) {
-  return `<div class="testrow ${state}"><span class="testword">${esc(word)}</span>`
+function deepRow(state, word, title, reason, detail, time, old) {
+  return `<div class="testrow ${state}${old ? " old" : ""}"><span class="testword">${esc(word)}</span>`
     + `<div class="testmain"><div class="testtitle">${esc(title)}</div>`
     + (reason ? `<div class="testreason">${esc(reason)}</div>` : "")
     + (detail ? detailsFold(`<div class="hint tight">${esc(detail)}</div>`) : "")
@@ -5252,7 +5300,8 @@ function renderDeep(d) {
     DEEP_TITLES[s.name] || s.title || s.name,
     s.sentence || "",
     s.detail || "",
-    deepTime(s.at || (d.running ? 0 : last.finished_at))));
+    deepTime(s.at || (d.running ? 0 : last.finished_at)),
+    !d.running && resultIsOld(s.at || last.finished_at)));
   if (d.running) {
     // The catalog is what lets a stage that has not started yet be a row
     // rather than nothing: a list that grows from empty reads as a run
@@ -5277,7 +5326,9 @@ function renderDeep(d) {
       else if (skipped) said = `Everything that could be tried works; ${skipped} part${skipped > 1 ? "s were" : " was"} left out.`;
       else said = "Everything works.";
       sum.textContent = d.running ? said : `${said} ${checkedWords(last.finished_at, 3)}`;
-      sum.classList.toggle("bad", c.failed > 0);
+      const stale = !d.running && resultIsOld(last.finished_at);
+      sum.classList.toggle("bad", c.failed > 0 && !stale);
+      sum.classList.toggle("old", stale);
       sum.hidden = false;
       deepCounts = c.line;
     } else {
@@ -5351,6 +5402,8 @@ function renderRehearsal(d) {
   const clean = last.cleanup || {};
   const rows = [];   // what a person reads: each planted thing, and any problem
   const tech = [];   // the numbers and the housekeeping, behind the fold
+  // A result a week old or more is history, not news: no alarm colour.
+  const old = resultIsOld(last.finished_at);
   if (last.finished_at) {
     const planted = c.planted || 0;
     const missed = planted - (c.found || 0);
@@ -5364,7 +5417,7 @@ function renderRehearsal(d) {
     (c.rows || []).forEach((r) => rows.push(diagRow(
       r.name || "A planted test",
       esc(REHEARSAL_WORDS[r.verdict] || r.verdict || ""),
-      r.verdict === "missed" || r.verdict === "false positive")));
+      !old && (r.verdict === "missed" || r.verdict === "false positive"))));
     tech.push(diagRow("Analyst", a.ran
       ? `found ${a.found || 0} of ${a.planted || 0}`
         + ` — recall ${Math.round((a.recall || 0) * 100)}%,`
@@ -5415,7 +5468,8 @@ function renderRehearsal(d) {
       : leftBehind ? "The checks caught every planted problem, but something it planted is still in the house."
       : "The checks caught every problem that was planted, and it cleaned up after itself.";
     sum.textContent = `${said} ${checkedWords(last.finished_at, 30)}`;
-    sum.classList.toggle("bad", bad);
+    sum.classList.toggle("bad", bad && !old);
+    sum.classList.toggle("old", old);
   }
   sum.hidden = !last.finished_at;
   body.innerHTML = rows.join("") + detailsFold(tech.join(""), "Details");
@@ -5543,7 +5597,7 @@ function renderAuthBox(a) {
     // The answer first, in one line: signed in, and when a real Claude
     // turn last said so. Where the credential came from and the three
     // stores are the evidence, so they sit behind Details.
-    const checked = c.checked_at ? ` · checked ${esc(fmtClock(c.checked_at))}` : "";
+    const checked = c.checked_at ? ` · checked ${esc(fmtWhen(c.checked_at))}` : "";
     rows.push(`<p class="authline"><b>Signed in</b>${checked}</p>`);
   }
 
@@ -5760,6 +5814,8 @@ $("#setSkipPerms").addEventListener("change", async () => {
     (saved) => skipPermsToast(on, saved));
   // A refused save leaves the switch where it was, and so does the box.
   if (!data) box.checked = !on;
+  renderPermsCaptions({ dangerously_skip_permissions: $("#setSkipPerms").checked,
+                        yolo_mode: $("#setYolo").checked });
 });
 $("#setTalkFirst").addEventListener("change", async () => {
   const box = $("#setTalkFirst");
@@ -5785,6 +5841,8 @@ $("#setYolo").addEventListener("change", async () => {
     on ? "No restrictions is on: brAIn may do anything"
        : "No restrictions is off: the restrictions are back");
   if (!data) box.checked = !on;
+  renderPermsCaptions({ dangerously_skip_permissions: $("#setSkipPerms").checked,
+                        yolo_mode: $("#setYolo").checked });
 });
 // Applied straight away rather than on the next status poll, so the Terminal
 // tab has already changed by the time the dialog is closed — and through the
@@ -8242,7 +8300,14 @@ function renderFindings() {
   if (!setupShown) {
     const cards = todayCards();
     if (!cards.length) {
-      list.appendChild(el("p", "empty-line", "Nothing needs you."));
+      // The To Do list under the queue is the person's too: chores that
+      // need their hands. An empty queue over a full list said two things.
+      const chores = todoRows().length;
+      list.appendChild(el("p", "empty-line tight", !chores
+        ? "Nothing needs you."
+        : chores === 1
+          ? "Nothing new to decide. The one chore on your To Do list below is waiting for you."
+          : `Nothing new to decide. The ${chores} chores on your To Do list below are waiting for you.`));
     } else {
       const waiting = cards.filter((c) => c.unchecked).length;
       if (waiting) list.appendChild(waitingNote(waiting));
@@ -8802,7 +8867,33 @@ function renderHistory() {
     const first = filters.find((f) => f.count > 0);
     if (first) todayState.histFilter = first.id;
   }
-  filters.forEach((f) => {
+  // The decisions are the filters. The log of what brAIn changed is a count
+  // in the thousands on a long-running house and is not a decision: it has
+  // its own line under them.
+  const logBox = $("#histChanges");
+  if (logBox) {
+    logBox.textContent = "";
+    const log = filters.find((f) => f.id === "changes");
+    logBox.hidden = !log;
+    if (log) {
+      const on = todayState.histFilter === "changes";
+      const open = el("button", "btn-tertiary histlogbtn", on
+        ? "\u2039 Back to what you decided"
+        : `${log.label}: ${log.count.toLocaleString()} \u203a`);
+      open.type = "button";
+      open.setAttribute("aria-pressed", on ? "true" : "false");
+      open.addEventListener("click", () => {
+        todayState.histFilter = on
+          ? ((filters.find((f) => f.id !== "changes" && f.count > 0)
+              || filters.find((f) => f.id !== "changes") || {}).id || "snoozed")
+          : "changes";
+        todayState.histPicked = true;
+        renderHistory();
+      });
+      logBox.appendChild(open);
+    }
+  }
+  filters.filter((f) => f.id !== "changes").forEach((f) => {
     const on = todayState.histFilter === f.id;
     const b = el("button", "pill" + (on ? " active" : ""));
     b.type = "button";

@@ -1437,6 +1437,18 @@ body.modal-open {
   white-space: normal; overflow-wrap: anywhere;
 }
 .setnavbtn.active .setnavsum { color: var(--ink-2); }
+/* A setting that lets brAIn act without asking is flagged on the list, in
+   words and in the warning colour. */
+.setnavsum.flag { color: var(--warning-ink); font-weight: 600; }
+.setnavbtn.active .setnavsum.flag { color: var(--warning-ink); }
+.permwarn {
+  margin: 0 0 var(--sp-3); padding: 10px 12px;
+  border: 1px solid var(--warning); border-radius: 10px;
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--warning-ink); font-size: var(--fs-body); font-weight: 600;
+  line-height: var(--lh-body);
+}
+.permwarn[hidden] { display: none; }
 .setback { display: none; }
 @media (min-width: 900px) {
   .setlayout { grid-template-columns: 320px minmax(0, 1fr); align-items: start; }
@@ -1703,6 +1715,7 @@ body.modal-open {
 .testshead .btn { flex: none; }
 .testssum { margin: 10px 0 0; font-size: var(--fs-body); font-weight: 600; color: var(--good-ink); }
 .testssum.bad { color: var(--critical-ink); }
+.testssum.old { color: var(--ink-2); }
 .testlist { margin-top: 8px; }
 .testrow {
   display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; gap: 4px 10px;
@@ -1712,6 +1725,7 @@ body.modal-open {
 .testword { font-size: var(--fs-meta); font-weight: 700; color: var(--ink-3); }
 .testrow.ok .testword { color: var(--good-ink); }
 .testrow.failed .testword { color: var(--critical-ink); }
+.testrow.old .testword { color: var(--ink-3); }
 .testtitle { font-weight: 600; color: var(--ink); }
 .testreason { color: var(--ink-2); line-height: 1.4; }
 .testrow.skipped .testtitle, .testrow.waiting .testtitle { color: var(--ink-2); }
@@ -2787,15 +2801,12 @@ body.kb-lift:not(.term-classic) #viewTerminal.active {
   gap: 6px;
 }
 .crkinds .pill { font-size: var(--fs-meta); }
-/* Below the rail's breakpoint the list is the whole page: the kinds are one
-   strip that scrolls along, never three rows above the first chat. */
+/* On the list page the kinds wrap like the rail's: a strip that scrolls
+   sideways cut the last pill's count in half at rest and nothing said there
+   was more of it. */
 @media (max-width: 899px) {
-  .pillseg.crkinds {
-    flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain;
-    scroll-snap-type: x proximity; scroll-padding-inline: 12px; scrollbar-width: none;
-  }
-  .pillseg.crkinds::-webkit-scrollbar { display: none; }
-  .pillseg.crkinds .pill { flex: none; scroll-snap-align: start; }
+  .pillseg.crkinds { gap: 6px 6px; padding-bottom: 6px; }
+  .pillseg.crkinds .pill { flex: none; }
 }
 .crhint {
   flex: none;
@@ -2810,7 +2821,9 @@ body.kb-lift:not(.term-classic) #viewTerminal.active {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 8px;
+  /* The last row stops short of the composer under it, with room to spare. */
+  padding: 8px 8px 20px;
+  scroll-padding-bottom: 20px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -6056,6 +6069,9 @@ body.term-classic #termMode .ico-out { display: block; }
   color: var(--ink-3);
 }
 
+/* Over a list that follows it, the line needs no air of its own. */
+.empty-line.tight { padding: var(--sp-1) 0; }
+
 /* Three buttons. Primary filled, secondary outline, tertiary text. 36px on
    a pointer, 44px on touch. Usable alone or on top of `.btn`. */
 .btn-primary, .btn-secondary, .btn-tertiary {
@@ -6461,6 +6477,8 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 /* History's rows (the pane itself is styled under Sections, below). */
 .histfilters { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
 .histlist { display: grid; gap: var(--sp-2); }
+.histchanges { margin: 0 0 var(--sp-2); }
+.histchanges[hidden] { display: none; }
 .histrow {
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3);
   padding: var(--sp-2) 0; border-bottom: 1px solid var(--hairline);
