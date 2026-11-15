@@ -13,13 +13,16 @@ export function presetName(t: Translate, preset: Preset): string {
 
 /**
  * The preset's temperature in the user's unit: a built-in oven preset's own round value in °F,
- * else the Celsius value, converted. Null for a broil or slow cook, which has a level.
+ * else the Celsius value, converted (a built-in one to a whole degree, which is what the appliance is then sent). Null for a broil or slow cook, which has a level.
  */
 export function presetTemperature(hass: HomeAssistant, preset: Preset): number | null {
   const { temperature_c: celsius, temperature_f: fahrenheit } = preset.settings;
   if (!isCelsius(hass) && typeof fahrenheit === "number") return fahrenheit;
   if (typeof celsius !== "number") return null;
-  return isCelsius(hass) ? celsius : Math.round(((celsius * 9) / 5 + 32) * 10) / 10;
+  if (isCelsius(hass)) return celsius;
+  const converted = (celsius * 9) / 5 + 32;
+  // A built-in preset is cooked at the whole degree shown (half up, as the server rounds).
+  return preset.builtin ? Math.floor(converted + 0.5) : Math.round(converted * 10) / 10;
 }
 
 /** "56 °C · 1 h 30 min", or "Air fry · 400 °F · 20 min". */

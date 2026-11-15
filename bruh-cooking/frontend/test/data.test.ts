@@ -32,7 +32,7 @@ describe("presets", () => {
     const celsius = fakeHass([FIXTURES["joule-idle"]]);
     const fahrenheit = fakeHass([FIXTURES["oven-idle"]]);
     expect(presetSummary(celsius, t, preset("steak_medium_rare"), SHARED_DATA.modes)).toBe("56 °C · 1 h 30 min");
-    expect(presetSummary(fahrenheit, t, preset("steak_medium_rare"), SHARED_DATA.modes)).toBe("132.8 °F · 1 h 30 min");
+    expect(presetSummary(fahrenheit, t, preset("steak_medium_rare"), SHARED_DATA.modes)).toBe("133 °F · 1 h 30 min");
     expect(presetSummary(fahrenheit, t, preset("frozen_pizza"), SHARED_DATA.modes)).toBe("Pizza · 400 °F · 16 min · Frozen");
     expect(presetSummary(celsius, t, preset("frozen_fries"), SHARED_DATA.modes)).toBe("Air fry · 205 °C · 20 min");
     expect(presetSummary(fahrenheit, t, preset("salmon_fillets"), SHARED_DATA.modes)).toBe("Broil · High · 8 min");

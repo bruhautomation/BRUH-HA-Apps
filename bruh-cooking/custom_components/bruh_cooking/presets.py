@@ -15,6 +15,7 @@ frontend/src/types.ts; built-in names are translated there, by id.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import math
 from typing import Any
 
 from .appliance import (
@@ -224,9 +225,14 @@ def applied_settings(
         return oven_settings(preset.settings, current, fahrenheit=fahrenheit)
     seconds = preset.settings.get("duration_s") or None
     low, high = temp_limits(model)
+    celsius = float(preset.settings["temperature_c"])
+    if fahrenheit and preset.builtin:
+        # The panel shows a built-in preset in a whole °F (half up, as it does), so that is
+        # what cooks: round the °F value, then back. A custom preset is sent as saved.
+        celsius = fahrenheit_to_celsius(math.floor(celsius * 9 / 5 + 32 + 0.5))
     return replace(
         current,
-        temperature_c=min(high, max(low, float(preset.settings["temperature_c"]))),
+        temperature_c=min(high, max(low, celsius)),
         duration_s=seconds,
     )
 

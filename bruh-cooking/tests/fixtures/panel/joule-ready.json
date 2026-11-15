@@ -200,7 +200,14 @@
           "updating"
         ],
         "device_class": "enum",
-        "friendly_name": "Countertop Status"
+        "friendly_name": "Countertop Status",
+        "last_contact": "2026-10-25T18:00:00+00:00",
+        "last_cook": {
+          "started_at": "2026-10-25T18:00:00+00:00",
+          "ended_at": null,
+          "target_temperature_c": 56.0,
+          "duration_s": 5400
+        }
       },
       "last_changed": "2026-10-25T18:00:00+00:00",
       "last_updated": "2026-10-25T18:00:00+00:00"

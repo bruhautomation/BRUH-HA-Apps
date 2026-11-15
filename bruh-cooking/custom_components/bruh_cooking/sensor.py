@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -108,10 +109,32 @@ class BrevilleSensor(BrevilleEntity, SensorEntity):
 
     @property
     def available(self) -> bool:
+        if self.entity_description.key == "status":
+            # Offline is what this sensor says, with the reason as attributes.
+            return self.appliance.on_account
         if self.entity_description.always_available:
             return self.cloud_available
         return super().available
 
     @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        if self.entity_description.key != "status":
+            return None
+        appliance = self.appliance
+        attrs: dict[str, Any] = {
+            "last_contact": appliance.last_contact.isoformat(timespec="seconds")
+            if appliance.last_contact
+            else None,
+            "last_cook": appliance.last_cook,
+        }
+        if (report := self.coordinator.offline_report(appliance)) is not None:
+            attrs["offline_cause"] = report["cause"]
+            attrs["offline_since"] = report["since"]
+            attrs["offline_reason"] = report["text"]
+        return attrs
+
+    @property
     def native_value(self) -> StateType | datetime:
+        if self.entity_description.key == "status" and not self.cloud_available:
+            return CookState.OFFLINE.value
         return self.entity_description.value_fn(self.appliance)

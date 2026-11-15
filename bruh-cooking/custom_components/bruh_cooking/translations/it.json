@@ -368,6 +368,12 @@
       }
     }
   },
+  "issues": {
+    "entity_ids_old_name": {
+      "title": "{name}: entity IDs use an older name",
+      "description": "The entities of {name} were created under an earlier name, so their IDs no longer match it (their displayed names do). Nothing was renamed, because automations and dashboards use the IDs. To rename them, open the device page, open its three-dot menu and choose Recreate entity IDs. Check your automations afterwards."
+    }
+  },
   "exceptions": {
     "untested_control": {
       "message": "Il controllo del {product} non è ancora stato testato. Per provarlo, attiva \"Consenti il controllo degli elettrodomestici non testati\" nelle opzioni dell'integrazione."
