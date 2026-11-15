@@ -19799,7 +19799,8 @@ function renderDashboard() {
     + `<label for="dashLessons">What brAIn has learned about this household</label>`
     + `<textarea id="dashLessons" rows="6" spellcheck="false">${esc((L.lessons || []).map((x) => "- " + (typeof x === "string" ? x : (x && x.text) || "")).join("\n"))}</textarea>`
     + `<p class="hint tight">One per line, yours to edit. Every change brAIn makes to the dashboard reads them.</p>`
-    + `<div class="row"><button type="button" class="btn" data-dash-act="lessons">Save lessons</button></div>`);
+    + `<div class="row"><button type="button" class="btn" data-dash-act="lessons">Save lessons</button></div>`
+    + dashKeepsHtml(L.keeps || []));
   const codeRows = code.length ? code.map((r) => `<div class="drow"><span><b>${esc(r.name)}</b>${r.kind === "new" ? " (new)" : ""} · ${esc(r.status === "paused" ? "paused by an update: Morph's own is running" : "in use")}</span>`
     + `<button type="button" class="btn small" data-dash-act="code_reset" data-v="${esc(r.name)}">Remove my change</button></div>`).join("")
     : `<p class="hint tight">None. brAIn can change any part of the dashboard's own code; ask in Edit.</p>`;
@@ -19817,6 +19818,19 @@ function renderDashboard() {
   const keepLessons = active && active.id === "dashLessons" ? active.value : null;
   body.innerHTML = parts.join("");
   if (keepLessons != null) { const ta = $("#dashLessons"); ta.value = keepLessons; ta.focus(); }
+}
+
+// What the learning loop will not propose moving, hiding or removing: each
+// card or section the household said No to changing, or put back by Undo or
+// Restore, with Forget to let it be proposed again (`learning.keeps`).
+function dashKeepsHtml(keeps) {
+  const rows = keeps.map((k) => `<div class="dashkeep"><span><b>${esc(k.name)}</b> · `
+    + `${esc(k.how === "undone" ? "you put it back after" : "you said No to")} `
+    + `“${esc(k.said)}”</span>`
+    + `<button type="button" class="btn small" data-dash-act="keep_clear" data-v="${esc(k.key)}">Forget</button></div>`).join("");
+  return `<p class="dashkeephead">Kept as they are</p>`
+    + (rows || `<p class="hint tight">Nothing yet. Say No to moving or removing a card, or put one back, and brAIn stops suggesting it.</p>`)
+    + (rows ? `<p class="hint tight">brAIn won't suggest moving, hiding or removing these. Forget lets it suggest again.</p>` : "");
 }
 
 async function dashRequest(kind, payload) {
@@ -19874,11 +19888,13 @@ $("#dashBody").addEventListener("click", async (ev) => {
     r = await dashRequest("lessons", { lessons });
   } else if (act === "code_reset") r = await dashRequest("code_reset", { name: v });
   else if (act === "undo_commit" || act === "restore") r = await dashRequest(act, { sha: v });
+  else if (act === "keep_clear") r = await dashRequest(act, { key: v });
   else if (act === "regenerate") { dashRegenSure = false; r = await dashRequest("regenerate"); }
   b.disabled = false;
   const said = { learn: "Learning pass started — suggestions appear on the dashboard when it answers.",
     lessons: "Lessons saved.", code_reset: "The dashboard's own copy is back. Reload the dashboard to see it.",
-    undo_commit: "Put back.", restore: "Restored that version. Undo is in History.", regenerate: "Rebuilt from the house." };
+    undo_commit: "Put back.", restore: "Restored that version. Undo is in History.",
+    keep_clear: "Forgotten. brAIn may suggest changing it again.", regenerate: "Rebuilt from the house." };
   toast(r && r.ok ? said[act] : (r && r.error) || "That did not work.");
   loadDashboard();
 });
