@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.7
+
+### Added
+
+- Each Breville or Sage account has its own device with an account sensor: connected or not, how many appliances were found, the last good poll, and any appliance on the account it does not drive with the reason. The add-on's log says the same a minute after start, whenever it changes, and once an hour (#1041).
+- A Repairs fix renames an appliance's entity ids to its current name, only when you confirm it; nothing is ever renamed on its own, because automations use the ids (#1044).
+
+### Fixed
+
+- Presets show the temperature the cook really uses, in whole degrees Fahrenheit (or the nearest half degree for your own), each with a one-line note on the doneness or food it is for (#1042).
+- With a cooker offline, the problem sensor still reads on or off, losing contact no longer ends the cook, and the last cook (preset, temperature, finish time) stays readable and survives a reload (#1043).
+- The device name follows a rename in the Breville app, and renaming one entity no longer puts the old device name back (#1044).
+
 ## 0.1.6
 
 ### Removed

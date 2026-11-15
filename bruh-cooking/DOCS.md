@@ -159,12 +159,12 @@ Every appliance has:
 
 | Entity | Type | What it does |
 |---|---|---|
-| Status | Sensor | What the appliance is doing: Idle, Preheating, Ready for food, Cooking, Done, Keeping warm, Press the button on the appliance, Error, Updating or Offline. |
+| Status | Sensor | What the appliance is doing: Idle, Preheating, Ready for food, Cooking, Done, Keeping warm, Press the button on the appliance, Error, Updating or Offline. Its attributes say when the appliance was last in contact and what the last cook was (start, end, temperature, time, the preset and the finish time when known); while it's offline, why and since when. |
 | Temperature | Sensor | The water or oven temperature. Unknown while the oven is idle, since it stops updating it. |
 | Time remaining | Sensor | Time left on the timer. |
 | Cook end | Sensor | When the timer will finish. |
 | Cooking | Binary sensor | On from the start of a cook to its end, including preheating and waiting for the food. |
-| Problem | Binary sensor | On while the appliance reports an error. |
+| Problem | Binary sensor | On while the appliance reports an error. While the appliance is offline it keeps the last error it reported. |
 | Error | Sensor (diagnostic) | The error, such as Low water level or Tipped over. |
 | Preheat | Sensor | How far preheating has got, in percent, from the temperature, as the Breville+ app works it out. An oven also ends preheating after 5 minutes, so once Home Assistant has seen it start, its Preheat counts that time too. It never goes back during a preheat. Unknown when the appliance isn't preheating. |
 | Target temperature | Number | The temperature for the next cook, or of the running one. |
@@ -172,6 +172,13 @@ Every appliance has:
 | Cook | Switch | Turn on to start a cook with these settings, and off to stop it. |
 | Continue | Button | Tells the appliance the food is in, which starts the timer, or that it's out. Available only while the appliance is waiting for this. |
 | Start timer automatically | Switch (configuration) | Starts the timer as soon as the temperature is reached, instead of waiting for **Continue**. On at first for the oven, as in the app. |
+
+Each account also has a **Breville account** device (Sage account for a Sage
+account) with one sensor: Connected, Not connected or Sign-in refused, with
+the number of appliances found, the time of the last successful poll, and any
+appliance on the account that BRUH Cooking doesn't drive, with the reason.
+The add-on's own log says the same a minute after it starts, whenever it
+changes, and once an hour.
 
 The oven also has:
 
@@ -305,7 +312,10 @@ response_variable: cook
 ## Examples
 
 These examples assume an appliance named Joule. Your entity IDs follow the
-appliance's name in the Breville+ app.
+appliance's name in the Breville+ app when it was added. If you rename it in
+the app later, the names follow at once but the IDs don't, because automations
+use them: **Settings → Repairs** then offers to rename the IDs, and only does
+so when you confirm.
 
 Get a notification when the water is ready for the food:
 
