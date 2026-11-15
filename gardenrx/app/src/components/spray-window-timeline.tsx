@@ -76,7 +76,7 @@ export function SprayWindowTimeline({
             <div className="flex items-center justify-between mb-1">
               <span className="text-[11px] font-medium text-foreground/70">
                 {dayLabel}
-                {dayIdx === 0 && <span className="text-emerald-600 ml-1 text-[9px]">Today</span>}
+                {dayIdx === 0 && <span className="text-leaf ml-1 text-[9px]">Today</span>}
               </span>
               <span
                 className={`text-[10px] font-semibold px-1.5 py-0 rounded-full ${ratingColorsLight[bestRating]}`}

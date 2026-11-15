@@ -263,7 +263,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                       <p className="text-xs font-semibold text-emerald-800">
                         {qs.crops.map((qc) => qc.crop!.name).join(', ')}
                       </p>
-                      <p className="text-[10px] text-emerald-600/70 truncate">
+                      <p className="text-[10px] text-ink-3 truncate">
                         {qs.products.map((qp) => qp.product!.brand).join(' + ')}
                       </p>
                     </div>
@@ -399,10 +399,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
             Select Crops
           </h2>
           {selectedCropIds.length < props.crops.length && (
-            <button
-              onClick={selectAll}
-              className="text-xs text-emerald-600 font-medium hover:text-emerald-700"
-            >
+            <button onClick={selectAll} className="text-xs text-leaf font-medium hover:text-leaf">
               Select all
             </button>
           )}
@@ -541,7 +538,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                     {!planAhead && (
                       <button
                         onClick={() => setPlanAhead(true)}
-                        className="text-sm text-emerald-600 font-medium px-4 py-2 rounded-lg ring-1 ring-emerald-300 hover:bg-emerald-50 transition-colors"
+                        className="text-sm text-leaf font-medium px-4 py-2 rounded-lg ring-1 ring-emerald-300 hover:bg-emerald-50 transition-colors"
                       >
                         Show all products
                       </button>
@@ -551,7 +548,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
               ) : (
                 <>
                   <div className="mx-auto w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center">
-                    <Shield className="w-7 h-7 text-emerald-600" />
+                    <Shield className="w-7 h-7 text-leaf" />
                   </div>
                   <p className="font-heading font-semibold text-lg text-emerald-800">
                     All selected crops are protected
@@ -561,7 +558,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                   </p>
                   <button
                     onClick={() => setPlanAhead(true)}
-                    className="text-sm text-emerald-600 font-medium hover:text-emerald-700 underline underline-offset-2"
+                    className="text-sm text-leaf font-medium hover:text-leaf underline underline-offset-2"
                   >
                     Plan next spray anyway
                   </button>
@@ -583,7 +580,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                       setDismissedMixes([]);
                       setRemovedProducts([]);
                     }}
-                    className="text-xs text-emerald-600 font-medium hover:text-emerald-700"
+                    className="text-xs text-leaf font-medium hover:text-leaf"
                   >
                     Reset
                   </button>
@@ -623,7 +620,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                           >
                             <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-50 ring-1 ring-emerald-200/50 shrink-0">
                               {isLogged ? (
-                                <Check className="w-4 h-4 text-emerald-600" />
+                                <Check className="w-4 h-4 text-leaf" />
                               ) : (
                                 <span className="text-sm font-heading font-semibold text-emerald-700">
                                   {idx + 1}
@@ -706,7 +703,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                                                 groupIds: plan.cropGroupIds,
                                               })
                                             }
-                                            className="font-medium text-sm text-left text-foreground hover:text-emerald-700 transition-colors"
+                                            className="font-medium text-sm text-left text-foreground hover:text-leaf transition-colors"
                                           >
                                             {productLabel(mp.product.brand, mp.ingredients)}
                                           </button>
@@ -810,7 +807,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
 
                                     {/* Row 3: dose inline */}
                                     <div className="flex items-baseline gap-2 text-[12px]">
-                                      <ArrowRight className="w-3 h-3 text-emerald-600/70 shrink-0" />
+                                      <ArrowRight className="w-3 h-3 text-ink-3 shrink-0" />
                                       <span className="text-muted-foreground">Add</span>
                                       <span className="font-heading font-semibold text-emerald-800">
                                         {dose.bestDisplay}
@@ -833,7 +830,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                                           <button
                                             type="button"
                                             onClick={() => setInventoryEditProductId(mp.product.id)}
-                                            className="text-[10px] text-emerald-600/70 hover:text-emerald-700 hover:underline font-medium"
+                                            className="text-[10px] text-ink-3 hover:text-leaf hover:underline font-medium"
                                             title="Enter inventory + price to estimate spray cost"
                                           >
                                             + price
@@ -1054,7 +1051,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                 }
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 hover:text-emerald-700"
+                className="inline-flex items-center gap-1 text-[11px] font-medium text-leaf hover:text-leaf"
               >
                 Learn more on {groupInfo.scheme}.info
                 <ArrowRight className="w-3 h-3" />
