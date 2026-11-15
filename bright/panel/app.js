@@ -98,6 +98,21 @@
       (lost ? lost + "% lost" : "no loss");
   }
 
+  // The ⋯ control and its menu. The menu is a row of its own under the row
+  // it belongs to, in the flow, never a floating box: a menu laid over the
+  // page covers the next row's buttons, which is what it did.
+  function moreToggle(label) {
+    return '<button class="btn more-toggle" data-more aria-expanded="false" ' +
+      'aria-label="' + label + '">⋯</button>';
+  }
+  function closeMoreMenus(scope) {
+    for (const menu of (scope || document).querySelectorAll(".more-menu")) {
+      menu.hidden = true;
+      const toggle = menu.closest(".row").querySelector("[data-more]");
+      if (toggle) toggle.setAttribute("aria-expanded", "false");
+    }
+  }
+
   function ago(epochSeconds) {
     if (!epochSeconds) return "";
     const s = Math.max(0, Date.now() / 1000 - epochSeconds);
@@ -149,11 +164,11 @@
         '<span class="muted row-note addr"></span></div>' +
         '<div class="row-actions">' +
         '<button class="btn" data-act="probe">Check</button>' +
-        '<details class="more"><summary aria-label="More checks">⋯</summary>' +
-        '<div class="more-menu">' +
+        moreToggle("More checks") + "</div>" +
+        '<div class="more-menu" hidden>' +
         '<button class="btn" data-act="rate">Find speed limit</button>' +
         '<button class="btn" data-act="demo">Beat-pulse demo</button>' +
-        "</div></details></div>";
+        "</div>";
       row.querySelector("strong").textContent = device.label || device.serial;
       row.querySelector(".addr").textContent = device.ip;
       row.querySelector(".rtt").textContent = fmtRtt(device.rtt);
@@ -193,8 +208,7 @@
     const serial = row.dataset.serial;
     const out = row.querySelector(".rtt");
     button.disabled = true;
-    const menu = button.closest("details");
-    if (menu) menu.open = false;
+    closeMoreMenus();
     try {
       if (button.dataset.act === "probe") {
         out.textContent = "Checking…";
@@ -386,7 +400,8 @@
     bar.innerHTML = "";
     if (openCluster && !fixture) {
       const ask = document.createElement("strong");
-      ask.textContent = openCluster.length + " lights are in this spot — pick one:";
+      ask.textContent = openCluster.length + " lights are in this group — " +
+        "pick one to move it:";
       const pick = document.createElement("div");
       pick.className = "cluster-pick";
       for (const id of openCluster) {
@@ -394,7 +409,7 @@
         if (!member) continue;
         const choose = document.createElement("button");
         choose.className = "btn";
-        choose.textContent = member.label;
+        choose.textContent = (ROLE_GLYPH[member.role] || "") + " " + member.label;
         choose.addEventListener("click", () => {
           openCluster = null;
           selectedFixture = id;
@@ -482,7 +497,8 @@
   const CLUSTER_PX = 40;
   let openCluster = null;   // ids listed in the pick bar, or null
 
-  function clusterFixtures(fixtures) {
+  function clusterFixtures(fixtures, radius) {
+    const reach = radius || CLUSTER_PX;
     const floor = $("mapFloor");
     const w = floor.clientWidth || 340;
     const h = floor.clientHeight || 340;
@@ -490,18 +506,58 @@
     for (const fixture of fixtures) {
       if (fixture.id === selectedFixture) { groups.push([fixture]); continue; }
       const home = groups.find((g) => g[0].id !== selectedFixture &&
-        Math.hypot((g[0].x - fixture.x) * w, (g[0].y - fixture.y) * h) < CLUSTER_PX);
+        Math.hypot((g[0].x - fixture.x) * w, (g[0].y - fixture.y) * h) < reach);
       if (home) home.push(fixture); else groups.push([fixture]);
     }
     return groups;
   }
 
+  // Names that would print over each other are not left to. Each label tries
+  // under its dot, then over it; one that fits neither way means its light is
+  // too close to a neighbour to be told apart on this floor, so the floor is
+  // redrawn with a wider pile radius until every name is readable.
+  function placeLabels(floor) {
+    const area = floor.getBoundingClientRect();
+    if (!area.width) return true;
+    const taken = Array.from(floor.querySelectorAll(".map-dot")).map(
+      (d) => d.getBoundingClientRect());
+    const placed = [];
+    const clash = (a, b) => a.left < b.right && b.left < a.right &&
+      a.top < b.bottom && b.top < a.bottom;
+    let all = true;
+    for (const label of floor.querySelectorAll(".dot-name")) {
+      const ownIndex = Array.from(floor.querySelectorAll('.map-dot')).indexOf(label.parentElement);
+      let fit = false;
+      for (const above of [false, true]) {
+        label.classList.toggle("above", above);
+        const box = label.getBoundingClientRect();
+        const inside = box.left >= area.left && box.right <= area.right &&
+          box.top >= area.top && box.bottom <= area.bottom;
+        const free = !placed.some((o) => clash(box, o)) &&
+          !taken.some((o, i) => i !== ownIndex && clash(box, o));
+        if (inside && free) { placed.push(box); fit = true; break; }
+      }
+      if (!fit) {
+        label.classList.remove("above");
+        placed.push(label.getBoundingClientRect());
+        all = false;
+      }
+    }
+    return all;
+  }
+
   function renderMap() {
+    for (const radius of [CLUSTER_PX, 60, 80, 105, 140, 200]) {
+      if (drawMap(radius)) return;
+    }
+  }
+
+  function drawMap(radius) {
     const floor = $("mapFloor");
     floor.innerHTML = "";
     if (selectedFixture && !fixtureById(selectedFixture)) selectedFixture = null;
     // A selected light that shares a spot is lifted out of its pile.
-    const groups = clusterFixtures(mapData.fixtures);
+    const groups = clusterFixtures(mapData.fixtures, radius);
     for (const group of groups) {
       if (group.length > 1) {
         const first = group[0];
@@ -510,6 +566,9 @@
           (first.x > 0.85 ? " edge-right" : first.x < 0.15 ? " edge-left" : "");
         placeDot(pile, first.x, first.y);
         pile.dataset.cluster = group.map((f) => f.id).join("|");
+        if (openCluster && openCluster.join("|") === pile.dataset.cluster) {
+          pile.classList.add("open");
+        }
         const count = document.createElement("span");
         count.className = "dot-glyph";
         count.textContent = String(group.length);
@@ -533,7 +592,7 @@
         (fixture.id === selectedFixture ? " selected" : "");
       const piled = fixture.id === selectedFixture && groups.some(
         (g) => g.length > 1 && Math.hypot((g[0].x - fixture.x) * (floor.clientWidth || 340),
-          (g[0].y - fixture.y) * (floor.clientHeight || 340)) < CLUSTER_PX);
+          (g[0].y - fixture.y) * (floor.clientHeight || 340)) < radius);
       placeDot(dot, fixture.x, fixture.y);
       if (piled) dot.style.transform = "translate(0, -52px)";
       dot.dataset.id = fixture.id;
@@ -549,6 +608,7 @@
       dot.appendChild(name);
       floor.appendChild(dot);
     }
+    const labelsFit = placeLabels(floor);
     const list = $("mapList");
     list.innerHTML = "";
     for (const fixture of mapData.fixtures) {
@@ -573,6 +633,7 @@
       list.appendChild(row);
     }
     renderSelection();
+    return labelsFit;
   }
 
   window.addEventListener("resize", () => {
@@ -778,6 +839,7 @@
         row.className = "row slim";
         row.dataset.hash = track.hash;
         const show = track.show;
+        row.dataset.played = show && show.last_played ? show.last_played : "";
         // The commonest action stays on the row — play the show if there
         // is one, build it if not — and the rest sit behind one menu.
         row.innerHTML = '<div class="row-main"><strong></strong>' +
@@ -785,19 +847,25 @@
           '<div class="row-actions">' +
           (show ? '<button class="btn" data-act="play">▶ Play</button>'
                 : '<button class="btn" data-act="compile">Build show</button>') +
-          '<details class="more"><summary aria-label="More actions">⋯</summary>' +
-          '<div class="more-menu">' +
+          moreToggle("More actions") + "</div>" +
+          '<div class="more-menu" hidden>' +
           (show ? '<button class="btn" data-act="compile">Rebuild show</button>'
                 : "") +
           '<button class="btn" data-act="claude">✨ Ask Claude to write it</button>' +
           '<button class="btn" data-act="sync" title="Beat pulses ' +
           'and drop flashes, no choreography — proves sync and drop ' +
           'detection">🧪 Test beats and drops</button>' +
-          "</div></details></div>";
+          "</div>";
         row.querySelector("strong").textContent = track.name;
         row.querySelector(".rtt").textContent = show
-          ? describeShow(show.tier, show.cues, show.compiled_at)
-          : "No show yet — Build show makes one";
+          ? describeShow(show)
+          : "No show yet";
+        if (show) {
+          const facts = document.createElement("p");
+          facts.className = "muted menu-info";
+          facts.textContent = describeBuild(show);
+          row.querySelector(".more-menu").prepend(facts);
+        }
         list.appendChild(row);
       }
     } catch (error) {
@@ -805,14 +873,24 @@
     }
   }
 
-  // A built show in plain words: who wrote it, how big, how long ago.
+  // A built show in plain words: whether it is ready and when it last
+  // played. The age of the build says nothing a person acts on (every show
+  // made in one sitting has the same one), so it lives behind the menu.
+  function describeShow(show) {
+    const played = show && show.last_played
+      ? "played " + ago(show.last_played) : "never played";
+    return "Ready · " + played;
+  }
+
+  // The build details, for the ⋯ menu: who wrote it, how big, how old.
   // Parts that are not known are left out, never printed as "null".
-  function describeShow(tier, cues, compiledAt) {
-    const who = tier === "claude" ? "Written by Claude"
-      : tier === "edited" ? "Edited by hand"
-      : tier === "algorithmic" ? "Written by BRight" : "Built";
-    return [who, cues ? cues + " cues" : "", ago(compiledAt)]
-      .filter(Boolean).join(" · ");
+  function describeBuild(show) {
+    const who = show.tier === "claude" ? "Written by Claude"
+      : show.tier === "edited" ? "Edited by hand"
+      : show.tier === "algorithmic" ? "Written by BRight" : "Built";
+    const built = ago(show.compiled_at);
+    return [who, show.cues ? show.cues + " cues" : "",
+            built ? "built " + built : ""].filter(Boolean).join(" · ");
   }
 
   // Who wrote this show, in a sentence.
@@ -869,7 +947,7 @@
     // Anywhere but the buttons opens that track's show file. The list and
     // the editor are one thing seen twice, the same way the light map and
     // its rows are.
-    if (event.target.closest("button, summary, details")) return;
+    if (event.target.closest("button, summary, details, .more-menu")) return;
     const row = event.target.closest(".row");
     if (row) {
       for (const other of $("showList").querySelectorAll(".row")) {
@@ -881,8 +959,16 @@
 
   // A ⋯ menu closes when you tap anywhere outside it.
   document.addEventListener("click", (event) => {
-    for (const menu of document.querySelectorAll("details.more[open]")) {
-      if (!menu.contains(event.target)) menu.open = false;
+    const toggle = event.target.closest("[data-more]");
+    const keep = toggle ? toggle.closest(".row") : null;
+    for (const menu of document.querySelectorAll(".more-menu:not([hidden])")) {
+      if (menu.closest(".row") !== keep) closeMoreMenus(menu.closest(".row"));
+    }
+    if (toggle) {
+      const menu = keep.querySelector(".more-menu");
+      const open = menu.hidden;
+      menu.hidden = !open;
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
     }
   });
 
@@ -893,8 +979,7 @@
     const out = row.querySelector(".rtt");
     const status = $("showStatus");
     button.disabled = true;
-    const menu = button.closest("details");
-    if (menu) menu.open = false;
+    closeMoreMenus();
     try {
       if (button.dataset.act === "compile" ||
           button.dataset.act === "claude") {
@@ -921,7 +1006,7 @@
         const who = describeDirector(result.director);
         out.textContent = (result.director && result.director.fell_back && who)
           ? who
-          : describeShow(result.tier, result.stats.cues, Date.now() / 1000);
+          : describeShow({ last_played: Number(row.dataset.played) || 0 });
         openScript(row.dataset.hash, row.querySelector("strong").textContent);
       } else if (button.dataset.act === "play"
                  || button.dataset.act === "sync") {
@@ -1167,6 +1252,86 @@
                    : "");
   }
 
+  // Which of the listed folders a track lives in, and where inside it: the
+  // longest folder that contains the file, then the way down from there.
+  function folderOf(track, folders) {
+    let best = null;
+    for (const folder of folders) {
+      const base = folder.path.replace(/\/$/, "") + "/";
+      if (String(track.file).startsWith(base) &&
+          (!best || base.length > best.length)) best = base;
+    }
+    return best;
+  }
+  function trackPlace(track, folders) {
+    const base = folderOf(track, folders);
+    const parts = String(track.file).split("/");
+    parts.pop();
+    if (!base) return parts.pop() || "?";
+    const inside = String(track.file).slice(base.length).split("/");
+    inside.pop();
+    const top = base.split("/").filter(Boolean).pop() || "/";
+    return [top].concat(inside).join(" / ");
+  }
+
+  // Tracks that look like the same song under two files: the same name once
+  // "(1)", "copy" and punctuation are set aside, or the same tempo and length
+  // to the second. Returns hash -> the name of the one it looks like. The
+  // library already merges byte-identical files; these differ in content.
+  function findCopies(tracks) {
+    const tidy = (name) => String(name).toLowerCase()
+      .replace(/\(\d+\)|\bcopy\b|\bcopy \d+\b/g, "")
+      .replace(/[^a-z0-9]+/g, " ").trim();
+    const keysOf = (track) => {
+      const keys = [];
+      if (tidy(track.name)) keys.push("n:" + tidy(track.name));
+      const s = track.summary;
+      if (s && s.bpm && s.duration) {
+        keys.push("t:" + Math.round(s.bpm) + "|" + Math.round(s.duration));
+      }
+      return keys;
+    };
+    const first = new Map();
+    const result = new Map();
+    for (const track of tracks) {
+      for (const key of keysOf(track)) {
+        if (!first.has(key)) { first.set(key, track); continue; }
+        const other = first.get(key);
+        if (other.hash === track.hash || result.has(track.hash)) continue;
+        result.set(track.hash, other.name);
+        if (!result.has(other.hash)) result.set(other.hash, track.name);
+      }
+    }
+    return result;
+  }
+
+  // The folders as one line when they are working or not in use, with the
+  // rows a tap away. Only a library with nothing in it and a folder gone is
+  // shown open, because that is the one a person has to act on.
+  function renderFolders(box, folders, tracks) {
+    const counts = folders.map((f) => tracks.filter(
+      (t) => folderOf(t, folders) === f.path.replace(/\/$/, "") + "/").length);
+    const inUse = counts.filter((n) => n > 0).length;
+    // A missing folder is a fault with a fix, never a folder "not in use".
+    const missing = folders.filter((f) => !f.exists).length;
+    const idle = folders.length - inUse - missing;
+    const details = document.createElement("details");
+    details.className = "info-toggle folder-summary";
+    details.open = missing > 0;
+    const line = document.createElement("summary");
+    const bits = [];
+    if (idle > 0) bits.push(idle + " not in use");
+    if (missing > 0) bits.push("⚠ " + missing + " missing");
+    line.textContent = tracks.length
+      ? tracks.length + (tracks.length === 1 ? " track" : " tracks") +
+        " in " + inUse + (inUse === 1 ? " folder" : " folders") +
+        (bits.length ? ", " + bits.join(", ") : "")
+      : "No music found" + (missing ? " — " + missing + " missing" : "");
+    details.appendChild(line);
+    for (const folder of folders) details.appendChild(folderRow(folder, tracks));
+    box.appendChild(details);
+  }
+
   // One folder: found with its track count, or missing with the one-line
   // fix. Remove edits the same list the Folders-to-scan card edits; a
   // folder set in the add-on's options cannot be removed from here, so it
@@ -1242,19 +1407,28 @@
       const box = $("libraryFolders");
       box.innerHTML = "";
       const tracks = body.tracks || [];
-      for (const folder of folders) box.appendChild(folderRow(folder, tracks));
+      renderFolders(box, folders, tracks);
       if (!tracks.length) {
         list.innerHTML = '<p class="muted">No audio files found.</p>';
         return;
       }
+      const copies = findCopies(tracks);
       list.innerHTML = "";
       for (const track of tracks) {
         const row = document.createElement("div");
         row.className = "row";
         row.innerHTML = '<div class="row-main"><strong></strong>' +
-          '<span class="rtt small"></span></div>';
+          '<span class="rtt small"></span>' +
+          '<span class="muted small track-folder"></span>' +
+          '<span class="small track-copy"></span></div>';
         row.querySelector("strong").textContent = track.name;
         row.querySelector(".rtt").textContent = trackSummary(track);
+        row.querySelector(".track-folder").textContent =
+          "In " + trackPlace(track, folders);
+        const twin = copies.get(track.hash);
+        const mark = row.querySelector(".track-copy");
+        if (twin) mark.textContent = "Looks like a copy of " + twin;
+        else mark.remove();
         list.appendChild(row);
       }
     } catch (error) {
@@ -4437,6 +4611,10 @@
         place < 0 ? "" : "#" + (place + 1);
     }
     const count = partySet.length;
+    $("partySetCount").textContent = count
+      ? count + (count === 1 ? " song ticked" : " songs ticked") + " of " +
+        $("partySet").querySelectorAll(".party-pick").length
+      : "None ticked: everything plays";
     $("btnPartyStart").textContent = count
       ? "🎉 Play " + count + (count === 1 ? " show" : " shows")
       : "🎉 Play everything";

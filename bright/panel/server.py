@@ -82,6 +82,7 @@ from director import effects as fx  # noqa: E402
 from stores import calibration as calibration_store  # noqa: E402
 from stores import effect_presets  # noqa: E402
 from stores import folders as folders_store  # noqa: E402
+from stores import plays as plays_store  # noqa: E402
 from stores import light_map  # noqa: E402
 from stores import parties as parties_store  # noqa: E402
 
@@ -708,6 +709,10 @@ def _folder_source(folder: Path, main: Path) -> str:
 async def h_library(request: web.Request) -> web.Response:
     folders = _music_folders()
     tracks = await asyncio.to_thread(library.scan_all, folders)
+    played = await asyncio.to_thread(plays_store.load)
+    for track in tracks:
+        if isinstance(track.get("show"), dict) and track["hash"] in played:
+            track["show"]["last_played"] = played[track["hash"]]
     return web.json_response({
         # `folder`/`exists` describe the main folder and stay for a panel
         # served before this update; `folders` is what the page renders.
@@ -1852,7 +1857,8 @@ async def _start_show_for(hash_hex: str, media_player: str,
         show["cues"], media_player=media_player,
         media_content_id=show["media_content_id"], title=show["title"],
         duration_s=show["duration_s"],
-        track_hash=show.get("track_hash", ""))
+        track_hash=show.get("track_hash", ""),
+        counts_as_played=not metronome)
     return (200 if result.get("ok") else 409), result
 
 

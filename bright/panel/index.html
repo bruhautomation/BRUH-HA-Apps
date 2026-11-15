@@ -338,7 +338,7 @@
            one. -->
       <div class="demo-controls">
         <input type="text" id="showVibe" maxlength="200"
-               placeholder="vibe for the next Claude show (optional): chill, rave, halloween…">
+               placeholder="Vibe for Claude shows, e.g. chill (optional)">
       </div>
       <div id="showList" class="list"><p class="muted">Not loaded yet.</p></div>
       <div class="demo-controls">
@@ -719,12 +719,11 @@
       <p class="muted small">Tick the songs to play, in the order you tick
         them. Nothing ticked plays everything in your music folders.
         A song with no show yet gets one written while the party runs.</p>
+      <div id="partySetCount" class="row-note muted" aria-live="polite"></div>
       <div id="partySet" class="list party-set"></div>
-      <div class="form-row">
+      <div class="party-save">
         <input type="text" id="partySetName" maxlength="48"
                placeholder="name this set (optional)">
-      </div>
-      <div class="form-row">
         <button id="btnPartySave" class="btn">Save as a set</button>
       </div>
       <div id="pfStatus" class="cal-status"></div>

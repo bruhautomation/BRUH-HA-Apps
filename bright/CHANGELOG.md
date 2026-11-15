@@ -5,6 +5,20 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.23.8
+
+### Changed
+
+- Shows rows say whether a show is ready and when it was last played ("Ready · played 3 d ago", "Ready · never played"), with the author, cue count and build age moved behind ⋯. BRight now remembers when each show last played, in its own data. Shows from before this release read "never played" until they next play (#1035).
+- Library folds its folders into one line ("4 tracks in 1 folder, 3 not in use") with the details behind a tap. Each track says which folder it is in, and a track that looks like a copy of another is marked (#1031).
+- Tapping a group on the Light Map lists the lights in it (#1034).
+
+### Fixed
+
+- The ⋯ menus on Shows and on bulb rows open on their own line under the row instead of floating over Play, Check and ⋯. "All" and "None" are at least 56px wide, and every text box is 16px (#1032, #1033).
+- Party's set name and Save as a set sit on separate lines, and the set says how many songs are ticked (#1030).
+- The Light Map's group badges are white on dark blue (about 7:1), and labels no longer overlap: a light whose label fits neither under nor over its dot joins a wider group (#1034).
+
 ## 0.23.7
 
 ### Fixed
