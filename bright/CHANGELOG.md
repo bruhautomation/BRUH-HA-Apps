@@ -5,6 +5,19 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.23.6
+
+### Changed
+
+- Shows: each track reads in plain words ("Written by Claude · 2032 cues · 3 min ago") with one visible action and the rest behind ⋯, and the speaker picker names speakers instead of entity ids (#943, #944).
+- The bulb checks list each bulb in one compact row ("Fast, 42 ms, no loss" or "Not checked yet") with a "Probe all unprobed" action, and the explanation sits behind an info toggle (#942).
+- Library's music folders each say Found with a track count or Missing with a one-line fix, a folder picked in the panel can be removed, and the old "brigt" folder is named as the add-on's earlier one (#941).
+
+### Fixed
+
+- Light Map names are readable on the map in both themes, and lights that share a spot show as one dot with a count that opens a list to pick from (#946).
+- On a phone the Shows page no longer scrolls sideways, and Party's set list, name field and Save as a set sit in their own rows with 44px All and None buttons (#944, #945).
+
 ## 0.23.5
 
 ### Fixed
