@@ -22,7 +22,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import BrevilleConfigEntry
 from .appliance import ERROR_OPTIONS, MODEL_BOV950, REPORTED_MODE_OPTIONS, CookState
-from .const import BRAND_SAGE, CONF_BRAND
 from .coordinator import (
     CONNECTION_STATES,
     Appliance,
@@ -123,7 +122,7 @@ class BrevilleAccountSensor(CoordinatorEntity[BrevilleCoordinator], SensorEntity
     def __init__(self, coordinator: BrevilleCoordinator) -> None:
         super().__init__(coordinator)
         entry = coordinator.config_entry
-        brand = "Sage" if entry.data.get(CONF_BRAND) == BRAND_SAGE else "Breville"
+        brand = coordinator.brand
         self._attr_unique_id = f"account_{entry.entry_id}"
         self._attr_device_info = DeviceInfo(
             identifiers={account_identifier(entry.entry_id)},

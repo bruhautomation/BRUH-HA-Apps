@@ -187,7 +187,7 @@ announce_ha_discovery() {
     esac
 }
 
-# How the Breville account stands, as the integration last wrote it (it runs
+# How the Breville or Sage account stands, as the integration last wrote it (it runs
 # inside Home Assistant, whose log is not this one): the connection, the
 # appliances found, the last good poll, and any appliance on the account it
 # does not drive, with the reason. One file per account; no email and no
@@ -212,14 +212,14 @@ report_accounts() {
     ACCOUNT_QUIET=0
     case "${summary}" in
         none)
-            bashio::log.info "No Breville account is set up yet: add it in Settings > Devices & services > BRUH Cooking (restart Home Assistant first if the integration was just deployed)"
+            bashio::log.info "No Breville or Sage account is set up yet: add it in Settings > Devices & services > BRUH Cooking (restart Home Assistant first if the integration was just deployed)"
             return 0 ;;
         unreadable)
             bashio::log.warning "The integration's account report could not be read"
             return 0 ;;
     esac
     for file in "${files[@]}"; do
-        line=$(jq -r '"Breville account: \(.connection | gsub("_"; " ")), \(.appliances_found) appliance(s) found, last good poll \(.last_poll // "never")"' "${file}" 2>/dev/null) || continue
+        line=$(jq -r '"\(.brand // "Breville") account: \(.connection | gsub("_"; " ")), \(.appliances_found) appliance(s) found, last good poll \(.last_poll // "never")"' "${file}" 2>/dev/null) || continue
         bashio::log.info "${line}"
         jq -r '.not_driven[]? | "  Not driven: \(.name), \(.reason)"' "${file}" 2>/dev/null | while IFS= read -r skipped; do
             bashio::log.info "${skipped}"

@@ -7,7 +7,7 @@ from collections import deque
 from collections.abc import Awaitable
 import contextlib
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import logging
 import os
@@ -51,7 +51,9 @@ from .appliance import (
 )
 from .const import (
     APPLIANCE_REFRESH_INTERVAL,
+    BRAND_SAGE,
     CONF_ALLOW_UNTESTED_CONTROL,
+    CONF_BRAND,
     CONF_SHOW_SIDEBAR_PANEL,
     DEFAULT_SHOW_SIDEBAR_PANEL,
     DOMAIN,
@@ -71,6 +73,10 @@ _T = TypeVar("_T")
 # last cook, so an appliance that is offline after a restart still says them.
 STORE_VERSION = 1
 STORE_SAVE_DELAY = 5
+# How long a preset named by `start` waits for its cook to be seen. The cloud
+# can accept a start the appliance never begins (an oven left waiting for Start
+# on its panel); a cook seen after this is someone else's and is not labelled.
+PRESET_WAIT = timedelta(minutes=15)
 # Where the add-on reads how each account stands (its log is not Home
 # Assistant's): one file per config entry, no email and no token in it.
 ACCOUNT_DIR = ".bruh_cooking/accounts"
@@ -133,6 +139,9 @@ class Appliance:
     # The latest cook seen: when it started and ended, and what it was set to;
     # the preset it came from and when it was due to finish, once known.
     last_cook: dict[str, Any] | None = None
+    # The appliance's own id for that cook, to tell it from a new one when
+    # contact comes back.
+    last_cook_id: str | None = None
 
 
 def _ago(seconds: float) -> str:
@@ -179,8 +188,9 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         self._reported: tuple[Any, ...] | None = None
         self._account_pending: dict[str, Any] | None = None
         self._account_writing = False
-        # A preset's name, held until the cook it starts is seen (note_preset).
-        self._pending_preset: dict[str, str] = {}
+        # A preset's name and when it was named, held until the cook it starts
+        # is seen, for PRESET_WAIT at most (note_preset).
+        self._pending_preset: dict[str, tuple[str, datetime]] = {}
         self._store: Store[dict[str, Any]] = Store(
             hass, STORE_VERSION, f"{DOMAIN}.{entry.entry_id}.appliances"
         )
@@ -203,6 +213,7 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
             if appliance.last_contact
             else None,
             "last_cook": appliance.last_cook,
+            "cook_id": appliance.last_cook_id,
         }
         self._store.async_delay_save(lambda: dict(self._remembered), STORE_SAVE_DELAY)
 
@@ -215,6 +226,8 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
             appliance.last_contact = dt_util.parse_datetime(saved["last_contact"])
         if isinstance(saved.get("last_cook"), dict):
             appliance.last_cook = saved["last_cook"]
+        if isinstance(saved.get("cook_id"), str):
+            appliance.last_cook_id = saved["cook_id"]
 
     @callback
     def note_preset(self, appliance: Appliance, preset: str | None) -> None:
@@ -222,7 +235,12 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         if preset is None:
             self._pending_preset.pop(appliance.serial, None)
         else:
-            self._pending_preset[appliance.serial] = preset
+            self._pending_preset[appliance.serial] = (preset, dt_util.utcnow())
+
+    @property
+    def brand(self) -> str:
+        """Breville or Sage, as the account was added: what the person calls it."""
+        return "Sage" if self.config_entry.data.get(CONF_BRAND) == BRAND_SAGE else "Breville"
 
     # -- the account, for the account sensor and the add-on's log ------------
 
@@ -251,13 +269,16 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         if key != self._reported:
             self._reported = key
             _LOGGER.info(
-                "Breville account: %s, %d appliance(s) found%s",
+                "%s account: %s, %d appliance(s) found%s",
+                self.brand,
                 summary["connection"].replace("_", " "),
                 summary["appliances_found"],
-                "".join(f"; not driven: {item['name']} ({item['reason']})" for item in self.not_driven),
+                "".join(f"; not driven: {item['name']}, {item['reason']}" for item in self.not_driven),
             )
         # One writer at a time, newest last: the report is written in the executor.
-        self._account_pending = {**summary, "written_at": dt_util.utcnow().isoformat(timespec="seconds")}
+        self._account_pending = {
+            **summary, "brand": self.brand, "written_at": dt_util.utcnow().isoformat(timespec="seconds"),
+        }
         if not self._account_writing:
             self._account_writing = True
             self.hass.async_create_task(self._write_account(), f"{DOMAIN} account report")
@@ -313,7 +334,7 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
             cause = "device"
             since = appliance.offline_since
             why = "Breville's cloud is reachable and the sign-in works, but the appliance is not answering"
-            fix = "Check that the appliance is plugged in and on Wi-Fi, and that the Breville app shows it online"
+            fix = f"Check that the appliance is plugged in and on Wi-Fi, and that the {self.brand} app shows it online"
         since = since or self.problem_since or dt_util.utcnow()
         age = max(0.0, (dt_util.utcnow() - since).total_seconds())
         return {
@@ -467,21 +488,33 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
             _LOGGER.info("%s is %s", product, "online" if status.online else "offline")
             if not status.online:
                 self._hold_finish(appliance, before)
+        cook = appliance.last_cook
+        open_cook = cook is not None and not cook.get("ended_at")
         if status.active and not before.active:
-            appliance.last_cook = {
-                "started_at": now.isoformat(timespec="seconds"),
-                "ended_at": None,
-                "target_temperature_c": status.target_temp_c,
-                "duration_s": status.cook_time_s,
-            }
-            if (preset := self._pending_preset.pop(appliance.serial, None)) is not None:
-                appliance.last_cook["preset"] = preset
-            _LOGGER.info("A cook started on the %s", product)
-        elif before.active and not status.active and status.online:
-            # Losing contact is not the cook ending: the last cook keeps its finish time.
-            if appliance.last_cook is not None and not appliance.last_cook.get("ended_at"):
-                appliance.last_cook["ended_at"] = now.isoformat(timespec="seconds")
+            if not (open_cook and not before.online and status.cook_id == appliance.last_cook_id):
+                # Not the cook that was running when contact went: a new one. (The
+                # same one carries on, with its preset.)
+                appliance.last_cook = {
+                    "started_at": now.isoformat(timespec="seconds"),
+                    "ended_at": None,
+                    "target_temperature_c": status.target_temp_c,
+                    "duration_s": status.cook_time_s,
+                }
+                appliance.last_cook_id = status.cook_id
+                # Only a preset named moments ago: a start the appliance never began
+                # must not label a cook someone starts by hand later.
+                pending = self._pending_preset.pop(appliance.serial, None)
+                if pending is not None and now - pending[1] <= PRESET_WAIT:
+                    appliance.last_cook["preset"] = pending[0]
+                _LOGGER.info("A cook started on the %s", product)
+        elif status.online and not status.active and open_cook and (before.active or not before.online):
+            # Seen stopped, or back in contact with the cook over (losing contact is
+            # not the cook ending, so the last cook kept its finish time till now).
+            cook["ended_at"] = now.isoformat(timespec="seconds")
             _LOGGER.info("The cook on the %s stopped", product)
+        if status.online and status.active and appliance.last_cook is not None:
+            # In contact during the cook: the live entities show its finish.
+            appliance.last_cook.pop("finish_at", None)
         self._remember(appliance)
 
     @callback
