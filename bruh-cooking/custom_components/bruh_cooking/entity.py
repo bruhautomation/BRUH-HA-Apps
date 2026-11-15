@@ -52,11 +52,17 @@ class BrevilleEntity(CoordinatorEntity[BrevilleCoordinator]):
         self._appliance = appliance
         self._attr_unique_id = f"{appliance.serial}_{key}"
         self._attr_translation_key = key
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        # Built when the entity is added (again, after its id is renamed), from the
+        # appliance's name now: a name fixed at creation would undo a rename in the app.
+        appliance = self._appliance
         info = MODELS[appliance.model]
         manufacturer = info.manufacturer
-        if manufacturer == "Breville" and coordinator.config_entry.data.get(CONF_BRAND) == BRAND_SAGE:
+        if manufacturer == "Breville" and self.coordinator.config_entry.data.get(CONF_BRAND) == BRAND_SAGE:
             manufacturer = "Sage"
-        self._attr_device_info = DeviceInfo(
+        return DeviceInfo(
             identifiers={(DOMAIN, appliance.serial)},
             manufacturer=manufacturer,
             model=info.product,
