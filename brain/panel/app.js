@@ -3325,6 +3325,7 @@ function renderSettingsForm(data) {
   $("#setYolo").checked = data.settings.yolo_mode === true;
   $("#setTalkFirst").checked = data.settings.talk_first === true;
   renderSkipPermsNote(data);
+  renderPermsCaptions(data.settings);
   $("#setGatherMode").value = data.settings.gather_mode || "search";
   $("#setRefreshMode").value = data.settings.refresh_mode || "changed";
   $("#setThinking").value = data.settings.thinking || "normal";
@@ -3584,9 +3585,12 @@ function restoreSettingsSections() {
 // what the section is for.
 let setSummaryData = null;
 
-function setSummary(id, text) {
+function setSummary(id, text, flag) {
   const node = document.getElementById(id);
-  if (node && text) { node.textContent = text; node.title = text; }
+  if (node && text) {
+    node.textContent = text; node.title = text;
+    node.classList.toggle("flag", !!flag);
+  }
 }
 
 function renderSetSummaries(data) {
@@ -3605,9 +3609,10 @@ function renderSetSummaries(data) {
     setSummary("setSumUsage", model
       + (Number.isFinite(used) ? ` · ${Math.round(used)}% of this session` : ""));
     setSummary("setSumPermissions", st.yolo_mode === true
-      ? "No restrictions"
+      ? "Acts without asking, no restrictions"
       : st.dangerously_skip_permissions === true
-        ? "Acts without asking" : "Asks before it acts");
+        ? "Acts without asking" : "Asks before it acts",
+      st.yolo_mode === true || st.dangerously_skip_permissions === true);
     const policy = String(st.notify_policy || "").trim();
     setSummary("setSumNotify", (policy ? `“${policy}”` : "Urgent alerts only")
       + (st.speak_first === true ? " · said aloud" : ""));
@@ -3707,6 +3712,26 @@ function skipPermsStale(data) {
       : "The terminal session already open still asks. End it with /exit and the next one won't.";
   }
   return "";
+}
+
+// What the two switches say about themselves while they are on: a caption
+// that says "off by default" under a switch that is on is a caption read as
+// the switch's state. The warning is plain words, never a colour alone.
+function renderPermsCaptions(st) {
+  const skip = (st || {}).dangerously_skip_permissions === true;
+  const yolo = (st || {}).yolo_mode === true;
+  const cap = $("#setYoloCaveat");
+  if (cap) {
+    cap.textContent = yolo ? "Normally off \u2014 it is on now." : "Off by default.";
+    cap.classList.toggle("warn", yolo);
+  }
+  const warn = $("#setPermWarn");
+  if (warn) {
+    warn.hidden = !(skip || yolo);
+    warn.textContent = yolo
+      ? "brAIn is acting without asking, with no restrictions: protected entities, house rules and the action gate are not applied."
+      : "brAIn is acting without asking: the terminal and the chat do not stop before each command, edit or change.";
+  }
 }
 
 function renderSkipPermsNote(data) {
@@ -5789,6 +5814,8 @@ $("#setSkipPerms").addEventListener("change", async () => {
     (saved) => skipPermsToast(on, saved));
   // A refused save leaves the switch where it was, and so does the box.
   if (!data) box.checked = !on;
+  renderPermsCaptions({ dangerously_skip_permissions: $("#setSkipPerms").checked,
+                        yolo_mode: $("#setYolo").checked });
 });
 $("#setTalkFirst").addEventListener("change", async () => {
   const box = $("#setTalkFirst");
@@ -5814,6 +5841,8 @@ $("#setYolo").addEventListener("change", async () => {
     on ? "No restrictions is on: brAIn may do anything"
        : "No restrictions is off: the restrictions are back");
   if (!data) box.checked = !on;
+  renderPermsCaptions({ dangerously_skip_permissions: $("#setSkipPerms").checked,
+                        yolo_mode: $("#setYolo").checked });
 });
 // Applied straight away rather than on the next status poll, so the Terminal
 // tab has already changed by the time the dialog is closed — and through the
