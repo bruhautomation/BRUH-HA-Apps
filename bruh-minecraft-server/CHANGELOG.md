@@ -5,6 +5,21 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.19.11
+
+### Added
+
+- Talk to the companion in parts when a request is longer than one chat message: start with "1 …", carry on with "2 …", "3 …", and say "end" to send it all as one request ("cancel" drops it). Each part is acknowledged quietly above your head, nothing is acted on before "end", an unfinished message is let go after five minutes, and an ordinary message that happens to start with a number ("10 creepers") is treated as usual (#982).
+
+### Fixed
+
+- Making maps (`render_maps`) works on Minecraft 26.1 and later, which keep a world's maps under `data/minecraft/maps/` with a new counter file; older worlds are unchanged (#981).
+- Blue buttons, the status dot, the active-world marker and name, and the world-gen badge are readable in light and dark (#951).
+- Players says "No one is online right now" instead of empty headers, and empty reply boxes are hidden (#950).
+- Worlds opens on the world list, with the explanation folded under "How worlds work", and the tab row shows when there are more tabs (#949).
+- Each backup is one compact row in local time with Restore inside the card (#948).
+- Server Properties fits a phone, with full-size 16px fields (#947).
+
 ## 1.19.10
 
 ### Added

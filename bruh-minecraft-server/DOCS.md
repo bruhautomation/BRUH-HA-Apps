@@ -682,6 +682,17 @@ anything listens; `t` is Unix seconds, `time` the same as ISO 8601 UTC,
 | `bruh_minecraft_point` | `player`, `name`, `verified`, `dimension`, `target` (`{x, y, z, block}` — the first block that is not air or a fluid within 96 blocks, or null), `building` and `room` (the atlas's `{id, name}` there, or null), `eye`, `yaw`, `pitch` (somebody looked through a spyglass) |
 | `bruh_minecraft_signal` | `name` (a word: letters, digits, `_`; lower-cased), `data` (the rest of the line, or empty) — a command block ran `say bruh:signal <name> [data]` (below) |
 
+**A long message in parts.** The game caps a chat line at 256 characters,
+so while a companion is on, a player can type a longer one as numbered
+lines: `1 build a stone tower`, `2 with a spiral staircase`, `3 and a red
+roof`, then `end`. Each part is acknowledged in the companion's thought
+bubble (or the action bar), not in chat; on `end` the parts, in number
+order, go out as **one** `bruh_minecraft_chat` whose `text` is the whole
+message and `parts` says how many there were. `cancel` drops it, and one
+nobody adds to for 5 minutes is dropped with a line in chat saying so.
+Only `1` opens a message, so a line like `10 creepers` said on its own is
+ordinary chat.
+
 **A button, a lever or a pressure plate in a build can drive the house**
 with no Skript. Wire it to a command block (impulse, *Needs Redstone*) whose
 command is
