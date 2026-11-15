@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.10
+
+### Fixed
+
+- Crop stages follow the date and the garden's own season, so a past-season crop reads Dormant in November instead of Bud Break or Green Fruit, and a stage set by hand gives way to the calendar once its season is over. "Fungicide due" and "Ready to pick" count only crops in season, a crop picked in the last two weeks still counts as ready, and the pre-harvest warning is never hidden (#1014).
+- Chips, tabs, toggles and text links on a phone are at least 40px tall and wide, and "Select all" is readable (#1015).
+- The hold-off card names the next good spray window with its day and time, never the hour already under way, and the Weather page gives the same answer; a crop's attention row opens a Tank mix with that crop chosen (#1016).
+- The picks log on a phone is one compact row per pick that opens for editing on a tap, and its last row clears the Log Harvest button (#1018).
+
 ## 0.1.9
 
 ### Removed
