@@ -85,6 +85,8 @@ from __future__ import annotations
 
 import re
 
+import numfmt
+
 from ._util import House, domain_of, join_names, num
 
 # How far under its setpoint a room has to have stayed, all month, before
@@ -585,12 +587,12 @@ def preheat(snap: dict, now: float) -> list[dict]:
                 f"there later in the morning, so nothing is broken — the "
                 f"heating starts too late rather than falling short. From "
                 f"that temperature this room takes about "
-                f"{int(round(lead_min))} minutes to climb, so the call "
+                f"{numfmt.span(lead_min * 60)} to climb, so the call "
                 f"would need to come at about {start // 60:02d}:"
                 f"{start % 60:02d}."),
             "fix": (
                 "Move the heating schedule for this room earlier by about "
-                f"{int(round(lead_min))} minutes, or give the thermostat a "
+                f"{numfmt.span(lead_min * 60)}, or give the thermostat a "
                 "target that starts before the house does."),
             "severity": "info",
             "fixable": False,
@@ -752,7 +754,7 @@ def window(snap: dict, now: float) -> list[dict]:
             "detail": (
                 f"{house.name(eid)} fell from {fall['from']:g}{unit} to "
                 f"{fall['to']:g}{unit} over the last "
-                f"{int(round(fall['span_min']))} minutes — about "
+                f"{numfmt.span(fall['span_min'] * 60)} — about "
                 f"{fall['rate']:.1f}{unit} an hour, where this room's own "
                 f"measured insulation allows about {expected:.1f}{unit} an "
                 f"hour at {outside:.1f}{unit} outside. Heat is leaving by "

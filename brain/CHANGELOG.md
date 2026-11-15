@@ -2,6 +2,20 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.5
+
+### Changed
+
+- Findings lead with one plain sentence: no log lines, firmware builds, integration names or network-table counts in the title or the first line. The title matches the worst fact ("offline for 9 days", not "struggling"), the detail opens with why the step matters, a battery finding opens with the level and the batteries to change, and connection details appear only when the finding is about the connection (#980, #977, #913).
+- Durations over two hours read in hours, and over two days in days ("9 days ago", not "226 hours ago"), everywhere the checks say how long. A Zigbee device silent for two days or more is called offline (#913).
+- One way of speaking everywhere brAIn writes: you are "you", never "the household", and nothing mentions the scorecard or "marked wrong" (#912).
+- An insight card opens with its verdict against what is normal here ("Normal, because …" or "Worth a look, because …"), calls a seasonal change normal, and leaves out sentences about what it could not check (#979).
+
+### Fixed
+
+- A card says when a reading was taken instead of calling an old one "now".
+- A run that read nothing about the house (only brAIn's own memory or health) no longer publishes an insight card (#976).
+
 ## 5.3.4
 
 ### Changed

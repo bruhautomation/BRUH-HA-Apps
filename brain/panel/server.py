@@ -6351,7 +6351,9 @@ async def _generate(insight_id: str) -> None:
             reads = (await asyncio.to_thread(
                 conversations.tool_reads, engine.CLAUDE_HOME, sid)
                 if sid else None)
-            if reads is not None and card_claims.read_nothing(reads["tools"]):
+            if reads is not None and card_claims.read_nothing(
+                    reads["tools"],
+                    {t.rsplit("__", 1)[-1] for t in engine.ANALYST_TOOLS}):
                 # Not a fault of brAIn's, so no journal row (the paid run
                 # is already in the usage figures); the backoff keeps a
                 # scheduled card from asking again at once.

@@ -90,17 +90,29 @@ def count(n: int, one: str, many: str = "") -> str:
     return f"{n} {one if n == 1 else (many or one + 's')}"
 
 
+def span(seconds) -> str:
+    """A length of time as a person says it: minutes up to two hours, whole
+    hours up to two days, then days. "230 minutes" and "226 hours" are both
+    arithmetic the reader has to redo."""
+    try:
+        sec = max(0.0, float(seconds))
+    except (TypeError, ValueError):
+        return "a while"
+    if sec < 7200:
+        return count(max(1, int(sec // 60)), "minute")
+    if sec < 2 * 86400:
+        return count(int(sec // 3600), "hour")
+    return count(int(sec // 86400), "day")
+
+
 def ago_minutes(minutes) -> str:
-    """'5 minutes ago' under an hour, whole hours after: never "1 hours
-    ago", which is what two checks composed by hand."""
+    """'5 minutes ago', '3 hours ago', '9 days ago' (see `span`)."""
     try:
         m = max(0, int(minutes))
     except (TypeError, ValueError):
         return "a while ago"
-    if m < 60:
-        return count(m, "minute") + " ago"
-    return count(m // 60, "hour") + " ago"
+    return span(m * 60) + " ago"
 
 
-__all__ = ["MINUS", "ago_minutes", "count", "number", "quantity", "times",
+__all__ = ["MINUS", "ago_minutes", "count", "number", "quantity", "span", "times",
            "unit_text"]
