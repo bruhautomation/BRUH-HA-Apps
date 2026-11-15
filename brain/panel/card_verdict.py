@@ -194,6 +194,25 @@ def verdict_of_sentence(sentence: str) -> str:
     return ""
 
 
+_CONTRACT_LEAD = re.compile(
+    r"\s*(normal|worth a look|needs action)\s*,\s*because\b", re.I)
+
+
+def contract_lead(summary: str) -> str:
+    """The verdict the card contract's own first sentence gives ("Normal,
+    because X compared with Y", "Worth a look, because …"), or ""."""
+    m = _CONTRACT_LEAD.match(str(summary or ""))
+    if not m:
+        return ""
+    return {"normal": FINE, "worth a look": LOOK,
+            "needs action": ACTION}[m.group(1).lower()]
+
+
+def _because(after: str) -> bool:
+    """A clause followed by its reason: the sentence is kept whole."""
+    return bool(re.match(r"\s*because\b", after or "", re.I))
+
+
 def lead_verdict(summary: str) -> tuple[str, str, bool]:
     """`(verdict, summary, stripped)`: the verdict the summary's first
     sentence is, and the summary without it when another sentence follows
@@ -350,7 +369,7 @@ def strip_verdict(text: str) -> tuple[str, bool]:
     rest, stripped = text or "", False
     while True:
         clause, after = lead_clause(rest)
-        if not says_fine(clause) or clause == rest:
+        if not says_fine(clause) or clause == rest or _because(after):
             break
         rest, stripped = after, True
     if not stripped and says_fine(lead_clause(rest)[0]) \
@@ -376,7 +395,8 @@ def strip_reassurance(text: str) -> tuple[str, bool]:
     rest, stripped = text or "", False
     while True:
         clause, after = lead_clause(rest)
-        if clause == rest or not after.strip() or not is_reassurance(clause):
+        if (clause == rest or not after.strip() or _because(after)
+                or not is_reassurance(clause)):
             break
         rest, stripped = after, True
     return (_capital(rest), True) if stripped else (text, False)
@@ -541,9 +561,11 @@ def review(obj: dict, previous: dict | None = None,
         verdict = LOOK
     # "Worth a look" is a pointer to something. A card that gives nothing to
     # look at (no step, no finding, no suggestion, no tile with a status, no
-    # open row, and no rise or disagreement the checks above found) found
-    # nothing: it is calm, not a look.
+    # open row, no rise or disagreement the checks above found) found
+    # nothing: calm. Its own lead sentence settles it first: one that says
+    # worth a look or needs action is never taken back.
     if (verdict == LOOK and not out.get("next") and not card_claims._acts(out)
+            and contract_lead(out.get("summary")) in ("", FINE)
             and open_row_named(out, open_rows) is None
             and not any(c in changed for c in (
                 "no fine verdict over an open finding",

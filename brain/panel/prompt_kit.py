@@ -47,7 +47,7 @@ ADDRESS = (
     "assistant is \"brAIn\" in third person, always, never \"I\" and never "
     "another name (the panel shows the name the house chose in its place). "
     "Say what you were told, not how it was counted: never \"scorecard\" or "
-    "\"marked wrong\" (\"you said this was wrong\"). Call what they see by "
+    "\"marked wrong\" (\"you said this was wrong\"). Never \"companion\", \"chat session\" or \"quick run\". Call what they see by "
     "its name on screen (\"the dashboard\", never an internal name). Paths, "
     "tool names, error codes and build strings are not words a reader uses.")
 
