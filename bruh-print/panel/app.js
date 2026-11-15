@@ -3174,10 +3174,17 @@ function renderHistory() {
     again.onclick = async () => {
       if (group.length > 1 && !confirm(`Print these ${count} labels again?`)) return;
       try {
-        let data = null;
+        let data = null, done = 0;
         /* Oldest first, so the batch comes out in the order it went in. */
-        for (const e of [...group].reverse())
-          data = await post(`/api/history/${e.id}/reprint`, {});
+        try {
+          for (const e of [...group].reverse()) {
+            data = await post(`/api/history/${e.id}/reprint`, {});
+            done += e.copies;
+          }
+        } catch (error) {
+          if (done) error.message = `${error.message} (${done} of ${count} labels printed before it stopped.)`;
+          throw error;
+        }
         toast(group.length > 1 ? `Printed ${count} labels.`
           : `Printed ${data.printed} on the ${data.side} roll.`, 'good');
         await loadState(); renderHistory();
@@ -3195,18 +3202,23 @@ function renderHistory() {
   }
 }
 
-/* Prints made in one go are one row. A batch is decided by structure: the
- * same template (or, with none, the same title), on the same stock and roll,
- * each print within ten minutes of the one before it. Newest first, as the
- * store keeps them. */
+/* Prints made in one go are one row, but only where that is certain: the
+ * history stores no batch id, so a batch is a run of template prints (never
+ * a reprint, never a quick print, never one grouped by title) of the same
+ * template on the same stock and roll, each within ten minutes of the one
+ * before it. Anything else stays a row of its own, because a grouped row's
+ * Print again spends labels for every member. Newest first, as the store
+ * keeps them. */
 const BATCH_GAP_S = 600;
 function historyGroups(entries) {
-  const key = (e) => `${e.template ? 't' : 'w'}|${e.template || e.title}|${e.stock}|${e.side}`;
+  const groupable = (e) => e.source === 'template' && !!e.template;
+  const key = (e) => `${e.template}|${e.stock}|${e.side}`;
   const groups = [];
   for (const entry of entries) {
     const last = groups[groups.length - 1];
     const prev = last && last[last.length - 1];
-    if (prev && key(prev) === key(entry) && prev.at - entry.at <= BATCH_GAP_S) last.push(entry);
+    if (prev && groupable(prev) && groupable(entry) && key(prev) === key(entry)
+        && prev.at - entry.at <= BATCH_GAP_S) last.push(entry);
     else groups.push([entry]);
   }
   return groups;
