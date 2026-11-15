@@ -47,6 +47,7 @@ import shutil
 import time
 from pathlib import Path
 
+import categories
 import run_sources
 import textclip
 
@@ -350,6 +351,22 @@ def clip_title(text: str) -> str:
     return textclip.clip(" ".join(str(text or "").split()), MAX_TITLE_CHARS)
 
 
+SHORT_TITLE_WORDS = 6
+
+
+def short_title(text: str) -> str:
+    """A person's own opener as a list row reads it: its first line, up to
+    its first sentence end, in at most `SHORT_TITLE_WORDS` words, "…" where
+    it was cut. Their words and their spelling, only fewer of them: the
+    whole message is one press away in the transcript."""
+    line = next((ln.strip() for ln in str(text or "").splitlines() if ln.strip()), "")
+    line = re.split(r"(?<=[.?!])\s", line, maxsplit=1)[0]
+    words = line.split()
+    cut = len(words) > SHORT_TITLE_WORDS
+    head = " ".join(words[:SHORT_TITLE_WORDS]).rstrip(".,;:!?-\u2013\u2014 ")
+    return clip_title(head + ("\u2026" if cut else "")) if head else clip_title(text)
+
+
 def _ask_about_title(raw: str) -> str:
     """The person's own words typed after the quote, else "About <the
     first quoted line>". The quote is the lines that start with "> "."""
@@ -455,7 +472,12 @@ def title_for(raw: str, source: str = "you", recorded: str = "") -> str:
         blurb = str(meta.get("blurb") or "")
         if blurb:
             return blurb[0].upper() + blurb[1:]
-    return clip_title(raw)
+    if str(raw or "").lstrip().startswith((_MEMORY_LEAD, categories.MEMORY_HEAD)):
+        # brAIn's own context block, put in front of a prompt by the code
+        # that sent it: never a person's words, whoever the registry says
+        # started the conversation.
+        return "A conversation brAIn started"
+    return short_title(raw)
 
 
 def display_title(path: Path, source: str = "you", recorded: str = "") -> str:

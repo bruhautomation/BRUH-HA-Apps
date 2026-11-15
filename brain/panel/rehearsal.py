@@ -888,7 +888,16 @@ def load() -> dict:
         data = json.loads(REHEARSAL_FILE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return {}
+    # A record written before its rows carried names: the plan says what
+    # each planted id was, so three rows do not read as one.
+    names = {row["id"]: row.get("name", "") for row in PLAN}
+    rows = (data.get("checks") or {}).get("rows")
+    for row in rows if isinstance(rows, list) else []:
+        if isinstance(row, dict) and not row.get("name") and names.get(row.get("id")):
+            row["name"] = names[row["id"]]
+    return data
 
 
 def outstanding(last: dict | None = None) -> list[str]:

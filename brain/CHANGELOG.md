@@ -2,6 +2,19 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.2
+
+### Changed
+
+- Ask's chat list titles a chat by the first few words the person typed (at most six, "…" where cut), and a chat that began with brAIn's own context block reads "A conversation brAIn started" instead of that block. The filter chips wrap on a phone, so no count is cut off, and the last chat keeps clear of the composer (#961, #999).
+- Needs you no longer says "Nothing needs you." above a To Do list of chores: it says nothing new needs deciding and that the chores below are waiting, and the blank gap above that line is gone (#963).
+- Timeline's grouped rows name what changed ("Bed and 5 others"), and History's count of changes brAIn made is its own line under the decision filters rather than one of them (#960).
+- ⚙ › Permissions: a switch that is on says "Normally off — it is on now", the page carries a plain warning while either is on, and the Settings list reads "Acts without asking" in the warning colour instead of "No restrictions" (#959).
+
+### Fixed
+
+- The rehearsal's results name what was planted in every row, also for results saved before rows carried names; results older than a week are shown in a neutral colour with their date, and Diagnostics times say the day when it is not today (#962).
+
 ## 5.3.1
 
 ### Fixed
