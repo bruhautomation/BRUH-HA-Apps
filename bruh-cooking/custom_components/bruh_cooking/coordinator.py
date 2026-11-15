@@ -21,7 +21,6 @@ from homeassistant.exceptions import (
     ServiceValidationError,
 )
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -64,13 +63,6 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 _T = TypeVar("_T")
-
-# What survives a restart of Home Assistant: each appliance's last contact and last cook.
-# Without it an offline appliance after a restart has nothing to say about its last cook.
-STORE_VERSION = 1
-STORE_SAVE_DELAY = 5
-# Where the add-on reads how the account is doing (its log is not Home Assistant's).
-STATUS_FILE = ".bruh_cooking/status.json"
 
 
 def device_for(hass: HomeAssistant, serial: str) -> dr.DeviceEntry | None:
@@ -154,83 +146,6 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         # turning the sign-in down, or the cloud connection being down, and since when.
         self.auth_failed = False
         self.problem_since: datetime | None = dt_util.utcnow()
-        # The account as last read: when the appliance list last came back, and the
-        # appliances it listed that this integration does not drive, with the reason.
-        self.last_poll: datetime | None = None
-        self.skipped: list[dict[str, str]] = []
-        # A preset's name, kept until the cook it started is seen (see note_preset).
-        self._pending_preset: dict[str, str] = {}
-        self._store: Store[dict[str, Any]] = Store(
-            hass, STORE_VERSION, f"{DOMAIN}.{entry.entry_id}.appliances"
-        )
-        self._remembered: dict[str, Any] = {}
-
-    async def async_load_remembered(self) -> None:
-        """Read what an earlier run left: last contact and last cook per appliance."""
-        data = await self._store.async_load()
-        self._remembered = data if isinstance(data, dict) else {}
-
-    @callback
-    def _remember(self, appliance: Appliance) -> None:
-        self._remembered[appliance.serial] = {
-            "last_contact": appliance.last_contact.isoformat(timespec="seconds")
-            if appliance.last_contact
-            else None,
-            "last_cook": appliance.last_cook,
-        }
-        self._store.async_delay_save(lambda: dict(self._remembered), STORE_SAVE_DELAY)
-
-    @callback
-    def _restore(self, appliance: Appliance) -> None:
-        saved = self._remembered.get(appliance.serial)
-        if not isinstance(saved, dict):
-            return
-        appliance.last_contact = dt_util.parse_datetime(saved.get("last_contact") or "")
-        if isinstance(saved.get("last_cook"), dict):
-            appliance.last_cook = saved["last_cook"]
-
-    @callback
-    def note_preset(self, appliance: Appliance, preset: str | None) -> None:
-        """A cook is about to start from this preset (None: it did not): the last cook says so once it does."""
-        if preset is None:
-            self._pending_preset.pop(appliance.serial, None)
-        else:
-            self._pending_preset[appliance.serial] = preset
-
-    def account_summary(self) -> dict[str, Any]:
-        """How the account stands, in words and counts; never a credential or the email."""
-        if self.auth_failed:
-            connection = "sign-in refused"
-        elif self.connected:
-            connection = "connected"
-        else:
-            connection = "not connected"
-        return {
-            "connection": connection,
-            "appliances_found": len(self.appliances),
-            "last_poll": self.last_poll.isoformat(timespec="seconds") if self.last_poll else None,
-            "not_driven": list(self.skipped),
-        }
-
-    @callback
-    def _publish_account(self) -> None:
-        """Write the account summary where the add-on's log can read it."""
-        data = {**self.account_summary(), "at": dt_util.utcnow().isoformat(timespec="seconds")}
-        path = self.hass.config.path(STATUS_FILE)
-
-        def write() -> None:
-            import json
-            import os
-
-            try:
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                with open(f"{path}.tmp", "w", encoding="utf-8") as fh:
-                    json.dump(data, fh)
-                os.replace(f"{path}.tmp", path)
-            except OSError:
-                pass  # a read-only /config: the add-on just has less to say
-
-        self.hass.async_add_executor_job(write)
 
     @callback
     def _note_path(self) -> None:
@@ -285,27 +200,14 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
 
         added = []
         listed: set[str] = set()
-        skipped: list[dict[str, str]] = []
         for raw in result["appliances"]:
             serial, model = raw.get("serialNumber"), raw.get("model")
             if not serial:
-                skipped.append(
-                    {
-                        "name": str(raw.get("name") or model or "unnamed"),
-                        "reason": "the account lists it without a serial number, so it cannot be matched",
-                    }
-                )
                 continue
             if model not in MODELS:
-                skipped.append(
-                    {
-                        "name": str(raw.get("name") or model or "unnamed"),
-                        "reason": f"model {model} is not one this integration drives (Joule, Joule Turbo, Joule Oven Air Fryer Pro)",
-                    }
-                )
                 if serial not in self._unsupported:
                     self._unsupported.add(serial)
-                    _LOGGER.info("Ignoring %s: model %s is not supported", raw.get("name") or "an appliance", model)
+                    _LOGGER.info("Ignoring unsupported appliance model %s", model)
                 continue
             listed.add(serial)
             if (appliance := self.appliances.get(serial)) is None:
@@ -313,26 +215,10 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
                     serial, model, raw.get("name"), raw.get("itemNumber"),
                     default_settings(model),
                 )
-                self._restore(appliance)
                 _LOGGER.info("Found %s on the account", MODELS[model].product)
                 added.append(appliance)
             elif raw.get("name"):
                 appliance.name = raw["name"]
-                self._follow_name(appliance)
-        first = self.last_poll is None
-        changed = first or skipped != self.skipped or len(listed) != len(self.appliances)
-        self.skipped = skipped
-        self.last_poll = dt_util.utcnow()
-        if changed:
-            _LOGGER.info(
-                "Breville account read: %d appliance(s) found, %d not driven%s",
-                len(listed),
-                len(skipped),
-                "".join(f"; {item['name']}: {item['reason']}" for item in skipped),
-            )
-        else:
-            _LOGGER.debug("Breville account read: %d appliance(s)", len(listed))
-        self._publish_account()
         # Appliances that left the account go unavailable; their devices can
         # then be deleted (async_remove_config_entry_device).
         for serial, appliance in self.appliances.items():
@@ -341,13 +227,6 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
             for appliance in added:
                 await self._socket.subscribe(appliance.serial, appliance.model)
         return self.appliances
-
-    @callback
-    def _follow_name(self, appliance: Appliance) -> None:
-        """The device carries the appliance's current name, not the one it was first seen with."""
-        device = device_for(self.hass, appliance.serial)
-        if device is not None and device.name != appliance.name and not device.name_by_user:
-            dr.async_get(self.hass).async_update_device(device.id, name=appliance.name)
 
     async def async_remove_appliance(self, serial: str) -> None:
         """Forget an appliance whose device was deleted."""
@@ -405,7 +284,6 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
             self._note_path()
             if connected:
                 self._set_auth_failed(False)
-            self._publish_account()
             self.async_update_listeners()
 
     @callback
@@ -429,23 +307,14 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
             appliance.last_cook = {
                 "started_at": now.isoformat(timespec="seconds"),
                 "ended_at": None,
-                "preset": self._pending_preset.pop(appliance.serial, None),
                 "target_temperature_c": status.target_temp_c,
                 "duration_s": status.cook_time_s,
-                "finish_at": status.ends_at.isoformat(timespec="seconds") if status.ends_at else None,
             }
             _LOGGER.info("A cook started on the %s", product)
         elif before.active and not status.active:
             if appliance.last_cook is not None and not appliance.last_cook.get("ended_at"):
                 appliance.last_cook["ended_at"] = now.isoformat(timespec="seconds")
             _LOGGER.info("The cook on the %s stopped", product)
-        elif status.active and appliance.last_cook is not None and not appliance.last_cook.get("ended_at"):
-            # The target and the finish time settle after the start message (and move when edited).
-            appliance.last_cook["target_temperature_c"] = status.target_temp_c
-            appliance.last_cook["duration_s"] = status.cook_time_s
-            if status.ends_at:
-                appliance.last_cook["finish_at"] = status.ends_at.isoformat(timespec="seconds")
-        self._remember(appliance)
 
     @callback
     def _handle_message(self, msg: Any) -> None:

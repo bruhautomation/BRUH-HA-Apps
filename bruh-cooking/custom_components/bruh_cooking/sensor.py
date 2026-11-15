@@ -126,8 +126,6 @@ class BrevilleSensor(BrevilleEntity, SensorEntity):
             if appliance.last_contact
             else None,
             "last_cook": appliance.last_cook,
-            # The account, so one entity says how the connection stands.
-            "account": self.coordinator.account_summary(),
         }
         if (report := self.coordinator.offline_report(appliance)) is not None:
             attrs["offline_cause"] = report["cause"]

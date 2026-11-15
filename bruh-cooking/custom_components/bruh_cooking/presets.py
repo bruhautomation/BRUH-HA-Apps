@@ -110,67 +110,6 @@ BUILTIN_PRESETS: tuple[Preset, ...] = (
 )
 
 
-# One line each, in words a cook reads: the doneness or the food. brAIn reads these in
-# get_presets (the panel translates the names, and shows the temperature and time).
-DESCRIPTIONS: dict[str, str] = {
-    "steak_rare": "Rare: a cool red centre, very tender.",
-    "steak_medium_rare": "Medium-rare: a warm red-pink centre, the usual steak.",
-    "steak_medium": "Medium: a pink centre, firmer.",
-    "steak_well_done": "Well done: no pink, firm and dry-edged.",
-    "beef_roast": "Roast beef, medium-rare all the way through; sear after.",
-    "short_ribs": "Short ribs, tender and sliceable after two days.",
-    "pork_chop": "Pork chop, juicy with a slight blush.",
-    "pulled_pork": "Pork shoulder that pulls apart with a fork.",
-    "chicken_breast": "Chicken breast, moist and sliceable.",
-    "chicken_thighs": "Chicken thighs, tender and fully cooked.",
-    "salmon": "Salmon, soft and silky.",
-    "white_fish": "White fish such as cod, flaky and moist.",
-    "shrimp": "Shrimp, tender and just opaque.",
-    "soft_eggs": "Eggs with a soft, custardy yolk.",
-    "vegetables": "Firm vegetables such as carrots, tender with a bite.",
-    "frozen_fries": "Frozen fries, crisp.",
-    "chicken_wings": "Chicken wings, crisp skin.",
-    "frozen_pizza": "A frozen pizza, crisp base.",
-    "fresh_pizza": "A fresh pizza, browned crust.",
-    "roast_vegetables": "Roasted vegetables, browned at the edges.",
-    "roast_chicken": "A whole roast chicken.",
-    "cookies": "Cookies, golden at the edges.",
-    "cake": "A cake or other bake.",
-    "leftovers": "Warms leftovers without drying them out.",
-    "salmon_fillets": "Salmon fillets under the broiler.",
-    "dried_fruit": "Dried fruit, slowly dehydrated.",
-    "bread_dough": "Warm proof for bread dough.",
-    "pot_roast": "A pot roast, slow cooked until tender.",
-}
-
-
-def describe_preset(preset: Preset) -> str | None:
-    """The one-line note about a preset: what it is for, plus its safety note."""
-    text = DESCRIPTIONS.get(preset.id) if preset.builtin else None
-    if preset.note == NOTE_RAW_SAFE_FISH:
-        text = f"{text or ''} Use fish that's safe to eat raw.".strip()
-    return text
-
-
-def display_temperature(preset: Preset, fahrenheit: bool) -> float | None:
-    """The temperature a person is told for a preset, in the house's unit.
-
-    Fahrenheit is a whole degree for a built-in preset (what cooks, see
-    applied_settings) and the nearest half degree for a saved one; an oven
-    preset keeps its own round Fahrenheit value. Celsius is as stored.
-    """
-    celsius = _number(preset.settings.get("temperature_c"))
-    if celsius is None:
-        return None
-    if not fahrenheit:
-        return celsius
-    exact = _number(preset.settings.get("temperature_f"))
-    if exact is not None:
-        return exact
-    converted = celsius * 9 / 5 + 32
-    return float(math.floor(converted + 0.5)) if preset.builtin else math.floor(converted * 2 + 0.5) / 2
-
-
 class PresetError(ValueError):
     """A preset that can't be saved or applied, with the reason."""
 
