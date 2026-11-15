@@ -370,6 +370,15 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
 - **A part with nothing in it is left out, or says how to fill it.** An empty
   list ("Sequence · Empty") is not drawn as a dimmed tile: it is hidden, or in
   one line says what to add ("Add zones to build a sequence").
+- **A setting reads as a setting, and a tile always has its value.** A run
+  length or other `input_number` shows its value with its unit and says it is
+  a length ("Runs for 60 min · last ran Oct 30"), so it is never read as
+  something running now; a tile that cannot read its value says why in words
+  rather than showing a name over nothing.
+- **A pending restart is Morph's to say.** Morph's own bar at the top of the
+  page asks for a restart of Home Assistant when brAIn's update needs one; a
+  card does not say it again (not in a headline, not from `sensor.brain_status`
+  while its state is `needs_restart`).
 - **No empty space.** The card is as tall as what it draws: no `min-height`,
   padding or spacer kept for a row that is not there, and a part with
   nothing to show is left out, not drawn blank.

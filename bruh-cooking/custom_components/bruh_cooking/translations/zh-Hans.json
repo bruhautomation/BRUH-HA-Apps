@@ -55,13 +55,6 @@
   },
   "entity": {
     "sensor": {
-      "account": {
-        "state": {
-          "connected": "已连接",
-          "not_connected": "未连接",
-          "sign_in_refused": "登录被拒绝"
-        }
-      },
       "status": {
         "name": "状态",
         "state": {
@@ -378,14 +371,7 @@
   "issues": {
     "entity_ids_old_name": {
       "title": "{name}: entity IDs use an older name",
-      "fix_flow": {
-        "step": {
-          "confirm": {
-            "title": "Rename the entity IDs of {name}?",
-            "description": "The entities of {name} were created under an earlier name, so their IDs no longer match it (their displayed names do). Submit to give them IDs from {name}, the way Home Assistant names a new entity. Automations, scripts and dashboards that use the old IDs will stop finding them, so check those afterwards. Nothing is renamed if you close this."
-          }
-        }
-      }
+      "description": "The entities of {name} were created under an earlier name, so their IDs no longer match it (their displayed names do). Nothing was renamed, because automations and dashboards use the IDs. To rename them, open the device page, open its three-dot menu and choose Recreate entity IDs. Check your automations afterwards."
     }
   },
   "exceptions": {

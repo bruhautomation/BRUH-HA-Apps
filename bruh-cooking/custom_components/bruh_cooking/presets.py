@@ -110,76 +110,6 @@ BUILTIN_PRESETS: tuple[Preset, ...] = (
 )
 
 
-# One line each, about the doneness or the food. brAIn reads these from get_presets;
-# the panel translates the names by id and shows the temperature and time itself.
-DESCRIPTIONS: dict[str, str] = {
-    "steak_rare": "Rare steak, a cool red centre and very tender.",
-    "steak_medium_rare": "Medium-rare steak, a warm red-pink centre.",
-    "steak_medium": "Medium steak, a pink centre and firmer.",
-    "steak_well_done": "Well-done steak, no pink and firm.",
-    "beef_roast": "A beef roast, medium-rare all the way through; sear it after.",
-    "short_ribs": "Beef short ribs, tender enough to slice after two days.",
-    "pork_chop": "A pork chop, juicy with a slight blush.",
-    "pulled_pork": "Pork shoulder that pulls apart with a fork.",
-    "chicken_breast": "Chicken breast, moist and sliceable.",
-    "chicken_thighs": "Chicken thighs, tender and cooked through.",
-    "salmon": "Salmon, soft and silky.",
-    "white_fish": "White fish such as cod, flaky and moist.",
-    "shrimp": "Shrimp, tender and just opaque.",
-    "soft_eggs": "Eggs in the shell, with a soft, custardy yolk.",
-    "vegetables": "Firm vegetables such as carrots, tender with a bite.",
-    "frozen_fries": "Frozen fries, air fried until crisp.",
-    "chicken_wings": "Chicken wings with crisp skin.",
-    "frozen_pizza": "A frozen pizza with a crisp base.",
-    "fresh_pizza": "A fresh pizza with a browned crust.",
-    "roast_vegetables": "Roast vegetables, browned at the edges.",
-    "roast_chicken": "A whole roast chicken.",
-    "cookies": "Cookies, golden at the edges.",
-    "cake": "A cake or a similar bake.",
-    "leftovers": "Leftovers, warmed without drying out.",
-    "salmon_fillets": "Salmon fillets under the broiler.",
-    "dried_fruit": "Fruit slices, slowly dried.",
-    "bread_dough": "Bread dough, proofed somewhere warm.",
-    "pot_roast": "A pot roast, slow cooked until tender.",
-}
-
-RAW_SAFE_FISH_TEXT = "Use fish that is safe to eat raw: this does not pasteurize it."
-
-
-def describe_preset(preset: Preset) -> str | None:
-    """A preset's one-line note: what it is for, and its safety note when it has one."""
-    parts = [DESCRIPTIONS.get(preset.id)] if preset.builtin else []
-    if preset.note == NOTE_RAW_SAFE_FISH:
-        parts.append(RAW_SAFE_FISH_TEXT)
-    return " ".join(part for part in parts if part) or None
-
-
-def builtin_fahrenheit(celsius: float) -> float:
-    """A built-in preset's °F: the whole degree the panel shows (half up), and what cooks."""
-    return float(math.floor(celsius * 9 / 5 + 32 + 0.5))
-
-
-def display_temperature(preset: Preset, fahrenheit: bool) -> float | None:
-    """A preset's temperature in the house's unit, as a person is told it.
-
-    The same value the cook uses: a built-in sous vide preset is a whole °F
-    (applied_settings sends that degree), an oven preset its own round °F, and
-    a built-in preset in °C as stored. A saved preset is the nearest half degree.
-    """
-    celsius = _number(preset.settings.get("temperature_c"))
-    if not fahrenheit:
-        if celsius is None or preset.builtin:
-            return celsius
-        return math.floor(celsius * 2 + 0.5) / 2
-    if (exact := _number(preset.settings.get("temperature_f"))) is not None:
-        return exact
-    if celsius is None:
-        return None
-    if preset.builtin:
-        return builtin_fahrenheit(celsius)
-    return math.floor((celsius * 9 / 5 + 32) * 2 + 0.5) / 2
-
-
 class PresetError(ValueError):
     """A preset that can't be saved or applied, with the reason."""
 
@@ -299,7 +229,7 @@ def applied_settings(
     if fahrenheit and preset.builtin:
         # The panel shows a built-in preset in a whole °F (half up, as it does), so that is
         # what cooks: round the °F value, then back. A custom preset is sent as saved.
-        celsius = fahrenheit_to_celsius(builtin_fahrenheit(celsius))
+        celsius = fahrenheit_to_celsius(math.floor(celsius * 9 / 5 + 32 + 0.5))
     return replace(
         current,
         temperature_c=min(high, max(low, celsius)),
