@@ -2,6 +2,31 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.5
+
+### Changed
+
+- Findings lead with one plain sentence: no log lines, firmware builds, integration names or network-table counts in the title or the first line. The title matches the worst fact ("offline for 9 days", not "struggling"), the detail opens with why the step matters, a battery finding opens with the level and the batteries to change, and connection details appear only when the finding is about the connection (#980, #977, #913).
+- Durations over two hours read in hours, and over two days in days ("9 days ago", not "226 hours ago"), everywhere the checks say how long. A Zigbee device silent for two days or more is called offline (#913).
+- One way of speaking everywhere brAIn writes: you are "you", never "the household", and nothing mentions the scorecard or "marked wrong" (#912).
+- An insight card opens with its verdict against what is normal here ("Normal, because …" or "Worth a look, because …"), calls a seasonal change normal, and leaves out sentences about what it could not check (#979).
+
+### Fixed
+
+- A card says when a reading was taken instead of calling an old one "now".
+- A run that read nothing about the house (only brAIn's own memory or health) no longer publishes an insight card (#976).
+
+## 5.3.4
+
+### Changed
+
+- When Claude's usage limit is reached, brAIn says it is resting and until when ("Resting until 11:20 PM: Claude's usage limit is reached") on Today's status line, the status sensor and ⚙ › Diagnostics, instead of a fault. A chat turn refused for the limit says when to ask again. Runs pick up again at the time the message names, without a report (#920).
+
+### Fixed
+
+- A run refused with "You've hit your 5-hour limit · resets …" was counted as an error and filed as a fault: the limit is now read by the message's shape, whatever the window is called (#895).
+- The sign-in check read the same message as a sign-out, so Health said "Claude is not signed in" and asked for a new sign-in while the account was only at its limit (#896, #897).
+
 ## 5.3.3
 
 ### Fixed

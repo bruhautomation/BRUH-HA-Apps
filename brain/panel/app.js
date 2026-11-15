@@ -3972,6 +3972,9 @@ function renderDiagnostics(d) {
   const h = d.health || {};
   if (!healthOk) {
     rows.push(diagRow("brAIn", esc(h.reason || h.state || "unknown"), true));
+  } else if (h.resting) {
+    // The usage limit: not a fault, so not flagged, but said with its end.
+    rows.push(diagRow("brAIn", esc(h.resting)));
   }
   if (h.fix) rows.push(diagRow("What to do", esc(h.fix), true));
   if ((h.problems || []).length > 1) {

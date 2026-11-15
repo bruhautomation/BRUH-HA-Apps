@@ -986,10 +986,10 @@ Answer with ONE JSON object and nothing else. What it means:
   them ("06:00", "since 14:10 yesterday") — never "UTC", never an ISO
   stamp with a Z.
 - """ + prompt_kit.DEVICE_WORDS + """
-- Call the add-on "brAIn". Never its Supervisor slug (the hex prefix and
-  "_brain" a log line carries) or its container name.
+- Never brAIn's Supervisor slug (the hex prefix and "_brain" a log line
+  carries) or its container name.
 - brAIn's own upkeep (its instructions, memory, voice, settings) is
-  brAIn's: never ask the household to edit its files or call its tools,
+  brAIn's: never ask the reader to edit its files or call its tools,
   never a file path, tool name or model id, and never state its voice or
   name from memory.
 - "evidence" — every row is something you ACTUALLY READ. Each names the
@@ -1035,8 +1035,6 @@ Rules that matter more than anything about style:
   the homeowner. If the answer is already on their list, make no claim.
 - One claim per run. If you found two things, claim the one that matters
   and say the other in "detail".
-- Write about brAIn as "brAIn", never "I", and never name its
-  internal parts (the Resident, the first look, an investigation).
 - """ + prompt_kit.ADDRESS + """
 - Never refer to brAIn's own bookkeeping in anything the homeowner reads:
   no "signal 7", "row 3", "finding #12", case ids or timestamps used as

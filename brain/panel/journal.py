@@ -166,9 +166,90 @@ _SECRET_RE = re.compile(
 # requests", which is the API's limit and not the account's and is
 # answered the same way, by waiting. A 529 is deliberately not here: an
 # overloaded service is retried once inside the run (`engine.overloaded`).
+#
+# The subscription's message names its window in words the CLI changes
+# ("your limit", "your 5-hour limit", "your weekly limit", "your Opus
+# limit"), so it is read by its shape and not by the window's name: "hit
+# your <a few words> limit", or a limit followed by the clause that says
+# when it reopens ("… limit · resets 11:20pm"). The window was once a
+# lowercase-letters-only class, and "5-hour" — a digit — fell through to
+# `error`, which filed a fault per refused run and failed the sign-in
+# check as "not signed in". Neither alternative crosses a sentence end.
 _RATE_LIMITED_RE = re.compile(
-    r"hit your (?:[a-z\- ]*?)limit|usage limit|rate[ _-]?limit|"
+    r"hit your\b[^.\n|]{0,40}?\blimit\b|\blimit\b[^.\n]{0,12}?\bresets\b|"
+    r"usage limit|rate[ _-]?limit|"
     r"\b429\b|limiting requests|spend limit", re.IGNORECASE)
+
+# When the subscription's limit says it reopens: "resets 11:20pm
+# (America/New_York)", "resets 3pm", "resets Nov 18, 9am", and the older
+# "Claude AI usage limit reached|<epoch seconds>".
+_RESETS_RE = re.compile(
+    r"\bresets\s+(?:at\s+|on\s+)?"
+    r"(?:(?P<mon>[A-Za-z]{3,9})\.?\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?,?\s+"
+    r"(?:at\s+)?)?"
+    r"(?P<h>\d{1,2})(?::(?P<m>\d{2}))?\s*(?P<ap>[ap])?\.?m?\.?"
+    r"(?:\s*\((?P<tz>[A-Za-z][A-Za-z0-9_+\-]*(?:/[A-Za-z0-9_+\-]+)*)\))?",
+    re.IGNORECASE)
+_RESETS_EPOCH_RE = re.compile(r"limit reached\s*\|\s*(\d{10})\b", re.I)
+# A reset further out than this is a misread, not a window: the longest
+# one a plan has is a week.
+_RESET_HORIZON_S = 8 * 86400
+
+
+def limit_resets_at(text: str, now: float | None = None,
+                    house_tz=None) -> float:
+    """When the usage limit named in ``text`` reopens, as epoch seconds,
+    or 0.0 when the text does not say (or says something unreadable).
+
+    The clock is in the zone the message names, and in ``house_tz`` (a
+    tzinfo; the process's local zone when None) when it names none. A time with no date is its next occurrence;
+    a date with no year is this year's, or next year's once it has
+    passed. Never raises."""
+    import datetime as _dt
+    now = time.time() if now is None else float(now)
+    text = str(text or "")
+    try:
+        m = _RESETS_EPOCH_RE.search(text)
+        if m:
+            at = float(m.group(1))
+            return at if now < at <= now + _RESET_HORIZON_S else 0.0
+        m = _RESETS_RE.search(text)
+        if not m:
+            return 0.0
+        hour, minute = int(m.group("h")), int(m.group("m") or 0)
+        ap = (m.group("ap") or "").lower()
+        if ap:
+            if not 1 <= hour <= 12:
+                return 0.0
+            hour = hour % 12 + (12 if ap == "p" else 0)
+        elif not m.group("m"):
+            return 0.0  # "resets 3" is a number, not a time
+        if hour > 23 or minute > 59:
+            return 0.0
+        zone = house_tz
+        if m.group("tz"):
+            from zoneinfo import ZoneInfo
+            try:
+                zone = ZoneInfo(m.group("tz"))
+            except Exception:  # noqa: BLE001 — an unknown zone is the house's
+                zone = house_tz
+        here = (_dt.datetime.fromtimestamp(now, zone) if zone
+                else _dt.datetime.fromtimestamp(now).astimezone())
+        if m.group("mon"):
+            month = _dt.datetime.strptime(m.group("mon")[:3].title(), "%b").month
+            at = here.replace(month=month, day=int(m.group("day")), hour=hour,
+                              minute=minute, second=0, microsecond=0)
+            if at.timestamp() < now - 86400:
+                at = at.replace(year=at.year + 1)
+        else:
+            at = here.replace(hour=hour, minute=minute, second=0,
+                              microsecond=0)
+            if at.timestamp() <= now:
+                at += _dt.timedelta(days=1)
+        stamp = at.timestamp()
+    except Exception:  # noqa: BLE001 — an unreadable time is no time
+        return 0.0
+    return stamp if now < stamp <= now + _RESET_HORIZON_S else 0.0
 
 
 # 143 is 128 + SIGTERM (a CLI that handled the signal) and -15 is Python's

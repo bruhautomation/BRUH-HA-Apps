@@ -1551,7 +1551,9 @@ def file_run_failure(row: dict, diagnostics=None, now: float | None = None) -> s
     """One report for a failed journal row. The row IS the run section, and
     its own ``ts`` is the report's time — the file is about when the run
     failed, not about when the reports thread got to it."""
-    if not isinstance(row, dict) or row.get("outcome") not in FAILURE_OUTCOMES:
+    # `outcome_of`, not the stored word: a row written `error` whose text
+    # is the account's usage limit is a rest, and files nothing.
+    if not isinstance(row, dict) or journal.outcome_of(row) not in FAILURE_OUTCOMES:
         return None
     if now is None and isinstance(row.get("ts"), (int, float)) and row["ts"] > 0:
         now = float(row["ts"])

@@ -99,14 +99,28 @@ NOT_FROM_HOUSE_WHY = ("the answer carried nothing read from the house, so no "
                       "card was made from it")
 
 
-def read_nothing(tools) -> bool:
+# Tools that read brAIn itself (its memory, its list, its health, its own
+# decisions): a run that called only these read nothing about the house.
+SELF_TOOLS = frozenset({"recall", "get_findings", "get_health",
+                        "explain_decision", "notification_history"})
+
+
+def read_nothing(tools, house=None) -> bool:
     """Whether a run called no tool that reads the house. The names are the
     run's own transcript (`conversations.tool_reads`); the CLI's structured
-    reply is a tool call too and is not a read. A routing note from a chat
-    turn ("no data needed") is this: it is judged by what the run did,
-    never by how the reply is worded."""
-    return not [t for t in tools or ()
-                if not str(t).lower().endswith("structuredoutput")]
+    reply is a tool call too and is not a read, and neither is a tool that
+    reads brAIn itself (`SELF_TOOLS`) or one outside ``house``, the bare
+    names of the analyst's reads. A routing note from a chat turn ("no data
+    needed") is this: it is judged by what the run did, never by how the
+    reply is worded."""
+    for t in tools or ():
+        bare = str(t).rsplit("__", 1)[-1]
+        if bare.lower().endswith("structuredoutput") or bare in SELF_TOOLS:
+            continue
+        if house is not None and bare not in house:
+            continue
+        return False
+    return True
 
 
 def blind_lead(obj: dict, verdict: str = "") -> str:

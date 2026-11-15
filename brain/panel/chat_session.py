@@ -2393,10 +2393,13 @@ def _normalise(event: dict, interrupted: bool = False) -> list[dict]:
             return [{"type": "notice", "text": "Stopped."}]
         if event.get("is_error"):
             text = _error_text(event)
+            outcome = journal.classify({"ok": False, "error": text})
             journal.record(
-                "chat", journal.classify({"ok": False, "error": text}),
+                "chat", outcome,
                 error=text, duration_s=secs,
                 turns=turns if isinstance(turns, int) else None)
+            if outcome == "rate_limited":
+                return [{"type": "notice", "text": _resting_text(text)}]
             return [{"type": "notice", "level": "error", "text": text}]
         journal.record("chat", "ok", duration_s=secs,
                        turns=turns if isinstance(turns, int) else None)
@@ -2432,6 +2435,33 @@ def _session_info(event: dict) -> dict:
         "version": event.get("claude_code_version") or "",
         "api_key_source": event.get("apiKeySource") or "none",
     }
+
+
+def _resting_text(error: str, now: float | None = None) -> str:
+    """What a chat turn the account's usage limit refused says: when brAIn
+    is back, on the house's clock, and not the limit as an error. The
+    CLI's own words are kept when they name no time this can read."""
+    import baselines  # noqa: PLC0415 — only this rare turn needs them
+    import brief  # noqa: PLC0415
+
+    try:
+        tz, name = baselines.house_timezone()
+    except Exception:  # noqa: BLE001 — the process's zone, then
+        tz, name = None, ""
+    back = journal.limit_resets_at(error, now=now, house_tz=tz)
+    if not back:
+        return ("brAIn is resting: Claude's usage limit is reached. "
+                f"Claude said: {error}")
+    import datetime as _dt  # noqa: PLC0415
+
+    local = _dt.datetime.fromtimestamp(back, tz)
+    when = brief.format_clock(local.hour, local.minute,
+                              brief.clock_style("", name))
+    if local.date() != _dt.datetime.fromtimestamp(
+            time.time() if now is None else now, tz).date():
+        when = f"{local:%a} {when}"
+    return (f"brAIn is resting until {when}: Claude's usage limit is "
+            "reached. Ask again then.")
 
 
 def _error_text(event: dict) -> str:
