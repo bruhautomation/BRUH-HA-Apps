@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.5
+
+### Fixed
+
+- The blue Print and Upload buttons and the active tab label are readable (5.4:1, was 3:1) (#936).
+- Long file names in Files › Library wrap onto two lines on a phone instead of being cut after about 14 characters, so near-identical names can be told apart, and the version chip no longer clips (#935).
+- The Printers page no longer scrolls sideways on a phone, and the layer timeline is one tappable track that picks the nearest layer, instead of thin ticks (#934).
+- When the camera could not see the last print, failure detection says so at the top with what to check, a blind look is no longer shown in green as fine, and the unclear "could not be read" line is plain (#933).
+- Each AMS spool says its colour and material ("White PLA"); the remaining amount shows only when the printer sends it, and "level u…" is gone (#932).
+
 ## 0.4.4
 
 ### Added
