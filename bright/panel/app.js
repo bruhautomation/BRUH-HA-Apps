@@ -231,18 +231,37 @@
   // One probe per unprobed bulb, in turn — the same call the Check button
   // makes, never several at once (a probe is timing, and parallel ones
   // would time each other).
+  let probeAllStop = false;
+  let probeAllRunning = false;
   $("btnProbeAll").addEventListener("click", async () => {
     const button = $("btnProbeAll");
     const status = $("probeAllStatus");
+    if (probeAllRunning) {
+      probeAllStop = true;
+      button.disabled = true;
+      status.textContent = "Stopping after this bulb…";
+      return;
+    }
     const rows = Array.from($("lifxList").querySelectorAll(".row"))
       .filter((r) => r.dataset.serial && !r.dataset.probed);
     if (!rows.length) {
       status.textContent = "Every bulb has been checked.";
       return;
     }
-    button.disabled = true;
+    // A probe is timing; a show playing would time the bulbs against itself.
+    try {
+      const state = await api("api/show/state");
+      if (state && state.active) {
+        status.textContent = "A show is playing. Stop it first, then check the bulbs.";
+        return;
+      }
+    } catch (error) { /* cannot tell: go on, the probe itself will say */ }
+    probeAllRunning = true;
+    probeAllStop = false;
+    button.textContent = "Stop";
     let done = 0;
     for (const row of rows) {
+      if (probeAllStop) break;
       status.textContent = "Checking " + (done + 1) + " of " + rows.length + "…";
       const out = row.querySelector(".rtt");
       out.textContent = "Checking…";
@@ -255,7 +274,14 @@
       }
       done += 1;
     }
-    status.textContent = "Checked " + done + " bulb" + (done === 1 ? "" : "s") + ".";
+    for (const row of rows) {
+      const out = row.querySelector(".rtt");
+      if (out.textContent === "Checking…") out.textContent = "";
+    }
+    status.textContent = (probeAllStop ? "Stopped after " : "Checked ") + done +
+      " bulb" + (done === 1 ? "" : "s") + ".";
+    probeAllRunning = false;
+    button.textContent = "Probe all unprobed";
     button.disabled = false;
   });
 
@@ -843,13 +869,20 @@
     // Anywhere but the buttons opens that track's show file. The list and
     // the editor are one thing seen twice, the same way the light map and
     // its rows are.
-    if (event.target.closest("button")) return;
+    if (event.target.closest("button, summary, details")) return;
     const row = event.target.closest(".row");
     if (row) {
       for (const other of $("showList").querySelectorAll(".row")) {
         other.classList.toggle("selected", other === row);
       }
       openScript(row.dataset.hash, row.querySelector("strong").textContent);
+    }
+  });
+
+  // A ⋯ menu closes when you tap anywhere outside it.
+  document.addEventListener("click", (event) => {
+    for (const menu of document.querySelectorAll("details.more[open]")) {
+      if (!menu.contains(event.target)) menu.open = false;
     }
   });
 
