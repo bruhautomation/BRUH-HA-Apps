@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.9
+
+### Removed
+
+- Everything in 0.1.8 is taken back out, and GardenRX is again as it was in 0.1.7. The development loop's transcript monitor flagged the batch that made 0.1.8: its fixer edited a test file while working, a scratch file that was never merged. The monitor's rule is to revert any batch it flags and redo it on a stronger model, so the same fixes (#1014, #1015, #1016, #1017, #1018) come back in a later release.
+
 ## 0.1.8
 
 ### Fixed
