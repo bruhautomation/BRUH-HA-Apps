@@ -113,16 +113,28 @@ const ACT_ICONS = {
 // `action` says a word of the tile's own sits beside the line.
 export function statusHtml(val, o) {
   const opt = o || {};
-  const parts = (Array.isArray(val) ? val : [val]).map((p) => (p == null ? '' : String(p))).filter(Boolean);
-  if (parts.length < 2) return esc(parts[0] || '');
+  // A part is a string, or { text, short }: where the tile is too narrow for the
+  // next part, `short` stands in for the first one and says both facts in fewer words.
+  const parts = (Array.isArray(val) ? val : [val]).map((p) => (p == null ? '' : p && typeof p === 'object' ? p : String(p))).filter((p) => p && (typeof p === 'string' || p.text));
+  if (!parts.length) return '';
   const sep = opt.sep == null ? ' \u00b7 ' : opt.sep;
+  const body = (p) => (typeof p === 'string' ? p : p.text);
+  if (parts.length < 2) return esc(body(parts[0]));
   let n = 0;
-  return `${parts.map((p, i) => {
-    const text = (i ? sep : '') + p; n += text.length;
-    if (!i) return `<i>${esc(text)}</i>`;
-    const need = Math.min(STATUS.max, Math.max(STATUS.min, Math.ceil((n * STATUS.charPx + STATUS.linePx + (opt.action ? STATUS.actionPx : 0)) / STATUS.step) * STATUS.step));
+  const needOf = (len) => Math.min(STATUS.max, Math.max(STATUS.min, Math.ceil((len * STATUS.charPx + STATUS.linePx + (opt.action ? STATUS.actionPx : 0)) / STATUS.step) * STATUS.step));
+  const first = parts[0];
+  const short = typeof first === 'object' && first.short ? first.short : '';
+  const out = parts.map((p, i) => {
+    const text = (i ? sep : '') + body(p); n += text.length;
+    if (!i) return short ? '' : `<i>${esc(text)}</i>`;
+    const need = needOf(n);
     return `<i class="w${need}">${esc(text)}</i>`;
-  }).join('')}`;
+  });
+  if (short) {
+    const need = needOf(parts.slice(0, 2).reduce((a, p, i) => a + (i ? sep.length : 0) + body(p).length, 0));
+    out[0] = `<i class="sh h${need}">${esc(short)}</i><i class="w${need}">${esc(body(first))}</i>`;
+  }
+  return out.join('');
 }
 
 export function stripFace(o) {
@@ -383,7 +395,7 @@ const lightGroup = {
     const bad = gone ? gone + ' unavailable' : '';
     return off(ctx.st) ? 'Unavailable' : ctx.preview != null ? ctx.preview + '%'
       : total === 1 && !gone ? [n ? 'On' : 'Off', n ? `avg ${avg}%` : '']
-        : n ? [!gone && n === total ? `All ${total} on` : `${n} of ${total} on`, `avg ${avg}%`, bad]
+        : n ? [{ text: !gone && n === total ? `All ${total} on` : `${n} of ${total} on`, short: `${!gone && n === total ? 'All ' + total : n + ' of ' + total} \u00b7 ${avg}%` }, `avg ${avg}%`, bad]
           : total ? [!gone ? `All ${total} off` : reach ? `${reach} off` : 'All unavailable', reach ? bad : ''] : 'Off';
   },
   more: (ctx) => {
@@ -556,7 +568,7 @@ const lock = {
     // options.sub: one reading said beside the state ("Locked · 188 mi").
     const sub = ctx.card.options && ctx.card.options.sub && ctx.hass.states[ctx.card.options.sub];
     const extra = sub && !off(sub) ? ' · ' + detailValue(sub) : '';
-    return stripFace({ kind: 'none', icon: 'lock', accent: ctx.accent, active: unlocked, action, actIcon: action.toLowerCase(), armed: ctx.confirm || '', actionColor: unlocked ? 'var(--indigo)' : 'var(--amber)', name: ctx.name, val: off(st) ? stateWord(st, ctx.hass) : stateWord(st, ctx.hass) + extra, iconTransform: unlocked ? 'translateY(-3px)' : 'none', hint: ctx.hint });
+    return stripFace({ kind: 'none', icon: 'lock', accent: ctx.accent, active: unlocked, action, actIcon: action.toLowerCase(), armed: ctx.confirm || '', actionColor: unlocked ? 'var(--indigo)' : 'var(--amber)', name: ctx.name, val: off(st) ? stateWord(st, ctx.hass) : [stateWord(st, ctx.hass), extra.replace(/^ \u00b7 /, '')], iconTransform: unlocked ? 'translateY(-3px)' : 'none', hint: ctx.hint });
   },
   more: (ctx) => {
     const a = (ctx.st && ctx.st.attributes) || {};
