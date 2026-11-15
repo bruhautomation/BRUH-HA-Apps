@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.14
+
+### Fixed
+
+- Morph: a tile that holds a Lovelace card (a thermostat or climate card, for one) is a labelled group, not a button laid around the card's own controls, so every temperature chip and button on it can be tapped on its own. The room chips on the readings chart are 40px tall instead of 28px with an invisible margin that overlapped the next row (#1052).
+
 ## 5.3.13
 
 ### Changed
