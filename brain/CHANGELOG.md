@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.21
+
+### Fixed
+
+- A restart line on the Timeline says "and came back" only when every device did; otherwise it says how many are still offline ("113 devices went unavailable · 3 still offline") and lists those first behind the tap. Every device's own return now folds into the line, not just the first 40 (#1140).
+
 ## 5.3.20
 
 ### Changed
