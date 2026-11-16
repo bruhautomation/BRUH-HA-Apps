@@ -22,7 +22,7 @@
 html, body { margin: 0; }
 body {
   background: var(--bg); color: var(--ink);
-  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Noto Sans CJK SC", "Noto Sans CJK JP", "Noto Sans CJK KR", "PingFang SC", "Hiragino Sans", "Microsoft YaHei", "Malgun Gothic", sans-serif;
 }
 /* ---- The bar: one row at every width ------------------------------------
    Home Assistant's own header is above it, so on a phone the panel's name is
@@ -126,6 +126,10 @@ a.button { text-decoration: none; }
 .chip.q { text-transform: none; text-align: left; white-space: normal; }
 button.chip { min-height: 32px; font-weight: 500; }
 details { margin-top: 12px; }
+/* A closed details takes no part in layout: its buttons (a menu's Refresh,
+   Delete, Send G-code) were still laid out under the camera's controls and
+   the file row's Print, and measured as covering them. */
+details:not([open]) > :not(summary) { display: none; }
 summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; gap: 8px; }
 pre { white-space: pre-wrap; font-size: 12px; max-height: 200px; overflow: auto; }
 dialog { border: 1px solid var(--line); border-radius: var(--r-md);
@@ -150,6 +154,7 @@ dialog::backdrop { background: rgba(5, 8, 11, .45); }
 .pmenupop button, .pmenupop .button { justify-content: flex-start; background: transparent; }
 .pmenupop button:hover:not(:disabled), .pmenupop .button:hover { background: var(--sunk); }
 .pmenupop [hidden] { display: none !important; }
+
 /* A printer's and a file's menu opens in the flow, under its own row, and
    moves what is below it down: a floating one covered the camera's buttons
    and ran off the bottom of the list. */
@@ -464,7 +469,7 @@ fieldset.trays { border: 1px solid var(--line); border-radius: var(--r-sm); disp
 .ring.done { background: var(--done); }
 .ring.done span { color: var(--done); font-size: 20px; }
 .jobtext { flex: 1; min-width: 0; display: grid; gap: 1px; }
-.jobname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jobname { overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
 .jobtext .hint { margin: 0; }
 .facts { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .facts b { color: var(--ink); font-weight: 600; }
@@ -570,17 +575,22 @@ details.more > summary { list-style: none; }
 .frow { display: flex; align-items: center; gap: var(--s3); padding: 10px 0; border-top: 1px solid var(--line); }
 .fthumb { flex: none; width: 64px; height: 64px; border-radius: var(--r-sm); object-fit: contain; background: var(--sunk); }
 .fthumb.nopic { font-size: 12px; }
-.fthumb.kind { font-size: 12px; font-weight: 700; letter-spacing: .04em; color: var(--muted); }
+.fthumb.kind { font-size: 11px; font-weight: 700; letter-spacing: .04em; color: var(--muted); align-content: center; gap: 2px; }
+.fthumb.kind .ic { width: 22px; height: 22px; }
 .fslice { margin: 2px 0; font-size: 14px; font-weight: 600; }
 .filebar { display: flex; gap: var(--s2); margin: var(--s3) 0 var(--s2); }
 .filebar input { flex: 1 1 auto; min-width: 0; }
 .filebar select { flex: none; max-width: 45%; }
 .fname { display: block; overflow-wrap: anywhere; }
 .frow .grow { min-width: 0; }
+/* Print and the ⋯ menu stay beside the title block at every width (a row of
+   their own made each file taller); only an opened menu takes the row's
+   whole width, in the flow, under it. */
+.frow:has(.pmenu[open]) { flex-wrap: wrap; }
+.frow:has(.pmenu[open]) .factions { flex: 1 1 100%; }
 @media (max-width: 560px) {
-  .frow { flex-wrap: wrap; }
-  .frow .grow { flex: 1 1 calc(100% - 64px - var(--s3)); }
-  .frow .factions { margin-left: calc(64px + var(--s3)); }
+  .frow { gap: var(--s2); }
+  .frow > .fthumb { width: 48px; height: 48px; }
   .badges .pill { white-space: normal; }
 }
 .badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
@@ -740,6 +750,7 @@ label[hidden], [hidden] { display: none !important; }
 .wtick.live::after { background: var(--live); border-color: var(--live); }
 .wtick.warn::after { background: var(--warn); border-color: var(--warn); }
 .wtick.bad::after { background: var(--bad); border-color: var(--bad); }
+.wtick.blind::after { background: repeating-linear-gradient(45deg, var(--warn) 0 2px, transparent 2px 4px); border-color: var(--warn); }
 .wtick.missed::after, .wtick.skipped::after { border-color: var(--muted); border-style: dashed; }
 .wnow { position: absolute; top: 2px; margin-left: -1px; width: 2px; height: 34px; pointer-events: none; background: var(--ink); border-radius: 1px; }
 .wnow span { position: absolute; top: -2px; left: 4px; font-size: 11px; font-weight: 700; white-space: nowrap;
@@ -752,6 +763,7 @@ label[hidden], [hidden] { display: none !important; }
 .wkey i.k-live { background: var(--live); border-color: var(--live); }
 .wkey i.k-warn { background: var(--warn); border-color: var(--warn); }
 .wkey i.k-bad { background: var(--bad); border-color: var(--bad); }
+.wkey i.k-blind { background: repeating-linear-gradient(45deg, var(--warn) 0 2px, transparent 2px 4px); border-color: var(--warn); }
 .wkey i.k-missed { border-color: var(--muted); border-style: dashed; }
 .wreason { margin: 0; font-size: 13px; }
 .wreason b { font-weight: 600; }
@@ -778,3 +790,5 @@ label[hidden], [hidden] { display: none !important; }
 
 .wblind { padding: 10px 12px; border-radius: var(--r-sm); background: var(--warn-bg); color: var(--warn-ink); }
 .wblind p { margin: 4px 0 0; font-size: 14px; }
+.wblind button { margin-top: 8px; }
+.wblindnote p { margin: 0; flex: 1 1 auto; }

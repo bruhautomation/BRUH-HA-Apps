@@ -931,6 +931,13 @@ def _file_rows(working: bool) -> list[dict]:
             row.update(threemf.inspect(str(library.path_of(row["path"]))))
             rows.append(row)
         library.link_slices(rows)
+        # A source file says what Print will do with it through its newest
+        # slice: that slice's time and weight, not nothing.
+        for row in rows:
+            if row.get("sliced_path") and not row.get("seconds") and not row.get("grams"):
+                info = threemf.inspect(str(library.path_of(row["sliced_path"])))
+                row.update(seconds=info.get("seconds"), grams=info.get("grams"),
+                           filament_use=row.get("filament_use") or info.get("filament_use"))
     rows.sort(key=lambda r: r["modified"], reverse=True)
     return rows
 
