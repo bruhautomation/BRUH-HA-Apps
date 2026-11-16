@@ -90,6 +90,11 @@ def install_docs() -> None:
             old = ""
         if old != new:
             paths.write_text(dst, new)
+        if name == "AGENTS.md":
+            # The house's own cards were written under the rules of their
+            # day: a change of the rules asks once to check them again.
+            learning.card_rules_changed(learning.card_rules(new),
+                                        [p.name for p in paths.CARDS_DIR.glob("*.js")])
     readme = paths.CARDS_DIR / "README.md"
     if not readme.exists() and (paths.DEFAULTS / "cards-README.md").exists():
         shutil.copyfile(paths.DEFAULTS / "cards-README.md", readme)

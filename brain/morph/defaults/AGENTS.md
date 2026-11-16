@@ -367,6 +367,17 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   the state shows it by being pressed. Two controls for the same thing (a pump
   and the button that runs it) agree about when it last ran, or each says what
   its date is ("pump last ran", "run pump last pressed").
+- **A script or scene a Morph tile already runs is not a second control in a
+  card.** A Bedtime pill saying "tap to run" in a card above a Bedtime tile
+  saying "Ran last night 12:35 AM" reads as two different things. Leave it to
+  the tile; a card that must carry it says what it does and when it last ran
+  in the tile's words ("Run Bedtime · ran last night 12:35 AM").
+- **Every camera is named, and says why when there is no picture.** A grid of
+  cameras is the `camera` card, or a card that puts each camera's name and
+  state on its tile ("Porch · Offline", "Garage · No picture yet"), never a
+  wall of bare pictures that look alike while they load or fail. Cameras that
+  all have nothing to show fold to one line that names them. A card never
+  fetches pictures more often than the `camera` card does.
 - **A part with nothing in it is left out, or says how to fill it.** An empty
   list ("Sequence · Empty") is not drawn as a dimmed tile: it is hidden, or in
   one line says what to add ("Add zones to build a sequence").

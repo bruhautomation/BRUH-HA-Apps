@@ -2,6 +2,19 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.19
+
+### Added
+
+- When a release changes the rules brAIn follows for dashboard cards and the house already has cards brAIn built, Morph asks once whether brAIn should check them against the new rules; a No is kept. Rules written after a card was built never reached that card, which is why Tune, refresh, the people tiles, a duplicated Bedtime and a cut-off lights summary stayed as they were (#1127, #1128, #1129).
+- The card rules say a script or scene a tile already runs is not shown again as a "tap to run" pill, and every camera is named and says why it has no picture (#1125, #1127).
+
+### Fixed
+
+- The timeline's label ends in an ellipsis on a phone instead of being cut mid-word, a calendar event is named by its title with whose calendar it is underneath, and a numbered stack says "2 calendar events at once" (#1126).
+- On a touch screen the thermostat's − and + and its mode and fan pills are 40px targets, with the visible circles and pills unchanged (#1129).
+- The dashboard preview the development loop photographs draws a grid or stack card with its cards instead of a placeholder, and says what it keeps out of the preview, so the walkthrough no longer reports the preview's own boxes as faults (#1128, #1125).
+
 ## 5.3.18
 
 ### Changed

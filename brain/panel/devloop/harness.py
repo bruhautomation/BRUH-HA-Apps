@@ -17,8 +17,10 @@ its own code — a house's card from /config/morph/cards, served by name under
 `/devloop/harness/morph_cards/` and `/morph_cards/` (the path a card's own
 absolute import names) — and a card that throws on its config or on `hass`
 is a labelled box saying why. A built-in Lovelace card (a tile, an entities
-card) is Home Assistant's own code and is drawn as a labelled box rather than
-a guess at what Home Assistant would draw.
+card) is Home Assistant's own code and is drawn as a labelled box naming
+what it shows (each entity with its state) rather than a guess at what Home
+Assistant would draw; a grid or a stack lays out its cards, each drawn as it
+would be alone.
 
 The page is served on loopback only and is pure text here: `page(name)`.
 """
@@ -190,10 +192,60 @@ function customCard(cfg) {
   wrap.getCardSize = () => (card && card.getCardSize ? card.getCardSize() : 1);
   return wrap;
 }
+// A built-in card is Home Assistant's own code and is not drawn here, but
+// it is not a blank either: its box names what it shows — each entity with
+// its state, as the house has it — so a picture of a card that hosts one
+// says what is in it. A grid or a stack is only a container: its cards are
+// laid out and each drawn as it would be on its own (a Morph card in a grid
+// by its own code). Read-only like the rest: the box has no controls.
+const CONTAINERS = { grid: 1, 'vertical-stack': 1, 'horizontal-stack': 1 };
+function entityIds(cfg) {
+  const out = [];
+  const add = (e) => { const id = typeof e === 'string' ? e : e && typeof e.entity === 'string' ? e.entity : ''; if (id && !out.includes(id)) out.push(id); };
+  if (cfg) { add(cfg.entity); (Array.isArray(cfg.entities) ? cfg.entities : []).forEach(add); }
+  return out;
+}
+function builtinBox(cfg, type) {
+  const el = box('');
+  const ids = entityIds(cfg);
+  const paint = (h) => {
+    el.textContent = '';
+    const head = document.createElement('div');
+    head.textContent = "Home Assistant's " + (type || 'card') + ' card (drawn by Home Assistant, not in this preview)'
+      + (ids.length ? ':' : '');
+    el.appendChild(head);
+    ids.slice(0, 12).forEach((id) => {
+      const st = h && h.states ? h.states[id] : null;
+      const row = document.createElement('div');
+      row.textContent = ((st && st.attributes && st.attributes.friendly_name) || id) + ' · ' + (st ? st.state : 'missing');
+      el.appendChild(row);
+    });
+    if (ids.length > 12) { const more = document.createElement('div'); more.textContent = 'and ' + (ids.length - 12) + ' more'; el.appendChild(more); }
+  };
+  paint(null);
+  let current = null;
+  Object.defineProperty(el, 'hass', { get: () => current, set: (v) => { current = v; paint(v); } });
+  return el;
+}
+async function container(cfg, type, make) {
+  const el = document.createElement('div');
+  const cols = type === 'grid' ? Math.max(1, Math.min(6, parseInt(cfg.columns, 10) || 2)) : 0;
+  el.style.cssText = type === 'horizontal-stack' ? 'display:flex;gap:8px' : cols ? `display:grid;gap:8px;grid-template-columns:repeat(${cols},minmax(0,1fr))` : 'display:grid;gap:8px';
+  const kids = [];
+  for (const c of (Array.isArray(cfg.cards) ? cfg.cards : []).slice(0, 24)) {
+    const k = await make(c);
+    if (type === 'horizontal-stack') k.style.flex = '1 1 0';
+    kids.push(k); el.appendChild(k);
+  }
+  let current = null;
+  Object.defineProperty(el, 'hass', { get: () => current, set: (v) => { current = v; kids.forEach((k) => { try { k.hass = v; } catch (e) { /* drawn as it is */ } }); } });
+  return el;
+}
 window.loadCardHelpers = async () => ({ async createCardElement(cfg) {
   const type = String((cfg && cfg.type) || '');
   if (!type.startsWith('custom:')) {
-    return box('Lovelace ' + (type || 'card') + ' — drawn by Home Assistant, not in this preview');
+    if (CONTAINERS[type]) return container(cfg, type, (c) => this.createCardElement(c));
+    return builtinBox(cfg, type);
   }
   const tag = type.slice(7);
   if (!customElements.get(tag)) {

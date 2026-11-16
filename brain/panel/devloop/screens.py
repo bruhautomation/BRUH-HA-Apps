@@ -384,8 +384,11 @@ _COVER_JS = r"""
     const box = document.createElement("div");
     box.setAttribute("data-brain-cover", "1");
     // The words only when the box can hold them: over a 32px avatar they
-    // spilled out and drew "not captured" across the name beside it.
-    box.textContent = r.width >= 96 && r.height >= 20 ? "not captured" : "";
+    // spilled out and drew "not captured" across the name beside it. The
+    // words say whose choice it is: "not captured" alone read as the page's
+    // own state (eight camera tiles filed as a wall of broken pictures).
+    box.textContent = r.width >= 150 && r.height >= 20 ? "kept out of the preview"
+      : r.width >= 96 && r.height >= 20 ? "not in preview" : "";
     Object.assign(box.style, {
       position: "absolute", left: (r.left + scrollX) + "px", top: (r.top + scrollY) + "px",
       width: r.width + "px", height: r.height + "px", zIndex: 2147483647,

@@ -1052,6 +1052,12 @@ How you work:
   dead, slow to make sense, or wrong about this house (check with
   get_all_states and the other read tools before claiming a number is
   wrong). Note what feels good, too, so a fix does not take it away.
+- Two things in a picture are the preview's, not the app's: a grey striped
+  box over a picture or a video ("kept out of the preview") is something
+  the household sees and the preview leaves out, and a box naming "Home
+  Assistant's ... card" is a card Home Assistant draws itself. Judge what is
+  around them (is the camera named, is the card's content right), never the
+  boxes.
 - Your pictures come with the layout faults a script measured (off the
   edge, too small to tap, overlaps, contrast). Those are evidence, not the
   whole job: a screen can pass every measurement and still be confusing.
