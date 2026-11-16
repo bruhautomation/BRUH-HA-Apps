@@ -1626,30 +1626,44 @@ def restored(snap: dict, now: float) -> list[dict]:
         still = {e: _stands_in_for(house, e) for e in eids}
         covered = [e for e in eids if still[e]]
         lost = [e for e in eids if not still[e]]
-        detail = (f"{len(eids)} restored entit{'y' if len(eids) == 1 else 'ies'}: "
-                  + join_names([house.label(e) for e in eids])
-                  + ". They show as unavailable and clutter every picker.")
-        remove = ("remove them in Settings > Devices & services > "
-                  "Entities: select them and press Remove selected.")
-        if covered:
-            detail += (" " + join_names([
-                f"{house.label(e)} still reports through "
-                f"{house.label(still[e])}" for e in covered])
-                + ", so " + ("that one is" if len(covered) == 1
-                             else "those are")
-                + " only a leftover.")
-        if lost:
+        # Each name once (#1086): the list is said in the detail, and every
+        # later sentence says "it"/"them" or "the rest". "Restored" is
+        # Home Assistant's word for an entity kept after its source went;
+        # the reader is told what that means instead (#1084).
+        one = len(eids) == 1
+        named = []
+        for e in eids:
+            label = house.label(e)
+            now_by = house.label(still[e]) if still[e] else ""
+            named.append(label if not now_by else
+                         f"{label} (a newer copy still reports)"
+                         if now_by == label else
+                         f"{label} (now reported by {now_by})")
+        detail = (("This is" if one else f"These {len(eids)} are")
+                  + " left over from something Home Assistant no longer has, "
+                  "so " + ("it shows" if one else "they show")
+                  + " as unavailable and clutter" + ("s" if one else "")
+                  + " every picker: " + ", ".join(named) + ".")
+        remove = ("remove " + ("it" if one else "them")
+                  + " in Settings > Devices & services > "
+                  "Entities: select " + ("it" if one else "them")
+                  + " and press Remove selected.")
+        if covered and lost:
+            detail += (" Nothing else in the house reports for the "
+                       + ("other one" if len(lost) == 1 else "rest") + " now.")
+        elif lost:
             detail += (" Nothing else in the house reports for "
-                       + join_names([house.label(e) for e in lost])
-                       + " now.")
+                       + ("it" if one else "them") + " now.")
         if not lost:
-            fix = "What they stood for still works, so " + remove
+            fix = ("What " + ("it" if one else "they") + " stood for still "
+                   "works, so " + remove)
         else:
-            fix = ("If you still use "
-                   + join_names([house.label(e) for e in lost])
-                   + ", reinstall the integration that provided "
-                   + ("it" if len(lost) == 1 else "them")
-                   + ". Otherwise " + remove)
+            what = ("it" if one else "them") if not covered else (
+                "the " + ("other one" if len(lost) == 1 else "rest"))
+            fix = ("If you still use " + what + ", reinstall the "
+                   "integration that provided "
+                   + ("it" if len(lost) == 1 else "them") + ". Otherwise "
+                   + remove)
         out.append({
             "text": f"Entities from the {spell_integration(platform)} "
                     "integration are left over with nothing providing them",

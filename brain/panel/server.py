@@ -6346,26 +6346,26 @@ async def _generate(insight_id: str) -> None:
             raise RuntimeError("Claude returned an unparseable insight (no JSON/html)")
         # Cards come only from analyses of the house. A search run whose
         # transcript shows it called no tool read nothing (a chat turn's
-        # routing note, "no data needed"): not a card, however it got here.
-        # The snapshot path is handed the house, so it always read it; a
-        # transcript that cannot be found proves nothing and is no reason.
-        if sent and sent.get("gather_mode") == "search":
+        # routing note, "no data needed"), and a reply that says in its
+        # typed field that the question is not about the house (either
+        # path, the snapshot fallback too, #1135): not a card, however it
+        # got here. A transcript that cannot be found proves nothing.
+        # A reply that filed or offered something is about the house,
+        # whatever its flag says: what it filed is not dropped. An answer
+        # in words with no tile is still a card (the garage door is shut).
+        not_house = (obj.get("about_house") is False
+                     and not obj.get("findings")
+                     and not obj.get("opportunities"))
+        if not not_house and sent and sent.get("gather_mode") == "search":
             sid = str((result.get("meta") or {}).get("session_id") or "")
             reads = (await asyncio.to_thread(
                 conversations.tool_reads, engine.CLAUDE_HOME, sid)
                 if sid else None)
-            if reads is not None and card_claims.read_nothing(
-                    reads["tools"],
-                    {t.rsplit("__", 1)[-1] for t in engine.ANALYST_TOOLS}):
-                # Not a fault of brAIn's, so no journal row (the paid run
-                # is already in the usage figures); the backoff keeps a
-                # scheduled card from asking again at once.
-                log.info("insight %s: %s", insight_id,
-                         card_claims.NOT_FROM_HOUSE_WHY)
-                _note_card_failure(insight_id, card_claims.NOT_FROM_HOUSE_WHY)
-                _set_job(insight_id, state="error",
-                         error=card_claims.NOT_FROM_HOUSE_WHY)
-                return
+            not_house = reads is not None and card_claims.read_nothing(
+                reads["tools"],
+                {t.rsplit("__", 1)[-1] for t in engine.ANALYST_TOOLS})
+        if not_house and await _not_a_card(insight_id, question, job):
+            return
         # The design system is a stylesheet the card is written against,
         # injected once here rather than re-sent as hex in every prompt.
         html = inject_styles(obj["html"])
@@ -6669,6 +6669,48 @@ def _due_stamp(card: dict | None) -> str:
     card = card or {}
     return max(str(card.get("generated_at") or ""),
                str(card.get("checked_at") or ""))
+
+
+async def _not_a_card(insight_id: str, question, job: dict) -> bool:
+    """A run that read nothing of the house, or said in its typed field
+    that the question is not about it: no card and no card-shaped error
+    box (#1083, #1135). Whether it was handled; False means the caller
+    stores the card after all.
+
+    An asked question is answered where conversations are, in Ask: a new
+    chat starts with it, and the job ends done with no card, carrying the
+    chat's key so the panel can say where the answer went. One that came
+    FROM the chat (Save as report) already has its answer there. When the
+    chat cannot be started the answer is not thrown away: the card is
+    stored, so nothing claims an answer that reached nowhere. A category
+    card is not a fault of brAIn's either: no journal row (the paid run
+    is already in the usage figures), and the backoff keeps a scheduled
+    card from asking again at once."""
+    if question is None:
+        log.info("insight %s: %s", insight_id, card_claims.NOT_FROM_HOUSE_WHY)
+        _note_card_failure(insight_id, card_claims.NOT_FROM_HOUSE_WHY)
+        _set_job(insight_id, state="error",
+                 error=card_claims.NOT_FROM_HOUSE_WHY)
+        return True
+    if job.get("from_chat"):
+        to_chat = "from_chat"
+    else:
+        try:
+            opened = await _ask_in_chat(
+                str(question), {},
+                title=_ask_title({"title": question}))
+            to_chat = str(opened.get("key") or "")
+        except Exception as exc:  # noqa: BLE001 — the card stands instead
+            log.warning("insight %s: could not hand the question to Ask, "
+                        "so the card is kept: %s", insight_id, exc)
+            return False
+        if not to_chat:
+            return False
+    log.info("insight %s: %s; answered in Ask", insight_id,
+             card_claims.NOT_FROM_HOUSE_WHY)
+    CARD_FAILURES.pop(insight_id, None)
+    _set_job(insight_id, state="done", error="", to_chat=to_chat)
+    return True
 
 
 def _no_fallback(result: dict) -> bool:
@@ -9268,6 +9310,11 @@ def _enqueue(job_id: str, question: str | None = None, **fields) -> bool:
     # Whether a person asked this card for a change ("automation_edit"),
     # which makes the rule it offers theirs; reset for the same reason.
     fields.setdefault("asked_change", "")
+    # Whether the question came from Ask's "Save as report", and where a
+    # question that was not about the house was answered instead (#1135);
+    # reset for the same reason.
+    fields.setdefault("from_chat", False)
+    fields.setdefault("to_chat", "")
     _set_job(job_id, state="queued", error="", question=question,
              started_at=time.time(), kind=fields.pop("kind", "insight"), **fields)
     QUEUE.put_nowait(job_id)
@@ -10139,7 +10186,8 @@ async def h_status(request: web.Request) -> web.Response:
         # `prompt_chars`/`entities` are what the run is spending, carried so
         # a card can say it while the spinner is still turning.
         "jobs": {jid: {k: j.get(k) for k in
-                       ("state", "error", "question", "prompt_chars", "entities")}
+                       ("state", "error", "question", "prompt_chars", "entities",
+                        "to_chat")}
                  for jid, j in JOBS.items()},
         "queue_size": QUEUE.qsize(),
     })
@@ -10418,57 +10466,64 @@ def _card_entities(insight: dict) -> list[str]:
     return out
 
 
+def _insights_listing() -> list[dict]:
+    """Every stored card as Reports reads it: its one verdict, whether it
+    folds (quiet, superseded, a finding's twin), its tags and heading. The
+    design review is handed this too, so it reads what the household is
+    shown rather than the store (#1134).
+
+    Tags are resolved at read time, not stored: a hand-edited tag is a diff
+    against whatever the latest run wrote, so a new run's new tag still
+    appears while the one you threw away stays gone."""
+    insights = load_insights()
+    # one read of the edits file for the whole list, not one per card
+    edits = card_tags.load_edits()
+    superseded = _superseded(insights)
+    # The open findings a card can be wholly about (`card_claims.
+    # finding_twin`): a card and a finding about one thing are one item.
+    try:
+        live_rows = [f for f in findings_store.list_all("live")
+                     if f.get("entity_id")]
+    except Exception:  # noqa: BLE001 — no rows is no twin
+        live_rows = []
+
+    def device_of(eid):
+        return (_NAMES.get(eid) or {}).get("device")
+    for ins in insights:
+        # A card saved under an older card stylesheet is drawn with
+        # this one, so the dashboard's look reaches every card.
+        if isinstance(ins.get("html"), str):
+            ins["html"] = refresh_styles(ins["html"])
+        ins["tags"] = card_tags.effective_tags(ins, edits)
+        ins["entities"] = _card_entities(ins)
+        # One verdict: the chip, and a card stored before the field
+        # existed read the same way (its verdict sentence taken off
+        # the prose it was written into). The file is not touched.
+        ins["quiet"] = card_verdict.folds_quiet(ins)
+        ins.update(card_verdict.legacy(ins))
+        if not ins.get("verdict"):
+            ins.pop("verdict", None)
+        if ins.get("id") in superseded:
+            ins["superseded_by"] = superseded[ins["id"]]
+        # Its headline decides too: a side remark about another
+        # sensor does not make a card about a finding's thing a
+        # second item (#759).
+        twin = card_claims.finding_twin(
+            set(ins["entities"]), live_rows, device_of,
+            headline=_card_entities({"title": ins.get("title")}))
+        if twin is not None and twin.get("ts"):
+            ins["told_in"] = f"f:{twin['ts']}"
+        # The heading an asked card carries in place of "Custom". A
+        # category card is headed by its category, which the panel
+        # reads live off the definition so a rename shows at once.
+        if str(ins.get("id") or "").startswith("custom-"):
+            ins["eyebrow"] = card_tags.eyebrow(ins, ins["tags"])
+    return insights
+
+
 async def h_insights(request: web.Request) -> web.Response:
-    # Tags are resolved at read time, not stored: a hand-edited tag is a diff
-    # against whatever the latest run wrote, so a new run's new tag still
-    # appears while the one you threw away stays gone.
-    def listing() -> list[dict]:
-        insights = load_insights()
-        # one read of the edits file for the whole list, not one per card
-        edits = card_tags.load_edits()
-        superseded = _superseded(insights)
-        # The open findings a card can be wholly about (`card_claims.
-        # finding_twin`): a card and a finding about one thing are one item.
-        try:
-            live_rows = [f for f in findings_store.list_all("live")
-                         if f.get("entity_id")]
-        except Exception:  # noqa: BLE001 — no rows is no twin
-            live_rows = []
-
-        def device_of(eid):
-            return (_NAMES.get(eid) or {}).get("device")
-        for ins in insights:
-            # A card saved under an older card stylesheet is drawn with
-            # this one, so the dashboard's look reaches every card.
-            if isinstance(ins.get("html"), str):
-                ins["html"] = refresh_styles(ins["html"])
-            ins["tags"] = card_tags.effective_tags(ins, edits)
-            ins["entities"] = _card_entities(ins)
-            # One verdict: the chip, and a card stored before the field
-            # existed read the same way (its verdict sentence taken off
-            # the prose it was written into). The file is not touched.
-            ins["quiet"] = card_verdict.folds_quiet(ins)
-            ins.update(card_verdict.legacy(ins))
-            if not ins.get("verdict"):
-                ins.pop("verdict", None)
-            if ins.get("id") in superseded:
-                ins["superseded_by"] = superseded[ins["id"]]
-            # Its headline decides too: a side remark about another
-            # sensor does not make a card about a finding's thing a
-            # second item (#759).
-            twin = card_claims.finding_twin(
-                set(ins["entities"]), live_rows, device_of,
-                headline=_card_entities({"title": ins.get("title")}))
-            if twin is not None and twin.get("ts"):
-                ins["told_in"] = f"f:{twin['ts']}"
-            # The heading an asked card carries in place of "Custom". A
-            # category card is headed by its category, which the panel
-            # reads live off the definition so a rename shows at once.
-            if str(ins.get("id") or "").startswith("custom-"):
-                ins["eyebrow"] = card_tags.eyebrow(ins, ins["tags"])
-        return insights
-
-    return web.json_response({"insights": await asyncio.to_thread(listing)})
+    return web.json_response(
+        {"insights": await asyncio.to_thread(_insights_listing)})
 
 
 # "learn about the boiler", "study my energy use" — the ask bar's second verb.
@@ -10551,7 +10606,9 @@ async def h_generate(request: web.Request) -> web.Response:
         while _job_active(f"custom-{stamp}"):
             stamp += 1
         insight_id = f"custom-{stamp}"
-        _enqueue(insight_id, question=question)
+        # From the chat: an answer that turns out not to be about the
+        # house is already in the chat, so it is not asked there again.
+        _enqueue(insight_id, question=question, from_chat=True)
         return web.json_response({"queued": [insight_id]})
     if question:
         if len(question) > 500:
@@ -20660,7 +20717,7 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
             # handed it as its subject, the way a look is handed the owner's.
             topic = await asyncio.to_thread(
                 lambda: dl_streams.design_context(
-                    load_insights(),
+                    _insights_listing(),
                     (findings_store.listing() or {}).get("findings") or []))
         result = await _claude(
             engine.run_analyst,
@@ -25397,7 +25454,12 @@ async def _route_ask(question: str, routes: list[dict]) -> dict:
     out: dict = {"queued": [], "routes": [r["kind"] for r in routes]}
     for route in routes:
         kind, text = route["kind"], route["text"]
-        if kind in ("card_question", "chat", "automation_edit"):
+        if kind == "chat":
+            # A conversation, not a question about the house (#1083): it
+            # is answered in Ask, never published as a card. The panel
+            # opens the chat with these words.
+            out["chat"] = " ".join(x for x in (out.get("chat"), text) if x)
+        elif kind in ("card_question", "automation_edit"):
             card_id = _new_card_id()
             asked = (AUTOMATION_EDIT_FRAME.format(text)
                      if kind == "automation_edit" else text)

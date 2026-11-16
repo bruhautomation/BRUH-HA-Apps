@@ -853,6 +853,12 @@ def folds_quiet(card: dict) -> bool:
     # nothing changing, and folds with the all-fine ones (#793).
     if shown["verdict"] in (LOOK, ACTION) or not nothing_to_act(card):
         return False
+    if shown["verdict"] == FINE and not card.get("question"):
+        # A card nobody asked for whose judgement is "all fine" is not
+        # worth a card of its own (#1134): its name is on the quiet line
+        # and it opens whole from there. An asked card is the answer
+        # somebody wanted, and stays.
+        return True
     return bool(card.get("quiet")) or quiet(card) or no_change(card, None)
 
 

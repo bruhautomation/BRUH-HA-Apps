@@ -155,7 +155,11 @@ FINDING_VOICE = (
     "\"let me know\". When nothing is needed, make no claim; a claim ends "
     "in one step, or in the one question only the reader can answer. "
     "Housekeeping on brAIn's own instruction or personality files is "
-    "brAIn's: never a finding.")
+    "brAIn's: never a finding. (7) Each name once across title, detail and "
+    "step (after that, \"it\" or \"them\"); a list whole, or its count, "
+    "never cut with \"…\"; no voice id, service id or file line; an "
+    "installer's term (restored entities, neighbour table, routes, "
+    "children) is said as what it means for the house.")
 
 HONEST_EMPTY = (
     "Nothing, or \"unknown\", is a good answer when that is what the data "

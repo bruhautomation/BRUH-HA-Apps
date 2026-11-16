@@ -65,7 +65,7 @@ from . import (STREAMS, WALK_APPS, data_dir, enabled, load_settings, read_token,
                stream_on)
 from . import blocks, github
 from .aliases import Aliases
-from .plaintext import plain
+from .plaintext import plain, without_addresses
 from .siblings import PRODUCTS, spec_by_name
 
 log = logging.getLogger("brain.devloop")
@@ -371,9 +371,11 @@ def _digest(text: str) -> str:
 
 def scrub(text: str) -> str:
     """Everything credential-shaped out: the reports' own rules plus a
-    GitHub token, which this package is the first to hold — and every
-    control character (`plain`), so no report carries one anywhere."""
-    return _GITHUB_TOKEN_RE.sub("[redacted]", reports.redact(plain(text)))
+    GitHub token, which this package is the first to hold — every
+    control character (`plain`), so no report carries one anywhere, and
+    every network address of the house (`without_addresses`)."""
+    return without_addresses(
+        _GITHUB_TOKEN_RE.sub("[redacted]", reports.redact(plain(text))))
 
 
 def _abridged(diagnostics: dict) -> str:

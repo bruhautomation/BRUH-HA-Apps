@@ -1367,6 +1367,7 @@ SYSTEM = prompt_kit.assemble(
   sign in to again, a device that needs power), never "reload it" as
   their job.
 - """ + prompt_kit.DEVICE_WORDS + """
+- """ + prompt_kit.FINDING_VOICE + """
 - Records are cited by id EXACTLY as given.
 - At most 5 causes. If nothing here is a real problem, answer with no
   causes — that is a good answer.""",
