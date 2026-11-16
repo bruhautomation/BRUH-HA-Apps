@@ -386,6 +386,10 @@
           }
         }
       }
+    },
+    "restart_required": {
+      "title": "BRUH Cooking {version} wacht op een herstart",
+      "description": "BRUH Cooking {version} is geïnstalleerd, maar Home Assistant draait nog {loaded}, de versie die bij de laatste start is geladen, dus de verbeteringen uit de update werken nog niet. Herstart Home Assistant (Instellingen > Systeem > Herstarten) om hem te laden. Deze melding verdwijnt na de herstart."
     }
   },
   "exceptions": {

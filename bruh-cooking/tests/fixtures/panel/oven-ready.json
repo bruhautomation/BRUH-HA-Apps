@@ -324,9 +324,9 @@
         "last_contact": "2026-10-25T18:00:00+00:00",
         "last_cook": {
           "started_at": "2026-10-25T18:00:00+00:00",
-          "ended_at": null,
-          "target_temperature_c": 176.66666666666666,
-          "duration_s": null
+          "target_temperature": 350.0,
+          "temperature_unit": "°F",
+          "settings_from": "started on the appliance or in the app"
         }
       },
       "last_changed": "2026-10-25T18:00:00+00:00",
