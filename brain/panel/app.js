@@ -2505,6 +2505,9 @@ async function generate(categoryOrId, question, inPlace = false) {
 function showRouted(res) {
   const said = [];
   if ((res.queued || []).length) said.push("Making a card for that");
+  // A conversation, not a question about the house: it goes to Ask, where
+  // its answer is a chat reply and never a card (#1083).
+  if (res.chat) askAbout(res.chat, null, res.chat);
   if ("intent" in res) {
     said.push(res.intent_say
       ? res.intent_say.replace(/\.$/, "")
@@ -2606,8 +2609,37 @@ async function deleteCard(id, catInfo, name) {
   }
 }
 
+// A question the ask bar made a card of that turned out not to be about
+// the house is answered in Ask instead (#1135): no card, and one toast
+// saying where the answer is. Jobs already handed over when the page
+// loaded were said by the page that asked.
+const handedToChat = new Set();
+let handoffPrimed = false;
+function noteChatHandoffs() {
+  const jobs = (state.status && state.status.jobs) || {};
+  Object.entries(jobs).forEach(([jid, j]) => {
+    if (!j || !j.to_chat || handedToChat.has(jid)) return;
+    handedToChat.add(jid);
+    if (!handoffPrimed) return;
+    if (j.to_chat === "from_chat") {
+      toast("That was not about the house, so no report was made — it stays in Ask.");
+      return;
+    }
+    toast("That was not about the house, so brAIn answered it in Ask.", null, {
+      label: "Open",
+      run: () => {
+        switchView("terminal");
+        chatReconnect(j.to_chat);
+        askShow("chat");
+      },
+    });
+  });
+  handoffPrimed = true;
+}
+
 async function refreshStatus() {
   state.status = await api("api/status");
+  noteChatHandoffs();
   renderIfChanged();
   // The dot reads the status line's own state, which the render key above
   // does not carry, so it is repainted on every poll — one attribute.

@@ -2,6 +2,21 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.18
+
+### Changed
+
+- A question that is not about the house, or a turn that read nothing from it, is answered in Ask instead of becoming a card on Reports; one toast with Open says where the answer went (#1135, #1083).
+- Cards open with a verdict and a comparison to the unit's own history; a range says what it is a range of, and a weather station is "the weather station" or "the nearest airport", never its code. A card nobody asked for whose verdict is all fine folds into the "All quiet" line (#1134, #1085).
+- Findings say each name once and give lists whole, and the overnight check writes in the same household voice as the Resident (#1086).
+- `cooking_status` says when Home Assistant still runs an older BRUH Cooking integration than the add-on deployed, so brAIn can tell the person a restart is owed (completes BRUH Cooking 0.1.10's #1116–#1118).
+
+### Fixed
+
+- Voice ids and date-stamped firmware builds in findings are said in plain words ("a voice", "Z-Stack from July 2021"), and the technical text that is taken out is kept under Details instead of dropped (#1133, #1084).
+- The left-over-entities finding names its list once and explains what it means, instead of repeating the names and saying "restored entities" (#1086).
+- The development loop's design review reads Reports as the screen shows it (verdicts, folded cards, whole sentences), so it no longer reports cuts and folded cards the screen never shows.
+
 ## 5.3.17
 
 ### Added

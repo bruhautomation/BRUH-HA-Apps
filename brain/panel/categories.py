@@ -521,6 +521,11 @@ CARD_SCHEMA = {
         "fixed": {"type": "array", "items": {"type": "string"}},
         "live": {"type": "array", "items": {"type": "string"}},
         "html": {"type": "string"},
+        # False when an asked question is not about this house (#1135):
+        # the server makes no card and brAIn answers it in Ask instead.
+        # Typed, so neither path has to read the reply's wording.
+        "about_house": {"type": "boolean",
+                        "description": "false only when the question is not about this house's devices, rooms or readings."},
     },
     "required": ["title", "summary", "highlights", "html"],
     "additionalProperties": False,
@@ -529,7 +534,7 @@ CARD_SCHEMA = {
 
 _CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The highlights ARE the product: concrete numbers with names and times. The title holds the conclusion. The summary's FIRST sentence is the verdict and its reason against this house's own norm: "Normal, because X compared with Y" or "Worth a look, because X compared with Y" (the same judgement as `verdict`; never the title's figures again). A change the season explains (cooling stopping in November, heating starting) is normal. When all is normal, title and summary both say so in one short sentence, with at most two highlights, none with a status, and "html": "".
 
-A CARD EXISTS FOR A CHANGE OR A DECISION. If the honest conclusion is "nothing unusual", "nothing happened" or "no comparison possible", the card is not worth showing: brAIn drops it. A card worth keeping names ONE thing to do, or says everything is normal in a single sentence. Every number is given against a normal the reader can see ("62 °F, usually 68 °F"). A term only a specialist knows (aux heat, defrost, stage, setpoint, differential) is said in everyday words ("the backup heater", "the outdoor unit melting frost") or left out.
+A CARD EXISTS FOR A CHANGE OR A DECISION. If the honest conclusion is "nothing unusual", "nothing happened" or "no comparison possible", the card is not worth showing: brAIn drops it. A card worth keeping names ONE thing to do, or says everything is normal in a single sentence. Every number is given against a normal the reader can see ("62 °F, usually 68 °F"), and the Y of the verdict is this unit's OWN history on like days ("5 defrosts vs usually 2–3 on days below freezing"), never a textbook range. Any range says what it is a range of ("a defrost usually warms the coil to 89–101 °F"). A weather station is "the weather station" (or "the nearest airport" when it is one), never its code. A term only a specialist knows (aux heat, defrost, stage, setpoint, differential) is said in everyday words ("the backup heater", "the outdoor unit melting frost") or left out.
 
 OUTPUT CONTRACT (strict JSON; title, summary, highlights and html are required):
 {"title": "max 60 chars", "verdict": "all fine|worth a look|needs action", "next": "a step", "summary": "1-2 sentences, max ~220 chars, the first 'Normal|Worth a look, because X compared with Y'",
@@ -544,7 +549,7 @@ highlights: 3-6 checkable data points, each with its unit, the entity/room/perso
 tags: what the card is ABOUT, not the category it was asked for.
 hypotheses: usually ZERO, and never the ending. A belief the data cannot settle that would change how you read this home, answerable yes or no; never one memory answers.
 learned: durable NEW discoveries about this home, one plain fact each, no advice, nothing broken, never a KNOWN FACT or the snapshot.
-findings: things that are BROKEN and have an owner. It names the entity, the number and when it started; "fix" is ONE chosen step, never "either…or", "if not" or "also confirm"; "fixable" is true ONLY when software could make the change (config, rename, service call; never batteries or re-pairing). severity: critical = safety or data loss; serious = not working; warning = degraded or will break soon; info = worth tidying. A conclusion of fine files none; an empty list is usual. Never repeat a finding the prompt lists as reported or dismissed; an open one about a device this card covers is the verdict on it: point to it in one clause, never call that device fine.
+findings: things that are BROKEN and have an owner. It names the entity, the number and when it started, in its true state ("offline for 10 days", never "struggling"), each name once and any list whole; "fix" is ONE chosen step, never "either…or", "if not" or "also confirm"; "fixable" is true ONLY when software could make the change (config, rename, service call; never batteries or re-pairing). severity: critical = safety or data loss; serious = not working; warning = degraded or will break soon; info = worth tidying. A conclusion of fine files none; an empty list is usual. Never repeat a finding the prompt lists as reported or dismissed; an open one about a device this card covers is the verdict on it: point to it in one clause, never call that device fine.
 opportunities: usually none. An automation this home clearly lacks, as the one sentence the household would say to ask for it, with the entity_ids it names. Never something broken (a finding).
 live: max 12 entity_ids to keep current, ONLY when watching them change is the story. Register `window.brainLive(callback)` once: it hands you {entity_id: {state, attributes, unit, name}} now and on every refresh. Draw the snapshot values first so the page works with no live data; never poll or fetch.
 
@@ -689,9 +694,10 @@ def _framing(
             f"QUESTION: {question.strip()}\n"
         )
         parts.append(
-            "Choose the most fitting visualization for the answer. If the question is not really "
-            "about the smart home data, answer briefly and honestly in the summary and keep the "
-            "visualization minimal. The question itself is never shown on the card, so the title "
+            "Choose the most fitting visualization for the answer. If the question is not about "
+            "this house's devices, rooms or readings (an account, a key, brAIn itself, the wider "
+            "world), set \"about_house\": false with an empty \"html\" and no highlights: brAIn "
+            "makes no card and answers it in Ask instead. The question itself is never shown on the card, so the title "
             "must name the finding rather than echo the question, and the summary must OPEN with "
             "the direct answer in a few words (\"Yes — dehumidify first.\", \"About 40 minutes.\") "
             "and then give the reason with its number."

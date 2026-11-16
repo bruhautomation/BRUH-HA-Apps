@@ -560,13 +560,14 @@ def _self_care(obj: dict) -> dict | None:
         return None
 
 
-def plain(text: str, names: dict | None = None, tz=None) -> str:
+def plain(text: str, names: dict | None = None, tz=None,
+          step: bool = False) -> str:
     """`house_words.plain` with the panel's names and zone when not handed."""
     if not isinstance(text, str) or not text:
         return text
     return house_words.plain(
         text, names if names is not None else _names_now(),
-        tz if tz is not None else _tz_now())
+        tz if tz is not None else _tz_now(), step=step)
 
 
 def _plain_row(row: dict, keys=("claim", "detail", "fix", "todo_text")) -> dict:
@@ -596,7 +597,8 @@ def _plain_row(row: dict, keys=("claim", "detail", "fix", "todo_text")) -> dict:
             for token in house_words.technical(out[key])[1]:
                 if token not in technical:
                     technical.append(token)
-            out[key] = plain(out[key], names, tz)
+            out[key] = plain(out[key], names, tz,
+                             step=key in ("fix", "todo_text"))
             # One narrator, one stored answer for its voice.
             out[key] = house_words.self_said(
                 out[key], who["name"], who["voice"], dev=dev,
@@ -1001,6 +1003,10 @@ def shown_words(entry: dict) -> dict:
     entry = entry if isinstance(entry, dict) else {}
     model = _model_written(entry.get("source"))
     out = {}
+    # What the pass takes out of a sentence is kept for Details (#1133):
+    # the row's Technical line, never lost and never in the sentence.
+    technical = clean_technical(entry.get("technical"))
+    before = list(technical)
     for key in ("text", "claim", "detail", "fix"):
         said = entry.get(key)
         if isinstance(said, str) and said:
@@ -1026,6 +1032,12 @@ def shown_words(entry: dict) -> dict:
             if plain_said != said and (plain_said
                                        or key not in ("text", "fix")):
                 out[key] = plain_said
+                for token in house_words.lint(said):
+                    if token not in technical:
+                        technical.append(token)
+    technical = clean_technical(technical)
+    if technical != before:
+        out["technical"] = technical
     return out
 
 
