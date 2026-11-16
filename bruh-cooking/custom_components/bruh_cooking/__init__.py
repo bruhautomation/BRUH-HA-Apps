@@ -17,6 +17,7 @@ from homeassistant.helpers import config_validation as cv, device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.loader import async_get_integration
 
 from .api import BRANDS, BrevilleClient, Tokens
 from .appliance import CONVECTION_ALL, OVEN_MODES
@@ -43,6 +44,7 @@ from .frontend import (
     async_remove_entry_panel,
     async_setup_frontend,
 )
+from .restart import async_watch_restart
 from .services import async_register_services
 from .panel_api import (
     async_panel_entry_removed,
@@ -87,7 +89,13 @@ BUNDLE_FOLLOW = timedelta(seconds=60)
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Register the services, the sidebar panel and its websocket API."""
-    await hass.async_add_executor_job(record_loaded, hass.config.path(LOADED_FILE))
+    version = (await async_get_integration(hass, DOMAIN)).version
+    loaded_version = str(version) if version else None
+    await hass.async_add_executor_job(
+        record_loaded, hass.config.path(LOADED_FILE), loaded_version
+    )
+    # A newer copy deployed later says so in Repairs until Home Assistant restarts.
+    async_watch_restart(hass, loaded_version)
     _register_services(hass)
     async_setup_frontend(hass)
     async_setup_panel_api(hass)

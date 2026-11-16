@@ -405,6 +405,7 @@ async def ws_apply_preset(
     except PresetError as err:
         connection.send_error(msg["id"], ERR_INVALID_PRESET, str(err))
         return
+    coordinator.note_settings_preset(appliance, preset.spoken_name)
     # The setting entities show the new settings.
     coordinator.async_update_listeners()
     connection.send_result(msg["id"])

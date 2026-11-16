@@ -202,7 +202,7 @@
         "device_class": "enum",
         "friendly_name": "Countertop Status",
         "last_contact": "2026-10-25T18:00:00+00:00",
-        "last_cook": null
+        "last_cook": "no cook yet"
       },
       "last_changed": "2026-10-25T18:00:00+00:00",
       "last_updated": "2026-10-25T18:00:00+00:00"

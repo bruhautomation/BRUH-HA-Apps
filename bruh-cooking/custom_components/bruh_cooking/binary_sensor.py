@@ -72,12 +72,23 @@ class BrevilleBinarySensor(BrevilleEntity, BinarySensorEntity):
 
     @property
     def available(self) -> bool:
-        # The problem sensor reads on or off while the appliance is offline: the
-        # last error seen stands, and why it is offline is the status sensor's to say.
-        if self.entity_description.key == "problem":
+        # The problem and cooking sensors read on or off while the appliance is
+        # offline (why it is offline is the status sensor's to say): the last
+        # error seen stands, and an appliance that was idle when contact went is
+        # not cooking.
+        if self.entity_description.key in ("problem", "cooking"):
             return self.appliance.on_account
         return super().available
 
     @property
     def is_on(self) -> bool | None:
-        return self.entity_description.value_fn(self.appliance)
+        appliance = self.appliance
+        if (
+            self.entity_description.key == "cooking"
+            and not (self.coordinator.connected and appliance.status.online)
+        ):
+            # Cooking when contact went: unknown until it answers (the status
+            # sensor's offline_reason says so). Otherwise off.
+            cook = appliance.last_cook
+            return None if cook is not None and not cook.get("ended_at") else False
+        return self.entity_description.value_fn(appliance)

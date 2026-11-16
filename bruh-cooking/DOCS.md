@@ -36,7 +36,8 @@ not the password, and asks you to log in again if the session expires. To add
 another account, add the integration again.
 
 The add-on keeps the integration deployed: an update to the add-on brings the
-new integration with it (restart Home Assistant to load it), and a deleted
+new integration with it (restart Home Assistant to load it; until you do,
+Repairs says so), and a deleted
 `custom_components/bruh_cooking` folder is put back within ten minutes. Turn
 off *Home Assistant integration* in the add-on's options to stop it copying
 anything.
@@ -159,11 +160,11 @@ Every appliance has:
 
 | Entity | Type | What it does |
 |---|---|---|
-| Status | Sensor | What the appliance is doing: Idle, Preheating, Ready for food, Cooking, Done, Keeping warm, Press the button on the appliance, Error, Updating or Offline. Its attributes say when the appliance was last in contact and what the last cook was (start, end, temperature, time, the preset and the finish time when known); while it's offline, why and since when. |
+| Status | Sensor | What the appliance is doing: Idle, Preheating, Ready for food, Cooking, Done, Keeping warm, Press the button on the appliance, Error, Updating or Offline. Its attributes say when the appliance was last heard from and what the last cook was (start, end, temperature, time, where its settings came from, and the finish time when known), or "no cook yet"; while it's offline, why, since when, and how long ago it was last heard from. |
 | Temperature | Sensor | The water or oven temperature. Unknown while the oven is idle, since it stops updating it. |
 | Time remaining | Sensor | Time left on the timer. |
 | Cook end | Sensor | When the timer will finish. |
-| Cooking | Binary sensor | On from the start of a cook to its end, including preheating and waiting for the food. |
+| Cooking | Binary sensor | On from the start of a cook to its end, including preheating and waiting for the food. While the appliance is offline it's off, or unknown if it was cooking when contact was lost. |
 | Problem | Binary sensor | On while the appliance reports an error. While the appliance is offline it keeps the last error it reported. |
 | Error | Sensor (diagnostic) | The error, such as Low water level or Tipped over. |
 | Preheat | Sensor | How far preheating has got, in percent, from the temperature, as the Breville+ app works it out. An oven also ends preheating after 5 minutes, so once Home Assistant has seen it start, its Preheat counts that time too. It never goes back during a preheat. Unknown when the appliance isn't preheating. |

@@ -172,7 +172,7 @@ class BrevilleSensor(BrevilleEntity, SensorEntity):
             "last_contact": appliance.last_contact.isoformat(timespec="seconds")
             if appliance.last_contact
             else None,
-            "last_cook": appliance.last_cook,
+            "last_cook": self.coordinator.cook_summary(appliance),
         }
         if (report := self.coordinator.offline_report(appliance)) is not None:
             attrs["offline_cause"] = report["cause"]

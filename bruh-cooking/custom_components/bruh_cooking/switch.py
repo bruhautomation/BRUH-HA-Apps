@@ -61,7 +61,10 @@ class CookSwitch(BrevilleSwitch):
     async def async_start_cook_service(self, **kwargs: Any) -> None:
         """bruh_cooking.start_cook: start a cook with explicit settings."""
         settings = start_settings(self.hass, self.appliance, kwargs)
-        await self.coordinator.async_start_cook(self.appliance, settings)
+        source = self.coordinator.settings_source(self.appliance)
+        if any(value is not None for value in kwargs.values()):
+            source += ", changed at the start"
+        await self.coordinator.async_start_cook(self.appliance, settings, source)
 
 
 class BrevilleOptionSwitch(BrevilleSwitch, RestoreEntity):
