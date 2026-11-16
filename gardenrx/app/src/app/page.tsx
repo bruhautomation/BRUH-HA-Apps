@@ -3,7 +3,7 @@ import { SPRAY_RATING, LOCATION } from '@/config/thresholds';
 import { getSprayRecordsForCrop, computeCoverage } from '@/lib/protection';
 import { buildPhiByProductGroup, computeCropPhi } from '@/lib/phi';
 import { harvestSeason } from '@/lib/harvest-windows';
-import { needsCoverageNow, dueTypes, mostlyResting } from '@/lib/coverage-season';
+import { needsCoverageNow, dueTypes, mostlyResting, sprayMissing } from '@/lib/coverage-season';
 import { applyPhenology } from '@/lib/phenology';
 import {
   fetchCrops,
@@ -28,8 +28,8 @@ import {
   type ComingUpItem,
 } from '@/components/today/sections';
 import { QueuedSprayCard } from '@/components/queued-spray-card';
-import { RainTracker } from '@/components/rain-tracker';
-import { dailyRainfall, rainfallSummary } from '@/lib/rainfall';
+import { RainSummaryLine } from '@/components/rain-tracker';
+import { dailyRainfall } from '@/lib/rainfall';
 
 export const dynamic = 'force-dynamic';
 
@@ -153,15 +153,19 @@ export default async function TodayPage() {
   // Crops whose coverage has lapsed (red) — or brand-new crops with no history.
   const urgent = cropData
     .filter((c) => c.active)
-    .map((c) => {
-      const fc = c.fungicideCoverage,
-        ic = c.insecticideCoverage;
-      const missing: Array<'fungicide' | 'insecticide'> = [];
+    .map((c) => ({
+      cropId: c.crop.id,
+      cropName: c.crop.name,
       // A monitored type with lapsed (red) coverage — or no history at all — is due.
-      if (c.monitorFung && (!fc || fc.status === 'red')) missing.push('fungicide');
-      if (c.monitorIns && !c.inBloom && (!ic || ic.status === 'red')) missing.push('insecticide');
-      return { cropId: c.crop.id, cropName: c.crop.name, missing };
-    })
+      missing: sprayMissing({
+        active: c.active,
+        inBloom: c.inBloom,
+        monitorFung: c.monitorFung,
+        monitorIns: c.monitorIns,
+        fung: c.fungicideCoverage,
+        ins: c.insecticideCoverage,
+      }),
+    }))
     .filter((u) => u.missing.length > 0);
   const fungDue = urgent.filter((u) => u.missing.includes('fungicide')).map((u) => u.cropName);
   const insDue = urgent.filter((u) => u.missing.includes('insecticide')).map((u) => u.cropName);
@@ -327,7 +331,6 @@ export default async function TodayPage() {
 
   // 30-day rainfall summary + watering advice for the home-page Rainfall card.
   const rainDaily = dailyRainfall(weather?.precipHistory ?? [], 30);
-  const rainSummary = rainDaily.length ? rainfallSummary(rainDaily) : null;
   const dailyHighs = (weather?.daily ?? [])
     .map((d) => d.tempHigh)
     .filter((t): t is number => typeof t === 'number');
@@ -392,11 +395,10 @@ export default async function TodayPage() {
               </div>
             </section>
           )}
-          {rainSummary && (
+          {rainDaily.length > 0 && (
             <section className="t-sec">
-              <RainTracker
+              <RainSummaryLine
                 daily={rainDaily}
-                summary={rainSummary}
                 avgHighF={avgHigh7}
                 humidityPct={weather?.current?.humidity ?? null}
                 dormant={mostlyResting(cropData.map((c) => c.stages))}

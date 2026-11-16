@@ -125,7 +125,10 @@ SENSORS: tuple[GardenRxSensorDescription, ...] = (
         kind="inventory",
         state_class=SensorStateClass.MEASUREMENT,
         value=lambda d: (d.get("inventory") or {}).get("low_count"),
-        attrs=lambda d: {"items": (d.get("inventory") or {}).get("items", [])},
+        attrs=lambda d: {
+            "items": (d.get("inventory") or {}).get("items", []),
+            "low_pct": (d.get("inventory") or {}).get("low_pct"),
+        },
     ),
 )
 

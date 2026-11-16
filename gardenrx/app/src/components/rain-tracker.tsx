@@ -1,8 +1,9 @@
-import { CloudRain, Droplets } from 'lucide-react';
+import Link from 'next/link';
+import { CloudRain, Droplets, ChevronRight } from 'lucide-react';
 import type { DailyRain, RainSummary } from '@/lib/rainfall';
 import { DROUGHT_META, WATERING_META, wateringAdvice } from '@/lib/rainfall';
 
-/** Home-page rainfall card: a watering call-to-action (rain vs. evapotranspiration
+/** Weather's rainfall card: a watering call-to-action (rain vs. evapotranspiration
  *  demand), 30-day daily bars, week/month totals, drought status. */
 export function RainTracker({
   daily,
@@ -101,12 +102,41 @@ export function RainTracker({
         <span>Today</span>
       </div>
 
-      <p className="text-[10px] text-muted-foreground/60 mt-2">
-        {meta.note}
-        {summary.wettest && summary.wettest.inches > 0
-          ? ` Wettest day: ${summary.wettest.inches.toFixed(2)}″ on ${fmtDay(summary.wettest.date)}.`
-          : ''}
-      </p>
+      {summary.wettest && summary.wettest.inches > 0 && (
+        <p className="text-[11px] text-muted-foreground/70 mt-2">
+          Wettest day: {summary.wettest.inches.toFixed(2)}″ on {fmtDay(summary.wettest.date)}.
+        </p>
+      )}
     </section>
+  );
+}
+
+/** Today's one line on watering: the same advice as Weather's Rainfall card,
+ *  linking to it, so the card itself is shown once. */
+export function RainSummaryLine({
+  daily,
+  avgHighF,
+  humidityPct,
+  dormant,
+}: {
+  daily: DailyRain[];
+  avgHighF?: number | null;
+  humidityPct?: number | null;
+  dormant?: boolean;
+}) {
+  if (daily.length === 0) return null;
+  const advice = wateringAdvice(daily, { avgHighF, humidityPct, dormant });
+  return (
+    <Link
+      href="/weather"
+      className={`flex min-h-11 items-center gap-2.5 rounded-lg px-3 py-2 ring-1 ${WATERING_META[advice.status].badge}`}
+    >
+      <Droplets className="w-4 h-4 shrink-0" />
+      <span className="min-w-0 flex-1 text-[14px] leading-snug">
+        <span className="font-semibold">{advice.headline}</span>
+        <span className="opacity-80"> · {advice.rain7.toFixed(2)}″ rain this week</span>
+      </span>
+      <ChevronRight className="w-4 h-4 shrink-0 opacity-70" />
+    </Link>
   );
 }

@@ -433,19 +433,25 @@ export function CropDetailView({
                   : covLabel(worst as 'red' | 'yellow' | 'green')}
           </div>
           <div className="m-sub">
-            {!trackFung
-              ? 'Fungicide manual'
-              : fungCoverage
-                ? `Fungicide ${resting ? 'resting' : fungCoverage.status === 'red' ? 'lapsed' : `${fungCoverage.daysRemaining}d`}`
-                : 'Fungicide —'}
-            {' · '}
-            {!trackIns
-              ? 'Insecticide manual'
-              : inBloom
-                ? 'Insecticide held'
-                : insCoverage
-                  ? `Insecticide ${resting ? 'resting' : insCoverage.status === 'red' ? 'lapsed' : `${insCoverage.daysRemaining}d`}`
-                  : 'Insecticide —'}
+            {resting && !bothManual ? (
+              'Dormant or past harvest: no spray cover needed until it leafs out'
+            ) : (
+              <>
+                {!trackFung
+                  ? 'Fungicide as needed'
+                  : fungCoverage
+                    ? `Fungicide ${fungCoverage.status === 'red' ? 'lapsed' : `${fungCoverage.daysRemaining}d`}`
+                    : 'Fungicide —'}
+                {' · '}
+                {!trackIns
+                  ? 'Insecticide as needed'
+                  : inBloom
+                    ? 'Insecticide held'
+                    : insCoverage
+                      ? `Insecticide ${insCoverage.status === 'red' ? 'lapsed' : `${insCoverage.daysRemaining}d`}`
+                      : 'Insecticide —'}
+              </>
+            )}
           </div>
         </div>
         <div className="metric">

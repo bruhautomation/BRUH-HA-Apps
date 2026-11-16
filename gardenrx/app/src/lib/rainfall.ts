@@ -85,58 +85,54 @@ export function rainfallSummary(daily: DailyRain[]): RainSummary {
   return { week, month, daysSinceRain, wettest, status, monthExpected };
 }
 
-export const DROUGHT_META: Record<
-  DroughtStatus,
-  { label: string; badge: string; bar: string; note: string }
-> = {
+export const DROUGHT_META: Record<DroughtStatus, { label: string; badge: string; bar: string }> = {
   drought: {
     label: 'Drought',
     badge: 'bg-rose-100 text-rose-700 ring-rose-300/60',
     bar: 'bg-rose-400',
-    note: 'Well below the ~1 in/week target — irrigate.',
   },
   dry: {
     label: 'Dry',
     badge: 'bg-amber-100 text-amber-700 ring-amber-300/60',
     bar: 'bg-amber-400',
-    note: 'Below normal — keep an eye on soil moisture.',
   },
   adequate: {
     label: 'Adequate',
     badge: 'bg-emerald-100 text-emerald-700 ring-emerald-300/60',
     bar: 'bg-emerald-400',
-    note: 'Near the ~1 in/week target.',
   },
   wet: {
     label: 'Wet',
     badge: 'bg-sky-100 text-sky-700 ring-sky-300/60',
     bar: 'bg-sky-400',
-    note: 'Above normal — you can hold off watering.',
   },
 };
 
 // ── Watering recommendation ──
 
-/** Highs below this, with the garden resting, mean no watering call. */
-const DORMANT_COOL_F = 60;
+/** With the garden resting, highs below this mean resting plants: no watering call. */
+const RESTING_WARM_F = 75;
+/** Resting plants draw roughly this share of a growing garden's weekly water. */
+const RESTING_SHARE = 0.5;
 
-export type WateringStatus = 'soak' | 'water-soon' | 'ok' | 'wet';
+export type WateringStatus = 'soak' | 'water-soon' | 'ok' | 'wet' | 'rest';
 
 export interface WateringAdvice {
   status: WateringStatus;
   rain7: number; // last 7 days of rain, inches
   targetWeekly: number; // evapotranspiration-adjusted weekly need, inches
   deficit: number; // shortfall vs target, inches (>= 0)
-  headline: string; // short call to action
-  detail: string; // one-line explanation
+  headline: string; // the one instruction
+  detail: string; // why, in one line
 }
 
 /**
  * Should you water this week? Plants want a deep soak roughly weekly — twice a
  * week in real heat — so we compare the *last 7 days* of rain against a weekly
  * target that scales with evapotranspiration demand (hotter and drier air pull
- * more moisture) rather than a flat "1 inch/week". A multi-day deficit means
- * it's time to irrigate, even if the 30-day total looks fine.
+ * more moisture) and with the season: a resting garden (most crops dormant or
+ * past harvest) needs about half, and outside real heat it is never told to
+ * water, only reminded to check the soil after a dry spell.
  */
 export function wateringAdvice(
   daily: DailyRain[],
@@ -165,52 +161,68 @@ export function wateringAdvice(
   // Dry air pulls more moisture from soil and leaves; humid air, less.
   if (hum != null) target += hum < 40 ? 0.2 : hum < 55 ? 0.1 : hum > 80 ? -0.15 : 0;
   target = Math.max(0.5, Math.min(2.2, Math.round(target * 10) / 10));
+  if (opts.dormant) target = Math.round(target * RESTING_SHARE * 10) / 10;
 
   const deficit = round2(Math.max(0, target - rain7));
-  const hot = high != null && high >= 88;
-  const cadence = hot
-    ? 'a deep soak ~twice this week'
-    : high != null && high < 65
-      ? 'a soak every week or two is plenty'
-      : 'a deep soak about once a week';
+  const heatNote = high != null ? `, highs near ${Math.round(high)}°` : '';
+  const rainNote = `${rain7.toFixed(2)}″ of rain in the last 7 days`;
 
-  let status: WateringStatus;
-  let headline: string;
-  if (opts.dormant && high != null && high < DORMANT_COOL_F && rain7 < target * 1.4) {
-    // Resting plants in cool weather barely draw on the soil: no call to water.
-    status = 'ok';
-    headline = 'No watering needed';
+  if (rain7 >= target * 1.4) {
     return {
-      status,
+      status: 'wet',
       rain7,
       targetWeekly: target,
       deficit,
-      headline,
-      detail: `Most of the garden is dormant and highs are near ${Math.round(high)}°, so it needs little water. ${rain7.toFixed(2)}″ of rain in the last 7 days.`,
+      headline: 'Skip watering',
+      detail: `${rainNote}, well above the ~${target.toFixed(1)}″ this week calls for${heatNote}.`,
     };
-  } else if (rain7 >= target * 1.4) {
-    status = 'wet';
-    headline = 'Skip watering';
-  } else if (deficit <= 0.2) {
-    status = 'ok';
-    headline = 'No watering needed';
-  } else if (deficit <= target * 0.6) {
-    status = 'water-soon';
-    headline = 'Water in a day or two';
-  } else {
-    status = 'soak';
-    headline = 'Water now';
+  }
+  if (opts.dormant && (high == null || high < RESTING_WARM_F)) {
+    // Resting plants in cool weather barely draw on the soil: a soft note at most.
+    return {
+      status: 'rest',
+      rain7,
+      targetWeekly: target,
+      deficit,
+      headline:
+        deficit > target * 0.6
+          ? 'Check the soil before winter'
+          : 'No watering needed while the garden rests',
+      detail:
+        deficit > target * 0.6
+          ? `Most of the garden is dormant${heatNote}; ${rainNote}. If the soil is dry a few inches down, one deep watering will carry the roots into winter.`
+          : `Most of the garden is dormant${heatNote}; ${rainNote} covers its ~${target.toFixed(1)}″ a week.`,
+    };
   }
 
-  const heatNote = high != null ? `, highs near ${Math.round(high)}°` : '';
-  const detail =
-    status === 'wet'
-      ? `${rain7.toFixed(2)}″ of rain in the last 7 days — well above the ~${target.toFixed(1)}″ this week's weather calls for${heatNote}.`
-      : status === 'ok'
-        ? `${rain7.toFixed(2)}″ of rain in the last 7 days covers about ${target.toFixed(1)}″ of need${heatNote}.`
-        : `Only ${rain7.toFixed(2)}″ of rain in the last 7 days vs ~${target.toFixed(1)}″ needed${heatNote}. Aim for ${cadence}.`;
-
-  return { status, rain7, targetWeekly: target, deficit, headline, detail };
+  const hot = high != null && high >= 88;
+  if (deficit <= 0.2)
+    return {
+      status: 'ok',
+      rain7,
+      targetWeekly: target,
+      deficit,
+      headline: 'No watering needed',
+      detail: `${rainNote} covers about ${target.toFixed(1)}″ of need${heatNote}.`,
+    };
+  // A resting garden in heat is never told to water now: the soft call at most.
+  if (deficit <= target * 0.6 || opts.dormant)
+    return {
+      status: 'water-soon',
+      rain7,
+      targetWeekly: target,
+      deficit,
+      headline: 'Water in a day or two',
+      detail: `${rainNote} vs ~${target.toFixed(1)}″ needed${heatNote}: one deep soak covers it.`,
+    };
+  return {
+    status: 'soak',
+    rain7,
+    targetWeekly: target,
+    deficit,
+    headline: hot ? 'Water now, and again in a few days' : 'Water now',
+    detail: `Only ${rainNote} vs ~${target.toFixed(1)}″ needed${heatNote}.`,
+  };
 }
 
 export const WATERING_META: Record<WateringStatus, { badge: string; bar: string }> = {
@@ -218,4 +230,5 @@ export const WATERING_META: Record<WateringStatus, { badge: string; bar: string 
   'water-soon': { badge: 'bg-amber-100 text-amber-700 ring-amber-300/60', bar: 'bg-amber-400' },
   ok: { badge: 'bg-emerald-100 text-emerald-700 ring-emerald-300/60', bar: 'bg-emerald-400' },
   wet: { badge: 'bg-sky-100 text-sky-700 ring-sky-300/60', bar: 'bg-sky-400' },
+  rest: { badge: 'bg-muted/60 text-foreground/80 ring-border/60', bar: 'bg-muted' },
 };

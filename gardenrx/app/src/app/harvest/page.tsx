@@ -17,7 +17,7 @@ import { HarvestStatusCards, type StatusCrop } from '@/components/harvest-status
 import { computeCropPhi } from '@/lib/phi';
 import { parseHarvestWindow } from '@/lib/harvest-windows';
 import { applyPhenology } from '@/lib/phenology';
-import { needsCoverageNow } from '@/lib/coverage-season';
+import { needsCoverageNow, cropStages } from '@/lib/coverage-season';
 import { VARIETY_CATALOG } from '@/lib/variety-catalog';
 
 export const dynamic = 'force-dynamic';
@@ -99,11 +99,10 @@ export default async function HarvestPage() {
       .filter((h) => now.getTime() - Date.parse(h.harvested_at) < RECENT_PICK_MS)
       .map((h) => h.crop_id)
   );
-  const isResting = (cropId: number) => {
-    if (pickedRecently.has(cropId)) return false;
-    const ids = new Set(varieties.filter((v) => v.crop_id === cropId).map((v) => v.id));
-    return !needsCoverageNow(effectiveStages.filter((s) => ids.has(s.variety_id)));
-  };
+  // Resting (every variety dormant or past harvest) by the stages Crops shows.
+  const restingByStage = (cropId: number) =>
+    !needsCoverageNow(cropStages(cropId, varieties, effectiveStages).map((stage) => ({ stage })));
+  const isResting = (cropId: number) => !pickedRecently.has(cropId) && restingByStage(cropId);
   const fmtShort = (d: Date | null) =>
     d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
   const inWindowNow = (m: number, r: { startMonth: number; endMonth: number }) =>
@@ -130,6 +129,7 @@ export default async function HarvestPage() {
   const doNotHarvest: StatusCrop[] = [];
   const ready: StatusCrop[] = [];
   const developing: StatusCrop[] = [];
+  let offSeason = 0;
   for (const crop of crops) {
     const group = crop.crop_group_id ? (cropGroupName.get(crop.crop_group_id) ?? null) : null;
     const phi = computeCropPhi(
@@ -153,11 +153,14 @@ export default async function HarvestPage() {
       });
       continue;
     }
-    // Resting crops are never "ready"; the safe-interval warning above is not gated on it.
-    if (w.ready) {
-      if (!isResting(crop.id))
-        ready.push({ id: crop.id, name: crop.name, group, note: w.phrase ?? 'In season' });
-    } else if (w.hasWindow)
+    // A resting crop is neither ready nor developing: it is off season, and is
+    // counted once in the line under the cards instead.
+    if (isResting(crop.id)) {
+      if (w.hasWindow) offSeason++;
+      continue;
+    }
+    if (w.ready) ready.push({ id: crop.id, name: crop.name, group, note: w.phrase ?? 'In season' });
+    else if (w.hasWindow)
       developing.push({ id: crop.id, name: crop.name, group, note: w.phrase ?? 'Upcoming' });
   }
 
@@ -168,7 +171,12 @@ export default async function HarvestPage() {
         <span className="meta">Track your yield</span>
       </div>
       <div className="mx-auto max-w-3xl">
-        <HarvestStatusCards doNotHarvest={doNotHarvest} ready={ready} developing={developing} />
+        <HarvestStatusCards
+          doNotHarvest={doNotHarvest}
+          ready={ready}
+          developing={developing}
+          offSeason={offSeason}
+        />
         <HarvestTracker
           harvests={harvests ?? []}
           varieties={varieties}

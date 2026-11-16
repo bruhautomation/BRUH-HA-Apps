@@ -24,7 +24,12 @@ import { cropIconColor } from '@/components/crop-icon';
 import { CovDot, covColor } from '@/components/status';
 import type { CropGroup } from '@/lib/database.types';
 
-export type CovCell = { status: 'green' | 'yellow' | 'red'; daysRemaining: number } | null;
+export type CovCell = {
+  status: 'green' | 'yellow' | 'red';
+  daysRemaining: number;
+  /** The day cover runs out, e.g. "Dec 3". */
+  due: string;
+} | null;
 
 export type CropCardModel = {
   id: number;
@@ -105,6 +110,7 @@ export function CropsBoard({
   }, [cards, cat, q, sort]);
 
   const grouped = cat === 'all' && sort === 'priority';
+  const restingCount = filtered.filter((c) => c.resting).length;
 
   return (
     <div className="page">
@@ -156,6 +162,14 @@ export function CropsBoard({
         <AddCropButton cropGroups={cropGroups} existing={cards.map((c) => c.name)} />
       </div>
 
+      {restingCount > 0 && (
+        <p className="mb-4 text-[14px] text-ink-3">
+          {restingCount} {restingCount === 1 ? 'crop is' : 'crops are'} resting: dormant or past
+          harvest, they need no fungicide or insecticide cover until they leaf out again, so their
+          cards show no spray line.
+        </p>
+      )}
+
       {grouped ? (
         categories.map((category) => {
           const list = filtered.filter((c) => c.category === category);
@@ -206,6 +220,16 @@ function CropCard({ c }: { c: CropCardModel }) {
         : c.protection === 'green'
           ? 'var(--leaf)'
           : 'var(--line-2)';
+  // Only what asks something of the grower: a resting crop has no spray line,
+  // and an as-needed type is the grower's own call, so it is left off too.
+  const covs = c.resting
+    ? []
+    : [
+        c.trackFung ? <CovLine key="f" label="Fungicide" cov={c.fung} /> : null,
+        c.trackIns ? (
+          <CovLine key="i" label="Insecticide" cov={c.ins} heldForBloom={c.inBloom} />
+        ) : null,
+      ].filter(Boolean);
   return (
     <Link
       href={`/crops/${c.id}`}
@@ -225,89 +249,50 @@ function CropCard({ c }: { c: CropCardModel }) {
         <div className="min-w-0 flex-1">
           <div className="cc-name">{c.name}</div>
           <div className="cc-var">
-            {c.varietyCount
-              ? `${c.varietyCount} ${c.varietyCount === 1 ? 'variety' : 'varieties'}`
-              : 'Ornamental'}
+            {c.stageLabel && (
+              <span className="cc-stage" style={{ ['--stg' as string]: c.stageColor }}>
+                <span className="dot" /> {c.stageLabel}
+              </span>
+            )}
+            <span>
+              {c.varietyCount
+                ? `${c.varietyCount} ${c.varietyCount === 1 ? 'variety' : 'varieties'}`
+                : 'Ornamental'}
+            </span>
           </div>
         </div>
-        <ChevronRight className="mt-1 size-[18px] shrink-0 text-ink-3" />
-      </div>
-
-      <div className="cc-stage-line">
-        {c.stageLabel && (
-          <span className="cc-stage" style={{ ['--stg' as string]: c.stageColor }}>
-            <span className="dot" /> {c.stageLabel}
-          </span>
-        )}
         {c.phiActive && (
           <span className="cc-flag hold">
             <TriangleAlert className="size-3.5" /> Hold {c.phiDaysLeft}d
           </span>
         )}
+        <ChevronRight className="size-[18px] shrink-0 self-center text-ink-3" />
       </div>
 
-      <div className="cc-covs">
-        <CovChip label="Fungicide" cov={c.fung} manual={!c.trackFung} resting={c.resting} />
-        <CovChip
-          label="Insecticide"
-          cov={c.ins}
-          suppressed={c.inBloom}
-          manual={!c.trackIns}
-          resting={c.resting}
-        />
-      </div>
+      {covs.length > 0 && <div className="cc-covs">{covs}</div>}
     </Link>
   );
 }
 
-function CovChip({
+function CovLine({
   label,
   cov,
-  suppressed,
-  manual,
-  resting,
+  heldForBloom,
 }: {
   label: string;
   cov: CovCell;
-  suppressed?: boolean;
-  manual?: boolean;
-  resting?: boolean;
+  heldForBloom?: boolean;
 }) {
-  if (manual) {
-    return (
-      <span className="cc-cov">
-        <span
-          className="inline-block rounded-full"
-          style={{ width: 7, height: 7, background: 'var(--ink-3)', opacity: 0.5 }}
-        />
-        <span className="cc-cov-k">{label}</span>
-        <span className="cc-cov-v" style={{ color: 'var(--ink-3)' }}>
-          as needed
-        </span>
-      </span>
-    );
-  }
-  if (resting) {
-    return (
-      <span className="cc-cov">
-        <CovDot status="untracked" size={7} />
-        <span className="cc-cov-k">{label}</span>
-        <span className="cc-cov-v" style={{ color: 'var(--ink-3)' }}>
-          resting
-        </span>
-      </span>
-    );
-  }
-  if (suppressed) {
+  if (heldForBloom) {
     return (
       <span className="cc-cov">
         <span
           className="inline-block rounded-full"
           style={{ width: 7, height: 7, background: 'var(--bloom)', opacity: 0.45 }}
         />
-        <span className="cc-cov-k">{label}</span>
+        <span className="cc-cov-k">{label}:</span>
         <span className="cc-cov-v" style={{ color: 'var(--bloom)' }}>
-          bloom
+          held for bloom
         </span>
       </span>
     );
@@ -315,10 +300,10 @@ function CovChip({
   if (!cov) {
     return (
       <span className="cc-cov">
-        <CovDot status="untracked" size={7} />
-        <span className="cc-cov-k">{label}</span>
-        <span className="cc-cov-v" style={{ color: 'var(--ink-3)' }}>
-          —
+        <CovDot status="red" size={7} />
+        <span className="cc-cov-k">{label}:</span>
+        <span className="cc-cov-v" style={{ color: covColor('red') }}>
+          not sprayed yet
         </span>
       </span>
     );
@@ -326,9 +311,9 @@ function CovChip({
   return (
     <span className="cc-cov">
       <CovDot status={cov.status} size={7} />
-      <span className="cc-cov-k">{label}</span>
+      <span className="cc-cov-k">{label}:</span>
       <span className="cc-cov-v" style={{ color: covColor(cov.status) }}>
-        {cov.status === 'red' ? 'lapsed' : `${cov.daysRemaining}d`}
+        {cov.status === 'red' ? 'due now' : `next due ${cov.due}`}
       </span>
     </span>
   );

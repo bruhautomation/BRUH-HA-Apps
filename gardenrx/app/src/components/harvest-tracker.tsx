@@ -415,12 +415,21 @@ export function HarvestTracker({
       <HarvestCharts byCrop={byCrop} events={events} />
 
       {/* ── Recent picks (editable table) ── */}
-      <section className="pb-20">
-        <div className="flex items-baseline justify-between mb-2">
+      <section>
+        {/* The log's own header holds Log Harvest: a floating button covered the
+            rows it sat over, whatever the padding below them. */}
+        <div className="flex items-center justify-between gap-3 mb-2">
           <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground">
-            Picks log
+            Picks log <span className="ml-1 text-muted-foreground/60">{rows.length}</span>
           </p>
-          <span className="text-[10px] text-muted-foreground/50">{rows.length}</span>
+          <button
+            type="button"
+            onClick={openLogDialog}
+            className="flex min-h-11 items-center gap-2 rounded-full bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-emerald-700 active:scale-95"
+          >
+            <Plus className="w-4 h-4" />
+            Log Harvest
+          </button>
         </div>
 
         {rows.length === 0 ? (
@@ -644,15 +653,6 @@ export function HarvestTracker({
           </div>
         )}
       </section>
-
-      {/* ── Log Harvest FAB ── */}
-      <button
-        onClick={openLogDialog}
-        className="fixed bottom-20 right-4 z-40 flex items-center gap-2 rounded-full bg-emerald-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-600/25 transition-all hover:bg-emerald-700 active:scale-95"
-      >
-        <Plus className="w-4 h-4" />
-        Log Harvest
-      </button>
 
       {/* ── Log Harvest Dialog ── */}
       <FormDialog open={logOpen} onOpenChange={setLogOpen} title="Log Harvest">
