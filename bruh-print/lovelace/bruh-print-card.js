@@ -31,7 +31,7 @@
  * reloaded it.
  */
 
-const CARD_VERSION = '0.14.8';
+const CARD_VERSION = '0.14.9';
 
 /* The integration's domain: the name on the services and the string every
  * entity id this card looks for carries. */
@@ -56,7 +56,15 @@ const DEFAULTS = {
 };
 
 const css = `
-  :host { display: block; }
+  :host { display: block;
+    /* Home Assistant's own greys and its default blue are tuned for a
+       large heading, not for 11-15px text: the grey on its grey tile is
+       3.8:1 and white on its blue is 2.6:1. Text here is pulled toward the
+       theme's reading colour until it clears 4.5:1, and a filled button is
+       darkened under its white label; both follow the theme, light or dark. */
+    --bp-muted: color-mix(in srgb, var(--secondary-text-color) 45%, var(--primary-text-color));
+    --bp-accent: color-mix(in srgb, var(--primary-color) 50%, var(--primary-text-color));
+    --bp-fill: color-mix(in srgb, var(--primary-color) 50%, #000); }
   ha-card { padding: 16px; }
   .head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
   .head h2 { margin: 0; font-size: 18px; font-weight: 600; flex: 1 1 auto;
@@ -64,7 +72,7 @@ const css = `
   .pill { display: inline-flex; align-items: center; gap: 6px;
     padding: 4px 10px; border-radius: 999px; font-size: 12px;
     background: var(--secondary-background-color);
-    color: var(--secondary-text-color); white-space: nowrap; }
+    color: var(--bp-muted); white-space: nowrap; }
   .pill .dot { width: 8px; height: 8px; border-radius: 50%;
     background: var(--success-color, #1f9254); }
   .pill.bad { background: color-mix(in srgb, var(--error-color, #c0392b) 16%, transparent);
@@ -73,21 +81,22 @@ const css = `
   /* Nothing is wrong at the printer — this card just cannot find the
      entities that would say. A green dot beside "no status" is the
      contradiction; a red one is a fault that is not happening. */
-  .pill.unknown .dot { background: var(--secondary-text-color); }
+  .pill.unknown .dot { background: var(--bp-muted); }
 
   .rolls { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     margin-bottom: 14px; }
   .roll { padding: 9px 11px; border-radius: 10px;
     background: var(--secondary-background-color); }
   .roll .who { font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
-    color: var(--secondary-text-color); }
+    color: var(--bp-muted); }
+  /* A roll's name wraps: the one that tells two rolls apart is the end of it. */
   .roll .what { font-size: 14px; font-weight: 550; margin: 2px 0 5px;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    overflow-wrap: anywhere; }
   .roll .bar { height: 5px; border-radius: 999px; overflow: hidden;
     background: var(--divider-color); }
   .roll .bar > i { display: block; height: 100%;
     background: var(--primary-color); }
-  .roll .est { font-size: 11px; color: var(--secondary-text-color); margin-top: 4px; }
+  .roll .est { font-size: 11px; color: var(--bp-muted); margin-top: 4px; }
   /* A roll box is a button when there is a choice to make, and a readout
      when there is not — one loaded roll is not a selection. Both draw the
      same, so the card does not change shape when a second roll is set. */
@@ -96,13 +105,13 @@ const css = `
     background: var(--card-background-color, #fff); }
   button.roll.on { border-color: var(--primary-color);
     box-shadow: 0 0 0 1px var(--primary-color) inset; }
-  button.roll.on .who { color: var(--primary-color); font-weight: 700; }
+  button.roll.on .who { color: var(--bp-accent); font-weight: 700; }
   button.roll:focus-visible { outline: 2px solid var(--primary-color);
     outline-offset: 2px; }
 
   .field { display: block; margin-bottom: 10px; }
   .field > span { display: block; font-size: 12px; font-weight: 600;
-    color: var(--secondary-text-color); margin-bottom: 4px; }
+    color: var(--bp-muted); margin-bottom: 4px; }
   input, select, textarea {
     width: 100%; box-sizing: border-box; padding: 10px 11px; min-height: 44px;
     font: inherit; font-size: 16px; border-radius: 9px;
@@ -122,8 +131,8 @@ const css = `
     background: var(--secondary-background-color);
     color: var(--primary-text-color);
   }
-  button.primary { background: var(--primary-color);
-    border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
+  button.primary { background: var(--bp-fill);
+    border-color: var(--bp-fill); color: #fff; }
   button[disabled] { opacity: .5; cursor: progress; }
   .actions { display: flex; gap: 10px; align-items: center; margin-top: 14px;
     flex-wrap: wrap; }
@@ -132,7 +141,7 @@ const css = `
   .msg.ok { background: color-mix(in srgb, var(--success-color, #1f9254) 14%, transparent); }
   .msg.err { background: color-mix(in srgb, var(--error-color, #c0392b) 14%, transparent);
     color: var(--error-color, #c0392b); }
-  .empty { color: var(--secondary-text-color); font-size: 14px; }
+  .empty { color: var(--bp-muted); font-size: 14px; }
 
   /* The card cannot work. Not styled as an error — nothing has gone
      wrong at the printer — but it has to be read before the form under
@@ -143,7 +152,7 @@ const css = `
   .trouble p { margin: 0 0 6px; font-size: 13.5px; line-height: 1.45; }
   .trouble p:last-child { margin-bottom: 0; }
   .trouble .what { font-weight: 600; }
-  .trouble .who { font-size: 11.5px; color: var(--secondary-text-color); }
+  .trouble .who { font-size: 11.5px; color: var(--bp-muted); }
 `;
 
 class BruhPrintCard extends HTMLElement {
@@ -471,7 +480,11 @@ class BruhPrintCard extends HTMLElement {
         : 'not set';
       box.append(who, what);
       if (entity.attributes.loaded) {
-        const remaining = Number(entity.state) || 0;
+        /* The sensor is `unknown` while the add-on is not counting. That is
+         * not an empty roll, so there is no bar and no zero. */
+        const counted = entity.state !== '' && Number.isFinite(Number(entity.state))
+          && !['unknown', 'unavailable'].includes(entity.state);
+        const remaining = counted ? Number(entity.state) : 0;
         const bar = document.createElement('div');
         bar.className = 'bar';
         const fill = document.createElement('i');
@@ -485,8 +498,11 @@ class BruhPrintCard extends HTMLElement {
         bar.append(fill);
         const est = document.createElement('div');
         est.className = 'est';
-        est.textContent = `about ${remaining} left · ${entity.attributes.size || ''}`;
-        box.append(bar, est);
+        est.textContent = counted
+          ? `about ${remaining} left · ${entity.attributes.size || ''}`
+          : `not counted · ${entity.attributes.size || ''}`;
+        if (counted) box.append(bar);
+        box.append(est);
       }
       wrap.append(box);
     }

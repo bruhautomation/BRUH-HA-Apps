@@ -196,6 +196,32 @@ const ICONS = {
   link: "M3.9,12C3.9,10.29 5.29,8.9 7,8.9H11V7H7A5,5 0 0,0 2,12A5,5 0 0,0 7,17H11V15.1H7C5.29,15.1 3.9,13.71 3.9,12M8,13H16V11H8V13M17,7H13V8.9H17C18.71,8.9 20.1,10.29 20.1,12C20.1,13.71 18.71,15.1 17,15.1H13V17H17A5,5 0 0,0 22,12A5,5 0 0,0 17,7Z",
 };
 
+// A name written in a script the device has no font for draws as empty boxes.
+// Each such character is tested once (a font without it gives the same width
+// as a character no font has) and left out of what is drawn; the full name
+// stays in the tooltip and everything that sends it.
+const _glyphs = {};
+let _ruler = null;
+function drawable(ch) {
+  if (ch.charCodeAt(0) < 0x2e80) return true;
+  if (!(ch in _glyphs)) {
+    try {
+      _ruler = _ruler || document.createElement("canvas").getContext("2d");
+      _ruler.font = "16px system-ui, sans-serif";
+      const gap = _ruler.measureText("\u{10FFFE}").width;
+      _glyphs[ch] = Math.abs(_ruler.measureText(ch).width - gap) > 0.01;
+    } catch (_) { _glyphs[ch] = true; }
+  }
+  return _glyphs[ch];
+}
+
+function shownName(name) {
+  const text = String(name || "");
+  if (/^[\u0000-\u2e7f]*$/.test(text)) return text;
+  const kept = [...text].filter(drawable).join("").replace(/[\s_\-.·]{2,}/g, "_").replace(/^[\s_\-.]+|[\s_\-]+$/g, "");
+  return kept || text;
+}
+
 function icon(name) {
   const span = el("span", { class: "ic", "aria-hidden": "true" });
   span.innerHTML = `<svg viewBox="0 0 24 24"><path d="${ICONS[name]}"/></svg>`;
@@ -465,7 +491,7 @@ function jobBlock(p) {
   return el("div", { class: "job" },
     ring(p.progress, finished && !p.printing),
     el("div", { class: "jobtext" },
-      el("b", { class: "jobname", title: p.file }, p.file),
+      el("b", { class: "jobname", title: p.file }, shownName(p.file)),
       el("p", { class: "hint" }, stage),
       facts.length ? el("div", { class: "facts" }, facts) : null),
     p.job_picture ? el("img", { class: "jobpic", src: p.job_picture, alt: "", loading: "lazy" }) : null,
@@ -629,7 +655,7 @@ async function loadStorage(p, all = false) {
         } }, icon("close"), "Delete from the printer")));
       return el("li", {},
         el("div", { class: "grow" },
-          el("b", { title: f.name }, f.name.replace(/(\.gcode)?\.3mf$/i, "")),
+          el("b", { title: f.name }, shownName(f.name.replace(/(\.gcode)?\.3mf$/i, ""))),
           el("span", { class: "hint" }, [fileWhen(f), f.size ? megabytes(f.size) : null].filter(Boolean).join(" · "))),
         el("button", { type: "button", disabled: p.printing, title: p.printing ? "It is printing" : "Print it again",
           onclick: () => printStored(p, f) }, "Print"),
@@ -765,7 +791,9 @@ function watchTimeline(p, w) {
   const track = el("div", { class: "wtrack", role: "group",
     "aria-label": `${points.length} planned looks over ${total} layers` }, line);
   for (const c of points) {
-    const tone = c.state === "done" ? (DECISION_TONE[c.decision] || "live") : c.state;
+    // A look that could not see is its own state: "" in the tone table once
+    // fell through to the green "fine" dot.
+    const tone = c.state === "done" ? (c.decision === "blind" ? "blind" : DECISION_TONE[c.decision] || "live") : c.state;
     const tick = el("button", { type: "button", class: `wtick ${tone}`, style: `left:${at(c.layer)}%`, "data-at": String(at(c.layer)),
       "aria-label": `Layer ${c.layer}: ${KIND_WORDS[c.kind] || c.kind}`,
       onclick: () => { track.querySelectorAll(".wtick.on").forEach((t) => t.classList.remove("on")); tick.classList.add("on"); say(c); } });
@@ -797,6 +825,7 @@ function watchTimeline(p, w) {
       el("span", {}, `Now · ${p.layer}`)));
   }
   const done = points.filter((c) => c.state === "done").length;
+  const blinds = points.filter((c) => c.state === "done" && c.decision === "blind").length;
   const next = points.find((c) => c.state === "planned");
   if (next) say(next);
   else reason.textContent = done ? "Every planned look is done." : "";
@@ -806,6 +835,7 @@ function watchTimeline(p, w) {
   const used = (w.looks && w.looks.used) || 0;
   const extra = Math.max(0, used - done);
   const counts = `${done} of ${points.length} planned looks done`
+    + (blinds ? ` · ${blinds} could not see` : "")
     + (extra ? ` · ${extra} extra (a doubt or a sudden change)` : "");
   return el("div", { class: "wplan" },
     el("div", { class: "wplanhead" }, el("b", {}, "Where it looks"), el("span", { class: "hint" }, counts)),
@@ -814,6 +844,7 @@ function watchTimeline(p, w) {
     el("ul", { class: "wkey", "aria-label": "Key" },
       el("li", {}, el("i", {}), "Planned"), el("li", {}, el("i", { class: "k-live" }), "Looked: fine"),
       el("li", {}, el("i", { class: "k-warn" }), "Doubt"), el("li", {}, el("i", { class: "k-bad" }), "Failure"),
+      el("li", {}, el("i", { class: "k-blind" }), "Could not see"),
       el("li", {}, el("i", { class: "k-missed" }), "Missed")),
     reason,
     w.plan.source === "gcode" ? null : el("p", { class: "hint" }, "Looks are spread evenly over the layers."));
@@ -945,12 +976,17 @@ function watchBlock(p) {
   // A blind look is a warning only while a print runs and can still be helped;
   // after it, it is a note about what happened.
   const blindLook = lastDecision === "blind";
+  // The light is the usual reason, so it is offered beside the notice,
+  // through the same printer command as the camera's light button.
+  const lightOn = blindLook && p.online && p.chamber_light === false
+    ? el("button", { type: "button", onclick: () => command(p, "light", { value: true }) }, icon("light"), "Turn on light") : null;
   const blind = blindLook && p.printing
     ? el("div", { class: "wblind", role: "status" }, el("b", {}, "The camera couldn't see this print."),
-      el("p", {}, "Check that the lens is clean, the chamber light is on and the camera is pointing at the plate. It looks again at the next planned look, or press Check now.")) : null;
+      el("p", {}, "Check that the lens is clean, the chamber light is on and the camera is pointing at the plate. It looks again at the next planned look, or press Check now."),
+      lightOn) : null;
   const blindNote = blindLook && !p.printing
-    ? el("p", { class: "hint wblindnote" }, `Last look: camera could not see${p.chamber_light === false ? " (light off)" : ""}`
-      + `${last.at ? ` · ${ago(last.at)}` : ""}`) : null;
+    ? el("div", { class: "row wrap wblindnote" }, el("p", { class: "hint" }, `Last look: camera could not see${p.chamber_light === false ? " (light off)" : ""}`
+      + `${last.at ? ` · ${ago(last.at)}` : ""}`), lightOn) : null;
   const lastRow = last && !repeats && !blindNote ? el("div", { class: "wlast" },
     last.image_url ? el("img", { src: last.image_url, alt: "", loading: "lazy" }) : null,
     el("div", { class: "grow" },
@@ -1333,10 +1369,19 @@ function fileKind(f) {
 }
 
 function filePicture(f) {
-  const src = f.design ? `api/design/parts/${encodeURIComponent(f.design)}/thumb`
+  // A source with a slice shows the slice's plate (the real preview of what
+  // prints); its own picture is the next try, then its kind.
+  const own = f.design ? `api/design/parts/${encodeURIComponent(f.design)}/thumb`
     : `api/thumb?path=${encodeURIComponent(f.path)}`;
-  return el("img", { class: "fthumb", src, alt: "", loading: "lazy",
-    onerror: (e) => e.target.replaceWith(el("div", { class: "fthumb nopic kind", "aria-hidden": "true" }, fileKind(f))) });
+  const slice = f.sliced_path ? `api/thumb?path=${encodeURIComponent(f.sliced_path)}` : null;
+  const none = () => el("div", { class: "fthumb nopic kind", "aria-hidden": "true" }, icon("chamber"), fileKind(f));
+  const img = el("img", { class: "fthumb", src: slice || own, alt: "", loading: "lazy" });
+  let tried = slice ? 0 : 1;
+  img.onerror = () => {
+    if (tried === 0) { tried = 1; img.src = own; return; }
+    img.replaceWith(none());
+  };
+  return img;
 }
 
 function filamentChips(f) {
@@ -1361,7 +1406,7 @@ function visibleFiles() {
 function sliceFacts(f) {
   if (f.sliced || f.sliced_path) {
     const own = [f.seconds ? duration(Math.round(f.seconds / 60)) : null, f.grams ? `${f.grams} g` : null].filter(Boolean);
-    return own.length ? own.join(" · ") : f.sliced ? null : "Sliced copy ready";
+    return own.length ? own.join(" · ") : "Slices when you print";
   }
   return "Not sliced yet — Print will slice first";
 }
@@ -1386,9 +1431,9 @@ function renderFiles() {
           loadFiles();
         } }, icon("close"), "Delete")));
     return el("div", { class: "frow" }, filePicture(f),
-      el("div", { class: "grow" }, el("b", { class: "fname", title: f.path }, designed ? f.name : f.path),
+      el("div", { class: "grow" }, el("b", { class: "fname", title: f.path }, shownName(designed ? f.name : f.path)),
         el("div", { class: "badges" }, badges),
-        slice ? el("p", { class: `fslice${f.sliced || f.sliced_path ? "" : " hint"}` }, slice) : null,
+        slice ? el("p", { class: `fslice${f.seconds || f.grams ? "" : " hint"}` }, slice) : null,
         el("p", { class: "hint" }, facts), filamentChips(f)),
       el("div", { class: "factions" },
         el("button", { class: "primary", onclick: () => openPrint(f) }, "Print"), menu));

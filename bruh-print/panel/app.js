@@ -248,7 +248,10 @@ function renderBar() {
     chip.append(el('span', null, stock ? stock.label : 'empty'));
     chip.classList.toggle('empty', !roll.loaded);
     chip.setAttribute('data-tip', stock
-      ? `${roll.side} roll: ${stock.name} ${stock.label}. About ${roll.remaining} left. Press to change.`
+      ? `${roll.side} roll: ${stock.name} ${stock.label}. `
+        + (S.settings.track_remaining === false
+          ? 'Not counting what is left. '
+          : `About ${roll.remaining} left. `) + 'Press to change.'
       : `BRUH Print does not know what is in the ${roll.side} roll. Press to say.`);
     /* A single-roll printer has one bay, and a chip offering a choice that
      * does not exist is a control that lies. */
@@ -1844,8 +1847,21 @@ function renderPrinter() {
   /* Said once under both rolls, not once per roll. */
   document.querySelectorAll('.baynote').forEach((n) => n.remove());
   if (S.settings.track_remaining === false && S.rolls.some((r) => stockById(r.stock)))
-    bays.after(el('p', 'est baynote',
-      'Not counting what is left. Turn it back on under Settings below.'));
+    {
+      /* The switch is right here: a note that points at a setting two
+       * closed sections down is a sentence about something you cannot see. */
+      const note = el('p', 'est baynote', 'Not counting what is left. ');
+      const on = el('button', 'btn tiny', 'Count what is left');
+      on.onclick = async () => {
+        try {
+          await post('/api/settings', { track_remaining: true });
+          await loadState(); renderPrinter(); renderBar();
+          toast('Counting what is left.', 'good');
+        } catch (error) { fail(error); }
+      };
+      note.append(on);
+      bays.after(note);
+    }
 
   const table = $('stockTable');
   table.innerHTML = '';
