@@ -12765,11 +12765,14 @@ function epStates(ep) {
   // the server (`episodes._fold_dropouts`).
   if (ep.kind === "restart") {
     const n = ep.devices || 0;
+    const off = ep.offline || 0;
     return n ? `${n} device${n === 1 ? "" : "s"} went unavailable`
-      + (ep.back === false ? "" : " and came back") : "";
+      + (off ? ` · ${off} still offline` : " and came back") : "";
   }
-  if (!ep.last || ep.last === ep.first) return ep.first || "";
-  return `${ep.first} → ${ep.last}`;
+  const off = ep.kind === "mass" && ep.first && ep.offline
+    ? ` · ${ep.offline} still offline` : "";
+  if (!ep.last || ep.last === ep.first) return (ep.first || "") + off;
+  return `${ep.first} → ${ep.last}${off}`;
 }
 
 // Empty for a row nothing claims. That was "No cause recorded" on every
@@ -13018,19 +13021,25 @@ function actSection(sec) {
 }
 
 // A collapsed burst opens onto the entities it collapsed — already in the
-// payload, so nothing is fetched.
+// payload, so nothing is fetched. The server lists the ones still offline
+// first (`offline` of them), so they are read before the ones that returned.
 function actMassHtml(ep) {
   const ids = ep.entities || [];
   const more = (ep.devices || ids.length) - ids.length;
+  const off = Math.min(ep.offline || 0, ids.length);
+  const list = (part) => part.map((id) => `<div><code>${esc(id)}</code></div>`).join("");
   const lead = ep.kind === "restart"
     ? `${esc(String(ep.devices || ids.length))} entities went unavailable `
       + `while Home Assistant restarted`
-      + (ep.back === false ? ", and not all of them came back:" : ", and came back with it:")
+      + (off ? "." : ", and came back with it:")
     : `${esc(String(ep.devices || ids.length))} entities changed `
       + `together, with nothing recorded as the cause — an integration `
-      + `reloading or reconnecting does this:`;
-  return `<div>${lead}</div>`
-    + ids.map((id) => `<div><code>${esc(id)}</code></div>`).join("")
+      + `reloading or reconnecting does this` + (off ? "." : ":");
+  const body = off
+    ? `<div>Still offline:</div>${list(ids.slice(0, off))}`
+      + (ids.length > off ? `<div>Came back:</div>${list(ids.slice(off))}` : "")
+    : list(ids);
+  return `<div>${lead}</div>` + body
     + (more > 0 ? `<div>and ${esc(String(more))} more</div>` : "");
 }
 

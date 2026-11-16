@@ -401,7 +401,9 @@ def group(actions: list[dict], classes: dict[str, str] | None = None,
             _settle(ep, now)
     out.extend(_agree_with_now(newest, live or {}, now))
     restarts = restart_episodes(lifecycle or [])
-    out = _fold_dropouts(out, restarts)
+    out = _fold_dropouts(out, restarts, live or {})
+    for ep in out:
+        ep.pop("_last", None)
     _mark_restarts(out, restarts)
     out.extend(restarts)
     out.sort(key=lambda e: (_ORDER[e["subject"]], -e["ended"], -e["started"]))
@@ -446,12 +448,12 @@ def _mass_changes(rows: list[dict], platforms: dict[str, str]
         for prev in reversed(made):
             if ts - prev["ended"] > MASS_JOIN_S:
                 break
-            overlap = len(ents & prev["_ents"])
-            if overlap * 2 >= min(len(ents), len(prev["_ents"])):
+            overlap = len(ents & prev["_last"].keys())
+            if overlap * 2 >= min(len(ents), len(prev["_last"])):
                 joined = prev
                 break
         if joined is not None:
-            joined["_ents"] |= ents
+            joined["_last"].update(dict.fromkeys(ents, state))
             joined["ended"] = max(joined["ended"], ts)
             joined["last"] = state
             joined["count"] += len(members)
@@ -466,10 +468,15 @@ def _mass_changes(rows: list[dict], platforms: dict[str, str]
             "states": [{"ts": ts, "state": state, "cause": "unattributed",
                         "by_name": "", "entities": len(members)}],
             "causes": {"unattributed": len(members)},
-            "cause": "unattributed", "by_name": "", "_ents": ents,
+            "cause": "unattributed", "by_name": "",
+            # Each member's own last state in the burst, uncapped: a row
+            # that joined a return burst over half the same devices is not
+            # a row in which all of them returned (#1140). Read by
+            # `_fold_dropouts`, and taken off before the payload leaves.
+            "_last": dict.fromkeys(ents, state),
         })
     for ep in made:
-        ents = sorted(ep.pop("_ents"))
+        ents = sorted(ep["_last"])
         names = {integration_name(platforms.get(e, "")) for e in ents}
         source = names.pop() if len(names) == 1 else ""
         ep["entities"] = ents[:MASS_KEEP]
@@ -642,7 +649,8 @@ def _is_return(ep: dict) -> bool:
             and int(ep.get("count") or 0) <= DROPOUT_MAX_CHANGES)
 
 
-def _fold_dropouts(episodes: list[dict], restarts: list[dict]) -> list[dict]:
+def _fold_dropouts(episodes: list[dict], restarts: list[dict],
+                   live: dict[str, dict] | None = None) -> list[dict]:
     """A restart is ONE line, whatever it took down with it (#1121).
 
     A restart's two minutes read as "Light 1 and 32 others unavailable →
@@ -655,15 +663,23 @@ def _fold_dropouts(episodes: list[dict], restarts: list[dict]) -> list[dict]:
     as a row per device). The event is folded:
 
     * into the restart row when the logbook holds one around it — it then
-      carries the devices (`devices`, `entities`), whether they all came
-      back (`back`), and opens onto them;
+      carries the devices (`devices`, `entities`), how many of them are
+      still offline (`offline`, those listed first), and opens onto them;
     * otherwise into one collapsed row of its own, which says how many
       devices dropped out and does NOT claim a restart nobody recorded.
+
+    A device is still offline when its live state is `unavailable`, or,
+    with no live state (a window paged back to), when the logbook last saw
+    it `unavailable` and no return of its own followed. Each device is read
+    on its own: a burst's last state speaks for the burst, and a burst
+    joined to a return burst over half the same devices said "came back"
+    about the few that never did (#1140).
 
     A lone entity's blip is folded only into a burst or a restart: one
     device going unavailable on its own is that device's news, and so is
     one that has not come back. Returns the episodes with the folded ones
     taken out (and the merged rows in)."""
+    live = live or {}
     blips = sorted((e for e in episodes if _is_dropout(e)),
                    key=lambda e: e["started"])
     if not blips:
@@ -680,6 +696,8 @@ def _fold_dropouts(episodes: list[dict], restarts: list[dict]) -> list[dict]:
     returns = [e for e in episodes if _is_return(e)]
     folded: set[int] = set()
     merged: list[dict] = []
+    # restart id -> (every device, the ones still offline), across clusters.
+    by_restart: dict[int, tuple[dict, set[str], set[str]]] = {}
     for cluster in clusters:
         start = cluster[0]["started"]
         restart = next((r for r in restarts
@@ -691,10 +709,11 @@ def _fold_dropouts(episodes: list[dict], restarts: list[dict]) -> list[dict]:
         out: set[str] = set()        # the ones last seen unavailable
         for e in cluster:
             if e.get("kind") == "mass":
-                these = set(e.get("entities") or [])
-                ents |= these
-                if not _came_back(e):
-                    out |= these
+                last = e.get("_last") or dict.fromkeys(e.get("entities") or [],
+                                                      e.get("last"))
+                ents |= set(last)
+                out |= {x for x, st in last.items()
+                        if _norm(st) == "unavailable"}
             else:
                 ents.add(e["entity_id"])
                 if not _came_back(e):
@@ -702,9 +721,21 @@ def _fold_dropouts(episodes: list[dict], restarts: list[dict]) -> list[dict]:
         upto = max(e["ended"] for e in cluster) + DROPOUT_JOIN_S
         came = [r for r in returns if id(r) not in folded
                 and r["entity_id"] in ents and start <= r["started"] <= upto]
-        if restart is None and len(cluster) == 1 and not came:
-            continue                 # one burst is already one row
         out -= {r["entity_id"] for r in came}
+        # What the house says now outranks the logbook, both ways.
+        for x in ents:
+            row = live.get(x)
+            if isinstance(row, dict) and row.get("state") is not None:
+                if _norm(row.get("state")) == "unavailable":
+                    out.add(x)
+                else:
+                    out.discard(x)
+        if restart is None and len(cluster) == 1 and not came:
+            # One burst is already one row; it still says which of its
+            # devices have not come back, and lists them first.
+            cluster[0]["offline"] = len(out)
+            cluster[0]["entities"] = _offline_first(ents, out)
+            continue
         group_ = cluster + came
         ended = max(e["ended"] for e in group_)
         devices = max(len(ents), sum(int(e.get("devices") or 0)
@@ -713,9 +744,10 @@ def _fold_dropouts(episodes: list[dict], restarts: list[dict]) -> list[dict]:
         folded.update(id(e) for e in group_)
         if restart is not None:
             restart["devices"] = int(restart.get("devices") or 0) + devices
-            restart["entities"] = sorted(set(restart.get("entities") or []) | ents)[:MASS_KEEP]
-            # "and came back" is said only when every one of them did.
-            restart["back"] = restart.get("back", True) and not out
+            _, all_, off = by_restart.setdefault(id(restart),
+                                                 (restart, set(), set()))
+            all_ |= ents
+            off |= out
             continue
         masses = [e for e in cluster if e.get("kind") == "mass"]
         sources = {e.get("integration") or "" for e in masses}
@@ -728,16 +760,26 @@ def _fold_dropouts(episodes: list[dict], restarts: list[dict]) -> list[dict]:
             "count": sum(int(e.get("count") or 0) for e in group_),
             "first": "", "last": "",
             "states": list(reversed(states))[:MAX_STATES],
-            "entities": sorted(ents)[:MASS_KEEP], "devices": devices,
-            "integration": source, "back": not out,
+            "entities": _offline_first(ents, out), "devices": devices,
+            "integration": source, "offline": len(out),
         })
-        tail = "" if out else " and came back"
+        tail = f" · {len(out)} still offline" if out else " and came back"
         row["name"] = (f"{devices} devices from {source} went unavailable{tail}"
                        if source else
                        f"{devices} devices went unavailable together{tail}")
         row["duration_s"] = max(0.0, row["ended"] - row["started"])
         merged.append(row)
+    for restart, all_, off in by_restart.values():
+        # "and came back" is said only when every one of them did.
+        restart["entities"] = _offline_first(all_, off)
+        restart["offline"] = len(off)
     return [e for e in episodes if id(e) not in folded] + merged
+
+
+def _offline_first(ents: set[str], out: set[str]) -> list[str]:
+    """The devices a folded row opens onto: the ones still offline first,
+    since they are the news, then the ones that came back; capped."""
+    return (sorted(out) + sorted(ents - out))[:MASS_KEEP]
 
 
 def _mark_restarts(episodes: list[dict], restarts: list[dict]) -> int:
