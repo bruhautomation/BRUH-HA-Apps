@@ -1346,7 +1346,7 @@
       if (!result.has(b.hash)) result.set(b.hash, displayName(a));
     };
     const norm = (text) => String(text).normalize("NFKC").toLowerCase()
-      .replace(/[^\p{L}\p{N}]+/gu, "");
+      .replace(/[^\p{L}\p{M}\p{N}]+/gu, "");
     const tagKey = (t) => {
       const m = t.summary || {};
       const artist = m.artist ? norm(m.artist) : "";
