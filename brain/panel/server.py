@@ -2138,7 +2138,8 @@ def _brief_morning(now: float, night: dict) -> dict:
             night.get("states") or [], night.get("actions") or [], now,
             closures_store=store, bucket=bucket, clock=clock,
             labels={eid: row.get("labels") for eid, row in _NAMES.items()
-                    if isinstance(row, dict) and row.get("labels")})
+                    if isinstance(row, dict) and row.get("labels")},
+            door_pairs=dict(_DOOR_PAIRS))
     except Exception as exc:  # noqa: BLE001 — a reason lost, not the brief
         log.info("brief could not read this morning: %s", exc)
         return {}
@@ -3921,7 +3922,8 @@ async def publish_morph_feed() -> bool:
             closures_store=stores["closures"],
             usual_open=closures.usual_open,
             rhythm_profile=stores["rhythm"],
-            routines=routines_rows, states=states)
+            routines=routines_rows, states=states,
+            door_pairs=dict(_DOOR_PAIRS))
 
     try:
         feed = await asyncio.to_thread(build)
@@ -13626,6 +13628,12 @@ FACTS_REGISTRY_FRESH_S = 13 * 3600
 # the snapshot that pass already fetched, `_FACTS_CTX`'s rule: never a
 # registry read for the feed's own sake.
 _NAMES: dict[str, dict] = {}
+# Each lock's own door sensor and its door's dedicated contact sensor, off
+# the last checks pass's registries (`closures.door_pairs`, #1130): the
+# readers that say whether a door is open now ask `closures.outvoted` with
+# it and the live states, so the house summary, the brief and Morph agree
+# with the bedtime check about a door the lock's sensor misreads.
+_DOOR_PAIRS: dict[str, dict] = {}
 # Entity ids in prose. The same shape `ha_data.ENTITY_ID_RE` accepts,
 # bounded so `e.g.` and a version number do not read as one.
 _ENTITY_IN_TEXT_RE = re.compile(r"\b([a-z_]+)\.([a-z0-9_]+)\b")
@@ -13718,6 +13726,14 @@ def _note_registry(snapshot: dict) -> None:
         _NAMES.update(names)
     except Exception as exc:  # noqa: BLE001
         log.debug("names note failed: %s", exc)
+    try:
+        pairs = closures.door_pairs(snapshot.get("states") or {},
+                                    snapshot.get("entities") or [],
+                                    snapshot.get("devices") or [])
+        _DOOR_PAIRS.clear()
+        _DOOR_PAIRS.update(pairs)
+    except Exception as exc:  # noqa: BLE001 — no pairs is every door as read
+        log.debug("door pairs note failed: %s", exc)
     try:
         _MACHINE_STATUS.clear()
         _MACHINE_STATUS.update(_machine_status_map(snapshot))
@@ -17887,7 +17903,8 @@ async def _situation_pass(now: float | None, states, run_model: bool) -> dict:
             closures_store=await asyncio.to_thread(closures.load),
             appliances_store=await asyncio.to_thread(appliances.load),
             calendars=settings.get("occasion_calendars") or [],
-            occasions=upcoming, world=WORLD_VIEW["world"])
+            occasions=upcoming, world=WORLD_VIEW["world"],
+            door_pairs=dict(_DOOR_PAIRS))
     except Exception as exc:  # noqa: BLE001 — a frame that could not be
         # built is a frame that says so; it reads `unknown`, never `away`.
         frame = situation.failed_frame(now, str(exc))
@@ -18649,6 +18666,9 @@ def _thermal_payload(store: dict) -> dict:
     # name" about an id somebody had typed.
     entity_areas = _FACTS_CTX.get("entity_areas") or {}
     area_aliases = _FACTS_CTX.get("area_aliases") or {}
+    # A sensor the owner marked as not reading the room's air since the
+    # nightly pass is shown as the pass will file it, not as a room (#1082).
+    marked = thermal.marked_not_air()
 
     def _where(eid: str) -> dict:
         area_id = str(entity_areas.get(eid) or "")
@@ -18656,7 +18676,7 @@ def _thermal_payload(store: dict) -> dict:
                 "area_aliases": [str(a) for a in area_aliases.get(area_id) or []]}
 
     for eid, entry in sorted((store.get("rooms") or {}).items()):
-        if not isinstance(entry, dict):
+        if not isinstance(entry, dict) or eid in marked:
             continue
         ends = (entry.get("coolest"), entry.get("warmest"))
         warm = None
@@ -18682,7 +18702,15 @@ def _thermal_payload(store: dict) -> dict:
     # thermometer in it is an answer that cannot be acted on, where "only
     # three nights of readings" can.
     measured_ids = {r["id"] for r in rooms}
-    for eid, left in sorted((store.get("unmeasured") or {}).items()):
+    unmeasured = dict(store.get("unmeasured") or {})
+    for eid in marked:
+        entry = (store.get("rooms") or {}).get(eid)
+        if isinstance(entry, dict):
+            unmeasured[eid] = {"name": entry.get("name"),
+                               "area": entry.get("area"),
+                               "reason": "you said it does not measure the "
+                                         "room's air"}
+    for eid, left in sorted(unmeasured.items()):
         if not isinstance(left, dict) or eid in measured_ids:
             continue
         rooms.append({
@@ -21984,6 +22012,12 @@ def _cases_payload(now: float | None = None) -> dict:
             case["watch_off"] = not _cannot_stop_watching(case)
         except Exception:  # noqa: BLE001 — unreadable offers nothing
             case["watch_off"] = False
+        # "<It> doesn't read the room's air" (#1082): on a report that
+        # judged a room's temperature by one thermometer.
+        try:
+            case["room_air_off"] = not _cannot_mark_room_air(case)
+        except Exception:  # noqa: BLE001 — unreadable offers nothing
+            case["room_air_off"] = False
         # Pretty names: the entity the card is about, and every id the
         # prose mentions, so the panel can render words a person reads
         # rather than ids they translate. Only ids the last snapshot saw
@@ -23148,6 +23182,82 @@ async def h_finding_stop_raising(request: web.Request) -> web.Response:
     if got.get("error"):
         raise web.HTTPConflict(text=got["error"])
     return web.json_response({k: v for k, v in got.items() if k != "ids"})
+
+
+# ---------------------------------------------------------------------------
+# "<It> doesn't read the room's air" — the owner's mark on one thermometer
+# ---------------------------------------------------------------------------
+#
+# Ignore's box on a report that judged a room's air or heat by one
+# thermometer (#1082): a sensor inside a pump box, or on a manifold, reads
+# what it sits in, and every room-air reader trusted it. The tick writes
+# `exception:room_air` on the sensor (`checks._util.ROOM_AIR_RULE`). No
+# check has that id, so it quiets nothing by itself; the heat model leaves
+# the sensor out (`thermal.marked_not_air`, and `_thermal_payload` at once),
+# and the climate checks, the frost warning and `base.unusual` read it
+# (`House.room_air_verdict`). It is a fact, so `recall` and Knowledge show
+# it, and it carries the report's key, so the Ignore's Undo takes it back.
+# Offered on the reports whose rule reads a room's temperature, about a
+# temperature sensor, and never on a safety or protected thing's device.
+ROOM_AIR_SOURCES = ("check:climate.", "check:base.", "check:forecast.",
+                    findings_store.RESIDENT_SOURCE)
+
+
+def _cannot_mark_room_air(finding: dict) -> str:
+    """Why this report cannot offer the room-air mark, or "" when it can."""
+    source = str(finding.get("source") or "")
+    if not (source == findings_store.RESIDENT_SOURCE
+            or source.startswith(ROOM_AIR_SOURCES[:-1])):
+        return "only a report that judged a room's temperature can"
+    eid = str(finding.get("entity_id") or "")
+    own = str((_NAMES.get(eid) or {}).get("class") or "")
+    if not eid.startswith("sensor.") or own != "temperature":
+        return "only a thermometer can be marked this way"
+    _family, classes, _device = _device_family(eid)
+    if corrections.never_covered(
+            eid, "", device_class=own,
+            protected=automation_writer.protected_patterns(),
+            device_classes=classes):
+        return "brAIn always reads safety and protected devices"
+    return ""
+
+
+def _mark_not_room_air(finding: dict) -> dict:
+    """Write the mark. ``{"ok", "id", "name"}`` or ``{"error"}``."""
+    why = _cannot_mark_room_air(finding)
+    if why:
+        return {"error": why}
+    eid = str(finding.get("entity_id") or "")
+    name = str((_NAMES.get(eid) or {}).get("name") or "") or eid
+    try:
+        row, _created = facts_store.add(
+            f"{name} does not measure the air of the room it is in: brAIn "
+            "leaves it out of room temperature and heat judgments",
+            subject=eid, source="correction",
+            predicate=facts_store.EXCEPTION_PREFIX + checks._util.ROOM_AIR_RULE,
+            confidence=0.95,
+            about=str(finding.get("claim") or finding.get("text") or ""),
+            finding_key=findings_store.normalize(finding.get("text") or ""))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not mark %s as not room air: %s", log_safe(eid), exc)
+        return {"error": "brAIn could not write that down"}
+    if not row:
+        return {"error": "brAIn could not write that down"}
+    decision_trail.note(
+        "exception", eid, "you said it does not measure the room's air: the "
+        "heat model, the climate checks, the frost warning and the unusual-"
+        "reading check leave it out", check=checks._util.ROOM_AIR_RULE,
+        source=str(finding.get("source") or ""),
+        text=str(finding.get("text") or ""))
+    return {"ok": True, "id": row["id"], "name": name}
+
+
+async def h_finding_not_room_air(request: web.Request) -> web.Response:
+    finding = _finding_or_404(request)
+    got = await asyncio.to_thread(_mark_not_room_air, finding)
+    if got.get("error"):
+        raise web.HTTPConflict(text=got["error"])
+    return web.json_response(got)
 
 
 # ---------------------------------------------------------------------------
@@ -30728,6 +30838,8 @@ def make_app() -> web.Application:
                         h_finding_stop_watching)
     app.router.add_post("/api/finding/{ts}/stop_raising",
                         h_finding_stop_raising)
+    app.router.add_post("/api/finding/{ts}/not_room_air",
+                        h_finding_not_room_air)
     # The producer, not the row. Registered before /api/finding/{ts}/…
     # only for tidiness; the path does not collide.
     app.router.add_post("/api/findings/mute", h_findings_mute)

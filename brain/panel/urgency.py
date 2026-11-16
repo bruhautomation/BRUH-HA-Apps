@@ -47,6 +47,10 @@ PRODUCER_URGENCY = {
     # window starts. Anything but `now` holds it until morning, which is
     # the one delivery that makes the check pointless.
     "check:evening.left_open": "now",
+    # A lock's door sensor that contradicts the door's contact sensor is a
+    # fitting to look at in daylight: brAIn already reads the door by the
+    # contact while the lock is locked, so nothing is lost by morning.
+    "check:dev.door_disagree": "today",
     # A chore is never urgent and often arrives in the evening: an
     # emptied dishwasher at eight in the morning is the same dishwasher.
     # `whenever` is what lets quiet hours hold it, which is the whole

@@ -593,8 +593,9 @@ class MorphPanel extends HTMLElement {
     const suppressed = {};
     Object.keys(this.suppressed).forEach((id) => { if (this.suppressed[id] === day) suppressed[id] = true; });
     const narrow = (this.rootEl && this.rootEl.clientWidth) < 480;
+    const feed = fh.usable ? this.brain().feed : null;
     return {
-      now, states, feed: fh.usable ? this.brain().feed : null, casesByEntity, pins, suppressed, touched: this.touched, asked: this.asked,
+      now, states: sal.trustDoors(states, feed && feed.door_pairs), feed, casesByEntity, pins, suppressed, touched: this.touched, asked: this.asked,
       occupied, asleepRooms, anyAsleep, allAsleep: sleepers >= 2 && awake === 0, alarms, nowMax: narrow ? sal.NOW_MAX_PHONE : sal.NOW_MAX,
       name: (e) => friendly(this.hass, e),
     };
