@@ -531,12 +531,13 @@ export function InventoryList({
           placeholder="Add a product to your stock..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full pl-9 pr-8 py-2 text-sm rounded-xl ring-1 ring-black/[0.06] bg-card shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+          className="w-full h-11 pl-9 pr-11 text-base rounded-xl ring-1 ring-black/[0.06] bg-card shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
         />
         {search && (
           <button
             onClick={() => setSearch('')}
-            className="absolute right-3 top-1/2 -translate-y-1/2"
+            aria-label="Clear search"
+            className="absolute right-0.5 top-1/2 -translate-y-1/2 grid size-10 place-items-center"
           >
             <X className="w-3.5 h-3.5 text-muted-foreground/50" />
           </button>
@@ -586,7 +587,7 @@ export function InventoryList({
           <div className="flex items-center gap-1.5 flex-wrap">
             <button
               onClick={() => setAreaFilter(null)}
-              className={`text-[11px] font-medium px-2.5 py-1 rounded-full ring-1 transition-all ${
+              className={`min-h-10 text-[13px] font-medium px-3 rounded-full ring-1 transition-all ${
                 !areaFilter
                   ? 'bg-foreground text-card ring-foreground shadow-sm'
                   : 'bg-card text-muted-foreground ring-border/60 hover:ring-border'
@@ -602,7 +603,7 @@ export function InventoryList({
                 <button
                   key={a}
                   onClick={() => setAreaFilter(active ? null : a)}
-                  className={`inline-flex items-center gap-1 text-[11px] font-medium px-2.5 py-1 rounded-full ring-1 transition-all ${
+                  className={`inline-flex min-h-10 items-center gap-1 text-[13px] font-medium px-3 rounded-full ring-1 transition-all ${
                     active
                       ? AREA_STYLE[a].chip
                       : 'bg-card text-muted-foreground ring-border/60 hover:ring-border'
@@ -620,7 +621,7 @@ export function InventoryList({
               <button
                 key={k}
                 onClick={() => setSortBy(k)}
-                className={`text-[10px] font-medium px-1.5 py-0.5 rounded transition-colors ${
+                className={`min-h-10 text-[13px] font-medium px-2.5 rounded-md transition-colors ${
                   sortBy === k
                     ? 'bg-emerald-100 text-emerald-800'
                     : 'text-muted-foreground hover:text-foreground'

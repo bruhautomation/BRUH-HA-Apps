@@ -299,6 +299,7 @@ export function buildSummary(rows: GardenRows, now: Date, timeZone: string) {
     inventory: {
       items,
       low_count: items.filter((i) => i.low).length,
+      low_pct: LOW_STOCK_PCT,
     },
   };
 }

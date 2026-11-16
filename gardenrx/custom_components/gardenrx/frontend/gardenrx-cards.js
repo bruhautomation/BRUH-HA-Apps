@@ -99,7 +99,6 @@ const css = (morph) => `
   .bar { height: 6px; border-radius: 3px; background: var(--g-sunk); overflow: hidden; margin-top: 4px; }
   .bar > i { display: block; height: 100%; background: var(--g-accent); border-radius: 3px; }
   .bar.low > i { background: var(--g-bad); }
-  .bar.mid > i { background: var(--g-warn); }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .chip { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--g-sunk); }
   .chip.bad { background: color-mix(in srgb, var(--g-bad) 16%, transparent); color: var(--g-bad); }
@@ -387,10 +386,13 @@ class GardenInventoryCard extends GardenCard {
     const cfg = this._config;
     const items = (a.items || []).filter((i) => !cfg.low_only || i.low).slice(0, cfg.max_items);
     const low = Number(s.state) || 0;
+    // Red is exactly what the count counts (the summary's low flag), and the
+    // line says where that line is drawn: no second, unexplained amber band.
+    const lowPct = Number(a.low_pct) || 20;
     const head = `<div class="hero"><span class="big">${low}</span>
-      <span class="muted">running low${(a.items || []).length ? ` of ${a.items.length} in stock` : ''}</span></div>`;
+      <span class="muted">running low (${lowPct}% or less)${(a.items || []).length ? ` of ${a.items.length} in stock` : ''}</span></div>`;
     const list = items.length ? `<div class="list">${items.map((i) => {
-      const cls = i.pct == null ? '' : i.pct <= 20 ? 'low' : i.pct <= 50 ? 'mid' : '';
+      const cls = i.low ? 'low' : '';
       return `<div><div class="row"><span class="name">${esc(i.product)}</span>
           <span class="muted">${num(i.quantity, 2)} ${esc(i.unit)}${i.pct != null ? ` · ${i.pct}%` : ''}</span></div>
         ${i.pct != null ? `<div class="bar ${cls}"><i style="width:${Math.max(2, i.pct)}%"></i></div>` : ''}</div>`;

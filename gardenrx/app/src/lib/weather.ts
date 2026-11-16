@@ -220,22 +220,13 @@ function hourRange(a: number, b: number): string {
 }
 
 /**
- * The next stretch of good spray weather still ahead, in the words Today and
- * Weather both show: "today 6–7 pm", "tomorrow 8–11 am", "Sat 9 am–1 pm".
- * Good means a GOOD or EXCELLENT daytime hour (6 am to 9 pm) starting after the
- * current one: it is asked only when right now is not good, so the hour under
- * way is never offered as the opening. Null when nothing in the forecast qualifies.
+ * Each forecast hour marked good or not by the one rule every spray window uses:
+ * a GOOD or EXCELLENT daytime hour (6 am to 9 pm), with `over` for an hour that
+ * has already started on the garden's clock.
  */
-export function nextSprayOpening(
-  hourly: HourlyForecast[],
-  now: Date = new Date()
-): { label: string; start: string; end: string } | null {
+function rateHours(hourly: HourlyForecast[], now: Date) {
   const nowStamp = localStamp(now);
-  const today = nowStamp.slice(0, 10);
-  const tomorrow = new Date(today + 'T12:00:00Z');
-  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-  const tomorrowStr = tomorrow.toISOString().slice(0, 10);
-  const good = hourly.map((h, i) => {
+  return hourly.map((h, i) => {
     let until: number | null = null;
     for (let j = i + 1; j < hourly.length; j++) {
       if (hourly[j].precipitation > 0.01) {
@@ -252,6 +243,63 @@ export function nextSprayOpening(
       over: h.time.slice(0, 13) <= nowStamp.slice(0, 13),
     };
   });
+}
+
+/** A window shorter than this many hours is offered as a short one. */
+export const SHORT_SPRAY_WINDOW_HOURS = 3;
+
+/**
+ * The longest stretch of good spray weather still ahead on each forecast day,
+ * by the same rule as `nextSprayOpening`: { date → "3–7 pm", hours }. A day
+ * with no good hour left is absent.
+ */
+export function daySprayWindows(
+  hourly: HourlyForecast[],
+  now: Date = new Date()
+): Map<string, { label: string; hours: number }> {
+  const good = rateHours(hourly, now);
+  const out = new Map<string, { label: string; hours: number }>();
+  let i = 0;
+  while (i < good.length) {
+    if (!good[i].ok || good[i].over) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (
+      j + 1 < good.length &&
+      good[j + 1].ok &&
+      !good[j + 1].over &&
+      good[j + 1].date === good[i].date &&
+      good[j + 1].hour === good[j].hour + 1
+    )
+      j++;
+    const hours = j - i + 1;
+    const prev = out.get(good[i].date);
+    if (!prev || hours > prev.hours)
+      out.set(good[i].date, { label: hourRange(good[i].hour, good[j].hour + 1), hours });
+    i = j + 1;
+  }
+  return out;
+}
+
+/**
+ * The next stretch of good spray weather still ahead, in the words Today and
+ * Weather both show: "today 6–7 pm", "tomorrow 8–11 am", "Sat 9 am–1 pm".
+ * Good means a GOOD or EXCELLENT daytime hour (6 am to 9 pm) starting after the
+ * current one: it is asked only when right now is not good, so the hour under
+ * way is never offered as the opening. Null when nothing in the forecast qualifies.
+ */
+export function nextSprayOpening(
+  hourly: HourlyForecast[],
+  now: Date = new Date()
+): { label: string; start: string; end: string } | null {
+  const nowStamp = localStamp(now);
+  const today = nowStamp.slice(0, 10);
+  const tomorrow = new Date(today + 'T12:00:00Z');
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  const tomorrowStr = tomorrow.toISOString().slice(0, 10);
+  const good = rateHours(hourly, now);
   const first = good.findIndex((g) => g.ok && !g.over);
   if (first < 0) return null;
   const g0 = good[first];

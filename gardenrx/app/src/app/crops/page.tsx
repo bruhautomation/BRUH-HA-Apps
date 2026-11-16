@@ -11,14 +11,14 @@ import {
   buildIngredientMap,
 } from '@/lib/queries';
 import { fetchWeather } from '@/lib/weather';
+import { LOCATION } from '@/config/thresholds';
 import { getSprayRecordsForCrop, computeCoverage, type CoverageInfo } from '@/lib/protection';
 import { buildPhiByProductGroup, computeCropPhi } from '@/lib/phi';
 import { harvestSeason } from '@/lib/harvest-windows';
 import { applyPhenology } from '@/lib/phenology';
 import { stageIndex, stageVarColor, stageLabel } from '@/lib/stage-color';
 import { CropsBoard, type CropCardModel, type CovCell } from '@/components/crops/crops-board';
-import { needsCoverageNow, dueTypes } from '@/lib/coverage-season';
-import type { PhenologicalStage } from '@/lib/database.types';
+import { needsCoverageNow, dueTypes, cropStages } from '@/lib/coverage-season';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,8 +43,14 @@ const GROUP_CATEGORY: Record<string, string> = {
 };
 const ORCHARD_NONGROUP = new Set(['Figs', 'Persimmons', 'Pawpaws', 'Mulberries', 'Jujube']);
 
-function covCell(c: CoverageInfo | null): CovCell {
-  return c ? { status: c.status, daysRemaining: c.daysRemaining } : null;
+function covCell(c: CoverageInfo | null, now: Date): CovCell {
+  if (!c) return null;
+  // The day the cover runs out, on the garden's calendar: "next due Dec 3".
+  const due = new Date(now.getTime() + Math.max(0, c.daysRemaining) * 86400000).toLocaleDateString(
+    'en-US',
+    { month: 'short', day: 'numeric', timeZone: LOCATION.timezone }
+  );
+  return { status: c.status, daysRemaining: c.daysRemaining, due };
 }
 
 export default async function CropsPage() {
@@ -83,10 +89,7 @@ export default async function CropsPage() {
 
   const cards: CropCardModel[] = crops.map((crop) => {
     const cropVarieties = varieties.filter((v) => v.crop_id === crop.id);
-    const stages = cropVarieties.map((v) => {
-      const vs = effectiveStages.find((s) => s.variety_id === v.id);
-      return (vs?.stage ?? 'dormant') as PhenologicalStage;
-    });
+    const stages = cropStages(crop.id, varieties, effectiveStages);
     const topStage = stages.length
       ? stages.reduce((a, b) => (stageIndex(b) > stageIndex(a) ? b : a))
       : null;
@@ -148,8 +151,8 @@ export default async function CropsPage() {
       inBloom,
       trackFung,
       trackIns,
-      fung: covCell(fung),
-      ins: covCell(ins),
+      fung: covCell(fung, now),
+      ins: covCell(ins, now),
       phiActive,
       phiDaysLeft: phi.daysLeft,
       protection,

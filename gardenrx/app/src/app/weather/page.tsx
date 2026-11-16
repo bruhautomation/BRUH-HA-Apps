@@ -1,13 +1,14 @@
 import {
   fetchWeather,
   getCurrentSprayRating,
-  rateSprayWindow,
   nextSprayOpening,
-  type SprayRating,
+  daySprayWindows,
+  SHORT_SPRAY_WINDOW_HOURS,
 } from '@/lib/weather';
+import { anySprayDue } from '@/lib/spray-due';
 import { fetchCrops, fetchVarieties, fetchVarietyStages, fetchCropGroups } from '@/lib/queries';
 import { applyPhenology } from '@/lib/phenology';
-import { mostlyResting } from '@/lib/coverage-season';
+import { mostlyResting, cropStages } from '@/lib/coverage-season';
 import { dailyRainfall, rainfallSummary } from '@/lib/rainfall';
 import { RatingPill } from '@/components/status';
 import { SprayWindow3Day } from '@/components/today/spray-window-3day';
@@ -29,16 +30,10 @@ function wxEmoji(code: number): string {
   return '☁️';
 }
 
-function pill(r: SprayRating): { cls: string; txt: string } {
-  if (r === 'EXCELLENT' || r === 'GOOD') return { cls: 'good', txt: 'Spray' };
-  if (r === 'FAIR') return { cls: 'ok', txt: 'Caution' };
-  return { cls: 'no', txt: 'Hold' };
-}
-
 export default async function WeatherPage() {
   const [weather, crops, varieties, varietyStages, cropGroups] = await Promise.all([
     fetchWeather().catch(() => null),
-    fetchCrops().catch(() => []),
+    fetchCrops({ activeOnly: true }).catch(() => []),
     fetchVarieties().catch(() => []),
     fetchVarietyStages().catch(() => []),
     fetchCropGroups().catch(() => []),
@@ -67,28 +62,11 @@ export default async function WeatherPage() {
     }
   }
 
-  // per-day spray rating for the forecast strip
-  const rated = hourly.map((h, i) => {
-    let hr: number | null = null;
-    for (let j = i + 1; j < hourly.length; j++) {
-      if (hourly[j].precipitation > 0.01) {
-        hr = j - i;
-        break;
-      }
-    }
-    return {
-      date: h.time.slice(0, 10),
-      hour: new Date(h.time).getHours(),
-      rating: rateSprayWindow(h.temp, h.windSpeed, hr),
-    };
-  });
-  const order: Record<SprayRating, number> = { EXCELLENT: 0, GOOD: 1, FAIR: 2, POOR: 3 };
-  const dayRating = new Map<string, SprayRating>();
-  for (const r of rated) {
-    if (r.hour < 6 || r.hour > 20) continue;
-    const prev = dayRating.get(r.date);
-    if (!prev || order[r.rating] < order[prev]) dayRating.set(r.date, r.rating);
-  }
+  // Per-day spray windows for the forecast strip: the same good-hour rule as the
+  // banner's next opening, and only when Today would ask for a spray at all.
+  const sprayDue = await anySprayDue(precipHistory).catch(() => false);
+  const dayWindows = sprayDue ? daySprayWindows(hourly) : new Map();
+  const forecastDates = new Set(hourly.map((h) => h.time.slice(0, 10)));
 
   const rainDaily = dailyRainfall(precipHistory, 30);
   const rainSummary = rainDaily.length ? rainfallSummary(rainDaily) : null;
@@ -100,13 +78,7 @@ export default async function WeatherPage() {
   // stage calendar Today and Crops use.
   const effectiveStages = applyPhenology(varietyStages, varieties, crops, cropGroups, new Date());
   const dormant = mostlyResting(
-    crops.map((c) =>
-      varieties
-        .filter((v) => v.crop_id === c.id)
-        .map((v) => ({
-          stage: effectiveStages.find((s) => s.variety_id === v.id)?.stage ?? 'dormant',
-        }))
-    )
+    crops.map((c) => cropStages(c.id, varieties, effectiveStages).map((stage) => ({ stage })))
   );
 
   const goodNow = rating === 'EXCELLENT' || rating === 'GOOD';
@@ -202,8 +174,16 @@ export default async function WeatherPage() {
         style={{ ['--fc-cols' as string]: Math.min(7, daily.length) }}
       >
         {daily.slice(0, 7).map((d, i) => {
-          const r = dayRating.get(d.date);
-          const p = r ? pill(r) : null;
+          const win = dayWindows.get(d.date);
+          const chip = !sprayDue
+            ? null
+            : win
+              ? win.hours < SHORT_SPRAY_WINDOW_HOURS
+                ? { cls: 'ok', txt: `Short ${win.label}` }
+                : { cls: 'good', txt: `Spray ${win.label}` }
+              : forecastDates.has(d.date)
+                ? { cls: 'no', txt: 'Hold' }
+                : null;
           return (
             <div key={d.date} className={`fc-day${i === 0 ? ' today' : ''}`}>
               <div className="fc-dow">
@@ -223,7 +203,7 @@ export default async function WeatherPage() {
               <div className="fc-hi">{Math.round(d.tempHigh)}°</div>
               <div className="fc-lo">{Math.round(d.tempLow)}°</div>
               {d.precipSum > 0.01 && <div className="fc-rain">{d.precipSum.toFixed(2)}″</div>}
-              {p && <div className={`fc-spray ${p.cls}`}>{p.txt}</div>}
+              {chip && <div className={`fc-spray ${chip.cls}`}>{chip.txt}</div>}
             </div>
           );
         })}
