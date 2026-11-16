@@ -443,7 +443,7 @@ result and nothing is installed on the device.
 world has — added from the browser, by hand, by link or by the `plugins:`
 option — grouped by kind, each saying where it stands:
 
-- **Working** — loaded now.
+- **Enabled** — loaded now.
 - **Restart the server to turn it on** — added since the server started.
   Plugins, mods and a resource-pack change need a restart; data packs do not
   (the panel reloads them live).

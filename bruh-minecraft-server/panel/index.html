@@ -47,7 +47,7 @@
       <button class="tab active" data-tab="dashboard" role="tab">Dashboard</button>
       <button class="tab" data-tab="console" role="tab">Console</button>
       <button class="tab" data-tab="players" role="tab">Players</button>
-      <button class="tab" data-tab="properties" role="tab">Server Properties</button>
+      <button class="tab" data-tab="properties" role="tab">Properties</button>
       <button class="tab" data-tab="addons" role="tab">Add-ons</button>
       <button class="tab" data-tab="backups" role="tab">Backups</button>
       <button class="tab" data-tab="worlds" role="tab">Worlds</button>
@@ -541,6 +541,7 @@
             <dt>Latency</dt><dd id="m-latency">—</dd>
           </dl>
           <button id="btn-tune" class="btn btn-ghost" type="button" title="Inspect host RAM/CPU and propose memory/distance settings">Tune for my hardware</button>
+          <p class="muted tune-hint">Suggests memory and view distance for this machine; you confirm first.</p>
           <p id="perf-hint" class="perf-hint" hidden></p>
           <p id="memory-hint" class="perf-hint" hidden></p>
         </div>
@@ -796,7 +797,7 @@
     <!-- Backups -->
     <section id="tab-backups" class="tab-panel">
       <h2>Backups</h2>
-      <p class="muted">Git-mode backups store incremental history; restoring a commit re-syncs the world from that snapshot. Backups are <strong>per-world</strong> — switch worlds from the Worlds tab to browse another profile's history.</p>
+      <p class="muted">Git-mode backups keep a history of the world. Backups are <strong>per-world</strong> — switch worlds from the Worlds tab to browse another profile's history.</p>
       <div id="backups-panel"></div>
     </section>
 
