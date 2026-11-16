@@ -1709,6 +1709,42 @@ def _contradictions(conflicts, clock: set[str]) -> list[dict]:
     return [keep[i] for i in sorted(keep)]
 
 
+# How far either side of a logged move a rule's run may have started or
+# finished and still be the run that made it: Core stamps the trace and the
+# state change from the same clock, a moment apart.
+TRACE_SLACK_S = 2.0
+
+
+def _traces_back(snap: dict, house: House, moves) -> bool:
+    """Whether the two rules' own traces show each of them running when the
+    logbook says it moved the entity, for at least one undo of the pair.
+
+    The miner attributes a state change to an automation by the logbook's
+    context; a trace is Core's own record of that rule running. A run of
+    each rule spanning its move (the first's at ``ts - after_s``, the
+    second's at ``ts``) is the measurement; a trace Core no longer holds
+    (it keeps five a rule) or a house whose traces could not be read backs
+    nothing.
+    """
+    keys = {item["entity_id"]: item["key"] for item in _traced(house)}
+
+    def ran_at(rule: str, at: float) -> bool:
+        key = keys.get(rule)
+        if not key:
+            return False
+        return any(_trace_start_ts(r) - TRACE_SLACK_S <= at
+                   <= _trace_end_ts(r) + TRACE_SLACK_S
+                   for r in _traces_for(snap, key))
+
+    for c in moves or ():
+        ts = float(c.get("ts") or 0.0)
+        first_at = ts - float(c.get("after_s") or 0.0)
+        if (ts and ran_at(str(c.get("first") or ""), first_at)
+                and ran_at(str(c.get("second") or ""), ts)):
+            return True
+    return False
+
+
 def conflicting(snap: dict, now: float) -> list[dict]:
     """Two automations that keep undoing each other.
 
@@ -1769,6 +1805,7 @@ def conflicting(snap: dict, now: float) -> list[dict]:
                                    "entities": [], "last": 0.0,
                                    "scheduled": False})
         p["names"].update(names)
+        p.setdefault("moves", []).append(c)
         p["count"] += 1
         p["scheduled"] = p["scheduled"] or bool(c.get("scheduled"))
         if c["entity_id"] not in p["entities"]:
@@ -1776,11 +1813,24 @@ def conflicting(snap: dict, now: float) -> list[dict]:
         p["last"] = max(p["last"], c.get("ts") or 0.0)
 
     out = []
+    # While the household's record stands this check down (#1078), a pair
+    # is filed only when the two rules' own traces back the miner: each
+    # was running at the moment the logbook says it moved the entity.
+    stood = house.stand_down("auto.conflict", now)
     for key, p in sorted(pairs.items()):
         if p["count"] < CONFLICT_MIN and not p["scheduled"]:
             continue
         rules = [k for k in key if k.startswith("automation.")]
         subject = rules[0] if rules else ""
+        if (stood and subject
+                and not any(house._never_covered(e, "auto.conflict")
+                            for e in [*p["entities"], *rules])
+                and not _traces_back(snap, house, p.get("moves") or ())):
+            house.gave_up("auto.conflict", [{"entity_id": subject}],
+                          "the two rules' run history does not show both "
+                          "running when the entity moved; "
+                          + stood["reason"], kind="stand_down")
+            continue
         # A Wrong is written under BOTH rules (the evidence below), and
         # asked of both: the row is filed under whichever sorts first, so
         # asking only that one let the rule somebody keeps answering about

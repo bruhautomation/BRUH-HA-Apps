@@ -6507,10 +6507,12 @@ function openNoteForm(card, actions, onSend, opts) {
   }
   form.appendChild(ta);
   // Optional boxes beside the note, for the one ending that has more to
-  // say: "Ignore all like this" (the rule, for every thing) and "Stop
-  // watching <it>" (the thing, for every rule). `opts.check` and
-  // `opts.watch` are their labels; what they send ride back to `onSend` as
-  // the third and fourth arguments.
+  // say: "Stop raising this about <it>" (this rule, this thing — chosen by
+  // the press, never read off the words typed above it), "Stop watching
+  // <it>" (the thing, for every rule) and "Ignore all like this" (the rule,
+  // for every thing). `opts.pair`, `opts.watch` and `opts.check` are their
+  // labels; what they send ride back to `onSend` as the third, fourth and
+  // fifth arguments.
   const tick = (label) => {
     if (!label) return null;
     const line = el("label", "findnotecheck");
@@ -6521,8 +6523,9 @@ function openNoteForm(card, actions, onSend, opts) {
     form.appendChild(line);
     return box;
   };
-  const check = tick(opts.check);
+  const pair = tick(opts.pair);
   const watch = tick(opts.watch);
+  const check = tick(opts.check);
   const row = el("div", "findnoteactions");
   const send = el("button", "btn small primary", opts.send);
   const cancel = el("button", "btn small ghost", "Cancel");
@@ -6537,7 +6540,7 @@ function openNoteForm(card, actions, onSend, opts) {
   send.addEventListener("click", () => {
     send.disabled = cancel.disabled = true;
     onSend(ta.value.trim(), [send, cancel], !!(check && check.checked),
-      !!(watch && watch.checked));
+      !!(watch && watch.checked), !!(pair && pair.checked));
   });
   cancel.addEventListener("click", () => {
     form.remove();
@@ -7381,7 +7384,8 @@ async function refreshToday() {
                      refreshProposalData(), refreshTodayExtras()]);
 }
 
-async function runAnswer(row, answer, btns, note, ignoreAll, change, stopWatching) {
+async function runAnswer(row, answer, btns, note, ignoreAll, change, stopWatching,
+                         stopRaising) {
   const finding = caseAsFinding(row);
   if (answer.verb === "recheck" && finding) {
     return recheckFinding(finding, btns, btns.find((b) => b.dataset.verb === "recheck"));
@@ -7396,6 +7400,11 @@ async function runAnswer(row, answer, btns, note, ignoreAll, change, stopWatchin
     if (stopWatching && finding) {
       const got = await api(`api/finding/${finding.ts}/stop_watching`, { method: "POST" });
       watched = ` — and brAIn has stopped watching ${got.name || "it"}`;
+    } else if (stopRaising && finding) {
+      // This rule about this thing, for good: written before the Ignore,
+      // which then carries it instead of reading the note as "not now".
+      await api(`api/finding/${finding.ts}/stop_raising`, {
+        method: "POST", body: JSON.stringify({ note: note || "" }) });
     }
     const data = await api(answer.route.replace(/^\//, ""), {
       method: answer.method || "POST",
@@ -7440,8 +7449,8 @@ function caseThingName(row) {
 function askThenRun(row, answer, btns) {
   const ignore = IGNORE_VERBS.has(answer.verb) && answer.verb !== "no";
   openNoteForm(btns.card, btns.actions,
-    (text, formBtns, all, watch) => runAnswer(row, answer, btns.concat(formBtns), text, all,
-      undefined, watch), {
+    (text, formBtns, all, watch, pair) => runAnswer(row, answer, btns.concat(formBtns),
+      text, all, undefined, watch, pair), {
       hint: answer.ask || (ignore ? "Why? (helps brAIn learn)"
         : answer.verb === "no" ? "Why not? (helps brAIn learn)" : "Optional."),
       placeholder: answer.placeholder || answer.prefill
@@ -7451,6 +7460,8 @@ function askThenRun(row, answer, btns) {
       check: ignore && answer.verb === "wrong" && row.mutable
         ? "Ignore all like this" : "",
       // Absent on safety, security and protected things (`watch_off`).
+      pair: ignore && answer.verb === "wrong" && row.watch_off
+        ? `Stop raising this about ${caseThingName(row)}` : "",
       watch: ignore && answer.verb === "wrong" && row.watch_off
         ? `Stop watching ${caseThingName(row)}: no check looks at it again` : "",
       chips: ignore ? answer.chips || [] : [],

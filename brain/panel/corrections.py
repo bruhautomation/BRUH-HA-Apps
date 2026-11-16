@@ -504,7 +504,7 @@ def broken_answer(entity_id: str, check_id: str = "", *, faulty,
 
     The ONE answer every reader shares — the device checks
     (`House.answered_off`), the first look (`resident.set_aside_broken`)
-    and the investigation gate (`resident.faulty_case`). In order:
+    and the investigation gate (`server._settled_devices`). In order:
 
     * the floors first: a security check (`SECURITY_PREFIX`), and a pair
       `never_covered` names — a leak, smoke or gas sensor, a lock, an
