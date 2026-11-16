@@ -124,8 +124,18 @@
 
   // Speakers by their friendly name, which the profiles endpoint carries
   // beside the id (a select of ids is a select of strangers).
-  function fillPlayerSelect(select, profiles, previous, withOffset) {
-    select.innerHTML = '<option value="">— calibrated player —</option>';
+  //
+  // With nothing calibrated the picker says so in words and a button beside
+  // it opens the Calibrate tab; the caller disables what needs a speaker.
+  // Returns whether there is a speaker to pick.
+  function fillPlayerSelect(select, profiles, previous, withOffset, emptyLabel) {
+    const have = (profiles || []).length > 0;
+    select.innerHTML = "";
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = have ? (emptyLabel || "Choose a speaker")
+      : "No speaker calibrated yet";
+    select.appendChild(blank);
     for (const profile of profiles || []) {
       const option = document.createElement("option");
       option.value = profile.entity_id;
@@ -134,6 +144,25 @@
       option.selected = profile.entity_id === previous;
       select.appendChild(option);
     }
+    select.disabled = !have;
+    const host = select.closest("label") || select;
+    let note = host.parentNode.querySelector(
+      ':scope > .player-note[data-for="' + select.id + '"]');
+    if (!have && !note) {
+      note = document.createElement("button");
+      note.type = "button";
+      note.className = "btn small player-note";
+      note.dataset.for = select.id;
+      note.textContent = "Calibrate a speaker first →";
+      note.addEventListener("click", () => {
+        const tab = document.querySelector('.tab[data-tab="calibrate"]');
+        if (tab) tab.click();
+      });
+      host.after(note);
+    } else if (have && note) {
+      note.remove();
+    }
+    return have;
   }
 
   // ------------------------------------------------------------------
@@ -826,14 +855,15 @@
         api("api/library"), api("api/calibrate/profiles"),
       ]);
       const playerSelect = $("showPlayer");
-      fillPlayerSelect(playerSelect, profiles.profiles,
-                       playerSelect.value, false);
+      const haveSpeaker = fillPlayerSelect(
+        playerSelect, profiles.profiles, playerSelect.value, false);
       const tracks = (lib.tracks || []).filter((t) => t.analyzed);
       if (!tracks.length) {
         list.innerHTML = '<p class="muted">No analyzed tracks — Library first.</p>';
         return;
       }
       list.innerHTML = "";
+      const copies = findCopies(tracks);
       for (const track of tracks) {
         const row = document.createElement("div");
         row.className = "row slim";
@@ -856,15 +886,21 @@
           'and drop flashes, no choreography — proves sync and drop ' +
           'detection">🧪 Test beats and drops</button>' +
           "</div>";
-        row.querySelector("strong").textContent = track.name;
-        row.querySelector(".rtt").textContent = show
+        row.querySelector("strong").textContent = displayName(track);
+        row.querySelector(".rtt").textContent = (show
           ? describeShow(show)
-          : "No show yet";
+          : "No show yet") + (copies.has(track.hash)
+          ? " · same song as " + copies.get(track.hash) : "");
         if (show) {
           const facts = document.createElement("p");
           facts.className = "muted menu-info";
           facts.textContent = describeBuild(show);
           row.querySelector(".more-menu").prepend(facts);
+        }
+        // Nothing to play on until a speaker is calibrated: the button
+        // says so by being off, and the note beside the picker says why.
+        for (const play of row.querySelectorAll('[data-act="play"]')) {
+          play.disabled = !haveSpeaker;
         }
         list.appendChild(row);
       }
@@ -1055,8 +1091,10 @@
       // Keep the chosen speaker across a reload — this runs on every
       // visit to the tab, and losing the pick meant the party quietly
       // fell back to whichever player calibrated best, in another room.
-      fillPlayerSelect(select, profiles.profiles,
-                       select.value, false);
+      const have = fillPlayerSelect(select, profiles.profiles,
+                                    select.value, false,
+                                    "Best calibrated speaker");
+      $("btnPartyStart").disabled = !have;
     } catch (error) {
       $("partyStatus").textContent = "failed: " + error.message;
     }
@@ -1171,13 +1209,13 @@
       for (const track of (lib.tracks || []).filter((t) => t.analyzed)) {
         const option = document.createElement("option");
         option.value = track.hash;
-        option.textContent = track.name;
+        option.textContent = displayName(track);
         option.selected = track.hash === hadTrack;
         trackSelect.appendChild(option);
       }
       const playerSelect = $("syncPlayer");
-      fillPlayerSelect(playerSelect, profiles.profiles,
-                       playerSelect.value, true);
+      $("btnSyncStart").disabled = !fillPlayerSelect(
+        playerSelect, profiles.profiles, playerSelect.value, true);
     } catch (error) {
       $("syncStatus").textContent = "failed: " + error.message;
     }
@@ -1274,61 +1312,104 @@
     return [top].concat(inside).join(" / ");
   }
 
-  // Tracks that look like the same song under two files: the same name once
-  // "(1)", "copy" and punctuation are set aside, or the same tempo and length
-  // to the second. Returns hash -> the name of the one it looks like. The
-  // library already merges byte-identical files; these differ in content.
+  // What a song is called on screen: the file's own title tag (with the
+  // artist) when it has one, otherwise the file name with its underscores
+  // read as spaces. The raw name stays on the row's `title` for anyone who
+  // needs to find the file.
+  function displayName(track) {
+    const s = track.summary || {};
+    if (s.title) {
+      const artist = s.artist && !s.title.toLowerCase().includes(
+        s.artist.toLowerCase()) ? s.artist + " – " : "";
+      return artist + s.title;
+    }
+    return String(track.name).replace(/_+/g, " ").trim() || track.name;
+  }
+
+  // Tracks that are clearly the same song under two files, decided from
+  // what the analysis measured and what the files say about themselves —
+  // never from the file names: the same artist and title tags, or the same
+  // length (within a second and a half, which is what two encodes of one
+  // recording differ by) at the same tempo (or half or double of it, which
+  // is how the beat tracker disagrees with itself). The library already
+  // merges byte-identical files; these differ in content. Returns hash ->
+  // the name of the one it matches.
   function findCopies(tracks) {
-    const tidy = (name) => String(name).toLowerCase()
-      .replace(/\(\d+\)|\bcopy\b|\bcopy \d+\b/g, "")
-      .replace(/[^a-z0-9]+/g, " ").trim();
-    const keysOf = (track) => {
-      const keys = [];
-      if (tidy(track.name)) keys.push("n:" + tidy(track.name));
-      const s = track.summary;
-      if (s && s.bpm && s.duration) {
-        keys.push("t:" + Math.round(s.bpm) + "|" + Math.round(s.duration));
-      }
-      return keys;
-    };
-    const first = new Map();
     const result = new Map();
-    for (const track of tracks) {
-      for (const key of keysOf(track)) {
-        if (!first.has(key)) { first.set(key, track); continue; }
-        const other = first.get(key);
-        if (other.hash === track.hash || result.has(track.hash)) continue;
-        result.set(track.hash, other.name);
-        if (!result.has(other.hash)) result.set(other.hash, track.name);
+    const mark = (a, b) => {
+      if (a.hash === b.hash) return;
+      if (!result.has(a.hash)) result.set(a.hash, displayName(b));
+      if (!result.has(b.hash)) result.set(b.hash, displayName(a));
+    };
+    const tagged = new Map();
+    for (const t of tracks) {
+      const s = t.summary || {};
+      if (!s.title || !s.artist) continue;
+      const key = (s.artist + "|" + s.title).toLowerCase();
+      if (tagged.has(key)) mark(tagged.get(key), t); else tagged.set(key, t);
+    }
+    const timed = tracks.filter((t) => t.summary && t.summary.duration
+      && t.summary.bpm).sort((a, b) => a.summary.duration - b.summary.duration);
+    for (let i = 0; i < timed.length; i++) {
+      for (let j = i + 1; j < timed.length; j++) {
+        const x = timed[i].summary;
+        const y = timed[j].summary;
+        if (y.duration - x.duration > 1.5) break;
+        const ratio = x.bpm / y.bpm;
+        if ([1, 2, 0.5].some((k) => Math.abs(ratio / k - 1) < 0.02)) {
+          mark(timed[i], timed[j]);
+        }
       }
     }
     return result;
   }
 
-  // The folders as one line when they are working or not in use, with the
-  // rows a tap away. Only a library with nothing in it and a folder gone is
-  // shown open, because that is the one a person has to act on.
+  // The folders as one line that says whether anything needs doing, with
+  // the rows a tap away. A folder with no music in it is not a problem, so
+  // those sit under a quiet "not used" line; only a folder that is gone is
+  // shown open, because that is the one a person can act on.
   function renderFolders(box, folders, tracks) {
-    const counts = folders.map((f) => tracks.filter(
-      (t) => folderOf(t, folders) === f.path.replace(/\/$/, "") + "/").length);
-    const inUse = counts.filter((n) => n > 0).length;
-    // A missing folder is a fault with a fix, never a folder "not in use".
-    const missing = folders.filter((f) => !f.exists).length;
-    const idle = folders.length - inUse - missing;
+    const base = (f) => f.path.replace(/\/$/, "") + "/";
+    const counts = new Map(folders.map((f) => [f, tracks.filter(
+      (t) => folderOf(t, folders) === base(f)).length]));
+    const holding = folders.filter((f) => f.exists && counts.get(f) > 0);
+    const missing = folders.filter((f) => !f.exists);
+    const unused = folders.filter((f) => f.exists && !counts.get(f));
+    const plural = (n, one, many) => n + " " + (n === 1 ? one : many);
     const details = document.createElement("details");
     details.className = "info-toggle folder-summary";
-    details.open = missing > 0;
+    details.open = missing.length > 0;
     const line = document.createElement("summary");
-    const bits = [];
-    if (idle > 0) bits.push(idle + " not in use");
-    if (missing > 0) bits.push("⚠ " + missing + " missing");
-    line.textContent = tracks.length
-      ? tracks.length + (tracks.length === 1 ? " track" : " tracks") +
-        " in " + inUse + (inUse === 1 ? " folder" : " folders") +
-        (bits.length ? ", " + bits.join(", ") : "")
-      : "No music found" + (missing ? " — " + missing + " missing" : "");
+    if (!tracks.length) {
+      line.textContent = "No music found" + (missing.length
+        ? " — " + plural(missing.length, "folder is", "folders are") +
+          " missing" : "");
+    } else {
+      let verdict = "nothing to do";
+      if (missing.length) {
+        verdict = "⚠ " + plural(missing.length, "folder is", "folders are") +
+          " missing — remove it below";
+      } else if (unused.length) {
+        verdict = "nothing to do (" + plural(unused.length, "other folder has",
+          "other folders have") + " no music)";
+      }
+      line.textContent = plural(tracks.length, "track", "tracks") + " in " +
+        plural(holding.length, "folder", "folders") + " — " + verdict;
+    }
     details.appendChild(line);
-    for (const folder of folders) details.appendChild(folderRow(folder, tracks));
+    for (const folder of holding.concat(missing)) {
+      details.appendChild(folderRow(folder, tracks, counts.get(folder)));
+    }
+    if (unused.length) {
+      const quiet = document.createElement("p");
+      quiet.className = "muted small folder-unused";
+      quiet.textContent = "Not used — no music in " +
+        (unused.length === 1 ? "this folder" : "these folders");
+      details.appendChild(quiet);
+      for (const folder of unused) {
+        details.appendChild(folderRow(folder, tracks, 0));
+      }
+    }
     box.appendChild(details);
   }
 
@@ -1336,7 +1417,7 @@
   // fix. Remove edits the same list the Folders-to-scan card edits; a
   // folder set in the add-on's options cannot be removed from here, so it
   // says where to change it instead of offering a button that does nothing.
-  function folderRow(folder, tracks) {
+  function folderRow(folder, tracks, count) {
     const row = document.createElement("div");
     row.className = "row folder-row";
     const main = document.createElement("div");
@@ -1347,8 +1428,6 @@
     path.textContent = folder.path;
     const status = document.createElement("span");
     status.className = "row-note";
-    const count = tracks.filter((t) => String(t.file).startsWith(
-      folder.path.replace(/\/$/, "") + "/")).length;
     status.textContent = folder.exists
       ? "Found, " + count + (count === 1 ? " track" : " tracks")
       : "Missing";
@@ -1368,7 +1447,16 @@
     }
     if (note.textContent) main.appendChild(note);
     row.appendChild(main);
-    if (folder.source === "picked") {
+    if (folder.source === "picked" && count > 0) {
+      // Removing the folder that holds the music would empty the library,
+      // so it is not offered here; the folder picker below is where a
+      // folder is taken off the list on purpose.
+      const holds = document.createElement("span");
+      holds.className = "row-note muted";
+      holds.textContent = "Holds your music — untick it under Folders to " +
+        "scan to stop using it";
+      main.appendChild(holds);
+    } else if (folder.source === "picked") {
       const actions = document.createElement("div");
       actions.className = "row-actions";
       const remove = document.createElement("button");
@@ -1421,13 +1509,13 @@
           '<span class="rtt small"></span>' +
           '<span class="muted small track-folder"></span>' +
           '<span class="small track-copy"></span></div>';
-        row.querySelector("strong").textContent = track.name;
+        row.querySelector("strong").textContent = displayName(track);
         row.querySelector(".rtt").textContent = trackSummary(track);
         row.querySelector(".track-folder").textContent =
-          "In " + trackPlace(track, folders);
+          "Folder: " + trackPlace(track, folders);
         const twin = copies.get(track.hash);
         const mark = row.querySelector(".track-copy");
-        if (twin) mark.textContent = "Looks like a copy of " + twin;
+        if (twin) mark.textContent = "Same song as " + twin;
         else mark.remove();
         list.appendChild(row);
       }
@@ -3018,7 +3106,7 @@
       for (const track of (lib.tracks || []).filter((t) => t.show)) {
         const option = document.createElement("option");
         option.value = track.hash;
-        option.textContent = track.name;
+        option.textContent = displayName(track);
         option.selected = track.hash === previous;
         select.appendChild(option);
       }
@@ -4541,6 +4629,7 @@
       for (const hash of Object.keys(partyPins)) {
         if (!known.has(hash)) delete partyPins[hash];
       }
+      const copies = findCopies(tracks);
       for (const track of tracks) {
         const row = document.createElement("label");
         row.className = "row party-pick";
@@ -4551,7 +4640,7 @@
         const main = document.createElement("div");
         main.className = "row-main";
         const title = document.createElement("strong");
-        title.textContent = track.name;
+        title.textContent = displayName(track);
         main.appendChild(title);
         const note = document.createElement("span");
         note.className = "muted small";
@@ -4564,6 +4653,9 @@
             ? "written by Claude" : "BRight's own director")
           : "a show gets written while the party runs");
         if (track.stale) bits.push("analysed by an older BRight");
+        if (copies.has(track.hash)) {
+          bits.push("same song as " + copies.get(track.hash));
+        }
         note.textContent = bits.join(" · ");
         main.appendChild(note);
         row.appendChild(check);
@@ -4603,6 +4695,38 @@
 
   // The tick order, written beside each ticked row. Without it "in the
   // order you tick them" is a promise nothing on screen keeps.
+  // The set is shown a page at a time instead of in a box that scrolls: a
+  // scrolling box keeps every row it has clipped laid out underneath the
+  // controls that follow it, so the name box and Save sat "on top of" rows
+  // nobody could see. A ticked song is always shown.
+  const PARTY_PAGE = 12;
+  let partyShown = PARTY_PAGE;
+  function pagePartySet() {
+    const rows = Array.from($("partySet").querySelectorAll(".party-pick"));
+    let hidden = 0;
+    rows.forEach((row, index) => {
+      const later = index >= partyShown &&
+        !row.querySelector("input").checked;
+      row.classList.toggle("party-later", later);
+      if (later) hidden += 1;
+    });
+    let more = $("partyMore");
+    if (!more) {
+      more = document.createElement("button");
+      more.id = "partyMore";
+      more.type = "button";
+      more.className = "btn small";
+      more.addEventListener("click", () => {
+        partyShown += 24;
+        pagePartySet();
+      });
+      $("partySet").after(more);
+    }
+    more.hidden = hidden === 0;
+    more.textContent = "Show " + Math.min(hidden, 24) + " more of " +
+      hidden + " songs";
+  }
+
   function renderSetOrder() {
     for (const row of $("partySet").querySelectorAll(".party-pick")) {
       const hash = row.querySelector("input").dataset.hash;
@@ -4610,6 +4734,7 @@
       row.querySelector(".party-order").textContent =
         place < 0 ? "" : "#" + (place + 1);
     }
+    pagePartySet();
     const count = partySet.length;
     $("partySetCount").textContent = count
       ? count + (count === 1 ? " song ticked" : " songs ticked") + " of " +
@@ -5831,7 +5956,7 @@
       for (const track of (lib.tracks || []).filter((t) => t.analyzed)) {
         const option = document.createElement("option");
         option.value = track.hash;
-        option.textContent = track.name;
+        option.textContent = displayName(track);
         option.selected = track.hash === hadTrack;
         trackSelect.appendChild(option);
       }

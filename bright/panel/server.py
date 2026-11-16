@@ -2695,6 +2695,7 @@ async def h_live_ws(request: web.Request) -> web.WebSocketResponse:
 # Calibration — how long the speaker takes, measured, never configured
 # ---------------------------------------------------------------------------
 REFERENCE_WAV = MEDIA_DIR / "bright" / "calibration.wav"
+library.exclude_files([REFERENCE_WAV])
 # What media_player.play_media is handed for the file above (HA maps the
 # /media mount to the local media source).
 REFERENCE_RELATIVE = "bright/calibration.wav"
