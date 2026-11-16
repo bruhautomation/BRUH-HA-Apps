@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.7
+
+### Fixed
+
+- A closed ⋯ menu, Temperatures or G-code section no longer lays its buttons out under the visible ones, so Refresh, Reconnect, Delete and Open in Studio never sit over the camera buttons, the "i", Print or ⋯ at any width (#1096, #1098).
+- Each Files row keeps Print and ⋯ beside the title, so rows are shorter on a phone; an opened menu takes the row in the flow (#1096).
+- A long print name wraps to two lines instead of being cut, and characters the device has no font for are left out of the shown name instead of drawn as boxes; the full name is in its tooltip (#1097).
+- A file row shows its newest slice's plate picture (or a clear icon for its kind), its print time and grams when it has a slice, or "Slices when you print" (#1099).
+- A failure-detection look that could not see is its own state in the timeline and the count ("2 could not see"), never the green "fine" dot, and the card offers "Turn on light" beside the notice when the chamber light is off (#1100).
+
 ## 0.4.6
 
 ### Fixed
