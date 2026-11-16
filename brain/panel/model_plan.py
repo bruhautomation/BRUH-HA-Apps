@@ -53,6 +53,7 @@ JOBS: dict[str, tuple[str, str, bool, bool]] = {
     # Looks — volume work with a closed vocabulary.
     "first_look":      ("haiku",  "low",    False, True),
     "scene_names":     ("haiku",  "low",    False, False),
+    "chat_title":      ("haiku",  "low",    False, False),
     "playbook_text":   ("haiku",  "low",    False, False),
     "episode_summary": ("haiku",  "low",    False, False),
     "consolidate":     ("haiku",  "low",    False, False),

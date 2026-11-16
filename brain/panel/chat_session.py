@@ -1076,6 +1076,9 @@ class ChatSession:
         # a test constructing one directly gets.
         self._on_change = None
         self._on_ask = None
+        # When a reply has landed: the server names a person's chat by its
+        # topic after the first one (`server._title_after_reply`, #1119).
+        self._on_reply = None
         # Last time anything happened in here — what the cap's LRU reads.
         # Bumped by every event rather than by sends alone, so a session
         # answering in the background is not the one evicted for idleness.
@@ -1163,6 +1166,14 @@ class ChatSession:
         try:
             self._on_change(self)
         except Exception:  # noqa: BLE001 — a listing must never fail a turn
+            pass
+
+    def _replied(self) -> None:
+        if self._on_reply is None:
+            return
+        try:
+            self._on_reply(self)
+        except Exception:  # noqa: BLE001 — same rule
             pass
 
     def _asked(self) -> None:
@@ -1727,6 +1738,8 @@ class ChatSession:
                     self._busy_since = 0.0
                     self._set_state("ready")
                     self._persist()
+                    if event.get("subtype") == "success":
+                        self._replied()
         finally:
             # Only the *current* process reports; a reader still winding down
             # after stop() must not overwrite the state its replacement set.
@@ -2843,6 +2856,8 @@ class SessionRegistry:
         # The same, for "Let brAIn act without asking". False until the
         # server says otherwise, which is asking.
         self.skip_permissions = False
+        # Called with a session whose reply has just landed; the server's.
+        self.on_reply = None
         _migrate_legacy()
         prune_transcripts()
 
@@ -2855,6 +2870,7 @@ class SessionRegistry:
         session.skip_permissions = self.skip_permissions
         session._on_change = lambda _s: self._broadcast()
         session._on_ask = self._announce_ask
+        session._on_reply = lambda s: self.on_reply(s) if self.on_reply else None
         self._sessions.append(session)
         self._trim_idle()
         return session

@@ -1098,7 +1098,7 @@
       <button type="button" class="setnavbtn" data-sec="diagnostics" role="tab" aria-controls="setsecDiagnostics">
         <span class="setnavname">Diagnostics</span><span class="setnavsum" id="setSumDiagnostics">Run all tests, and what is wrong</span></button>
       <button type="button" class="setnavbtn" data-sec="developer" role="tab" aria-controls="setsecDeveloper">
-        <span class="setnavname">Developer</span><span class="setnavsum" id="setSumDeveloper">Rehearsal, capture, development loop</span></button>
+        <span class="setnavname">Developer</span><span class="setnavsum" id="setSumDeveloper">House-check rehearsal, capture, development loop</span></button>
       <button type="button" class="setnavbtn" data-sec="guide" role="tab" aria-controls="setsecGuide">
         <span class="setnavname">Guide</span><span class="setnavsum" id="setSumGuide">How brAIn works</span></button>
     </div>
@@ -1126,7 +1126,6 @@
                 <span class="subtext">A dashboard laid out by what matters now, which brAIn designs
                   with you. Experimental: actively developed, may be unstable.</span></span></label>
             </div>
-            <p class="hint setgroupnote featwhere">Stays in this house.</p>
 
             <div class="setrow top">
               <label class="check bigcheck"><input id="featPersonality" class="tog" type="checkbox" data-feature="personality">
@@ -1134,7 +1133,6 @@
                 <span class="subtext">brAIn uses the name and personality you give it on every
                   screen, in chat, voice and notifications.</span></span></label>
             </div>
-            <p class="hint setgroupnote featwhere">Stays in this house.</p>
 
             <div class="setrow top">
               <label class="check bigcheck"><input id="featLearning" class="tog" type="checkbox" data-feature="learning_loop">
@@ -1142,8 +1140,11 @@
                 <span class="subtext">brAIn learns from chats, voice and how its reports end. Off,
                   it only does what you ask.</span></span></label>
             </div>
-            <p class="hint setgroupnote" id="featLearned" hidden></p>
-            <p class="hint setgroupnote featwhere">Stays in this house.</p>
+            <!-- One sentence; what each learner wrote is behind it (#1124). -->
+            <details class="hint setgroupnote featlearned" id="featLearned" hidden>
+              <summary id="featLearnedSum"></summary>
+              <ul id="featLearnedList"></ul>
+            </details>
 
             <div class="setrow top">
               <label class="check bigcheck"><input id="setDevloop" class="tog" type="checkbox">
@@ -1151,7 +1152,7 @@
                 <span class="subtext">brAIn files its own faults as issues in your private GitHub
                   repository, so the cloud routine can fix them.</span></span></label>
             </div>
-            <p class="hint setgroupnote featwhere featout">Leaves this house, with names, rooms and
+            <p class="hint setgroupnote featout">Leaves this house, with names, rooms and
               entity ids replaced by aliases. Set the repository in
               <a class="linkish" href="#" data-open-sec="developer">Developer</a>.</p>
           </div>
@@ -1606,8 +1607,10 @@
             <div class="testshead">
               <div>
                 <h4 class="testsname">Run all tests</h4>
-                <p class="hint tight">Every part of brAIn, for real: about five Claude runs.
-                  It makes one test helper and removes it.</p>
+                <p class="hint tight">Tests brAIn itself, every part for real: about five
+                  Claude runs, and one test helper made and removed. The checks that watch
+                  your house are rehearsed in
+                  <a class="linkish" href="#" data-open-sec="developer">Developer</a>.</p>
               </div>
               <button id="deepRun" class="btn primary" aria-label="Run all tests">Run</button>
             </div>
@@ -1673,9 +1676,10 @@
           <h2 class="setsecname">Developer</h2>
         </header>
         <div class="setsecbody">
-          <h4 class="sethead first">Rehearsal</h4>
-          <p class="hint tight">Plants a few deliberately broken test automations, scores
-            brAIn's checks against them, and removes them. It asks first.</p>
+          <h4 class="sethead first">Rehearse the house checks</h4>
+          <p class="hint tight">Scores the checks that watch your house, not brAIn itself
+            (that is Run all tests, in Diagnostics): it plants a few broken test
+            automations, sees which the checks catch, and removes them. It asks first.</p>
           <div class="row">
             <button id="rehearseRun" class="btn" aria-label="Run a rehearsal">Run</button>
             <!-- Rendered only when the record says something is still in

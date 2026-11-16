@@ -2,6 +2,21 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.20
+
+### Changed
+
+- Each chat in Ask gets a short topic title after its first reply, and the list is grouped: live chats first, then Today, Yesterday, This week and by month (#1119).
+- Needs you uses one count everywhere: the tab badge, the banner and the page's first line agree and say which groups they count, e.g. "16 things need you: 7 problems, 2 questions, 3 suggestions and 4 tidy-ups" (#1122).
+- Diagnostics and Developer say which self-test is which and point at each other; each "Right now" row is one plain sentence with the details behind More, and an empty result list says nothing rather than showing an empty fold (#1120).
+- Features shows the privacy note once, under the one switch that sends anything out, and the learning loop says "Learned 53 things this week" with the breakdown behind a tap (#1124).
+
+### Fixed
+
+- A Home Assistant restart is one line on the Timeline ("Home Assistant restarted · 113 devices went unavailable and came back"), devices still unavailable keep their own rows, the day opens on people instead, and the presence bar says when the house was empty (#1121).
+- On a phone the last chat in Ask and its ⋯ sit fully above the message bar (#1137).
+- On a phone the buttons on a Needs you card wrap with a gap instead of being cut ("Add to To D") (#1123).
+
 ## 5.3.19
 
 ### Added
