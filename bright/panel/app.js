@@ -1345,10 +1345,13 @@
       if (!result.has(a.hash)) result.set(a.hash, displayName(b));
       if (!result.has(b.hash)) result.set(b.hash, displayName(a));
     };
-    const norm = (text) => String(text).toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const norm = (text) => String(text).normalize("NFKC").toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, "");
     const tagKey = (t) => {
       const m = t.summary || {};
-      return m.title && m.artist ? norm(m.artist) + "|" + norm(m.title) : "";
+      const artist = m.artist ? norm(m.artist) : "";
+      const title = m.title ? norm(m.title) : "";
+      return artist && title ? artist + "|" + title : "";
     };
     const tagged = new Map();
     for (const t of tracks) {
