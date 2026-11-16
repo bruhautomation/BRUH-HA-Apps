@@ -221,15 +221,19 @@ _IPV4_RE = re.compile(r"(?:\b(?:the\s+)?IP(?:\s+address)?\s+)?" + _IPV4,
                       re.I)
 
 
-def addresses(text: str) -> str:
+def addresses(text: str, step: bool = False) -> str:
     """IPv4 addresses out of a sentence a person reads: an aside or an
     "at <address>" is dropped (the thing is already named), and any other
-    is "its address". Text with none is returned exactly as it was."""
+    is "its address". In a ``step`` any other is the value the step acts
+    on ("reserve 192.168.1.40 for it on the router"), and "its address"
+    there left a step with its noun missing (#1086), so it stays. Text
+    with none is returned exactly as it was."""
     if not text or not re.search(_IPV4, text):
         return text
     out = _IPV4_ASIDE_RE.sub("", text)
     out = _IPV4_AT_RE.sub("", out)
-    out = _IPV4_RE.sub("its address", out)
+    if not step:
+        out = _IPV4_RE.sub("its address", out)
     return re.sub(r"[ \t]{2,}", " ", out)
 
 
@@ -284,12 +288,15 @@ def slug(text: str) -> str:
 
 
 def plain(text: str, names: Mapping | None = None,
-          tz: dt.tzinfo | None = None, now: float | None = None) -> str:
-    """`text` with the slips turned into the house's own words."""
+          tz: dt.tzinfo | None = None, now: float | None = None,
+          step: bool = False) -> str:
+    """`text` with the slips turned into the house's own words. A ``step``
+    keeps an address it acts on (`addresses`)."""
     if not isinstance(text, str) or not text:
         return text
     try:
-        return entities(slug(times(addresses(internals(templates(text))),
+        return entities(slug(times(addresses(internals(templates(text)),
+                                             step=step),
                                    tz, now)), names)
     except Exception:  # noqa: BLE001 — a cleanup must never cost the row
         return text
@@ -860,6 +867,23 @@ _BARE_BUILD_RE = re.compile(
     r"\s*\(\s*(?:firmware\s+)?build\s+(?=[\w.\-]*\d)[A-Za-z0-9][\w.\-]{3,}\s*\)"
     r"|\b(firmware\s+)?build\s+(?=[\w.\-]*\d)[A-Za-z0-9][\w.\-]{2,}[A-Za-z0-9]",
     re.I)
+# A voice's id (#1133): a Piper voice ("en_US-kristin-medium") or a cloud
+# one ("en-US-Wavenet-D"). Beside the word "voice" it is an aside and goes
+# ("speak with the voice service, voice en_US-…"); anywhere else it is "a
+# voice". The id is kept for Details.
+_VOICE_ID = (r"(?<![\w.\-/])(?:[a-z]{2,3}_[A-Z]{2}|[a-z]{2}-[A-Z]{2})"
+             r"(?:-[A-Za-z0-9_]+)+(?![\w\-])")
+_VOICE_ID_RE = re.compile(_VOICE_ID)
+_VOICE_ASIDE_RE = re.compile(
+    r"\s*(?:,\s*|\(\s*)(?:the\s+|its\s+)?voice:?\s+" + _VOICE_ID + r"\s*\)?")
+_VOICE_SAID_RE = re.compile(r"(?:\b(?:the\s+)?voice:?\s+)?" + _VOICE_ID)
+# A build stamped with its date ("Z-Stack 20210708", #1133): eight digits
+# that read as a date, said as the month it was built.
+_DATE_BUILD_RE = re.compile(
+    r"(?<![\w.\-/])((?:19|20)\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])"
+    r"(?![\w.\-/])")
+_MONTHS = ("January", "February", "March", "April", "May", "June", "July",
+           "August", "September", "October", "November", "December")
 # A signal strength in dBm ("-84 dBm"): a number a radio engineer reads and
 # a household cannot weigh (#855). `dbm_words` says it in words IN PLACE;
 # a sentence is never dropped for holding one.
@@ -1032,6 +1056,19 @@ def technical(text: str, files: bool = True,
         keep(m.group(1))
         return ""
 
+    def voice_aside(m: re.Match) -> str:
+        keep(_VOICE_ID_RE.search(m.group(0)).group(0))
+        return ""
+
+    def voice(m: re.Match) -> str:
+        keep(_VOICE_ID_RE.search(m.group(0)).group(0))
+        lead = m.group(0)[:len(m.group(0)) - len(m.group(0).lstrip())]
+        return lead + "a voice"
+
+    def dated(m: re.Match) -> str:
+        keep(m.group(0))
+        return f"from {_MONTHS[int(m.group(2)) - 1]} {m.group(1)}"
+
     def code(m: re.Match) -> str:
         keep(m.group(0))
         return code_words(m.group(0), names)
@@ -1039,6 +1076,9 @@ def technical(text: str, files: bool = True,
     try:
         out = _BUILD_RE.sub(build, text)
         out = _BARE_BUILD_RE.sub(bare_build, out)
+        out = _DATE_BUILD_RE.sub(dated, out)
+        out = _VOICE_ASIDE_RE.sub(voice_aside, out)
+        out = _VOICE_SAID_RE.sub(voice, out)
         out = dbm_words(out, keep)
         out = _HEX_RE.sub(hexcode, out)
         out = _MCP_RE.sub(swap("one of brAIn's tools"), out)
@@ -1201,7 +1241,7 @@ def lint(text: str, files: bool = True, figures: bool = True) -> list[str]:
         return []
     out: list[str] = []
     for pattern in ((_FILE_RE if files else _PATH_RE), _LINE_NO_RE, _HEX_RE,
-                    _BUILD_RE, _BARE_BUILD_RE,
+                    _BUILD_RE, _BARE_BUILD_RE, _DATE_BUILD_RE, _VOICE_ID_RE,
                     *((_DBM_RE,) if figures else ()),
                     _MCP_RE, _SNAKE_RE, _LEGACY_RE):
         out += [m.group(0).strip() for m in pattern.finditer(text)]

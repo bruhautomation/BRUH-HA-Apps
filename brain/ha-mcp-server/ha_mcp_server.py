@@ -4628,10 +4628,41 @@ def _cooking_appliance(appliance):
     return {"appliance": name[:80]} if name else {}
 
 
+COOKING_SHARED_DIR = os.environ.get("BRAIN_COOKING_DIR", "/config/.bruh_cooking")
+
+
+def _cooking_restart_owed():
+    """A sentence when Home Assistant still runs an older BRUH Cooking
+    integration than the add-on deployed, else None. The add-on writes what
+    it deployed (deployed.json) and the integration what Home Assistant
+    loaded (integration.json), each with its code's fingerprint: an update
+    nobody restarted for kept answering from the old code for days."""
+    def read(name):
+        try:
+            with open(os.path.join(COOKING_SHARED_DIR, name), encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    deployed, loaded = read("deployed.json"), read("integration.json")
+    want, have = deployed.get("fingerprint"), loaded.get("fingerprint")
+    if not (isinstance(want, str) and isinstance(have, str) and want and have) or want == have:
+        return None
+    version = deployed.get("version") or "a newer version"
+    return (f"BRUH Cooking {version} is installed, but Home Assistant is still "
+            f"running the integration it loaded at its last start"
+            f"{' (' + str(loaded['version']) + ')' if loaded.get('version') else ''}, "
+            "so this answer comes from the older code. Tell the person to restart "
+            "Home Assistant (Settings > System > Restart) to load the update.")
+
+
 def cooking_status(appliance="", presets=False):
     """What each cooking appliance is doing, and optionally the presets it can cook."""
     data = _cooking_appliance(appliance)
     status = _addon_call("bruh_cooking", "get_status", data)
+    if not status.get("error") and (owed := _cooking_restart_owed()):
+        status = {**status, "restart_needed": owed}
     if status.get("error") or not presets:
         return status
     listing = _addon_call("bruh_cooking", "get_presets", data)
@@ -8626,7 +8657,9 @@ TOOLS = [
             "minutes left, when it ends, preheat percent, the oven's mode and "
             "door, any error, whether control is allowed, and the next cook's "
             "settings. appliance narrows it to one (its name). presets=true adds "
-            "the presets each appliance can cook. Read-only."
+            "the presets each appliance can cook. restart_needed, when present, "
+            "says Home Assistant still runs an older BRUH Cooking: tell the "
+            "person. Read-only."
         ),
         "inputSchema": {"type": "object", "properties": {
             "appliance": {"type": "string"},

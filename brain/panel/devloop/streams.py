@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 import reports
-from textclip import clip
+from textclip import clip, shorten
 
 from . import STREAMS
 from .plaintext import plain
@@ -1188,27 +1188,52 @@ def screen_targets(name: str, screens: list) -> str:
             + "\n".join(f"- {slug} — {label}" for slug, label in rows[:WALKTHROUGH_IDS]))
 
 
+def _said(value, limit: int) -> str:
+    """One field as the screen says it, cut by whole sentence: a "…" the
+    review reads was this block's own cut, and it reported it as brAIn
+    cutting lists (#1086)."""
+    return shorten(" ".join(str(value or "").split()), limit)
+
+
 def design_context(insights: list, findings: list) -> str:
     """What the design review is shown: the words brAIn put in front of the
     household, newest first, bounded once, in whole lines. Never the chart
     HTML — a card's words are what a person reads, and the HTML is the
-    cloud's to look at."""
-    parts = ["INSIGHT CARDS (title — summary):"]
+    cloud's to look at.
+
+    ``insights`` is the Reports listing (`server._insights_listing`), so a
+    card is shown as Reports draws it (#1134): its verdict chip and its
+    next step beside its words, and a card Reports folds — all quiet, one
+    a newer card covers, one that IS a finding — not as a card: the quiet
+    ones are named on the one line Reports draws for them."""
+    parts = ["INSIGHT CARDS ([verdict] title — summary — next step):"]
+    quiet: list[str] = []
     for ins in (insights or [])[:24]:
         if not isinstance(ins, dict):
             continue
-        title = clip(" ".join(str(ins.get("title") or "").split()), 140)
-        summary = clip(" ".join(str(ins.get("summary") or "").split()), 400)
+        title = _said(ins.get("title"), 140)
+        if ins.get("superseded_by") or ins.get("told_in"):
+            continue
+        if ins.get("quiet"):
+            if title:
+                quiet.append(title)
+            continue
+        summary = _said(ins.get("summary"), 600)
         if title or summary:
-            parts.append(f"- {title} — {summary}")
+            chip = f"[{ins['verdict']}] " if ins.get("verdict") else ""
+            step = _said(ins.get("next"), 200)
+            parts.append(f"- {chip}{title} — {summary}"
+                         + (f" — Next: {step}" if step else ""))
+    if quiet:
+        parts.append("- (one folded line, not cards) All quiet: "
+                     + "; ".join(quiet))
     parts += ["", "FINDINGS AS WORDED (text | detail | what to do | what a look said):"]
     for f in (findings or [])[:40]:
         if not isinstance(f, dict):
             continue
         tri = f.get("triage") if isinstance(f.get("triage"), dict) else {}
-        bits = [clip(" ".join(str(f.get(k) or "").split()), 300)
-                for k in ("text", "detail", "fix")]
-        bits.append(clip(" ".join(str(tri.get("reason") or "").split()), 200))
+        bits = [_said(f.get(k), 400) for k in ("text", "detail", "fix")]
+        bits.append(_said(tri.get("reason"), 300))
         parts.append("- " + " | ".join(bits))
     # Cut in whole lines here and nowhere else: this was cut mid-line here
     # and again in the prompt, so the last finding the review saw was half
