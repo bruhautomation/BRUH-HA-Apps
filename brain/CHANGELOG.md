@@ -2,6 +2,17 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.16
+
+### Added
+
+- Ignoring a finding offers a one-press "Stop raising this about <name>": the same check stops raising that one thing, recall lists the exception, and nothing else is quietened. Typed words like "don't remind me" are no longer the only way to say it (#1079).
+
+### Fixed
+
+- The conflicting-automations and unavailable-device checks stand down on their own record, as the Resident's reports already did: after repeated Wrongs, a conflict is raised only when both automations' traces show them running against each other, and an unavailable device only after a week offline. Safety devices and locks are always raised (#1078).
+- A device the household has said is finished with, broken, or not to be watched is left out of every finding that lists devices (Zigbee, Z-Wave, Wi-Fi and connectivity lists) and out of the Resident's case text and evidence, instead of being named again (#1132).
+
 ## 5.3.15
 
 ### Changed

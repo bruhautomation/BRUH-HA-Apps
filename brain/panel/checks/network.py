@@ -180,7 +180,9 @@ def not_in_use(house: House, device: dict | None, entity_id: str = "") -> bool:
         words = _phrase_words(name)
         if any(f" {p} " in words for p in NOT_IN_USE_PHRASES):
             return True
-    return False
+    # Or the household said so on a card: finished with, broken, or Stop
+    # watching, about any entity of the device (`House.settled_device`).
+    return bool(house.settled_device(device, entity_id))
 
 
 def _device_entities(house: House, device_id: str) -> list[str]:

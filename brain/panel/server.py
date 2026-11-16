@@ -13914,6 +13914,53 @@ async def _resident_history_gates(case: dict, now: float) -> tuple[str, dict]:
     return "", case
 
 
+def _settled_devices() -> tuple[dict[str, str], dict[str, list[str]]]:
+    """``({entity_id: what the owner said}, {entity_id: [its names]})`` for
+    every entity of a device the household has settled (#1132): said to be
+    finished with or broken (`corrections.known_faulty`), or Stop watching
+    (an `exception:*` rule), on any card about any of its entities. Never a
+    pair `corrections.never_covered` names: a leak or smoke sensor, a lock,
+    an alarm or a protected entity is named whatever was said. The names
+    are the entity's and its device's, as the last checks pass read them,
+    less any that is also a room's."""
+    said: dict[str, str] = dict(corrections.known_faulty())
+    try:
+        for eid, checks_off in facts_store.exception_map().items():
+            if "*" in checks_off and eid not in said:
+                said[eid] = "you asked brAIn to stop watching it"
+    except Exception as exc:  # noqa: BLE001 — unread settles nothing
+        log.debug("settled devices: %s", exc)
+    by_device: dict[str, list[str]] = {}
+    for eid, row in _NAMES.items():
+        if row.get("device"):
+            by_device.setdefault(str(row["device"]), []).append(eid)
+    for eid, reason in list(said.items()):
+        device = str((_NAMES.get(eid) or {}).get("device") or "")
+        for other in by_device.get(device, ()):
+            said.setdefault(other, reason)
+    protected = automation_writer.protected_patterns()
+    settled: dict[str, str] = {}
+    for eid, reason in said.items():
+        device = str((_NAMES.get(eid) or {}).get("device") or "")
+        family = by_device.get(device, [eid]) if device else [eid]
+        if any(corrections.never_covered(e, "resident",
+                                         device_class=_device_class(e),
+                                         protected=protected)
+               for e in family):
+            continue
+        settled[eid] = reason
+    rooms = {str(a).strip().lower()
+             for a in (_FACTS_CTX.get("areas") or {}).values() if a}
+    devices = _FACTS_CTX.get("devices") or {}
+    names: dict[str, list[str]] = {}
+    for eid in settled:
+        row = _NAMES.get(eid) or {}
+        own = [str(row.get("name") or ""),
+               str(devices.get(str(row.get("device") or "").lower()) or "")]
+        names[eid] = [n for n in own if n and n.strip().lower() not in rooms]
+    return settled, names
+
+
 def _device_class(eid: str) -> str:
     """What kind of thing an entity is, by the registry's word (`_NAMES`),
     or "" where nothing says."""
@@ -15288,16 +15335,20 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
                        said=ungrounded)
         return False
     # A conclusion drawn from a sensor the owner called broken is a
-    # conclusion about nothing (`corrections.known_faulty`). A signal the
-    # never-ignore floors hold (safety, protected, hot) is still looked at.
+    # conclusion about nothing (`corrections.known_faulty`), and a device the
+    # owner has settled — finished with, broken, Stop watching — is not
+    # named again beside something else (#1132): the case about it is
+    # refused, and its mentions in another case are left out
+    # (`resident.leave_out_settled`). A signal the never-ignore floors hold
+    # (safety, protected, hot) is still looked at.
     if not resident.never_ignore(signal)[0]:
-        faulty = await asyncio.to_thread(corrections.known_faulty)
-        broken = resident.faulty_case(case, _signal_entities(signal), faulty,
-                                      _device_class)
+        settled, names = await asyncio.to_thread(_settled_devices)
+        case, broken = resident.leave_out_settled(
+            case, str(signal.get("subject") or ""), settled, names)
         if broken:
             RESIDENT_STATE["refused"] = RESIDENT_STATE.get("refused", 0) + 1
-            log.info("an investigation of %s rests on a sensor the owner "
-                     "called broken; refused", signal.get("subject"))
+            log.info("an investigation of %s rests on a device the owner "
+                     "settled; refused", signal.get("subject"))
             await asyncio.to_thread(decision_trail.note_many, [{
                 "kind": "explained",
                 "subject": str(signal.get("subject") or ""),
@@ -15306,6 +15357,14 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
             await _outcome(signal, "refused", run_id, now, why, refines,
                            said=broken)
             return False
+        left = case.pop("left_out", None)
+        if left:
+            await asyncio.to_thread(decision_trail.note_many, [{
+                "kind": "exception", "subject": eid, "check": "resident",
+                "reason": settled.get(eid, ""),
+                "text": "left out of a report about "
+                        + str(signal.get("subject") or "something else")}
+                for eid in left], now)
     # "It is idle" about a machine whose every starting automation waits on
     # a reading that is not past its threshold now is the rule working
     # (#558); "where is it?" or "how is it disarmed?" put to the owner while
@@ -22577,6 +22636,14 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
     # note is the fact's text where there is one, because it is the
     # sentence a person will want to read back beside the rule it muted.
     if spec.get("kind") == "ignored":
+        # A reach the person chose by pressing it ("Stop raising this about
+        # <it>") is already written; this Wrong carries it for the undo and
+        # writes nothing of its own, and no second look reads the words for
+        # a scope or a lifetime: the press said both (#1079).
+        chosen = await asyncio.to_thread(_chosen_rules, finding)
+        if chosen:
+            payload["_exception_ids"] = chosen
+            return payload, fact
         written = await asyncio.to_thread(
             _record_condition if _is_resident_condition(finding, note)
             else _record_exception, finding, note)
@@ -22610,6 +22677,11 @@ def _for_now(finding: dict, spec: dict, note: str) -> bool:
     if not (source.startswith("check:") or source in _FOR_NOW_SOURCES):
         return False
     if corrections.is_offer(finding):
+        return False
+    if _chosen_rules(finding):
+        # The person pressed "Stop raising this about <it>" (or "Stop
+        # watching <it>") with this Wrong: the reach is the press's, and the
+        # words beside it are the reason, never a period to read (#1079).
         return False
     if source.split(":", 1)[-1] in ANSWERED_ONCE:
         # A standing fact about an automation (it has never fired, it has
@@ -22990,6 +23062,92 @@ async def h_finding_stop_watching(request: web.Request) -> web.Response:
     if got.get("error"):
         raise web.HTTPConflict(text=got["error"])
     return web.json_response(got)
+
+
+# ---------------------------------------------------------------------------
+# "Stop raising this about <it>" — this check skips this thing, by the press
+# ---------------------------------------------------------------------------
+#
+# Ignore's box on a house check's report about one thing (#1079). A Wrong
+# writes this same rule (`_record_exception`), unless the words typed with
+# it read as "not now" (`corrections.puts_off`): "don't remind me" became a
+# hold that lifted when the report changed, and "stop reminding me" came
+# back. The tick is the person saying which, so nothing is read off the
+# words: the rule is `exception:<check>` on the row's subjects, permanent,
+# with no reading range, and the Wrong that follows carries it
+# (`_chosen_rules`) instead of snoozing. Offered where "Stop watching" is
+# (`watch_off`): never on a safety, security or protected thing.
+
+
+def _chosen_rules(finding: dict) -> list[str]:
+    """The ids of the rules a press beside this Wrong wrote for this report
+    ("Stop raising this about <it>", "Stop watching <it>"), or []: an
+    exception under this check or `*`, on the row's own entity, carrying
+    the report's finding key."""
+    source = str(finding.get("source") or "")
+    eid = str(finding.get("entity_id") or "")
+    if not source.startswith("check:") or not eid:
+        return []
+    key = findings_store.normalize(finding.get("text") or "")
+    try:
+        rows = facts_store.exceptions(eid, source[len("check:"):])
+    except Exception as exc:  # noqa: BLE001 — unread is "none chosen"
+        log.debug("could not read the rules for %s: %s", log_safe(eid), exc)
+        return []
+    return [str(r["id"]) for r in rows
+            if r.get("id") and str(r.get("finding_key") or "") == key]
+
+
+def _stop_raising(finding: dict, note: str = "") -> dict:
+    """Write the pair rule. ``{"ok", "ids", "name"}`` or ``{"error"}``."""
+    if not str(finding.get("source") or "").startswith("check:"):
+        return {"error": "only a house check's report can be stopped this way"}
+    why = _cannot_stop_watching(finding)
+    if why:
+        return {"error": why}
+    rule, subjects = _exception_rule(finding)
+    if not rule or not subjects:
+        return {"error": "this report is not about one thing"}
+    eid = str(finding.get("entity_id") or "")
+    name = str((_NAMES.get(eid) or {}).get("name") or "") or eid
+    report = str(finding.get("claim") or finding.get("text") or "")
+    text = facts_store.exception_text(report, note)
+    per = max(1, int(getattr(facts_store, "MAX_SUBJECTS", 12)))
+    ids: list[str] = []
+    for start in range(0, len(subjects), per):
+        chunk = subjects[start:start + per]
+        try:
+            row, _created = facts_store.add(
+                text, subject=chunk[0], extra_subjects=chunk[1:],
+                source="correction",
+                predicate=facts_store.EXCEPTION_PREFIX + rule,
+                run_id=str(finding.get("run_id") or ""), confidence=0.95,
+                about=report,
+                finding_key=findings_store.normalize(finding.get("text") or ""))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not stop raising %s for %s: %s", rule,
+                        log_safe(chunk[0]), exc)
+            continue
+        if row:
+            ids.append(row["id"])
+    if not ids:
+        return {"error": "brAIn could not write that down"}
+    decision_trail.note(
+        "exception", eid, "you chose Stop raising this: this check does not "
+        "report it again", check=rule,
+        source=str(finding.get("source") or ""),
+        text=str(finding.get("text") or ""))
+    return {"ok": True, "ids": ids, "name": name}
+
+
+async def h_finding_stop_raising(request: web.Request) -> web.Response:
+    finding = _finding_or_404(request)
+    body = await _json_body(request)
+    note = str(body.get("note") or "").strip()[:findings_store.MAX_NOTE]
+    got = await asyncio.to_thread(_stop_raising, finding, note)
+    if got.get("error"):
+        raise web.HTTPConflict(text=got["error"])
+    return web.json_response({k: v for k, v in got.items() if k != "ids"})
 
 
 # ---------------------------------------------------------------------------
@@ -30568,6 +30726,8 @@ def make_app() -> web.Application:
     app.router.add_post("/api/finding/{ts}/advice", h_finding_advice)
     app.router.add_post("/api/finding/{ts}/stop_watching",
                         h_finding_stop_watching)
+    app.router.add_post("/api/finding/{ts}/stop_raising",
+                        h_finding_stop_raising)
     # The producer, not the row. Registered before /api/finding/{ts}/…
     # only for tidiness; the path does not collide.
     app.router.add_post("/api/findings/mute", h_findings_mute)

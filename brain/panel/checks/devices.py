@@ -15,8 +15,8 @@ from ._registry_facts import (FEATURE_PLATFORMS,
                               SELF_PLATFORMS, SETTINGS_CATEGORIES,
                               entry_not_loaded as _entry_not_loaded,
                               is_node_status)
-from ._util import (SOFTWARE_DOMAINS, House, after_restart, age_days,
-                    counted_names, domain_of, evidence_for,
+from ._util import (MEASURED_UNAVAILABLE_DAYS, SOFTWARE_DOMAINS, House,
+                    after_restart, age_days, counted_names, domain_of, evidence_for,
                     explained_range, join_names, num, parse_ts,
                     spell_integration, when)
 
@@ -681,6 +681,11 @@ def unavailable(snap: dict, now: float) -> list[dict]:
     by_device: dict[str, list[tuple[str, float]]] = {}
     loose: list[tuple[str, float]] = []
     derived: list[tuple[str, float]] = []
+    # While the household's record stands this check down (#1078), a device
+    # is filed only when the stretch itself is the measurement: at least
+    # `MEASURED_UNAVAILABLE_DAYS` offline. A remote that sleeps, a lamp
+    # switched off at the wall for an evening, is a day or two.
+    stood = house.stand_down("dev.unavailable", now)
     for eid, st in _live_hardware(house):
         if st.get("state") != "unavailable":
             continue
@@ -689,6 +694,13 @@ def unavailable(snap: dict, now: float) -> list[dict]:
         if earlier is not None and (age is None or earlier > age):
             age = earlier
         if age is None or age < UNAVAILABLE_DAYS:
+            continue
+        if (stood and age < MEASURED_UNAVAILABLE_DAYS
+                and not house._never_covered(eid, "dev.unavailable")):
+            house.gave_up("dev.unavailable", [{"entity_id": eid}],
+                          f"offline for {age:.0f} "
+                          f"day{'' if round(age) == 1 else 's'}; "
+                          + stood["reason"], kind="stand_down")
             continue
         # An entity whose integration is gone is the `restored` check's.
         if (st.get("attributes") or {}).get("restored"):
