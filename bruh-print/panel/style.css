@@ -995,3 +995,9 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
   }
   .fontpick, .fontrow { min-height: 44px; font-size: 16px; }
 }
+
+/* A closed <details> still lays its children out (Chromium keeps them for
+   find-in-page), so a layout reader counts hidden controls as sitting on
+   visible ones. Nothing in a closed disclosure is drawn; make it say so. */
+details:not([open]) > :not(summary) { display: none; }
+.baynote .btn { margin-left: 6px; vertical-align: middle; }
