@@ -37,7 +37,7 @@ another account, add the integration again.
 
 The add-on keeps the integration deployed: an update to the add-on brings the
 new integration with it (restart Home Assistant to load it; until you do,
-Repairs says so, and so does brAIn when it reads the appliances), and a deleted
+Repairs says so), and a deleted
 `custom_components/bruh_cooking` folder is put back within ten minutes. Turn
 off *Home Assistant integration* in the add-on's options to stop it copying
 anything.

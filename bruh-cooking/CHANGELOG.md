@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.10
+
+### Added
+
+- When Home Assistant is still running the integration it loaded before an update, Repairs says a restart is owed, and the restart clears it. Until now only the add-on's log said so, and the fixes in 0.1.9 never reached the house that asked for them because Home Assistant was not restarted (#1116, #1117, #1118).
+
+### Fixed
+
+- An appliance that is offline says how long from when it was last heard from ("Offline for 3 days, counted from when it was last heard from"), never "under a minute" for an appliance silent for days (#1117).
+- The Cooking sensor keeps a real state while the appliance is offline: off, or unknown when a cook was running when contact was lost, and the Status sensor carries the offline reason, since and cause (#1116).
+- The last cook reads "no cook yet" before the first one, leaves blank details out, gives the target in your unit, and says where its settings came from: a preset, Home Assistant's cook settings, or the appliance itself (#1117).
+- Presets for a Fahrenheit house are whole degrees, and the cook is sent the matching Celsius value (#1118).
+
 ## 0.1.9
 
 ### Added
