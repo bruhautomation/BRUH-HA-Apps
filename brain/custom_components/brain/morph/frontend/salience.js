@@ -68,7 +68,10 @@ export function trustDoors(states, pairs) {
   Object.keys(pairs).forEach((sensor) => {
     const p = pairs[sensor] || {};
     const s = states[sensor]; const c = states[p.contact]; const l = states[p.lock];
-    if (s && s.state === 'on' && c && c.state === 'off' && l && l.state === 'locked') {
+    // The partner must say it is a door (`closures.PARTNER_CLASSES`): a
+    // window or an opening is another opening, never this door's answer.
+    const door = c && (c.attributes || {}).device_class === 'door';
+    if (s && s.state === 'on' && door && c.state === 'off' && l && l.state === 'locked') {
       out = out || { ...states };
       out[sensor] = { ...s, state: 'off', outvoted_by: p.contact };
     }

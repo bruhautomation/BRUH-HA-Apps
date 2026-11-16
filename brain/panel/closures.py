@@ -425,12 +425,17 @@ async def build(session, states: dict, now: float | None = None,
 # the house summary and Morph's night page all said the door was open.
 #
 # "The same door" is decided from the registries, never from names: the
-# lock's sensor is the one door-class binary sensor on the device that
-# carries the lock, and its partner is the one door-class binary sensor in
-# that area on a device of its own that carries no lock. Two locks with
+# lock's sensor is the one door- or opening-class binary sensor on the
+# device that carries the lock, and its partner is the one binary sensor of
+# class `door` (never `opening`, `window` or `garage_door`) in that area on
+# a device of its own that carries no lock. Two locks with
 # door sensors in one area, or two contacts, and nothing is paired: a guess
 # about which door is which is the one way this could hide an open door.
 PAIR_CLASSES = frozenset({"door", "opening"})
+# The partner has to say it is a DOOR. An `opening`, a window or a garage
+# door alone in the same area is another opening, and letting it outvote the
+# lock's own sensor would hide a real open door behind a shut window.
+PARTNER_CLASSES = frozenset({"door"})
 
 
 def door_pairs(states: dict, entities, devices) -> dict[str, dict]:
@@ -447,11 +452,11 @@ def door_pairs(states: dict, entities, devices) -> dict[str, dict]:
         return str(row.get("area_id") or dev_area.get(
             str(row.get("device_id") or ""), "") or "")
 
-    def door_class(eid: str, row: dict) -> bool:
+    def door_class(eid: str, row: dict, classes=PAIR_CLASSES) -> bool:
         attrs = (states.get(eid) or {}).get("attributes") or {}
         klass = (attrs.get("device_class") or row.get("device_class")
                  or row.get("original_device_class") or "")
-        return eid.startswith("binary_sensor.") and str(klass) in PAIR_CLASSES
+        return eid.startswith("binary_sensor.") and str(klass) in classes
 
     by_device: dict[str, list[str]] = {}
     for eid, row in rows.items():
@@ -471,7 +476,8 @@ def door_pairs(states: dict, entities, devices) -> dict[str, dict]:
     contacts: dict[str, list[str]] = {}
     for eid, row in rows.items():
         device = str(row.get("device_id") or "")
-        if device and device not in lock_devices and door_class(eid, row):
+        if (device and device not in lock_devices
+                and door_class(eid, row, PARTNER_CLASSES)):
             where = area(row)
             if where:
                 contacts.setdefault(where, []).append(eid)
@@ -510,7 +516,7 @@ def outvoted(states: dict, pairs: dict | None) -> dict[str, dict]:
 
 __all__ = [
     "HISTORY_DAYS", "MAX_ENTITIES", "MIN_BUCKETS", "MIN_OBSERVED_S", "STORE",
-    "PAIR_CLASSES", "build", "build_entity", "candidates", "door_pairs",
+    "PAIR_CLASSES", "PARTNER_CLASSES", "build", "build_entity", "candidates", "door_pairs",
     "fetch_history", "is_closure", "outvoted",
     "load", "progress", "save", "spread_interval", "usual_open",
 ]
