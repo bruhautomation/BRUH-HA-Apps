@@ -411,6 +411,7 @@ select { max-width: 100%; min-width: 0; }
   margin-top: 6px;
   padding: 10px;
   font: inherit;
+  font-size: 16px;
   color: var(--ink);
   background: var(--bg);
   border: 1px solid var(--line);
@@ -667,14 +668,11 @@ select { max-width: 100%; min-width: 0; }
    air below before the first card. */
 .tab-intro { margin: 4px 0 14px; max-width: 640px; }
 
-/* The set: a scrollable list of the whole library with tick boxes, which
-   is the party. Capped in height because a library of three hundred
-   songs would otherwise push Play, the speaker and the live view off
-   the screen — the list is the long part of this tab and the controls
-   above it are the part somebody came for. */
+/* The set: the library with tick boxes, which is the party. Shown a page
+   at a time (see pagePartySet) so a library of three hundred songs does
+   not push the controls below it off the screen, and without a scrolling
+   box, whose clipped rows stay laid out under whatever follows. */
 .party-set {
-  max-height: 46vh;
-  overflow-y: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 0 10px;
@@ -690,7 +688,6 @@ select { max-width: 100%; min-width: 0; }
 /* Narrow on purpose: it is a qualifier on the row, not the row's
    subject, and at full width it competes with the song's name. */
 .party-version { max-width: 100%; flex: 1 1 100%; }
-.party-set { flex: none; }
 /* A song's row wraps its controls rather than laying them on one line: the
    name, the version select and the tick order share a phone's width, and a
    fixed-width select beside a long title is what put one on the other. */
@@ -1170,8 +1167,18 @@ body.mn-open .foot { display: none; }
 /* Name and Save are two lines of their own below the list. The list
    scrolls inside its box, so it is painted inside it and can never sit
    over what follows. */
-.party-set { contain: paint; }
 .party-save { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin: 12px 0 0; clear: both; }
 .party-save input { width: 100%; }
 .menu-info { margin: 2px 4px 4px; font-size: 16px; overflow-wrap: anywhere; }
 .folder-summary > summary::after { content: "▾"; margin-left: 8px; }
+
+/* A class rule beats the touch floor above, so the two textareas that set
+   their own size say it again here, after them: iPhone Safari zooms the
+   page into any field under 16px. */
+@media (pointer: coarse), (max-width: 700px) {
+  .script-editor, .revise-input { font-size: 16px; }
+}
+.player-note { margin: 4px 0; }
+.party-set .party-later { display: none; }
+#partyMore { margin-top: 8px; }
+#partyMore[hidden] { display: none; }

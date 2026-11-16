@@ -706,6 +706,25 @@ def read_mirrored_script(hash_hex: str) -> dict | None:
     return data
 
 
+# Files that sit in a music folder but are not music: the click track the
+# calibration plays. Registered by the server, which owns where it lives, so
+# the library never has to know a file name.
+_EXCLUDED: set[str] = set()
+
+
+def exclude_files(paths) -> None:
+    """Keep these files out of every listing, party queue and analysis pass."""
+    _EXCLUDED.clear()
+    _EXCLUDED.update(str(Path(p).resolve()) for p in paths)
+
+
+def _is_excluded(file: str) -> bool:
+    try:
+        return str(Path(file).resolve()) in _EXCLUDED
+    except OSError:
+        return False
+
+
 def scan_all(folders) -> list[dict]:
     """Every audio file under every folder, listed once.
 
@@ -721,6 +740,8 @@ def scan_all(folders) -> list[dict]:
     for folder in folders:
         for entry in scan(folder, cache):
             if entry["hash"] in seen:
+                continue
+            if _is_excluded(entry["file"]):
                 continue
             seen.add(entry["hash"])
             tracks.append(entry)
@@ -779,6 +800,18 @@ def scan(folder: Path, cache: "_HashCache | None" = None) -> list[dict]:
                               .get("notes")) or []),
                 "lyrics": bool((analysis.get("lyrics") or {}).get("synced")),
             }
+            # The file's own tags, when it has any: a title tag that is not
+            # simply the file name is what the song is called, and the
+            # panel shows it instead of "vava_vroom". The analyzer fills
+            # `title` with the stem when there is no tag, so equal means
+            # untagged.
+            tags = analysis.get("tags") or {}
+            title = str(tags.get("title") or "").strip()
+            if title and title != path.stem:
+                entry["summary"]["title"] = title
+            artist = str(tags.get("artist") or "").strip()
+            if artist:
+                entry["summary"]["artist"] = artist
             show = load_show(hash_hex)
             if show:
                 entry["show"] = {

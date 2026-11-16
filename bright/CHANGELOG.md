@@ -5,6 +5,16 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.23.9
+
+### Fixed
+
+- With no calibrated speaker, the speaker picker on Shows and Party says so and offers "Calibrate a speaker first", and Play stays off until there is one (#1105).
+- Every text box on a phone uses 16px text, so iPhone no longer zooms the page when you tap the show script or the revise box (#1106).
+- The Library summary says in plain words whether anything needs doing; folders with no music sit under a quiet "Not used" line, and Remove is not offered for the folder that holds your music (#1107).
+- The party set shows 12 songs with "Show more" instead of a scrolling box, so the set's name and "Save as a set" never sit under hidden rows at any width (#1108).
+- Songs show their own title and artist when the file has them; two files that are the same song are marked "Same song as …"; the folder tag reads "Folder: …"; and the calibration click track is left out of the library, the party list and the show pickers (#1109).
+
 ## 0.23.8
 
 ### Changed
