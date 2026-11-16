@@ -2,6 +2,18 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.17
+
+### Added
+
+- Ignoring a temperature report offers "<name> doesn't measure the room's air": once ticked, that sensor is left out of room and heat checks (the heat model, every climate check, the freezing check, the frost warning and unusual readings), and recall lists it. Safety devices cannot be marked (#1082).
+- When a lock's own door sensor says open while a separate door contact on the same door says closed and the lock is locked, one finding says the two sensors disagree, once (#1130).
+
+### Fixed
+
+- Heat-loss, freeze and frost findings use only thermometers the heat model found to read room air, so a room whose sensors sit in a box or on equipment is no longer said to be losing heat or at risk of freezing (#1131).
+- With a lock locked and its door's own contact sensor closed, bedtime, the house summary, the morning brief and Morph's night page treat the door as closed instead of open; a contact that says open is always believed (#1130).
+
 ## 5.3.16
 
 ### Added

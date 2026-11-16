@@ -310,7 +310,8 @@ def always_on_label(labels) -> bool:
 def morning_facts(states: list[dict], night_actions: list[dict], now: float,
                   *, closures_store: dict | None = None,
                   bucket: int | None = None, clock=None,
-                  labels: dict | None = None) -> dict:
+                  labels: dict | None = None,
+                  door_pairs: dict | None = None) -> dict:
     """What is true of the house at wake-up that somebody would act on.
 
     Two things, both read off the states the brief fetches once: a
@@ -324,6 +325,8 @@ def morning_facts(states: list[dict], night_actions: list[dict], now: float,
     own "HH:MM" and defaults to UTC for a caller with no timezone.
     `labels` is `{entity_id: [label]}` off the last checks pass; a light
     labelled "always on" is meant to be on and is not left on.
+    `door_pairs` is `closures.door_pairs`: a lock's door sensor its door's
+    contact sensor outvotes while the lock is locked is shut (#1130).
     """
     import datetime  # noqa: PLC0415
 
@@ -342,6 +345,13 @@ def morning_facts(states: list[dict], night_actions: list[dict], now: float,
     left_on: list[dict] = []
     open_unusual: list[str] = []
     entities = ((closures_store or {}).get("entities") or {})
+    shut_by_contact: dict = {}
+    if door_pairs:
+        import closures  # noqa: PLC0415 — only when there is a pair
+
+        shut_by_contact = closures.outvoted(
+            {str(st.get("entity_id") or ""): st for st in states or []
+             if isinstance(st, dict)}, door_pairs)
     for st in states or []:
         if not isinstance(st, dict):
             continue
@@ -368,7 +378,7 @@ def morning_facts(states: list[dict], night_actions: list[dict], now: float,
         elif eid in entities and bucket is not None:
             import closures  # noqa: PLC0415 — only the closures branch
 
-            if state not in closures.OPEN_STATES:
+            if state not in closures.OPEN_STATES or eid in shut_by_contact:
                 continue
             usual = closures.usual_open(entities[eid], bucket)
             # None is "not watched at this hour", which is not "never open".

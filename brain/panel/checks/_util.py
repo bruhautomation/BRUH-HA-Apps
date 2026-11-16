@@ -454,6 +454,14 @@ def explained_range(value, anchor, floor: float = 0.0) -> list[float] | None:
     return [round(low - pad, 3), round(high + pad, 3)]
 
 
+# The owner's mark that a thermometer does not measure the air of the room
+# it is in (a sensor inside a pump box, one on a heating manifold): an
+# `exception:room_air` fact on the sensor, written from the Wrong box
+# (`server._mark_not_room_air`). No check is called this, so it stands no
+# check down by itself; the readers of a room's air ask `room_air_verdict`.
+ROOM_AIR_RULE = "room_air"
+
+
 class House:
     """Lookups over a snapshot that several checks want."""
 
@@ -543,6 +551,28 @@ class House:
                                                for n in said):
                 return f" It is named for the {other} but assigned to the {area}."
         return f" It is in the {area}."
+
+    def room_air_verdict(self, entity_id: str) -> tuple[str, str]:
+        """``(kind, why)`` when this thermometer is known NOT to read the
+        air of its room, else ``("", "")``.
+
+        ``marked``: the owner said so (`ROOM_AIR_RULE`). ``not_air``: the
+        nightly heat model left it out for what it is (a machine's probe,
+        a derived reading, a reading that jumps like equipment). ``held``:
+        the model found something keeps it warm at night, so it does not
+        follow outdoors. All three are structured, read off the snapshot:
+        the facts table and the thermal store's `unmeasured[eid]["kind"]`.
+        A sensor the model simply lacked nights for has no verdict.
+        """
+        table = self.snap.get("facts")
+        if isinstance(table, dict) and ROOM_AIR_RULE in (
+                table.get(entity_id) or ()):
+            return "marked", "you said it does not measure the room's air"
+        left = (((self.snap.get("thermal") or {}).get("unmeasured") or {})
+                .get(entity_id))
+        if isinstance(left, dict) and left.get("kind") in ("not_air", "held"):
+            return str(left["kind"]), str(left.get("reason") or "")
+        return "", ""
 
     def exists(self, entity_id: str) -> bool:
         return entity_id in self.states or entity_id in self.registry

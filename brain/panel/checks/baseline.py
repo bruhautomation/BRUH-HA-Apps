@@ -511,6 +511,12 @@ def related_nearby(house: House, eid: str, st: dict
                 and other_attrs.get("device_class") == klass
                 and (house.registry.get(other) or {}).get("device_id")
                 != own_device):
+            # "Compare it with" a thermometer that does not read the room's
+            # air (the owner's mark, or the heat model's verdict that it is
+            # a machine's or is kept warm) sends somebody to a reading that
+            # cannot answer whether the room changed (#1131).
+            if klass == "temperature" and house.room_air_verdict(other)[0]:
+                continue
             peers.append(name)
     return (list(dict.fromkeys(actors))[:RELATED_MAX],
             list(dict.fromkeys(peers))[:RELATED_MAX],
@@ -722,6 +728,16 @@ def unusual(snap: dict, now: float) -> list[dict]:
                           "reports it as a faulty sensor", kind="claimed")
             continue
         if not eligible(house, eid, st):
+            continue
+        # A thermometer the owner said does not measure the room's air
+        # (#1082: inside a box, on a manifold they called broken) has no
+        # "usual" worth comparing against — what it reads moves with the
+        # thing it sits in. Their mark, so it holds past the freezing limit.
+        if house.room_air_verdict(eid)[0] == "marked":
+            house.gave_up("base.unusual", [{"entity_id": eid}],
+                          "you said it does not measure the room's air, so "
+                          "brAIn does not judge its readings",
+                          kind="explained")
             continue
         # The household's Wrongs about this sensor (`House.answered_off`)
         # end it, unless the reading has crossed a safety limit: a pipe or a

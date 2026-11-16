@@ -225,8 +225,13 @@ def build_frame(states, *, now: float, tz, tz_name: str = "",
                 areas: dict | None = None, names: dict | None = None,
                 closures_store: dict | None = None,
                 appliances_store: dict | None = None,
-                calendars=(), occasions=(), world: dict | None = None) -> dict:
-    """One deterministic picture of the house now. Never raises on data."""
+                calendars=(), occasions=(), world: dict | None = None,
+                door_pairs: dict | None = None) -> dict:
+    """One deterministic picture of the house now. Never raises on data.
+
+    `door_pairs` is `closures.door_pairs` off the last checks pass: a
+    lock's own door sensor outvoted by its door's contact sensor while the
+    lock is locked is a shut door here (`closures.outvoted`, #1130)."""
     import baselines  # noqa: PLC0415 — the hour-of-week bucket, one answer
     import closures  # noqa: PLC0415
 
@@ -276,11 +281,14 @@ def build_frame(states, *, now: float, tz, tz_name: str = "",
     shut = (closures_store or {}).get("entities") or {}
     bucket = baselines.hour_of_week(now, tz or dt.timezone.utc)
     open_rows = []
+    shut_by_contact = closures.outvoted(smap, door_pairs)
     for eid, st in sorted(smap.items()):
         attrs = st.get("attributes") or {}
         if not closures.is_closure(eid, attrs):
             continue
         if str(st.get("state") or "").lower() not in closures.OPEN_STATES:
+            continue
+        if eid in shut_by_contact:
             continue
         usual = closures.usual_open(shut.get(eid) or {}, bucket)
         open_rows.append({
