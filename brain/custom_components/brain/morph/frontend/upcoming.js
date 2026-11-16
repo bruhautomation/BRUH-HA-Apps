@@ -454,6 +454,18 @@ function when(m, mins) {
 }
 const NOW = { day: '', time: 'Now' };
 
+// The readout names a thing by its own title and says, on the line under it,
+// what kind of thing it is: a calendar event is "Dentist", from "Family
+// calendar", never "Dentist · Family" with nothing saying that the second
+// half is a calendar (a person's name there read as a second person, #1126).
+const titleOf = (i) => (i.kind === 'calendar' && i.more && i.more.title) || i.label;
+const fromOf = (i) => (i.kind === 'calendar' ? (i.more && i.more.who ? `${i.more.who} calendar` : 'calendar') : '');
+function kindLine(items, first, stack) {
+  const n = items.length;
+  if (n > 1) return stack ? `${n} ${items.every((i) => i.kind === 'calendar') ? 'calendar events ' : ''}at once` : first;
+  return [first, fromOf(items[0])].filter(Boolean).join(' \u00b7 ');
+}
+
 // What the reading point is over at cursor `c`, across every lane: the
 // nearest stack, and anything on another lane at the same moment.
 export function reading(m, c) {
@@ -465,8 +477,8 @@ export function reading(m, c) {
     const items = near.filter(({ s }) => Math.abs(s.t - t0) * m.k < STACK_PX).flatMap(({ s }) => s.items);
     const f = items[0]; const n = items.length;
     return { hit: true, t: t0, items, when: when(m, t0), rel: rel(t0), color: f.color, solid: f.solid,
-      name: n > 1 ? items.map((i) => i.label).join(' · ') : f.label, eid: n > 1 ? '' : f.eid || '',
-      extra: n > 1 ? `${n} at once` : [f.sub, KINDS[f.kind].word].filter(Boolean).join(' · ') };
+      name: items.map(titleOf).join(' · '), eid: n > 1 ? '' : f.eid || '',
+      extra: kindLine(items, [f.sub, KINDS[f.kind].word].filter(Boolean).join(' · '), true) };
   }
   const over = m.durs.filter((d) => c >= d.t - 1 && c <= d.t2 + 1);
   if (over.length) {
@@ -479,8 +491,8 @@ export function reading(m, c) {
     }
     const running = d.t <= 0 && c <= 0.5;
     return { hit: true, t: d.t, items: over, when: running ? NOW : when(m, d.t), rel: running ? 'until ' + clock(m.base + d.t2 * 60000) : rel(d.t),
-      color: d.color, solid: true, name: over.map((x) => x.label).join(' · '), eid: over.length > 1 ? '' : d.eid || '',
-      extra: running ? `${dur(d.t2)} left` : `until ${clock(m.base + d.t2 * 60000)} · ${dur(d.t2 - d.t)}` };
+      color: d.color, solid: true, name: over.map(titleOf).join(' · '), eid: over.length > 1 ? '' : d.eid || '',
+      extra: kindLine(over, running ? `${dur(d.t2)} left` : `until ${clock(m.base + d.t2 * 60000)} · ${dur(d.t2 - d.t)}`) };
   }
   const nx = m.targets.find((t) => t > c + 0.5);
   const nxs = nx == null ? null : m.stacks.find((s) => s.t === nx) || m.durs.find((d) => d.t === nx);

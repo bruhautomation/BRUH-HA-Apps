@@ -756,6 +756,14 @@ const CLIMATE_CSS = `<style>
    Fan word goes first, then an action with a short word takes it, then an
    action with an icon is its icon alone; past that an action's word ends in
    an ellipsis (it is the one part of the row that shrinks). */
+/* Under a finger every climate control is a 40px box (#1129), the extra as
+   transparent edge rather than a bigger mark: the round -/+ keep their 26px
+   circle (the background is clipped to the content box) and the pills their
+   28px pill (clipped to the padding box inside a transparent top and bottom
+   border; the radius is 14px across and 20px down so the pill's ends stay
+   round). A routine still shrinks to fit its row (min-width:0). The
+   measure reads the element's own box, so the ::before areas did not count. */
+@media (pointer:coarse){.cl-sq{width:40px;height:40px;margin:-7px;padding:7px;box-sizing:border-box;background-clip:content-box}.cl-sq::before{content:none}.cl-seg button{min-height:40px;min-width:40px;margin-block:-6px;border:solid transparent;border-width:6px 0;border-radius:14px/20px;background-clip:padding-box}.cl-seg button::before{content:none}.cl-seg button:hover,.cl-seg button[aria-pressed="true"]{background-clip:padding-box}.cl-sq:hover{background-clip:content-box}.cl-run .cl-seg button{min-width:0}}
 @container (max-width:470px){.cl-seglab{display:none}.cl-seg button{padding:0 7px}.cl-div{margin:0 4px}}
 @container (max-width:420px){.cl-run .cl-long{display:none}.cl-run .cl-short{display:inline-block}}
 @container (max-width:370px){.cl-run button.cl-hasic .cl-txt{display:none}}

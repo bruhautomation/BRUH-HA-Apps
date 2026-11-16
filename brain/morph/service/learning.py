@@ -579,6 +579,69 @@ def house_card_loaded(name: str, now: float | None = None) -> bool:
     return True
 
 
+CARD_RULES_HEADING = "## Custom card code"
+CARD_RULES_TITLE = "Check this house's own cards against Morph's card rules"
+_RULE_HEAD = re.compile(r"^- \*\*(.+?)\*\*", re.MULTILINE)
+
+
+def card_rules(agents_text: str) -> list[str]:
+    """The rules AGENTS.md sets for a house's own card code, one per bullet,
+    by the bold sentence that starts it ("Every button and chip is a 40px
+    target.")."""
+    start = agents_text.find(CARD_RULES_HEADING)
+    if start < 0:
+        return []
+    end = agents_text.find("\n## ", start + len(CARD_RULES_HEADING))
+    body = agents_text[start:end if end > 0 else None]
+    return [" ".join(m.group(1).split()) for m in _RULE_HEAD.finditer(body)]
+
+
+def card_rules_changed(rules: list[str], files: list[str], now: float | None = None) -> bool:
+    """A Morph update changed the rules for card code, and this house has
+    card files written before it. A rule only shapes the next card brAIn
+    writes: the files already in /config/morph/cards went on breaking it
+    (a group's summary that lists every member, buttons under 40px) through
+    the releases that added it. So the house is asked once per change of the
+    rules whether brAIn should check its cards against them, naming the rules
+    that are new since the last check. Its Do it is a Tell. A No is kept
+    (the next change of the rules does not ask again). Answers whether a
+    suggestion was opened."""
+    now = now or time.time()
+    rules = [str(r)[:200] for r in rules or [] if str(r).strip()]
+    data = _load()
+    before = data.get("card_rules")
+    if not rules or before == rules:
+        return False
+    data["card_rules"] = rules
+    files = sorted(str(f)[:80] for f in files or [])[:40]
+    key = _key(CARD_RULES_TITLE)
+    item = next((it for it in data["items"] if it.get("key") == key), None)
+    if not files or key in data["declined"] or (item and item.get("status") == "doing"):
+        _save(data)
+        return False
+    new = [r for r in rules if r not in before] if isinstance(before, list) else []
+    why = ("Morph's rules for card code changed, and these cards were written before: "
+           + ("new since the last check: " + "; ".join(r.rstrip(".") for r in new[:6]) if new
+              else "nothing has checked them against the rules since")) + "."
+    change = (f"Morph's rules for this house's own card code changed (/config/morph/AGENTS.md, "
+              f"“Custom card code”). Read that section, then check each card file in "
+              f"/config/morph/cards against it: {', '.join(files)}. Fix what a file breaks, "
+              "keeping what each card is for, and leave alone a file that already follows the rules. "
+              "Say which files you changed and which rule each one broke.")
+    if item and item.get("status") == "open":
+        item.update(why=why, change=change)
+    elif item:
+        item.update(status="open", why=why, change=change, created=now)
+        for gone in ("snoozed_until", "filed", "withdrawn", "tell", "decided"):
+            item.pop(gone, None)
+    else:
+        data["items"].append({"id": _mint_id(_taken(data), now), "key": key, "title": CARD_RULES_TITLE,
+                              "why": why, "change": change, "kind": "dashboard", "status": "open",
+                              "created": now})
+    _save(data)
+    return True
+
+
 def decide(sid: str, verb: str, note: str = "") -> dict:
     """Not now / No / Send. Do it is `tell.start` with the suggestion's
     change, and calls `mark_doing` once it has an id; on a ``code``
