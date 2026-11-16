@@ -386,6 +386,10 @@
           }
         }
       }
+    },
+    "restart_required": {
+      "title": "BRUH Cooking {version} 正在等待重启",
+      "description": "BRUH Cooking {version} 已安装，但 Home Assistant 仍在运行上次启动时加载的 {loaded}，因此本次更新的修复尚未生效。请重启 Home Assistant（设置 > 系统 > 重启）以加载新版本。重启后此提示会消失。"
     }
   },
   "exceptions": {

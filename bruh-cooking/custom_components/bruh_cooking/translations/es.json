@@ -386,6 +386,10 @@
           }
         }
       }
+    },
+    "restart_required": {
+      "title": "BRUH Cooking {version} espera un reinicio",
+      "description": "BRUH Cooking {version} está instalado, pero Home Assistant sigue ejecutando {loaded}, la versión que cargó al iniciarse por última vez, así que las correcciones de la actualización aún no funcionan. Reinicia Home Assistant (Ajustes > Sistema > Reiniciar) para cargarla. Este aviso desaparece tras el reinicio."
     }
   },
   "exceptions": {

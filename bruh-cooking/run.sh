@@ -166,6 +166,22 @@ deploy_custom_integration() {
     else
         bashio::log.debug "${INTEGRATION} integration up-to-date (${src_ver})"
     fi
+    record_deployed "${src_ver}" "${src_fp}"
+}
+
+# What is on disk for Home Assistant to load, beside the record of what it
+# loaded (integration.json): brAIn's cooking_status compares the two, so a
+# restart nobody made is said where brAIn reads the appliances, not only in
+# this log. Rewritten only when it changes.
+record_deployed() {
+    local file="${COOKING_SHARED}/deployed.json" body
+    [ -n "$2" ] || return 0
+    body=$(jq -nc --arg version "$1" --arg fingerprint "$2" '{version: $version, fingerprint: $fingerprint}') || return 0
+    [ "$(cat "${file}" 2>/dev/null)" = "${body}" ] && return 0
+    mkdir -p "${COOKING_SHARED}" \
+        && printf '%s\n' "${body}" > "${file}.tmp" \
+        && mv -f "${file}.tmp" "${file}" \
+        || bashio::log.debug "Could not write ${file}"
 }
 
 # Announce to the Supervisor so HA Core offers a one-click setup tile. The

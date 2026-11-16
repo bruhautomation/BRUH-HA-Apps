@@ -7,6 +7,7 @@ from collections import deque
 from collections.abc import Awaitable
 import contextlib
 from dataclasses import dataclass, field
+from dataclasses import replace
 from datetime import datetime, timedelta
 import json
 import logging
@@ -16,6 +17,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import aiohttp
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
@@ -26,6 +28,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
+from homeassistant.util.unit_conversion import TemperatureConverter
 
 from .api import (
     ApplianceSocket,
@@ -73,10 +76,14 @@ _T = TypeVar("_T")
 # last cook, so an appliance that is offline after a restart still says them.
 STORE_VERSION = 1
 STORE_SAVE_DELAY = 5
-# How long a preset named by `start` waits for its cook to be seen. The cloud
+# How long a start from Home Assistant waits for its cook to be seen. The cloud
 # can accept a start the appliance never begins (an oven left waiting for Start
-# on its panel); a cook seen after this is someone else's and is not labelled.
-PRESET_WAIT = timedelta(minutes=15)
+# on its panel); a cook seen after this was started somewhere else.
+START_WAIT = timedelta(minutes=15)
+# Where a cook's settings came from when Home Assistant did not start it.
+STARTED_ELSEWHERE = "started on the appliance or in the app"
+# What the status says of an appliance whose cook it has never seen.
+NO_COOK_YET = "no cook yet"
 # Where the add-on reads how each account stands (its log is not Home
 # Assistant's): one file per config entry, no email and no token in it.
 ACCOUNT_DIR = ".bruh_cooking/accounts"
@@ -136,12 +143,15 @@ class Appliance:
     # When the appliance last reported itself online, and since when it has not.
     last_contact: datetime | None = None
     offline_since: datetime | None = None
-    # The latest cook seen: when it started and ended, and what it was set to;
-    # the preset it came from and when it was due to finish, once known.
+    # The latest cook seen: when it started and ended, what it was set to and
+    # where those settings came from, and when it was due to finish, once known.
     last_cook: dict[str, Any] | None = None
     # The appliance's own id for that cook, to tell it from a new one when
     # contact comes back.
     last_cook_id: str | None = None
+    # The preset the panel last filled the cook settings from, and the settings
+    # it made: the next cook is that preset's only while they are unchanged.
+    settings_preset: tuple[str, CookSettings] | None = None
 
 
 def _ago(seconds: float) -> str:
@@ -177,10 +187,8 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         self.connected = False
         self._tracker = StateTracker()
         self._socket: ApplianceSocket | None = None
-        # What the integration observes about the way to the appliance: Breville
-        # turning the sign-in down, or the cloud connection being down, and since when.
+        # Breville turning the sign-in down, as last observed.
         self.auth_failed = False
-        self.problem_since: datetime | None = dt_util.utcnow()
         # The account as last read: when the appliance list last came back, and
         # the appliances on it this integration does not drive, with the reason.
         self.last_poll: datetime | None = None
@@ -188,9 +196,9 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         self._reported: tuple[Any, ...] | None = None
         self._account_pending: dict[str, Any] | None = None
         self._account_writing = False
-        # A preset's name and when it was named, held until the cook it starts
-        # is seen, for PRESET_WAIT at most (note_preset).
-        self._pending_preset: dict[str, tuple[str, datetime]] = {}
+        # Where a start's settings came from and when it was sent, held until
+        # the cook it starts is seen, for START_WAIT at most (async_start_cook).
+        self._pending_start: dict[str, tuple[str, datetime]] = {}
         self._store: Store[dict[str, Any]] = Store(
             hass, STORE_VERSION, f"{DOMAIN}.{entry.entry_id}.appliances"
         )
@@ -229,13 +237,34 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         if isinstance(saved.get("cook_id"), str):
             appliance.last_cook_id = saved["cook_id"]
 
-    @callback
-    def note_preset(self, appliance: Appliance, preset: str | None) -> None:
-        """A cook is about to start from this preset (None: it did not start)."""
-        if preset is None:
-            self._pending_preset.pop(appliance.serial, None)
-        else:
-            self._pending_preset[appliance.serial] = (preset, dt_util.utcnow())
+    def settings_source(self, appliance: Appliance) -> str:
+        """Where the next cook's settings come from, in words."""
+        if appliance.settings_preset is not None:
+            name, made = appliance.settings_preset
+            if made == appliance.settings:
+                return f"the {name} preset"
+        return "the cook settings in Home Assistant"
+
+    def cook_summary(self, appliance: Appliance) -> dict[str, Any] | str:
+        """The last cook as a person reads it, in the house's unit; NO_COOK_YET before one."""
+        cook = appliance.last_cook
+        if not cook:
+            return NO_COOK_YET
+        out: dict[str, Any] = {
+            key: cook[key] for key in ("started_at", "ended_at", "finish_at") if cook.get(key)
+        }
+        if (celsius := cook.get("target_temperature_c")) is not None:
+            unit = self.hass.config.units.temperature_unit
+            out["target_temperature"] = round(
+                TemperatureConverter.convert(celsius, UnitOfTemperature.CELSIUS, unit), 1
+            )
+            out["temperature_unit"] = unit
+        if cook.get("duration_s"):
+            out["duration_minutes"] = round(cook["duration_s"] / 60)
+        # A cook kept by 0.1.9 named only its preset.
+        if source := cook.get("settings_from") or (cook.get("preset") and f"the {cook['preset']} preset"):
+            out["settings_from"] = source
+        return out
 
     @property
     def brand(self) -> str:
@@ -302,45 +331,44 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         finally:
             self._account_writing = False
 
-    @callback
-    def _note_path(self) -> None:
-        """Track since when the way to the appliances has been down."""
-        if self.connected and not self.auth_failed:
-            self.problem_since = None
-        elif self.problem_since is None:
-            self.problem_since = dt_util.utcnow()
-
     def offline_report(self, appliance: Appliance) -> dict[str, Any] | None:
         """Why an appliance is offline and one thing to try; None while it is online.
 
         Decided from what is observed: Breville turning the sign-in down (an
         authentication error), the cloud connection being down (the websocket
         will not connect), or the connection being fine while the appliance
-        reports itself offline.
+        reports itself offline. How long is counted from the last contact,
+        the time the status shows beside it, which a restart of Home Assistant
+        keeps; with none, the report says it has not been heard from.
         """
         if self.connected and appliance.status.online:
             return None
         if self.auth_failed:
             cause = "sign_in"
-            since = self.problem_since
             why = "Breville is not accepting the saved sign-in"
             fix = "Sign in again: open Settings > Devices & services > BRUH Cooking and choose Reconfigure or the sign-in notice"
         elif not self.connected:
             cause = "cloud"
-            since = self.problem_since
             why = "Home Assistant cannot reach Breville's cloud"
             fix = "Check that Home Assistant has internet access; it reconnects by itself"
         else:
             cause = "device"
-            since = appliance.offline_since
             why = "Breville's cloud is reachable and the sign-in works, but the appliance is not answering"
             fix = f"Check that the appliance is plugged in and on Wi-Fi, and that the {self.brand} app shows it online"
-        since = since or self.problem_since or dt_util.utcnow()
-        age = max(0.0, (dt_util.utcnow() - since).total_seconds())
+        since = appliance.offline_since or appliance.last_contact
+        if appliance.last_contact is not None:
+            age = max(0.0, (dt_util.utcnow() - appliance.last_contact).total_seconds())
+            heard = f"Offline for {_ago(age)}, counted from when it was last heard from"
+        else:
+            heard = "Offline for an unknown time: not heard from since Home Assistant started"
+        text = f"{heard}. {why}. To try: {fix}."
+        cook = appliance.last_cook
+        if cook is not None and not cook.get("ended_at"):
+            text += " It was cooking when contact was lost, so whether it still is will be known when it answers."
         return {
             "cause": cause,
-            "since": since.isoformat(timespec="seconds"),
-            "text": f"Offline for {_ago(age)}. {why}. To try: {fix}.",
+            "since": since.isoformat(timespec="seconds") if since else None,
+            "text": text,
         }
 
     async def _async_update_data(self) -> dict[str, Appliance]:
@@ -458,11 +486,15 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
             _LOGGER.info(
                 "Connection to Breville's cloud is %s", "up" if connected else "down"
             )
-            self._note_path()
             if connected:
                 self._set_auth_failed(False)
             else:
+                now = dt_util.utcnow()
                 for appliance in self.appliances.values():
+                    if appliance.status.online:
+                        # In contact until now: that is when it was last heard from.
+                        appliance.last_contact = appliance.offline_since = now
+                        self._remember(appliance)
                     self._hold_finish(appliance, appliance.status)
             self._account_changed()
             self.async_update_listeners()
@@ -472,7 +504,6 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         if self.auth_failed != failed:
             self.auth_failed = failed
             _LOGGER.info("Breville sign-in %s", "was refused" if failed else "works")
-            self._note_path()
             self._account_changed()
             self.async_update_listeners()
 
@@ -483,8 +514,10 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         product = MODELS[appliance.model].product
         if status.online:
             appliance.last_contact = now
+            appliance.offline_since = None
+        elif before.online and appliance.offline_since is None:
+            appliance.offline_since = now
         if status.online != before.online:
-            appliance.offline_since = None if status.online else now
             _LOGGER.info("%s is %s", product, "online" if status.online else "offline")
             if not status.online:
                 self._hold_finish(appliance, before)
@@ -494,18 +527,17 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
             if not (open_cook and not before.online and status.cook_id == appliance.last_cook_id):
                 # Not the cook that was running when contact went: a new one. (The
                 # same one carries on, with its preset.)
+                # Only a start sent moments ago: one the appliance never began
+                # must not label a cook someone starts by hand later.
+                pending = self._pending_start.pop(appliance.serial, None)
                 appliance.last_cook = {
                     "started_at": now.isoformat(timespec="seconds"),
                     "ended_at": None,
-                    "target_temperature_c": status.target_temp_c,
-                    "duration_s": status.cook_time_s,
+                    "settings_from": pending[0]
+                    if pending is not None and now - pending[1] <= START_WAIT
+                    else STARTED_ELSEWHERE,
                 }
                 appliance.last_cook_id = status.cook_id
-                # Only a preset named moments ago: a start the appliance never began
-                # must not label a cook someone starts by hand later.
-                pending = self._pending_preset.pop(appliance.serial, None)
-                if pending is not None and now - pending[1] <= PRESET_WAIT:
-                    appliance.last_cook["preset"] = pending[0]
                 _LOGGER.info("A cook started on the %s", product)
         elif status.online and not status.active and open_cook and (before.active or not before.online):
             # Seen stopped, or back in contact with the cook over (losing contact is
@@ -513,8 +545,13 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
             cook["ended_at"] = now.isoformat(timespec="seconds")
             _LOGGER.info("The cook on the %s stopped", product)
         if status.online and status.active and appliance.last_cook is not None:
-            # In contact during the cook: the live entities show its finish.
+            # In contact during the cook: the live entities show its finish, and
+            # what it is set to is kept (the first report can leave it out).
             appliance.last_cook.pop("finish_at", None)
+            if status.target_temp_c is not None:
+                appliance.last_cook["target_temperature_c"] = status.target_temp_c
+            if status.cook_time_s:
+                appliance.last_cook["duration_s"] = status.cook_time_s
         self._remember(appliance)
 
     @callback
@@ -577,8 +614,13 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
             )
 
     async def async_start_cook(
-        self, appliance: Appliance, settings: CookSettings | None = None
+        self,
+        appliance: Appliance,
+        settings: CookSettings | None = None,
+        source: str | None = None,
     ) -> None:
+        """Start a cook; `source` says where its settings came from (the next
+        cook's settings when none is given), for the last cook to repeat."""
         self._ensure_control_allowed(appliance)
         try:
             steps = build_manual_steps(appliance.model, settings or appliance.settings)
@@ -588,15 +630,27 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
                 translation_key="start_failed",
                 translation_placeholders={"error": str(err)},
             ) from err
-        await self._call(
-            self.client.load_manual_recipe(
-                appliance.serial,
-                appliance.model,
-                firmware_for(appliance.model, appliance.state),
-                steps,
-                locale=self._locale(),
-            )
+        self._pending_start[appliance.serial] = (
+            source or self.settings_source(appliance), dt_util.utcnow()
         )
+        try:
+            await self._call(
+                self.client.load_manual_recipe(
+                    appliance.serial,
+                    appliance.model,
+                    firmware_for(appliance.model, appliance.state),
+                    steps,
+                    locale=self._locale(),
+                )
+            )
+        except Exception:
+            self._pending_start.pop(appliance.serial, None)
+            raise
+
+    @callback
+    def note_settings_preset(self, appliance: Appliance, name: str) -> None:
+        """The panel filled the cook settings from this preset."""
+        appliance.settings_preset = (name, replace(appliance.settings))
 
     async def async_stop_cook(self, appliance: Appliance) -> None:
         await self._call(

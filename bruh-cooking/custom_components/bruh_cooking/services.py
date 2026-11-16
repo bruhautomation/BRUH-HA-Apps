@@ -256,12 +256,13 @@ def describe(
             "temperature": _temperature(hass, settings.temperature_c),
             "duration_minutes": _minutes(settings.duration_s) or None,
             "auto_start_timer": settings.auto_start_timer,
+            "settings_from": coordinator.settings_source(appliance),
         },
     }
     out["last_contact"] = (
         appliance.last_contact.isoformat(timespec="seconds") if appliance.last_contact else None
     )
-    out["last_cook"] = appliance.last_cook
+    out["last_cook"] = coordinator.cook_summary(appliance)
     if (report := coordinator.offline_report(appliance)) is not None:
         out["offline_cause"] = report["cause"]
         out["offline_since"] = report["since"]
@@ -352,7 +353,7 @@ async def _preset_settings(
             translation_key="preset_does_not_fit",
             translation_placeholders={"preset": wanted, "error": str(err)},
         ) from err
-    return settings, preset.name or preset.id.replace("_", " ")
+    return settings, preset.spoken_name
 
 
 async def _start(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
@@ -364,22 +365,22 @@ async def _start(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
             translation_placeholders={"appliance": appliance_name(hass, appliance)},
         )
     options = dict(call.data)
-    preset_name: str | None = None
+    # Anything said beside a preset, or instead of one, besides naming the appliance.
+    changed = any(key not in (ATTR_APPLIANCE, ATTR_PRESET) for key in options)
     if options.get(ATTR_PRESET):
         base, preset_name = await _preset_settings(hass, appliance, options[ATTR_PRESET])
         # The preset is the starting point; anything said beside it wins.
         # Keep the person's timer and keep-warm switches, as a mode change does.
         preset_appliance = replace(appliance, settings=base)
         settings = start_settings(hass, preset_appliance, options)
+        source = f"the {preset_name} preset" + (", changed at the start" if changed else "")
     else:
         settings = start_settings(hass, appliance, options)
-    # The last cook says which preset it came from once the appliance reports it.
-    coordinator.note_preset(appliance, preset_name)
-    try:
-        await coordinator.async_start_cook(appliance, settings)
-    except Exception:
-        coordinator.note_preset(appliance, None)
-        raise
+        source = None
+        if changed:
+            source = coordinator.settings_source(appliance) + ", changed at the start"
+    # The last cook says where its settings came from once the appliance reports it.
+    await coordinator.async_start_cook(appliance, settings, source)
     name = appliance_name(hass, appliance)
     unit = hass.config.units.temperature_unit
     answer: dict[str, Any] = {

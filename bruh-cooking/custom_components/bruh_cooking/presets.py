@@ -59,6 +59,11 @@ class Preset:
     def builtin(self) -> bool:
         return self.name is None
 
+    @property
+    def spoken_name(self) -> str:
+        """The name brAIn and the last cook use: a custom one's own, a built-in one's id in words."""
+        return self.name or self.id.replace("_", " ")
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,

@@ -386,6 +386,10 @@
           }
         }
       }
+    },
+    "restart_required": {
+      "title": "BRUH Cooking {version} czeka na ponowne uruchomienie",
+      "description": "BRUH Cooking {version} jest zainstalowany, ale Home Assistant nadal działa na wersji {loaded}, wczytanej przy ostatnim uruchomieniu, więc poprawki z aktualizacji jeszcze nie działają. Uruchom ponownie Home Assistant (Ustawienia > System > Uruchom ponownie), aby ją wczytać. Ten komunikat zniknie po ponownym uruchomieniu."
     }
   },
   "exceptions": {

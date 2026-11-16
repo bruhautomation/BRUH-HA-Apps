@@ -386,6 +386,10 @@
           }
         }
       }
+    },
+    "restart_required": {
+      "title": "BRUH Cooking {version} is waiting for a restart",
+      "description": "BRUH Cooking {version} is installed, but Home Assistant is still running {loaded}, the version it loaded when it last started, so the fixes in the update are not working yet. Restart Home Assistant (Settings > System > Restart) to load it. This goes away after the restart."
     }
   },
   "exceptions": {
