@@ -404,6 +404,20 @@ READING_CHECKS = frozenset({"base.unusual", "dev.implausible",
 STAND_DOWN_ONCE = READING_CHECKS
 STAND_DOWN_SILENT = frozenset({"auto.never_fired"})
 SILENT_MIN_WRONG = 2
+# The checks that, while their record stands them down (`rule_record.holds`,
+# or the Resident's own arithmetic, `rule_record.measured_only`), file only
+# what a measurement backs (#1078): two rules undoing each other is filed
+# when both rules' own traces show them running at the moments the
+# entity moved, a device gone quiet when the stretch is at least
+# `MEASURED_UNAVAILABLE_DAYS` long. Never a pair `_never_covered` names.
+STAND_DOWN_MEASURED = frozenset({"auto.conflict", "dev.unavailable"})
+MEASURED_UNAVAILABLE_DAYS = 7
+# What backs a row from each of them, in the sentence the trail says.
+MEASURED_BY = {
+    "auto.conflict": "both rules' own run history",
+    "dev.unavailable": f"a stretch of at least {MEASURED_UNAVAILABLE_DAYS} "
+                       "days offline",
+}
 # The chore checks that answer for one machine: an explanation given under
 # either is about the machine (`House.owner_explained`).
 CHORE_CHECKS = frozenset({"chore.waiting", "chore.dehumidifier"})
@@ -631,6 +645,10 @@ class House:
         device = (self.registry.get(entity_id) or {}).get("device_id")
         if not device:
             return []
+        return [e for e in self._device_entities(device) if e != entity_id]
+
+    def _device_entities(self, device_id: str) -> list[str]:
+        """Every entity on one device, read once per snapshot."""
         by_device = getattr(self, "_by_device", None)
         if by_device is None:
             by_device = {}
@@ -639,7 +657,7 @@ class House:
                     by_device.setdefault(row["device_id"], []).append(
                         str(row["entity_id"]))
             self._by_device = by_device
-        return [e for e in by_device.get(device, ()) if e != entity_id]
+        return list(by_device.get(device_id, ()))
 
     def _device_rule(self, entity_id: str, check_id: str, rules_of) -> dict | None:
         """An answer given about another entity of the same device.
@@ -843,6 +861,65 @@ class House:
                         return {"text": str(note), "scope": "answers"}
         return None
 
+    def settled_device(self, device: dict | None, entity_id: str = "",
+                       check_id: str = "*") -> str:
+        """The household's own answer finishing with this device, or "".
+
+        A check that NAMES devices in a list rather than filing a row per
+        entity (the Zigbee devices gone quiet, the network's drop list)
+        asked only whether somebody disabled or labelled the device, so
+        "it is not in use", "that sensor is broken" or Stop watching, given
+        on any card about any of its entities, left it named in the next
+        list (#1132). Read from what is stored, the same two answers every
+        other reader takes: a device said to be finished with or broken
+        (`snap["faulty"]`, `corrections.broken_answer`'s wording) and a rule
+        about everything on one of its entities (`*`, Stop watching). Never
+        a pair `_never_covered` names, and the drop goes on the trail.
+        """
+        device_id = str((device or {}).get("id") or "")
+        named = [entity_id] if entity_id else []
+        if device_id:
+            named += [e for e in self._device_entities(device_id)
+                      if e not in named]
+        if not named:
+            return ""
+        if any(self._never_covered(eid, check_id) for eid in named):
+            return ""
+        faulty = self.snap.get("faulty")
+        faulty = faulty if isinstance(faulty, dict) else {}
+        table = self.snap.get("corrections")
+        rules_of = ((table.get("entity") or {}) if isinstance(table, dict)
+                    else {})
+        facts = self.snap.get("facts")
+        try:
+            import corrections  # noqa: PLC0415 — lazy: it imports the stores
+            gone = corrections.gone_for_good
+        except Exception:  # noqa: BLE001
+            def gone(_note):
+                return False
+        said = ""
+        for eid in named:
+            reason = str(faulty.get(eid) or "")
+            if reason and gone(reason):
+                said = reason
+                break
+            rule = (rules_of.get(eid) or {}).get("*")
+            if rule is not None:
+                said = str((rule or {}).get("text") or "") \
+                    if isinstance(rule, dict) else ""
+                said = said or "you asked brAIn to stop watching it"
+                break
+            if not rules_of and isinstance(facts, dict) \
+                    and "*" in (facts.get(eid) or ()):
+                said = "you asked brAIn to stop watching it"
+                break
+        if said:
+            self._note({"kind": "exception", "subject": named[0],
+                        "check": check_id, "reason": said,
+                        "text": "you settled this device, so it is left "
+                                "out of the list"})
+        return said
+
     def acknowledged(self, entity_id: str, check_id: str) -> bool:
         """Has the household said they know about this (an `accepted` ending:
         To Do, "on my list") and is that answer still standing? The check
@@ -963,7 +1040,8 @@ class House:
                                if rule.get("until") else "")})
         return False
 
-    def stand_down(self, check_id: str) -> dict | None:
+    def stand_down(self, check_id: str,
+                   now: float | None = None) -> dict | None:
         """This check's own record, when it stands the check down, else None.
 
         ``{"wrong", "total", "streak", "reason"}``, read off the producer
@@ -974,10 +1052,14 @@ class House:
         raises each entity once (`answered_off`); `auto.never_fired`
         (`STAND_DOWN_SILENT`) stands down once marked Wrong
         `SILENT_MIN_WRONG` times, the latest a Wrong, and raises nothing.
-        Any agreement given later lifts both. No record, or one that cannot
-        be read, stands nothing down.
+        Any agreement given later lifts both. `STAND_DOWN_MEASURED`'s checks
+        stand down while `rule_record.holds` or `rule_record.measured_only`
+        (the Resident's arithmetic) and then file only what a measurement
+        backs; ``measured`` on the answer says what that is. No record, or
+        one that cannot be read, stands nothing down.
         """
-        if check_id not in STAND_DOWN_ONCE | STAND_DOWN_SILENT:
+        if check_id not in (STAND_DOWN_ONCE | STAND_DOWN_SILENT
+                            | STAND_DOWN_MEASURED):
             return None
         table = self.snap.get("record")
         row = (table or {}).get(f"check:{check_id}") \
@@ -991,6 +1073,24 @@ class House:
             streak = int(row.get("streak") or 0)
         except Exception:  # noqa: BLE001 — unreadable holds nothing back
             return None
+        if check_id in STAND_DOWN_MEASURED:
+            import time as _time  # noqa: PLC0415
+            when = _time.time() if now is None else float(now)
+            row = {**row, "source": f"check:{check_id}"}
+            if not (rule_record.holds(row)
+                    or (rule_record.quietable(row["source"])
+                        and rule_record.measured_only(row, when))):
+                return None
+            said = (f"the last {streak} of this rule's reports wrong in a "
+                    "row" if streak >= rule_record.HOLD_STREAK else
+                    f"{wrong} of this rule's {total} reports wrong, the "
+                    "latest among them")
+            backed = MEASURED_BY.get(check_id, "a measurement")
+            return {"wrong": wrong, "total": total, "streak": streak,
+                    "measured": backed,
+                    "reason": f"you marked {said}, so brAIn raises one only "
+                              f"when {backed} backs it, until you agree "
+                              "with one"}
         if check_id in STAND_DOWN_SILENT:
             if wrong < SILENT_MIN_WRONG or row.get("last") != "wrong":
                 return None

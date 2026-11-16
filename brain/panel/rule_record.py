@@ -168,7 +168,16 @@ def resident_stand_down(scorecard, now: float) -> dict | None:
     nothing back."""
     row = next((r for r in scorecard or () if isinstance(r, dict)
                 and r.get("source") == RESIDENT_SOURCE), None)
-    if row is None:
+    return measured_only(row, now)
+
+
+def measured_only(row, now: float) -> dict | None:
+    """``row`` while its record says the producer should file only what a
+    measurement backs, else None: the Resident's arithmetic (above), read
+    for any producer's scorecard row. A house check that names a thing the
+    household keeps answering Wrong about (`checks._util.STAND_DOWN_MEASURED`)
+    reads it too (#1078). Unreadable is None."""
+    if not isinstance(row, dict):
         return None
     try:
         streak = int(row.get("streak") or 0)

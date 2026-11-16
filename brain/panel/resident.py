@@ -1500,32 +1500,92 @@ def read_a_measurement(tools) -> bool:
                for name in tools or ())
 
 
-def faulty_case(case: dict, entities, faulty: dict,
-                device_class=None) -> str:
-    """Why a case rests on a sensor the owner called broken, or "".
+# How a case's prose is cut into sentences for `leave_out_settled`: after a
+# full stop, a question or an exclamation mark followed by a space, so a
+# reading such as 21.5 stays whole.
+_SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
+# A name shorter than this is not matched in prose ("TV" is in too many
+# words' company); the entity id still is.
+SETTLED_NAME_MIN = 3
 
-    ``entities`` is what the signal was about; the case's own entity and
-    every entity its evidence cites are read too. A case drawn from a
-    reading somebody said is broken is a conclusion about nothing.
+
+def _names_any(text: str, words) -> bool:
+    low = str(text or "").lower()
+    return any(re.search(r"(?<![\w.])" + re.escape(w) + r"(?![\w])", low)
+               for w in words)
+
+
+def leave_out_settled(case: dict, subject: str, settled: dict,
+                      names: dict | None = None) -> tuple[dict, str]:
+    """``(case, why)``: the case with every mention of a device the owner
+    has settled left out, and ``why`` non-empty when nothing can be left
+    of it (#1132).
+
+    ``settled`` is ``{entity_id: what the owner said}`` for every entity of
+    a device the household called finished with or broken, or asked brAIn
+    to stop watching (the caller reads the stored answers, extends them to
+    the device's other entities and applies the floors); ``names`` is
+    ``{entity_id: [the names a person reads for it]}``. Read off the case's
+    structure, never off the household's words:
+
+    * a case about a settled device — the signal's subject, the case's own
+      entity, or a claim that names it — is refused with the owner's words;
+    * an evidence row on one is dropped, and a case whose every evidence
+      row was one is refused (it rested on nothing else);
+    * a sentence of the detail, the fix or the To Do line that names one
+      is left out, so "Knob 1 has been silent for nine days" is not said
+      beside a repeater the owner did not answer about.
+
+    The case returned carries ``left_out``, the names it dropped, for the
+    caller's trail entry.
     """
-    if not isinstance(case, dict) or not faulty:
-        return ""
-    import corrections  # noqa: PLC0415 — it imports the stores
-    named = [str(case.get("entity_id") or ""), *[str(e) for e in entities or ()],
-             *[str(r.get("entity") or "") for r in case.get("evidence") or ()
-               if isinstance(r, dict)]]
-    for eid in named:
-        # The one helper (`corrections.broken_answer`): its floors first;
-        # the caller writes the trail entry, with the case's claim.
-        said = corrections.broken_answer(
-            eid, "resident", faulty=faulty,
-            device_class=device_class(eid) if device_class else "",
-            note=lambda row: None)
-        if said:
-            return textclip.clip(
-                f"{eid} was called broken or finished with by the owner "
-                f"({said})", MAX_WHY)
-    return ""
+    if not isinstance(case, dict) or not settled:
+        return case, ""
+    names = names or {}
+    own = [e for e in (str(subject or ""), str(case.get("entity_id") or ""))
+           if e]
+    for eid in own:
+        if eid in settled:
+            return case, textclip.clip(
+                f"{eid} is a device the owner has settled "
+                f"({settled[eid]})", MAX_WHY)
+    words: dict[str, list[str]] = {}
+    for eid in settled:
+        said = [eid.lower()] + [
+            str(n).strip().lower() for n in names.get(eid) or ()
+            if len(str(n).strip()) >= SETTLED_NAME_MIN]
+        words[eid] = list(dict.fromkeys(said))
+    every = [w for ws in words.values() for w in ws]
+    claim = " ".join(str(case.get(k) or "") for k in ("claim", "text"))
+    for eid, ws in words.items():
+        if _names_any(claim, ws):
+            return case, textclip.clip(
+                f"the report is about {eid}, a device the owner has settled "
+                f"({settled[eid]})", MAX_WHY)
+    out = dict(case)
+    left: list[str] = []
+    evidence = [r for r in case.get("evidence") or () if isinstance(r, dict)]
+    kept = [r for r in evidence if str(r.get("entity") or "") not in settled]
+    if evidence and not kept:
+        eid = str(evidence[0].get("entity") or "")
+        return case, textclip.clip(
+            f"every reading it rests on is from {eid}, a device the owner "
+            f"has settled ({settled.get(eid, '')})", MAX_WHY)
+    if len(kept) != len(evidence):
+        out["evidence"] = kept
+        left += [str(r.get("entity") or "") for r in evidence if r not in kept]
+    for key in ("detail", "fix", "todo_text"):
+        text = str(case.get(key) or "")
+        if not text or not _names_any(text, every):
+            continue
+        parts = [p for p in _SENTENCE_END_RE.split(text) if p.strip()]
+        keep = [p for p in parts if not _names_any(p, every)]
+        out[key] = " ".join(keep).strip()
+        left += [eid for eid, ws in words.items()
+                 if any(_names_any(p, ws) for p in parts if p not in keep)]
+    if left:
+        out["left_out"] = sorted(set(left))
+    return out, ""
 
 
 def set_aside_broken(batch: list[dict], verdicts: dict[int, dict],
@@ -2284,7 +2344,7 @@ __all__ = [
     "investigate_system",
     "note_withheld", "parse_case", "parse_dismissal", "parse_first_look",
     "rejudge_due", "tier_for", "watch", "watch_note", "watched",
-    "DOOR_CLASSES", "READING_DOMAINS", "drivers_of", "faulty_case",
+    "DOOR_CLASSES", "READING_DOMAINS", "drivers_of", "leave_out_settled",
     "open_duration", "stated_open", "ungrounded_did_not_run",
     "device_aliases", "not_due", "look_tier",
     "next_batch_limit", "shrunk_batch_limit", "grown_batch_limit",
