@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.14.9
+
+### Fixed
+
+- Every text on the Lovelace card reads at 4.5:1 or better in light and dark: the Print button, the "printing on this" label and the printer chip take colours made from your theme's text colour instead of its blue and grey (#1101).
+- With label counting off, each roll tile on the card says "not counted" with no empty bar, instead of "about 0 left"; long roll names wrap instead of being cut (#1102).
+- Closed sections on the Printer tab no longer lay their controls out under the visible ones, so "Which measurement is which?", "Add a stock" and its fields never overlap the selects or the roll buttons (#1103).
+- The "not counting" note on the Printer tab has a "Count what is left" button that turns counting back on where you are, and the Quick tab's status no longer says how many are left while counting is off (#1104).
+
 ## 0.14.8
 
 ### Fixed
