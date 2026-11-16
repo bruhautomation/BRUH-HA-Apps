@@ -134,14 +134,6 @@ SAFETY_CLASSES = frozenset({
 # different sentences about the same shape of record, decided here so the
 # panel cannot invent a fourth.
 SUBJECTS: tuple[dict, ...] = (
-    # First because it explains rows below it: the minute after a restart
-    # is a page of things going unavailable and coming back.
-    # No entity is ever grouped by this gap — its rows are built whole by
-    # `restart_episodes` and `_mass_changes` — but every subject carries one.
-    {"id": "system", "label": "Home Assistant", "gap_s": 60.0,
-     "reads": "span",
-     "blurb": "Home Assistant itself stopping and starting, and anything "
-              "that moved a whole integration's devices at once."},
     {"id": "security", "label": "Locks & safety", "gap_s": 300.0,
      "reads": "span",
      "blurb": "Locks, alarms, and the sensors that are about the house "
@@ -173,6 +165,17 @@ SUBJECTS: tuple[dict, ...] = (
      "blurb": "Scripts, scenes, helpers, and anything whose kind this "
               "could not tell — never guessed into a section it might "
               "not belong in."},
+    # Last: the tab opens on what people and automations did (#1121). A
+    # restart used to head the day as "Scene 1 and 79 others unavailable",
+    # two minutes of the house's plumbing above everything anybody did; it
+    # is one folded row now (`_fold_dropouts`), and it is read after the
+    # house, not before it. No entity is ever grouped by this gap — its
+    # rows are built whole by `restart_episodes` and `_mass_changes` — but
+    # every subject carries one.
+    {"id": "system", "label": "Home Assistant", "gap_s": 60.0,
+     "reads": "span",
+     "blurb": "Home Assistant itself stopping and starting, and anything "
+              "that moved a whole integration's devices at once."},
 )
 
 SUBJECT_IDS = tuple(s["id"] for s in SUBJECTS)
@@ -398,6 +401,7 @@ def group(actions: list[dict], classes: dict[str, str] | None = None,
             _settle(ep, now)
     out.extend(_agree_with_now(newest, live or {}, now))
     restarts = restart_episodes(lifecycle or [])
+    out = _fold_dropouts(out, restarts)
     _mark_restarts(out, restarts)
     out.extend(restarts)
     out.sort(key=lambda e: (_ORDER[e["subject"]], -e["ended"], -e["started"]))
@@ -585,6 +589,155 @@ def restart_episodes(lifecycle: list[dict]) -> list[dict]:
         out.append(row(pending, pending, "stopped", "stopped",
                        "Home Assistant stopped", 1))
     return out
+
+
+# The states a device is in while Home Assistant (or its integration)
+# cannot reach it. A burst into one of them and back is plumbing, not
+# something that happened in the house.
+DROPOUT_STATES = frozenset({"unavailable", "unknown"})
+# How close two dropout bursts are to be one event: a restart takes things
+# away over a few seconds and brings them back over a couple of minutes,
+# integration by integration.
+DROPOUT_JOIN_S = 300.0
+# A single entity's dropout is part of a burst only while it is this short:
+# one that stayed unavailable for an hour is a device that did not come
+# back, which is worth its own row.
+DROPOUT_MAX_CHANGES = 3
+
+
+def _is_dropout(ep: dict) -> bool:
+    """An episode nothing caused that went unavailable (or unknown) and, at
+    most, came back: a collapsed burst whose states include a dropout, or
+    one entity's short unavailable → back."""
+    if ep.get("kind") == "restart" or ep.get("cause") not in ("", "unattributed"):
+        return False
+    if ep.get("kind") == "mass":
+        return any(_norm(r.get("state")) in DROPOUT_STATES
+                   for r in ep.get("states") or [])
+    # One device's blip only when it came back: one still unavailable is a
+    # device that did not, and that is its own row however short the run.
+    return (_norm(ep.get("first")) in DROPOUT_STATES
+            and _came_back(ep)
+            and not ep.get("from_live")
+            and int(ep.get("count") or 0) <= DROPOUT_MAX_CHANGES)
+
+
+def _came_back(ep: dict) -> bool:
+    """Whether a dropout episode ended reachable. Only `unavailable` is
+    "not back": a scene or a button rests in `unknown` after every restart
+    until it is next used, which is not a device that failed to return. A
+    live state the logbook missed (`live`) is what it says now."""
+    last = ep.get("live") if ep.get("live") is not None else ep.get("last")
+    return _norm(last) != "unavailable"
+
+
+def _is_return(ep: dict) -> bool:
+    """One entity's short run, nothing caused, out of the dropout states:
+    the shape of a device coming back on its own second after a burst took
+    it away (a light's `off`, a tracker's `home`)."""
+    return (not ep.get("kind") and bool(ep.get("entity_id"))
+            and ep.get("cause") in ("", "unattributed")
+            and not ep.get("from_live")
+            and _norm(ep.get("first")) not in DROPOUT_STATES
+            and int(ep.get("count") or 0) <= DROPOUT_MAX_CHANGES)
+
+
+def _fold_dropouts(episodes: list[dict], restarts: list[dict]) -> list[dict]:
+    """A restart is ONE line, whatever it took down with it (#1121).
+
+    A restart's two minutes read as "Light 1 and 32 others unavailable →
+    off" and "Scene 1 and 79 others unavailable" above everything anybody
+    did, beside a "Home Assistant restarted" row that already said why.
+    So the dropout bursts (`_is_dropout`) that fall within
+    ``DROPOUT_JOIN_S`` of each other are one event, and so is each of
+    their devices coming back on its own second afterwards (`_is_return`:
+    the returns are rarely in one second, so `_mass_changes` leaves them
+    as a row per device). The event is folded:
+
+    * into the restart row when the logbook holds one around it — it then
+      carries the devices (`devices`, `entities`), whether they all came
+      back (`back`), and opens onto them;
+    * otherwise into one collapsed row of its own, which says how many
+      devices dropped out and does NOT claim a restart nobody recorded.
+
+    A lone entity's blip is folded only into a burst or a restart: one
+    device going unavailable on its own is that device's news, and so is
+    one that has not come back. Returns the episodes with the folded ones
+    taken out (and the merged rows in)."""
+    blips = sorted((e for e in episodes if _is_dropout(e)),
+                   key=lambda e: e["started"])
+    if not blips:
+        return episodes
+    clusters: list[list[dict]] = []
+    for ep in blips:
+        last = clusters[-1] if clusters else None
+        if last is not None and ep["started"] - max(
+                e["ended"] if e.get("kind") == "mass" else e["started"]
+                for e in last) <= DROPOUT_JOIN_S:
+            last.append(ep)
+        else:
+            clusters.append([ep])
+    returns = [e for e in episodes if _is_return(e)]
+    folded: set[int] = set()
+    merged: list[dict] = []
+    for cluster in clusters:
+        start = cluster[0]["started"]
+        restart = next((r for r in restarts
+                        if r["started"] - RESTART_BEFORE_S <= start
+                        <= r["ended"] + RESTART_AFTER_S), None)
+        if restart is None and not any(e.get("kind") == "mass" for e in cluster):
+            continue                 # lone devices with nothing to join
+        ents: set[str] = set()
+        out: set[str] = set()        # the ones last seen unavailable
+        for e in cluster:
+            if e.get("kind") == "mass":
+                these = set(e.get("entities") or [])
+                ents |= these
+                if not _came_back(e):
+                    out |= these
+            else:
+                ents.add(e["entity_id"])
+                if not _came_back(e):
+                    out.add(e["entity_id"])
+        upto = max(e["ended"] for e in cluster) + DROPOUT_JOIN_S
+        came = [r for r in returns if id(r) not in folded
+                and r["entity_id"] in ents and start <= r["started"] <= upto]
+        if restart is None and len(cluster) == 1 and not came:
+            continue                 # one burst is already one row
+        out -= {r["entity_id"] for r in came}
+        group_ = cluster + came
+        ended = max(e["ended"] for e in group_)
+        devices = max(len(ents), sum(int(e.get("devices") or 0)
+                                     if e.get("kind") == "mass" else 1
+                                     for e in cluster))
+        folded.update(id(e) for e in group_)
+        if restart is not None:
+            restart["devices"] = int(restart.get("devices") or 0) + devices
+            restart["entities"] = sorted(set(restart.get("entities") or []) | ents)[:MASS_KEEP]
+            # "and came back" is said only when every one of them did.
+            restart["back"] = restart.get("back", True) and not out
+            continue
+        masses = [e for e in cluster if e.get("kind") == "mass"]
+        sources = {e.get("integration") or "" for e in masses}
+        source = sources.pop() if len(sources) == 1 else ""
+        states = sorted((r for e in masses for r in e.get("states") or []),
+                        key=lambda r: r.get("ts") or 0)
+        row = dict(masses[0])
+        row.update({
+            "started": start, "ended": ended,
+            "count": sum(int(e.get("count") or 0) for e in group_),
+            "first": "", "last": "",
+            "states": list(reversed(states))[:MAX_STATES],
+            "entities": sorted(ents)[:MASS_KEEP], "devices": devices,
+            "integration": source, "back": not out,
+        })
+        tail = "" if out else " and came back"
+        row["name"] = (f"{devices} devices from {source} went unavailable{tail}"
+                       if source else
+                       f"{devices} devices went unavailable together{tail}")
+        row["duration_s"] = max(0.0, row["ended"] - row["started"])
+        merged.append(row)
+    return [e for e in episodes if id(e) not in folded] + merged
 
 
 def _mark_restarts(episodes: list[dict], restarts: list[dict]) -> int:
@@ -886,7 +1039,7 @@ def summary_prompt(payload: dict, tz_name: str = "") -> str:
 
 __all__ = [
     "ACTIVE_STATES", "COVER_CLASSES", "DOOR_CLASSES", "INTEGRATION_NAMES",
-    "MASS_JOIN_S", "MASS_MIN", "MAX_ROWS", "MAX_STATES", "MOTION_CLASSES",
+    "DROPOUT_JOIN_S", "DROPOUT_STATES", "MASS_JOIN_S", "MASS_MIN", "MAX_ROWS", "MAX_STATES", "MOTION_CLASSES",
     "READINGS", "RESTART_AFTER_S", "RESTART_BEFORE_S", "RESTART_PAIR_S",
     "SAFETY_CLASSES", "integration_name", "restart_episodes",
     "SUBJECTS", "SUBJECT_IDS", "SUMMARY_MAX_ROWS", "SUMMARY_MAX_TURNS",

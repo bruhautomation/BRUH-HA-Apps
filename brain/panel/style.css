@@ -1563,6 +1563,13 @@ body.modal-open {
 #setsecFeatures .setgroup.featlist { border: 0; border-radius: 0; background: transparent; }
 #setModal #setsecFeatures .setgroup > .setrow { padding-left: 0; padding-right: 0; }
 #setModal #setsecFeatures .setgroup > .setgroupnote { padding-left: 0; padding-right: 0; }
+/* What learning wrote: one sentence, the breakdown behind it (#1124). The
+   setrow above it is the switch, so the sentence sits under it, unruled. */
+#setModal #setsecFeatures .setgroup > .featlearned { border-top: 0; padding-top: 0; }
+.featlearned > summary { cursor: pointer; min-height: 44px; padding: 10px 0; box-sizing: border-box; }
+.featlearned.empty > summary { list-style: none; cursor: default; pointer-events: none; }
+.featlearned.empty > summary::-webkit-details-marker { display: none; }
+.featlearned > ul { margin: var(--sp-1) 0 0; padding-left: var(--sp-5); }
 #setModal .setgroup > .setgroupfield { padding: var(--sp-3) var(--sp-4) var(--sp-2); }
 #setModal .setgroup > .setgroupfield > label:not(.check):not(.setcam) { margin-top: 0; }
 /* The budget slider's two ends: 5% at the left, "No limit" past 100% at
@@ -1961,6 +1968,12 @@ body.modal-open {
   border-bottom: 1px solid var(--hairline);
 }
 .diag .drow:last-child { border-bottom: 0; }
+/* Right now: one sentence a row, and More under it (`faultLine`). */
+.diag .fline { padding: 6px 0; border-bottom: 1px solid var(--hairline); }
+.diag .fline:last-of-type { border-bottom: 0; }
+.diag .fline .flinesay { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink); }
+.diag .fline.bad .flinesay b { color: var(--serious-ink); }
+.diag .fline .detailsbody p { margin: 4px 0 0; }
 .diag .dk { flex: 0 0 40%; color: var(--ink-2); }
 /* An indented key — one of a group under the row above it. The
    rehearsal's per-defect rows used to ask for this with a pair of
@@ -2835,13 +2848,25 @@ body.kb-lift:not(.term-classic) #viewTerminal.active {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  /* The last row stops short of the composer under it, with room to spare. */
-  padding: 8px 8px 20px;
-  scroll-padding-bottom: 20px;
+  padding: 8px 8px 0;
+  scroll-padding-bottom: 24px;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
+/* The last row stops short of the composer under it, with room to spare
+   (#1137). A spacer rather than bottom padding: WebKit leaves the bottom
+   padding of a scrolling flex column out of what it scrolls to, so on an
+   iPhone the last row and its ⋯ ended flush under the message box. */
+.crlist::after { content: ""; flex: none; height: 24px; }
+/* "Live now", "Today", "Yesterday", "This week", a month (#1119). */
+.crday {
+  margin: 10px 10px 2px;
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  color: var(--ink-3);
+}
+.crday:first-child { margin-top: 2px; }
 .crempty {
   display: flex;
   flex-direction: column;
@@ -4388,9 +4413,9 @@ body.term-classic #termMode .ico-out { display: block; }
   min-width: 0;
 }
 .caseevent { font-size: var(--fs-meta); color: var(--ink-2); word-break: break-word; }
-.caseevval { color: var(--ink-1); }
+.caseevval { color: var(--ink); }
 .caseevwhen, .caseactdetail { color: var(--ink-3); font-size: var(--fs-meta); }
-.caseactlabel { color: var(--ink-1); }
+.caseactlabel { color: var(--ink); }
 /* What consent an action needs, said in words beside it: a list of things
    that could happen to a house, where "asks you first" and "no consent
    needed" are the whole difference, is not a list to distinguish by tint. */
@@ -4716,11 +4741,6 @@ body.term-classic #termMode .ico-out { display: block; }
   color: var(--ink-2);
   font-variant-numeric: tabular-nums;
 }
-.actawaylabel {
-  font-size: var(--fs-meta);
-  font-weight: 600;
-  color: var(--ink-3);
-}
 
 /* The press that spends, and the paragraph it buys. */
 .actask { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
@@ -4931,7 +4951,7 @@ body.term-classic #termMode .ico-out { display: block; }
   padding: 6px 0;
   min-height: 44px;
 }
-.today .tseg.press:hover { color: var(--ink-1); }
+.today .tseg.press:hover { color: var(--ink); }
 .today .tsegwhere {
   border: 1px solid var(--hairline);
   border-radius: 999px;
@@ -5081,7 +5101,7 @@ body.term-classic #termMode .ico-out { display: block; }
   color: var(--ink-2);
   font-size: var(--fs-body);
 }
-.kdrillhead { margin: 12px 0 6px; font-size: var(--fs-body); color: var(--ink-1); }
+.kdrillhead { margin: 12px 0 6px; font-size: var(--fs-body); color: var(--ink); }
 .kdrillhead:first-child { margin-top: 0; }
 .kfoot { margin-top: 8px; color: var(--ink-3); font-size: var(--fs-meta); }
 
@@ -5102,7 +5122,7 @@ body.term-classic #termMode .ico-out { display: block; }
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
-.ktable td:first-child { white-space: normal; color: var(--ink-1); }
+.ktable td:first-child { white-space: normal; color: var(--ink); }
 
 /* Baselines: a search box, because a house has hundreds of these and a list
    of hundreds is one nobody scrolls. 16px, spelled here, because this is a
@@ -6373,27 +6393,15 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 .qtidyedit input, .qtidyedit select { width: 100%; max-width: 360px; }
 .qtidyerr { margin: 0; font-size: var(--fs-meta); color: var(--serious-ink); }
 .qcard .card-actions .btn.icon { min-width: var(--btn-h); min-height: var(--btn-h); }
-/* On a phone the row is the primary, Snooze, Ignore and the ⋯ (the rest
-   folded behind it, `foldsSecondary`), and it has to be one row at 390px:
-   at the desktop's 16px inset "Add to To Do · Snooze · Ignore · ⋯" came to
-   350px on a 329px card, and a runner's wider font still wrapped it at 6px
-   gaps; it does not wrap now, and a label that still does not fit is cut
-   with an ellipsis rather than pushing the row onto a second line. The
-   height and the 44px touch floor stay. */
+/* On a phone the row is Respond, the primary, Snooze, Ignore and the ⋯
+   (the rest folded behind it, `foldsSecondary`). It wraps: five whole
+   labels do not fit one 390px row, and the one-row version cut them with
+   an ellipsis ("Add to To D") and pressed Respond to its edges (#1123). A
+   label is never cut; a second line is the lesser harm. */
 @media (max-width: 640px) {
-  .qcard > .card-actions { gap: 4px; flex-wrap: nowrap; min-width: 0; }
-  .qcard > .card-actions > button:not(.icon) {
-    padding-left: 8px; padding-right: 8px; min-width: 0;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .qcard > .card-actions { flex-wrap: wrap; gap: var(--sp-2); min-width: 0; }
+  .qcard > .card-actions > button:not(.icon) { white-space: nowrap; }
   .qcard > .card-actions > button.icon { flex: none; }
-}
-/* Narrower than any current phone's portrait width the four do not fit
-   without cutting the main answer's own words, and a wrapped row is the
-   lesser harm there. `min-width: 0` stays: a grid item's automatic minimum
-   is its content, which is what pushed the card past the screen. */
-@media (max-width: 359px) {
-  .qcard > .card-actions { flex-wrap: wrap; }
-  .qcard > .card-actions > button:not(.icon) { overflow: visible; text-overflow: clip; }
 }
 .qcard .findnote { margin-top: 0; }
 

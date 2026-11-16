@@ -29714,7 +29714,81 @@ def _chat_registry() -> "chat_session.SessionRegistry":
     registry = chat_session.registry()
     registry.model = eff_chat_model()
     registry.skip_permissions = eff_skip_permissions()
+    registry.on_reply = _title_after_reply
     return registry
+
+
+# A person's chat, named by what it is about once it has a first reply
+# (#1119). The list showed the first words typed — "You are …", a typo, a
+# pasted prompt — because brAIn's chat runs `claude -p`, whose transcripts
+# carry no `ai-title`, and `conversations.short_title` can only cut the
+# words it is given. One small run reads the opening exchange and names
+# it; the name goes on the run-sources ledger as the conversation's
+# recorded title, which is what every opener brAIn writes already does, so
+# the list reads it with no new path. Only a conversation nobody else named:
+# a machine's (claimed by a source), one an opener titled as it opened, and
+# one that IS one of brAIn's own openers keep theirs. Once per conversation
+# per run of the add-on, whatever the run answers: a failed run leaves the
+# first-words title, which is what the list showed before.
+CHAT_TITLE_SYSTEM = (
+    "You name conversations for a list. Answer with the title only: two to "
+    "six words saying what the conversation is about, in the language it is "
+    "in, sentence case, no quotes and no full stop. Name the topic, not the "
+    "request, and never the assistant.")
+CHAT_TITLE_TIMEOUT_S = 90
+CHAT_TITLE_CHARS = 1500
+CHAT_TITLE_WORDS = 8
+_CHAT_TITLED: set[str] = set()
+
+
+def _title_after_reply(session) -> None:
+    sid = str(getattr(session, "session_id", "") or "")
+    if not sid or sid in _CHAT_TITLED:
+        return
+    _CHAT_TITLED.add(sid)
+    asked = next((str(e.get("text") or "") for e in session.events
+                  if e.get("type") == "user" and e.get("text")), "")
+    said = next((str(e.get("text") or "") for e in session.events
+                 if e.get("type") == "text" and e.get("text")), "")
+    if not asked.strip() or not said.strip():
+        return
+    try:
+        asyncio.get_running_loop().create_task(_title_chat(sid, asked, said))
+    except RuntimeError:
+        pass   # no loop: nothing to run it on, and the first words stand
+
+
+def _chat_title_from(text: str) -> str:
+    """The title a run answered, or "" for an answer that is not one."""
+    line = next((ln.strip() for ln in str(text or "").splitlines() if ln.strip()), "")
+    line = re.sub(r"^(?:title\s*:\s*|#+\s*)", "", line, flags=re.I)
+    line = line.strip(" \"'\u201c\u201d\u2018\u2019*_`").rstrip(".!:;,")
+    words = line.split()
+    if not words or len(words) > CHAT_TITLE_WORDS:
+        return ""
+    return conversations.clip_title(" ".join(words))
+
+
+async def _title_chat(sid: str, asked: str, said: str) -> None:
+    """Name one conversation. Never raises."""
+    try:
+        if run_sources.lookup([sid]).get(sid) or run_sources.titles([sid]).get(sid):
+            return
+        if conversations.known_title(asked, "you") is not None:
+            return
+        prompt = ("The first message of a conversation:\n"
+                  + textclip.clip(asked.strip(), CHAT_TITLE_CHARS)
+                  + "\n\nThe first reply:\n"
+                  + textclip.clip(said.strip(), CHAT_TITLE_CHARS)
+                  + "\n\nThe title:")
+        result = await _claude(
+            engine.run_claude, prompt, CHAT_TITLE_SYSTEM, eff_model(),
+            CHAT_TITLE_TIMEOUT_S, 1, "chat_title", job="chat_title")
+        title = _chat_title_from(result.get("text") or "")
+        if title:
+            await asyncio.to_thread(run_sources.record_title, sid, title)
+    except Exception as exc:  # noqa: BLE001 — the first words stay the title
+        log.info("could not title a chat: %s", exc)
 
 
 def _chat() -> "chat_session.ChatSession":

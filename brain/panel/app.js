@@ -3956,37 +3956,21 @@ function diagCounts(byOutcome) {
   return entries.map(([word, n]) => `${n} ${esc(word)}`).join(" · ");
 }
 
-// Everything wrong right now, at the top of the dialog and at the top of
-// the report — one list, one derivation, from the payload the server
-// already assembles. Reading a fault used to mean knowing which of a
-// dozen sections it would be in, which is the same reason the report
-// grew this section: the facts were all there and none was findable.
-function faultRows(d) {
-  const rows = (d && d.faults) || [];
-  if (!rows.length) {
-    return [diagRow("Anything wrong?",
-      "Nothing — every check ran, every background job is running, no run failed in the "
-      + "last day and the health verdict is ok.")];
-  }
-  const out = [diagRow("Anything wrong?",
-    `${rows.length} thing${rows.length > 1 ? "s" : ""} to look at`, true)];
-  rows.forEach((r) => out.push(diagRow(
-    r.title || r.where || "?", faultValue(r), true, true)));
-  return out;
-}
-
-// One fault in the owner's words: what is not working and what to do,
-// with the ids, job words and codes (the machine `where`/`what`/`detail`
-// the report file and the development loop read) folded under a closed
-// "Technical detail". A row from an older server carries no words of its
-// own, and reads as it always did.
-function faultValue(r) {
-  if (!r.sentence) {
-    return esc(r.what || "")
-      + (r.detail ? ` <span class="faultsay">${esc(r.detail)}</span>` : "");
-  }
-  return `<span class="faultsay">${esc(r.sentence)}</span>`
-    + techDetail(r.technical);
+// One row of Right now: its title and ONE sentence, and anything more —
+// the sentences after the first, the technical words — behind one tap.
+// A key/value table of a title beside three sentences and a "Technical
+// detail" was a form to read, not a line (#1120).
+function faultLine(title, text, moreHtml, calm) {
+  const said = String(text || "").trim();
+  const m = said.match(/^(.+?[.!?])\s+(\S[\s\S]*)$/);
+  const first = m ? m[1] : said;
+  const rest = m ? `<p>${esc(m[2])}</p>` : "";
+  const extra = rest + (moreHtml || "");
+  return `<div class="fline${calm ? "" : " bad"}"><p class="flinesay"><b>${esc(title)}</b>`
+    + (first ? `<br>${esc(/[.!?]$/.test(first) ? first : first + ".")}` : "") + `</p>`
+    + (extra ? `<details class="techdetails flinemore"><summary>More</summary>`
+      + `<div class="detailsbody">${extra}</div></details>` : "")
+    + `</div>`;
 }
 
 // When a result was made, in the words a person says, and whether it is old
@@ -4023,13 +4007,9 @@ function paintRunButton(btn, note, stamp, label) {
   btn.classList.toggle("stalerun", old);
   btn.setAttribute("aria-label", old
     ? `${label}: the last result is out of date` : label);
-  if (note) {
-    note.classList.toggle("stalenote", old);
-    if (old) {
-      note.textContent = "Out of date: run it again to see how things are now.";
-      note.hidden = false;
-    }
-  }
+  // No "Out of date" line under it: the sentence above already says how old
+  // the result is, and "Run again" is the way to a new one (#1120).
+  if (note) note.classList.remove("stalenote");
 }
 
 // Technical values behind one closed fold, the form ⚙ allows (read-only text,
@@ -4054,7 +4034,13 @@ function renderDiagnostics(d) {
   const failures = j.failures || [];
   const faults = (d && d.faults) || [];
   // The first row says how many; the lead sentence below says it already.
-  const rows = faults.length ? faultRows(d).slice(1) : [];
+  // Each fault is one sentence, its title and what is wrong; the rest of
+  // what it says and its technical words are one tap under it (#1120).
+  const rows = faults.map((r) => {
+    const said = r.sentence || [r.what, r.detail].filter(Boolean).join(". ");
+    return faultLine(r.title || r.where || "Something", said,
+      r.technical ? `<p class="hint">${esc(r.technical)}</p>` : "");
+  });
   const healthOk = !((d.health || {}).state && d.health.state !== "ok");
   // The screen opens with one sentence: does everything work, and when was
   // that looked at. Everything under it is the evidence, in one fold.
@@ -4073,17 +4059,17 @@ function renderDiagnostics(d) {
   // The verdict first, because it is the one line somebody who is not
   // debugging should have to read. Everything below it is the evidence.
   const h = d.health || {};
+  const more = (h.problems || []).slice(1, 5).map(
+    (p) => `<li>${esc(p.what)} &mdash; ${esc(p.fix)}</li>`);
+  const healthMore = (h.fix ? `<p><b>What to do:</b> ${esc(h.fix)}</p>` : "")
+    + (more.length ? `<p><b>Also:</b></p><ul>${more.join("")}</ul>` : "");
   if (!healthOk) {
-    rows.push(diagRow("brAIn", esc(h.reason || h.state || "unknown"), true));
+    rows.push(faultLine("brAIn", h.reason || h.state || "unknown", healthMore));
   } else if (h.resting) {
     // The usage limit: not a fault, so not flagged, but said with its end.
-    rows.push(diagRow("brAIn", esc(h.resting)));
-  }
-  if (h.fix) rows.push(diagRow("What to do", esc(h.fix), true));
-  if ((h.problems || []).length > 1) {
-    const more = h.problems.slice(1, 5).map(
-      (p) => `<li>${esc(p.what)} &mdash; ${esc(p.fix)}</li>`);
-    rows.push(diagRow("Also", `<ul>${more.join("")}</ul>`, true));
+    rows.push(faultLine("brAIn", h.resting, healthMore, true));
+  } else if (healthMore) {
+    rows.push(faultLine("brAIn", "", healthMore));
   }
   const upTop = rows.length;
   rows.push(diagRow("Add-on version",
@@ -5583,8 +5569,11 @@ function renderRehearsal(d) {
     sum.classList.toggle("old", old);
   }
   sum.hidden = !last.finished_at;
-  body.innerHTML = detailsFold(rows.join("") + detailsFold(tech.join(""), "Details"),
-    "Each result");
+  // "Each result" only over results: housekeeping alone is its own
+  // "Details", never a fold whose whole content is another fold (#1120).
+  body.innerHTML = rows.length
+    ? detailsFold(rows.join("") + detailsFold(tech.join(""), "Details"), "Each result")
+    : detailsFold(tech.join(""), "Details");
   body.hidden = !rows.length && !tech.length;
   const step = (d.progress || {}).step;
   const busy = !!(d.running || d.sweeping);
@@ -6325,8 +6314,42 @@ function todayListsLoaded() {
 }
 
 function needsCountNow() {
-  if (!todayListsLoaded()) return state.serverNeeds || 0;
-  return todayCards().filter((c) => c.counted !== false).length;
+  return needsSummary().n;
+}
+
+// What needs the person, in words, from the same cards the number counts:
+// "5 things need you: 2 problems, a question and 2 suggestions". The tab's badge, the
+// banner over the cards and the line Needs you opens on all read this, so
+// a banner of 5 over "3 things need you now" (the lead once counted only
+// problems and questions) cannot come back (#1122). The armed one-offs are
+// counted by nothing, as everywhere.
+const NEEDS_WORDS = { problems: ["a problem", "problems"], questions: ["a question", "questions"],
+  chores: ["a suggestion", "suggestions"], tidy: ["a tidy-up", "tidy-ups"] };
+
+function needsSummary() {
+  if (!todayListsLoaded()) {
+    const n = state.serverNeeds || 0;
+    return { n, urgent: 0, words: n ? `${n} thing${n === 1 ? "" : "s"} need${n === 1 ? "s" : ""} you` : "" };
+  }
+  const counted = todayCards().filter((c) => c.counted !== false);
+  const groups = todayGroups(counted);
+  const parts = Object.keys(NEEDS_WORDS).filter((g) => groups[g].length).map((g) => {
+    const k = groups[g].length;
+    return k === 1 ? NEEDS_WORDS[g][0] : `${k} ${NEEDS_WORDS[g][1]}`;
+  });
+  const n = counted.length;
+  const urgent = groups.problems.filter((c) => c.urgent).length;
+  let words = "";
+  if (parts.length) {
+    const list = parts.length < 2 ? parts[0]
+      : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+    // The total leads whenever it is more than one group's, so the number on
+    // the badge is the first thing the sentence says.
+    words = (parts.length > 1 ? `${n} things need you: ${list}`
+      : list.charAt(0).toUpperCase() + list.slice(1) + ` need${n === 1 ? "s" : ""} you`)
+      + (urgent ? ` (${urgent} urgent)` : "");
+  }
+  return { n, urgent, words };
 }
 
 function syncNeedsCount() {
@@ -6353,8 +6376,7 @@ function renderNeedsStrip() {
   const cases = state.cases || [];
   const urgent = cases.filter((c) => c.urgent);
   strip.classList.toggle("urgent", urgent.length > 0);
-  $("#needsStripCount").textContent =
-    `${n} thing${n === 1 ? "" : "s"} need${n === 1 ? "s" : ""} you`;
+  $("#needsStripCount").textContent = needsSummary().words;
   const lead = (urgent[0] || cases[0] || {}).claim;
   $("#needsStripSub").textContent = lead ? prettyText(lead) : "Problems, questions and suggestions to decide on";
 }
@@ -8383,25 +8405,21 @@ function waitingNote(n) {
 // row with a press that goes to where Home Assistant restarts.
 function todayLead(groups, chores = 0) {
   const box = el("div", "qlead");
-  const urgent = groups.problems.filter((c) => c.urgent).length;
-  const now = groups.problems.length + groups.questions.length;
-  const later = groups.chores.length + groups.tidy.length;
+  const counted = GROUP_ORDER.filter((g) => g !== "waiting")
+    .reduce((n, g) => n + groups[g].length, 0);
   let text;
-  if (!now && !later && chores) {
+  if (!counted && chores) {
     text = chores === 1
       ? "Nothing new to decide. The one chore on your To Do list below is waiting for you."
       : `Nothing new to decide. The ${chores} chores on your To Do list below are waiting for you.`;
-  } else if (!now && !later) {
+  } else if (!counted) {
     text = "Nothing needs you.";
-  } else if (!now) {
-    text = later ? "Nothing needs you right now. The chores and suggestions below can wait."
-      : "Nothing needs you right now.";
   } else {
-    text = `${now} ${now === 1 ? "thing needs" : "things need"} you now`
-      + (urgent ? ` (${urgent} urgent)` : "")
-      + (later ? ". The chores and suggestions below can wait." : ".");
+    // The same sentence as the badge and the banner: one number, named by
+    // its groups.
+    text = needsSummary().words + ".";
   }
-  box.appendChild(el("p", "qleadline" + (!now && !later ? " empty-line tight" : ""), text));
+  box.appendChild(el("p", "qleadline" + (!counted ? " empty-line tight" : ""), text));
   const integ = (state.status || {}).integration || {};
   if (integ.restart_pending === true) {
     const row = el("div", "qleadrow");
@@ -12725,6 +12743,8 @@ function epFor(secs) {
 // hall sensor comes out as "on for 83 minutes".
 function epWhen(ep, reads) {
   const at = actTime(ep.started);
+  // A restart is said by when Home Assistant was back: "restarted at 9:04".
+  if (ep.kind === "restart" && ep.last === "started") return `at ${actTime(ep.ended)}`;
   if (reads === "moment") {
     return ep.open ? `since ${at}` : `at ${at}`;
   }
@@ -12740,6 +12760,14 @@ function epWhen(ep, reads) {
 // The state, in as few words as it takes. A single-change episode is one
 // word; a run is where it started and where it ended.
 function epStates(ep) {
+  // A restart's own states ("stopped → started") say what its name does;
+  // what is worth a line is what it took down with it, folded into it on
+  // the server (`episodes._fold_dropouts`).
+  if (ep.kind === "restart") {
+    const n = ep.devices || 0;
+    return n ? `${n} device${n === 1 ? "" : "s"} went unavailable`
+      + (ep.back === false ? "" : " and came back") : "";
+  }
   if (!ep.last || ep.last === ep.first) return ep.first || "";
   return `${ep.first} → ${ep.last}`;
 }
@@ -12771,13 +12799,25 @@ function epKey(ep) {
 // When the house was empty — the one thing on this tab that Home Assistant
 // holds every fact for and has never said, and the reason it is above the
 // list rather than in it: it is the context the rows below are read in.
+// One sentence, about the house (#1121): "Nobody home 09:00–11:30 · 14:00–now"
+// read as a status line about the people rather than when the house sat
+// empty, and "–now" is not a time.
 function renderAwayBand(host, away) {
   if (!away || !away.length) return;
   const box = el("div", "actaway");
-  box.appendChild(el("span", "actawaylabel", "Nobody home"));
-  box.appendChild(el("span", null, away.slice(0, 6).map((s) =>
-    `${actTime(s.start)}–${s.ongoing ? "now" : actTime(s.end)}`).join(" · ")));
+  box.appendChild(el("span", null, awaySentence(away.slice(0, 6))));
   host.appendChild(box);
+}
+
+function awaySentence(spans) {
+  const done = spans.filter((s) => !s.ongoing)
+    .map((s) => `from ${actTime(s.start)} to ${actTime(s.end)}`);
+  const now = spans.find((s) => s.ongoing);
+  const list = (xs) => xs.length < 2 ? xs.join("")
+    : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
+  if (!done.length) return now ? `The house has been empty since ${actTime(now.start)}.` : "";
+  return `The house was empty ${list(done)}`
+    + (now ? `, and has been again since ${actTime(now.start)}.` : ".");
 }
 
 // The paragraph, and the press that buys it. Rendered as three states,
@@ -12963,12 +13003,14 @@ function actSection(sec) {
       + (note ? `<span class="actnote">${esc(note)}</span>` : "")
       + (ep.undid
          ? `<span class="actundid">a person undid ${esc(ep.undid)}</span>` : "");
-    // A restart names no entity, so there is no history to open under it.
-    if (!ep.entity_id && ep.kind !== "mass") row.disabled = true;
+    // A restart names no entity, so there is no history to open under it —
+    // only the devices it took down, when it took any.
+    const folded = ep.kind === "mass" || (ep.kind === "restart" && (ep.entities || []).length);
+    if (!ep.entity_id && !folded) row.disabled = true;
     box.appendChild(row);
     if (actState.open === key) {
       const why = el("div", "actwhy");
-      why.innerHTML = ep.kind === "mass" ? actMassHtml(ep) : actWhyHtml(ep);
+      why.innerHTML = folded ? actMassHtml(ep) : actWhyHtml(ep);
       box.appendChild(why);
     }
   });
@@ -12980,9 +13022,14 @@ function actSection(sec) {
 function actMassHtml(ep) {
   const ids = ep.entities || [];
   const more = (ep.devices || ids.length) - ids.length;
-  return `<div>${esc(String(ep.devices || ids.length))} entities changed `
-    + `together, with nothing recorded as the cause — an integration `
-    + `reloading or reconnecting does this:</div>`
+  const lead = ep.kind === "restart"
+    ? `${esc(String(ep.devices || ids.length))} entities went unavailable `
+      + `while Home Assistant restarted`
+      + (ep.back === false ? ", and not all of them came back:" : ", and came back with it:")
+    : `${esc(String(ep.devices || ids.length))} entities changed `
+      + `together, with nothing recorded as the cause — an integration `
+      + `reloading or reconnecting does this:`;
+  return `<div>${lead}</div>`
     + ids.map((id) => `<div><code>${esc(id)}</code></div>`).join("")
     + (more > 0 ? `<div>and ${esc(String(more))} more</div>` : "");
 }
@@ -15871,6 +15918,41 @@ function renderConvKinds() {
   }
 }
 
+// The list's groups, in order: "Live now" (a process holds it, it is
+// answering or waiting on an OK, or a terminal window has it), then
+// Today, Yesterday, This week, and each older month by its name. The server
+// sends newest first, so each group keeps that order.
+function convIsLive(c) {
+  if (c.terminal) return true;
+  const st = convRowState(c).state;
+  return st === "live" || st === "answering" || st === "needs_ok";
+}
+
+function convDay(ts) {
+  if (!ts) return "Earlier";
+  const d = new Date(ts * 1000);
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const day = 86400 * 1000;
+  if (d >= start) return "Today";
+  if (d >= new Date(start.getTime() - day)) return "Yesterday";
+  if (d >= new Date(start.getTime() - 6 * day)) return "This week";
+  return d.toLocaleDateString([], d.getFullYear() === start.getFullYear()
+    ? { month: "long" } : { month: "long", year: "numeric" });
+}
+
+function convGroups(convs) {
+  const out = [];
+  const add = (label, c) => {
+    const last = out[out.length - 1];
+    if (last && last.label === label) last.rows.push(c);
+    else out.push({ label, rows: [c] });
+  };
+  convs.filter(convIsLive).forEach((c) => add("Live now", c));
+  convs.filter((c) => !convIsLive(c)).forEach((c) => add(convDay(c.modified), c));
+  return out;
+}
+
 function renderChatRail() {
   const list = $("#chatRailList");
   if (!list) return;
@@ -15891,7 +15973,15 @@ function renderChatRail() {
     list.appendChild(empty);
     return;
   }
-  chatState.convs.forEach((c) => {
+  // Live chats first, under their own heading, then the rest under the day
+  // they were last spoken in (#1119): a flat list of forty titles had no
+  // sense of which were going and which were last month's.
+  let heading = null;
+  convGroups(chatState.convs).forEach(({ label, rows }) => rows.forEach((c) => {
+    if (label !== heading) {
+      heading = label;
+      list.appendChild(el("h3", "crday", label));
+    }
     // The one you are in is marked rather than hidden: a list that silently
     // omits the current item makes you wonder where it went. On the list
     // page it is also the way back into it.
@@ -15927,7 +16017,7 @@ function renderChatRail() {
     // delete cannot reach.
     if (!c.view_only) row.appendChild(convRowMenu(c));
     list.appendChild(row);
-  });
+  }));
   // brAIn's terminal windows on a conversation the list has no row for
   // yet (one a card's Ask started there): Claude processes too, so they
   // are listed rather than running out of sight.
@@ -19847,28 +19937,66 @@ function paintFeatures() {
 }
 
 // Under the Learning loop: what each learner wrote in the last week, counted
-// off its own ledger on the server (panel/learning_report.py).
-function learnedWords(learned) {
+// off its own ledger on the server (panel/learning_report.py). One sentence
+// ("Learned 53 things this week"), and what each learner wrote behind a tap:
+// the counts as one log-style line were a ledger, not something to read
+// (#1124).
+const LEARNED_FROM = { chat: "chats", voice: "voice", assistant: "brAIn's own replies",
+  study: "study sessions", morph: "the dashboard", service: "automations",
+  person: "you", extractor: "chats" };
+
+function learnedPeriod(days) {
+  return days === 7 ? "this week" : `in the last ${days} days`;
+}
+
+function learnedLines(learned) {
   const rows = (learned && Array.isArray(learned.learners)) ? learned.learners : [];
-  const days = (learned && learned.days) || 7;
-  const said = rows.filter((r) => r && r.count > 0).map((r) => {
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  return rows.filter((r) => r && r.count > 0).map((r) => {
     if (r.key === "memory") {
-      const by = Object.entries(r.by_source || {}).map(([k, n]) => `${n} ${k}`).join(", ");
-      return `memory ${r.count}${by ? ` (${by})` : ""}`;
+      // Two ledgers' words for one place ("chat", "extractor") are one entry.
+      const by = {};
+      Object.entries(r.by_source || {}).forEach(([k, n]) => {
+        const w = LEARNED_FROM[k] || "elsewhere";
+        by[w] = (by[w] || 0) + (Number(n) || 0);
+      });
+      const from = Object.entries(by).map(([w, n]) => `${w} (${n})`);
+      return plural(r.count, "thing to remember", "things to remember")
+        + (from.length ? `, from ${from.join(", ")}` : "");
     }
-    if (r.key === "presence") return `presence ${r.count} (${(r.growth || 0) + (r.revisions || 0)} about itself, ${r.notes || 0} about people)`;
-    if (r.key === "morph") return `Morph learning ${r.count} change${r.count === 1 ? "" : "s"} (${r.learned_md || 0} to LEARNED.md)`;
-    return `${String(r.label || r.key).toLowerCase()} ${r.count}`;
+    if (r.key === "reflect") return plural(r.count, "lesson", "lessons") + " from how its reports ended";
+    if (r.key === "presence") {
+      const self = (r.growth || 0) + (r.revisions || 0);
+      return [self && plural(self, "note about itself", "notes about itself"),
+        r.notes && plural(r.notes, "note about the people here", "notes about the people here")]
+        .filter(Boolean).join(" and ") || plural(r.count, "note", "notes");
+    }
+    if (r.key === "morph") return plural(r.count, "dashboard change", "dashboard changes") + " from how it is used";
+    return `${String(r.label || r.key)}: ${r.count}`;
   });
-  return said.length ? `In the last ${days} days learning wrote: ${said.join("; ")}.`
-    : `Learning wrote nothing in the last ${days} days.`;
+}
+
+function learnedTotal(learned) {
+  const rows = (learned && Array.isArray(learned.learners)) ? learned.learners : [];
+  return rows.reduce((n, r) => n + ((r && r.count) || 0), 0);
 }
 
 function paintLearned(learned) {
-  const line = $("#featLearned");
-  if (!line) return;
-  line.hidden = !learned;
-  if (learned) line.textContent = learnedWords(learned);
+  const box = $("#featLearned");
+  if (!box) return;
+  box.hidden = !learned;
+  if (!learned) return;
+  const total = learnedTotal(learned);
+  const when = learnedPeriod(learned.days || 7);
+  $("#featLearnedSum").textContent = total
+    ? `Learned ${total} thing${total === 1 ? "" : "s"} ${when}`
+    : `Nothing learned ${when}`;
+  const list = $("#featLearnedList");
+  list.textContent = "";
+  learnedLines(learned).forEach((t) => list.appendChild(el("li", null, t)));
+  // Nothing to open: the sentence is the whole of it.
+  box.classList.toggle("empty", !total);
+  if (!total) box.open = false;
 }
 
 async function loadFeatures() {
