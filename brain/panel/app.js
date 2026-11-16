@@ -2621,7 +2621,7 @@ function noteChatHandoffs() {
     if (!j || !j.to_chat || handedToChat.has(jid)) return;
     handedToChat.add(jid);
     if (!handoffPrimed) return;
-    if (j.to_chat === "-") {
+    if (j.to_chat === "from_chat") {
       toast("That was not about the house, so no report was made — it stays in Ask.");
       return;
     }

@@ -28,7 +28,8 @@ back before the capture. `redact` removes, in this order:
 * credentials: `upstream.scrub`'s rules, a password field's value, and
   anything key-shaped (a long mixed-case-and-digit run, a long hex run);
 * addresses: a street address, a postcode beside a state or town, an
-  email address, a phone number, a pair of coordinates;
+  email address, a phone number, a pair of coordinates, and a network
+  address (IPv4, IPv6 or MAC, through `upstream.scrub`);
 * then the loop's own aliases, so a room or a lamp is called what the
   issue text calls it.
 

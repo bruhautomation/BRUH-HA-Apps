@@ -23,7 +23,7 @@ import reports
 from textclip import clip, shorten
 
 from . import STREAMS
-from .plaintext import plain
+from .plaintext import plain, without_addresses
 from .siblings import PRODUCTS
 
 # The owner's own words are the requirement, so they keep a generous limit
@@ -1191,8 +1191,10 @@ def screen_targets(name: str, screens: list) -> str:
 def _said(value, limit: int) -> str:
     """One field as the screen says it, cut by whole sentence: a "…" the
     review reads was this block's own cut, and it reported it as brAIn
-    cutting lists (#1086)."""
-    return shorten(" ".join(str(value or "").split()), limit)
+    cutting lists (#1086). No network address: a finding's step keeps the
+    one it acts on for the household, and that stays in the house."""
+    return shorten(without_addresses(" ".join(str(value or "").split())),
+                   limit)
 
 
 def design_context(insights: list, findings: list) -> str:

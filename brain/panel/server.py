@@ -6350,14 +6350,12 @@ async def _generate(insight_id: str) -> None:
         # typed field that the question is not about the house (either
         # path, the snapshot fallback too, #1135): not a card, however it
         # got here. A transcript that cannot be found proves nothing.
-        not_house = obj.get("about_house") is False or (
-            # An asked card with no reading, no chart and nothing filed
-            # or offered is an answer in words only: that is a chat
-            # reply, whichever path made it (the snapshot cannot be read
-            # for tool calls).
-            question is not None and not obj.get("highlights")
-            and not str(obj.get("html") or "").strip()
-            and not obj.get("findings") and not obj.get("opportunities"))
+        # A reply that filed or offered something is about the house,
+        # whatever its flag says: what it filed is not dropped. An answer
+        # in words with no tile is still a card (the garage door is shut).
+        not_house = (obj.get("about_house") is False
+                     and not obj.get("findings")
+                     and not obj.get("opportunities"))
         if not not_house and sent and sent.get("gather_mode") == "search":
             sid = str((result.get("meta") or {}).get("session_id") or "")
             reads = (await asyncio.to_thread(
@@ -6366,8 +6364,7 @@ async def _generate(insight_id: str) -> None:
             not_house = reads is not None and card_claims.read_nothing(
                 reads["tools"],
                 {t.rsplit("__", 1)[-1] for t in engine.ANALYST_TOOLS})
-        if not_house:
-            await _not_a_card(insight_id, question, job)
+        if not_house and await _not_a_card(insight_id, question, job):
             return
         # The design system is a stylesheet the card is written against,
         # injected once here rather than re-sent as hex in every prompt.
@@ -6674,35 +6671,46 @@ def _due_stamp(card: dict | None) -> str:
                str(card.get("checked_at") or ""))
 
 
-async def _not_a_card(insight_id: str, question, job: dict) -> None:
-    """A run that read nothing of the house, or said the question is not
-    about it: no card and no card-shaped error box (#1083, #1135).
+async def _not_a_card(insight_id: str, question, job: dict) -> bool:
+    """A run that read nothing of the house, or said in its typed field
+    that the question is not about it: no card and no card-shaped error
+    box (#1083, #1135). Whether it was handled; False means the caller
+    stores the card after all.
 
     An asked question is answered where conversations are, in Ask: a new
-    chat starts with it (unless it came FROM the chat, where its answer
-    already is), and the job ends done with no card, carrying the chat's
-    key so the panel can say where the answer went. A category card is
-    not a fault of brAIn's either: no journal row (the paid run is already
-    in the usage figures), and the backoff keeps a scheduled card from
-    asking again at once."""
-    log.info("insight %s: %s", insight_id, card_claims.NOT_FROM_HOUSE_WHY)
+    chat starts with it, and the job ends done with no card, carrying the
+    chat's key so the panel can say where the answer went. One that came
+    FROM the chat (Save as report) already has its answer there. When the
+    chat cannot be started the answer is not thrown away: the card is
+    stored, so nothing claims an answer that reached nowhere. A category
+    card is not a fault of brAIn's either: no journal row (the paid run
+    is already in the usage figures), and the backoff keeps a scheduled
+    card from asking again at once."""
     if question is None:
+        log.info("insight %s: %s", insight_id, card_claims.NOT_FROM_HOUSE_WHY)
         _note_card_failure(insight_id, card_claims.NOT_FROM_HOUSE_WHY)
         _set_job(insight_id, state="error",
                  error=card_claims.NOT_FROM_HOUSE_WHY)
-        return
-    to_chat = ""
-    if not job.get("from_chat"):
+        return True
+    if job.get("from_chat"):
+        to_chat = "from_chat"
+    else:
         try:
             opened = await _ask_in_chat(
                 str(question), {},
                 title=_ask_title({"title": question}))
             to_chat = str(opened.get("key") or "")
-        except Exception as exc:  # noqa: BLE001 — still no card
-            log.warning("insight %s: could not hand the question to Ask: %s",
-                        insight_id, exc)
+        except Exception as exc:  # noqa: BLE001 — the card stands instead
+            log.warning("insight %s: could not hand the question to Ask, "
+                        "so the card is kept: %s", insight_id, exc)
+            return False
+        if not to_chat:
+            return False
+    log.info("insight %s: %s; answered in Ask", insight_id,
+             card_claims.NOT_FROM_HOUSE_WHY)
     CARD_FAILURES.pop(insight_id, None)
-    _set_job(insight_id, state="done", error="", to_chat=to_chat or "-")
+    _set_job(insight_id, state="done", error="", to_chat=to_chat)
+    return True
 
 
 def _no_fallback(result: dict) -> bool:
