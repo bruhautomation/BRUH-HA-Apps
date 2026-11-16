@@ -189,7 +189,9 @@
       $('#m-type').textContent = state.server_type || '—';
       $('#m-uptime').textContent = stats.uptime_seconds
         ? fmtDuration(stats.uptime_seconds) : '—';
-      $('#m-memory').textContent = state.memory_mb ? `${state.memory_mb} MB` : '—';
+      // What the server is allowed to use; its live use is not measured here.
+      $('#m-memory').textContent = state.memory_mb
+        ? `${state.memory_mb >= 1024 ? `${Math.round(state.memory_mb / 102.4) / 10} GB` : `${state.memory_mb} MB`} allocated` : '—';
       // TPS health colors. 20 is perfect; under ~17 sustained means the
       // server can't keep up. Apply per-cell so the eye can tell which
       // window slipped first.
@@ -1190,13 +1192,31 @@
     });
     const clock = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     const dayOf = (ts) => new Date(ts * 1000).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
-    const row = (ts, label, ref, short) => `
+    const row = (ts, label, ref, short, extra) => `
       <li class="snap">
-        <div class="snap-text"><strong>${esc(short ? clock(ts) : when(ts))}</strong><span class="muted">${esc(label)}</span></div>
+        <div class="snap-text"><strong>${esc(short ? clock(ts) : when(ts))}</strong><span class="muted">${esc(label)}</span>${extra ? `<span class="muted">${esc(extra)}</span>` : ''}</div>
         <button class="btn btn-ghost snap-restore" data-restore="${esc(ref)}" data-when="${esc(when(ts))}">Restore</button>
       </li>`;
     const KINDS = { scheduled: 'Scheduled backup', manual: 'Manual backup', 'before a world change': 'Before a world change' };
     const gitLabel = (c) => KINDS[c.kind] || 'Backup';
+    // A snapshot is only kept when the world changed since the one before it.
+    const gitExtra = (c) => ['world changed', c.players == null ? '' : (c.players === 0 ? 'nobody online' : `${c.players} online`)].filter(Boolean).join(' · ');
+    // Snapshots of one kind within half an hour of each other fold into one line.
+    const clump = (items) => {
+      const out = [];
+      items.forEach((c) => {
+        const last = out[out.length - 1];
+        if (last && last[0].kind === c.kind && last[last.length - 1].ts - c.ts <= 1800) last.push(c);
+        else out.push([c]);
+      });
+      return out;
+    };
+    const rows = (items, short) => clump(items).map((g) => {
+      if (g.length === 1) return row(g[0].ts, gitLabel(g[0]), g[0].sha, short, gitExtra(g[0]));
+      const span = `${clock(g[g.length - 1].ts)} – ${clock(g[0].ts)}`;
+      return `<li class="snap-clump"><details><summary><strong>${esc(span)}</strong> <span class="muted">${esc(gitLabel(g[0]))} · ${g.length} snapshots</span></summary>
+        <ul class="snap-list snap-inner">${g.map((c) => row(c.ts, gitLabel(c), c.sha, true, gitExtra(c))).join('')}</ul></details></li>`;
+    }).join('');
     const renderGit = () => {
       if (!git.length) return '<p class="muted">No git snapshots yet.</p>';
       // The last day stays a plain list; older snapshots fold under their day.
@@ -1208,7 +1228,7 @@
         if (!days.has(d)) days.set(d, []);
         days.get(d).push(c);
       });
-      const list = (items, short) => `<ul class="snap-list">${items.map((c) => row(c.ts, gitLabel(c), c.sha, short)).join('')}</ul>`;
+      const list = (items, short) => `<ul class="snap-list">${rows(items, short)}</ul>`;
       return (recent.length ? list(recent, false) : '')
         + [...days].map(([d, items]) => `<details class="snap-day"><summary>${esc(d)} <span class="muted">· ${items.length} snapshot${items.length === 1 ? '' : 's'}</span></summary>${list(items, true)}</details>`).join('');
     };
@@ -1219,6 +1239,7 @@
     };
 
     host.innerHTML = `
+      <p class="muted snap-note">Restore puts the whole world (and its nether and end) back as it was at that time and restarts the server. Anything built or changed since is lost.</p>
       <h3>Git snapshots</h3>${renderGit()}
       <h3>Archives</h3>${renderArchives()}
     `;
@@ -1594,10 +1615,19 @@
 
   const fmtCount = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
 
+  // A compact mark for the kind, for the items that have no art of their own.
+  const svg = (d) => `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  const KIND_ICON = {
+    plugin: svg('<path d="M9 3v5M15 3v5M6 8h12v4a6 6 0 0 1-12 0zM12 18v3"/>'),
+    mod: svg('<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/>'),
+    datapack: svg('<path d="M12 3l8 4-8 4-8-4zM4 12l8 4 8-4M4 16.5l8 4 8-4"/>'),
+    resourcepack: svg('<rect x="3.5" y="5" width="17" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M4 17l5-4 4 3 3-2 4 3"/>'),
+  };
+
   function iconHtml(item) {
     return item.icon
       ? `<img class="addon-icon" src="${esc(item.icon)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
-      : '<div class="addon-icon addon-icon-blank" aria-hidden="true"></div>';
+      : `<div class="addon-icon addon-icon-kind" aria-hidden="true">${KIND_ICON[item.kind] || KIND_ICON.plugin}</div>`;
   }
 
   // --- the world list ---------------------------------------------------
@@ -1614,7 +1644,7 @@
       actions.push(`<button class="btn" data-world-update="${esc(item.id)}" data-kind="${esc(item.kind)}">Update</button>`);
     }
     {
-      actions.push(`<button class="btn btn-danger" data-world-remove="${esc(item.file)}" data-kind="${esc(item.kind)}" data-title="${esc(item.title)}">Remove</button>`);
+      actions.push(`<button class="btn btn-ghost addon-remove" data-world-remove="${esc(item.file)}" data-kind="${esc(item.kind)}" data-title="${esc(item.title)}">Remove</button>`);
     }
     row.innerHTML = `
       ${iconHtml(item)}

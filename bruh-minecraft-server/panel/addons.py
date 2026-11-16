@@ -607,7 +607,7 @@ BUNDLED_PREFIXES = ("geyser", "floodgate", "viaversion", "viabackwards")
 BUNDLED_DATAPACKS = {"bukkit", "paper", "vanilla", "file"}
 
 STATUS_TEXT = {
-    "active": "Working",
+    "active": "Enabled",
     "restart": "Restart the server to turn it on",
     "next_start": "Turns on when the server starts",
     "unused": "Not in use",
