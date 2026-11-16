@@ -899,7 +899,8 @@
         }
         // Nothing to play on until a speaker is calibrated: the button
         // says so by being off, and the note beside the picker says why.
-        for (const play of row.querySelectorAll('[data-act="play"]')) {
+        for (const play of row.querySelectorAll(
+          '[data-act="play"], [data-act="sync"]')) {
           play.disabled = !haveSpeaker;
         }
         list.appendChild(row);
@@ -1327,13 +1328,16 @@
   }
 
   // Tracks that are clearly the same song under two files, decided from
-  // what the analysis measured and what the files say about themselves —
-  // never from the file names: the same artist and title tags, or the same
-  // length (within a second and a half, which is what two encodes of one
-  // recording differ by) at the same tempo (or half or double of it, which
-  // is how the beat tracker disagrees with itself). The library already
-  // merges byte-identical files; these differ in content. Returns hash ->
-  // the name of the one it matches.
+  // what the files say about themselves and what the analysis measured —
+  // never from the file names. Two tracks are marked when their artist and
+  // title tags both match (letters and digits only, any case), or, when
+  // either has no such tags, when they are the same length to a quarter of
+  // a second (two encodes of one recording differ by hundredths), the same
+  // tempo to half a percent, and heard with the same number of sections
+  // and drops. Tempo and length alone are not enough: real libraries bunch
+  // at 120 and 128 bpm and at three to four minutes. The library already
+  // merges byte-identical files. Returns hash -> the name of the one it
+  // matches.
   function findCopies(tracks) {
     const result = new Map();
     const mark = (a, b) => {
@@ -1341,11 +1345,15 @@
       if (!result.has(a.hash)) result.set(a.hash, displayName(b));
       if (!result.has(b.hash)) result.set(b.hash, displayName(a));
     };
+    const norm = (text) => String(text).toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const tagKey = (t) => {
+      const m = t.summary || {};
+      return m.title && m.artist ? norm(m.artist) + "|" + norm(m.title) : "";
+    };
     const tagged = new Map();
     for (const t of tracks) {
-      const s = t.summary || {};
-      if (!s.title || !s.artist) continue;
-      const key = (s.artist + "|" + s.title).toLowerCase();
+      const key = tagKey(t);
+      if (!key) continue;
       if (tagged.has(key)) mark(tagged.get(key), t); else tagged.set(key, t);
     }
     const timed = tracks.filter((t) => t.summary && t.summary.duration
@@ -1354,9 +1362,10 @@
       for (let j = i + 1; j < timed.length; j++) {
         const x = timed[i].summary;
         const y = timed[j].summary;
-        if (y.duration - x.duration > 1.5) break;
-        const ratio = x.bpm / y.bpm;
-        if ([1, 2, 0.5].some((k) => Math.abs(ratio / k - 1) < 0.02)) {
+        if (y.duration - x.duration > 0.25) break;
+        if (tagKey(timed[i]) && tagKey(timed[j])) continue;
+        if (Math.abs(x.bpm / y.bpm - 1) < 0.005 &&
+            x.sections === y.sections && x.drops === y.drops) {
           mark(timed[i], timed[j]);
         }
       }
