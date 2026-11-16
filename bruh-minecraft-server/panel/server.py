@@ -792,9 +792,30 @@ def _detect_crash(state: dict) -> dict | None:
     return {"excerpt": excerpt, "log_size": log_path.stat().st_size}
 
 
+_JOINED_RE = re.compile(r"INFO\]: ([A-Za-z0-9_.*]{1,16}) joined the game$", re.M)
+
+
+def _joined_in_log(tail: int = 400_000) -> set[str]:
+    """Names the console log shows joining (a Bedrock player comes in through
+    Floodgate and may not be in usercache.json)."""
+    try:
+        with open(MC_CONSOLE_LOG, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - tail))
+            text = f.read().decode("utf-8", "replace")
+    except OSError:
+        return set()
+    return set(_JOINED_RE.findall(text))
+
+
 def _known_players(online: list) -> list[dict]:
     """Everyone the server's own files know: who has joined (usercache.json),
-    is whitelisted, is an operator or is banned, each with their current roles."""
+    is whitelisted or an operator, or is banned, each with their current roles.
+
+    A name the poller read from the server's `/list` reply or a status ping is
+    "online" only when the server's files also know it: a player who joins is
+    written to usercache.json by the server itself, so a name parsed from
+    text that no file knows is a misread, not a player."""
     def names(fname: str) -> list[str]:
         data = _read_json(MC_SERVER_DIR / fname, [])
         return [str(e["name"]) for e in data
@@ -803,13 +824,13 @@ def _known_players(online: list) -> list[dict]:
 
     ops, white, banned = set(names("ops.json")), set(names("whitelist.json")), \
         set(names("banned-players.json"))
-    seen = set(names("usercache.json"))
-    online_set = {str(n) for n in online}
-    everyone = {*seen, *ops, *white, *banned, *online_set}
+    seen = set(names("usercache.json")) | _joined_in_log()
+    on_file = seen | ops | white | banned
+    online_set = {str(n) for n in online} & on_file
     out = [{
         "name": n, "op": n in ops, "whitelisted": n in white,
         "banned": n in banned, "online": n in online_set,
-    } for n in everyone if VALID_PLAYER_NAME.match(n)]
+    } for n in on_file if VALID_PLAYER_NAME.match(n)]
     out.sort(key=lambda p: (not p["online"], p["name"].lower()))
     return out
 
@@ -1357,9 +1378,11 @@ async def api_backups_list(_: web.Request) -> web.Response:
                 # The commit body carries "Kind: scheduled | manual | before a
                 # world change" (older snapshots have none: kind stays "").
                 kind = re.search(r"^Kind: (.{1,40})$", parts[3], re.M)
+                on = re.search(r"^Players online at backup: (\d{1,4})$", parts[3], re.M)
                 result["git"].append({
                     "sha": parts[0], "ts": int(parts[1]), "subject": parts[2],
                     "kind": kind.group(1) if kind else "",
+                    "players": int(on.group(1)) if on else None,
                 })
 
     archives_dir = MC_BACKUP_DIR / "archives"

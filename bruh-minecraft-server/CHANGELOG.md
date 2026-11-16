@@ -5,6 +5,17 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.19.13
+
+### Fixed
+
+- On a phone every tab fits or visibly scrolls: "Server Properties" is now "Properties" (#1110).
+- Add-ons without their own picture show a small icon for their kind instead of a blank box, the status pill reads "Enabled" on a solid background, and Remove is a quieter outlined button (#1111).
+- The dashboard's memory says what it is: "4 GB allocated" (#1112).
+- "Tune for my hardware" has room above it and a line saying what it does: it suggests memory and view distance, and you confirm first (#1113).
+- Backups taken within half an hour of each other fold into one line, each says whether the world changed and how many players were on, and the list says what Restore replaces (#1114).
+- The Players tab lists only names the server knows, from its own player files and join log, so a word from a command reply such as "list" no longer appears as a player (#1115).
+
 ## 1.19.12
 
 ### Changed

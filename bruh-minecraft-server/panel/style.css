@@ -756,6 +756,10 @@ footer {
   white-space: pre-wrap;
 }
 
+/* Tune button: room above it, and one line on what it does. */
+#btn-tune { margin-top: 14px; }
+.tune-hint { margin: 6px 0 0; font-size: 13px; }
+
 /* Smart performance hint under the TPS card */
 .perf-hint {
   margin: 10px 0 0;
@@ -916,7 +920,8 @@ footer {
 }
 .addon-head { display: flex; gap: 10px; align-items: center; min-width: 0; }
 .addon-icon { width: 40px; height: 40px; border-radius: 8px; flex: none; object-fit: cover; }
-.addon-icon-blank { background: var(--bg-raise); }
+.addon-icon-kind { background: var(--bg-raise); color: var(--muted); display: flex; align-items: center; justify-content: center; }
+.addon-remove { color: var(--danger-ink); font-size: 13px; }
 .addon-title { display: flex; flex-direction: column; min-width: 0; }
 .addon-title strong, .addon-title .muted { overflow-wrap: anywhere; }
 .addon-title .muted { font-size: 12px; }
@@ -947,8 +952,9 @@ footer {
 .addon-row .addon-note { grid-column: 2 / -1; }
 /* Status is said in words; the colour only reinforces it. */
 .addon-status {
-  justify-self: end; white-space: nowrap; font-size: 12px; font-weight: 600;
+  justify-self: end; white-space: nowrap; font-size: 13px; font-weight: 600;
   padding: 3px 10px; border-radius: 999px; border: 1px solid currentColor;
+  background: var(--bg-raise);
 }
 .addon-status-active { color: var(--accent-ink); }
 .addon-status-restart { color: var(--warn-ink); }
@@ -1145,3 +1151,10 @@ input[type="file"]::file-selector-button {
   font: inherit; font-size: 16px; min-height: 44px; padding: 8px 16px; margin-right: 12px;
   background: var(--bg-raise); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
 }
+
+/* Backups: snapshots minutes apart fold into one line; the rows inside sit flat. */
+.snap-clump { border-bottom: 1px solid var(--border); list-style: none; }
+.snap-clump:last-child { border-bottom: none; }
+.snap-clump summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 12px; flex-wrap: wrap; }
+.snap-inner { margin: 0; border: none; border-top: 1px solid var(--border); border-radius: 0; background: var(--bg-raise); }
+.snap-note { margin: 0 0 8px; }
