@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.12
+
+### Changed
+
+- Harvest, Crops, Weather and Today now share one season rule: crops that are dormant or past harvest are left out of "Still developing" and counted in one line as off season, the same way Crops shows them (#1090).
+- The 7-day forecast's chip uses the same rule as the banner and says when: "Spray 3–7 pm", "Short 4–5 pm" for a window under three hours, or nothing when no spray is due (#1092).
+- Each crop card on Crops is one compact row; spray lines say when the next spray is due ("Fungicide: next due Dec 3") and are left off for resting crops, with one line at the top saying what resting means (#1095).
+- Log Harvest sits in the picks log's header instead of floating over the last row (#1093).
+
+### Fixed
+
+- A resting garden is never told "Water now": in cool weather it gets a quiet "No watering needed while the garden rests", or "Check the soil before winter" after a dry spell, and each watering card gives one instruction. Today shows a one-line rain summary that links to Weather instead of the whole card twice (#1091).
+- The stock search box is 44px tall with 16px text and the sort chips 40px on a phone; the stock card colours red exactly what it counts as running low, and says where that line is (20% or less) (#1094).
+
 ## 0.1.11
 
 ### Changed
