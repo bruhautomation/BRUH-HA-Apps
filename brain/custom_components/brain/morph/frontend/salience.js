@@ -55,6 +55,27 @@ const isClosure = (st) => {
 };
 const isOpenState = (st) => !!st && ['on', 'open', 'opening', 'unlocked', 'unlocking'].includes(st.state);
 
+// A lock's own door sensor that reads open while its door's dedicated
+// contact sensor reads closed and the lock is locked is the sensor, not the
+// door (#1130). Which sensor and contact are one door is brAIn's to say,
+// from the registries (`feed.door_pairs`, `closures.door_pairs`); this is
+// the same rule as `closures.outvoted`, read against the live states. The
+// states handed back carry that sensor as closed and nothing else changed;
+// a contact that reads open is never outvoted.
+export function trustDoors(states, pairs) {
+  if (!states || !pairs) return states;
+  let out = null;
+  Object.keys(pairs).forEach((sensor) => {
+    const p = pairs[sensor] || {};
+    const s = states[sensor]; const c = states[p.contact]; const l = states[p.lock];
+    if (s && s.state === 'on' && c && c.state === 'off' && l && l.state === 'locked') {
+      out = out || { ...states };
+      out[sensor] = { ...s, state: 'off', outvoted_by: p.contact };
+    }
+  });
+  return out || states;
+}
+
 // ---------------------------------------------------------------- periods
 
 // Minutes since local midnight.

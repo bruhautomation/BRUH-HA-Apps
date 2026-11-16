@@ -296,6 +296,18 @@ def fit_loss(points: list[tuple[float, float]]) -> dict | None:
     return fit_loss_why(points)[0]
 
 
+# Why a reading has no model when it does not follow outdoors at night. A
+# constant, so `build` files it as `held` by identity, never by its words.
+NOT_COOLING = ("it did not cool faster on colder nights: something heats it "
+               "at night, or the outdoor reference does not describe it")
+# What `unmeasured[eid]["kind"]` says, for the readers that must know a
+# thermometer is not a room's air (`checks._util.House.room_air_verdict`):
+# `marked` the owner said so, `not_air` it is a machine's, outdoors or a
+# derived figure, `held` something keeps it warm at night. A reason with no
+# kind (too few nights, no reading) is no verdict about the air.
+UNMEASURED_KINDS = ("marked", "not_air", "held")
+
+
 def fit_loss_why(points: list[tuple[float, float]]) -> tuple[dict | None, str]:
     """`fit_loss`, with the sentence saying why when there is no fit."""
     import baselines  # noqa: PLC0415 — panel-local, and this module is
@@ -320,9 +332,7 @@ def fit_loss_why(points: list[tuple[float, float]]) -> tuple[dict | None, str]:
         # A room that warms as it gets colder outside is not a room this
         # can describe: something is heating it, or the reference is not
         # outdoors. Either way the honest answer is no model.
-        return None, ("it did not cool faster on colder nights: something "
-                      + "heats it at night, or the outdoor reference does "
-                      + "not describe it")
+        return None, NOT_COOLING
     tau = 1.0 / k
     if not (MIN_TAU_H <= tau <= MAX_TAU_H):
         return None, (f"the fit gave a time constant of {tau:.1f} hours, "
@@ -1224,7 +1234,8 @@ def room_candidates(states: dict, outdoor: str, unit: str,
 
 
 def room_candidates_why(states: dict, outdoor: str, unit: str,
-                        areas: dict | None = None, world=None
+                        areas: dict | None = None, world=None,
+                        marked=frozenset(), kinds: dict | None = None
                         ) -> tuple[list[str], dict[str, str]]:
     """`room_candidates`, and why each thermometer IN A ROOM was left out.
 
@@ -1232,18 +1243,29 @@ def room_candidates_why(states: dict, outdoor: str, unit: str,
     somebody can ask about by name, and "no measured room by that name"
     is the wrong answer about a room with a thermometer in it. A sensor
     with no area, or one in the garden, is not a room to explain.
+
+    ``marked`` are the sensors the owner said do not measure the room's
+    air (`exception:room_air`); ``kinds``, when handed a dict, is filled
+    with `UNMEASURED_KINDS` for the ones left out for what they ARE.
     """
     areas = areas or {}
+    kinds = {} if kinds is None else kinds
     out = []
     why: dict[str, str] = {}
     for eid, st, own in _temperature_sensors(states):
         if eid == outdoor:
             continue
         room = areas.get(eid) and not _area_is_outdoors(areas[eid])
+        if eid in marked:
+            if room:
+                why[eid] = "you said it does not measure the room's air"
+                kinds[eid] = "marked"
+            continue
         if _looks_outdoor(eid, st, world):
             if room:
                 why[eid] = ("its name says it is outdoors, so it is read as "
                             "an outdoor thermometer rather than a room")
+                kinds[eid] = "not_air"
             continue
         # A dew point sitting in a room's area reads inside the band and
         # carries the class, so the band alone lets one through as a room.
@@ -1251,10 +1273,12 @@ def room_candidates_why(states: dict, outdoor: str, unit: str,
             if room:
                 why[eid] = ("it is a derived reading (a dew point, a "
                             "feels-like), not the temperature of the room")
+                kinds[eid] = "not_air"
             continue
         if _measures_a_machine(eid, st, world):
             if room:
                 why[eid] = "it measures a machine, not the room"
+                kinds[eid] = "not_air"
             continue
         if own != unit:
             if room:
@@ -1418,6 +1442,21 @@ async def fetch_hourly(session, ids: list[str], now: float,
     return out if answered else None
 
 
+def marked_not_air() -> frozenset:
+    """The sensors the owner said do not measure the room's air, off the
+    facts store (`exception:room_air`). Unreadable is none marked: the
+    checks read the same mark live, so a missed one here is one night."""
+    try:
+        import facts_store  # noqa: PLC0415 — panel-local
+        from checks._util import ROOM_AIR_RULE  # noqa: PLC0415
+        return frozenset(eid for eid, rules in
+                         facts_store.exception_map().items()
+                         if ROOM_AIR_RULE in rules)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("thermal: could not read the room-air marks: %s", exc)
+        return frozenset()
+
+
 async def build(session, states: dict, registries: dict | None = None,
                 now: float | None = None, path: str | None = None,
                 world: dict | None = None) -> dict:
@@ -1471,10 +1510,12 @@ async def build(session, states: dict, registries: dict | None = None,
         save(payload, path)
         return payload
 
-    ids, left_out = room_candidates_why(states, outdoor, unit, areas, world)
+    kinds: dict[str, str] = {}
+    ids, left_out = room_candidates_why(states, outdoor, unit, areas, world,
+                                        marked=marked_not_air(), kinds=kinds)
     payload["asked"] = len(ids)
 
-    def _not_measured(eid: str, reason: str) -> None:
+    def _not_measured(eid: str, reason: str, kind: str = "") -> None:
         # Why a room somebody might ask about by name has no model — the
         # one answer "no measured room by that name" could never give.
         if len(payload["unmeasured"]) >= UNMEASURED_MAX:
@@ -1484,9 +1525,11 @@ async def build(session, states: dict, registries: dict | None = None,
         payload["unmeasured"][eid] = {
             "name": str(name or "")[:60], "area": areas.get(eid) or "",
             "reason": reason}
+        if kind:
+            payload["unmeasured"][eid]["kind"] = kind
 
     for eid, reason in sorted(left_out.items()):
-        _not_measured(eid, reason)
+        _not_measured(eid, reason, kinds.get(eid, ""))
     if not ids:
         payload["reason"] = (
             "no indoor temperature sensor in an area reports in "
@@ -1524,12 +1567,12 @@ async def build(session, states: dict, registries: dict | None = None,
         # left out by what it does, whatever it is called (`equipment_jumps`).
         jumps = equipment_jumps(rows.get(eid) or [], tz, unit)
         if jumps:
-            _not_measured(eid, jumps)
+            _not_measured(eid, jumps, "not_air")
             continue
         entry, why = build_room_why(rows.get(eid) or [], outdoor_rows, tz,
                                     unit)
         if not entry:
-            _not_measured(eid, why)
+            _not_measured(eid, why, "held" if why == NOT_COOLING else "")
             continue
         name = ((states.get(eid) or {}).get("attributes") or {}).get(
             "friendly_name")
@@ -1557,5 +1600,6 @@ __all__ = [
     "in_room_band", "is_night", "is_stale", "load", "normalise_unit",
     "OUTDOOR_TRIALS", "choose_outdoor", "daily_swing", "rank_outdoor",
     "percentile", "pick_outdoor", "progress", "recent_fall",
-    "room_candidates", "room_candidates_why", "save",
+    "room_candidates", "room_candidates_why", "save", "NOT_COOLING",
+    "UNMEASURED_KINDS", "marked_not_air",
 ]

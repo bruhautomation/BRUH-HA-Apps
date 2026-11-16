@@ -251,7 +251,8 @@ def people_rows(states) -> dict:
 
 def build_feed(*, now: float, tz, tz_name: str, baselines_store=None,
                closures_store=None, usual_open=None, rhythm_profile=None,
-               routines=None, states=None, appliances=None) -> dict:
+               routines=None, states=None, appliances=None,
+               door_pairs=None) -> dict:
     """The feed, out of whatever the panel could read.
 
     A store that could not be read is handed in as None and its key is
@@ -273,6 +274,16 @@ def build_feed(*, now: float, tz, tz_name: str, baselines_store=None,
         feed["people"] = people_rows(states)
     if appliances is not None:
         feed["appliances"] = appliances
+    # Each lock's own door sensor and its door's contact sensor
+    # (`closures.door_pairs`): Morph reads the live states against them
+    # (`salience.trustDoors`), so a locked door the contact says is shut is
+    # not "open at night" because the lock's sensor misreads it (#1130).
+    if door_pairs:
+        feed["door_pairs"] = {
+            str(k): {"lock": str(v.get("lock") or ""),
+                     "contact": str(v.get("contact") or "")}
+            for k, v in sorted(door_pairs.items())[:MAX_DOORS]
+            if isinstance(v, dict)}
     return feed
 
 

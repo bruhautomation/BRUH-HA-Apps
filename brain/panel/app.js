@@ -6509,10 +6509,11 @@ function openNoteForm(card, actions, onSend, opts) {
   // Optional boxes beside the note, for the one ending that has more to
   // say: "Stop raising this about <it>" (this rule, this thing — chosen by
   // the press, never read off the words typed above it), "Stop watching
-  // <it>" (the thing, for every rule) and "Ignore all like this" (the rule,
-  // for every thing). `opts.pair`, `opts.watch` and `opts.check` are their
-  // labels; what they send ride back to `onSend` as the third, fourth and
-  // fifth arguments.
+  // <it>" (the thing, for every rule), "Ignore all like this" (the rule,
+  // for every thing) and "<It> doesn't read the room's air" (a
+  // thermometer's placement, for every room and heat judgment). `opts.pair`,
+  // `opts.watch`, `opts.check` and `opts.air` are their labels; what they
+  // send ride back to `onSend` as the third to sixth arguments.
   const tick = (label) => {
     if (!label) return null;
     const line = el("label", "findnotecheck");
@@ -6524,6 +6525,7 @@ function openNoteForm(card, actions, onSend, opts) {
     return box;
   };
   const pair = tick(opts.pair);
+  const air = tick(opts.air);
   const watch = tick(opts.watch);
   const check = tick(opts.check);
   const row = el("div", "findnoteactions");
@@ -6540,7 +6542,8 @@ function openNoteForm(card, actions, onSend, opts) {
   send.addEventListener("click", () => {
     send.disabled = cancel.disabled = true;
     onSend(ta.value.trim(), [send, cancel], !!(check && check.checked),
-      !!(watch && watch.checked), !!(pair && pair.checked));
+      !!(watch && watch.checked), !!(pair && pair.checked),
+      !!(air && air.checked));
   });
   cancel.addEventListener("click", () => {
     form.remove();
@@ -7385,7 +7388,7 @@ async function refreshToday() {
 }
 
 async function runAnswer(row, answer, btns, note, ignoreAll, change, stopWatching,
-                         stopRaising) {
+                         stopRaising, notRoomAir) {
   const finding = caseAsFinding(row);
   if (answer.verb === "recheck" && finding) {
     return recheckFinding(finding, btns, btns.find((b) => b.dataset.verb === "recheck"));
@@ -7405,6 +7408,12 @@ async function runAnswer(row, answer, btns, note, ignoreAll, change, stopWatchin
       // which then carries it instead of reading the note as "not now".
       await api(`api/finding/${finding.ts}/stop_raising`, {
         method: "POST", body: JSON.stringify({ note: note || "" }) });
+    }
+    // The thermometer's placement: written before the Ignore too, so the
+    // Ignore's Undo takes it back with the report it was written under.
+    if (notRoomAir && finding) {
+      const got = await api(`api/finding/${finding.ts}/not_room_air`, { method: "POST" });
+      watched += ` — and brAIn no longer reads ${got.name || "it"} as a room's air`;
     }
     const data = await api(answer.route.replace(/^\//, ""), {
       method: answer.method || "POST",
@@ -7449,8 +7458,8 @@ function caseThingName(row) {
 function askThenRun(row, answer, btns) {
   const ignore = IGNORE_VERBS.has(answer.verb) && answer.verb !== "no";
   openNoteForm(btns.card, btns.actions,
-    (text, formBtns, all, watch, pair) => runAnswer(row, answer, btns.concat(formBtns),
-      text, all, undefined, watch, pair), {
+    (text, formBtns, all, watch, pair, air) => runAnswer(row, answer, btns.concat(formBtns),
+      text, all, undefined, watch, pair, air), {
       hint: answer.ask || (ignore ? "Why? (helps brAIn learn)"
         : answer.verb === "no" ? "Why not? (helps brAIn learn)" : "Optional."),
       placeholder: answer.placeholder || answer.prefill
@@ -7464,6 +7473,9 @@ function askThenRun(row, answer, btns) {
         ? `Stop raising this about ${caseThingName(row)}` : "",
       watch: ignore && answer.verb === "wrong" && row.watch_off
         ? `Stop watching ${caseThingName(row)}: no check looks at it again` : "",
+      // On a report that judged a room by one thermometer (`room_air_off`).
+      air: ignore && answer.verb === "wrong" && row.room_air_off
+        ? `${caseThingName(row)} doesn't measure the room's air: leave it out of room and heat checks` : "",
       chips: ignore ? answer.chips || [] : [],
     });
 }
@@ -9548,6 +9560,7 @@ function makeFactRow(f) {
   if (f.predicate && String(f.predicate).startsWith("exception:")) {
     const rule = String(f.predicate).slice(10);
     bits.push(rule === "*" ? "no house check looks at it or its device"
+      : rule === "room_air" ? "not read as a room's air or for heat"
       : "stands " + rule + " down");
   }
   detail.appendChild(el("span", null, bits.filter(Boolean).join(" · ")));

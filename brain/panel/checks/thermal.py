@@ -177,8 +177,10 @@ def _room_air(house: House, rooms: dict, check_id: str) -> dict:
     the check, so a store built before cannot carry one in: a reading filed
     as the device's own, or one on a device that is a manifold, a coil, a
     pipe or a tank (`thermal.on_a_machine`), or a printer's or a computer's
-    (`devices.machine_of`). Each left out is one `explained` trail line.
-    Not read by `climate.freeze`: a pipe heading for freezing is still news.
+    (`devices.machine_of`), or one the owner marked as not measuring the
+    room's air (`House.room_air_verdict`). Each left out is one `explained`
+    trail line. Not read by `climate.freeze`: a pipe heading for freezing is
+    still news (it skips the owner's mark alone, `freezing_rooms`).
     """
     import thermal  # noqa: PLC0415 — panel-local, like every other check
 
@@ -186,6 +188,12 @@ def _room_air(house: House, rooms: dict, check_id: str) -> dict:
 
     out = {}
     for eid, entry in rooms.items():
+        kind, said = house.room_air_verdict(eid)
+        if kind in ("marked", "not_air"):
+            house.gave_up(check_id, [{"entity_id": eid}],
+                          f"{said}, so it is not read as a room",
+                          kind="explained")
+            continue
         why = thermal.on_a_machine(house.registry.get(eid),
                                    house.device_of(eid))
         if not why and devices.machine_of(house, eid):
@@ -666,8 +674,14 @@ def freezing_rooms(snap: dict, now: float) -> list[dict]:
         # to forecast — and `hours_to_fall` says so structurally.
         return []
 
+    house = House(snap)
     out = []
     for eid, entry in sorted(rooms.items()):
+        # A probe on a pipe is still read here, on purpose; a sensor the
+        # owner said does not measure the room's air (#1082: a manifold
+        # they called broken, a thermometer inside a box) is not.
+        if house.room_air_verdict(eid)[0] == "marked":
+            continue
         rows = recent.get(eid) or []
         seen = thermal.latest(rows)
         if seen is None or not entry.get("k"):
@@ -904,10 +918,24 @@ def _frost_kind(house: House, eid: str, conditioned: set[str],
                or reg.get("original_device_class") or "") != "temperature":
             return ""
         area_id = house.area_id_of(eid)
-        if eid in said_cold["entities"] or (area_id and area_id in said_cold["areas"]):
-            return "space"
-        if area_id and area_id not in conditioned and _COLD_SPACE_WORDS.search(area):
-            return "space"
+        if not ((eid in said_cold["entities"]
+                 or (area_id and area_id in said_cold["areas"]))
+                or (area_id and area_id not in conditioned
+                    and _COLD_SPACE_WORDS.search(area))):
+            return ""
+        # A thermometer is the evidence a space is there and cold. One the
+        # owner said does not read the room's air, one the heat model found
+        # is a machine's, and one it found something keeps warm at night
+        # are not that evidence (#1131): a room whose only thermometers are
+        # those is not named. One the model merely lacked nights for still
+        # counts — a cold garage is exactly what this warns about.
+        kind, said = house.room_air_verdict(eid)
+        if kind:
+            house.gave_up(FROST_CHECK, [{"entity_id": eid}],
+                          f"{said}, so it is not evidence of a space that "
+                          "gets cold", kind="explained")
+            return ""
+        return "space"
     return ""
 
 

@@ -414,8 +414,103 @@ async def build(session, states: dict, now: float | None = None,
     return payload
 
 
+# ---------------------------------------------------------------------------
+# A lock's own door sensor, and a dedicated contact on the same door
+# ---------------------------------------------------------------------------
+#
+# Many smart locks publish a door sensor of their own beside the lock, and
+# one fitted or calibrated wrong reads open on a shut door all night. A
+# house that also has a dedicated contact sensor on that door has the
+# answer, and brAIn went on believing the lock's (#1130): the bedtime check,
+# the house summary and Morph's night page all said the door was open.
+#
+# "The same door" is decided from the registries, never from names: the
+# lock's sensor is the one door-class binary sensor on the device that
+# carries the lock, and its partner is the one door-class binary sensor in
+# that area on a device of its own that carries no lock. Two locks with
+# door sensors in one area, or two contacts, and nothing is paired: a guess
+# about which door is which is the one way this could hide an open door.
+PAIR_CLASSES = frozenset({"door", "opening"})
+
+
+def door_pairs(states: dict, entities, devices) -> dict[str, dict]:
+    """``{lock_door_sensor: {"lock", "contact"}}`` for the doors whose
+    lock's own sensor has a dedicated contact sensor beside it."""
+    states = states or {}
+    dev_area = {str(d.get("id")): str(d.get("area_id") or "")
+                for d in devices or () if isinstance(d, dict) and d.get("id")}
+    rows = {str(r["entity_id"]): r for r in entities or ()
+            if isinstance(r, dict) and r.get("entity_id")
+            and not r.get("disabled_by")}
+
+    def area(row: dict) -> str:
+        return str(row.get("area_id") or dev_area.get(
+            str(row.get("device_id") or ""), "") or "")
+
+    def door_class(eid: str, row: dict) -> bool:
+        attrs = (states.get(eid) or {}).get("attributes") or {}
+        klass = (attrs.get("device_class") or row.get("device_class")
+                 or row.get("original_device_class") or "")
+        return eid.startswith("binary_sensor.") and str(klass) in PAIR_CLASSES
+
+    by_device: dict[str, list[str]] = {}
+    for eid, row in rows.items():
+        if row.get("device_id"):
+            by_device.setdefault(str(row["device_id"]), []).append(eid)
+    built_in: list[tuple[str, str, str]] = []
+    lock_devices: set[str] = set()
+    for device, eids in by_device.items():
+        locks = [e for e in eids if e.startswith("lock.")]
+        if not locks:
+            continue
+        lock_devices.add(device)
+        sensors = [e for e in eids if door_class(e, rows[e])]
+        if len(locks) == 1 and len(sensors) == 1:
+            built_in.append((sensors[0], locks[0],
+                             area(rows[sensors[0]]) or area(rows[locks[0]])))
+    contacts: dict[str, list[str]] = {}
+    for eid, row in rows.items():
+        device = str(row.get("device_id") or "")
+        if device and device not in lock_devices and door_class(eid, row):
+            where = area(row)
+            if where:
+                contacts.setdefault(where, []).append(eid)
+    per_area: dict[str, int] = {}
+    for _sensor, _lock, where in built_in:
+        per_area[where] = per_area.get(where, 0) + 1
+    out: dict[str, dict] = {}
+    for sensor, lock, where in sorted(built_in):
+        if not where or per_area.get(where) != 1:
+            continue
+        found = contacts.get(where) or []
+        if len(found) == 1:
+            out[sensor] = {"lock": lock, "contact": found[0]}
+    return out
+
+
+def _state_of(states, eid: str) -> str:
+    st = (states or {}).get(eid) or {}
+    return str(st.get("state") or "").lower()
+
+
+def outvoted(states: dict, pairs: dict | None) -> dict[str, dict]:
+    """The lock door sensors to read as SHUT now: the sensor says open,
+    its door's dedicated contact says shut, and the lock is locked. A
+    contact that says open is never outvoted — that door is open."""
+    out: dict[str, dict] = {}
+    for sensor, pair in (pairs or {}).items():
+        if not isinstance(pair, dict):
+            continue
+        if (_state_of(states, sensor) == "on"
+                and _state_of(states, pair.get("contact")) == "off"
+                and _state_of(states, pair.get("lock")) == "locked"):
+            out[sensor] = pair
+    return out
+
+
 __all__ = [
     "HISTORY_DAYS", "MAX_ENTITIES", "MIN_BUCKETS", "MIN_OBSERVED_S", "STORE",
-    "build", "build_entity", "candidates", "fetch_history", "is_closure",
+    "PAIR_CLASSES", "build", "build_entity", "candidates", "door_pairs",
+    "fetch_history", "is_closure", "outvoted",
     "load", "progress", "save", "spread_interval", "usual_open",
 ]
