@@ -808,23 +808,42 @@ def _joined_in_log(tail: int = 400_000) -> set[str]:
     return set(_JOINED_RE.findall(text))
 
 
-def _known_players(online: list) -> list[dict]:
-    """Everyone the server's own files know: who has joined (usercache.json),
-    is whitelisted or an operator, or is banned, each with their current roles.
+def _played_uuids() -> set[str] | None:
+    """The UUIDs that have player data in any world here (`playerdata/`,
+    or `players/data/` from 26.1): the people who have actually been in a
+    world. None when no world has the folder yet (nothing to go by)."""
+    found: set[str] | None = None
+    for pattern in ("*/playerdata/*.dat", "*/players/data/*.dat"):
+        for path in MC_SERVER_DIR.glob(pattern):
+            found = found if found is not None else set()
+            found.add(path.stem.lower())
+    return found
 
-    A name the poller read from the server's `/list` reply or a status ping is
-    "online" only when the server's files also know it: a player who joins is
-    written to usercache.json by the server itself, so a name parsed from
-    text that no file knows is a misread, not a player."""
-    def names(fname: str) -> list[str]:
+
+def _known_players(online: list) -> list[dict]:
+    """Everyone the server's own files know: who has played here, is
+    whitelisted or an operator, or is banned, each with their current roles.
+
+    usercache.json is not a list of players: the server also writes to it
+    every name a command looked up (`op list`, `whitelist add list`), so
+    the word "list" became a row (#1180). A name there counts when its UUID
+    has player data in a world, or the console log shows it joining (a
+    Bedrock player through Floodgate). A name the poller read from the
+    server's `/list` reply or a status ping is "online" only when it is
+    known this way too."""
+    def entries(fname: str) -> list[dict]:
         data = _read_json(MC_SERVER_DIR / fname, [])
-        return [str(e["name"]) for e in data
-                if isinstance(e, dict) and isinstance(e.get("name"), str)] \
+        return [e for e in data if isinstance(e, dict) and isinstance(e.get("name"), str)] \
             if isinstance(data, list) else []
+
+    def names(fname: str) -> list[str]:
+        return [str(e["name"]) for e in entries(fname)]
 
     ops, white, banned = set(names("ops.json")), set(names("whitelist.json")), \
         set(names("banned-players.json"))
-    seen = set(names("usercache.json")) | _joined_in_log()
+    played = _played_uuids()
+    seen = {str(e["name"]) for e in entries("usercache.json")
+            if played is None or str(e.get("uuid") or "").lower() in played} | _joined_in_log()
     on_file = seen | ops | white | banned
     online_set = {str(n) for n in online} & on_file
     out = [{
