@@ -348,8 +348,28 @@ export class Engine {
           run.forEach((g) => {
             let b = 0; load.forEach((l, i) => { if (l < load[b]) b = i; });
             load[b] += Math.ceil(g.items.reduce((a, it) => a + Math.min(span(it, w), wd[b]), 0) / wd[b]) + (g.label ? 0.4 : 0);
-            parts.push({ g: g, c0: st[b], bw: wd[b] });
+            parts.push({ g: g, c0: st[b], bw: wd[b], b: b });
           });
+          // A band is as wide as its groups' own tiles (#1191). A compact
+          // tile is exactly one column and never stretches, so two of them in
+          // a three-column band (beside a card that stretched to the band's
+          // width) left an empty column BETWEEN that group and the next one,
+          // which read as a missing tile. Each band keeps only the columns its
+          // widest group uses at its own spans, the bands after it move left,
+          // and the spare columns go to a last band that has a card to
+          // stretch, or stay at the section's end.
+          const used = wd.map((x, i) => {
+            const mine = parts.filter((pt) => pt.b === i);
+            return mine.length ? Math.min(x, Math.max(...mine.map((pt) => pt.g.items.reduce((a, it) => a + span(it, w), 0)))) : x;
+          });
+          const spare = w - used.reduce((a, x) => a + x, 0);
+          if (spare > 0) {
+            const last = nb - 1;
+            if (parts.some((pt) => pt.b === last && pt.g.items.some((it) => !it.compact))) used[last] += spare;
+            let x0 = 0; const st2 = used.map((u) => { const c = x0; x0 += u; return c; });
+            parts.forEach((pt) => { pt.c0 = st2[pt.b]; pt.bw = used[pt.b]; });
+          }
+          parts.forEach((pt) => { delete pt.b; });
           out.push({ run: parts });
         }
         run = [];

@@ -2,6 +2,19 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.23
+
+### Changed
+
+- Morph's dashboard tune-ups no longer suggest removing a card, group or section that holds a control (a light, switch or lock), even one rarely tapped, and a No to a reorder is remembered for every section that move would change, however it is worded next time. Removing a card nobody looks at and that holds no control is still suggested (#1198).
+- Morph's card rules gain five: a button that carries a status says it whole, an opened card says what it is and what it is doing first, a chart's numbers have their own margin, an old reading is marked old, and a card does not repeat the label above it. The house is asked once to have its own cards checked against them (#1191, #1192, #1193, #1194).
+
+### Fixed
+
+- A light group tile on a phone reads "16 of 31 on" without an unexplained percent (the wide tile keeps "avg 48%"), and its words sit on a plain plate over the stripes (#1195).
+- The thermostat's routine buttons stay at least 40px wide under a finger, on their own row when the modes leave no room; the history chart's last time label no longer prints over "Now" (#1192).
+- A band of narrow tiles no longer leaves a wide empty gap between two groups on a laptop (#1191).
+
 ## 5.3.22
 
 ### Fixed

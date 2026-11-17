@@ -616,7 +616,9 @@ function axisTicks(t0, t1) {
   // Round to local hours for steps of an hour or more.
   if (step >= 60 * M) { const h = new Date(t0); h.setMinutes(0, 0, 0); t = h.getTime(); while (t < t0 || new Date(t).getHours() % (step / (60 * M))) t += 60 * M; }
   for (; t <= t1; t += step) {
-    const f = (t - t0) / span; if (f < 0.06 || f > 0.86) continue;
+    // Clear of "Now" at the end even on a phone's 200px plot ("Noon" and
+    // "Now" were printed over each other at 390).
+    const f = (t - t0) / span; if (f < 0.06 || f > 0.76) continue;
     const dt = new Date(t); const h = dt.getHours(), mi = dt.getMinutes();
     out.push([f, mi === 0 && h === 0 ? 'Midnight' : mi === 0 && h === 12 ? 'Noon' : clock(t).replace(':00', '')]);
   }

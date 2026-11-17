@@ -113,27 +113,17 @@ const ACT_ICONS = {
 // `action` says a word of the tile's own sits beside the line.
 export function statusHtml(val, o) {
   const opt = o || {};
-  // A part is a string, or { text, short }: where the tile is too narrow for the
-  // next part, `short` stands in for the first one and says both facts in fewer words.
-  const parts = (Array.isArray(val) ? val : [val]).map((p) => (p == null ? '' : p && typeof p === 'object' ? p : String(p))).filter((p) => p && (typeof p === 'string' || p.text));
+  const parts = (Array.isArray(val) ? val : [val]).map((p) => (p == null ? '' : String(p))).filter(Boolean);
   if (!parts.length) return '';
   const sep = opt.sep == null ? ' \u00b7 ' : opt.sep;
-  const body = (p) => (typeof p === 'string' ? p : p.text);
-  if (parts.length < 2) return esc(body(parts[0]));
+  if (parts.length < 2) return esc(parts[0]);
   let n = 0;
   const needOf = (len) => Math.min(STATUS.max, Math.max(STATUS.min, Math.ceil((len * STATUS.charPx + STATUS.linePx + (opt.action ? STATUS.actionPx : 0)) / STATUS.step) * STATUS.step));
-  const first = parts[0];
-  const short = typeof first === 'object' && first.short ? first.short : '';
   const out = parts.map((p, i) => {
-    const text = (i ? sep : '') + body(p); n += text.length;
-    if (!i) return short ? '' : `<i>${esc(text)}</i>`;
-    const need = needOf(n);
-    return `<i class="w${need}">${esc(text)}</i>`;
+    const text = (i ? sep : '') + p; n += text.length;
+    if (!i) return `<i>${esc(text)}</i>`;
+    return `<i class="w${needOf(n)}">${esc(text)}</i>`;
   });
-  if (short) {
-    const need = needOf(parts.slice(0, 2).reduce((a, p, i) => a + (i ? sep.length : 0) + body(p).length, 0));
-    out[0] = `<i class="sh h${need}">${esc(short)}</i><i class="w${need}">${esc(body(first))}</i>`;
-  }
   return out.join('');
 }
 
@@ -418,12 +408,12 @@ const lightGroup = {
     // The parts of one status line (statusHtml): the first is always shown, a later one only where the tile has the room.
     if (isFG(ctx)) return off(ctx.st) ? 'Unavailable' : n ? `${n === total ? 'All ' + total : n + ' of ' + total} on` : total ? `All ${total} off` : 'Off';
     if (isCG(ctx)) return off(ctx.st) ? 'Unavailable' : ctx.preview != null ? ctx.preview + '% open' : n ? [`${n === total ? 'All ' + total : n + ' of ' + total} open`, mixed ? '' : avg + '%'] : total ? `All ${total} closed` : 'Closed';
-    // ONE format for a light group (#887 #967): how many of the reachable ones are on ("20 of 31 on", "All 5 on", "5 off"), then the average level of those that are on, labelled, then (where the tile has the room) how many cannot be reached. "All" only when every member answers; one light reads "On" or "Off".
+    // ONE format for a light group (#887 #967): how many of the reachable ones are on ("20 of 31 on", "All 5 on", "5 off"), then the average level of those that are on, labelled, then (where the tile has the room) how many cannot be reached. "All" only when every member answers; one light reads "On" or "Off". A tile with no room for "avg 48%" says the count alone: a bare "48%" beside it read as a fault or a charge (#1195).
     const reach = total - gone;
     const bad = gone ? gone + ' unavailable' : '';
     return off(ctx.st) ? 'Unavailable' : ctx.preview != null ? ctx.preview + '%'
       : total === 1 && !gone ? [n ? 'On' : 'Off', n ? `avg ${avg}%` : '']
-        : n ? [{ text: !gone && n === total ? `All ${total} on` : `${n} of ${total} on`, short: `${!gone && n === total ? 'All ' + total : n + ' of ' + total} \u00b7 ${avg}%` }, `avg ${avg}%`, bad]
+        : n ? [!gone && n === total ? `All ${total} on` : `${n} of ${total} on`, `avg ${avg}%`, bad]
           : total ? [!gone ? `All ${total} off` : reach ? `${reach} off` : 'All unavailable', reach ? bad : ''] : 'Off';
   },
   more: (ctx) => {
@@ -737,7 +727,8 @@ const CLIMATE_CSS = `<style>
 .cl-sq::before{content:"";position:absolute;inset:-9px -5px}
 .cl-val.pend{color:var(--muted)}
 .cl-sq:hover{background:var(--chip);color:var(--text)}
-.cl-ctl{display:flex;flex-wrap:nowrap;align-items:center;gap:6px 0;white-space:nowrap;margin-top:12px;padding-top:8px;border-top:1px solid var(--line);container-type:inline-size}
+.cl-ctl{margin-top:12px;padding-top:8px;border-top:1px solid var(--line);container-type:inline-size}
+.cl-in{display:flex;flex-wrap:nowrap;align-items:center;gap:6px 0;white-space:nowrap}
 .cl-seg{display:inline-flex;gap:3px}
 .cl-seg button{position:relative;border:0;margin:0;font:inherit;font-size:13px;font-weight:600;color:var(--muted);background:color-mix(in oklab,var(--text) 5%,transparent);padding:0 8px;min-height:28px;border-radius:999px;white-space:nowrap;cursor:pointer;transition:background-color .2s ease,color .2s ease}
 .cl-seg button:hover{color:var(--text);background:color-mix(in oklab,var(--text) 10%,transparent)}
@@ -761,13 +752,19 @@ const CLIMATE_CSS = `<style>
    circle (the background is clipped to the content box) and the pills their
    28px pill (clipped to the padding box inside a transparent top and bottom
    border; the radius is 14px across and 20px down so the pill's ends stay
-   round). A routine still shrinks to fit its row (min-width:0). The
+   round). A routine shrinks to fit its row down to its icon in a 40px box,
+   never under (#1192: an icon-only routine was 16px wide). The
    measure reads the element's own box, so the ::before areas did not count. */
-@media (pointer:coarse){.cl-sq{width:40px;height:40px;margin:-7px;padding:7px;box-sizing:border-box;background-clip:content-box}.cl-sq::before{content:none}.cl-seg button{min-height:40px;min-width:40px;margin-block:-6px;border:solid transparent;border-width:6px 0;border-radius:14px/20px;background-clip:padding-box}.cl-seg button::before{content:none}.cl-seg button:hover,.cl-seg button[aria-pressed="true"]{background-clip:padding-box}.cl-sq:hover{background-clip:content-box}.cl-run .cl-seg button{min-width:0}}
+@media (pointer:coarse){.cl-sq{width:40px;height:40px;margin:-7px;padding:7px;box-sizing:border-box;background-clip:content-box}.cl-sq::before{content:none}.cl-seg button{min-height:40px;min-width:40px;margin-block:-6px;border:solid transparent;border-width:6px 0;border-radius:14px/20px;background-clip:padding-box}.cl-seg button::before{content:none}.cl-seg button:hover,.cl-seg button[aria-pressed="true"]{background-clip:padding-box}.cl-sq:hover{background-clip:content-box}.cl-run .cl-seg button{min-width:40px;justify-content:center}}
 @container (max-width:470px){.cl-seglab{display:none}.cl-seg button{padding:0 7px}.cl-div{margin:0 4px}}
 @container (max-width:420px){.cl-run .cl-long{display:none}.cl-run .cl-short{display:inline-block}}
 @container (max-width:370px){.cl-run button.cl-hasic .cl-txt{display:none}}
 @container (max-width:330px){.cl-seg{gap:2px}.cl-seg button{padding:0 5px}}
+/* Under a finger the routines keep their 40px boxes, so where the modes and
+   the fan leave them no room they take a row of their own (#1192) rather
+   than shrinking under a finger's width or running off the card; on that
+   row a routine keeps its word (the short one where it has one). */
+@media (pointer:coarse){@container (max-width:470px){.cl-in{flex-wrap:wrap;row-gap:10px}.cl-run{flex:1 0 100%;margin-left:0;padding-left:0}.cl-run button.cl-hasic .cl-txt:not(.cl-long){display:inline-block}}}
 </style>`;
 const MINUS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"></path></svg>';
 const PLUS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>';
@@ -857,7 +854,7 @@ const climate = {
 <div class="cl-head"><b style="font-size:14px">${esc(ctx.name)}</b><span class="flex1"></span>${hint ? `<span class="hint">${esc(hint)}</span>` : ''}<span class="cl-dot${['heating', 'cooling', 'drying', 'fan'].includes(a.hvac_action) ? ' on' : ''}" style="background:${actColor};color:${actColor}"></span><span class="cl-act" style="color:${actColor === 'var(--quiet)' ? 'var(--quiet)' : actColor}">${esc(actWord)}</span></div>
 <div class="cl-main"><div class="cl-now"><span class="big">${cur != null ? fmtT(cur) : '—'}</span><span class="small">${a.current_humidity != null ? esc(Math.round(a.current_humidity)) + '% humidity' : 'now'}</span></div>
 ${sets ? `<div class="cl-sets">${sets}</div>` : `<span class="small" style="margin-left:auto">${st.state === 'off' ? 'System off' : ''}</span>`}</div>
-<div class="cl-ctl">${modeSeg}${fanSeg}${runSeg}</div></div>`;
+<div class="cl-ctl"><div class="cl-in">${modeSeg}${fanSeg}${runSeg}</div></div></div>`;
   },
   more: (ctx) => {
     // With a detail (HVAC performance) the opened card is that detail; the

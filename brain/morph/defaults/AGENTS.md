@@ -367,6 +367,29 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   the state shows it by being pressed. Two controls for the same thing (a pump
   and the button that runs it) agree about when it last ran, or each says what
   its date is ("pump last ran", "run pump last pressed").
+- **A card does not repeat the label above it.** A card placed under a group
+  or section label that already names it ("Doors") starts with what it
+  knows ("2 open", "All locked"), not with the same word as a title of
+  its own.
+- **An opened card says what it is and what it is doing, first.** Opened, a
+  card leads with the thing's name and its state in the mode that is
+  selected ("Coffee machine · Idle", "Coffee machine · Brewing · 93° · 2 min left"), and
+  only then its settings and switches. A mode selector and one toggle with
+  no name and no state is a dead end for someone asking whether it is
+  ready.
+- **A button that carries a status says it whole.** A button with a name
+  and a status under it ("TVs", "Speakers") says a short status that
+  fits: the count and at most one name ("TV on", "3 of 11 playing",
+  "All off"), never a longer sentence cut short with an ellipsis. If the
+  status does not fit beside the name, it goes on its own line under it,
+  and nothing on the button ends in an ellipsis.
+- **A chart's numbers have their own margin.** Axis values ("70°", "50°")
+  sit in a gutter beside the plot or in a row under it, never over the
+  lines, and two labels on one axis never print over each other.
+- **An old reading is marked old.** A card that dates its readings ("64.2° ·
+  50 min ago") marks one that has not been updated for 30 minutes or more
+  as stale (dimmed, with its age in words) so it is never read as a live
+  figure; a reading that is current shows no age at all.
 - **A script or scene a Morph tile already runs is not a second control in a
   card.** A Bedtime pill saying "tap to run" in a card above a Bedtime tile
   saying "Ran last night 12:35 AM" reads as two different things. Leave it to
