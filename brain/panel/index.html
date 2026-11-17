@@ -1222,6 +1222,11 @@
           <h2 class="setsecname">Model &amp; usage</h2>
         </header>
         <div class="setsecbody">
+          <!-- One plain sentence first: is brAIn working, or paused, and
+               when it starts again (`usageLead`, #1188). The figures,
+               token counts and why a figure is an estimate are under
+               Details: read-only, so the fold holds no setting. -->
+          <p class="permwarn calm" id="usageLead" role="status"></p>
           <div class="usagewrap">
             <label>This session</label>
             <div class="usagebar" aria-hidden="true">
@@ -1232,8 +1237,13 @@
             <div class="usagebar" aria-hidden="true">
               <div id="usageWeekFill" class="usageweekfill"></div>
             </div>
-            <div id="usageText" class="hint"></div>
-            <div id="usageDetail" class="usagedetail"></div>
+            <details class="techdetails detailsfold" id="usageMore">
+              <summary>Details</summary>
+              <div class="detailsbody">
+                <div id="usageText" class="hint"></div>
+                <div id="usageDetail" class="usagedetail"></div>
+              </div>
+            </details>
           </div>
 
           <label for="setPlan">Your Claude subscription</label>
@@ -1341,19 +1351,33 @@
           <p class="permwarn" id="setPermWarn" role="status"></p>
           <label for="setPermLevel">What brAIn may do without asking</label>
           <select id="setPermLevel" class="sel selin">
-            <option value="ask">Ask first: before each command, edit or change</option>
-            <option value="act">Act: goes ahead, within your house rules and off-limits list</option>
-            <option value="free">No limits: goes ahead, and ignores both</option>
+            <option value="ask">Ask first: brAIn asks you before it changes anything</option>
+            <option value="act">Act: brAIn makes changes on its own, but keeps to your house
+              rules and off-limits list</option>
+            <option value="free">No limits: brAIn makes any change on its own, and your house
+              rules and off-limits list do not stop it</option>
           </select>
-          <!-- Rewritten by renderSettingsForm from `permission_sessions`
-               when an open terminal session did not get the setting's
-               current value; this text is what it says otherwise. The
-               caveat under it is never replaced: it is the half that is
-               about safety. -->
-          <p class="hint setgroupnote" id="setSkipPermsNote">Applies to the next terminal session and chat
-            message.</p>
-          <p class="hint setgroupnote" id="setSkipPermsCaveat">What you have put off limits is blocked in
-            brAIn's own tools, not in every shell command.</p>
+          <!-- Shown only while a terminal session already open did not get
+               the level in force (`skipPermsStale`): something may still
+               be acting, so it is said on the page, not in the fold. -->
+          <p class="hint setgroupnote warn" id="setSkipPermsNote" hidden></p>
+          <!-- The safety half, in the house's words; it stays on the page
+               whatever the level. Its exact, technical form is the fold
+               under it (#1187). -->
+          <p class="hint setgroupnote" id="setSkipPermsCaveat">Your off-limits list blocks brAIn's
+            usual ways of changing the house, not every way. A change it makes by running a
+            command directly can get past it, and Undo cannot take that back.</p>
+          <details class="techdetails detailsfold" id="setPermsDev">
+            <summary>For developers</summary>
+            <div class="detailsbody">
+              <p class="hint">A change here reaches the chat on its next message and the
+                terminal in its next session; a terminal session already open keeps the
+                level it started with.</p>
+              <p class="hint">Off limits is enforced in brAIn's own tools and the obvious shell
+                commands, not in every shell command, and what a shell command changes is not
+                in brAIn's undo journal.</p>
+            </div>
+          </details>
 
           <div class="setgroup">
           <div class="setrow top">
