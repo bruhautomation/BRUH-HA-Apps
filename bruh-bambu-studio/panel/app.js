@@ -199,11 +199,12 @@ const ICONS = {
 // A name written in a script the device has no font for draws as empty boxes.
 // Each such character is tested once (a font without it gives the same width
 // as a character no font has) and left out of what is drawn; the full name
-// stays in the tooltip and everything that sends it.
+// stays in the tooltip and everything that sends it. Latin, Greek and
+// Cyrillic are drawn by every device; everything past them is tested.
 const _glyphs = {};
 let _ruler = null;
 function drawable(ch) {
-  if (ch.charCodeAt(0) < 0x2e80) return true;
+  if (ch.charCodeAt(0) < 0x530) return true;
   if (!(ch in _glyphs)) {
     try {
       _ruler = _ruler || document.createElement("canvas").getContext("2d");
@@ -215,12 +216,32 @@ function drawable(ch) {
   return _glyphs[ch];
 }
 
-function shownName(name) {
-  const text = String(name || "");
-  if (/^[\u0000-\u2e7f]*$/.test(text)) return text;
-  const kept = [...text].filter(drawable).join("").replace(/[\s_\-.·]{2,}/g, "_").replace(/^[\s_\-.]+|[\s_\-]+$/g, "");
-  return kept || text;
+// The drawable part of a text, or "" when none of it can be drawn here.
+function drawableText(text) {
+  if (/^[\u0000-\u052f]*$/.test(text)) return text;
+  return [...text].filter(drawable).join("").replace(/[\s_\-.·]{2,}/g, " ").replace(/^[\s_\-.·]+|[\s_\-.·]+$/g, "");
 }
+
+// The name a print file is shown by, everywhere the panel names one (the
+// job, the printer's storage, the Files list): without its folder, its
+// extension, a slice's time stamp or a download's " (1)", and with
+// underscores as spaces so it wraps between words. The card in Home
+// Assistant (lovelace/bruh-bambu-card.js) carries the same function: it
+// loads on its own and imports nothing. `fallback` is said when no character
+// of the name can be drawn on this device.
+function printName(name, fallback = "This print") {
+  const text = String(name || "").split(/[\\/]/).pop()
+    .replace(/\.(gcode\.3mf|gcode|3mf|stl|step|stp|obj|amf)$/i, "")
+    .replace(/-\d{8}-\d{6}$/, "").replace(/\s*\(\d+\)$/, "")
+    .replace(/_+/g, " ").replace(/\s+/g, " ").trim();
+  return drawableText(text) || fallback;
+}
+
+// A print running from a plate of a project, when its name cannot be shown.
+const plateName = (p) => {
+  const m = /plate_(\d+)\.gcode$/i.exec(p.gcode_file || "");
+  return m ? `Plate ${m[1]}` : p.printing ? "This print" : "Last print";
+};
 
 function icon(name) {
   const span = el("span", { class: "ic", "aria-hidden": "true" });
@@ -450,6 +471,9 @@ function plateWatching(p) {
   return Boolean(w && w.plate_watch);
 }
 
+// The printers whose job name is shown whole (tapped).
+const fullNames = new Set();
+
 // The job: what is printing (or what just finished, until the plate is
 // cleared), its progress and its two buttons. Nothing once the plate is
 // clear: a finished print that is no longer on the plate is not news.
@@ -491,7 +515,14 @@ function jobBlock(p) {
   return el("div", { class: "job" },
     ring(p.progress, finished && !p.printing),
     el("div", { class: "jobtext" },
-      el("b", { class: "jobname", title: p.file }, shownName(p.file)),
+      el("b", { class: `jobname${fullNames.has(p.id) ? " full" : ""}`, title: p.file, role: "button", tabindex: "0",
+        "aria-expanded": String(fullNames.has(p.id)), onclick: (e) => {
+          // Two lines, and the whole name on a tap (kept across the poll's redraws).
+          if (fullNames.has(p.id)) fullNames.delete(p.id); else fullNames.add(p.id);
+          e.currentTarget.classList.toggle("full", fullNames.has(p.id));
+          e.currentTarget.setAttribute("aria-expanded", String(fullNames.has(p.id)));
+        }, onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.currentTarget.click(); } } },
+      printName(p.file, plateName(p))),
       el("p", { class: "hint" }, stage),
       facts.length ? el("div", { class: "facts" }, facts) : null),
     p.job_picture ? el("img", { class: "jobpic", src: p.job_picture, alt: "", loading: "lazy" }) : null,
@@ -655,7 +686,7 @@ async function loadStorage(p, all = false) {
         } }, icon("close"), "Delete from the printer")));
       return el("li", {},
         el("div", { class: "grow" },
-          el("b", { title: f.name }, shownName(f.name.replace(/(\.gcode)?\.3mf$/i, ""))),
+          el("b", { title: f.name }, printName(f.name, "Print file")),
           el("span", { class: "hint" }, [fileWhen(f), f.size ? megabytes(f.size) : null].filter(Boolean).join(" · "))),
         el("button", { type: "button", disabled: p.printing, title: p.printing ? "It is printing" : "Print it again",
           onclick: () => printStored(p, f) }, "Print"),
@@ -828,7 +859,9 @@ function watchTimeline(p, w) {
   const blinds = points.filter((c) => c.state === "done" && c.decision === "blind").length;
   const next = points.find((c) => c.state === "planned");
   if (next) say(next);
-  else reason.textContent = done ? "Every planned look is done." : "";
+  // A plan whose looks mostly could not see was not done in any sense a
+  // person means: the notice up front says so, and this line says nothing.
+  else reason.textContent = done && blinds * 2 <= done ? "Every planned look is done." : "";
   if (next) reason.prepend("Next: ");
   // Looks are counted as brAIn runs: the planned ones, and the extra looks a
   // sudden change, the printer's own camera or a doubt asked for.
@@ -973,21 +1006,10 @@ function watchBlock(p) {
   // The last look is the alert's own while one is open: said once, not twice.
   const repeats = last && w.alert && w.alert.open && w.alert.check === last.n;
   const lastDecision = last ? lookDecision(last) : null;
-  // A blind look is a warning only while a print runs and can still be helped;
-  // after it, it is a note about what happened.
-  const blindLook = lastDecision === "blind";
-  // The light is the usual reason, so it is offered beside the notice,
-  // through the same printer command as the camera's light button.
-  const lightOn = blindLook && p.online && p.chamber_light === false
-    ? el("button", { type: "button", onclick: () => command(p, "light", { value: true }) }, icon("light"), "Turn on light") : null;
-  const blind = blindLook && p.printing
-    ? el("div", { class: "wblind", role: "status" }, el("b", {}, "The camera couldn't see this print."),
-      el("p", {}, "Check that the lens is clean, the chamber light is on and the camera is pointing at the plate. It looks again at the next planned look, or press Check now."),
-      lightOn) : null;
-  const blindNote = blindLook && !p.printing
-    ? el("div", { class: "row wrap wblindnote" }, el("p", { class: "hint" }, `Last look: camera could not see${p.chamber_light === false ? " (light off)" : ""}`
-      + `${last.at ? ` · ${ago(last.at)}` : ""}`), lightOn) : null;
-  const lastRow = last && !repeats && !blindNote ? el("div", { class: "wlast" },
+  const check = el("button", { type: "button", disabled: !(p.printing || p.state === "finish") || w.status === "looking",
+    title: "Have brAIn look at the print now", onclick: () => watchAct(p, "check") }, icon("eye"), "Check now");
+  const blind = watchBlind(p, w, last, lastDecision, check);
+  const lastRow = last && !repeats && !blind ? el("div", { class: "wlast" },
     last.image_url ? el("img", { src: last.image_url, alt: "", loading: "lazy" }) : null,
     el("div", { class: "grow" },
       el("div", { class: "row wcheckhead" },
@@ -997,19 +1019,66 @@ function watchBlock(p) {
   return el("section", { class: `watch ${tone}` }, head,
     blind,
     watchAlert(p, w),
-    lastRow && blind ? lastRow : null,
     watchTimeline(p, w),
-    lastRow && !blind ? lastRow : null,
-    blindNote,
-    el("div", { class: "row wrap" },
-      el("button", { type: "button", disabled: !(p.printing || p.state === "finish") || w.status === "looking",
-        title: "Have brAIn look at the print now", onclick: () => watchAct(p, "check") }, icon("eye"), "Check now")),
+    lastRow,
+    // A blind notice carries its own Check now, beside the light.
+    blind ? null : el("div", { class: "row wrap" }, check),
     watchHistory(p));
 }
 
+// The planned looks that are done, and how many of them could not see.
+function blindCounts(w) {
+  const done = ((w.plan && w.plan.checkpoints) || []).filter((c) => c.state === "done");
+  return { done: done.length, blind: done.filter((c) => c.decision === "blind").length };
+}
+
+// When the camera could not see: said once, up front, in one compact box —
+// what happened, why (brAIn's own words, and the light when it is off), and
+// the light and Check now side by side. When most of the print's looks were
+// blind, that is what it says first: the print was not watched. While a print
+// runs it is a warning that can still be helped; after it, a note.
+function watchBlind(p, w, last, lastDecision, check) {
+  const counts = blindCounts(w);
+  const mostly = counts.done > 0 && counts.blind * 2 > counts.done;
+  if (!(lastDecision === "blind" || mostly)) return null;
+  const off = p.chamber_light === false;
+  const lightOff = off ? " (light off)" : "";
+  let headline;
+  const all = counts.blind === counts.done;
+  if (mostly && p.printing) {
+    headline = all ? `The camera has seen nothing of this print so far${lightOff}.`
+      : `The camera saw nothing at ${counts.blind} of ${counts.done} looks so far${lightOff}.`;
+  } else if (mostly) {
+    headline = all ? `Could not watch this print: the camera saw nothing${lightOff}.`
+      : `Could not watch most of this print: the camera saw nothing at ${counts.blind} of ${counts.done} looks${lightOff}.`;
+  }
+  else if (p.printing) headline = "The camera couldn't see this print at the last look.";
+  else headline = "The last look could not see the print.";
+  const why = [lastDecision === "blind" && last.summary ? last.summary : null,
+    off ? "The chamber light is off." : "Check that the lens is clean and the camera points at the plate.",
+    lastDecision === "blind" && last.at ? `Last look ${ago(last.at)}.` : null].filter(Boolean).join(" ");
+  // The light is the usual reason, so it is offered here, through the same
+  // printer command as the camera's light button.
+  const light = p.online && off
+    ? el("button", { type: "button", onclick: () => command(p, "light", { value: true }) }, icon("light"), "Turn on light") : null;
+  return el("div", { class: `wblind${p.printing || mostly ? "" : " quiet"}`, role: "status" },
+    el("b", {}, headline), el("p", {}, why),
+    el("div", { class: "wblindacts" }, light, check));
+}
+
+// The printer reports its Wi-Fi as a signal level ("-48dBm"); a person reads
+// a word. The level itself stays in the tooltip.
+function wifiWord(signal) {
+  const dbm = parseInt(String(signal), 10);
+  if (Number.isNaN(dbm)) return String(signal);
+  return dbm >= -55 ? "strong" : dbm >= -67 ? "good" : dbm >= -75 ? "fair" : "weak";
+}
+
 function printerCard(p) {
+  // Each fact is kept whole (no space to break at), so on a phone the line
+  // wraps between facts rather than inside one, and nothing is cut off.
   const meta = [p.model, p.nozzle_diameter ? `${p.nozzle_diameter} mm nozzle` : null, p.host,
-    p.wifi ? `Wi-Fi ${p.wifi}` : null].filter(Boolean).join(" · ");
+    p.wifi ? `Wi-Fi ${wifiWord(p.wifi)}` : null].filter(Boolean).map((t) => t.replace(/ /g, "\u00a0")).join(" · ");
   // Refresh, Reconnect and Remove are rare: the card's ⋯ menu, not a row.
   const menu = el("details", { class: "pmenu", "data-k": "menu" },
     el("summary", { "aria-label": `More for ${p.name}` }, "⋯"),
@@ -1024,7 +1093,7 @@ function printerCard(p) {
         refresh();
       } }, icon("close"), "Remove printer")));
   const head = el("header", { class: "phead" },
-    el("div", { class: "grow" }, el("h2", {}, p.name), el("p", { class: "hint", title: meta }, meta)),
+    el("div", { class: "grow" }, el("h2", {}, p.name), el("p", { class: "hint", title: p.wifi ? `Wi-Fi signal ${p.wifi}` : "" }, meta)),
     menu);
   // What the printer is doing now on the left (the picture, the job and its
   // controls, the temperatures and the filament); what watches it and what
@@ -1411,15 +1480,27 @@ function sliceFacts(f) {
   return "Not sliced yet — Print will slice first";
 }
 
+// A row's title is the file's name as a person reads it (printName); its
+// folder is said under it.
+const fileTitle = (f) => printName(f.design ? f.name : f.path, f.design ? "Designed part" : `${fileKind(f)} file`);
+
 function renderFiles() {
   const shown = visibleFiles();
+  // Files that read the same once their extensions are gone (a part's STL
+  // beside its 3MF, a download's " (1)") each say what kind of file they are.
+  const kinds = {};
+  for (const f of shown) (kinds[fileTitle(f)] = kinds[fileTitle(f)] || new Set()).add(fileKind(f));
   const rows = shown.map((f) => {
     const designed = Boolean(f.design);
+    const title = fileTitle(f);
     const badges = [el("span", { class: `pill ${f.sliced ? "done" : ""}` }, f.sliced ? "Sliced" : f.project ? "Project" : "Model")];
+    if (kinds[title].size > 1 && !designed) badges.unshift(el("span", { class: "pill ghost" }, fileKind(f)));
     if (f.plates && f.plates.length > 1) badges.push(el("span", { class: "pill" }, `${f.plates.length} plates`));
     if (designed) badges.push(el("span", { class: "pill ghost" }, `Designed with brAIn · v${f.version}`));
-    const facts = [megabytes(f.size), new Date(f.modified * 1000).toLocaleDateString()].join(" · ");
-    const slice = sliceFacts(f);
+    const folder = !designed && f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : null;
+    const facts = [folder, megabytes(f.size), new Date(f.modified * 1000).toLocaleDateString()].filter(Boolean).join(" · ");
+    // Not named `slice`: that is the function the menu's Slice calls.
+    const sliceLine = sliceFacts(f);
     const menu = el("details", { class: "pmenu" }, el("summary", { "aria-label": `More for ${f.name}` }, "⋯"),
       el("div", { class: "pmenupop" },
         !f.sliced && f.path.toLowerCase().endsWith(".3mf") ? el("button", { type: "button", onclick: () => slice(f) }, "Slice") : null,
@@ -1431,9 +1512,9 @@ function renderFiles() {
           loadFiles();
         } }, icon("close"), "Delete")));
     return el("div", { class: "frow" }, filePicture(f),
-      el("div", { class: "grow" }, el("b", { class: "fname", title: f.path }, shownName(designed ? f.name : f.path)),
+      el("div", { class: "grow" }, el("b", { class: "fname", title: f.path }, title),
         el("div", { class: "badges" }, badges),
-        slice ? el("p", { class: `fslice${f.seconds || f.grams ? "" : " hint"}` }, slice) : null,
+        sliceLine ? el("p", { class: `fslice${f.seconds || f.grams ? "" : " hint"}` }, sliceLine) : null,
         el("p", { class: "hint" }, facts), filamentChips(f)),
       el("div", { class: "factions" },
         el("button", { class: "primary", onclick: () => openPrint(f) }, "Print"), menu));

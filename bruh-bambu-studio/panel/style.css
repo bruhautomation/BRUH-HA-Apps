@@ -459,7 +459,7 @@ fieldset.trays { border: 1px solid var(--line); border-radius: var(--r-sm); disp
 @media (prefers-reduced-motion: reduce) { .pill.live .dot { animation: none; } }
 .phead { display: flex; align-items: center; gap: var(--s2); }
 .phead h2 { font-size: 19px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.phead .hint { margin: 2px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.phead .hint { margin: 2px 0 0; }
 .job { display: flex; align-items: center; gap: var(--s3); padding: 10px 12px; border-radius: var(--r-md); background: var(--sunk); }
 .ring { --p: 0; flex: none; width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center;
   background: conic-gradient(var(--live) calc(var(--p) * 1%), color-mix(in srgb, var(--muted) 22%, transparent) 0); }
@@ -469,7 +469,10 @@ fieldset.trays { border: 1px solid var(--line); border-radius: var(--r-sm); disp
 .ring.done { background: var(--done); }
 .ring.done span { color: var(--done); font-size: 20px; }
 .jobtext { flex: 1; min-width: 0; display: grid; gap: 1px; }
-.jobname { overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+/* A print's name wraps between words (a word wider than the line is the only
+   one broken), two lines of it, and the whole name on a tap. */
+.jobname { overflow: hidden; overflow-wrap: break-word; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; cursor: pointer; }
+.jobname.full { display: block; -webkit-line-clamp: unset; line-clamp: none; }
 .jobtext .hint { margin: 0; }
 .facts { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .facts b { color: var(--ink); font-weight: 600; }
@@ -788,7 +791,8 @@ label[hidden], [hidden] { display: none !important; }
 /* On a phone the sentence under the title says what the pill would. */
 @media (max-width: 560px) { .whead .pill { display: none; } }
 
-.wblind { padding: 10px 12px; border-radius: var(--r-sm); background: var(--warn-bg); color: var(--warn-ink); }
-.wblind p { margin: 4px 0 0; font-size: 14px; }
-.wblind button { margin-top: 8px; }
-.wblindnote p { margin: 0; flex: 1 1 auto; }
+/* The camera could not see: what, why, and Light and Check now on one row. */
+.wblind { display: grid; gap: 4px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--warn-bg); color: var(--warn-ink); }
+.wblind.quiet { background: var(--sunk); color: inherit; }
+.wblind p { margin: 0; font-size: 14px; }
+.wblindacts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
