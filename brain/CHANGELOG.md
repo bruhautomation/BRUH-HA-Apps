@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.22
+
+### Fixed
+
+- The development loop no longer files a report it already filed and that was fixed: when its queue was full it forgot the oldest reports first (exactly the fixed ones), then filed the same rule again as a new issue. It now remembers which issue a report went to, follows up only on that issue, and folds a duplicate back into the first one (#1153, #1154, #1155, #1156, #1197).
+- The layout check that photographs the other add-ons' panels no longer reports buttons inside a closed fold, or faded out, as overlapping each other (#1181).
+- "Automations whose trigger is not reporting" no longer raises an automation built to fire when its device goes unavailable or comes back (#1196).
+
 ## 5.3.21
 
 ### Changed

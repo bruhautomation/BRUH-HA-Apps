@@ -85,6 +85,17 @@ CLEAR_AFTER_S = 48 * 3600
 # reopened every closed report at once, none of them new evidence.
 REOPEN_AFTER_S = 24 * 3600
 MAX_QUEUE = 60
+# What a pruned report that was filed keeps, so the next pass that sees its
+# row finds its issue again (`_prune` / `_restore`): the issue, the
+# cloud's verdict, and the dates and flags the follow-ups decide by. The
+# words are refilled from the row by the pass that brings it back.
+KEEP_WHEN_PRUNED = ("fp", "stream", "state", "issue", "issue_url", "sent_at",
+                    "created_here", "body_digest", "verdict", "verdict_at",
+                    "closed_at", "fixed_in", "first_seen", "last_seen", "seen",
+                    "days", "version", "version_since", "noted_version",
+                    "cleared_noted", "returned", "returned_at", "came_back_at",
+                    "product", "addon")
+MAX_GONE = 400
 MAX_ABRIDGED = 20_000
 FP_RE = re.compile(r"^[0-9a-f]{16}$")
 # Rows that are about the fault list itself rather than a fault.
@@ -508,6 +519,14 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
                         if k in keys or (isinstance(r, dict) and r.get("fp") == old.get("fp"))]:
                 every_stood.pop(key, None)
         entry = items.get(fp)
+        if entry is None and old is None and not rolling:
+            # A report filed before whose queue entry was pruned is that
+            # issue's report still: brought back with the issue and its
+            # dates, so its row is read against them and never filed as a
+            # new issue (the marker search reads only the newest issues).
+            entry = _restore(data, fp, now)
+            if entry is not None:
+                items[fp] = entry
         if entry is None:
             entry = items[fp] = {
                 "fp": fp, "first_seen": now, "seen": 0, "stream": stream,
@@ -601,7 +620,7 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
         for name, ver in products.items():
             if name in PRODUCTS and ver:
                 known[name] = str(ver)[:40]
-    _prune(items)
+    _prune(data)
     if verdicts is not None and refiled:
         _vsave(verdicts)
     data["swept_at"] = now
@@ -925,7 +944,8 @@ def _issues_today(items: dict, now: float) -> int:
                and e.get("created_here"))
 
 
-def _prune(items: dict) -> None:
+def _prune(data: dict) -> None:
+    items: dict = data["items"]
     if len(items) <= MAX_QUEUE:
         return
     # Discarded and long-quiet entries go first; a pending one somebody has
@@ -933,8 +953,47 @@ def _prune(items: dict) -> None:
     def rank(e: dict) -> tuple:
         order = {"discarded": 0, "sent": 1, "ready": 2, "pending": 3}
         return (order.get(e.get("state"), 0), e.get("last_seen") or 0)
+    gone = data.get("gone") if isinstance(data.get("gone"), dict) else {}
     for fp in sorted(items, key=lambda k: rank(items[k]))[:len(items) - MAX_QUEUE]:
-        items.pop(fp, None)
+        entry = items.pop(fp, None)
+        # A filed report keeps its issue: the oldest sent report is the
+        # first pruned, and it is exactly the fixed one whose row a window
+        # still holds, so forgetting it filed that row as a new issue
+        # every night once the old one was past the marker search.
+        if (isinstance(entry, dict) and int(entry.get("issue") or 0) > 0
+                and not entry.get("rolling")):
+            gone.pop(fp, None)
+            gone[fp] = {k: entry[k] for k in KEEP_WHEN_PRUNED if k in entry}
+    for fp in list(gone)[:max(0, len(gone) - MAX_GONE)]:
+        gone.pop(fp, None)
+    if gone:
+        data["gone"] = gone
+
+
+def _restore(data: dict, fp: str, now: float) -> dict | None:
+    """The queue entry of a report already filed, rebuilt for a row seen
+    again after the entry was pruned: from what `_prune` kept, or else
+    from the cloud's verdict on its issue (an entry pruned before the
+    queue kept anything). None for a report never filed."""
+    gone = data.get("gone")
+    kept = gone.pop(fp, None) if isinstance(gone, dict) else None
+    if isinstance(kept, dict) and int(kept.get("issue") or 0) > 0:
+        return {**kept, "fp": fp, "state": "sent"}
+    row = (_vload().get("resolved") or {}).get(fp)
+    if not isinstance(row, dict) or int(row.get("issue") or 0) <= 0:
+        return None
+    verdict = str(row.get("verdict") or "closed")
+    entry = {"fp": fp, "stream": str(row.get("stream") or "faults"),
+             "state": "sent", "issue": int(row["issue"]), "first_seen": now,
+             "seen": 0, "sent_at": float(row.get("at") or now),
+             "verdict": verdict,
+             # When it was closed; a verdict read back before the close was
+             # kept is dated by when the house first read it, which is never
+             # earlier than the close, so nothing older reads as after it.
+             "closed_at": float(row.get("closed_at") or row.get("at") or now)}
+    if row.get("fixed_in"):
+        entry["fixed_in"] = str(row["fixed_in"])
+    return entry
 
 
 # ---------------------------------------------------------------------------
@@ -1366,17 +1425,45 @@ def _refresh_verdicts(token: str, repo: str, items: dict, v: dict,
             continue
         verdict = verdict_of(issue)
         fp, stream = entry["fp"], str(entry.get("stream") or "faults")
+        first = None
+        if verdict == "duplicate":
+            held = (v.get("held") or {}).get(fp)
+            # The first issue's verdict, or, when it was forgotten while the
+            # second one was open, the install record that still names it.
+            first = next((r for r in (
+                resolved.get(fp),
+                {"verdict": "fixed", "issue": held.get("issue"),
+                 "fixed_in": held.get("fixed_in"), "at": held.get("installed_at")}
+                if isinstance(held, dict) else None)
+                if isinstance(r, dict) and r.get("verdict") not in (None, "duplicate")
+                and 0 < int(r.get("issue") or 0) < number), None)
+        if first is not None:
+            # A second issue for one fingerprint, closed as the duplicate it
+            # is: the report goes back to the first issue, which keeps its
+            # verdict, so a real recurrence is said there and nothing else
+            # is. (A queue that forgot the first issue filed the second.)
+            entry.update(issue=int(first["issue"]), verdict=str(first["verdict"]),
+                         verdict_at=now, closed_at=float(first.get("closed_at")
+                                                          or first.get("at") or now))
+            if first.get("fixed_in"):
+                entry["fixed_in"] = str(first["fixed_in"])
+            entry.pop("issue_url", None)
+            continue
         if verdict != entry.get("verdict"):
             entry["verdict_at"] = now
         entry["verdict"] = verdict
         entry["closed_at"] = _epoch(issue.get("closed_at")) if verdict != "open" else 0
         if verdict == "open":
-            resolved.pop(fp, None)
+            # Only this issue's own verdict: a second issue for the same
+            # fingerprint, still open, does not erase what the first was.
+            if int((resolved.get(fp) or {}).get("issue") or 0) in (0, number):
+                resolved.pop(fp, None)
         else:
             old = resolved.get(fp) or {}
             same = old.get("verdict") == verdict
             row = {"stream": stream, "verdict": verdict, "issue": number,
                    "at": old.get("at") if same else now,
+                   "closed_at": entry["closed_at"],
                    # What was filed, so the next run can be told what was
                    # turned down after the queue entry itself is pruned.
                    "where": clip(str(entry.get("where") or ""), 120),
