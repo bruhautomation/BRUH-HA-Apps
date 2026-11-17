@@ -1786,6 +1786,10 @@
         }
       }
     },
+    "cooking_restart_required": {
+      "title": "Restart Home Assistant to finish updating BRUH Cooking",
+      "description": "BRUH Cooking {version} is installed, but Home Assistant is still running the integration it loaded at its last start ({loaded}), so the appliances answer from the older code. Restart Home Assistant from Settings → System to load the update. This notice clears after the restart."
+    },
     "user_issue": {
       "title": "{title}",
       "fix_flow": {

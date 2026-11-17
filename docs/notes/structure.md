@@ -176,6 +176,7 @@ BRUH-HA-Apps/
 │           ├── power_tools.py   # BRUH Power Tools: 91 registry admin services (from Spook, MIT)
 │           ├── sensor.py        # Anthropic usage-limit sensors
 │           ├── bridge.py        # File-based IPC with the add-on
+│           ├── cooking_restart.py # Repairs: BRUH Cooking's update waits on a restart
 │           ├── repairs.py       # "Restart required" repair flow
 │           ├── fingerprint.py   # The code's fingerprint: a restart only when it moved (every integration's copy)
 │           ├── todo.py          # todo.brain: the open findings, as HA's own to-do items
