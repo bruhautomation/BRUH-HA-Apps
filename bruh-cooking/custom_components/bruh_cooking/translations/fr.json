@@ -388,7 +388,7 @@
       }
     },
     "restart_required": {
-      "title": "Redémarrez Home Assistant pour terminer la mise à jour de BRUH Cooking",
+      "title": "BRUH Cooking {version} attend un redémarrage",
       "description": "BRUH Cooking {version} est installé, mais Home Assistant exécute toujours {loaded}, la version chargée lors de son dernier démarrage : les corrections de la mise à jour ne sont donc pas encore actives. Redémarrez Home Assistant (Paramètres > Système > Redémarrer) pour la charger. Ce message disparaît après le redémarrage."
     }
   },
