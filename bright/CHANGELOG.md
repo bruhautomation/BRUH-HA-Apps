@@ -5,6 +5,19 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.23.11
+
+### Changed
+
+- Light Map opens on the map: the roles-and-zones explanation is one short paragraph behind a link, the add controls are one group under the map, each light shows its zone, and Remove is set apart and asks for a second tap (#1175).
+- A room's bulb list starts with one line such as "2 of 24 checked, all fast", lists checked bulbs first and folds the rest; every "⋯" button has a tooltip (#1176).
+- The party set lists each song on one line; the show picker appears only when a song has more than one show, and the expand button gives the right count, e.g. "Show 10 more (22 total)" (#1177).
+- Effects › Write it: the describe box is full width with its whole example visible, every setting is named in plain words with its unit, and an empty lights list says what happens with nothing ticked (#1179).
+
+### Fixed
+
+- Library › Music folders: the warning names the missing folder and says where to fix it, Remove appears only on that folder, and empty or old-name folders share one plain line (#1178).
+
 ## 0.23.10
 
 ### Fixed
