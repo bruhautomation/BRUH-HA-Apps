@@ -171,8 +171,7 @@ export class CookHistory {
     ] as const) {
       const id = key === "current_temperature" ? appliance.entities[key]?.sensor : appliance.entities[key]?.number;
       const state = id ? hass.states[id] : undefined;
-      // A reading kept from before the appliance went offline is not a new one.
-      if (!id || !state || entry.seen[id] === state || state.attributes?.stale === true) continue;
+      if (!id || !state || entry.seen[id] === state) continue;
       entry.seen[id] = state;
       const value = Number.parseFloat(state.state);
       const at = toMs(state.last_updated);

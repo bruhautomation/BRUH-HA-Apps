@@ -388,7 +388,7 @@
       }
     },
     "restart_required": {
-      "title": "Starta om Home Assistant för att slutföra uppdateringen av BRUH Cooking",
+      "title": "BRUH Cooking {version} väntar på en omstart",
       "description": "BRUH Cooking {version} är installerat, men Home Assistant kör fortfarande {loaded}, versionen som lästes in vid senaste starten, så rättningarna i uppdateringen fungerar inte än. Starta om Home Assistant (Inställningar > System > Starta om) för att läsa in den. Meddelandet försvinner efter omstarten."
     }
   },

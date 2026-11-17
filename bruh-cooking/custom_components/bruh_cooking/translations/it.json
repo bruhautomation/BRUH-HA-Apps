@@ -388,7 +388,7 @@
       }
     },
     "restart_required": {
-      "title": "Riavvia Home Assistant per completare l'aggiornamento di BRUH Cooking",
+      "title": "BRUH Cooking {version} attende un riavvio",
       "description": "BRUH Cooking {version} è installato, ma Home Assistant esegue ancora {loaded}, la versione caricata all'ultimo avvio, quindi le correzioni dell'aggiornamento non sono ancora attive. Riavvia Home Assistant (Impostazioni > Sistema > Riavvia) per caricarla. Questo avviso scompare dopo il riavvio."
     }
   },
