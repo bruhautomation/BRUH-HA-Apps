@@ -3565,22 +3565,30 @@ def _companion_snapshot() -> str | None:
 # snapshot one chunk column at a time, and the spyglass reads before each
 # ray, and one `save-all flush` covers them all.
 SAVE_FRESH_S = 3.0
+# How long a `save-all flush` is waited for. A busy server (the time BRUH
+# Sight stops answering) takes more than ten seconds to write every loaded
+# chunk; given up on, the read that follows saw the save before it — a box
+# full of blocks read as air, and an edit "changed 0" (#1159).
+SAVE_WAIT_S = 40
 _SAVED: dict = {"at": -1e12}
 
 
-def save_world() -> None:
-    """`save-all flush` (it waits for the write) unless one just ran."""
+def save_world() -> bool:
+    """`save-all flush` (it waits for the write) unless one just ran.
+    Whether the world on disk is now the world as it is."""
     now = time.monotonic()
     if now - _SAVED["at"] < SAVE_FRESH_S:
-        return
+        return True
     try:
-        with Rcon(RCON_HOST, _rcon_password(), port=RCON_PORT, timeout=10) as r:
-            r.command("save-all flush")
-        _SAVED["at"] = time.monotonic()
-    except Exception:  # noqa: BLE001 — read what is on disk; a stale read is
-        # still the world as of the last save, and a cell an edit changes is
-        # checked again by the undo before it is put back.
+        with Rcon(RCON_HOST, _rcon_password(), port=RCON_PORT, timeout=SAVE_WAIT_S) as r:
+            reply = r.command("save-all flush")
+    except Exception:  # noqa: BLE001 — the caller decides what an old save is worth
         log.debug("save-all before a block read did not answer")
+        return False
+    if re.search(r"unable to save|failed", reply or "", re.I):
+        return False
+    _SAVED["at"] = time.monotonic()
+    return True
 
 
 def fresh_read() -> None:
@@ -3627,7 +3635,11 @@ def _companion_reader(dimension: str, box: tuple):
                             tuple(chunk) if isinstance(chunk, list) and len(chunk) == 2 else None)
     if isinstance(live, dict) and live and "error" not in live:
         return live
-    save_world()
+    if not save_world():
+        # What is on disk is the last save, minutes old: a block placed since
+        # reads as air. Said, never answered as if it were the world.
+        return mcmap.Unread("unsaved", "The server did not finish saving the world in time, "
+                            "so the saved files may be out of date. Try again in a moment.")
     region = mcmap.region_dir(world_dir(), dimension)
     try:
         return mcmap.box_states(region, *box, limit=None)
@@ -4177,11 +4189,21 @@ async def api_companion_job_undo(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+def _atlas_fresh() -> "atlas_mod.Atlas":
+    """The atlas after a save and a look at the region headers: it reads
+    the saved world, which otherwise lags the game by an autosave."""
+    index = _atlas()
+    save_world()
+    index.rescan()
+    return index
+
+
 async def api_atlas(request: web.Request) -> web.Response:
     body = await _json_body(request)
     try:
+        index = await asyncio.to_thread(_atlas_fresh)
         result = await asyncio.to_thread(
-            _atlas().query, body.get("player"), body.get("x"), body.get("z"), body.get("y"),
+            index.query, body.get("player"), body.get("x"), body.get("z"), body.get("y"),
             body.get("dimension"), body.get("radius"), body.get("query"))
     except atlas_mod.AtlasError as exc:
         return _companion_error(exc)
@@ -4191,8 +4213,9 @@ async def api_atlas(request: web.Request) -> web.Response:
 async def api_atlas_room(request: web.Request) -> web.Response:
     body = await _json_body(request)
     try:
+        index = await asyncio.to_thread(_atlas_fresh)
         result = await asyncio.to_thread(
-            _atlas().room, body.get("player"), body.get("room"), body.get("x"), body.get("y"),
+            index.room, body.get("player"), body.get("room"), body.get("x"), body.get("y"),
             body.get("z"), body.get("dimension"))
     except atlas_mod.AtlasError as exc:
         return _companion_error(exc)
