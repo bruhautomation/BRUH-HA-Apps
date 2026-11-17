@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.14.10
+
+### Added
+
+- A `bruh_print.choose_label` service sets which loaded label a text print uses when it names none. The panel's Quick tab and the dashboard card both show and change this one choice, so they always name the same roll; an automation's text print without a stock follows it too (#1174).
+
+### Changed
+
+- Printer tab: each roll's actions are one row with the main one first; "Forget the lining up" sits with the numbers it throws away; counting is a box under the rolls that says what counting gives you (#1173).
+- History rows show a small picture of each label, a date line with the count and roll, and a button that says how many it will print (#1171).
+
+### Fixed
+
+- The card and the Quick tab no longer disagree about which roll text prints on (#1174).
+- With nothing typed, the Quick preview says "Your label appears here" and Print waits for text; a request that gets no answer says "BRUH Print did not answer. Check that the add-on is running, then try again." instead of "Failed to fetch" (#1172).
+
 ## 0.14.9
 
 ### Fixed
