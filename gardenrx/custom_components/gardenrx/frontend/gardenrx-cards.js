@@ -96,6 +96,7 @@ const css = (morph) => `
   .row { display: flex; align-items: center; gap: 10px; justify-content: space-between; min-height: 32px; }
   .row .grow { flex: 1; min-width: 0; }
   .name { font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
+  .amt { white-space: nowrap; flex-shrink: 0; }
   .bar { height: 6px; border-radius: 3px; background: var(--g-sunk); overflow: hidden; margin-top: 4px; }
   .bar > i { display: block; height: 100%; background: var(--g-accent); border-radius: 3px; }
   .bar.low > i { background: var(--g-bad); }
@@ -384,19 +385,29 @@ class GardenInventoryCard extends GardenCard {
     if (!s) return this._missing(morph, 'stock');
     const a = s.attributes || {};
     const cfg = this._config;
-    const items = (a.items || []).filter((i) => !cfg.low_only || i.low).slice(0, cfg.max_items);
+    const all = a.items || [];
     const low = Number(s.state) || 0;
     // Red is exactly what the count counts (the summary's low flag), and the
     // line says where that line is drawn: no second, unexplained amber band.
     const lowPct = Number(a.low_pct) || 20;
-    const head = `<div class="hero"><span class="big">${low}</span>
-      <span class="muted">running low (${lowPct}% or less)${(a.items || []).length ? ` of ${a.items.length} in stock` : ''}</span></div>`;
-    const list = items.length ? `<div class="list">${items.map((i) => {
+    // Nothing low: one line, and the lowest few under their own label (the
+    // items come lowest first), not a big 0 over the whole shelf.
+    const calm = low === 0 && all.length > 0;
+    const shown = cfg.low_only ? all.filter((i) => i.low) : calm ? all.slice(0, 3) : all;
+    const items = shown.slice(0, cfg.max_items);
+    const head = calm
+      ? `<div class="muted">Nothing running low · ${all.length} in stock</div>`
+      : `<div class="hero"><span class="big">${low}</span>
+      <span class="muted">running low (${lowPct}% or less)${all.length ? ` of ${all.length} in stock` : ''}</span></div>`;
+    const rows = items.map((i) => {
       const cls = i.low ? 'low' : '';
-      return `<div><div class="row"><span class="name">${esc(i.product)}</span>
-          <span class="muted">${num(i.quantity, 2)} ${esc(i.unit)}${i.pct != null ? ` · ${i.pct}%` : ''}</span></div>
+      return `<div><div class="row"><span class="name grow">${esc(i.product)}</span>
+          <span class="muted amt">${num(i.quantity, 2)} ${esc(i.unit)}${i.pct != null ? ` · ${i.pct}%` : ''}</span></div>
         ${i.pct != null ? `<div class="bar ${cls}"><i style="width:${Math.max(2, i.pct)}%"></i></div>` : ''}</div>`;
-    }).join('')}</div>` : morph ? '' : '<div class="empty">Nothing in stock yet. Add products on the GardenRX panel\'s Inventory page.</div>';
+    }).join('');
+    const list = items.length
+      ? `<div class="section">${calm ? '<div class="label">Lowest stock</div>' : ''}<div class="list">${rows}</div></div>`
+      : morph || calm ? '' : '<div class="empty">Nothing in stock yet. Add products on the GardenRX panel\'s Inventory page.</div>';
     return `<div class="wrap">${cfg.title ? `<div class="title">${esc(cfg.title)}</div>` : ''}${head}${list}</div>`;
   }
 }
