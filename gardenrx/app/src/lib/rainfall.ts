@@ -52,12 +52,18 @@ export interface RainSummary {
   daysSinceRain: number | null; // days since a day with >= 0.1"
   wettest: DailyRain | null;
   status: DroughtStatus;
-  monthExpected: number; // ~1"/week reference for the window
+  monthExpected: number; // the window's reference: ~1"/week growing, about half resting
 }
 
 const RAIN_DAY = 0.1; // a day with at least this much counts as "it rained"
 
-export function rainfallSummary(daily: DailyRain[]): RainSummary {
+/**
+ * The 30-day total against what the garden needs in this season. A growing
+ * garden wants ~1"/week; a resting one (most crops dormant or past harvest)
+ * draws about half of that, and "drought" is a growing-season word: a resting
+ * garden that is short of its reference is at most "dry".
+ */
+export function rainfallSummary(daily: DailyRain[], opts: { dormant?: boolean } = {}): RainSummary {
   const n = daily.length;
   const lastN = (k: number) => daily.slice(Math.max(0, n - k)).reduce((s, d) => s + d.inches, 0);
   const week = round2(lastN(7));
@@ -76,11 +82,19 @@ export function rainfallSummary(daily: DailyRain[]): RainSummary {
     null
   );
 
-  // Gardens want roughly 1 inch of water per week; compare the window total to that.
-  const monthExpected = round2((Math.min(30, n) / 7) * 1.0);
+  // Gardens want roughly 1 inch of water per week while growing; compare the
+  // window total to the season's share of that.
+  const weekly = opts.dormant ? RESTING_SHARE : 1.0;
+  const monthExpected = round2((Math.min(30, n) / 7) * weekly);
   const ratio = monthExpected > 0 ? month / monthExpected : 0;
   const status: DroughtStatus =
-    ratio < 0.33 ? 'drought' : ratio < 0.66 ? 'dry' : ratio < 1.5 ? 'adequate' : 'wet';
+    ratio < 0.33 && !opts.dormant
+      ? 'drought'
+      : ratio < 0.66
+        ? 'dry'
+        : ratio < 1.5
+          ? 'adequate'
+          : 'wet';
 
   return { week, month, daysSinceRain, wettest, status, monthExpected };
 }
