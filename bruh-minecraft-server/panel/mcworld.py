@@ -252,6 +252,10 @@ _LINE_RE = re.compile(
 _NAME = r"[A-Za-z0-9_.*\-]{1,32}"
 _JOIN_RE = re.compile(rf"^(?P<name>{_NAME}) joined the game$")
 _LEAVE_RE = re.compile(rf"^(?P<name>{_NAME}) left the game$")
+# The same lines for a name the stricter shape refuses — a Bedrock gamertag
+# with a space when Floodgate keeps spaces — read only for somebody `list`
+# shows on (`known`), never as a new player.
+_JOIN_ANY_RE = re.compile(r"^(?P<name>[^<>:\[\]]{1,40}?) (?P<how>joined|left) the game$")
 _ADV_RE = re.compile(
     rf"^(?P<name>{_NAME}) has (?P<how>made the advancement|completed the challenge|reached the goal) \[(?P<what>.+)\]$")
 _CHAT_RE = re.compile(r"^(?:\[Not Secure\] )?<(?P<name>[^>]{1,40})> (?P<text>.*)$")
@@ -329,7 +333,7 @@ def parse_log_line(line: str, known: set[str] | frozenset[str] = frozenset()) ->
     thread = str(m.group("thread") or "")
     if (s := _SYSTEM_RE.match(msg)):
         inner = s["text"].strip()
-        if _JOIN_RE.match(inner) or _LEAVE_RE.match(inner):
+        if _JOIN_RE.match(inner) or _LEAVE_RE.match(inner) or _JOIN_ANY_RE.match(inner):
             msg = inner
         else:
             return None
@@ -346,6 +350,12 @@ def parse_log_line(line: str, known: set[str] | frozenset[str] = frozenset()) ->
         return {"kind": "join", "player": j["name"], "text": f"{j['name']} joined"}
     if (j := _LEAVE_RE.match(msg)):
         return {"kind": "leave", "player": j["name"], "text": f"{j['name']} left"}
+    if (j := _JOIN_ANY_RE.match(msg)) and not marked:
+        name = j["name"].strip()
+        mine = next((k for k in known if _bare(k) == _bare(name)), None)
+        if mine is not None:
+            kind = "join" if j["how"] == "joined" else "leave"
+            return {"kind": kind, "player": mine, "text": f"{mine} {j['how']}"}
     if (j := _ADV_RE.match(msg)):
         verb = {"made the advancement": "made the advancement",
                 "completed the challenge": "completed the challenge",
@@ -968,6 +978,12 @@ class WorldCollector:
                 ev["player"] = who
             else:
                 ev["player"], ev["shown"], ev["unmatched"] = None, shown, True
+        if ev["kind"] in ("join", "leave") and ev["player"] not in self.sessions:
+            # The log's form of a name `list` gave another way (a Floodgate
+            # prefix of "." or "*" on one and not the other) is the same person.
+            same = next((n for n in self.sessions if _bare(n) == _bare(ev["player"])), None)
+            if same is not None:
+                ev["player"] = same
         if ev["kind"] == "join":
             self.unheard_joins.pop(ev["player"], None)
         if ev["kind"] == "join" and ev["player"] in self.joined_via_list:
@@ -1104,11 +1120,11 @@ class WorldCollector:
                     "why": ("The panel cannot read the server's log, so chat, joins and "
                             "deaths are missing from the feed while players are on.")}
         if missed:
+            who = " and ".join(missed[:2]) + (" and others" if len(missed) > 2 else "")
             return {"ok": False, "code": "joins_unheard", "players": missed[:6],
-                    "why": (f"{', '.join(missed[:3])} came on without the usual join line in "
-                            "the server's log. A plugin or script probably changed the join "
-                            "or chat messages, so the feed may miss chat. Chat is still read "
-                            "in the common rewritten shapes (\"Name: text\").")}
+                    "why": (f"Chat from {who} may be missing from this feed, because the "
+                            "server's log did not show them joining; the game itself is fine, "
+                            "and nothing needs doing unless chat stays missing.")}
         return {"ok": True, "why": ""}
 
     def _query_time(self, what: str) -> int | None:

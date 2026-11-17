@@ -1058,7 +1058,7 @@ footer {
 .companion-status[data-code="ready"], .companion-status[data-code="acting"],
 .companion-status[data-code="asking"], .companion-status[data-code="waiting"] { border-left-color: var(--accent-ink); }
 .companion-status[data-code="off"] { border-left-color: var(--warn); }
-.companion-status.bad { border-left-color: var(--danger); }
+.companion-status.bad { border-left-color: var(--danger); color: var(--fg); }
 .companion-intro { margin: 0 0 4px; }
 .companion-step { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 4px; }
 .companion-step h3 { display: flex; align-items: center; gap: 8px; font-size: 15px; color: var(--fg); }
@@ -1158,3 +1158,10 @@ input[type="file"]::file-selector-button {
 .snap-clump summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 12px; flex-wrap: wrap; }
 .snap-inner { margin: 0; border: none; border-top: 1px solid var(--border); border-radius: 0; background: var(--bg-raise); }
 .snap-note { margin: 0 0 8px; }
+
+/* Worlds: every row's buttons keep their own width and their whole label,
+   44px tall, in one order (Switch, Rename, Download); Delete stands apart
+   at the far end, on its own line when the row is narrow (#1183). */
+#worlds-table td.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+#worlds-table td.actions .btn { flex: 0 0 auto; min-width: 0; min-height: 44px; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; }
+#worlds-table td.actions .btn-danger { margin-left: auto; }

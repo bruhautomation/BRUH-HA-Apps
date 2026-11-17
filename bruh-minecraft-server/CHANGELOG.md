@@ -5,6 +5,15 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.19.14
+
+### Fixed
+
+- brAIn's look at the world no longer sees an empty box when the server is busy: block reads keep their own back-off, the save they fall back on is waited for, and when the save does not finish the answer says so instead of reading an old save. An edit that removes a block now reports it and its undo puts it back. Looking a build up by name finds the builds brAIn has made and the places it knows (#1159).
+- Players lists people who have actually played here, not names a server command looked up, so a row called "list" no longer appears (#1180).
+- A Bedrock player's join is matched to the player list without its prefix, so a normal Bedrock join no longer raises the "feed may miss chat" notice; when it does show, it is one plain sentence in readable contrast (#1182).
+- World rows share one layout with whole button labels, and Delete sits apart from Download (#1183).
+
 ## 1.19.13
 
 ### Fixed

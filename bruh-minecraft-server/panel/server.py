@@ -808,23 +808,42 @@ def _joined_in_log(tail: int = 400_000) -> set[str]:
     return set(_JOINED_RE.findall(text))
 
 
-def _known_players(online: list) -> list[dict]:
-    """Everyone the server's own files know: who has joined (usercache.json),
-    is whitelisted or an operator, or is banned, each with their current roles.
+def _played_uuids() -> set[str] | None:
+    """The UUIDs that have player data in any world here (`playerdata/`,
+    or `players/data/` from 26.1): the people who have actually been in a
+    world. None when no world has the folder yet (nothing to go by)."""
+    found: set[str] | None = None
+    for pattern in ("*/playerdata/*.dat", "*/players/data/*.dat"):
+        for path in MC_SERVER_DIR.glob(pattern):
+            found = found if found is not None else set()
+            found.add(path.stem.lower())
+    return found
 
-    A name the poller read from the server's `/list` reply or a status ping is
-    "online" only when the server's files also know it: a player who joins is
-    written to usercache.json by the server itself, so a name parsed from
-    text that no file knows is a misread, not a player."""
-    def names(fname: str) -> list[str]:
+
+def _known_players(online: list) -> list[dict]:
+    """Everyone the server's own files know: who has played here, is
+    whitelisted or an operator, or is banned, each with their current roles.
+
+    usercache.json is not a list of players: the server also writes to it
+    every name a command looked up (`op list`, `whitelist add list`), so
+    the word "list" became a row (#1180). A name there counts when its UUID
+    has player data in a world, or the console log shows it joining (a
+    Bedrock player through Floodgate). A name the poller read from the
+    server's `/list` reply or a status ping is "online" only when it is
+    known this way too."""
+    def entries(fname: str) -> list[dict]:
         data = _read_json(MC_SERVER_DIR / fname, [])
-        return [str(e["name"]) for e in data
-                if isinstance(e, dict) and isinstance(e.get("name"), str)] \
+        return [e for e in data if isinstance(e, dict) and isinstance(e.get("name"), str)] \
             if isinstance(data, list) else []
+
+    def names(fname: str) -> list[str]:
+        return [str(e["name"]) for e in entries(fname)]
 
     ops, white, banned = set(names("ops.json")), set(names("whitelist.json")), \
         set(names("banned-players.json"))
-    seen = set(names("usercache.json")) | _joined_in_log()
+    played = _played_uuids()
+    seen = {str(e["name"]) for e in entries("usercache.json")
+            if played is None or str(e.get("uuid") or "").lower() in played} | _joined_in_log()
     on_file = seen | ops | white | banned
     online_set = {str(n) for n in online} & on_file
     out = [{
@@ -3565,22 +3584,30 @@ def _companion_snapshot() -> str | None:
 # snapshot one chunk column at a time, and the spyglass reads before each
 # ray, and one `save-all flush` covers them all.
 SAVE_FRESH_S = 3.0
+# How long a `save-all flush` is waited for. A busy server (the time BRUH
+# Sight stops answering) takes more than ten seconds to write every loaded
+# chunk; given up on, the read that follows saw the save before it — a box
+# full of blocks read as air, and an edit "changed 0" (#1159).
+SAVE_WAIT_S = 40
 _SAVED: dict = {"at": -1e12}
 
 
-def save_world() -> None:
-    """`save-all flush` (it waits for the write) unless one just ran."""
+def save_world() -> bool:
+    """`save-all flush` (it waits for the write) unless one just ran.
+    Whether the world on disk is now the world as it is."""
     now = time.monotonic()
     if now - _SAVED["at"] < SAVE_FRESH_S:
-        return
+        return True
     try:
-        with Rcon(RCON_HOST, _rcon_password(), port=RCON_PORT, timeout=10) as r:
-            r.command("save-all flush")
-        _SAVED["at"] = time.monotonic()
-    except Exception:  # noqa: BLE001 — read what is on disk; a stale read is
-        # still the world as of the last save, and a cell an edit changes is
-        # checked again by the undo before it is put back.
+        with Rcon(RCON_HOST, _rcon_password(), port=RCON_PORT, timeout=SAVE_WAIT_S) as r:
+            reply = r.command("save-all flush")
+    except Exception:  # noqa: BLE001 — the caller decides what an old save is worth
         log.debug("save-all before a block read did not answer")
+        return False
+    if re.search(r"unable to save|failed", reply or "", re.I):
+        return False
+    _SAVED["at"] = time.monotonic()
+    return True
 
 
 def fresh_read() -> None:
@@ -3627,7 +3654,11 @@ def _companion_reader(dimension: str, box: tuple):
                             tuple(chunk) if isinstance(chunk, list) and len(chunk) == 2 else None)
     if isinstance(live, dict) and live and "error" not in live:
         return live
-    save_world()
+    if not save_world():
+        # What is on disk is the last save, minutes old: a block placed since
+        # reads as air. Said, never answered as if it were the world.
+        return mcmap.Unread("unsaved", "The server did not finish saving the world in time, "
+                            "so the saved files may be out of date. Try again in a moment.")
     region = mcmap.region_dir(world_dir(), dimension)
     try:
         return mcmap.box_states(region, *box, limit=None)
@@ -4177,11 +4208,21 @@ async def api_companion_job_undo(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+def _atlas_fresh() -> "atlas_mod.Atlas":
+    """The atlas after a save and a look at the region headers: it reads
+    the saved world, which otherwise lags the game by an autosave."""
+    index = _atlas()
+    save_world()
+    index.rescan()
+    return index
+
+
 async def api_atlas(request: web.Request) -> web.Response:
     body = await _json_body(request)
     try:
+        index = await asyncio.to_thread(_atlas_fresh)
         result = await asyncio.to_thread(
-            _atlas().query, body.get("player"), body.get("x"), body.get("z"), body.get("y"),
+            index.query, body.get("player"), body.get("x"), body.get("z"), body.get("y"),
             body.get("dimension"), body.get("radius"), body.get("query"))
     except atlas_mod.AtlasError as exc:
         return _companion_error(exc)
@@ -4191,8 +4232,9 @@ async def api_atlas(request: web.Request) -> web.Response:
 async def api_atlas_room(request: web.Request) -> web.Response:
     body = await _json_body(request)
     try:
+        index = await asyncio.to_thread(_atlas_fresh)
         result = await asyncio.to_thread(
-            _atlas().room, body.get("player"), body.get("room"), body.get("x"), body.get("y"),
+            index.room, body.get("player"), body.get("room"), body.get("x"), body.get("y"),
             body.get("z"), body.get("dimension"))
     except atlas_mod.AtlasError as exc:
         return _companion_error(exc)

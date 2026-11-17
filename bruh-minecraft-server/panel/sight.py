@@ -20,6 +20,9 @@ Everything here fails soft: without the plugin (vanilla, Fabric, Forge,
 Folia, a server still starting) every call answers None and the callers
 read RCON and the saved world as before. A failure backs off for
 `BACKOFF_S` so a missing plugin costs one file stat a beat, not a timeout.
+A block read keeps a backoff of its own: a state poll that timed out on a
+busy tick must not send the next look to a save that is minutes old, which
+read as an empty world (#1159).
 """
 from __future__ import annotations
 
@@ -54,6 +57,7 @@ class Sight:
         self.clock = clock
         self.opener = opener or urllib.request.urlopen
         self.down_until = -1e12
+        self.blocks_down_until = -1e12
         self.last_error: str | None = None
         self._state: tuple[float, dict[str, Any]] | None = None
         self.calls = 0
@@ -76,16 +80,20 @@ class Sight:
             else "127.0.0.1"
         return {"host": host, "port": data["port"], "token": data["token"]}
 
-    def _fail(self, why: str) -> None:
+    def _fail(self, why: str, blocks: bool = False) -> None:
         self.last_error = why[:200]
-        self.down_until = self.clock() + BACKOFF_S
+        if blocks:
+            self.blocks_down_until = self.clock() + BACKOFF_S
+        else:
+            self.down_until = self.clock() + BACKOFF_S
 
     def _call(self, path: str, payload: dict[str, Any] | None, timeout: float) -> Any:
-        if self.clock() < self.down_until:
+        blocks = path == "/v1/blocks"
+        if self.clock() < (self.blocks_down_until if blocks else self.down_until):
             return None
         ep = self.endpoint()
         if ep is None:
-            self._fail("BRUH Sight is not running (no endpoint file)")
+            self._fail("BRUH Sight is not running (no endpoint file)", blocks)
             return None
         data = None if payload is None else json.dumps(payload).encode()
         req = urllib.request.Request(
@@ -103,10 +111,10 @@ class Sight:
                     return {"error": json.loads(exc.read().decode("utf-8")).get("error")}
                 except (ValueError, OSError, AttributeError):
                     return {"error": "bad request"}
-            self._fail(f"BRUH Sight answered {exc.code}")
+            self._fail(f"BRUH Sight answered {exc.code}", blocks)
             return None
         except (OSError, ValueError) as exc:
-            self._fail(f"BRUH Sight did not answer ({exc})")
+            self._fail(f"BRUH Sight did not answer ({exc})", blocks)
             return None
         self.last_error = None
         return body

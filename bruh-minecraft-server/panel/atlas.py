@@ -416,6 +416,14 @@ class Atlas:
                 idx["regions"].pop(name, None)
         self.last_sort = -1e12
 
+    def rescan(self) -> None:
+        """Look at the region headers now (a query after a save): the
+        chunks it wrote are summarised by the query that wants them, not
+        `RESCAN_S` later, so a build made a minute ago is in the answer."""
+        with self._lock:
+            self._root()
+            self._scan()
+
     def _enqueue(self, key: str, cx: int, cz: int, ts: int) -> None:
         if (key, cx, cz) not in self.queued:
             self.queued.add((key, cx, cz))
@@ -880,6 +888,20 @@ class Atlas:
             if lab.get("dimension") == dim and hit(lab["name"]):
                 out.append({"kind": "place" if lab.get("target") == "point" else lab["target"],
                             "name": lab["name"], "x": lab["x"], "y": lab["y"], "z": lab["z"]})
+        # The family's builds and named places (the build log, places.json,
+        # spawn): what a building is called when nothing in the world says it.
+        known = []
+        for p in self.places() or []:
+            try:
+                x, z = round(float(p["x"])), round(float(p["z"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+            if (p.get("dimension") or "minecraft:overworld") != dim or not p.get("name"):
+                continue
+            row = {"kind": "place", "name": str(p["name"])[:NAME_MAX], "x": x, "z": z}
+            known.append(row)
+            if hit(row["name"]):
+                out.append(row)
         for rx, rz in sorted(tuple(int(n) for n in name[2:].split("."))
                              for name in self._index(key)["regions"]):
             for s in self._region(key, rx, rz)["chunks"].values():
@@ -890,7 +912,7 @@ class Atlas:
                         out.append({"kind": "sign", "name": t["text"], "x": t["x"],
                                     "y": t["y"], "z": t["z"]})
         return {"dimension": dim, "query": text[:NAME_MAX], "matches": out[:40],
-                "indexed": {"pending": len(self.queue)}}
+                "places": known[:40], "indexed": {"pending": len(self.queue)}}
 
     def _search(self, key: str, text: str, buildings: list[dict[str, Any]],
                 cx1: int, cz1: int, cx2: int, cz2: int) -> list[dict[str, Any]]:
