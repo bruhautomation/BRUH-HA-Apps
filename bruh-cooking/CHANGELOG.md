@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.13
+
+### Changed
+
+- While an appliance is out of contact, Temperature, Cooking and the cook-end sensor keep their last known values, marked old (`stale`, `as_of`), instead of reading unavailable; controls stay unavailable, and the panel still draws the appliance as offline (#1186).
+- The Repairs notice for an update that needs a restart reads "Restart Home Assistant to finish updating BRUH Cooking" (#1185).
+
+This is 0.1.11 made again after its revert in 0.1.12.
+
+## 0.1.12
+
+### Removed
+
+- Reverted 0.1.11 (#1186, #1185): the development loop's own review of how that release was made flagged one step it does not accept, so the release is taken back and made again. Readings of an offline appliance go back to unavailable, and the restart notice to its earlier title, until it ships again.
+
 ## 0.1.11
 
 ### Changed
