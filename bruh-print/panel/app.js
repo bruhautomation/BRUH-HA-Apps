@@ -85,10 +85,20 @@ async function api(path, options = {}) {
   finally { if (counted) { printsOpen--; showBusy(); } }
 }
 async function apiCall(path, options) {
-  const response = await fetch(relative(path), {
-    headers: options.body ? { 'Content-Type': 'application/json' } : {},
-    ...options,
-  });
+  let response;
+  try {
+    response = await fetch(relative(path), {
+      headers: options.body ? { 'Content-Type': 'application/json' } : {},
+      ...options,
+    });
+  } catch {
+    /* The browser's own words for a request that never got an answer are
+     * "Failed to fetch" or "Load failed", which say nothing a person can
+     * do anything about (#1172). This is every call in the panel, so every
+     * toast and note gets the same plain sentence. */
+    throw new Error('BRUH Print did not answer. Check that the add-on is '
+      + 'running, then try again.');
+  }
   const type = response.headers.get('content-type') || '';
   if (!type.includes('application/json')) {
     if (!response.ok) throw new Error(`${path} answered ${response.status}`);
@@ -185,6 +195,7 @@ async function loadState() {
     fonts: data.fonts, settings: data.settings, catalog: data.catalog,
     printer: data.printer, printers: data.printers, history: data.history,
   });
+  S.quickStock = data.quick_stock || '';
   S.printerError = data.printer_error;
   S.ambiguous = data.ambiguous;
   renderBar();
@@ -440,22 +451,31 @@ function openStockPicker(current, onPick) {
   $('modal').showModal();
 }
 
+/* Which label Quick prints on. ONE answer, and it is the add-on's: the
+ * Lovelace card reads the same one off the printer sensor and a press on
+ * either is stored there (#1174). It was this browser's own memory, which is
+ * how the card said the left roll while this tab said the right one for the
+ * same word. When that label is in neither roll, the left roll's — the
+ * order the card falls back in too. */
+function quickChoice(rows) {
+  const has = (id) => id && rows.some((s) => s.id === id);
+  if (has(S.quickStock)) return S.quickStock;
+  const left = S.rolls.find((r) => r.side === 'left' && r.loaded);
+  if (left && has(left.stock)) return left.stock;
+  return (rows[0] || {}).id || '';
+}
+
 function fillPickers() {
-  const options = (select, keep) => {
-    const previous = keep ?? select.value;
-    const rows = loadedStocks();
-    select.innerHTML = '';
-    for (const stock of rows) {
-      const option = el('option', null, stockOptionText(stock));
-      option.value = stock.id;
-      select.append(option);
-    }
-    if (previous && rows.some((s) => s.id === previous)) select.value = previous;
-    else if (rows.some((s) => s.id === S.settings.default_stock))
-      select.value = S.settings.default_stock;
-    else select.value = (rows[0] || {}).id || '';
-  };
-  options($('quickStock'), prefGet('bruhprint.stock', null));
+  const select = $('quickStock');
+  const before = select.value;
+  const rows = loadedStocks();
+  select.innerHTML = '';
+  for (const stock of rows) {
+    const option = el('option', null, stockOptionText(stock));
+    option.value = stock.id;
+    select.append(option);
+  }
+  select.value = quickChoice(rows);
   setStockButton($('designStock'), S.label ? S.label.stock : null);
 
   const quickFont = $('quickFont');
@@ -465,6 +485,8 @@ function fillPickers() {
   updateTurnLines();
   quickSummary();
   updatePrintsOn();
+  /* Picked on the card since the last look: the picture follows. */
+  if (before && before !== select.value) debouncedQuick();
 
   if (!$('addBar').childElementCount) buildAddBar();
 }
@@ -622,19 +644,37 @@ function quickPayload(printIt) {
   };
 }
 
+/* The picture frame with no picture in it, saying why in one calm line. */
+function quickEmpty(message) {
+  $('quickPreview').classList.remove('on');
+  $('quickPlaceholder').textContent = message;
+  $('quickPlaceholder').hidden = false;
+  $('quickFit').textContent = '';
+}
+
+/* Print is for a label with words on it; an empty box has nothing to send. */
+function syncQuickPrint() {
+  $('quickPrint').disabled = !$('quickText').value.trim() || !$('quickStock').value;
+}
+
 async function quickPreview() {
   const typed = $('quickText').value.trim();
-  const text = typed || 'Your text here';
   const image = $('quickPreview');
-  if (!$('quickStock').value) {
-    image.classList.remove('on');
-    $('quickPlaceholder').hidden = false;
-    $('quickFit').textContent = '';
+  syncQuickPrint();
+  /* Nothing typed is not a label to draw. It drew a "Your text here" sample
+   * by asking the server, so an empty box could show "Loading the
+   * preview…" over a raw "Failed to fetch" before anybody had typed a
+   * letter (#1172). Nothing is asked for until there is something to
+   * draw, and a reply still in flight is dropped. */
+  if (!typed || !$('quickStock').value) {
+    ++quickSeq;
+    quickEmpty(typed ? 'Pick a label below to see it here.' : 'Your label appears here');
+    notes($('quickNotes'), []);
     return;
   }
   const seq = ++quickSeq;
   try {
-    const data = await post('/api/quick', { ...quickPayload(false), text });
+    const data = await post('/api/quick', quickPayload(false));
     /* Out-of-order replies are the ordinary case here: this fires on every
      * keystroke and a longer word renders slower. Dropping a stale reply is
      * what stops the preview flicking back to what you typed two letters
@@ -643,14 +683,17 @@ async function quickPreview() {
     image.src = data.png;
     image.classList.add('on');
     $('quickPlaceholder').hidden = true;
-    $('quickFit').textContent = typed
-      ? `${data.fit.lines.length} line${data.fit.lines.length > 1 ? 's' : ''}, `
-        + `${data.fit.size_mm}mm tall`
-      : 'Sample \u2014 type above to replace it.';
-    if (typed) S.label = data.label;
+    $('quickFit').textContent =
+      `${data.fit.lines.length} line${data.fit.lines.length > 1 ? 's' : ''}, `
+      + `${data.fit.size_mm}mm tall`;
+    S.label = data.label;
     notes($('quickNotes'), data.notes);
   } catch (error) {
     if (seq !== quickSeq) return;
+    /* A picture of the words before the failure would be a preview of
+     * something that is not what prints, so it goes, and the frame says
+     * what happened in the words `api` puts on it. */
+    quickEmpty('The preview could not be drawn.');
     notes($('quickNotes'), [error.message]);
   }
 }
@@ -660,11 +703,20 @@ function notes(list, items) {
   for (const item of items || []) list.append(el('li', null, item));
 }
 
+/* Stored in the add-on, not this browser, so the card shows the same pick. */
+async function chooseQuickStock(id) {
+  S.quickStock = id;
+  try {
+    const data = await post('/api/quick/stock', { stock: id });
+    S.quickStock = data.quick_stock || id;
+  } catch (error) { fail(error); }
+}
+
 const debouncedQuick = () => { clearTimeout(quickTimer); quickTimer = setTimeout(quickPreview, 260); };
 ['quickText', 'quickStock', 'quickUpper']
   .forEach((id) => $(id).addEventListener('input', () => {
     if (id === 'quickStock') {
-      prefSet('bruhprint.stock', $('quickStock').value);
+      chooseQuickStock($('quickStock').value);
       updateTurnLines();
       updatePrintsOn();
     }
@@ -687,7 +739,7 @@ $('quickPrint').addEventListener('click', async () => {
     toast(`Printed ${data.printed} on the ${data.side} roll.`, 'good');
     notes($('quickNotes'), data.notes);
     await loadState();
-  } catch (error) { fail(error); } finally { button.disabled = false; }
+  } catch (error) { fail(error); } finally { syncQuickPrint(); }
 });
 
 $('quickToDesign').addEventListener('click', () => {
@@ -1844,24 +1896,29 @@ function renderPrinter() {
     bays.append(bay);
   }
 
-  /* Said once under both rolls, not once per roll. */
+  /* Said once for both rolls, not once per roll — as a box that sits with
+   * them, rather than a loose line under them that did not say what
+   * counting is for (#1173). The switch is right here: a note that points
+   * at a setting two closed sections down is a sentence about something
+   * you cannot see. */
   document.querySelectorAll('.baynote').forEach((n) => n.remove());
-  if (S.settings.track_remaining === false && S.rolls.some((r) => stockById(r.stock)))
-    {
-      /* The switch is right here: a note that points at a setting two
-       * closed sections down is a sentence about something you cannot see. */
-      const note = el('p', 'est baynote', 'Not counting what is left. ');
-      const on = el('button', 'btn tiny', 'Count what is left');
-      on.onclick = async () => {
-        try {
-          await post('/api/settings', { track_remaining: true });
-          await loadState(); renderPrinter(); renderBar();
-          toast('Counting what is left.', 'good');
-        } catch (error) { fail(error); }
-      };
-      note.append(on);
-      bays.after(note);
-    }
+  if (S.settings.track_remaining === false && S.rolls.some((r) => stockById(r.stock))) {
+    const note = el('div', 'baynote');
+    note.append(el('p', null,
+      'Counting keeps an estimate of how many labels are left on each roll, '
+      + 'so you can see when one is running low. It counts down from what '
+      + 'you say is loaded; the printer itself cannot tell.'));
+    const on = el('button', 'btn', 'Count what is left');
+    on.onclick = async () => {
+      try {
+        await post('/api/settings', { track_remaining: true });
+        await loadState(); renderPrinter(); renderBar();
+        toast('Counting what is left.', 'good');
+      } catch (error) { fail(error); }
+    };
+    note.append(on);
+    bays.after(note);
+  }
 
   const table = $('stockTable');
   table.innerHTML = '';
@@ -2197,6 +2254,9 @@ function lineUpBlock(roll, stock) {
     const more = el('details', 'caldetail');
     more.append(el('summary', null, 'What it measured'),
                 el('p', null, calibrationSentence(stock)));
+    /* Forget lives with the numbers it throws away, behind the same press,
+     * rather than as a red button under the everyday ones (#1173). */
+    more.append(forgetButton(roll, stock));
     state.append(more);
   } else {
     state.append(el('p', 'calverdict', rollable
@@ -2208,8 +2268,11 @@ function lineUpBlock(roll, stock) {
   }
   wrap.append(state);
 
-  /* The main action until it has been done, then a quiet one. */
-  const go = el('button', done ? 'btn wide' : 'btn primary wide',
+  /* One row of actions, the main one first: it is the main action until
+   * it has been done, then a quiet one. It was a full-width button over two
+   * half-rows of small ones and a red one on a line of its own (#1173). */
+  const actions = el('div', 'bayactions');
+  const go = el('button', done ? 'btn' : 'btn primary',
     done ? 'Line up again' : 'Line up this roll');
   go.id = `lineUp-${roll.side}`;
   go.disabled = !rollable;
@@ -2225,7 +2288,7 @@ function lineUpBlock(roll, stock) {
           + 'property of the roll, so there is nothing to measure until '
           + 'there is one.'));
   go.onclick = () => lineUpDialog(stock, roll.side);
-  wrap.append(go);
+  actions.append(go);
 
   /* The last label of a job left inside the printer rather than pushed out
    * to the tear bar. Only a roll whose calibration asked for it ends that
@@ -2237,8 +2300,7 @@ function lineUpBlock(roll, stock) {
       'The last label is held inside so the next print lines up; press to '
       + 'feed it out.'));
 
-  const foot = el('div', 'foot');
-  const check = el('button', 'btn tiny', 'Print a check label');
+  const check = el('button', 'btn', 'Print a check label');
   check.id = `checkLabel-${roll.side}`;
   /* Offered on continuous paper, unlike the wizard: a frame drawn around
    * everything this roll can print on is a real answer there — it is the
@@ -2256,10 +2318,10 @@ function lineUpBlock(roll, stock) {
       toast(`Check label printed on the ${data.side} roll.`, 'good');
     } catch (error) { fail(error); }
   };
-  foot.append(check);
+  actions.append(check);
 
   if (cal.ending === 'hold') {
-    const feed = el('button', 'btn tiny', 'Feed');
+    const feed = el('button', 'btn', 'Feed');
     feed.id = `feedRoll-${roll.side}`;
     feed.setAttribute('data-tip',
       'Moves the paper to the tear bar. It prints nothing.');
@@ -2267,29 +2329,31 @@ function lineUpBlock(roll, stock) {
       try { await post('/api/printer/feed', { side: roll.side }); toast('Fed to the tear bar.', 'good'); }
       catch (error) { fail(error); }
     };
-    foot.append(feed);
+    actions.append(feed);
   }
 
-  wrap.append(foot);
-  /* Only where there is something to forget. A button that clears nothing
-   * is a control asking to be understood, and the answer would be "it does
-   * what has already happened". */
-  if (stock && stock.calibrated) {
-    const forget = el('button', 'btn tiny danger forgetcal', 'Forget the lining up');
-    forget.id = `forgetCal-${roll.side}`;
-    forget.setAttribute('data-tip',
-      'Throws the measurement away and prints exactly what the add-on '
-      + 'shipped with. Not a reset to a guessed default — to nothing.');
-    forget.onclick = async () => {
-      try {
-        await del(`/api/stock/${stock.id}/calibration`);
-        await loadState(); renderPrinter(); fillPickers();
-        toast('Forgotten. This roll prints as it did before.', 'good');
-      } catch (error) { fail(error); }
-    };
-    wrap.append(forget);
-  }
+  wrap.append(actions);
   return wrap;
+}
+
+/* Only where there is something to forget — it is drawn inside "What it
+ * measured", which only a lined-up roll has. A button that clears nothing
+ * is a control asking to be understood, and the answer would be "it does
+ * what has already happened". */
+function forgetButton(roll, stock) {
+  const forget = el('button', 'btn tiny danger forgetcal', 'Forget the lining up');
+  forget.id = `forgetCal-${roll.side}`;
+  forget.setAttribute('data-tip',
+    'Throws the measurement away and prints exactly what the add-on '
+    + 'shipped with. Not a reset to a guessed default — to nothing.');
+  forget.onclick = async () => {
+    try {
+      await del(`/api/stock/${stock.id}/calibration`);
+      await loadState(); renderPrinter(); fillPickers();
+      toast('Forgotten. This roll prints as it did before.', 'good');
+    } catch (error) { fail(error); }
+  };
+  return forget;
 }
 
 
@@ -3216,6 +3280,39 @@ $('printerChip').addEventListener('click', () => show('printer'));
 $('statusChip').addEventListener('click', () => show('printer'));
 
 /* ── History ────────────────────────────────────────────────────────── */
+/* A row is told apart by what is ON the label, and a title cannot do that:
+ * three prints called "Pantry" were three identical rows (#1171). Every
+ * entry already keeps its label document, so the picture is drawn from it
+ * by the same renderer as every other preview, the way it reads (`canvas`,
+ * so a tube wrap's words are not on their side) — nothing new is stored, and
+ * what is kept here is one small image per row on screen, for as long as
+ * the page is open. Drawn one at a time, newest first, so opening the tab
+ * on a Pi is not thirty renders at once. */
+const thumbs = new Map();
+let thumbQueue = Promise.resolve();
+function historyThumb(entry) {
+  const image = el('img', 'hthumb');
+  image.alt = labelWords(entry.label) || entry.title || '';
+  const known = thumbs.get(entry.id);
+  if (known) { image.src = known; return image; }
+  thumbQueue = thumbQueue.then(async () => {
+    if (!image.isConnected) return;
+    try {
+      const response = await api('/api/preview', {
+        method: 'POST', body: JSON.stringify({ label: entry.label, scale: 1, view: 'canvas' }) });
+      const url = URL.createObjectURL(await response.blob());
+      thumbs.set(entry.id, url);
+      image.src = url;
+    } catch { image.classList.add('none'); }
+  });
+  return image;
+}
+/* Every text box's words, for the picture's alt text. */
+const labelWords = (label) => ((label && label.elements) || [])
+  .filter((e) => e.type === 'text')
+  .map((e) => String((e.props || {}).text || '').split(/\s+/).join(' ').trim())
+  .filter(Boolean).join(' \u00b7 ');
+
 function renderHistory() {
   const list = $('historyList');
   list.innerHTML = '';
@@ -3230,18 +3327,28 @@ function renderHistory() {
     const text = el('div', 'htext');
     text.append(el('span', 'what', historyTitle(group)));
     const stock = stockById(entry.stock);
+    const stockName = stock ? stock.name : entry.stock;
     const when = (e) => new Date(e.at * 1000).toLocaleString([],
       { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-    text.append(el('span', 'meta',
-      `${when(entry)} \u00b7 ${count === 1 ? '1 label' : `${count} labels`}`
-      + ` \u00b7 ${entry.side} roll \u00b7 ${stock ? stock.name : entry.stock}`));
+    /* When, how many and which roll. The stock's name is on the picture's
+     * own shape and in Print again's tip; it took the line to three rows on
+     * a phone. */
+    const meta = el('span', 'meta', `${when(entry)} \u00b7 `
+      + `${count === 1 ? '1 label' : `${count} labels`} \u00b7 ${entry.side} roll`);
+    meta.title = stockName;
+    text.append(meta);
     const buttons = el('div', 'hbtns');
-    const again = el('button', 'btn tiny', 'Print again');
+    /* Says how many it will spend, because a batch row spends every label
+     * in the batch. */
+    const again = el('button', 'btn tiny', group.length > 1
+      ? `Print all ${count} again`
+      : (count === 1 ? 'Print this again' : `Print these ${count} again`));
     /* The Printed tab's lede used to say this and nothing else. A sentence
      * that describes a button belongs on the button. */
-    again.setAttribute('data-tip', group.length > 1
-      ? 'Prints every label of this batch again \u2014 same words, same stock, same roll.'
-      : 'Prints exactly this label again \u2014 same words, same stock, same roll.');
+    again.setAttribute('data-tip', (group.length > 1
+      ? 'Prints every label of this batch again'
+      : 'Prints exactly this label again')
+      + ` \u2014 same words, on the ${entry.side} roll (${stockName}).`);
     again.onclick = async () => {
       if (group.length > 1 && !confirm(`Print these ${count} labels again?`)) return;
       try {
@@ -3268,7 +3375,7 @@ function renderHistory() {
     const first = group[group.length - 1];
     open.onclick = () => { loadLabel(structuredClone(first.label)); show('design'); };
     buttons.append(again, open);
-    row.append(text, buttons);
+    row.append(historyThumb(group[group.length - 1]), text, buttons);
     list.append(row);
   }
 }

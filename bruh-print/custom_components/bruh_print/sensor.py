@@ -105,6 +105,9 @@ class PrinterSensor(_Base):
             "recognised": printer.get("recognised", True),
             "error": self._data.get("printer_error", ""),
             "add_on_version": self._data.get("version", ""),
+            # The stock a text print lands on. The Lovelace card starts from
+            # it and the Quick tab sets it, so both name the same roll.
+            "text_prints_on": self._data.get("quick_stock", ""),
         }
 
 

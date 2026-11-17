@@ -5,7 +5,8 @@
     "print_label": "mdi:label-outline",
     "reprint": "mdi:printer-refresh",
     "set_roll": "mdi:roll",
-    "print_test": "mdi:border-all-variant"
+    "print_test": "mdi:border-all-variant",
+    "choose_label": "mdi:label-variant-outline"
   },
   "entity": {
     "sensor": {

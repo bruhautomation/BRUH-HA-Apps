@@ -31,7 +31,9 @@ the quickest way to tell the three "no printer" causes apart:
 
 `default_stock` and `enforce_stock` only seed the panel's own settings on the
 first run. After that the panel owns them, so changing one there is not
-undone by the next restart.
+undone by the next restart. The default stock is also the label text prints
+on: picking a **Label** on the Quick tab, or pressing a roll on the Lovelace
+card, changes it for both, so they always name the same roll.
 
 ## Label stock
 
@@ -514,7 +516,7 @@ data: {side: left, stock: edcc-082wh, remaining: 1000}
 
 | Entity | State | Worth knowing |
 | --- | --- | --- |
-| `sensor.bruh_print_printer` | Model name | `two_rolls`, `dots_across`, `serial` |
+| `sensor.bruh_print_printer` | Model name | `two_rolls`, `dots_across`, `serial`, `text_prints_on` (the label text prints on) |
 | `sensor.bruh_print_left_roll` | Estimated labels left | `stock_name`, `size`, `loaded` |
 | `sensor.bruh_print_right_roll` | Estimated labels left | Unavailable on a one-roll printer |
 | `sensor.bruh_print_last_label` | What came out last | `entry_id` — pass it to `reprint` |

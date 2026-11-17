@@ -31,6 +31,7 @@ from .const import (
     DOMAIN,
     ISSUE_LOCAL_NOT_SERVED,
     LOCAL_PATH,
+    SERVICE_CHOOSE_LABEL,
     SERVICE_PRINT_LABEL,
     SERVICE_PRINT_TEMPLATE,
     SERVICE_PRINT_TEST,
@@ -103,6 +104,12 @@ PRINT_TEST_SCHEMA = vol.Schema({
     vol.Optional("side"): SIDES,
 })
 
+# Which label a text print lands on — the one answer the Quick tab and the
+# card share, so a press on either is what the other shows.
+CHOOSE_LABEL_SCHEMA = vol.Schema({
+    vol.Required("stock"): cv.string,
+})
+
 SERVICES = {
     SERVICE_PRINT_TEXT: PRINT_TEXT_SCHEMA,
     SERVICE_PRINT_TEMPLATE: PRINT_TEMPLATE_SCHEMA,
@@ -110,6 +117,7 @@ SERVICES = {
     SERVICE_REPRINT: REPRINT_SCHEMA,
     SERVICE_SET_ROLL: SET_ROLL_SCHEMA,
     SERVICE_PRINT_TEST: PRINT_TEST_SCHEMA,
+    SERVICE_CHOOSE_LABEL: CHOOSE_LABEL_SCHEMA,
 }
 
 

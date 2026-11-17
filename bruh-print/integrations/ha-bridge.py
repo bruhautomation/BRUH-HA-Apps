@@ -62,6 +62,9 @@ ROUTES: dict[str, Any] = {
     # worse failure than a service whose name is one release behind
     # what it prints.
     "print_test": lambda p: ("POST", "/api/printer/check"),
+    # Which label a text print lands on: the card's roll boxes and the
+    # Quick tab's picker are two views of this one setting (#1174).
+    "choose_label": lambda p: ("POST", "/api/quick/stock"),
     # The one read: what is loaded, what can be printed on it, and which
     # templates exist — so a voice request ("print a freezer label that
     # says chili") can name a stock and a template that are really there
