@@ -479,7 +479,8 @@ def _unchecked(row: dict) -> bool:
 def _item_list(row: dict) -> dict:
     """`item_labels` and `items_noun` for a row naming two things or more,
     else nothing."""
-    labels, noun = findings_store.item_labels(row.get("items"))
+    labels, noun = findings_store.item_labels(row.get("items"),
+                                                 row.get("item_names"))
     if len(labels) < 2:
         return {}
     return {"item_labels": labels, "items_noun": noun}

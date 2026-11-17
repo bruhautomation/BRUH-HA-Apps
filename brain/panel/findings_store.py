@@ -1868,6 +1868,9 @@ def _shape(entry: dict) -> dict:
     items = clean_items(entry.get("items"))
     if items:
         out["items"] = items
+        names = clean_items(entry.get("item_names"))
+        if names:
+            out["item_names"] = names
     explained = clean_explained(entry.get("explained"))
     if explained:
         # What a Wrong on this row explains (`server._record_exception`).
@@ -2176,20 +2179,28 @@ _ITEM_ENTITY_RE = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
 _ITEM_KEY_RE = re.compile(r"^[a-z_]+:\S+$")
 
 
-def item_labels(items) -> tuple[list[str], str]:
+def item_labels(items, names=None) -> tuple[list[str], str]:
     """``(labels, noun)`` for a row's `items`, as a person reads them.
+
+    ``names`` is the row's own `item_names`, when the check that filed it
+    names its items better than any one entity's name can (the frost check
+    keys a room as `area:<id>` and a controller by its zones, and names
+    each once): those are the labels, as written.
 
     The card's count line and its Show all (#437): every item by the name
     the house gives it, or — for an entity the house has no name for, a
     reference to one that no longer exists — the id read aloud (`the scene
     “before movie”`), never the id itself. An item that is not an entity
     (a device key, ``device:<id>`` or ``entry:<id>``) is left out, while an
-    item that is already a name a person reads (the frost check names the
-    spaces and devices at risk, never an id) is shown as it is; ``noun`` is
+    item that is already a name a person reads (a frost row filed before
+    its items were keys) is shown as it is; ``noun`` is
     "entities" when every item is one, else "items"."""
     keys = clean_items(items)
     if not keys:
         return [], ""
+    given = clean_items(names)
+    if given:
+        return given, "items"
     from checks._util import spoken_id  # noqa: PLC0415 — a leaf, lazy
     names = _names_now()
     labels: list[str] = []
@@ -2290,6 +2301,11 @@ def coerce(obj: dict) -> dict | None:
     items = clean_items(obj.get("items"))
     if items:
         entry["items"] = items
+        # What a person reads for them, when the keys are rooms and
+        # devices a name list says better (`item_labels`).
+        names = clean_items(obj.get("item_names"))
+        if names:
+            entry["item_names"] = names
     explained = clean_explained(obj.get("explained"))
     if explained:
         entry["explained"] = explained
@@ -5070,6 +5086,14 @@ def refresh_details(objs: list[dict]) -> int:
             if str(cur.get("source") or "").startswith("check:") \
                     and "evidence" in entry:
                 cur["evidence"] = _clean_evidence(entry.get("evidence"))
+            changed += 1
+        # And what the card calls them, which a renamed room changes alone.
+        new_names = clean_items(entry.get("item_names"))
+        if new_items and new_names != clean_items(cur.get("item_names")):
+            if new_names:
+                cur["item_names"] = new_names
+            else:
+                cur.pop("item_names", None)
             changed += 1
         # A check's own sentence about what to do follows the check, so a
         # reworded rule reaches the rows it already filed. Only while the

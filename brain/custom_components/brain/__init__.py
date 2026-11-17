@@ -409,12 +409,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         stop_minecraft = await minecraft_part.async_setup(
             hass, bridge, async_track_time_interval)
+        # BRUH Cooking's update waiting on a restart (cooking_restart.py):
+        # its add-on cannot reach Home Assistant, and the older integration
+        # it replaced cannot say so, so brAIn's Repairs says it. Checked now
+        # and every five minutes (the add-on deploys every ten).
+        from . import cooking_restart
+
+        async def _check_cooking(_now=None) -> None:
+            try:
+                await cooking_restart.async_check(hass, DOMAIN)
+            except Exception:  # noqa: BLE001 — a notice, never a failed setup
+                _LOGGER.debug("Could not check BRUH Cooking's restart",
+                              exc_info=True)
+
+        await _check_cooking()
+        unsub_cooking = async_track_time_interval(
+            hass, _check_cooking, timedelta(minutes=5))
 
         def _stop_learning() -> None:
             unsub_learning()
             unsub_findings()
             unsub_actions()
             stop_minecraft()
+            unsub_cooking()
+            ir.async_delete_issue(hass, DOMAIN, cooking_restart.ISSUE_ID)
             # The Repairs entries are this watcher's, so they leave with
             # it: a reload puts them back on the first poll, and removing
             # the integration should not leave brAIn's rows on somebody's

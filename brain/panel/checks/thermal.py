@@ -387,10 +387,12 @@ def unconditioned_from(rows) -> dict:
     ``rows`` are facts-store rows (any source, the Wrong reasons among
     them). An `area:` subject names the room; an entity subject names a
     sensor, whose room the check resolves against the registry it holds.
-    ``{"areas": [...], "entities": [...]}``, sorted, for the snapshot.
+    ``{"areas": [...], "entities": [...], "stated": {"areas", "entities"}}``,
+    sorted, for the snapshot: ``stated`` is the part said as a fact about
+    the house rather than as the reason for a Wrong (`source` is not
+    `correction`), which is all `frost_ahead` names a space on (#1200).
     """
-    areas: set[str] = set()
-    entities: set[str] = set()
+    found = {"all": (set(), set()), "stated": (set(), set())}
     for row in rows or ():
         if not isinstance(row, dict):
             continue
@@ -399,13 +401,21 @@ def unconditioned_from(rows) -> dict:
         subjects = row.get("subjects")
         if not isinstance(subjects, list) or not subjects:
             subjects = [row.get("subject") or ""]
+        into = ["all"] + ([] if row.get("source") == "correction"
+                          else ["stated"])
         for subject in subjects:
             subject = str(subject or "")
-            if subject.startswith("area:") and subject[5:]:
-                areas.add(subject[5:])
-            elif "." in subject and ":" not in subject:
-                entities.add(subject)
-    return {"areas": sorted(areas), "entities": sorted(entities)}
+            for which in into:
+                areas, entities = found[which]
+                if subject.startswith("area:") and subject[5:]:
+                    areas.add(subject[5:])
+                elif "." in subject and ":" not in subject:
+                    entities.add(subject)
+    areas, entities = found["all"]
+    stated_areas, stated_entities = found["stated"]
+    return {"areas": sorted(areas), "entities": sorted(entities),
+            "stated": {"areas": sorted(stated_areas),
+                       "entities": sorted(stated_entities)}}
 
 
 def conditioned_areas(house: House) -> set[str]:
@@ -426,12 +436,38 @@ def conditioned_areas(house: House) -> set[str]:
             area = house.area_id_of(eid)
             if area:
                 heated.add(area)
+    return heated - said_unconditioned(house)
+
+
+def said_unconditioned(house: House) -> set[str]:
+    """The area ids the household said nothing heats (`snap["unconditioned"]`):
+    a room named, or the room of a sensor named.
+
+    A fact about the ROOM, not a correction of one check, so every check
+    that judges a room by how it cools against the house's heating reads
+    it (`heat_loss` through `conditioned_areas`, `window`, `freeze`): a
+    porch the owner said is unheated tracks outside, and its falling is
+    not a fault. A room with no heating that nobody described is left as
+    it was.
+    """
     said = house.snap.get("unconditioned") or {}
-    if isinstance(said, dict):
-        heated -= {str(a) for a in said.get("areas") or ()}
-        heated -= {house.area_id_of(str(e))
-                   for e in said.get("entities") or ()}
-    return heated
+    if not isinstance(said, dict):
+        return set()
+    areas = {str(a) for a in said.get("areas") or () if a}
+    areas |= {house.area_id_of(str(e)) for e in said.get("entities") or ()}
+    return {a for a in areas if a}
+
+
+def _left_unheated(house: House, eid: str, unheated: set[str],
+                   check_id: str) -> bool:
+    """True, with its trail line, when ``eid`` is in a room the household
+    said nothing heats."""
+    if house.area_id_of(eid) not in unheated:
+        return False
+    house.gave_up(check_id, [{"entity_id": eid}],
+                  "you said nothing heats this room, so it is expected to "
+                  "follow the outside temperature", kind="explained")
+    return True
 
 
 def heat_loss(snap: dict, now: float) -> list[dict]:
@@ -675,11 +711,14 @@ def freezing_rooms(snap: dict, now: float) -> list[dict]:
         return []
 
     house = House(snap)
+    unheated = said_unconditioned(house)
     out = []
     for eid, entry in sorted(rooms.items()):
         # A probe on a pipe is still read here, on purpose; a sensor the
         # owner said does not measure the room's air (#1082: a manifold
-        # they called broken, a thermometer inside a box) is not.
+        # they called broken, a thermometer inside a box) is not, and
+        # a room they said nothing heats (#1200) is marked for `freeze` to
+        # leave out (still claimed here, so `window` does not take it up).
         if house.room_air_verdict(eid)[0] == "marked":
             continue
         rows = recent.get(eid) or []
@@ -698,7 +737,8 @@ def freezing_rooms(snap: dict, now: float) -> list[dict]:
             continue
         out.append({"entity_id": eid, "entry": entry, "indoor": indoor,
                     "outside": outside, "hours": hours, "unit": unit,
-                    "floor": floor})
+                    "floor": floor,
+                    "said_unheated": house.area_id_of(eid) in unheated})
     return out
 
 
@@ -710,8 +750,15 @@ def _deg_absolute(celsius: float, unit: str) -> float:
 def freeze(snap: dict, now: float) -> list[dict]:
     """A room on course for the temperature pipes are at risk at."""
     house = House(snap)
+    unheated = said_unconditioned(house)
+    # A room the household said nothing heats (#1200) follows outside by
+    # design, "check the heating is reaching it" has no heating to check,
+    # and its cold night is `climate.frost_ahead`'s to warn about, as the
+    # unheated space it is — the warning they can answer.
     hits = [h for h in freezing_rooms(snap, now)
-            if house.should_report(h["entity_id"], "climate.freeze")]
+            if not (h["said_unheated"] and _left_unheated(
+                house, h["entity_id"], unheated, "climate.freeze"))
+            and house.should_report(h["entity_id"], "climate.freeze")]
     if not hits or len(hits) > MAX_FREEZE:
         return []
     hits.sort(key=lambda h: h["hours"])
@@ -754,6 +801,7 @@ def window(snap: dict, now: float) -> list[dict]:
 
     house = House(snap)
     rooms = _room_air(house, rooms, "climate.window")
+    unheated = said_unconditioned(house)
     hits = []
     for eid, entry in sorted(rooms.items()):
         if eid in claimed or not entry.get("k"):
@@ -784,6 +832,8 @@ def window(snap: dict, now: float) -> list[dict]:
         if fall["rate"] < expected * WINDOW_FACTOR:
             continue
         if fall["rate"] - expected < min_excess:
+            continue
+        if _left_unheated(house, eid, unheated, "climate.window"):
             continue
         if not house.should_report(eid, "climate.window"):
             continue
@@ -951,10 +1001,23 @@ def frost_ahead(snap: dict, now: float) -> list[dict]:
         return []
     house = House(snap)
     conditioned = conditioned_areas(house)
+    # A room is named as a cold space on what the household STATED about
+    # it, never on the reason they gave for waving off a report about it:
+    # "it's an unheated porch" said to the heat-loss card means leave the
+    # porch alone, and naming it on the next cold night undid that answer
+    # (#1200). Every climate check that compares rooms reads both.
     said_cold = snap.get("unconditioned") or {"areas": [], "entities": []}
+    if isinstance(said_cold.get("stated"), dict):
+        said_cold = said_cold["stated"]
     said_cold = {"areas": set(said_cold.get("areas") or ()),
                  "entities": set(said_cold.get("entities") or ())}
     found: dict[str, list[str]] = {k: [] for k in FROST_KINDS}
+    # What each name IS, as the keys this check asks by: a room's
+    # `area:<id>`, a device's entities. A Wrong on the card writes its rule
+    # under the row's `items` (`server._exception_rule`), and the names a
+    # person reads are not anything `should_report` is ever asked about —
+    # the porch answered Wrong one night was named again the next (#1200).
+    keys: dict[str, list[str]] = {}
     seen: set[str] = set()
     for eid in sorted(set(house.states) | set(house.registry)):
         if not house.enabled(eid):
@@ -971,17 +1034,27 @@ def frost_ahead(snap: dict, now: float) -> list[dict]:
             continue
         # A space is named by its room, a device by its device: six zones
         # of one controller are one thing to drain.
+        area_id = house.area_id_of(eid)
         if kind == "space":
             what = house.area_of(eid) or house.label(eid)
+            key = f"area:{area_id}" if area_id else eid
         else:
             device = house.device_of(eid)
             what = house.device_name(device) if device else house.label(eid)
-        if what and what.lower() not in seen:
+            key = eid
+        if not what:
+            continue
+        if what.lower() not in seen:
             seen.add(what.lower())
             found[kind].append(what)
+        held = keys.setdefault(what.lower(), [])
+        if key not in held:
+            held.append(key)
     names = [n for k in FROST_KINDS for n in found[k]]
     if not names:
         return []
+    named = names[:MAX_FROST_NAMES]
+    items = list(dict.fromkeys(k for n in named for k in keys[n.lower()]))
     temp, unit = night["temp"], night["unit"]
     low = f"{temp:.0f}{unit}".replace("-", "−")
     steps = []
@@ -1004,7 +1077,10 @@ def frost_ahead(snap: dict, now: float) -> list[dict]:
         "severity": "warning",
         "fixable": False,
         "entity_id": "",
-        "items": names[:MAX_FROST_NAMES],
+        # The keys the rule is written under, and the names the card shows
+        # for them under its count line (`findings_store.item_labels`).
+        "items": items,
+        "item_names": named,
         "evidence": [{"entity": "", "value": f"forecast low {low}",
                       "when": f"{night['date']} {night['hm']}"}],
     }]
