@@ -72,8 +72,9 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 _T = TypeVar("_T")
 
-# What survives a restart of Home Assistant: each appliance's last contact and
-# last cook, so an appliance that is offline after a restart still says them.
+# What survives a restart of Home Assistant: each appliance's last contact, last
+# temperature and last cook, so an appliance that is offline after a restart
+# still says them.
 STORE_VERSION = 1
 STORE_SAVE_DELAY = 5
 # How long a start from Home Assistant waits for its cook to be seen. The cloud
@@ -143,6 +144,10 @@ class Appliance:
     # When the appliance last reported itself online, and since when it has not.
     last_contact: datetime | None = None
     offline_since: datetime | None = None
+    # The temperature it last reported while in contact (None when it reported
+    # none, as an idle oven does): what the Temperature sensor keeps, marked as
+    # old, while the appliance is offline.
+    last_temp_c: float | None = None
     # The latest cook seen: when it started and ended, what it was set to and
     # where those settings came from, and when it was due to finish, once known.
     last_cook: dict[str, Any] | None = None
@@ -222,6 +227,7 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
             else None,
             "last_cook": appliance.last_cook,
             "cook_id": appliance.last_cook_id,
+            "temperature_c": appliance.last_temp_c,
         }
         self._store.async_delay_save(lambda: dict(self._remembered), STORE_SAVE_DELAY)
 
@@ -236,6 +242,8 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
             appliance.last_cook = saved["last_cook"]
         if isinstance(saved.get("cook_id"), str):
             appliance.last_cook_id = saved["cook_id"]
+        if isinstance(saved.get("temperature_c"), (int, float)):
+            appliance.last_temp_c = float(saved["temperature_c"])
 
     def settings_source(self, appliance: Appliance) -> str:
         """Where the next cook's settings come from, in words."""
@@ -331,6 +339,19 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         finally:
             self._account_writing = False
 
+    def in_contact(self, appliance: Appliance) -> bool:
+        """The cloud is connected and the appliance reports itself online: its readings are live."""
+        return self.connected and appliance.status.online
+
+    def last_known(self, appliance: Appliance) -> dict[str, Any]:
+        """What marks a reading kept from before contact was lost: it is old, and from when."""
+        return {
+            "stale": True,
+            "as_of": appliance.last_contact.isoformat(timespec="seconds")
+            if appliance.last_contact
+            else None,
+        }
+
     def offline_report(self, appliance: Appliance) -> dict[str, Any] | None:
         """Why an appliance is offline and one thing to try; None while it is online.
 
@@ -341,7 +362,7 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         the time the status shows beside it, which a restart of Home Assistant
         keeps; with none, the report says it has not been heard from.
         """
-        if self.connected and appliance.status.online:
+        if self.in_contact(appliance):
             return None
         if self.auth_failed:
             cause = "sign_in"
@@ -515,6 +536,7 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         if status.online:
             appliance.last_contact = now
             appliance.offline_since = None
+            appliance.last_temp_c = status.current_temp_c
         elif before.online and appliance.offline_since is None:
             appliance.offline_since = now
         if status.online != before.online:

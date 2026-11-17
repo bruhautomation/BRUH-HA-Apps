@@ -19,6 +19,7 @@ from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from . import BrevilleConfigEntry
 from .appliance import ERROR_OPTIONS, MODEL_BOV950, REPORTED_MODE_OPTIONS, CookState
@@ -38,6 +39,17 @@ class BrevilleSensorDescription(SensorEntityDescription):
     value_fn: Callable[[Appliance], StateType | datetime]
     models: frozenset[str] | None = None
     always_available: bool = False
+    # A reading kept while the appliance is out of contact: the last value it
+    # reported, marked as old (stale, as_of), rather than unavailable.
+    last_known_fn: Callable[[Appliance], StateType | datetime] | None = None
+
+
+def _finish_last_seen(appliance: Appliance) -> datetime | None:
+    """When the cook open as contact went was due to finish, as last seen."""
+    cook = appliance.last_cook
+    if not cook or cook.get("ended_at") or not cook.get("finish_at"):
+        return None
+    return dt_util.parse_datetime(cook["finish_at"])
 
 
 SENSORS: tuple[BrevilleSensorDescription, ...] = (
@@ -55,6 +67,7 @@ SENSORS: tuple[BrevilleSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=1,
         value_fn=lambda a: a.status.current_temp_c,
+        last_known_fn=lambda a: a.last_temp_c,
     ),
     BrevilleSensorDescription(
         key="preheat",
@@ -73,6 +86,7 @@ SENSORS: tuple[BrevilleSensorDescription, ...] = (
         key="cook_end",
         device_class=SensorDeviceClass.TIMESTAMP,
         value_fn=lambda a: a.status.ends_at,
+        last_known_fn=_finish_last_seen,
     ),
     BrevilleSensorDescription(
         key="active_mode",
@@ -159,6 +173,9 @@ class BrevilleSensor(BrevilleEntity, SensorEntity):
         if self.entity_description.key == "status":
             # Offline is what this sensor says, with the reason as attributes.
             return self.appliance.on_account
+        if self.entity_description.last_known_fn is not None:
+            # Out of contact it keeps the last value, marked as old.
+            return self.appliance.on_account
         if self.entity_description.always_available:
             return self.cloud_available
         return super().available
@@ -166,6 +183,10 @@ class BrevilleSensor(BrevilleEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         if self.entity_description.key != "status":
+            if self.entity_description.last_known_fn is not None and not self.coordinator.in_contact(
+                self.appliance
+            ):
+                return self.coordinator.last_known(self.appliance)
             return None
         appliance = self.appliance
         attrs: dict[str, Any] = {
@@ -184,4 +205,7 @@ class BrevilleSensor(BrevilleEntity, SensorEntity):
     def native_value(self) -> StateType | datetime:
         if self.entity_description.key == "status" and not self.cloud_available:
             return CookState.OFFLINE.value
+        last_known = self.entity_description.last_known_fn
+        if last_known is not None and not self.coordinator.in_contact(self.appliance):
+            return last_known(self.appliance)
         return self.entity_description.value_fn(self.appliance)
