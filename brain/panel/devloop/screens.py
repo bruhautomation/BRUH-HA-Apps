@@ -519,12 +519,6 @@ _AUDIT_JS = r"""
     if (el.closest("[data-brain-cover]")) return false;
     const r = el.getBoundingClientRect();
     if (r.width < 1 || r.height < 1) return false;
-    // What is inside a closed <details>, or under a hidden or faded-out
-    // ancestor, still answers a box of its own size: six Restore buttons
-    // folded under one day were measured on top of each other. The
-    // browser's own answer to "is this drawn" asks the ancestors too.
-    if (el.checkVisibility && !el.checkVisibility({ opacityProperty: true, visibilityProperty: true }))
-      return false;
     const cs = getComputedStyle(el);
     return cs.visibility !== "hidden" && cs.display !== "none" && +cs.opacity > 0.05;
   };
