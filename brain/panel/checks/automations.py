@@ -1275,19 +1275,6 @@ def _trigger_kind(trig: dict) -> str:
     return str(trig.get("platform") or trig.get("trigger") or "").lower()
 
 
-def _waits_on_unavailable(trig: dict) -> bool:
-    """A state trigger written to fire as its entity goes away (`to:
-    unavailable`) or comes back (`from: unavailable`). Its entity being
-    unavailable is the moment it is built for, not a trigger gone dead:
-    "tell me when the freezer plug drops off" has already fired, and
-    "turn the porch light on when the sensor is back" is waiting for
-    exactly that."""
-    if _trigger_kind(trig) != "state":
-        return False
-    return any(str(v).strip().lower() == "unavailable"
-               for key in ("to", "from") for v in listify(trig.get(key)))
-
-
 def trigger_unavailable(snap: dict, now: float) -> list[dict]:
     """An automation whose trigger watches an entity that is not reporting.
 
@@ -1307,8 +1294,6 @@ def trigger_unavailable(snap: dict, now: float) -> list[dict]:
             continue  # a switched-off automation is auto.forgotten_off's
         broken: list[str] = []
         for trig in _triggers(item["config"]):
-            if _waits_on_unavailable(trig):
-                continue
             for eid in _watched(house, trig):
                 if "." not in eid:
                     continue

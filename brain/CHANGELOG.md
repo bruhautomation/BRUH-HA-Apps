@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.25
+
+### Removed
+
+- Reverted 5.3.22 (#1153, #1154, #1155, #1156, #1197, #1181, #1196): the development loop's own review of how that release was made flagged one step it does not accept, so the release is taken back and made again. The house half of the loop goes back to filing a fixed rule's report again when its queue forgets it, the layout check again counts hidden buttons as overlapping, and the trigger check again raises automations built to fire on unavailable, until it ships again.
+
 ## 5.3.24
 
 ### Added
