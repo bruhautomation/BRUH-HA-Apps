@@ -69,6 +69,38 @@ function finishAt(min) {
   return t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+// A name written in a script the device has no font for draws as empty
+// boxes: such a character is tested once (a font without it measures the
+// same as a character no font has) and left out of what is drawn.
+const glyphs = {};
+let ruler = null;
+function drawable(ch) {
+  if (ch.charCodeAt(0) < 0x530) return true;
+  if (!(ch in glyphs)) {
+    try {
+      ruler = ruler || document.createElement('canvas').getContext('2d');
+      ruler.font = '16px system-ui, sans-serif';
+      glyphs[ch] = Math.abs(ruler.measureText(ch).width - ruler.measureText('\u{10FFFE}').width) > 0.01;
+    } catch (_) { glyphs[ch] = true; }
+  }
+  return glyphs[ch];
+}
+
+// The name a print file is shown by: without its folder, its extension, a
+// slice's time stamp or a download's " (1)", with underscores as spaces so it
+// wraps between words, and only what this device can draw. The panel's
+// app.js has the same function (this file loads on its own and imports
+// nothing); `fallback` is said when nothing of the name can be drawn.
+function printName(name, fallback) {
+  const text = String(name || '').split(/[\\/]/).pop()
+    .replace(/\.(gcode\.3mf|gcode|3mf|stl|step|stp|obj|amf)$/i, '')
+    .replace(/-\d{8}-\d{6}$/, '').replace(/\s*\(\d+\)$/, '')
+    .replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
+  const shown = /^[\u0000-\u052f]*$/.test(text) ? text : [...text].filter(drawable).join('')
+    .replace(/[\s_\-.·]{2,}/g, ' ').replace(/^[\s_\-.·]+|[\s_\-.·]+$/g, '');
+  return shown || fallback;
+}
+
 function temp(now, target) {
   if (now == null) return '–';
   return target ? `${Math.round(now)}°/${Math.round(target)}°` : `${Math.round(now)}°`;
@@ -102,12 +134,14 @@ const css = (morph) => `
   .cam { position: relative; aspect-ratio: 16 / 9; width: min(100%, 320px); justify-self: center;
     border-radius: 12px; overflow: hidden; background: var(--b-sunk); }
   .cam img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
-  .job { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 10px; row-gap: 2px; }
+  .job { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 10px; row-gap: 0; }
   .pct { font-family: ${morph ? "'Bricolage Grotesque', sans-serif" : 'inherit'};
     font-size: 22px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
   .pct small { font-size: 14px; font-weight: 500; color: var(--b-muted); margin-left: 6px; }
-  .job .muted { grid-column: 1; }
-  .job > button { grid-row: 1 / span 2; grid-column: 2; }
+  .job .muted, .job .title { grid-column: 1; }
+  /* The print's name: its own line, wrapping between words. */
+  .title { font-size: 14px; font-weight: 600; overflow-wrap: break-word; }
+  .job > button { grid-row: 1 / span 3; grid-column: 2; }
   .muted { color: var(--b-muted); font-size: 13px; overflow-wrap: anywhere; }
   .bar { height: 4px; border-radius: 2px; background: var(--b-sunk); overflow: hidden; }
   .bar > i { display: block; height: 100%; background: var(--b-accent); }
@@ -337,7 +371,8 @@ class BruhBambuCard extends HTMLElement {
       const left = a.remaining_min != null && live ? `${duration(a.remaining_min)} left · done ${finishAt(a.remaining_min)}` : '';
       const job = live || pct != null ? `<div class="job">
           <span class="pct">${pct != null ? `${pct}%` : ''}${left ? `<small>${left}</small>` : ''}</span>
-          <span class="muted">${[a.file, a.layer != null && a.total_layers ? `layer ${a.layer}/${a.total_layers}` : '', live ? a.stage : ''].filter(Boolean).map(esc).join(' · ')}</span>
+          ${a.file ? `<span class="title" title="${esc(a.file)}">${esc(printName(a.file, live ? 'This print' : 'Last print'))}</span>` : ''}
+          <span class="muted">${[a.layer != null && a.total_layers ? `layer ${a.layer}/${a.total_layers}` : '', live ? a.stage : ''].filter(Boolean).map(esc).join(' · ')}</span>
           ${alertPause ? '' : pauseBtn}
         </div>
         <div class="bar"><i style="width:${Math.max(0, Math.min(100, a.progress || 0))}%"></i></div>`
