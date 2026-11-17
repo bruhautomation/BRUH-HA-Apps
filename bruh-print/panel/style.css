@@ -309,7 +309,7 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
   border-radius: 2px; image-rendering: pixelated;
 }
 .preview-frame img.on { display: block; }
-.placeholder { color: var(--ink-3); font-size: 14px; margin: 0; }
+.placeholder { color: var(--ink-3); font-size: 16px; margin: 0; text-align: center; }
 .fitline { font-size: 13px; color: var(--ink-3); margin: 10px 0 0; }
 
 .notes { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
@@ -593,6 +593,12 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 .hrow .meta { font-size: 12.5px; color: var(--ink-2); line-height: 1.35;
   font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .hrow .hbtns { display: flex; gap: 6px; flex: none; flex-wrap: wrap; }
+/* The label itself, small: the one thing that tells two rows of the same
+   title apart. Capped both ways so a long tube wrap stays a thumbnail. */
+.hrow .hthumb { flex: none; width: 72px; height: 48px; object-fit: contain;
+  image-rendering: auto; background: #fff; border: 1px solid var(--line);
+  border-radius: 4px; }
+.hrow .hthumb.none { visibility: hidden; }
 
 .tform { display: grid; gap: 10px; padding-bottom: 4px; }
 
@@ -792,10 +798,20 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 .caldetail > summary::before { content: "\25b8"; font-size: 12px; color: var(--ink-3); }
 .caldetail[open] > summary::before { content: "\25be"; }
 .caldetail > p { padding-bottom: 6px; }
-/* Forget throws a measurement away: it sits apart from the harmless check
-   label, on a line of its own, and is a real target. */
-.calbay .forgetcal { justify-self: start; min-height: 40px; margin-top: 6px; }
-.baynote { margin: 10px 0 0; }
+/* A roll's actions are one row, the main one first; on a phone that is too
+   narrow for them they wrap as equal halves rather than as a full-width
+   button over two small ones. */
+.bayactions { display: flex; flex-wrap: wrap; gap: 8px; }
+.bayactions > .btn { flex: 1 1 140px; }
+/* Forget throws a measurement away: it lives inside "What it measured",
+   apart from the everyday actions, and is a real target. */
+.caldetail .forgetcal { min-height: 40px; margin: 2px 0 6px; }
+/* Counting, said once for both rolls, in a box directly under them. */
+.baynote { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px 14px;
+  align-items: center; background: var(--panel); border: 1px dashed var(--line);
+  border-radius: var(--radius); padding: 12px 14px; }
+.baynote p { margin: 0; flex: 1 1 260px; font-size: 14px; color: var(--ink-2);
+  line-height: 1.45; }
 
 /* The wizard. `.calsplit` is one column on a phone and two above 640px:
    the drawing has to be ON the screen you are typing into, and at 390px
@@ -1000,4 +1016,4 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
    find-in-page), so a layout reader counts hidden controls as sitting on
    visible ones. Nothing in a closed disclosure is drawn; make it say so. */
 details:not([open]) > :not(summary) { display: none; }
-.baynote .btn { margin-left: 6px; vertical-align: middle; }
+

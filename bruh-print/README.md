@@ -100,7 +100,7 @@ that does nothing.
 
 ## From Home Assistant
 
-Six services, all of which return what happened so a script can branch on it:
+Seven services, all of which return what happened so a script can branch on it:
 
 | Service | What it does |
 | --- | --- |
@@ -110,6 +110,7 @@ Six services, all of which return what happened so a script can branch on it:
 | `bruh_print.reprint` | Print something from the history again |
 | `bruh_print.set_roll` | Say which labels are in a roll |
 | `bruh_print.print_test` | Print a check label — a frame around everything the roll can print on |
+| `bruh_print.choose_label` | Choose the label text prints on — the Quick tab and the card both show it |
 
 ```yaml
 action: bruh_print.print_template

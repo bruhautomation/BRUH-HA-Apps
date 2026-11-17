@@ -31,7 +31,7 @@
  * reloaded it.
  */
 
-const CARD_VERSION = '0.14.9';
+const CARD_VERSION = '0.14.10';
 
 /* The integration's domain: the name on the services and the string every
  * entity id this card looks for carries. */
@@ -198,11 +198,21 @@ class BruhPrintCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    /* The label text prints on is one setting in the add-on, shared with
+     * the panel's Quick tab. When it moves — somebody picked a label there,
+     * or on another dashboard — a press made here earlier is history, and
+     * the shared answer is what this card shows from then on. */
+    const shared = this._sharedStock();
+    if (shared !== this._lastShared) {
+      if (this._lastShared !== undefined) this._form.stock = '';
+      this._lastShared = shared;
+    }
     /* Re-render only when what the card displays has moved. Without this the
      * card rebuilds its DOM on every state change in the house and the
      * cursor jumps out of the text box mid-word. */
     const next = JSON.stringify([this._state('printer'), this._state('problem'),
       this._rollState('left'), this._rollState('right'), this._busy, this._message,
+      shared,
       /* An integration that finishes loading after this card was built
        * changes what the card says and touches no entity it reads, so the
        * signature has to carry it or the block stays up until something
@@ -421,11 +431,45 @@ class BruhPrintCard extends HTMLElement {
    * a selector offering one choice is a readout, and it is styled as one. */
   _selectedStock() {
     /* The config's stock wins until somebody presses a box, so a dashboard
-     * pinned to one label keeps printing that label. */
+     * pinned to one label keeps printing that label. After that it is the
+     * add-on's own answer — the same one the panel's Quick tab shows — and
+     * only when that label is in neither roll, the left roll's. Taking the
+     * first roll listed here instead is how the card said "left" while
+     * Quick said "right" for the same word (#1174). */
     if (this._form.stock) return this._form.stock;
     if (this._config.stock) return this._config.stock;
-    const first = this._loadedRolls()[0];
-    return first ? first.stock : '';
+    const rolls = this._loadedRolls();
+    const shared = this._sharedStock();
+    if (shared && rolls.some((roll) => roll.stock === shared)) return shared;
+    return rolls[0] ? rolls[0].stock : '';
+  }
+
+  _sharedStock() {
+    return this._find('printer')?.attributes?.text_prints_on || '';
+  }
+
+  /* A press on a roll is a choice for the whole house, not this card: the
+   * add-on keeps it, and the Quick tab shows it. An older integration
+   * without the service still gets the press on this card. */
+  _choose(stock) {
+    this._form.stock = stock;
+    this._signature = '';
+    this._render();
+    if (!this._hass?.services?.[DOMAIN]?.choose_label) return;
+    Promise.resolve()
+      .then(() => this._hass.callService(DOMAIN, 'choose_label', { stock },
+        undefined, false))
+      .catch((error) => {
+        this._message = {
+          text: 'This card will print on that label, but BRUH Print could not '
+            + 'remember the choice: '
+            + ((typeof error === 'string' && error) || error?.message
+               || 'no answer'),
+          bad: true,
+        };
+        this._signature = '';
+        this._render();
+      });
   }
 
   _loadedRolls() {
@@ -462,11 +506,7 @@ class BruhPrintCard extends HTMLElement {
         if (entity.attributes.stock === chosen) box.classList.add('on');
         box.setAttribute('aria-pressed',
           entity.attributes.stock === chosen ? 'true' : 'false');
-        box.addEventListener('click', () => {
-          this._form.stock = entity.attributes.stock;
-          this._signature = '';
-          this._render();
-        });
+        box.addEventListener('click', () => this._choose(entity.attributes.stock));
       }
       const who = document.createElement('div');
       who.className = 'who';
