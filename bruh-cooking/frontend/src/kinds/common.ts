@@ -10,10 +10,15 @@ import type { ApplianceContext, Control, Phase, Section } from "./types";
 // ---------------------------------------------------------------------------------------------
 // Reading entities
 
-/** An entity's state, or null when it has none ("unavailable", "unknown"). */
+/**
+ * An entity's state, or null when it has none ("unavailable", "unknown") or the one it has is
+ * old: a reading the integration keeps from before the appliance went offline (`stale`), which
+ * the panel must not draw as live.
+ */
 export function stateValue(entity: HassEntity | undefined): string | null {
   const state = entity?.state;
   if (state === undefined || state === "" || state === "unavailable" || state === "unknown") return null;
+  if (entity?.attributes?.stale === true) return null;
   return state;
 }
 

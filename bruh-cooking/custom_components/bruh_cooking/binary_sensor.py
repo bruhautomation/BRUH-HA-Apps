@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -74,21 +75,24 @@ class BrevilleBinarySensor(BrevilleEntity, BinarySensorEntity):
     def available(self) -> bool:
         # The problem and cooking sensors read on or off while the appliance is
         # offline (why it is offline is the status sensor's to say): the last
-        # error seen stands, and an appliance that was idle when contact went is
-        # not cooking.
+        # error seen stands, and cooking keeps what it was when contact went.
         if self.entity_description.key in ("problem", "cooking"):
             return self.appliance.on_account
         return super().available
 
     @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        if self.entity_description.key == "cooking" and not self.coordinator.in_contact(self.appliance):
+            return self.coordinator.last_known(self.appliance)
+        return None
+
+    @property
     def is_on(self) -> bool | None:
         appliance = self.appliance
-        if (
-            self.entity_description.key == "cooking"
-            and not (self.coordinator.connected and appliance.status.online)
-        ):
-            # Cooking when contact went: unknown until it answers (the status
-            # sensor's offline_reason says so). Otherwise off.
+        if self.entity_description.key == "cooking" and not self.coordinator.in_contact(appliance):
+            # The last known value, marked as old: on when a cook was open as
+            # contact went (the status sensor's offline_reason says it may have
+            # ended since), otherwise off.
             cook = appliance.last_cook
-            return None if cook is not None and not cook.get("ended_at") else False
+            return cook is not None and not cook.get("ended_at")
         return self.entity_description.value_fn(appliance)
