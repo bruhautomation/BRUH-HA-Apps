@@ -577,14 +577,20 @@ a.btn {
   color: var(--ink-3);
   line-height: 1.7;
 }
-.quietline strong { color: var(--ink-2); font-weight: 600; }
+.quietline strong { display: block; color: var(--ink-2); font-weight: 600; }
+/* One link per line, each left-aligned and drawn alike (#1189): a name is
+   often a whole question, and inline buttons wrapped and centred their
+   own text between commas. */
+.quietlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
 .quietname {
   border: 0;
   background: none;
   padding: 0;
   font: inherit;
+  line-height: var(--lh-body);
   color: var(--accent-ink);
   font-weight: 600;
+  text-align: left;
   cursor: pointer;
 }
 .quietname:hover, .quietname:focus-visible { text-decoration: underline; }
@@ -1394,7 +1400,7 @@ body.modal-open {
   border-radius: 6px;
   transition: width 400ms ease-out;
 }
-#usageFill.over { background: linear-gradient(90deg, var(--serious), var(--critical)); }
+#usageFill.over { background: var(--warning); }
 #usageMark {
   position: absolute;
   top: -2px;
@@ -6393,15 +6399,20 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 .qtidyedit input, .qtidyedit select { width: 100%; max-width: 360px; }
 .qtidyerr { margin: 0; font-size: var(--fs-meta); color: var(--serious-ink); }
 .qcard .card-actions .btn.icon { min-width: var(--btn-h); min-height: var(--btn-h); }
-/* On a phone the row is Respond, the primary, Snooze, Ignore and the ⋯
-   (the rest folded behind it, `foldsSecondary`). It wraps: five whole
-   labels do not fit one 390px row, and the one-row version cut them with
-   an ellipsis ("Add to To D") and pressed Respond to its edges (#1123). A
-   label is never cut; a second line is the lesser harm. */
+/* The row is the card's one primary first, then the quiet presses
+   (Respond, Snooze, Ignore, ⋯) at every width. On a phone the rest fold
+   behind the ⋯ (`foldsSecondary`), and five whole labels do not fit one
+   390px row: the one-row version cut them with an ellipsis (#1123), and
+   letting them wrap left one stray button on a second line (#1190). So the
+   primary takes the whole first line on purpose and the quiet presses
+   share the line under it. A label is never cut. */
 @media (max-width: 640px) {
   .qcard > .card-actions { flex-wrap: wrap; gap: var(--sp-2); min-width: 0; }
   .qcard > .card-actions > button:not(.icon) { white-space: nowrap; }
   .qcard > .card-actions > button.icon { flex: none; }
+  .qcard > .card-actions > .btn-primary:first-child { flex: 1 0 100%; }
+  .qcard > .card-actions > .btn-secondary { flex: 1 1 auto; padding-left: var(--sp-2);
+    padding-right: var(--sp-2); }
 }
 .qcard .findnote { margin-top: 0; }
 
@@ -7289,7 +7300,7 @@ body.term-classic #chatModelPick { display: none; }
 /* The quiet line's names are real targets on touch. After the text floor
    on purpose: that block must stay the first coarse block in the file. */
 @media (pointer: coarse) {
-  .quietline .quietname { min-height: 44px; padding: 0 4px; }
+  .quietline .quietname { display: flex; align-items: center; min-height: 44px; padding: 0; }
 }
 
 /* ------------------------------------------------- one header, one theme

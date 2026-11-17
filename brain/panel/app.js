@@ -2269,44 +2269,60 @@ function render() {
   });
   // A card whose answer is "all normal" sorts below the ones that need
   // something, so the slot at the top goes to a card worth reading.
-  attentionFirst(shown, (e) => cardNeedsSomething(e.ins, casesForInsight(e.ins).length))
-    .forEach((e) => grid.appendChild(e.make()));
-  if (quiet.length) grid.appendChild(quietLine(quiet));
+  const needs = (e) => cardNeedsSomething(e.ins, casesForInsight(e.ins).length);
+  attentionFirst(shown, needs).forEach((e) => grid.appendChild(e.make()));
+  // Open: a card on screen that is not all fine, a finding a card is about,
+  // or anything counted on Needs you.
+  const open = (state.needsCount || 0) > 0 || twinned.length > 0
+    || shown.some((e) => e.ins && (needs(e)
+      || ["worth a look", "needs action"].includes(String(e.ins.verdict || ""))));
+  if (quiet.length) grid.appendChild(quietLine(quiet, !open));
   if (twinned.length) grid.appendChild(twinLine(twinned));
   renderSchedule();
 }
 
-// Every card that is all fine about nothing changing, as one line: each
-// name opens that card. A card about nothing is still the house's answer,
-// but four of them took the screen from the one that needed action.
-function quietLine(cards) {
-  const line = el("p", "quietline");
-  line.appendChild(el("strong", null, "All quiet: "));
-  cards.forEach((c, n) => {
-    if (n) line.appendChild(document.createTextNode(", "));
-    const a = el("button", "quietname", c.title || c.category_title || "Report");
-    a.type = "button";
-    a.dataset.id = c.id;
-    a.addEventListener("click", () => openModal(c, true));
-    line.appendChild(a);
-  });
-  return line;
+// Every card that is all fine about nothing changing, as one short list:
+// each name opens that card. A card about nothing is still the house's
+// answer, but four of them took the screen from the one that needed action.
+// "All quiet" is said only when nothing is open — no card here that is
+// worth a look and nothing on Needs you — or the line under a "Worth a look"
+// card and a "2 things need you" banner contradicts both (#1189). Each card
+// is named by what it is about (its label, the question asked, the report's
+// name), never by its headline: a headline here is "Nothing unusual",
+// which as a link says nothing about what it opens.
+function quietName(c) {
+  const label = String(c.category_title || "").trim();
+  if (label && label !== "Custom") return label;
+  return String(c.question || "").trim() || c.title || "Report";
 }
 
-// Every card that is one open finding's story, as one line: each name
-// opens the finding on Needs you, where the card is linked from.
-function twinLine(cards) {
-  const line = el("p", "quietline");
-  line.appendChild(el("strong", null, "On Needs you: "));
-  cards.forEach((c, n) => {
-    if (n) line.appendChild(document.createTextNode(", "));
-    const a = el("button", "quietname", c.title || c.category_title || "Report");
+function insightLinkList(head, cards, name, open) {
+  const box = el("div", "quietline");
+  box.appendChild(el("strong", null, head));
+  const list = el("ul", "quietlist");
+  cards.forEach((c) => {
+    const li = el("li");
+    const a = el("button", "quietname", prettyText(name(c)));
     a.type = "button";
     a.dataset.id = c.id;
-    a.addEventListener("click", () => openCase(c.told_in));
-    line.appendChild(a);
+    a.addEventListener("click", () => open(c));
+    li.appendChild(a);
+    list.appendChild(li);
   });
-  return line;
+  box.appendChild(list);
+  return box;
+}
+
+function quietLine(cards, nothingOpen) {
+  return insightLinkList(nothingOpen ? "All quiet" : "Also checked, nothing new",
+    cards, quietName, (c) => openModal(c, true));
+}
+
+// Every card that is one open finding's story, as one list: each name
+// opens the finding on Needs you, where the card is linked from.
+function twinLine(cards) {
+  return insightLinkList("On Needs you", cards,
+    (c) => c.title || c.category_title || "Report", (c) => openCase(c.told_in));
 }
 
 // One compact list of every recurring card: when it runs, when it last did,
@@ -3154,7 +3170,38 @@ $("#newModal").addEventListener("click", (ev) => {
 // Auto-saves on change (no Save button) — the point is setting a budget in
 // two taps. Slider commits on release ("change"), not on every pixel.
 
-function renderUsageMeter(usage, budgetPct, noLimit) {
+// The sentence Model & usage opens on (#1188): whether brAIn's automatic
+// work is running or paused, and when it starts again, in words a person
+// acts on. Why a figure is an estimate, the token counts and the breakdown
+// are the Details fold's; asking by hand is never paused, so it is said
+// only beside a pause.
+function usageLeadWords(usage, budgetPct, noLimit, autoOn) {
+  const u = usage || {};
+  const at = (t) => (t ? ` They start again at ${fmtClock(t)}.` : "");
+  const byHand = " Anything you ask brAIn still runs.";
+  if (autoOn === false) {
+    return { text: "Automatic insights are switched off." + byHand, warn: false };
+  }
+  if (noLimit && usageRateLimited({ ...u, no_limit: true })) {
+    return { text: "Automatic insights are paused: Claude has asked brAIn to slow down."
+      + at(u.rate_limited_until) + byHand, warn: true };
+  }
+  if (u.blocked) {
+    return { text: (noLimit
+      ? "Automatic insights are paused: this session of your Claude plan is used up."
+      : `Automatic insights are paused: they have used the ${Math.round(budgetPct)}% of `
+        + "this session you gave them.") + at(u.resets_at) + byHand, warn: true };
+  }
+  return { text: "brAIn is working normally.", warn: false };
+}
+
+function renderUsageMeter(usage, budgetPct, noLimit, autoOn) {
+  const lead = $("#usageLead");
+  if (lead) {
+    const said = usageLeadWords(usage, budgetPct, noLimit, autoOn);
+    lead.textContent = said.text;
+    lead.classList.toggle("calm", !said.warn);
+  }
   if (!usage) return;
   const pct = Math.min(100, usage.used_percent || 0);
   const fill = $("#usageFill");
@@ -3212,21 +3259,13 @@ function renderBudgetWords(value, usage) {
     : `up to ${pct}% of each 5-hour session`;
   slider.setAttribute("aria-valuetext", noLimit
     ? "No limit: run until Anthropic rate-limits" : `${pct}% of each 5-hour session`);
-  const u = usage || {};
-  let text;
-  let warn = false;
   // The line says what happens at the limit the label above names, never
-  // the limit again; "Asking by hand always runs" is the switch's own line.
-  if (noLimit && usageRateLimited({ ...u, no_limit: true })) {
-    text = `Paused: Anthropic rate-limited brAIn until ${fmtClock(u.rate_limited_until)}.`;
-    warn = true;
-  } else if (noLimit) {
-    text = "Past 100% they keep going, then pause until the session resets.";
-  } else {
-    text = "Past that they wait for the session to reset.";
-  }
-  note.textContent = text;
-  note.classList.toggle("warn", warn);
+  // the limit again; "Asking by hand always runs" is the switch's own line,
+  // and a pause in force is the section's opening sentence (`usageLead`).
+  note.textContent = noLimit
+    ? "Past 100% they keep going, then pause until the session resets."
+    : "Past that they wait for the session to reset.";
+  note.classList.remove("warn");
 }
 
 // Generation-defaults fields: ⚙ number input id → settings key. These are
@@ -3398,7 +3437,8 @@ function renderSettingsForm(data) {
   const noLimit = data.settings.budget_no_limit === true;
   $("#setBudget").value = noLimit ? BUDGET_NO_LIMIT : data.settings.budget_percent;
   renderBudgetWords(noLimit ? BUDGET_NO_LIMIT : data.settings.budget_percent, data.usage);
-  renderUsageMeter(data.usage, data.settings.budget_percent, noLimit);
+  renderUsageMeter(data.usage, data.settings.budget_percent, noLimit,
+    data.settings.auto_enabled);
   Object.entries(OPTION_FIELDS).forEach(([id, key]) => {
     const val = data.settings[key];
     $("#" + id).value = val == null ? "" : String(val);
@@ -3757,8 +3797,9 @@ function loadDeveloper() {
 // it. Nothing here ends one: a terminal is somebody's work.
 // The caveat (protected entities are refused through brAIn's own tools,
 // not every shell command) is its own line under this one and is never
-// replaced: it is the half of the switch that is about safety.
-const SKIP_PERMS_NOTE = "Applies to the next terminal session and chat message.";
+// replaced: it is the half of the switch that is about safety. When no
+// session is stale this line is hidden: when a change applies is a
+// terminal detail, said in the section's "For developers" fold (#1187).
 
 function skipPermsStale(data) {
   const on = data.settings && data.settings.dangerously_skip_permissions === true;
@@ -3791,11 +3832,12 @@ function permLevelOf(st) {
 // The sentence the page opens on: what brAIn may do alone right now, in
 // words. Amber only when it is acting without asking.
 const PERM_SENTENCES = {
-  ask: "brAIn asks you before it runs a command, edits a file or changes anything in the house.",
-  act: "brAIn goes ahead on its own: it runs commands, edits and changes things without "
-    + "asking, but keeps to your house rules and what you have put off limits.",
-  free: "brAIn goes ahead on its own with no limits: your house rules and what you have "
-    + "put off limits do not apply, and it never waits for your approval.",
+  ask: "brAIn asks you first whenever it wants to change something in your house: a "
+    + "light, an automation, a setting or a file.",
+  act: "brAIn changes things in your house on its own, without asking, but keeps to your "
+    + "house rules and never touches what you have put off limits.",
+  free: "brAIn changes anything in your house on its own, without asking. Your house rules "
+    + "and off-limits list do not stop it.",
 };
 
 function renderPermsCaptions(st) {
@@ -3811,8 +3853,8 @@ function renderSkipPermsNote(data) {
   const note = $("#setSkipPermsNote");
   if (!note) return;
   const stale = skipPermsStale(data);
-  note.textContent = stale || SKIP_PERMS_NOTE;
-  note.classList.toggle("warn", !!stale);
+  note.textContent = stale;
+  note.hidden = !stale;
 }
 
 // Open ⚙ at one control: the section it lives in opened, the control
@@ -7322,7 +7364,9 @@ function addRespond(card, id, thread, btns) {
   card.appendChild(form);
   if (respondPending[id]) form.appendChild(phaseLine("brAIn is reading that…"));
 
-  // The press that opens it: first in the answer row.
+  // The press that opens it: first of the quiet presses, straight after
+  // the card's one primary (#1190) — the row reads the same on every card
+  // and at every width: what to do, then the ways to answer otherwise.
   const open = el("button", "btn-secondary qrespondopen", "Respond");
   open.type = "button";
   open.dataset.verb = "respond";
@@ -7330,7 +7374,9 @@ function addRespond(card, id, thread, btns) {
   form.id = formId;
   open.setAttribute("aria-controls", formId);
   const row = btns && btns.actions;
-  if (row) row.insertBefore(open, row.firstChild);
+  const lead = row && row.firstElementChild
+    && row.firstElementChild.classList.contains("btn-primary") ? row.firstElementChild : null;
+  if (row) row.insertBefore(open, lead ? lead.nextSibling : row.firstChild);
   else card.insertBefore(open, form);
   if (btns) btns.push(open);
   const show = (on, focus) => {
@@ -12765,11 +12811,14 @@ function epStates(ep) {
   // the server (`episodes._fold_dropouts`).
   if (ep.kind === "restart") {
     const n = ep.devices || 0;
+    const off = ep.offline || 0;
     return n ? `${n} device${n === 1 ? "" : "s"} went unavailable`
-      + (ep.back === false ? "" : " and came back") : "";
+      + (off ? ` · ${off} still offline` : " and came back") : "";
   }
-  if (!ep.last || ep.last === ep.first) return ep.first || "";
-  return `${ep.first} → ${ep.last}`;
+  const off = ep.kind === "mass" && ep.first && ep.offline
+    ? ` · ${ep.offline} still offline` : "";
+  if (!ep.last || ep.last === ep.first) return (ep.first || "") + off;
+  return `${ep.first} → ${ep.last}${off}`;
 }
 
 // Empty for a row nothing claims. That was "No cause recorded" on every
@@ -13018,19 +13067,25 @@ function actSection(sec) {
 }
 
 // A collapsed burst opens onto the entities it collapsed — already in the
-// payload, so nothing is fetched.
+// payload, so nothing is fetched. The server lists the ones still offline
+// first (`offline` of them), so they are read before the ones that returned.
 function actMassHtml(ep) {
   const ids = ep.entities || [];
   const more = (ep.devices || ids.length) - ids.length;
+  const off = Math.min(ep.offline || 0, ids.length);
+  const list = (part) => part.map((id) => `<div><code>${esc(id)}</code></div>`).join("");
   const lead = ep.kind === "restart"
     ? `${esc(String(ep.devices || ids.length))} entities went unavailable `
       + `while Home Assistant restarted`
-      + (ep.back === false ? ", and not all of them came back:" : ", and came back with it:")
+      + (off ? "." : ", and came back with it:")
     : `${esc(String(ep.devices || ids.length))} entities changed `
       + `together, with nothing recorded as the cause — an integration `
-      + `reloading or reconnecting does this:`;
-  return `<div>${lead}</div>`
-    + ids.map((id) => `<div><code>${esc(id)}</code></div>`).join("")
+      + `reloading or reconnecting does this` + (off ? "." : ":");
+  const body = off
+    ? `<div>Still offline:</div>${list(ids.slice(0, off))}`
+      + (ids.length > off ? `<div>Came back:</div>${list(ids.slice(off))}` : "")
+    : list(ids);
+  return `<div>${lead}</div>` + body
     + (more > 0 ? `<div>and ${esc(String(more))} more</div>` : "");
 }
 

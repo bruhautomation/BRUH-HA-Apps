@@ -856,6 +856,10 @@ _COLD_SPACE_WORDS = re.compile(
     r"outbuilding|workshop|greenhouse)\b", re.I)
 FROST_KINDS = ("irrigation", "pool", "space")
 MAX_FROST_NAMES = 8
+# How many of them the sentence names before "and N more". The card shows
+# every one under its count line (`items`, Show all), and a sentence naming
+# eight was cut mid-name by the card's three-line clamp (#1190).
+FROST_SENTENCE_NAMES = 3
 
 
 def _frost_night(forecast: dict, now: float) -> dict | None:
@@ -994,7 +998,8 @@ def frost_ahead(snap: dict, now: float) -> list[dict]:
                 "what holds water outside",
         "detail": (f"The forecast low is {low} around {night['hm']} "
                    f"{night['day_words']}. At risk here: "
-                   + join_names(names[:MAX_FROST_NAMES]) + "."),
+                   + join_names(names[:MAX_FROST_NAMES],
+                                limit=FROST_SENTENCE_NAMES) + "."),
         "fix": fix[:1].upper() + fix[1:] + ".",
         "severity": "warning",
         "fixable": False,

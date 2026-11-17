@@ -2,6 +2,20 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.21
+
+### Changed
+
+- Settings › Model & usage opens on one plain sentence: brAIn is working, or paused and when it starts again. Token counts, the usage endpoint's own limits and the breakdown sit behind Details, and a reached budget is amber rather than red (#1188).
+- Settings › Permissions describes each choice by what brAIn will do in the house; the notes about terminal sessions and shell commands moved into a For developers fold (#1187).
+
+### Fixed
+
+- A problem card on Needs you lists everything at risk (three in the sentence, the rest behind Show all) instead of cutting a name off mid-word, and its buttons are one primary action first, then Respond, Snooze, Ignore and more, on every card and width (#1190).
+- The strip under the Insights cards says "All quiet" only when nothing is open; otherwise it is "Also checked, nothing new", one left-aligned link per line, each named by what it checked (#1189).
+
+- A restart line on the Timeline says "and came back" only when every device did; otherwise it says how many are still offline ("113 devices went unavailable · 3 still offline") and lists those first behind the tap. Every device's own return now folds into the line, not just the first 40 (#1140).
+
 ## 5.3.20
 
 ### Changed
