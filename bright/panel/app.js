@@ -103,7 +103,7 @@
   // page covers the next row's buttons, which is what it did.
   function moreToggle(label) {
     return '<button class="btn more-toggle" data-more aria-expanded="false" ' +
-      'aria-label="' + label + '">⋯</button>';
+      'aria-label="' + label + '" title="' + label + '">⋯</button>';
   }
   function closeMoreMenus(scope) {
     for (const menu of (scope || document).querySelectorAll(".more-menu")) {
@@ -176,6 +176,53 @@
   // ------------------------------------------------------------------
   // Lab: LIFX
   // ------------------------------------------------------------------
+  // A probe's verdict, kept on the row so the summary can count it.
+  function markProbe(row, stats) {
+    row.querySelector(".rtt").textContent = fmtRtt(stats);
+    const checked = stats && stats.p50_ms !== undefined;
+    row.dataset.probed = checked ? "1" : "";
+    row.dataset.speed = checked ? fmtRtt(stats).split(",")[0] : "";
+  }
+
+  // The list answers "is anything wrong?" in one line before any row:
+  // checked bulbs first, with their verdicts, and the ones nobody has
+  // checked yet folded under one line rather than twenty rows that all
+  // say the same thing.
+  function tidyDevices() {
+    const list = $("lifxList");
+    const rows = Array.from(list.querySelectorAll(".row[data-serial]"));
+    if (!rows.length) return;
+    const checked = rows.filter((r) => r.dataset.probed);
+    const unchecked = rows.filter((r) => !r.dataset.probed);
+    const summary = list.querySelector(".lifx-summary");
+    const speeds = {};
+    for (const row of checked) {
+      speeds[row.dataset.speed] = (speeds[row.dataset.speed] || 0) + 1;
+    }
+    let words;
+    if (!checked.length) {
+      words = "None of " + rows.length + " checked yet — Probe all unprobed " +
+        "checks them one by one.";
+    } else {
+      const verdict = Object.keys(speeds).length === 1
+        ? "all " + Object.keys(speeds)[0].toLowerCase()
+        : ["Fast", "Fair", "Slow"].filter((k) => speeds[k])
+          .map((k) => speeds[k] + " " + k.toLowerCase()).join(", ");
+      words = (checked.length === rows.length ? "All " + rows.length
+        : checked.length + " of " + rows.length) + " checked, " + verdict + ".";
+    }
+    summary.textContent = words;
+    const fold = list.querySelector(".lifx-unchecked");
+    for (const row of checked) list.insertBefore(row, fold);
+    for (const row of unchecked) fold.appendChild(row);
+    fold.hidden = !unchecked.length;
+    fold.querySelector("summary").textContent = unchecked.length + " not " +
+      "checked yet";
+    // Nothing checked: there is nothing above to read, so the names are
+    // shown rather than hidden behind a line.
+    if (!checked.length) fold.open = true;
+  }
+
   function renderDevices(devices) {
     const list = $("lifxList");
     if (!devices.length) {
@@ -183,7 +230,9 @@
         "Are they on this network?</p>";
       return;
     }
-    list.innerHTML = "";
+    list.innerHTML = '<p class="lifx-summary"></p>' +
+      '<details class="info-toggle lifx-unchecked"><summary></summary></details>';
+    const fold = list.querySelector(".lifx-unchecked");
     for (const device of devices) {
       const row = document.createElement("div");
       row.className = "row slim";
@@ -200,12 +249,11 @@
         "</div>";
       row.querySelector("strong").textContent = device.label || device.serial;
       row.querySelector(".addr").textContent = device.ip;
-      row.querySelector(".rtt").textContent = fmtRtt(device.rtt);
-      row.dataset.probed = device.rtt && device.rtt.p50_ms !== undefined
-        ? "1" : "";
       row.dataset.serial = device.serial;
-      list.appendChild(row);
+      markProbe(row, device.rtt);
+      list.insertBefore(row, fold);
     }
+    tidyDevices();
   }
 
   $("btnDiscover").addEventListener("click", async () => {
@@ -242,8 +290,8 @@
       if (button.dataset.act === "probe") {
         out.textContent = "Checking…";
         const stats = await post("api/lifx/probe", { serial });
-        out.textContent = fmtRtt(stats);
-        row.dataset.probed = "1";
+        markProbe(row, stats);
+        tidyDevices();
       } else if (button.dataset.act === "rate") {
         out.textContent = "rate ramp running (~12s)…";
         const started = await post("api/lifx/rate-test", { serial });
@@ -310,8 +358,7 @@
       out.textContent = "Checking…";
       try {
         const stats = await post("api/lifx/probe", { serial: row.dataset.serial });
-        out.textContent = fmtRtt(stats);
-        row.dataset.probed = "1";
+        markProbe(row, stats);
       } catch (error) {
         out.textContent = "Did not answer: " + error.message;
       }
@@ -321,6 +368,7 @@
       const out = row.querySelector(".rtt");
       if (out.textContent === "Checking…") out.textContent = "";
     }
+    tidyDevices();
     status.textContent = (probeAllStop ? "Stopped after " : "Checked ") + done +
       " bulb" + (done === 1 ? "" : "s") + ".";
     probeAllRunning = false;
@@ -454,7 +502,8 @@
       const hint = document.createElement("span");
       hint.className = "muted small";
       hint.textContent = mapData.fixtures.length
-        ? "Tap a light to select it, then drag it into place."
+        ? "Tap a light to select it, then drag it where it is in the " +
+          "room — left ↔ right matters most."
         : "No lights yet — add discovered bulbs or a switch light.";
       bar.appendChild(hint);
       return;
@@ -463,8 +512,7 @@
     name.textContent = fixture.label;
     const where = document.createElement("span");
     where.className = "muted small";
-    where.textContent = fixture.id +
-      (fixture.reachable === false ? " · unreachable" : "");
+    where.textContent = fixturePlace(fixture);
     const pick = document.createElement("select");
     pick.className = "role-pick";
     for (const role of mapData.roles) {
@@ -507,9 +555,11 @@
       names.appendChild(option);
     }
     const remove = document.createElement("button");
-    remove.className = "btn small";
+    remove.className = "btn small btn-remove";
     remove.textContent = "Remove this light";
-    remove.addEventListener("click", () => removeFixture(fixture.id));
+    remove.addEventListener("click", () => {
+      if (armRemove(remove)) removeFixture(fixture.id);
+    });
     bar.appendChild(name);
     bar.appendChild(where);
     bar.appendChild(pick);
@@ -647,10 +697,13 @@
       row.innerHTML = '<div class="row-main"><strong></strong>' +
         '<span class="muted small"></span></div>' +
         '<div class="row-actions"><select class="role-pick"></select>' +
-        '<button class="btn small" data-act="remove">Remove</button></div>';
+        '<button class="btn small btn-remove" data-act="remove">Remove</button></div>';
       row.querySelector("strong").textContent = fixture.label;
-      row.querySelector(".muted").textContent = fixture.id +
-        (fixture.reachable === false ? " · unreachable" : "");
+      row.querySelector(".muted").textContent = fixturePlace(fixture);
+      row.querySelector(".role-pick").setAttribute("aria-label",
+        "Role of " + fixture.label);
+      row.querySelector("[data-act=remove]").setAttribute("aria-label",
+        "Remove " + fixture.label);
       const pick = row.querySelector(".role-pick");
       for (const role of mapData.roles) {
         const option = document.createElement("option");
@@ -670,6 +723,30 @@
       renderMap();
     }
   });
+
+  // Where a light is, in words: its zone, and whether it answers. The id
+  // is the store's key, not something a person reads.
+  function fixturePlace(fixture) {
+    const bits = [fixture.zone ? "Zone: " + fixture.zone : "No zone"];
+    if (fixture.reachable === false) bits.push("not answering");
+    return bits.join(" · ");
+  }
+
+  // Remove sits beside the role picker on every row, one slip from it, so
+  // the first press only asks: the button says what a second press does,
+  // and goes back to itself if nobody presses again.
+  function armRemove(button) {
+    if (button.dataset.armed) return true;
+    const was = button.textContent;
+    button.dataset.armed = "1";
+    button.textContent = "Tap again to remove";
+    setTimeout(() => {
+      if (!button.isConnected) return;
+      delete button.dataset.armed;
+      button.textContent = was;
+    }, 4000);
+    return false;
+  }
 
   async function removeFixture(id) {
     try {
@@ -790,7 +867,7 @@
   $("mapList").addEventListener("click", (event) => {
     const button = event.target.closest('button[data-act="remove"]');
     if (!button) return;
-    removeFixture(button.closest(".row").dataset.id);
+    if (armRemove(button)) removeFixture(button.closest(".row").dataset.id);
   });
 
   $("btnImportLifx").addEventListener("click", async () => {
@@ -1377,9 +1454,19 @@
   }
 
   // The folders as one line that says whether anything needs doing, with
-  // the rows a tap away. A folder with no music in it is not a problem, so
-  // those sit under a quiet "not used" line; only a folder that is gone is
-  // shown open, because that is the one a person can act on.
+  // the rows a tap away. A folder that holds music and a folder that is
+  // gone each get a row with one status; a folder with nothing in it is not
+  // a problem, so all of those share one plain line with no buttons. The
+  // warning names what to do about the missing folder where that folder
+  // actually is: Remove for one ticked here, the add-on's Configuration for
+  // one set there (the panel cannot take that one off the list).
+  const LEGACY_FOLDER = "brigt";
+  const isLegacyFolder = (folder) =>
+    (folder.path.split("/").filter(Boolean).pop() || "").toLowerCase() ===
+      LEGACY_FOLDER;
+  const fromOptions = (folder) =>
+    folder.source === "main" || folder.source === "option";
+
   function renderFolders(box, folders, tracks) {
     const base = (f) => f.path.replace(/\/$/, "") + "/";
     const counts = new Map(folders.map((f) => [f, tracks.filter(
@@ -1392,44 +1479,51 @@
     details.className = "info-toggle folder-summary";
     details.open = missing.length > 0;
     const line = document.createElement("summary");
+    let missingWords = "";
+    if (missing.length === 1) {
+      missingWords = missing[0].path + " is missing — " + (fromOptions(missing[0])
+        ? "change it in the add-on's Configuration" : "remove it below");
+    } else if (missing.length) {
+      missingWords = missing.length + " folders are missing — see below";
+    }
     if (!tracks.length) {
-      line.textContent = "No music found" + (missing.length
-        ? " — " + plural(missing.length, "folder is", "folders are") +
-          " missing" : "");
+      line.textContent = "No music found" +
+        (missingWords ? " · ⚠ " + missingWords : "");
     } else {
       let verdict = "nothing to do";
-      if (missing.length) {
-        verdict = "⚠ " + plural(missing.length, "folder is", "folders are") +
-          " missing — remove it below";
-      } else if (unused.length) {
-        verdict = "nothing to do (" + plural(unused.length, "other folder has",
-          "other folders have") + " no music)";
-      }
+      if (missingWords) verdict = "⚠ " + missingWords;
       line.textContent = plural(tracks.length, "track", "tracks") + " in " +
         plural(holding.length, "folder", "folders") + " — " + verdict;
     }
     details.appendChild(line);
     for (const folder of holding.concat(missing)) {
-      details.appendChild(folderRow(folder, tracks, counts.get(folder)));
+      details.appendChild(folderRow(folder, counts.get(folder)));
     }
     if (unused.length) {
       const quiet = document.createElement("p");
-      quiet.className = "muted small folder-unused";
-      quiet.textContent = "Not used — no music in " +
-        (unused.length === 1 ? "this folder" : "these folders");
-      details.appendChild(quiet);
-      for (const folder of unused) {
-        details.appendChild(folderRow(folder, tracks, 0));
+      quiet.className = "muted folder-unused";
+      const names = unused.map((f) => f.path +
+        (isLegacyFolder(f) ? " (BRight's earlier name)" : "")).join(", ");
+      const them = unused.length === 1 ? "it" : "them";
+      const ways = [];
+      if (unused.some((f) => !fromOptions(f))) {
+        ways.push("untick " + them + " under Folders to scan");
       }
+      if (unused.some(fromOptions)) {
+        ways.push("take " + them + " out of the add-on's Configuration");
+      }
+      quiet.textContent = "No music in " + names + ". Nothing to do; to " +
+        "stop scanning " + them + ", " + ways.join(" or ") + ".";
+      details.appendChild(quiet);
     }
     box.appendChild(details);
   }
 
-  // One folder: found with its track count, or missing with the one-line
-  // fix. Remove edits the same list the Folders-to-scan card edits; a
-  // folder set in the add-on's options cannot be removed from here, so it
-  // says where to change it instead of offering a button that does nothing.
-  function folderRow(folder, tracks, count) {
+  // One folder, one status: found with its track count, or missing with
+  // the one way to fix it. Remove edits the same list the Folders-to-scan
+  // card edits, so it is offered only on a missing folder ticked here; a
+  // folder set in the add-on's options says where to change it instead.
+  function folderRow(folder, count) {
     const row = document.createElement("div");
     row.className = "row folder-row";
     const main = document.createElement("div");
@@ -1440,40 +1534,26 @@
     path.textContent = folder.path;
     const status = document.createElement("span");
     status.className = "row-note";
-    status.textContent = folder.exists
-      ? "Found, " + count + (count === 1 ? " track" : " tracks")
-      : "Missing";
+    if (folder.exists) {
+      status.textContent = "Found, " + count + (count === 1 ? " track" : " tracks") +
+        (isLegacyFolder(folder) ? " · the add-on's earlier name (BRigt); " +
+          "moving the music to /media/music is tidier" : "") +
+        (fromOptions(folder) ? " · set in the add-on's Configuration" : "");
+    } else {
+      status.textContent = fromOptions(folder)
+        ? "Missing · put music in it, or change it in the add-on's Configuration"
+        : "Missing · remove it, or put music back in it";
+    }
     main.appendChild(path);
     main.appendChild(status);
-    const last = folder.path.split("/").filter(Boolean).pop() || "";
-    const note = document.createElement("span");
-    note.className = "row-note muted";
-    const fromOptions = folder.source === "main" || folder.source === "option";
-    if (last.toLowerCase() === "brigt") {
-      note.textContent = "This is the folder from the add-on's earlier name " +
-        "(BRigt). Move your music to /media/music, or keep using it here.";
-    } else if (!folder.exists) {
-      note.textContent = fromOptions
-        ? "Put music in this folder, or change the folder in the add-on's Configuration."
-        : "This folder is gone. Remove it, or put music back in it.";
-    }
-    if (note.textContent) main.appendChild(note);
     row.appendChild(main);
-    if (folder.source === "picked" && count > 0) {
-      // Removing the folder that holds the music would empty the library,
-      // so it is not offered here; the folder picker below is where a
-      // folder is taken off the list on purpose.
-      const holds = document.createElement("span");
-      holds.className = "row-note muted";
-      holds.textContent = "Holds your music — untick it under Folders to " +
-        "scan to stop using it";
-      main.appendChild(holds);
-    } else if (folder.source === "picked") {
+    if (!folder.exists && !fromOptions(folder)) {
       const actions = document.createElement("div");
       actions.className = "row-actions";
       const remove = document.createElement("button");
       remove.className = "btn";
       remove.textContent = "Remove";
+      remove.setAttribute("aria-label", "Remove " + folder.path);
       remove.addEventListener("click", async () => {
         remove.disabled = true;
         try {
@@ -1486,11 +1566,6 @@
       });
       actions.appendChild(remove);
       row.appendChild(actions);
-    } else if (fromOptions && folder.exists) {
-      const fixed = document.createElement("span");
-      fixed.className = "row-note muted";
-      fixed.textContent = "Set in the add-on's Configuration";
-      main.appendChild(fixed);
     }
     return row;
   }
@@ -2405,8 +2480,8 @@
         const option = document.createElement("option");
         option.value = "";
         option.textContent = body.discovered
-          ? "— every discovered bulb is already on the map —"
-          : "— no bulbs discovered yet (Lab → Discover) —";
+          ? "All found bulbs are on the map"
+          : "No bulbs found yet (Lab › Discover)";
         select.appendChild(option);
       } else {
         const first = document.createElement("option");
@@ -2495,17 +2570,61 @@
   // the show editor's effect dialog: two places build this form, and a
   // second implementation of "what a strobe's controls are" would drift
   // from the catalog the moment a parameter's range changed.
+  // A parameter's key is what the script file says ("step_beats"); the form
+  // says what it does, with its unit. A key that is not here yet (a new
+  // effect's) still reads as words, its unit taken from its suffix.
+  const PARAM_WORDS = {
+    attack_ms: ["Rise time", "ms"], background: ["Brightness of the rest"],
+    band: ["Listens to"], beats: ["Length", "beats"],
+    blackout_before_ms: ["Dark before it", "ms"], bounce: ["Bounce back and forth"],
+    brightness: ["Brightness"], ceiling: ["Brightest it gets"],
+    colour_step: ["New colour on every step"], count: ["How many"],
+    curve: ["Curve"], cycles_per_cue: ["Pulses per message"],
+    decay_beats: ["Fade out", "beats"], decay_ms: ["Fade out", "ms"],
+    depth: ["How deep it dips"], desaturate: ["Flash in white"],
+    duty: ["Time spent on"], every_beats: ["Every", "beats"],
+    fade_ms: ["Fade time", "ms"], flash_beats: ["Flash length", "beats"],
+    flashes: ["Flashes"], floor: ["Dimmest it gets"], follow: ["Follows"],
+    follow_strength: ["Brighter on louder hits"],
+    from_brightness: ["Start brightness"], gamma: ["Response curve"],
+    groups: ["Groups"], hold: ["Hold the colour between notes"],
+    hold_ms: ["Hold", "ms"], hue_shift: ["Colour shift", "degrees"],
+    hue_spread: ["Colour spread", "degrees"], hz: ["Flashes per second"],
+    level: ["Level"], min_gap_beats: ["Least time between", "beats"],
+    min_strength: ["Quietest hit it answers"], minor_shift: ["Shift in a minor key", "degrees"],
+    offset_beats: ["Starts late by", "beats"], peak: ["Peak brightness"],
+    period_beats: ["One round takes", "beats"], repeats: ["Repeats"],
+    rotate: ["Rotate by", "lights"], saturate: ["Deepen the colour as it climbs"],
+    saturation: ["Colour strength"], seed: ["Shuffle number"],
+    shape: ["Shape"], span: ["Reach"], spread: ["Colours across lights"],
+    spread_deg: ["Colour spread", "degrees"], stagger: ["One more light each step"],
+    stagger_beats: ["Delay between lights", "beats"], state: ["Switch"],
+    step_beats: ["Step length", "beats"], steps: ["Steps"],
+    steps_per_period: ["Steps per round"], strength: ["Strength"],
+    to_brightness: ["End brightness"], to_saturation: ["End colour strength"],
+    voices: ["Notes at once"], white: ["White light"], width: ["Lights lit at once"],
+  };
+  function paramWords(name) {
+    if (PARAM_WORDS[name]) return PARAM_WORDS[name];
+    const unit = /_ms$/.test(name) ? "ms" : /_beats$/.test(name) ? "beats" : "";
+    const words = name.replace(/_(ms|beats)$/, "").replace(/_/g, " ");
+    return [words.charAt(0).toUpperCase() + words.slice(1), unit];
+  }
+
   function renderParamControls(box, spec, values) {
     box.innerHTML = "";
     if (!spec) return;
     for (const param of spec.params) {
+      const [words, unit] = paramWords(param.name);
       const label = document.createElement("label");
       label.className = "fx-param";
       const name = document.createElement("span");
-      name.textContent = param.name.replace(/_/g, " ");
-      label.appendChild(name);
+      name.textContent = words;
       let input;
       if (param.kind === "bool") {
+        // A tick box beside its sentence, like every other switch on the
+        // panel — not a sentence with a lone box under it.
+        label.classList.add("fx-param-flag");
         input = document.createElement("input");
         input.type = "checkbox";
         input.checked = Boolean(values[param.name] ?? param.default);
@@ -2514,7 +2633,7 @@
         for (const option of param.options) {
           const el = document.createElement("option");
           el.value = option;
-          el.textContent = option;
+          el.textContent = option.replace(/_/g, " ");
           el.selected = option === (values[param.name] ?? param.default);
           input.appendChild(el);
         }
@@ -2526,13 +2645,20 @@
         input.step = param.kind === "int" ? 1 : 0.05;
         input.value = values[param.name] ?? param.default;
         const range = document.createElement("span");
-        range.className = "muted small";
-        range.textContent = param.min + "–" + param.max;
-        label.appendChild(range);
+        range.className = "muted";
+        range.textContent = " (" + param.min + "–" + param.max +
+          (unit ? " " + unit : "") + ")";
+        name.appendChild(range);
       }
       input.dataset.param = param.name;
       input.dataset.kind = param.kind;
-      label.appendChild(input);
+      if (param.kind === "bool") {
+        label.appendChild(input);
+        label.appendChild(name);
+      } else {
+        label.appendChild(name);
+        label.appendChild(input);
+      }
       box.appendChild(label);
     }
   }
@@ -2593,7 +2719,10 @@
     const box = $("fxSelectNote");
     if (!box) return;
     if (!fxState.select) {
-      box.textContent = "";
+      // Nothing ticked is not nothing chosen: an empty list drives every
+      // light, which is the effect's own rule, so the card says so.
+      box.textContent = fxState.fixtures.length && !fxState.selection.size
+        ? "None ticked: this effect drives every light on the map it suits." : "";
       return;
     }
     box.textContent = "This effect selects: " +
@@ -2626,6 +2755,7 @@
       label.appendChild(text);
       box.appendChild(label);
     }
+    renderFxSelectNote();
   }
 
   function renderFxQuick() {
@@ -2671,7 +2801,7 @@
   });
   $("btnFxNone").addEventListener("click", () => {
     fxState.selection.clear();
-    renderFxFixtures();
+    fxTakeSelection();
   });
 
   $("fxType").addEventListener("change", () => {
@@ -3071,8 +3201,13 @@
     }
   });
 
+  // A box that wraps, so the whole example shows on a phone; Enter still
+  // sends it, and a description is one sentence, never a new line.
   $("fxAsk").addEventListener("keydown", (event) => {
-    if (event.key === "Enter") $("btnFxAsk").click();
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      $("btnFxAsk").click();
+    }
   });
 
   // The one route from an effect object into the builder's form. Two
@@ -4657,19 +4792,17 @@
         const note = document.createElement("span");
         note.className = "muted small";
         const bits = [];
-        // Whether a track already HAS a show is the useful thing to know
-        // when picking a set: one that does starts instantly, one that
-        // does not is written while the party runs.
-        bits.push(track.show
-          ? "has a show · " + (track.show.tier === "claude"
-            ? "written by Claude" : "BRight's own director")
-          : "a show gets written while the party runs");
+        // Only what is out of the ordinary goes on the row: a song with a
+        // show starts instantly, which is most of them, so saying so on
+        // every row is a second line of the same words twenty times. A
+        // song without one is written while the party runs.
+        if (!track.show) bits.push("no show yet · written while the party runs");
         if (track.stale) bits.push("analysed by an older BRight");
         if (copies.has(track.hash)) {
           bits.push("same song as " + copies.get(track.hash));
         }
         note.textContent = bits.join(" · ");
-        main.appendChild(note);
+        if (bits.length) main.appendChild(note);
         row.appendChild(check);
         row.appendChild(main);
 
@@ -4691,7 +4824,11 @@
           pinned.selected = true;
           pick.appendChild(pinned);
         }
-        if (track.show) row.appendChild(pick);
+        // Only a song with a choice to make gets the picker: with one
+        // show there is nothing to pick, and a select on every row made
+        // the set twice as tall for nothing.
+        const shows = track.show ? Number(track.show.versions || 1) : 0;
+        if (shows > 1 || partyPins[track.hash]) row.appendChild(pick);
 
         const order = document.createElement("span");
         order.className = "muted small party-order";
@@ -4735,8 +4872,8 @@
       $("partySet").after(more);
     }
     more.hidden = hidden === 0;
-    more.textContent = "Show " + Math.min(hidden, 24) + " more of " +
-      hidden + " songs";
+    more.textContent = "Show " + Math.min(hidden, 24) + " more (" +
+      rows.length + " total)";
   }
 
   function renderSetOrder() {

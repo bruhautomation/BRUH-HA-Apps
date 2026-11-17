@@ -121,49 +121,51 @@
     <div class="card">
       <div class="card-head">
         <h3>The room</h3>
-        <span>
-          <button id="btnImportLifx" class="btn">Add discovered bulbs</button>
-          <button id="btnAddAux" class="btn">Add a switch light…</button>
-        </span>
       </div>
-      <p class="muted small">Tap a light to select it, then drag it where it
-        is in the room (left ↔ right matters most — chases and sweeps travel
-        across x). The selected light can be re-roled, put in a zone, or
-        removed right here. Add bulbs one at a time from the picker below —
-        with a role and a zone — or drop every discovered one on the floor at
-        once and sort them out afterwards.</p>
-      <p class="muted small"><strong>Roles and zones are two different
-        questions.</strong> A <em>role</em> is what a light IS — a candle
-        stays warm and low and never strobes, a lamp carries the beat, a
-        strip carries motion, a party light is a switch. A <em>zone</em> is
-        just a name you give a group, usually a room: type the same word on
-        several lights and they become one. Nothing needs a zone, and there
-        is no list to maintain — a zone exists exactly as long as a light is
-        in it. What zones buy you is being able to say "the kitchen" in an
-        effect, or to send a chase travelling zone by zone through the
-        house rather than straight across the floor plan.</p>
+      <details class="info-toggle">
+        <summary>What are roles and zones?</summary>
+        <p class="muted">A <em>role</em> is what a light is: a candle stays
+          warm and low and never strobes, a lamp carries the beat, a strip
+          carries motion, a party light is a switch. A <em>zone</em> is a
+          name for a group, usually a room: type the same word on several
+          lights and they are one zone, so an effect can say "the kitchen"
+          or a chase can travel room by room. Nothing needs a zone.</p>
+      </details>
       <div id="mapSelection" class="map-selection"></div>
       <div id="mapFloor" class="map-floor"></div>
-      <div class="demo-controls" id="bulbPicker">
-        <select id="bulbCandidate">
-          <option value="">— discovered bulbs —</option>
-        </select>
-        <select id="bulbRole"></select>
-        <input type="text" id="bulbZone" placeholder="zone, e.g. Kitchen (optional)"
-               maxlength="32">
-        <button id="btnAddBulb" class="btn small">Add this bulb</button>
-        <button id="btnRefreshBulbs" class="btn small">Refresh list</button>
+      <div id="mapStatus" class="cal-status"></div>
+      <div class="map-add">
+        <h4>Add lights</h4>
+        <div class="demo-controls" id="bulbPicker">
+          <select id="bulbCandidate" aria-label="Discovered bulb">
+            <option value="">— discovered bulbs —</option>
+          </select>
+          <select id="bulbRole" aria-label="Role"></select>
+          <input type="text" id="bulbZone" placeholder="zone, e.g. Kitchen (optional)"
+                 aria-label="Zone" maxlength="32">
+          <button id="btnAddBulb" class="btn small">Add this bulb</button>
+          <button id="btnRefreshBulbs" class="btn small">Refresh list</button>
+        </div>
+        <div class="demo-controls">
+          <button id="btnImportLifx" class="btn small">Add every discovered bulb</button>
+          <button id="btnAddAux" class="btn small">Add a switch light…</button>
+        </div>
+        <div id="auxForm" class="demo-controls" hidden>
+          <select id="auxEntity" aria-label="Switch or light"><option value="">— switch/light entity —</option></select>
+          <select id="auxRole" aria-label="Role">
+            <option value="party">party</option>
+            <option value="laser">laser</option>
+          </select>
+          <button id="btnAuxSave" class="btn small">Add</button>
+        </div>
       </div>
-      <div id="auxForm" class="demo-controls" hidden>
-        <select id="auxEntity"><option value="">— switch/light entity —</option></select>
-        <select id="auxRole">
-          <option value="party">party</option>
-          <option value="laser">laser</option>
-        </select>
-        <button id="btnAuxSave" class="btn small">Add</button>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>Every light</h3>
       </div>
       <div id="mapList" class="list"></div>
-      <div id="mapStatus" class="cal-status"></div>
     </div>
   </section>
   <section class="pane" id="pane-effects">
@@ -176,9 +178,10 @@
       </div>
       <p class="muted small">A sentence becomes an effect for this
         room, unsaved — look at it, then keep it or change it.</p>
+      <textarea id="fxAsk" class="fx-ask" maxlength="200" rows="2"
+                aria-label="Describe the effect"
+                placeholder="bounce a warm pulse between the two window lamps"></textarea>
       <div class="demo-controls">
-        <input type="text" id="fxAsk" maxlength="200"
-               placeholder="bounce a warm pulse between the two window lamps">
         <button id="btnFxAsk" class="btn">Write it</button>
         <button id="btnFxInvent" class="btn small"
                 title="Claude proposes effects built for your light map">Or
