@@ -310,10 +310,12 @@ select { max-width: 100%; min-width: 0; }
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 13px;
+  font-size: 16px;
   color: var(--muted);
 }
 .fx-param > span:first-child { color: var(--ink); }
+.fx-param.fx-param-flag { flex-direction: row; align-items: center; gap: 10px; min-height: 44px; }
+.fx-param.fx-param-flag > span { color: var(--ink); }
 .fx-param input[type="number"], .fx-param input[type="text"],
 .fx-param select { min-height: 40px; }
 .fx-param input[type="checkbox"] { width: 22px; height: 22px; }
@@ -687,7 +689,7 @@ select { max-width: 100%; min-width: 0; }
 .party-order { margin-left: auto; }
 /* Narrow on purpose: it is a qualifier on the row, not the row's
    subject, and at full width it competes with the song's name. */
-.party-version { max-width: 100%; flex: 1 1 100%; }
+.party-version { max-width: 100%; flex: 0 1 14em; min-width: 0; }
 /* A song's row wraps its controls rather than laying them on one line: the
    name, the version select and the tick order share a phone's width, and a
    fixed-width select beside a long title is what put one on the other. */
@@ -1182,3 +1184,19 @@ body.mn-open .foot { display: none; }
 .party-set .party-later { display: none; }
 #partyMore { margin-top: 8px; }
 #partyMore[hidden] { display: none; }
+/* The describe-it box takes the card's whole width and wraps, so the
+   example sentence in it is never cut off on a phone. */
+.fx-ask { font-family: inherit; display: block; width: 100%; box-sizing: border-box; resize: vertical; margin: 10px 0 0; min-height: 64px; }
+/* Light Map: Remove is set apart from the role picker beside it and reads
+   as the one thing on the row that takes something away. */
+#mapList .row-actions { align-items: center; }
+.btn-remove { color: var(--bad); border-color: var(--bad); background: transparent; }
+#mapList .btn-remove { margin-left: 16px; }
+.btn-remove[data-armed] { background: var(--bad); color: #fff; }
+.map-add { margin-top: 14px; padding-top: 6px; border-top: 1px solid var(--line); }
+.map-add h4 { margin: 6px 0 0; font-size: 16px; }
+.map-add .demo-controls[hidden] { display: none; }
+#bulbCandidate { max-width: 100%; }
+/* The bulb list's one-line verdict, before any row. */
+.lifx-summary { margin: 4px 0 8px; font-size: 16px; }
+.lifx-unchecked[hidden] { display: none; }
