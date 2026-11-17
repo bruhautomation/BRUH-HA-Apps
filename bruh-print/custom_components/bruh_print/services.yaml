@@ -164,6 +164,21 @@ print_test:
       selector:
         text:
 
+choose_label:
+  name: Choose the label text prints on
+  description: >-
+    Which loaded label a text print uses when it names none. The panel's
+    Quick tab and the dashboard card both show this choice and both change
+    it, so they always name the same roll. Prints nothing.
+  fields:
+    stock:
+      name: Label stock
+      description: The stock id, from the panel's Printer tab.
+      required: true
+      example: edcc-082wh
+      selector:
+        text:
+
 get_status:
   name: Get status
   description: >-

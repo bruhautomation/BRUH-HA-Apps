@@ -24,6 +24,7 @@ SERVICE_PRINT_LABEL = "print_label"
 SERVICE_REPRINT = "reprint"
 SERVICE_SET_ROLL = "set_roll"
 SERVICE_PRINT_TEST = "print_test"
+SERVICE_CHOOSE_LABEL = "choose_label"
 SERVICE_STATUS = "get_status"
 
 # How long to wait for the add-on to answer a request. Longer than the

@@ -424,6 +424,9 @@ class Panel:
                  "fields": [f.as_dict() for f in t.form()[1]],
                  "stock": t.label.get("stock", ""), "copies": t.copies}
                 for t in self.templates.all()],
+            # Which label a text print with none named lands on, so the card
+            # and the Quick tab start from the same roll (#1174).
+            "quick_stock": self.quick_stock(),
             "last_print": (self.history.all(1)[0].as_dict()
                            if self.history.all(1) else None),
             "printed_today": sum(
@@ -1647,6 +1650,27 @@ async def h_quick(request: web.Request) -> web.Response:
               entry=record.as_dict(), notes=notes + rendered.notes, **result)
 
 
+async def h_quick_stock(request: web.Request) -> web.Response:
+    """Choose the label a text print lands on, for every surface at once.
+
+    The Quick tab and the Lovelace card each kept their own answer — one in
+    the browser, one taken off whichever roll the card listed first — and on
+    a Twin Turbo they named different rolls for the same word (#1174). The
+    default stock is the one answer; this is how either of them changes it,
+    and the state mirror is how the other one hears.
+    """
+    state = panel(request)
+    payload = await body(request)
+    stock_id = str(payload.get("stock") or "")
+    try:
+        state.stocks.require(stock_id)
+    except stock_store.UnknownStock as exc:
+        return bad(exc.detail, 404)
+    state.settings.update({"default_stock": stock_id})
+    state.mirror_state()
+    return ok(quick_stock=state.quick_stock())
+
+
 # -- templates --------------------------------------------------------------
 async def h_templates(request: web.Request) -> web.Response:
     return ok(templates=[t.as_dict() for t in panel(request).templates.all()])
@@ -2001,6 +2025,7 @@ def build_app(state: Panel | None = None) -> web.Application:
 
     app.router.add_get("/api/settings", h_settings_get)
     app.router.add_post("/api/settings", h_settings_put)
+    app.router.add_post("/api/quick/stock", h_quick_stock)
 
     # The UI last, so a static file can never shadow an API route.
     #
