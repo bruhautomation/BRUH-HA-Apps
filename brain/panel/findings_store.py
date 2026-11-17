@@ -2171,6 +2171,9 @@ def clean_items(value) -> list[str]:
 
 
 _ITEM_ENTITY_RE = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
+# A key that is not an entity: ``device:<id>``, ``entry:<id>`` and the
+# like. Anything else in `items` is a name and is read as written.
+_ITEM_KEY_RE = re.compile(r"^[a-z_]+:\S+$")
 
 
 def item_labels(items) -> tuple[list[str], str]:
@@ -2180,23 +2183,29 @@ def item_labels(items) -> tuple[list[str], str]:
     the house gives it, or — for an entity the house has no name for, a
     reference to one that no longer exists — the id read aloud (`the scene
     “before movie”`), never the id itself. An item that is not an entity
-    (a device key) is left out; ``noun`` is "entities" when every item is
-    one, else "items"."""
+    (a device key, ``device:<id>`` or ``entry:<id>``) is left out, while an
+    item that is already a name a person reads (the frost check names the
+    spaces and devices at risk, never an id) is shown as it is; ``noun`` is
+    "entities" when every item is one, else "items"."""
     keys = clean_items(items)
     if not keys:
         return [], ""
     from checks._util import spoken_id  # noqa: PLC0415 — a leaf, lazy
     names = _names_now()
     labels: list[str] = []
+    entities = 0
     for key in keys:
         if not _ITEM_ENTITY_RE.match(key):
+            if not _ITEM_KEY_RE.match(key):
+                labels.append(key)
             continue
+        entities += 1
         named = names.get(key)
         if isinstance(named, dict):
             named = named.get("name")
         labels.append(str(named).strip() if named and str(named).strip()
                       and str(named).strip() != key else spoken_id(key))
-    noun = "entities" if len(labels) == len(keys) else "items"
+    noun = "entities" if entities == len(keys) else "items"
     return labels, noun
 
 
