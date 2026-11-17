@@ -2,6 +2,17 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.24
+
+### Added
+
+- When BRUH Cooking was updated but Home Assistant still runs its older code, a Repairs notice says "Restart Home Assistant to finish updating BRUH Cooking", and it clears after the restart. BRUH Cooking's own notice can only come from its new code, so the first restart after an update had nothing to say it (#1185).
+
+### Fixed
+
+- A room the household has said nothing heats is left out of the cooling checks (heat loss, window and freeze), which say it is expected to follow outside, and unheated rooms no longer use up the freeze warning's limit for a heated one (#1200).
+- One Wrong on the frost card holds: the card now records the rooms and devices it names by their ids, so the answer matches the next cold night instead of being lost (#1200).
+
 ## 5.3.23
 
 ### Changed
