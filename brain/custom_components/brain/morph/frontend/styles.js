@@ -11,7 +11,7 @@ export const FONTS_URL = 'https://fonts.googleapis.com/css2?family=Bricolage+Gro
 // that wide, so a narrow tile says the first fact whole and never the first
 // half of two.
 export const STATUS = { min: 120, max: 600, step: 24, charPx: 7, linePx: 40, actionPx: 84 };
-const STATUS_RULES = Array.from({ length: (STATUS.max - STATUS.min) / STATUS.step + 1 }, (_, i) => { const w = STATUS.min + i * STATUS.step; return `@container (min-width:${w}px){.nv .vs i.w${w}{display:inline}.nv .vs i.sh.h${w}{display:none}}`; }).join('');
+const STATUS_RULES = Array.from({ length: (STATUS.max - STATUS.min) / STATUS.step + 1 }, (_, i) => { const w = STATUS.min + i * STATUS.step; return `@container (min-width:${w}px){.nv .vs i.w${w}{display:inline}}`; }).join('');
 
 export const CSS = `
 :host{display:block;height:100%;--ease:cubic-bezier(.22,1,.36,1);--ease-io:cubic-bezier(.65,0,.35,1)}
@@ -271,6 +271,8 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}.s
 .lanes{position:absolute;inset:0;display:flex;flex-direction:column;gap:1px;pointer-events:none}
 .lane{flex:1;position:relative;transition:background-color .5s var(--ease)}
 .lane>span{position:absolute;left:0;top:0;bottom:0;transition:width .7s var(--ease)}
+/* A group's name and status sit on a plain plate over its lanes (#1195): thirty lanes under small text were stripes it could not be read against. */
+.lanes~.sline .nv{margin-left:-7px;padding:3px 7px;border-radius:9px;background:color-mix(in oklab,var(--surface) 90%,transparent)}
 .sline{position:relative;height:100%;display:flex;align-items:center;gap:10px;padding:0 14px}
 .mnotes-fold{all:unset;box-sizing:border-box;width:100%;height:44px;display:flex;align-items:center;gap:10px;padding:0 14px;cursor:pointer;color:var(--muted);font-size:13px}
 .mnotes-fold b{flex:1;min-width:0;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -286,7 +288,7 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}.s
 /* "Unavailable · last seen Tue 3:58 AM" is one fact a person needs whole (#764): it takes two lines under a one-line name, which a 56px strip holds. */
 .strip .nv.two>span{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;text-overflow:ellipsis}
 .strip .nv.two b{display:block;white-space:nowrap;-webkit-line-clamp:unset;line-clamp:unset}
-.nv .vs i{font-style:normal}.nv .vs i[class]{display:none}.nv .vs i.sh{display:inline}
+.nv .vs i{font-style:normal}.nv .vs i[class]{display:none}
 ${STATUS_RULES}
 @media (max-width:520px){.sline{gap:8px;padding:0 11px}.nv b{font-size:13px}}
 .sline>.flex1{display:none}.sline>.track,.sline>.actword{margin-left:auto}

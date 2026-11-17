@@ -66,6 +66,7 @@ import wording
 log = logging.getLogger("morph.learning")
 
 MAX_SUGGESTIONS = 5
+ACTIONS = ("add", "change", "move", "remove")
 MAX_OPEN = 8
 MAX_LESSONS = 25
 WINDOW_S = 30 * 86400
@@ -77,9 +78,15 @@ SCHEMA = {
     "required": ["suggestions", "lessons"],
     "properties": {
         "suggestions": {"type": "array", "maxItems": MAX_SUGGESTIONS, "items": {
-            "type": "object", "required": ["title", "why", "change"], "additionalProperties": False,
+            "type": "object", "required": ["title", "why", "change", "action"], "additionalProperties": False,
             "properties": {
                 "title": {"type": "string", "description": "Under 60 characters, said as the change."},
+                "action": {"type": "string", "enum": list(ACTIONS),
+                           "description": "What it does to what is on the page: add something, change "
+                                          "a card in place, move (reorder) cards or sections, or remove "
+                                          "(or hide) a card, group or section."},
+                "moves": {"type": "array", "items": {"type": "string"},
+                          "description": "For a move: the id of every section whose place it changes."},
                 "why": {"type": "string", "description": "One sentence of evidence from the digest."},
                 "change": {"type": "string",
                            "description": "The instruction Morph will hand you if they press Do it."},
@@ -144,6 +151,66 @@ _CHANGE = re.compile(r"\b(remov\w*|delet\w*|drop\w*|hid(?:e|ing)|hidden|mov(?:e|
                      r"re-?position\w*|re-?arrang\w*|swap\w*|demot\w*|collaps\w*|merg\w*|ungroup\w*)\b", re.I)
 
 
+_GONE = re.compile(r"remov|delet|drop|hid", re.I)
+# "Put Climate above Security" is a move with none of _CHANGE's verbs: until
+# suggestions carried `action`, a No to one was kept against nothing.
+_PLACE = re.compile(r"\b(above|below|ahead of|top of|bottom of)\b", re.I)
+
+
+def _action(item: dict) -> str:
+    """What a proposal does, from its typed `action`. A suggestion stored
+    before the pass answered with one is read from its words."""
+    act = str(item.get("action") or "")
+    if act in ACTIONS:
+        return act
+    text = f"{item.get('title') or ''} {item.get('change') or ''}"
+    m = _CHANGE.search(text)
+    if m:
+        return "remove" if _GONE.match(m.group(1)) else "move"
+    return "move" if _PLACE.search(text) else ""
+
+
+def _is_change(item: dict) -> bool:
+    """Takes something away or moves it: the proposals a No is kept against."""
+    return _action(item) in ("move", "remove")
+
+
+# A card that holds a control is wanted for standby whether or not anybody
+# pressed it this month (#1198: "doesn't mean I want to lose the control"),
+# and one whose light is unavailable today is the same light tomorrow. Its
+# type, or the domain of the entity it shows, says so.
+CONTROL_TYPES = frozenset(("light", "light_group", "cover_group", "fan_group", "fan", "cover", "lock",
+                           "switch", "button", "vacuum", "climate", "media", "alarm", "scenes"))
+CONTROL_DOMAINS = frozenset(("light", "switch", "input_boolean", "lock", "cover", "fan", "climate",
+                             "media_player", "alarm_control_panel", "scene", "script", "button",
+                             "input_button", "vacuum", "valve", "siren", "humidifier", "water_heater",
+                             "input_select", "select", "input_number", "number"))
+
+
+def holds_control(card: dict) -> bool:
+    if str(card.get("type") or "") in CONTROL_TYPES:
+        return True
+    ents = [card.get("entity")] + list(card.get("entities") or [])
+    return any(isinstance(e, str) and e.partition(".")[0] in CONTROL_DOMAINS for e in ents)
+
+
+def removes_control(row: dict, dash: dict, d: dict) -> bool:
+    """A proposal to remove or hide a card that holds a control, or a group
+    or section with one in it (a row that names no card is about the cards
+    of its section). Only a control whose entity Home Assistant no longer
+    has at all may go: there is nothing left for it to control."""
+    if _action(row) != "remove":
+        return False
+    gone = set(d.get("missing") or [])
+    cid = str(row.get("card") or "")
+    if cid:
+        card = _find(dash, card_id=cid)
+        return card is not None and holds_control(card) and cid not in gone
+    sec = _find(dash, sec_id=str(row.get("section") or "")) if row.get("section") else None
+    return any(holds_control(c) and c.get("id") not in gone
+               for g in (sec or {}).get("groups") or [] for c in g.get("cards") or [])
+
+
 def _card_sig(card: dict) -> str:
     return _key(json.dumps({k: v for k, v in card.items() if k != "id"}, sort_keys=True, default=str))
 
@@ -174,7 +241,7 @@ def _keep(data: dict, item: dict, dash: dict, why: str, now: float) -> None:
     """Remember the answer against the card or section the item was about."""
     # Only a No to taking something away or moving it is a keep: a No to
     # "add a light card" says nothing about the section it was for.
-    if not _CHANGE.search(f"{item.get('title') or ''} {item.get('change') or ''}"):
+    if not _is_change(item):
         return
     keeps = data.setdefault("keeps", {})
     cid, sid = str(item.get("card") or ""), str(item.get("section") or "")
@@ -187,6 +254,11 @@ def _keep(data: dict, item: dict, dash: dict, why: str, now: float) -> None:
                                 "title": item.get("title"), "why": why, "at": now}
     elif sid and not cid:
         keeps[f"section:{sid}"] = {"title": item.get("title"), "why": why, "at": now}
+    # A refused reorder keeps the place of every section it would have moved
+    # (#1198: "Put Climate above Security" named one section and moved two).
+    for other in item.get("moves") or []:
+        if _find(dash, sec_id=str(other)) is not None:
+            keeps[f"section:{other}"] = {"title": item.get("title"), "why": why, "at": now}
     if len(keeps) > 200:
         for k in sorted(keeps, key=lambda k: keeps[k].get("at") or 0)[:len(keeps) - 200]:
             del keeps[k]
@@ -245,6 +317,24 @@ def clear_keep(key: str) -> bool:
     return True
 
 
+def record_declined_moves(data: dict, dash: dict) -> bool:
+    """A No to a move worded only by where things go ("Put Climate above
+    Security"), given before suggestions said what they do, was kept
+    against nothing, so the same reorder could be proposed again in other
+    words. Keep each such answer now, once."""
+    changed = False
+    for it in data["items"]:
+        if it.get("status") != "declined" or it.get("action") or it.get("kept_noted"):
+            continue
+        text = f"{it.get('title') or ''} {it.get('change') or ''}"
+        if _CHANGE.search(text) or not _PLACE.search(text):
+            continue
+        _keep(data, it, dash, "declined", float(it.get("decided") or time.time()))
+        it["kept_noted"] = True
+        changed = True
+    return changed
+
+
 def record_reverted(data: dict, dash: dict, now: float | None = None) -> bool:
     """A suggestion that was done and then undone is an answer too: the
     person put the card or order back, by Undo or by restoring an earlier
@@ -266,10 +356,18 @@ def record_reverted(data: dict, dash: dict, now: float | None = None) -> bool:
     return changed
 
 
+def proposals(rows: list, d: dict, dash: dict) -> list[dict]:
+    """The pass's suggestions that may be made: not a move or removal whose
+    only ground is that nobody pressed it, and not the removal of a control.
+    `add_suggestions` then drops what the household already refused or kept."""
+    return [{**r, "kind": "dashboard"} for r in rows or [] if isinstance(r, dict)
+            and not rests_on_disuse(r, d) and not removes_control(r, dash, d)]
+
+
 def rests_on_disuse(row: dict, d: dict) -> bool:
     """A proposal to remove, hide or move something whose only ground is
     that nobody pressed it. A card that is unavailable is another matter."""
-    if not _CHANGE.search(f"{row.get('title') or ''} {row.get('change') or ''}"):
+    if not _is_change(row):
         return False
     card = str(row.get("card") or "")
     if card:
@@ -453,8 +551,9 @@ def add_suggestions(rows: list[dict], dash: dict) -> int:
         key = _key(title)
         if key in known:
             continue
-        if (row.get("card") in kept_cards or (row.get("section") in kept_secs and not row.get("card"))) \
-                and _CHANGE.search(f"{title} {change}"):
+        moves = [str(x) for x in row.get("moves") or [] if str(x) in sections] if isinstance(row.get("moves"), list) else []
+        if (row.get("card") in kept_cards or (row.get("section") in kept_secs and not row.get("card"))
+                or kept_secs.intersection(moves)) and _is_change({**row, "title": title, "change": change}):
             continue
         words = _words(title)
         if any(_similar(words, w) for w in seen_words):
@@ -465,6 +564,10 @@ def add_suggestions(rows: list[dict], dash: dict) -> int:
                 "why": str(row.get("why") or "").strip()[:400], "change": change,
                 "kind": "code" if row.get("kind") == "code" else "dashboard",
                 "status": "open", "created": time.time()}
+        if row.get("action") in ACTIONS:
+            item["action"] = row["action"]
+        if moves:
+            item["moves"] = moves
         if row.get("section") in sections:
             item["section"] = row["section"]
         if row.get("card") in cards:
@@ -1134,7 +1237,8 @@ def digest(dash: dict, now: float | None = None, states: dict | None = None) -> 
                                   "entity": ent,
                                   "uses": by_card.get(c["id"], 0) + (by_entity.get(ent, 0) if ent else 0),
                                   "unavailable": bool(st and st.get("state") in ("unavailable", "unknown"))
-                                                  or bool(ent and states and st is None)})
+                                                  or bool(ent and states and st is None),
+                                  "missing": bool(ent and states and st is None)})
     out = outcomes(now - WINDOW_S)
     tells = [o for o in out if o.get("kind") == "tell"]
     undone = {o.get("id") for o in out if o.get("kind") == "undo"}
@@ -1158,6 +1262,7 @@ def digest(dash: dict, now: float | None = None, states: dict | None = None) -> 
         "sections": order, "cards": cards,
         "never_used": [c["id"] for c in cards if not c["uses"]] if len(days) >= 7 and log["state"] == "ok" else [],
         "dead": [c["id"] for c in cards if c["unavailable"]],
+        "missing": [c["id"] for c in cards if c["missing"]],
         "tells": shown,
         "suggestions": [{"title": o.get("title"), "verb": o.get("verb"), "note": o.get("note", "")}
                         for o in sugg][-30:],
@@ -1270,8 +1375,13 @@ def build_prompt(d: dict, dash_text: str, lessons, declined: dict,
         json.dumps({k: d[k] for k in ("days_with_use", "events", "by_kind")}),
         *([(d.get("log") or {}).get("sentence")] if (d.get("log") or {}).get("sentence") else []),
         "Never suggest moving, hiding or removing a card or section only because nobody pressed it:",
-        "a control can be wanted and rarely used (a lights group, a switch). Unavailable alone is",
-        "not a reason to remove a card either, unless it has been unavailable for weeks.",
+        "a card is glanced at as people scroll by, and a control is wanted for standby however rarely",
+        "it is used. Never suggest removing or hiding a card that holds a control (lights, a lights",
+        "group, switches, locks, covers, fans, a thermostat, media, scenes), nor a group or section",
+        "with one in it, even while it is unavailable. What can go is a card with no control on it",
+        "that nobody looks at, or a card whose entity Home Assistant no longer has.",
+        "Say what each suggestion does in `action`, and for a move list every section it reorders",
+        "in `moves`.",
         "",
         "Sections in dashboard order, with how often each was used and when:",
         fit(d["sections"], 6000, "sections"),
@@ -1362,7 +1472,7 @@ async def run_pass(states: dict | None = None, *, pressed: bool = False) -> dict
     dash, _, text = store.read()
     d = digest(dash, states=states)
     data = _load()
-    if record_reverted(data, dash):
+    if record_reverted(data, dash) | record_declined_moves(data, dash):
         _save(data)
     kept_cards, kept_secs = kept_ids(data, dash)
     # What the household chose to keep is not shown as dead or unused.
@@ -1414,7 +1524,7 @@ async def run_pass(states: dict | None = None, *, pressed: bool = False) -> dict
                                    rtext[:800])
             return {"error": err or "unreadable"}
         rows = [r for r in (obj.get("suggestions") or []) if isinstance(r, dict)]
-        rows = [{**r, "kind": "dashboard"} for r in rows if not rests_on_disuse(r, d)]
+        rows = proposals(rows, d, dash)
         added = add_suggestions(rows + code_suggestions(obj.get("code_reports")), dash)
         # Morph's own code problems go with the pass (plan 3.5).
         send_code_reports()
