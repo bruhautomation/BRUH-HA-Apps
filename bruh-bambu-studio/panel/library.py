@@ -86,17 +86,28 @@ def slice_stem(name: str) -> str:
 
 def link_slices(rows: list[dict]) -> None:
     """Give each source row `sliced_path`, the newest slice made from it (slicer
-    names its output after the source), so a reprint needs no second slice."""
+    names its output after the source), so a reprint needs no second slice.
+
+    A slice is one in `sliced/` or a `.gcode.3mf` among the rows themselves:
+    Bambu Studio's own Export plate sliced file saves `part.gcode.3mf` beside
+    `part.3mf`, and that source is sliced as surely as one the panel sliced."""
     newest: dict[str, tuple[int, str]] = {}
+
+    def offer(name: str, mtime: int, rel: str) -> None:
+        key = slice_stem(name).lower()
+        if key not in newest or mtime > newest[key][0]:
+            newest[key] = (mtime, rel)
+
     folder = ROOT / SLICED
     if folder.is_dir():
         for path in folder.glob("*.gcode.3mf"):
             if path.name.startswith("."):
                 continue
-            key = slice_stem(path.name).lower()
-            mtime = int(path.stat().st_mtime)
-            if key not in newest or mtime > newest[key][0]:
-                newest[key] = (mtime, relative(path))
+            offer(path.name, int(path.stat().st_mtime), relative(path))
+    for row in rows:
+        name = str(row.get("name", ""))
+        if row.get("sliced") and name.lower().endswith(".gcode.3mf") and row.get("path"):
+            offer(name, int(row.get("modified") or 0), row["path"])
     for row in rows:
         if row.get("sliced") or str(row.get("name", "")).lower().endswith(".gcode.3mf"):
             continue

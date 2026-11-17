@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.8
+
+### Changed
+
+- A print's name is shown as a person would write it everywhere (the job title, the printer's storage, the Files list and the dashboard card): no folder, extension, slicer time stamp, trailing "(1)" or underscores, and no empty boxes for characters the screen has no font for. The job title wraps at spaces and shows the whole name on a tap; the printer's subtitle fits on a phone ("Wi-Fi good") (#1166, #1169, #1170).
+- When the last look was blind, Failure detection shows the reason in one visible line with Turn on light and Check now on one row (#1168).
+
+### Fixed
+
+- Failure detection no longer says "Every planned look is done" when most of the looks saw nothing; it says up front that it could not watch the print and why (#1167).
+- A file in the library with a sliced copy beside it (not only in the sliced folder) no longer reads "Not sliced yet", and files with the same name but different kinds are labelled 3MF or STL (#1166).
+- The Files list's Slice menu item works again.
+
 ## 0.4.7
 
 ### Fixed
