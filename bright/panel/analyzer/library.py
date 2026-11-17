@@ -819,6 +819,10 @@ def scan(folder: Path, cache: "_HashCache | None" = None) -> list[dict]:
                     "palette": show.get("palette_name"),
                     "cues": (show.get("stats") or {}).get("cues"),
                     "compiled_at": show.get("compiled_at"),
+                    # How many shows the track has, so a list can offer a
+                    # choice of show only where there is one.
+                    "versions": len(_read_versions(hash_hex).get("versions")
+                                    or []) or 1,
                 }
         tracks.append(entry)
     if owned:
