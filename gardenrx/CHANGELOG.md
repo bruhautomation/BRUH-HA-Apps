@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.13
+
+### Changed
+
+- The Lovelace stock card says "Nothing running low · 14 in stock" when nothing is low, then lists the three lowest under "Lowest stock"; amounts stay on one line (#1164).
+- Harvest: when nothing is ready, held or developing, the three zero cards become one line, e.g. "Nothing to pick or hold right now · 21 crops off season", so the season total shows without scrolling (#1163).
+- Crops: on a phone the title stays on one line and the search field has its own full-width row with a readable placeholder (#1162).
+
+### Fixed
+
+- The rainfall card no longer shows a red DROUGHT badge for a resting garden: it uses the same resting rule as the watering advice beside it, so a dormant garden short of rain is at most "Dry", and DROUGHT appears only in the growing season (#1165).
+
 ## 0.1.12
 
 ### Changed

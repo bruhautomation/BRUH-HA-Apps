@@ -46,6 +46,14 @@ export function HarvestStatusCards({
   const [open, setOpen] = useState<string | null>(null);
   const lists: Record<string, StatusCrop[]> = { phi: doNotHarvest, ready, developing };
   if (doNotHarvest.length + ready.length + developing.length + offSeason === 0) return null;
+  // Nothing to pick, hold or watch: one line instead of three cards of 0.
+  if (doNotHarvest.length + ready.length + developing.length === 0)
+    return (
+      <p className="mb-[var(--gap)] text-[14px] text-ink-3">
+        Nothing to pick or hold right now · {offSeason} {offSeason === 1 ? 'crop' : 'crops'} off
+        season
+      </p>
+    );
 
   return (
     <div className="mb-[var(--gap)]">

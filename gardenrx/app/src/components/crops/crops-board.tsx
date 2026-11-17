@@ -114,16 +114,18 @@ export function CropsBoard({
 
   return (
     <div className="page">
-      <div className="section-title">
-        <h2>All crops</h2>
+      {/* On a phone the search takes its own full-width row under the title. */}
+      <div className="section-title flex-wrap">
+        <h2 className="whitespace-nowrap">All crops</h2>
         <span className="meta">
           {filtered.length} of {cards.length}
         </span>
         <div className="spacer" />
-        <div className="relative w-[200px] min-w-0 max-w-full">
+        <div className="relative w-full min-w-0 sm:w-[240px]">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-3" />
           <input
-            className="text-input w-full pl-9"
+            aria-label="Search crops"
+            className="text-input min-h-11 w-full pl-9 text-base placeholder:text-ink-3 placeholder:opacity-100 sm:text-sm"
             placeholder="Search crops…"
             value={q}
             onChange={(e) => setQ(e.target.value)}

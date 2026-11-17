@@ -69,7 +69,6 @@ export default async function WeatherPage() {
   const forecastDates = new Set(hourly.map((h) => h.time.slice(0, 10)));
 
   const rainDaily = dailyRainfall(precipHistory, 30);
-  const rainSummary = rainDaily.length ? rainfallSummary(rainDaily) : null;
   const avgHigh7 = daily.length
     ? daily.slice(0, 7).reduce((s, d) => s + d.tempHigh, 0) / Math.min(7, daily.length)
     : null;
@@ -80,6 +79,7 @@ export default async function WeatherPage() {
   const dormant = mostlyResting(
     crops.map((c) => cropStages(c.id, varieties, effectiveStages).map((stage) => ({ stage })))
   );
+  const rainSummary = rainDaily.length ? rainfallSummary(rainDaily, { dormant }) : null;
 
   const goodNow = rating === 'EXCELLENT' || rating === 'GOOD';
 
