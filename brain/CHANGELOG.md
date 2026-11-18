@@ -2,6 +2,15 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.4.0
+
+### Changed
+
+- Every brAIn screen now starts on the same left edge as the top bar, and ends on the same right edge, at every window width: the margin is 24 pixels (16 on a phone), and the page no longer jumps sideways when you move between Cards, Needs you, History and the other tabs. Lists and cards fill the page; a sentence is held to a readable length instead of running across a wide monitor. Needs you shows its cards two across on a wide screen, and Settings and the Guide start at the left edge with their list beside them, the version link ending where the Settings card does.
+- Even spacing: the gaps between cards and between sections, and the padding inside every box, come from one scale. Needs you and To Do share one heading style, Settings sections no longer draw a rule above each heading, Knowledge and Diagnostics lists divide their rows the same way, and Save no longer sits glued to the form that follows it.
+- Text boxes, drop-downs and buttons are one height (40 pixels, 44 on a touch screen) with one corner radius, and the boxes in a form share one fill.
+- The wide top bar now begins at 900 pixels (it began at 870); between 640 and 900 pixels it is the two-row bar.
+
 ## 5.3.27
 
 ### Fixed

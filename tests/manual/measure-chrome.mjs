@@ -150,7 +150,7 @@ async function open(width, height, touch) {
     const list = document.querySelector('#findList').getBoundingClientRect();
     const mine = document.querySelector('#todoList').getBoundingClientRect();
     return {
-      share: list.width / wrap.width,
+      share: list.width / Math.min(wrap.width, 1120), // the page width (--page)
       left: Math.round(list.left), mineLeft: Math.round(mine.left),
       cards: document.querySelectorAll('#findList .qcard').length,
       proposals: !!document.getElementById('viewProposals'),

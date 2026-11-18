@@ -67,67 +67,10 @@
   ]
  },
  "brain/panel/style.css": {
-  "font": [
-   "11px",
-   "13px",
-   "15px",
-   "17px",
-   "18px"
-  ],
-  "media": [
-   "480px",
-   "520px",
-   "600px",
-   "641px",
-   "860px",
-   "869px",
-   "870px",
-   "899px",
-   "1100px",
-   "1300px",
-   "1900px"
-  ],
-  "radius": [
-   "2px",
-   "3px",
-   "4px",
-   "5px",
-   "6px",
-   "7px",
-   "9px",
-   "10px",
-   "11px",
-   "14px",
-   "16px",
-   "18px",
-   "20px"
-  ],
-  "space": [
-   "2.5px",
-   "3px",
-   "5px",
-   "6px",
-   "7px",
-   "9px",
-   "10px",
-   "11px",
-   "13px",
-   "14px",
-   "18px",
-   "22px",
-   "26px",
-   "28px",
-   "30px",
-   "34px",
-   "36px",
-   "40px",
-   "44px",
-   "56px",
-   "60px",
-   "62px",
-   "80px",
-   "108px"
-  ]
+  "font": [],
+  "media": [],
+  "radius": [],
+  "space": []
  },
  "bright/panel/style.css": {
   "font": [],
