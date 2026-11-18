@@ -16,6 +16,8 @@ import {
 } from '@/lib/queries';
 import { categoryForCrop } from '@/lib/crop-category';
 import { SectionTabs, TREATMENT_TABS } from '@/components/shell/section-tabs';
+import { PageShell } from '@/components/ui/page-shell';
+import { SectionHeader } from '@/components/ui/section-header';
 
 export const dynamic = 'force-dynamic';
 
@@ -122,37 +124,31 @@ export default async function ProductsPage({
   const total = filtered.length;
 
   return (
-    <div className="page">
-      <div className="section-title">
-        <h2>Treatments</h2>
-        <span className="meta">
-          {total} {total === 1 ? 'product' : 'products'}
-          {activeCropName ? ` · ${activeCropName}` : params.q || params.type ? ' · matching' : ''}
-        </span>
-      </div>
-
+    <PageShell
+      title="Treatments"
+      meta={`${total} ${total === 1 ? 'product' : 'products'}${
+        activeCropName ? ` · ${activeCropName}` : params.q || params.type ? ' · matching' : ''
+      }`}
+    >
       <SectionTabs tabs={TREATMENT_TABS} />
 
-      <div className="mb-4">
-        <ProductSearch crops={filterableCrops} />
-      </div>
+      <ProductSearch crops={filterableCrops} />
 
-      <div className="space-y-8 animate-stagger">
+      <div className="sections animate-stagger">
         {TYPE_ORDER.map((type) => {
           const list = sections.get(type);
           if (!list || list.length === 0) return null;
           return (
-            <section key={type}>
-              <div className="flex items-center gap-2 mb-3">
-                <div className={`w-2 h-2 rounded-full ${typeDot[type] ?? 'bg-fuchsia-500'}`} />
-                <h2 className="text-sm font-heading font-semibold tracking-wide uppercase text-muted-foreground/70">
-                  {TYPE_LABEL[type]}
-                </h2>
-                <span className="text-[10px] text-muted-foreground/40">({list.length})</span>
-                <div className="flex-1 h-px bg-border/40" />
-              </div>
+            <section key={type} className="sec">
+              <SectionHeader
+                icon={
+                  <span className={`size-2 rounded-full ${typeDot[type] ?? 'bg-fuchsia-500'}`} />
+                }
+                title={TYPE_LABEL[type]}
+                meta={list.length}
+              />
 
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 min-[1200px]:grid-cols-3">
                 {list.map((product) => (
                   <ProductCard
                     key={product.id}
@@ -171,7 +167,7 @@ export default async function ProductsPage({
           </p>
         )}
       </div>
-    </div>
+    </PageShell>
   );
 }
 
@@ -192,7 +188,7 @@ function ProductCard({
   return (
     <Link
       href={`/products/${product.id}`}
-      className="group flex items-start gap-3 rounded-xl bg-card p-3 shadow-sm ring-1 ring-black/[0.04] hover:shadow-md hover:ring-emerald-200/70 transition-all duration-200"
+      className="group flex items-start gap-3 rounded-xl bg-card p-4 shadow-sm ring-1 ring-black/[0.04] hover:shadow-md hover:ring-emerald-200/70 transition-all duration-200"
     >
       <ProductAvatar
         productId={product.id}
@@ -205,19 +201,19 @@ function ProductCard({
           {product.brand}
         </p>
         {/* Active ingredient — always shown under the product name */}
-        <p className="text-[11.5px] text-muted-foreground leading-snug mt-0.5">
+        <p className="text-xs text-muted-foreground leading-snug mt-0.5">
           {ingredients.length > 0 ? ingredients.map((i) => i.name).join(' + ') : '—'}
           {groupLabel && (
-            <span className="ml-1.5 text-[10px] font-medium text-muted-foreground/60 bg-muted/60 px-1.5 py-0.5 rounded">
+            <span className="ml-2 text-xs font-medium text-muted-foreground/60 bg-muted/60 px-2 py-0.5 rounded-md">
               {groupLabel}
             </span>
           )}
         </p>
         {(rei != null || interval != null) && (
-          <div className="flex items-center gap-1.5 mt-1.5 tabular-nums">
+          <div className="flex items-center gap-2 mt-2 tabular-nums">
             {rei != null && (
               <span
-                className="inline-flex items-center gap-1 rounded-full bg-muted/60 text-foreground/60 px-1.5 py-0.5 text-[10px] font-medium"
+                className="inline-flex items-center gap-1 rounded-full bg-muted/60 text-foreground/60 px-2 py-0.5 text-xs font-medium"
                 title="Re-entry interval"
               >
                 <Clock className="w-2.5 h-2.5" />
@@ -226,7 +222,7 @@ function ProductCard({
             )}
             {interval != null && (
               <span
-                className="inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-800 px-1.5 py-0.5 text-[10px] font-medium"
+                className="inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-800 px-2 py-0.5 text-xs font-medium"
                 title="Cover-spray interval"
               >
                 <CalendarClock className="w-2.5 h-2.5" />
@@ -242,7 +238,7 @@ function ProductCard({
             ${Number(product.price_dollars).toFixed(2)}
           </p>
           {product.price_size && (
-            <p className="text-[10px] text-muted-foreground/60 mt-0.5">{product.price_size}</p>
+            <p className="text-xs text-muted-foreground/60 mt-0.5">{product.price_size}</p>
           )}
         </div>
       )}

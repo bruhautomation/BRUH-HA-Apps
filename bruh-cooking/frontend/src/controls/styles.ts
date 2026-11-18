@@ -66,7 +66,7 @@ export const controlStyles = css`
   }
   .hint {
     color: var(--bc-muted, #6b7178);
-    font-size: 12.5px;
+    font-size: 12px;
     white-space: pre-line;
   }
   .widget {
@@ -81,9 +81,9 @@ export const controlStyles = css`
   .error {
     display: flex;
     align-items: flex-start;
-    gap: 6px;
-    margin-top: 6px;
-    font-size: 12.5px;
+    gap: 8px;
+    margin-top: 8px;
+    font-size: 12px;
   }
   .reason {
     color: var(--bc-muted, #6b7178);
@@ -104,7 +104,7 @@ export const controlStyles = css`
   .link {
     display: inline-block;
     margin-top: 4px;
-    font-size: 12.5px;
+    font-size: 12px;
     font-weight: 500;
     color: var(--bc-accent, #03a9f4);
   }
@@ -131,19 +131,19 @@ export const controlStyles = css`
   .segmented {
     display: inline-flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 8px;
     max-width: 100%;
   }
   .segmented button {
     flex: 0 0 auto;
     min-height: 40px;
-    padding: 6px 14px;
+    padding: 8px 16px;
     border: none;
     border-radius: 999px;
     background: var(--bc-control-bg, rgba(127, 127, 127, 0.14));
     color: inherit;
     font: inherit;
-    font-size: 13.5px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
@@ -174,7 +174,7 @@ export const controlStyles = css`
   .tiles {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
-    gap: 6px;
+    gap: 8px;
     width: 100%;
   }
   .tile {
@@ -182,11 +182,11 @@ export const controlStyles = css`
     align-items: center;
     justify-content: center;
     min-height: 44px;
-    padding: 6px 10px;
+    padding: 8px 12px;
     box-sizing: border-box;
     border-radius: 12px;
     background: var(--bc-control-bg, rgba(127, 127, 127, 0.14));
-    font-size: 13.5px;
+    font-size: 14px;
     font-weight: 600;
     line-height: 1.2;
     text-align: center;
@@ -233,7 +233,7 @@ export const controlStyles = css`
   .dropdown select {
     max-width: 100%;
     min-height: 40px;
-    padding: 7px 36px 7px 14px;
+    padding: 8px 32px 8px 16px;
     border: none;
     border-radius: 999px;
     background: var(--bc-control-bg, rgba(127, 127, 127, 0.14));
@@ -258,7 +258,7 @@ export const controlStyles = css`
     right: 12px;
     width: 18px;
     height: 18px;
-    margin-top: -9px;
+    margin-top: -8px;
     fill: currentColor;
     pointer-events: none;
   }
@@ -317,7 +317,7 @@ export const controlStyles = css`
     display: inline-flex;
     align-items: center;
     gap: 2px;
-    padding: 3px;
+    padding: 4px;
     border-radius: 999px;
     background: var(--bc-control-bg, rgba(127, 127, 127, 0.14));
   }
@@ -350,7 +350,7 @@ export const controlStyles = css`
   }
   .stepper output {
     min-width: 4.2em;
-    font-size: 17px;
+    font-size: 16px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
     text-align: center;
@@ -358,7 +358,7 @@ export const controlStyles = css`
   /* On the stepper's grey, the muted color falls short of 4.5:1; the text color, softened, doesn't. */
   .stepper output .unit {
     margin-inline-start: 1px;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 500;
     color: color-mix(in srgb, var(--bc-text, #1f2328) 72%, transparent);
   }
@@ -375,12 +375,12 @@ export const controlStyles = css`
   .chips {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 8px;
   }
   .chips .bc-button {
     min-height: 40px;
-    padding: 6px 14px;
-    font-size: 13.5px;
+    padding: 8px 16px;
+    font-size: 14px;
   }
   .chips .bc-button[aria-pressed="true"] {
     background: var(--bc-accent-fill, var(--bc-accent, #03a9f4));
@@ -404,7 +404,7 @@ export const controlStyles = css`
   input[type="time"] {
     min-height: 40px;
     box-sizing: border-box;
-    padding: 6px 12px;
+    padding: 8px 12px;
     border: 1px solid var(--bc-divider, rgba(127, 127, 127, 0.35));
     border-radius: 10px;
     background: transparent;
@@ -424,7 +424,7 @@ export const controlStyles = css`
   }
   .slider span {
     color: var(--bc-muted, #6b7178);
-    font-size: 13px;
+    font-size: 14px;
   }
   .slider output {
     font-variant-numeric: tabular-nums;

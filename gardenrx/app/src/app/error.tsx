@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import Link from 'next/link';
 import { RotateCw, House, TriangleAlert } from 'lucide-react';
+import { PageShell } from '@/components/ui/page-shell';
 
 // Catches runtime errors in any route segment and renders inside the app shell
 // (sidebar + topbar stay interactive). `unstable_retry` re-fetches and
@@ -23,24 +24,19 @@ export default function Error({
   const retry = unstable_retry ?? reset ?? (() => window.location.reload());
 
   return (
-    <div className="page">
-      <div
-        className="card panel"
-        style={{ maxWidth: 460, margin: '48px auto', textAlign: 'center' }}
-      >
+    <PageShell width="narrow">
+      <div className="card panel mx-auto w-full max-w-md text-center">
         <div
           className="mx-auto grid size-12 place-items-center rounded-full"
           style={{ background: 'var(--danger-bg)', color: 'var(--danger)' }}
         >
           <TriangleAlert className="size-6" />
         </div>
-        <h2 className="font-display" style={{ fontSize: 20, marginTop: 14 }}>
-          Something went wrong
-        </h2>
-        <p className="text-ink-2" style={{ fontSize: 14, marginTop: 8, lineHeight: 1.55 }}>
+        <h2 className="font-display mt-3 text-xl">Something went wrong</h2>
+        <p className="mt-2 text-sm leading-relaxed text-ink-2">
           This page hit an error while loading. Your data is safe — try again.
         </p>
-        <div className="flex items-center justify-center gap-2" style={{ marginTop: 18 }}>
+        <div className="mt-4 flex items-center justify-center gap-2">
           <button type="button" onClick={() => retry()} className="btn btn-primary">
             <RotateCw className="size-4" /> Try again
           </button>
@@ -49,6 +45,6 @@ export default function Error({
           </Link>
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 }

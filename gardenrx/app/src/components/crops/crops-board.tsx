@@ -17,6 +17,8 @@ import {
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { PageShell } from '@/components/ui/page-shell';
+import { SectionHeader } from '@/components/ui/section-header';
 import { createClient } from '@/lib/db/client';
 import { CROP_CATALOG, type CatalogEntry } from '@/lib/crop-catalog';
 import { CropGlyph, resolveGlyphKind } from '@/components/crop-glyph';
@@ -113,27 +115,25 @@ export function CropsBoard({
   const restingCount = filtered.filter((c) => c.resting).length;
 
   return (
-    <div className="page">
-      {/* On a phone the search takes its own full-width row under the title. */}
-      <div className="section-title flex-wrap">
-        <h2 className="whitespace-nowrap">All crops</h2>
-        <span className="meta">
-          {filtered.length} of {cards.length}
-        </span>
-        <div className="spacer" />
-        <div className="relative w-full min-w-0 sm:w-[240px]">
+    <PageShell
+      width="wide"
+      title="All crops"
+      meta={`${filtered.length} of ${cards.length}`}
+      actionsClassName="max-sm:w-full"
+      actions={
+        <div className="relative w-full min-w-0 sm:w-60">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-3" />
           <input
             aria-label="Search crops"
-            className="text-input min-h-11 w-full pl-9 text-base placeholder:text-ink-3 placeholder:opacity-100 sm:text-sm"
+            className="text-input w-full pl-9 placeholder:text-ink-3 placeholder:opacity-100"
             placeholder="Search crops…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
-      </div>
-
-      <div className="mb-5 flex flex-wrap items-center gap-3">
+      }
+    >
+      <div className="flex flex-wrap items-center gap-3">
         <div className="chips">
           <button className={`chip${cat === 'all' ? ' active' : ''}`} onClick={() => setCat('all')}>
             All crops
@@ -150,7 +150,7 @@ export function CropsBoard({
         </div>
         <div className="spacer flex-1" />
         <label className="sort-ctl">
-          <ArrowUpDown className="size-[15px]" />
+          <ArrowUpDown className="size-4" />
           <span>{SORTS[sort]}</span>
           <select value={sort} onChange={(e) => setSort(e.target.value)} aria-label="Sort crops">
             {Object.entries(SORTS).map(([k, label]) => (
@@ -159,13 +159,13 @@ export function CropsBoard({
               </option>
             ))}
           </select>
-          <ChevronDown className="size-3.5" />
+          <ChevronDown className="size-4" />
         </label>
         <AddCropButton cropGroups={cropGroups} existing={cards.map((c) => c.name)} />
       </div>
 
       {restingCount > 0 && (
-        <p className="mb-4 text-[14px] text-ink-3">
+        <p className="text-sm text-ink-3">
           {restingCount} {restingCount === 1 ? 'crop is' : 'crops are'} resting: dormant or past
           harvest, they need no fungicide or insecticide cover until they leaf out again, so their
           cards show no spray line.
@@ -183,23 +183,18 @@ export function CropsBoard({
             .filter(Boolean)
             .join(' · ');
           return (
-            <div key={category}>
-              <div className="cat-head">
-                <div className="cat-ico">
-                  <Icon className="size-[17px]" />
-                </div>
-                <h2>{category}</h2>
-                <span className="cat-count">
-                  {list.length} crops{meta ? ` · ${meta}` : ''}
-                </span>
-                <div className="cat-line" />
-              </div>
+            <section key={category} className="sec">
+              <SectionHeader
+                icon={<Icon className="size-4" />}
+                title={category}
+                meta={`${list.length} crops${meta ? ` · ${meta}` : ''}`}
+              />
               <div className="crop-grid">
                 {list.map((c) => (
                   <CropCard key={c.id} c={c} />
                 ))}
               </div>
-            </div>
+            </section>
           );
         })
       ) : (
@@ -209,7 +204,7 @@ export function CropsBoard({
           ))}
         </div>
       )}
-    </div>
+    </PageShell>
   );
 }
 
@@ -268,7 +263,7 @@ function CropCard({ c }: { c: CropCardModel }) {
             <TriangleAlert className="size-3.5" /> Hold {c.phiDaysLeft}d
           </span>
         )}
-        <ChevronRight className="size-[18px] shrink-0 self-center text-ink-3" />
+        <ChevronRight className="size-4 shrink-0 self-center text-ink-3" />
       </div>
 
       {covs.length > 0 && <div className="cc-covs">{covs}</div>}
@@ -412,7 +407,7 @@ function AddCropButton({ cropGroups, existing }: { cropGroups: CropGroup[]; exis
             ) : (
               [...groups.entries()].map(([groupName, entries]) => (
                 <div key={groupName}>
-                  <p className="sticky top-0 bg-popover/95 px-2 pb-1 pt-2 text-[10px] font-medium uppercase tracking-widest text-muted-foreground/70 backdrop-blur-sm">
+                  <p className="sticky top-0 bg-popover/95 px-2 pb-1 pt-2 text-xs font-medium uppercase tracking-widest text-muted-foreground/70 backdrop-blur-sm">
                     {groupName}
                   </p>
                   {entries.map((e) => (
@@ -422,10 +417,10 @@ function AddCropButton({ cropGroups, existing }: { cropGroups: CropGroup[]; exis
                       disabled={saving}
                       className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-muted/60 disabled:opacity-50"
                     >
-                      <span className="w-6 shrink-0 text-center text-lg">{e.emoji}</span>
+                      <span className="w-6 shrink-0 text-center text-base">{e.emoji}</span>
                       <span className="text-sm font-medium text-foreground">{e.name}</span>
                       {e.cropGroup && (
-                        <span className="ml-auto text-[10px] text-muted-foreground/50">
+                        <span className="ml-auto text-xs text-muted-foreground/50">
                           {e.cropGroup}
                         </span>
                       )}

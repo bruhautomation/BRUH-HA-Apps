@@ -281,9 +281,9 @@ export class TempChart extends LitElement {
         line-height: 1.45;
       }
       .note {
-        margin: 6px 0 10px;
+        margin: 8px 0 12px;
         color: var(--bc-muted);
-        font-size: 13px;
+        font-size: 14px;
         line-height: 1.45;
       }
       figure {
@@ -303,7 +303,7 @@ export class TempChart extends LitElement {
       .axis,
       .unit {
         fill: var(--bc-muted);
-        font-size: 11px;
+        font-size: 12px;
         font-variant-numeric: tabular-nums;
       }
       .current,
@@ -331,14 +331,14 @@ export class TempChart extends LitElement {
         display: flex;
         flex-wrap: wrap;
         gap: 4px 16px;
-        margin-top: 6px;
+        margin-top: 8px;
         color: var(--bc-muted);
-        font-size: 12.5px;
+        font-size: 12px;
       }
       .legend span {
         display: inline-flex;
         align-items: center;
-        gap: 6px;
+        gap: 8px;
       }
       .key {
         display: inline-block;
@@ -353,17 +353,17 @@ export class TempChart extends LitElement {
         border-top: 1.5px dashed var(--bc-chart-target);
       }
       .bc-button {
-        margin-top: 10px;
+        margin-top: 12px;
       }
       table {
         width: 100%;
-        margin-top: 10px;
+        margin-top: 12px;
         border-collapse: collapse;
         font-variant-numeric: tabular-nums;
       }
       th,
       td {
-        padding: 5px 8px;
+        padding: 4px 8px;
         border-top: 1px solid var(--bc-divider);
         text-align: start;
         font-weight: 400;

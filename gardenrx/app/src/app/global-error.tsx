@@ -28,10 +28,8 @@ export default function GlobalError({
       >
         <title>Something went wrong — GardenRX</title>
         <div style={{ maxWidth: 420, textAlign: 'center' }}>
-          <h1 style={{ fontSize: 22, margin: '0 0 10px', fontWeight: 600 }}>
-            Something went wrong
-          </h1>
-          <p style={{ fontSize: 15, lineHeight: 1.55, color: '#a9bdb2', margin: '0 0 22px' }}>
+          <h1 style={{ fontSize: 20, margin: '0 0 8px', fontWeight: 600 }}>Something went wrong</h1>
+          <p style={{ fontSize: 14, lineHeight: 1.5, color: '#a9bdb2', margin: '0 0 24px' }}>
             GardenRX hit an unexpected error. Reloading usually clears it.
           </p>
           <button
@@ -41,8 +39,9 @@ export default function GlobalError({
               background: '#3fae7a',
               color: '#06120c',
               border: 'none',
-              borderRadius: 10,
-              padding: '11px 20px',
+              borderRadius: 8,
+              minHeight: 40,
+              padding: '0 16px',
               fontSize: 14,
               fontWeight: 600,
               cursor: 'pointer',

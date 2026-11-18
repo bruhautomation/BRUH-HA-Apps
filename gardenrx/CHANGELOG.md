@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0
+
+### Changed
+
+- Every screen now sits on one page grid: the title and everything under it share the same left edge and width, and the header's search and weather line up with the page instead of drifting to the window edge on wide screens. Phones use a 16 px margin.
+- One heading style for sections (and one size for page titles) replaces the five different ones, including the tiny uppercase labels on Weather, Spray and Harvest. Crop detail now shows every section as a card.
+- Spacing, corner radius, text sizes and button and field heights follow the shared design standard: one set of corner radii (the crop search box now matches the product searches), nothing smaller than 12 px, 40 px buttons and fields (44 px on touch screens).
+- Tablets (640-900 px wide) keep two or more columns instead of a stretched phone layout, the bottom bar now switches to the sidebar at 900 px, and Today uses the full width when only one column has content.
+- Harvest picks switch to the stacked card layout below 900 px so the Value column is no longer cut off.
+- The Lovelace cards (harvest, spray, stock) follow the shared card style: 16 px padding, 44 px buttons with 8 px corners, the theme's primary colour for main buttons, and an optional `title` option.
+
 ## 0.1.13
 
 ### Changed

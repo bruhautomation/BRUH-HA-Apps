@@ -98,7 +98,7 @@ function ToastItem({ toast, onDismiss }: { toast: ToastRecord; onDismiss: () => 
       aria-live={variant === 'error' ? 'assertive' : 'polite'}
     >
       <span className="toast-ico" aria-hidden="true">
-        <Icon className="size-[15px]" />
+        <Icon className="size-4" />
       </span>
       <div className="toast-body">
         <p className="toast-title">{toast.title}</p>

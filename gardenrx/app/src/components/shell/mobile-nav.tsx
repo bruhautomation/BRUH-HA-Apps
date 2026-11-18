@@ -18,7 +18,7 @@ export function MobileNav() {
             className={`mn-item${active ? ' active' : ''}`}
             aria-current={active ? 'page' : undefined}
           >
-            <Icon className="size-[19px]" />
+            <Icon className="size-5" />
             <span className="mn-lbl">{short}</span>
           </Link>
         );

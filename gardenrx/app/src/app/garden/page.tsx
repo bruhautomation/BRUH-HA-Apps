@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/db/server';
 import { fetchVarieties, fetchCrops, fetchCropGroups } from '@/lib/queries';
 import { GardenMap } from '@/components/garden-map';
+import { PageShell } from '@/components/ui/page-shell';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,21 +19,15 @@ export default async function GardenPage() {
     ]);
 
   return (
-    <div className="page">
-      <div className="section-title">
-        <h2>Garden Map</h2>
-        <span className="meta">Plan your space</span>
-      </div>
-      <div className="mx-auto max-w-4xl">
-        <GardenMap
-          zones={zones ?? []}
-          regions={regions ?? []}
-          templates={templates ?? []}
-          varieties={varieties}
-          crops={crops}
-          cropGroups={cropGroups}
-        />
-      </div>
-    </div>
+    <PageShell width="wide" title="Garden Map" meta="Plan your space">
+      <GardenMap
+        zones={zones ?? []}
+        regions={regions ?? []}
+        templates={templates ?? []}
+        varieties={varieties}
+        crops={crops}
+        cropGroups={cropGroups}
+      />
+    </PageShell>
   );
 }

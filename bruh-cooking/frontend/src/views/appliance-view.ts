@@ -318,7 +318,7 @@ export class ApplianceView extends LitElement {
         display: flex;
         flex-direction: column;
         gap: 12px;
-        padding: 14px 16px 18px;
+        padding: 16px;
       }
       .hero-head {
         display: flex;
@@ -331,12 +331,12 @@ export class ApplianceView extends LitElement {
       .status {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 12px;
       }
       .hero-head .pill {
         max-width: none;
         padding: 4px 12px;
-        font-size: 13px;
+        font-size: 14px;
       }
       .ring {
         position: relative;
@@ -364,7 +364,7 @@ export class ApplianceView extends LitElement {
         transition: stroke-dasharray 0.6s ease;
       }
       .ring-value {
-        font-size: 10.5px;
+        font-size: 12px;
         font-weight: 700;
         font-variant-numeric: tabular-nums;
       }
@@ -418,15 +418,15 @@ export class ApplianceView extends LitElement {
         transform: rotate(180deg);
       }
       .body {
-        padding: 0 16px 12px;
+        padding: 0 16px 16px;
       }
       .control {
-        padding: 10px 0;
+        padding: 12px 0;
         border-top: 1px solid var(--bc-divider);
       }
       /* Values to read sit closer than controls to use, like Home Assistant's device info. */
       .control:has(> bc-reading, > bc-countdown) {
-        padding: 7px 0;
+        padding: 8px 0;
       }
       .control:first-child,
       .note + .control {
@@ -434,15 +434,15 @@ export class ApplianceView extends LitElement {
         border-top: none;
       }
       .note {
-        margin: 0 0 6px;
+        margin: 0 0 8px;
         color: var(--bc-muted);
       }
       .note.shared {
         display: flex;
         align-items: flex-start;
-        gap: 6px;
-        margin-bottom: 10px;
-        font-size: 13px;
+        gap: 8px;
+        margin-bottom: 12px;
+        font-size: 14px;
       }
       .note.shared svg {
         flex: none;

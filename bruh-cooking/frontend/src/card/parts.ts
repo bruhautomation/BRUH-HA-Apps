@@ -67,7 +67,7 @@ export const partStyles = css`
     flex: none;
     max-width: 60%;
     overflow: hidden;
-    padding: 3px 10px;
+    padding: 4px 12px;
     border-radius: 999px;
     font-size: 12px;
     font-weight: 600;
@@ -96,7 +96,7 @@ export const partStyles = css`
     align-items: center;
     justify-content: center;
     min-width: 7.5em;
-    padding: 6px 14px 5px;
+    padding: 8px 16px 4px;
     box-sizing: border-box;
     border-radius: 8px;
     /* Dark glass with a faint glare across its upper half. */
@@ -126,20 +126,20 @@ export const partStyles = css`
   }
   .lcd .caption {
     margin-top: 4px;
-    font-size: 11px;
+    font-size: 12px;
     color: #9a9da2;
     white-space: nowrap;
   }
 
   .info {
     display: grid;
-    gap: 3px;
+    gap: 4px;
     margin: 0;
-    padding: 7px 12px;
+    padding: 8px 12px;
     border-radius: 12px;
     background: var(--bc-inset-bg);
     box-shadow: inset 0 0 0 1px var(--bc-inset-edge);
-    font-size: 13.5px;
+    font-size: 14px;
     line-height: 1.35;
   }
   .info .row {
@@ -172,7 +172,7 @@ export const partStyles = css`
     flex-wrap: wrap;
     align-items: center;
     gap: 8px;
-    padding: 8px 10px 8px 14px;
+    padding: 8px 12px 8px 16px;
     border-radius: 12px;
     border: 1px solid var(--bc-accent);
     background: var(--bc-inset-bg);

@@ -1,26 +1,29 @@
+import { PageShell } from '@/components/ui/page-shell';
+
 // Route-level loading UI. Next wraps each page in a Suspense boundary using
 // this as the fallback, so navigations paint an instant skeleton instead of
 // blocking on the page's server data (every page here is force-dynamic).
 export default function Loading() {
   return (
-    <div className="page" role="status" aria-label="Loading">
+    <PageShell
+      role="status"
+      aria-label="Loading"
+      header={<div className="skeleton" style={{ height: 28, width: 180 }} />}
+    >
       <span className="sr-only">Loading…</span>
-      <div className="section-title" style={{ marginBottom: 16 }}>
-        <div className="skeleton" style={{ height: 26, width: 180 }} />
-      </div>
 
-      <div className="skeleton" style={{ height: 158, borderRadius: 'var(--r-xl)' }} />
+      <div className="skeleton" style={{ height: 160 }} />
 
-      <div className="detail-grid" style={{ marginTop: 'var(--gap)' }}>
-        <div className="flex flex-col gap-[var(--gap)]">
-          <div className="skeleton" style={{ height: 124, borderRadius: 'var(--r-lg)' }} />
-          <div className="skeleton" style={{ height: 96, borderRadius: 'var(--r-lg)' }} />
+      <div className="detail-grid">
+        <div className="stack">
+          <div className="skeleton" style={{ height: 124 }} />
+          <div className="skeleton" style={{ height: 96 }} />
         </div>
-        <div className="flex flex-col gap-[var(--gap)]">
-          <div className="skeleton" style={{ height: 210, borderRadius: 'var(--r-lg)' }} />
-          <div className="skeleton" style={{ height: 96, borderRadius: 'var(--r-lg)' }} />
+        <div className="stack">
+          <div className="skeleton" style={{ height: 212 }} />
+          <div className="skeleton" style={{ height: 96 }} />
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 }

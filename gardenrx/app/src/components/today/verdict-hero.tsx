@@ -166,7 +166,7 @@ export function VerdictHero(props: Props) {
         </span>
         {p.eyebrow}
       </div>
-      <h1 className="v-head">{head}</h1>
+      <h2 className="v-head">{head}</h2>
       <div className="v-sub">{sub}</div>
 
       {(action || state === 'bloom-only') && (
@@ -174,7 +174,7 @@ export function VerdictHero(props: Props) {
           {action}
           {state === 'bloom-only' && (
             <span className="v-metaitem" style={{ color: 'var(--bloom)' }}>
-              <Flower2 className="size-[15px]" /> Pollinators active
+              <Flower2 className="size-4" /> Pollinators active
             </span>
           )}
         </div>
@@ -183,24 +183,24 @@ export function VerdictHero(props: Props) {
       <div className="v-meta">
         {weatherUnavailable && (
           <span className="v-metaitem" style={{ color: 'var(--warn)' }}>
-            <CloudOff className="size-[15px]" /> Weather unavailable
+            <CloudOff className="size-4" /> Weather unavailable
           </span>
         )}
         {rating && actionable && (
           <span className="v-metaitem">
-            <Gauge className="size-[15px] text-ink-3" />
+            <Gauge className="size-4 text-ink-3" />
             <span className="k">Spray now:</span> <RatingPill rating={rating} size="sm" />
           </span>
         )}
         {temp != null && (
           <span className="v-metaitem">
-            <Thermometer className="size-[15px] text-ink-3" />
+            <Thermometer className="size-4 text-ink-3" />
             <b>{Math.round(temp)}°</b>
           </span>
         )}
         {wind != null && (
           <span className="v-metaitem">
-            <Wind className="size-[15px] text-ink-3" />
+            <Wind className="size-4 text-ink-3" />
             <b>{Math.round(wind)} mph</b>
           </span>
         )}
@@ -212,7 +212,7 @@ export function VerdictHero(props: Props) {
             title="Pre-harvest interval — sprayed too recently to harvest safely"
             aria-label={`${phiCount} crops under a pre-harvest interval — not safe to harvest yet`}
           >
-            <TriangleAlert className="size-[15px]" /> {phiCount} under PHI{' '}
+            <TriangleAlert className="size-4" /> {phiCount} under PHI{' '}
             <ChevronRight className="size-3.5" />
           </Link>
         )}

@@ -94,15 +94,15 @@ export function HarvestCalendar({ crops, varieties, cropGroups }: Props) {
       open
     >
       {/* Header / summary */}
-      <summary className="flex items-center gap-3 px-4 py-3.5 cursor-pointer list-none [&::-webkit-details-marker]:hidden select-none hover:bg-parchment-50/40 transition-colors">
-        <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-emerald-50 ring-1 ring-emerald-200/50 shrink-0">
+      <summary className="flex items-center gap-3 px-4 py-4 cursor-pointer list-none [&::-webkit-details-marker]:hidden select-none hover:bg-parchment-50/40 transition-colors">
+        <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-emerald-50 ring-1 ring-emerald-200/50 shrink-0">
           <CalendarDays className="w-4 h-4 text-emerald-700" />
         </div>
         <div className="flex-1 min-w-0">
           <p className="font-heading text-base font-semibold tracking-tight text-foreground">
             Expected Harvest Windows
           </p>
-          <p className="text-[11px] text-muted-foreground/70">
+          <p className="text-xs text-muted-foreground/70">
             {totalVarieties} {totalVarieties === 1 ? 'variety' : 'varieties'} across {totalCrops}{' '}
             {totalCrops === 1 ? 'crop' : 'crops'}
           </p>
@@ -113,12 +113,12 @@ export function HarvestCalendar({ crops, varieties, cropGroups }: Props) {
       {/* Calendar body */}
       <div className="border-t border-border/40 bg-gradient-to-br from-parchment-50/40 via-card to-card">
         {/* Month header */}
-        <div className="sticky top-0 z-10 bg-card/95 backdrop-blur-sm border-b border-border/30 pt-2 pb-1.5">
+        <div className="sticky top-0 z-10 bg-card/95 backdrop-blur-sm border-b border-border/30 pt-2 pb-2">
           <div className="grid grid-cols-12 px-3">
             {MONTH_ABBR.map((m, i) => (
               <div
                 key={m}
-                className={`text-center text-[9px] font-medium tracking-wider uppercase transition-colors ${
+                className={`text-center text-xs font-medium tracking-wider uppercase transition-colors ${
                   i === currentMonth ? 'text-emerald-700 font-semibold' : 'text-muted-foreground/50'
                 }`}
               >
@@ -165,10 +165,10 @@ function CropSection({
   currentMonth: number;
 }) {
   return (
-    <div className="relative space-y-1.5">
+    <div className="relative space-y-2">
       <div className="flex items-baseline gap-2 pb-0.5 mb-0.5">
-        <p className="font-heading text-[13px] font-semibold text-foreground">{group.crop.name}</p>
-        <p className="text-[10px] text-muted-foreground/50">
+        <p className="font-heading text-sm font-semibold text-foreground">{group.crop.name}</p>
+        <p className="text-xs text-muted-foreground/50">
           {group.rows.length} {group.rows.length === 1 ? 'variety' : 'varieties'}
         </p>
       </div>
@@ -184,8 +184,8 @@ function VarietyBar({ row, currentMonth }: { row: VarietyRow; currentMonth: numb
     <div className="group/row">
       {/* Name + phrase on one line */}
       <div className="flex items-baseline gap-2 mb-0.5 px-0.5">
-        <p className="text-[11px] text-foreground/80 truncate flex-1 min-w-0">{row.variety.name}</p>
-        <p className="text-[9px] text-muted-foreground/60 font-mono truncate" title={row.phrase}>
+        <p className="text-xs text-foreground/80 truncate flex-1 min-w-0">{row.variety.name}</p>
+        <p className="text-xs text-muted-foreground/60 font-mono truncate" title={row.phrase}>
           {row.phrase}
         </p>
       </div>

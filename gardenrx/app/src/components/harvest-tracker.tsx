@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { DialogFooter } from '@/components/ui/dialog';
 import { FormDialog, ConfirmDialog } from '@/components/ui/form-dialog';
 import Link from 'next/link';
+import { SectionHeader } from '@/components/ui/section-header';
 import { createClient } from '@/lib/db/client';
 import { CropAvatar } from '@/components/crop-glyph';
 import { HarvestCharts } from '@/components/harvest-charts';
@@ -76,7 +77,7 @@ function NumberCell({ value, onCommit }: { value: number; onCommit: (v: number) 
       onKeyDown={(e) => {
         if (e.key === 'Enter') e.currentTarget.blur();
       }}
-      className="w-16 h-10 sm:w-14 sm:h-7 text-right text-base sm:text-sm tabular-nums rounded-md ring-1 ring-border/60 bg-card px-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+      className="w-16 h-10 min-[900px]:w-14 min-[900px]:h-8 text-right text-base min-[900px]:text-sm tabular-nums rounded-md ring-1 ring-border/60 bg-card px-2 focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
     />
   );
 }
@@ -373,11 +374,9 @@ export function HarvestTracker({
               : 'sm:grid-cols-2';
         return (
           <div className="rounded-2xl bg-card ring-1 ring-black/[0.05] shadow-sm overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/40">
-              <p className="text-[11px] font-medium tracking-widest uppercase text-muted-foreground/60">
-                Season total
-              </p>
-              <span className="text-[11px] text-muted-foreground/60 tabular-nums">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
+              <SectionHeader title="Season total" />
+              <span className="text-xs text-muted-foreground/60 tabular-nums">
                 {byCrop.length} {byCrop.length === 1 ? 'crop' : 'crops'} · {rows.length}{' '}
                 {rows.length === 1 ? 'pick' : 'picks'}
               </span>
@@ -385,7 +384,7 @@ export function HarvestTracker({
             <div className={`grid grid-cols-2 ${colsClass} gap-px bg-border/30`}>
               {stats.map((s) => (
                 <div key={s.label} className="bg-card px-4 py-3" title={s.title}>
-                  <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/55 mb-1">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground/55 mb-1">
                     {s.label}
                   </p>
                   <p
@@ -403,7 +402,7 @@ export function HarvestTracker({
       {/* where to set prices */}
       <Link
         href="/crops"
-        className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70 -mt-3 px-1 hover:text-emerald-700 transition-colors"
+        className="flex items-center gap-2 text-xs text-muted-foreground/70 px-1 hover:text-emerald-700 transition-colors"
       >
         <Info className="w-3 h-3 shrink-0" />
         <span>
@@ -418,14 +417,12 @@ export function HarvestTracker({
       <section>
         {/* The log's own header holds Log Harvest: a floating button covered the
             rows it sat over, whatever the padding below them. */}
-        <div className="flex items-center justify-between gap-3 mb-2">
-          <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground">
-            Picks log <span className="ml-1 text-muted-foreground/60">{rows.length}</span>
-          </p>
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <SectionHeader title="Picks log" meta={rows.length} />
           <button
             type="button"
             onClick={openLogDialog}
-            className="flex min-h-11 items-center gap-2 rounded-full bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-emerald-700 active:scale-95"
+            className="flex min-h-10 items-center gap-2 rounded-full bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-emerald-700 active:scale-95"
           >
             <Plus className="w-4 h-4" />
             Log Harvest
@@ -443,7 +440,7 @@ export function HarvestTracker({
         ) : (
           <div className="rounded-xl bg-card ring-1 ring-black/[0.05] overflow-hidden">
             {/* Phone: one compact row per pick (name, date, amount); tap to edit. */}
-            <ul className="divide-y divide-border/40 sm:hidden">
+            <ul className="divide-y divide-border/40 min-[900px]:hidden">
               {sortedRows.map((h) => {
                 const c = cropForHarvest(h);
                 const v = h.variety_id ? varietyMap.get(h.variety_id) : null;
@@ -461,7 +458,7 @@ export function HarvestTracker({
                       type="button"
                       onClick={() => setOpenPick(open ? null : h.id)}
                       aria-expanded={open}
-                      className="flex w-full items-center gap-2.5 px-3 py-2 text-left"
+                      className="flex w-full items-center gap-3 px-3 py-2 text-left"
                     >
                       <CropAvatar
                         name={c?.name ?? ''}
@@ -499,7 +496,7 @@ export function HarvestTracker({
                                 patchHarvest(h.id, { harvested_at: isoFromDate(d) });
                             }
                           }}
-                          className="h-10 text-base rounded-md ring-1 ring-border/50 bg-card px-1.5"
+                          className="h-10 text-base rounded-md ring-1 ring-border/50 bg-card px-2"
                         />
                         <NumberCell
                           value={Number(h.weight)}
@@ -524,7 +521,7 @@ export function HarvestTracker({
                               label: `${c?.name ?? 'harvest'} (${fmtAmount(Number(h.weight), h.unit)})`,
                             })
                           }
-                          className="ml-auto inline-flex items-center gap-1.5 rounded-md px-3 text-sm font-medium text-terra-600"
+                          className="ml-auto inline-flex items-center gap-2 rounded-md px-3 text-sm font-medium text-terra-600"
                         >
                           <Trash2 className="w-4 h-4" /> Delete
                         </button>
@@ -534,10 +531,10 @@ export function HarvestTracker({
                 );
               })}
             </ul>
-            <div className="hidden overflow-x-auto sm:block">
-              <table className="block w-full text-sm sm:table">
-                <thead className="hidden sm:table-header-group">
-                  <tr className="text-left text-[10px] font-medium tracking-widest uppercase text-muted-foreground/60 border-b border-border/50">
+            <div className="hidden overflow-x-auto min-[900px]:block">
+              <table className="block w-full text-sm min-[900px]:table">
+                <thead className="hidden min-[900px]:table-header-group">
+                  <tr className="text-left text-xs font-medium tracking-widest uppercase text-muted-foreground/60 border-b border-border/50">
                     <th className="px-3 py-2 font-medium">Crop</th>
                     <th className="px-2 py-2 font-medium">Date</th>
                     <th className="px-2 py-2 font-medium text-right">Amount</th>
@@ -545,7 +542,7 @@ export function HarvestTracker({
                     <th className="px-2 py-2 font-medium w-8"></th>
                   </tr>
                 </thead>
-                <tbody className="block divide-y divide-border/40 sm:table-row-group">
+                <tbody className="block divide-y divide-border/40 min-[900px]:table-row-group">
                   {sortedRows.map((h) => {
                     const c = cropForHarvest(h);
                     const v = h.variety_id ? varietyMap.get(h.variety_id) : null;
@@ -554,9 +551,9 @@ export function HarvestTracker({
                     return (
                       <tr
                         key={h.id}
-                        className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 px-3 py-2.5 hover:bg-muted/20 sm:table-row sm:p-0"
+                        className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 px-3 py-3 hover:bg-muted/20 min-[900px]:table-row min-[900px]:p-0"
                       >
-                        <td className="col-start-1 row-start-1 min-w-0 sm:table-cell sm:px-3 sm:py-1.5 sm:whitespace-nowrap">
+                        <td className="col-start-1 row-start-1 min-w-0 min-[900px]:table-cell min-[900px]:px-3 min-[900px]:py-2 min-[900px]:whitespace-nowrap">
                           <div className="flex items-center gap-2">
                             <CropAvatar
                               name={c?.name ?? ''}
@@ -576,7 +573,7 @@ export function HarvestTracker({
                             )}
                           </div>
                         </td>
-                        <td className="col-start-1 row-start-2 sm:table-cell sm:px-2 sm:py-1.5">
+                        <td className="col-start-1 row-start-2 min-[900px]:table-cell min-[900px]:px-2 min-[900px]:py-2">
                           <input
                             type="date"
                             value={dateInputValue(h.harvested_at)}
@@ -588,10 +585,10 @@ export function HarvestTracker({
                                   patchHarvest(h.id, { harvested_at: isoFromDate(val) });
                               }
                             }}
-                            className="h-10 sm:h-7 text-base sm:text-xs rounded-md ring-1 ring-border/50 bg-card px-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+                            className="h-10 min-[900px]:h-8 text-base min-[900px]:text-xs rounded-md ring-1 ring-border/50 bg-card px-2 focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
                           />
                         </td>
-                        <td className="col-start-2 row-start-2 sm:table-cell sm:px-2 sm:py-1.5">
+                        <td className="col-start-2 row-start-2 min-[900px]:table-cell min-[900px]:px-2 min-[900px]:py-2">
                           <div className="flex items-center justify-end gap-1">
                             <NumberCell
                               value={Number(h.weight)}
@@ -600,7 +597,7 @@ export function HarvestTracker({
                             <select
                               value={h.unit}
                               onChange={(e) => patchHarvest(h.id, { unit: e.target.value })}
-                              className="h-10 sm:h-7 text-base sm:text-xs rounded-md ring-1 ring-border/50 bg-card pl-1 pr-0.5 focus:outline-none"
+                              className="h-10 min-[900px]:h-8 text-base min-[900px]:text-xs rounded-md ring-1 ring-border/50 bg-card pl-1 pr-0.5 focus:outline-none"
                             >
                               {UNITS.map((u) => (
                                 <option key={u} value={u}>
@@ -611,11 +608,11 @@ export function HarvestTracker({
                           </div>
                         </td>
                         <td
-                          className={`col-span-2 row-start-3 text-left tabular-nums sm:table-cell sm:px-2 sm:py-1.5 sm:text-right sm:whitespace-nowrap ${val > 0 ? '' : 'max-sm:hidden'}`}
+                          className={`col-span-2 row-start-3 text-left tabular-nums min-[900px]:table-cell min-[900px]:px-2 min-[900px]:py-2 min-[900px]:text-right min-[900px]:whitespace-nowrap ${val > 0 ? '' : 'max-sm:hidden'}`}
                         >
                           {val > 0 ? (
                             <span className="font-medium text-emerald-700">
-                              <span className="mr-1 text-xs font-normal text-muted-foreground sm:hidden">
+                              <span className="mr-1 text-xs font-normal text-muted-foreground min-[900px]:hidden">
                                 Value
                               </span>
                               {fmtMoney(val)}
@@ -624,7 +621,7 @@ export function HarvestTracker({
                             <span className="text-muted-foreground/40">—</span>
                           )}
                         </td>
-                        <td className="col-start-2 row-start-1 text-right sm:table-cell sm:px-2 sm:py-1.5">
+                        <td className="col-start-2 row-start-1 text-right min-[900px]:table-cell min-[900px]:px-2 min-[900px]:py-2">
                           <button
                             onClick={() =>
                               setDeleteConfirm({
@@ -632,7 +629,7 @@ export function HarvestTracker({
                                 label: `${c?.name ?? 'harvest'} (${fmtAmount(Number(h.weight), h.unit)})`,
                               })
                             }
-                            className="grid size-10 place-items-center text-muted-foreground/60 hover:text-terra-500 transition-colors sm:size-auto sm:p-1"
+                            className="grid size-10 place-items-center text-muted-foreground/60 hover:text-terra-500 transition-colors min-[900px]:size-auto min-[900px]:p-1"
                             title="Delete"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -644,9 +641,11 @@ export function HarvestTracker({
                 </tbody>
               </table>
             </div>
-            <p className="text-[10px] text-muted-foreground/50 px-3 py-1.5 border-t border-border/40">
-              <span className="sm:hidden">Tap a pick to edit its date, amount or unit.</span>
-              <span className="hidden sm:inline">
+            <p className="text-xs text-muted-foreground/50 px-3 py-2 border-t border-border/40">
+              <span className="min-[900px]:hidden">
+                Tap a pick to edit its date, amount or unit.
+              </span>
+              <span className="hidden min-[900px]:inline">
                 Tap any date, amount, or unit to edit inline.
               </span>
             </p>
@@ -657,7 +656,7 @@ export function HarvestTracker({
       {/* ── Log Harvest Dialog ── */}
       <FormDialog open={logOpen} onOpenChange={setLogOpen} title="Log Harvest">
         <div className="space-y-4 mt-1">
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="h-crop" className="text-xs font-medium text-muted-foreground">
               Crop
             </Label>
@@ -684,7 +683,7 @@ export function HarvestTracker({
             </select>
           </div>
 
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="h-variety" className="text-xs font-medium text-muted-foreground">
               Variety <span className="text-muted-foreground/40">(optional)</span>
             </Label>
@@ -705,7 +704,7 @@ export function HarvestTracker({
           </div>
 
           <div className="flex gap-3">
-            <div className="flex-1 space-y-1.5">
+            <div className="flex-1 space-y-2">
               <Label htmlFor="h-weight" className="text-xs font-medium text-muted-foreground">
                 Amount
               </Label>
@@ -721,7 +720,7 @@ export function HarvestTracker({
                 required
               />
             </div>
-            <div className="w-24 space-y-1.5">
+            <div className="w-24 space-y-2">
               <Label htmlFor="h-unit" className="text-xs font-medium text-muted-foreground">
                 Unit
               </Label>
@@ -740,7 +739,7 @@ export function HarvestTracker({
             </div>
           </div>
 
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="h-date" className="text-xs font-medium text-muted-foreground">
               Date
             </Label>
@@ -759,7 +758,7 @@ export function HarvestTracker({
                 ? phiViolation(selectedCropId as number, isoFromDate(harvestedOn))
                 : null;
             return lp ? (
-              <div className="flex items-start gap-1.5 rounded-lg bg-terra-50 ring-1 ring-terra-200/60 px-3 py-2 text-[11px] text-terra-700">
+              <div className="flex items-start gap-2 rounded-lg bg-terra-50 ring-1 ring-terra-200/60 px-3 py-2 text-xs text-terra-700">
                 <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
                 <span>
                   <span className="font-semibold">Pre-harvest interval not met.</span> {lp.brand}{' '}
@@ -772,7 +771,7 @@ export function HarvestTracker({
             ) : null;
           })()}
 
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="h-notes" className="text-xs font-medium text-muted-foreground">
               Notes <span className="text-muted-foreground/40">(optional)</span>
             </Label>

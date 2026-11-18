@@ -45,8 +45,8 @@ export function QueuedEditPanel({
     : allProducts.filter((p) => selectedProducts.includes(p.id));
 
   return (
-    <div className="border-t border-emerald-200/30 px-3.5 py-3.5 space-y-3">
-      <p className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground/50">
+    <div className="border-t border-emerald-200/30 px-4 py-4 space-y-3">
+      <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground/50">
         Edit Products
       </p>
 
@@ -57,7 +57,7 @@ export function QueuedEditPanel({
           placeholder="Search products to add..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg ring-1 ring-border/60 bg-card focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+          className="w-full pl-8 pr-3 py-2 text-xs rounded-lg ring-1 ring-border/60 bg-card focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
         />
         {search && (
           <button
@@ -76,12 +76,12 @@ export function QueuedEditPanel({
             <div key={p.id}>
               <button
                 onClick={() => onToggleProduct(p.id)}
-                className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors ${
+                className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs transition-colors ${
                   selected ? 'bg-emerald-50 ring-1 ring-emerald-300' : 'hover:bg-muted/50'
                 }`}
               >
                 <div
-                  className={`w-3.5 h-3.5 rounded border-2 flex items-center justify-center shrink-0 ${
+                  className={`w-3.5 h-3.5 rounded-md border-2 flex items-center justify-center shrink-0 ${
                     selected ? 'bg-emerald-600 border-emerald-600' : 'border-muted-foreground/30'
                   }`}
                 >
@@ -93,13 +93,13 @@ export function QueuedEditPanel({
               </button>
               {selected && (
                 <div className="flex items-center gap-2 pl-8 pr-2 py-1">
-                  <label className="text-[10px] text-muted-foreground shrink-0">Rate:</label>
+                  <label className="text-xs text-muted-foreground shrink-0">Rate:</label>
                   <input
                     type="number"
                     step="0.1"
                     value={rates[p.id] ?? ''}
                     onChange={(e) => onRateChange(p.id, parseFloat(e.target.value) || 0)}
-                    className="w-20 h-6 text-[11px] rounded border ring-1 ring-border/40 px-1.5 bg-card focus:outline-none focus:ring-emerald-400/50"
+                    className="w-20 h-6 text-xs rounded-md border ring-1 ring-border/40 px-2 bg-card focus:outline-none focus:ring-emerald-400/50"
                     placeholder="e.g. 1.5"
                   />
                 </div>
@@ -108,7 +108,7 @@ export function QueuedEditPanel({
           );
         })}
         {search && filtered.length === 0 && (
-          <p className="text-[11px] text-muted-foreground/50 text-center py-3">
+          <p className="text-xs text-muted-foreground/50 text-center py-3">
             No products match &quot;{search}&quot;
           </p>
         )}
@@ -119,7 +119,7 @@ export function QueuedEditPanel({
         placeholder="Notes (optional)"
         value={notes}
         onChange={(e) => onNotesChange(e.target.value)}
-        className="w-full px-2.5 py-1.5 text-xs rounded-lg ring-1 ring-border/60 bg-card focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+        className="w-full px-3 py-2 text-xs rounded-lg ring-1 ring-border/60 bg-card focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
       />
 
       <div className="flex gap-2">

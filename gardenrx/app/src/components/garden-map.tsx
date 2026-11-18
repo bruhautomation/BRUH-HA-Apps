@@ -1897,13 +1897,13 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
         className={`flex items-center gap-2 ${fullscreen ? 'px-4 py-2 border-b border-border/40 shrink-0' : 'mb-3'}`}
       >
         {/* Zone tabs */}
-        <div className="flex items-center gap-1.5 overflow-x-auto flex-1 min-w-0">
+        <div className="flex items-center gap-2 overflow-x-auto flex-1 min-w-0">
           {zones.map((z) => (
             <button
               key={z.id}
               onClick={() => setActiveZoneId(z.id)}
               title={z.name}
-              className={`text-[11px] font-medium px-2.5 py-1 rounded-full whitespace-nowrap transition-all ${
+              className={`text-xs font-medium px-3 py-1 rounded-full whitespace-nowrap transition-all ${
                 z.id === activeZoneId
                   ? 'bg-emerald-600 text-white shadow-sm'
                   : 'bg-card text-muted-foreground ring-1 ring-border/60 hover:bg-muted/50'
@@ -1915,7 +1915,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
           <button
             onClick={() => setAddZoneOpen(true)}
             title="Add new zone"
-            className="text-[11px] text-leaf hover:text-leaf px-1.5 shrink-0"
+            className="text-xs text-leaf hover:text-leaf px-2 shrink-0"
           >
             <Plus className="w-3.5 h-3.5" />
           </button>
@@ -1924,19 +1924,19 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
         {/* Top-right actions — unified icon pill for zone management */}
         <div className="flex items-center gap-1 shrink-0">
           {stampTemplate && (
-            <div className="flex items-center gap-1.5 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
               <button
                 onClick={() => {
                   setStampTemplate(null);
                   setStampPos(null);
                   setStampRepeat({ count: 1, spacingCells: 0, direction: 'row' });
                 }}
-                className="text-[10px] font-medium px-2 py-1 rounded-full bg-amber-100 text-amber-800 ring-1 ring-amber-300/60 flex items-center gap-1"
+                className="text-xs font-medium px-2 py-1 rounded-full bg-amber-100 text-amber-800 ring-1 ring-amber-300/60 flex items-center gap-1"
               >
                 {stampTemplate.name} <X className="w-2.5 h-2.5" />
               </button>
               {/* Repeat controls */}
-              <div className="flex items-center gap-1 text-[10px]">
+              <div className="flex items-center gap-1 text-xs">
                 <label className="text-muted-foreground/60 shrink-0">Repeat</label>
                 <input
                   type="number"
@@ -1949,7 +1949,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                       count: Math.max(1, parseInt(e.target.value) || 1),
                     })
                   }
-                  className="w-10 h-5 text-center text-[10px] rounded ring-1 ring-border/60 bg-card px-1"
+                  className="w-10 h-5 text-center text-xs rounded-md ring-1 ring-border/60 bg-card px-1"
                   title="Number of copies"
                 />
                 {stampRepeat.count > 1 && (
@@ -1967,7 +1967,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                           spacingCells: Math.round((parseFloat(e.target.value) || 0) / FT_PER_CELL),
                         })
                       }
-                      className="w-12 h-5 text-center text-[10px] rounded ring-1 ring-border/60 bg-card px-1"
+                      className="w-12 h-5 text-center text-xs rounded-md ring-1 ring-border/60 bg-card px-1"
                       title="Gap between copies (ft)"
                     />
                     <span className="text-muted-foreground/60">ft</span>
@@ -1978,7 +1978,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                           direction: stampRepeat.direction === 'row' ? 'col' : 'row',
                         })
                       }
-                      className="px-1.5 py-0.5 rounded bg-muted/60 ring-1 ring-border/40 text-muted-foreground hover:text-foreground transition-colors"
+                      className="px-2 py-0.5 rounded-md bg-muted/60 ring-1 ring-border/40 text-muted-foreground hover:text-foreground transition-colors"
                       title="Toggle row/column direction"
                     >
                       {stampRepeat.direction === 'row' ? 'Row →' : 'Col ↓'}
@@ -1992,14 +1992,14 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
             {mapMode === 'edit' && (
               <button
                 onClick={() => setTemplateDialogOpen(true)}
-                className="inline-flex items-center justify-center h-7 w-7 sm:w-auto sm:px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-background/50 transition-colors relative"
+                className="inline-flex items-center justify-center h-8 w-8 sm:w-auto sm:px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-background/50 transition-colors relative"
                 title={`Templates${templates.length > 0 ? ` (${templates.length})` : ''}`}
                 aria-label="Templates"
               >
                 <LayoutTemplate className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline text-[11px] font-medium ml-1">Templates</span>
+                <span className="hidden sm:inline text-xs font-medium ml-1">Templates</span>
                 {templates.length > 0 && (
-                  <span className="absolute -top-1 -right-1 sm:static sm:ml-1 text-[9px] bg-emerald-100 text-emerald-700 rounded-full px-1.5 leading-4 font-semibold">
+                  <span className="absolute -top-1 -right-1 sm:static sm:ml-1 text-xs bg-emerald-100 text-emerald-700 rounded-full px-2 leading-4 font-semibold">
                     {templates.length}
                   </span>
                 )}
@@ -2007,7 +2007,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
             )}
             <button
               onClick={() => setFullscreen(!fullscreen)}
-              className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-background/50 transition-colors"
+              className="inline-flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-background/50 transition-colors"
               title={fullscreen ? 'Exit fullscreen' : 'Fullscreen editor'}
               aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
             >
@@ -2023,7 +2023,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                   onClick={() => setEditZone(activeZone)}
                   title="Edit zone size & name"
                   aria-label="Edit zone"
-                  className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-emerald-600 hover:bg-emerald-50 transition-colors"
+                  className="inline-flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-emerald-600 hover:bg-emerald-50 transition-colors"
                 >
                   <Settings2 className="w-3.5 h-3.5" />
                 </button>
@@ -2031,7 +2031,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                   onClick={() => setZoneDeleteConfirm(activeZone)}
                   title={`Delete "${activeZone.name}" and every element in it`}
                   aria-label="Delete zone"
-                  className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground/50 hover:text-terra-500 hover:bg-terra-50 transition-colors"
+                  className="inline-flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground/50 hover:text-terra-500 hover:bg-terra-50 transition-colors"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
@@ -2052,9 +2052,9 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
         <>
           {/* Toolbar — wraps on narrow screens instead of crowding */}
           <div
-            className={`flex items-center justify-between gap-2 flex-wrap ${fullscreen ? 'px-3 sm:px-4 py-1.5' : 'mb-2'}`}
+            className={`flex items-center justify-between gap-2 flex-wrap ${fullscreen ? 'px-3 sm:px-4 py-2' : 'mb-2'}`}
           >
-            <div className="flex items-center gap-1.5 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
               {/* Mode toggle — View (browse) vs Edit (mutate). Single prominent control. */}
               <div
                 className="inline-flex items-center rounded-lg bg-muted/50 ring-1 ring-border/40 p-0.5"
@@ -2072,7 +2072,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                     setStampPos(null);
                     setSelectedIds(new Set());
                   }}
-                  className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
                     mapMode === 'view'
                       ? 'bg-background text-foreground shadow-sm ring-1 ring-border/60'
                       : 'text-muted-foreground hover:text-foreground'
@@ -2086,7 +2086,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                   role="tab"
                   aria-selected={mapMode === 'edit'}
                   onClick={() => setMapMode('edit')}
-                  className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
                     mapMode === 'edit'
                       ? 'bg-emerald-600 text-white shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
@@ -2107,7 +2107,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                       setStampPos(null);
                       setStampRepeat({ count: 1, spacingCells: 0, direction: 'row' });
                     }}
-                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-all ${
+                    className={`flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
                       activeTool === 'draw'
                         ? 'bg-emerald-700 text-white shadow-sm ring-2 ring-emerald-500/40'
                         : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm'
@@ -2123,7 +2123,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                     <span className="hidden xs:inline">
                       {activeTool === 'draw' ? 'Drawing…' : 'Add'}
                     </span>
-                    <kbd className="hidden sm:inline text-[8px] opacity-70 ml-0.5">A</kbd>
+                    <kbd className="hidden sm:inline text-xs opacity-70 ml-0.5">A</kbd>
                   </button>
 
                   {/* Secondary tools */}
@@ -2140,7 +2140,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                             setStampPos(null);
                             setStampRepeat({ count: 1, spacingCells: 0, direction: 'row' });
                           }}
-                          className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium transition-all ${
+                          className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all ${
                             isActive
                               ? 'bg-background text-foreground shadow-sm ring-1 ring-border/60'
                               : 'text-muted-foreground hover:text-foreground hover:bg-background/50'
@@ -2150,7 +2150,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                         >
                           <Icon className="w-3 h-3" />
                           <span className="hidden sm:inline">{t.label}</span>
-                          <kbd className="hidden sm:inline text-[8px] text-muted-foreground/50 ml-0.5">
+                          <kbd className="hidden sm:inline text-xs text-muted-foreground/50 ml-0.5">
                             {t.shortcut}
                           </kbd>
                         </button>
@@ -2192,7 +2192,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
               >
                 <ZoomOut className="w-3.5 h-3.5" />
               </button>
-              <span className="text-[10px] font-medium text-muted-foreground tabular-nums w-9 text-center select-none">
+              <span className="text-xs font-medium text-muted-foreground tabular-nums w-10 text-center select-none">
                 {Math.round((zoom * 100) / (fitZoomBase || 1))}%
               </span>
               <button
@@ -2223,11 +2223,11 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
           {/* Zone info — size + element count on the left, tool hint on the right.
               Hint truncates on narrow screens so the dimensions never get pushed off. */}
           <div
-            className={`flex items-center justify-between gap-3 ${fullscreen ? 'px-3 sm:px-4 py-0.5 text-[10px]' : 'mb-1.5 text-[10px]'} text-muted-foreground/60`}
+            className={`flex items-center justify-between gap-3 ${fullscreen ? 'px-3 sm:px-4 py-0.5 text-xs' : 'mb-2 text-xs'} text-muted-foreground/60`}
           >
             <span className="tabular-nums shrink-0">
               {(zoneCols * FT_PER_CELL).toFixed(0)} × {(zoneRows * FT_PER_CELL).toFixed(0)} ft
-              <span className="mx-1.5 opacity-40">·</span>
+              <span className="mx-2 opacity-40">·</span>
               {zoneRegions.length} {zoneRegions.length === 1 ? 'element' : 'elements'}
             </span>
             <span className="truncate min-w-0 text-right">
@@ -2279,15 +2279,15 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
             {fullscreen && legend.total > 0 && (
               <details className="group/fslegend absolute bottom-3 right-3 z-10 rounded-xl bg-card/95 ring-1 ring-black/[0.08] shadow-lg backdrop-blur-sm max-w-[45%] max-h-[50%] overflow-hidden flex flex-col">
                 <summary className="flex items-center justify-between gap-2 px-3 py-2 cursor-pointer list-none [&::-webkit-details-marker]:hidden select-none hover:bg-muted/40">
-                  <span className="text-[10px] font-semibold tracking-[0.18em] uppercase text-foreground/70">
+                  <span className="text-xs font-semibold tracking-[0.18em] uppercase text-foreground/70">
                     Legend
-                    <span className="ml-1.5 text-muted-foreground/60 font-normal tracking-normal normal-case">
+                    <span className="ml-2 text-muted-foreground/60 font-normal tracking-normal normal-case">
                       {legend.total}
                     </span>
                   </span>
                   <ChevronDown className="w-3.5 h-3.5 text-muted-foreground/50 transition-transform group-open/fslegend:rotate-180" />
                 </summary>
-                <div className="px-3 pb-2.5 pt-1 overflow-y-auto space-y-2">
+                <div className="px-3 pb-3 pt-1 overflow-y-auto space-y-2">
                   {[
                     { title: 'Plants', items: legend.plants },
                     { title: 'Beds', items: legend.beds },
@@ -2297,12 +2297,12 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                     .filter((g) => g.items.length > 0)
                     .map((g) => (
                       <div key={g.title}>
-                        <p className="text-[9px] font-semibold tracking-[0.18em] uppercase text-foreground/50 mb-1">
+                        <p className="text-xs font-semibold tracking-[0.18em] uppercase text-foreground/50 mb-1">
                           {g.title}
                         </p>
                         <div className="flex flex-col gap-1">
                           {g.items.map((item) => (
-                            <div key={item.name} className="flex items-center gap-1.5 text-[11px]">
+                            <div key={item.name} className="flex items-center gap-2 text-xs">
                               <div
                                 className="w-3 h-3 rounded-sm shrink-0"
                                 style={{
@@ -2327,15 +2327,15 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
               labels on sm+ so the bar never wraps or gets crowded. */}
           {selectedIds.size > 0 && (
             <div
-              className={`flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3 ${fullscreen ? 'px-3 sm:px-4 py-2 border-t border-border/40 shrink-0 bg-card/60 backdrop-blur-sm' : 'mt-2'}`}
+              className={`flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3 ${fullscreen ? 'px-3 sm:px-4 py-2 border-t border-border/40 shrink-0 bg-card/60 backdrop-blur-sm' : 'mt-2'}`}
             >
               {/* Info */}
               <div className="flex items-center gap-2 flex-1 min-w-0">
-                <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 ring-1 ring-blue-200/60 px-2 py-1 text-[11px] font-semibold text-blue-800 shrink-0 tabular-nums">
+                <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 ring-1 ring-blue-200/60 px-2 py-1 text-xs font-semibold text-blue-800 shrink-0 tabular-nums">
                   <Square className="w-2.5 h-2.5" />
                   {selectedIds.size}
                 </span>
-                <span className="text-[11px] text-foreground font-medium tabular-nums shrink-0">
+                <span className="text-xs text-foreground font-medium tabular-nums shrink-0">
                   {selectionSqFt < 1
                     ? `${(selectionSqFt * 144).toFixed(0)} sq in`
                     : `${selectionSqFt.toFixed(1)} sq ft`}
@@ -2347,7 +2347,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                   )}
                 </span>
                 {selectedRegions.length === 1 && (
-                  <span className="text-[11px] text-muted-foreground truncate min-w-0">
+                  <span className="text-xs text-muted-foreground truncate min-w-0">
                     {selectedRegions[0].name}
                   </span>
                 )}
@@ -2360,7 +2360,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                     return c ? (
                       <Link
                         href={`/crops/${c.id}`}
-                        className="hidden sm:inline-flex items-center gap-1 text-[11px] text-leaf font-medium hover:text-leaf rounded-md bg-emerald-50 ring-1 ring-emerald-200/60 px-1.5 py-0.5 shrink-0"
+                        className="hidden sm:inline-flex items-center gap-1 text-xs text-leaf font-medium hover:text-leaf rounded-md bg-emerald-50 ring-1 ring-emerald-200/60 px-2 py-0.5 shrink-0"
                       >
                         {v.name}
                         <ExternalLink className="w-2.5 h-2.5" />
@@ -2375,23 +2375,23 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                     <button
                       onClick={mergeSelected}
                       disabled={saving}
-                      className="inline-flex items-center justify-center gap-1 h-8 w-8 sm:w-auto sm:px-2.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+                      className="inline-flex items-center justify-center gap-1 h-8 w-8 sm:w-auto sm:px-3 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors"
                       title="Combine selected into one irregular shape"
                       aria-label="Merge"
                     >
                       <Merge className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline text-[11px] font-medium">Merge</span>
+                      <span className="hidden sm:inline text-xs font-medium">Merge</span>
                     </button>
                   )}
                   <button
                     onClick={rotateSelected}
                     disabled={saving}
-                    className="inline-flex items-center justify-center gap-1 h-8 w-8 sm:w-auto sm:px-2.5 rounded-lg ring-1 ring-border/60 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 transition-colors"
+                    className="inline-flex items-center justify-center gap-1 h-8 w-8 sm:w-auto sm:px-3 rounded-lg ring-1 ring-border/60 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 transition-colors"
                     title="Rotate selected 90° clockwise"
                     aria-label="Rotate 90°"
                   >
                     <RotateCw className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline text-[11px] font-medium">Rotate</span>
+                    <span className="hidden sm:inline text-xs font-medium">Rotate</span>
                   </button>
                   <button
                     onClick={() => {
@@ -2399,12 +2399,12 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                       if (selected.length > 0) duplicateRegions(selected);
                     }}
                     disabled={saving}
-                    className="inline-flex items-center justify-center gap-1 h-8 w-8 sm:w-auto sm:px-2.5 rounded-lg ring-1 ring-border/60 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 transition-colors"
+                    className="inline-flex items-center justify-center gap-1 h-8 w-8 sm:w-auto sm:px-3 rounded-lg ring-1 ring-border/60 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 transition-colors"
                     title="Duplicate selected"
                     aria-label="Duplicate"
                   >
                     <Copy className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline text-[11px] font-medium">Duplicate</span>
+                    <span className="hidden sm:inline text-xs font-medium">Duplicate</span>
                   </button>
                   <button
                     onClick={() => {
@@ -2414,12 +2414,12 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                       }
                     }}
                     disabled={selectedIds.size !== 1}
-                    className="inline-flex items-center justify-center gap-1 h-8 w-8 sm:w-auto sm:px-2.5 rounded-lg ring-1 ring-border/60 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 transition-colors"
+                    className="inline-flex items-center justify-center gap-1 h-8 w-8 sm:w-auto sm:px-3 rounded-lg ring-1 ring-border/60 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 transition-colors"
                     title="Edit selected element"
                     aria-label="Edit"
                   >
                     <Pencil className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline text-[11px] font-medium">Edit</span>
+                    <span className="hidden sm:inline text-xs font-medium">Edit</span>
                   </button>
                   <div className="w-px h-5 bg-border/40 mx-0.5" />
                   <button
@@ -2449,15 +2449,15 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
           {legend.total > 0 && !fullscreen && (
             <details open className="group/section mt-3">
               <summary className="flex items-center justify-between mb-2 cursor-pointer list-none [&::-webkit-details-marker]:hidden select-none">
-                <h2 className="text-[11px] font-semibold tracking-[0.18em] uppercase text-foreground/70">
+                <h2 className="text-xs font-semibold tracking-[0.18em] uppercase text-foreground/70">
                   Legend
-                  <span className="ml-1.5 text-muted-foreground/60 font-normal tracking-normal normal-case">
+                  <span className="ml-2 text-muted-foreground/60 font-normal tracking-normal normal-case">
                     {legend.total}
                   </span>
                 </h2>
                 <ChevronDown className="w-4 h-4 text-muted-foreground/40 transition-transform group-open/section:rotate-180" />
               </summary>
-              <div className="space-y-2.5">
+              <div className="space-y-3">
                 {[
                   { title: 'Plants', items: legend.plants },
                   { title: 'Trellises', items: legend.trellises },
@@ -2466,12 +2466,12 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                   .filter((g) => g.items.length > 0)
                   .map((g) => (
                     <div key={g.title}>
-                      <p className="text-[10px] font-medium tracking-[0.18em] uppercase text-muted-foreground/50 mb-1">
+                      <p className="text-xs font-medium tracking-[0.18em] uppercase text-muted-foreground/50 mb-1">
                         {g.title}
                       </p>
                       <div className="flex flex-wrap gap-2">
                         {g.items.map((item) => (
-                          <div key={item.name} className="flex items-center gap-1.5 text-[11px]">
+                          <div key={item.name} className="flex items-center gap-2 text-xs">
                             <div
                               className="w-3 h-3 rounded-sm"
                               style={{
@@ -2514,13 +2514,13 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
               {dialogRegion?.name ?? 'Define Area'}
             </DialogTitle>
             {newRect && (
-              <p className="text-[10px] text-muted-foreground/50">
+              <p className="text-xs text-muted-foreground/50">
                 {(newRect.w * FT_PER_CELL).toFixed(1)}ft × {(newRect.h * FT_PER_CELL).toFixed(1)}ft
               </p>
             )}
           </DialogHeader>
           <form onSubmit={saveRegion} className="space-y-3 mt-1">
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Label htmlFor="r-name" className="text-xs font-medium text-muted-foreground">
                 Name
               </Label>
@@ -2552,7 +2552,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                 }
               }}
             />
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Label htmlFor="r-notes" className="text-xs font-medium text-muted-foreground">
                 Notes <span className="text-muted-foreground/40">(optional)</span>
               </Label>
@@ -2568,7 +2568,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
             {/* Size fields (edit mode only) */}
             {dialogRegion && (
               <div className="flex gap-3">
-                <div className="flex-1 space-y-1.5">
+                <div className="flex-1 space-y-2">
                   <Label htmlFor="r-width" className="text-xs font-medium text-muted-foreground">
                     Width (ft)
                   </Label>
@@ -2582,7 +2582,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                     className="rounded-lg"
                   />
                 </div>
-                <div className="flex-1 space-y-1.5">
+                <div className="flex-1 space-y-2">
                   <Label htmlFor="r-height" className="text-xs font-medium text-muted-foreground">
                     Height (ft)
                   </Label>
@@ -2597,7 +2597,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                   />
                 </div>
                 <div className="flex items-end pb-0.5">
-                  <span className="text-[10px] text-muted-foreground/50">
+                  <span className="text-xs text-muted-foreground/50">
                     {(dialogRegion.width * dialogRegion.height * FT_PER_CELL * FT_PER_CELL).toFixed(
                       1
                     )}{' '}
@@ -2606,7 +2606,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                 </div>
               </div>
             )}
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               {/* Link to crop page if variety is assigned */}
               {dialogRegion?.variety_id &&
                 (() => {
@@ -2616,7 +2616,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                   return c ? (
                     <Link
                       href={`/crops/${c.id}`}
-                      className="inline-flex items-center gap-1 text-[11px] text-leaf font-medium hover:text-leaf mt-1"
+                      className="inline-flex items-center gap-1 text-xs text-leaf font-medium hover:text-leaf mt-1"
                     >
                       View {c.name} — {v.name}
                       <ExternalLink className="w-2.5 h-2.5" />
@@ -2625,7 +2625,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                 })()}
             </div>
             <div className="flex gap-3">
-              <div className="flex-1 space-y-1.5">
+              <div className="flex-1 space-y-2">
                 <Label className="text-xs font-medium text-muted-foreground">Fill</Label>
                 <div className="flex flex-wrap gap-1">
                   {COLOR_PRESETS.map((c) => (
@@ -2639,14 +2639,14 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                         className="sr-only peer"
                       />
                       <div
-                        className="w-5 h-5 rounded peer-checked:ring-2 peer-checked:ring-emerald-500 peer-checked:scale-110 transition-all"
+                        className="w-5 h-5 rounded-md peer-checked:ring-2 peer-checked:ring-emerald-500 peer-checked:scale-110 transition-all"
                         style={{ backgroundColor: c }}
                       />
                     </label>
                   ))}
                 </div>
               </div>
-              <div className="flex-1 space-y-1.5">
+              <div className="flex-1 space-y-2">
                 <Label className="text-xs font-medium text-muted-foreground">Border</Label>
                 <div className="flex flex-wrap gap-1">
                   {BORDER_PRESETS.map((c) => (
@@ -2660,7 +2660,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                         className="sr-only peer"
                       />
                       <div
-                        className="w-5 h-5 rounded peer-checked:ring-2 peer-checked:ring-emerald-500 peer-checked:scale-110 transition-all"
+                        className="w-5 h-5 rounded-md peer-checked:ring-2 peer-checked:ring-emerald-500 peer-checked:scale-110 transition-all"
                         style={{ backgroundColor: c }}
                       />
                     </label>
@@ -2688,7 +2688,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                   setSelectedBorder(BORDER_PRESETS[0]);
                 }
               }}
-              className="self-start inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-leaf px-2 py-1 rounded-md ring-1 ring-border/40 hover:ring-emerald-300 hover:bg-emerald-50/40 transition-colors"
+              className="self-start inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-leaf px-2 py-1 rounded-md ring-1 ring-border/40 hover:ring-emerald-300 hover:bg-emerald-50/40 transition-colors"
               title={
                 typeSelection.startsWith('crop:')
                   ? 'Reset name and colors to the defaults for this crop'
@@ -2709,7 +2709,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                     bringToFront(dialogRegion.id);
                     setEditRegion(null);
                   }}
-                  className="px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/80 transition-colors"
+                  className="px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-muted/80 transition-colors"
                   title="Move to front (top layer)"
                 >
                   Bring Front
@@ -2721,7 +2721,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                     sendToBack(dialogRegion.id);
                     setEditRegion(null);
                   }}
-                  className="px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/80 transition-colors"
+                  className="px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-muted/80 transition-colors"
                   title="Move to back (bottom layer)"
                 >
                   Send Back
@@ -2731,7 +2731,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                   type="button"
                   onClick={() => saveAsTemplate(dialogRegion)}
                   disabled={saving}
-                  className="px-3 py-1.5 text-[11px] font-medium text-leaf hover:bg-emerald-50/80 transition-colors disabled:opacity-50"
+                  className="px-3 py-2 text-xs font-medium text-leaf hover:bg-emerald-50/80 transition-colors disabled:opacity-50"
                   title="Save as reusable template"
                 >
                   {saving ? '...' : 'Save as Template'}
@@ -2798,7 +2798,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                     setStampTemplate(t);
                     setTemplateDialogOpen(false);
                   }}
-                  className="flex-1 flex items-center gap-3 px-3 py-2.5 text-left min-w-0"
+                  className="flex-1 flex items-center gap-3 px-3 py-3 text-left min-w-0"
                 >
                   <div
                     className={`w-8 h-6 shrink-0 ${t.element_type === 'tree' ? 'rounded-full' : 'rounded-sm'}`}
@@ -2810,7 +2810,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                   />
                   <div className="flex-1 min-w-0">
                     <span className="text-sm font-medium block truncate">{t.name}</span>
-                    <span className="text-[10px] text-muted-foreground/50">
+                    <span className="text-xs text-muted-foreground/50">
                       {(t.width * FT_PER_CELL).toFixed(1)}&apos; ×{' '}
                       {(t.height * FT_PER_CELL).toFixed(1)}&apos; ·{' '}
                       {(t.width * t.height * FT_PER_CELL * FT_PER_CELL).toFixed(1)} sq ft
@@ -2871,13 +2871,13 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
       >
         {editTemplate && (
           <form onSubmit={updateTemplate} className="space-y-3 mt-1">
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Label htmlFor="t-name" className="text-xs font-medium text-muted-foreground">
                 Name
               </Label>
               <Input id="t-name" name="name" defaultValue={editTemplate.name} required autoFocus />
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Label htmlFor="t-type" className="text-xs font-medium text-muted-foreground">
                 Element type
               </Label>
@@ -2895,7 +2895,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
               </select>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 <Label htmlFor="t-width" className="text-xs font-medium text-muted-foreground">
                   Width (ft)
                 </Label>
@@ -2909,7 +2909,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                   required
                 />
               </div>
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 <Label htmlFor="t-height" className="text-xs font-medium text-muted-foreground">
                   Height (ft)
                 </Label>
@@ -2924,9 +2924,9 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                 />
               </div>
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Label className="text-xs font-medium text-muted-foreground">Fill color</Label>
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex flex-wrap gap-2">
                 {COLOR_PRESETS.map((c, i) => (
                   <label key={c} className="cursor-pointer">
                     <input
@@ -2937,7 +2937,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                       className="sr-only peer"
                     />
                     <span
-                      className="block w-7 h-7 rounded-md ring-1 ring-border/60 peer-checked:ring-2 peer-checked:ring-emerald-500 transition-all"
+                      className="block w-8 h-8 rounded-md ring-1 ring-border/60 peer-checked:ring-2 peer-checked:ring-emerald-500 transition-all"
                       style={{ backgroundColor: c, opacity: 0.82 }}
                       title={BORDER_PRESETS[i]}
                     />
@@ -2945,9 +2945,9 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                 ))}
               </div>
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Label className="text-xs font-medium text-muted-foreground">Border color</Label>
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex flex-wrap gap-2">
                 {BORDER_PRESETS.map((c) => (
                   <label key={c} className="cursor-pointer">
                     <input
@@ -2958,7 +2958,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                       className="sr-only peer"
                     />
                     <span
-                      className="block w-7 h-7 rounded-md ring-1 ring-border/60 peer-checked:ring-2 peer-checked:ring-emerald-500 transition-all"
+                      className="block w-8 h-8 rounded-md ring-1 ring-border/60 peer-checked:ring-2 peer-checked:ring-emerald-500 transition-all"
                       style={{ backgroundColor: c }}
                     />
                   </label>
@@ -3009,14 +3009,14 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
       {/* Add Zone dialog */}
       <FormDialog open={addZoneOpen} onOpenChange={setAddZoneOpen} title="New Garden Zone">
         <form onSubmit={addZone} className="space-y-3 mt-1">
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="z-name" className="text-xs font-medium text-muted-foreground">
               Name
             </Label>
             <Input id="z-name" name="name" required defaultValue="Garden" className="rounded-lg" />
           </div>
           <div className="flex gap-3">
-            <div className="flex-1 space-y-1.5">
+            <div className="flex-1 space-y-2">
               <Label htmlFor="z-w" className="text-xs font-medium text-muted-foreground">
                 Width (ft)
               </Label>
@@ -3029,7 +3029,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                 className="rounded-lg"
               />
             </div>
-            <div className="flex-1 space-y-1.5">
+            <div className="flex-1 space-y-2">
               <Label htmlFor="z-h" className="text-xs font-medium text-muted-foreground">
                 Height (ft)
               </Label>
@@ -3072,7 +3072,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
       >
         {editZone && (
           <form onSubmit={saveZoneEdit} className="space-y-3 mt-1" key={editZone.id}>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Label htmlFor="ez-name" className="text-xs font-medium text-muted-foreground">
                 Name
               </Label>
@@ -3085,7 +3085,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
               />
             </div>
             <div className="flex gap-3">
-              <div className="flex-1 space-y-1.5">
+              <div className="flex-1 space-y-2">
                 <Label htmlFor="ez-w" className="text-xs font-medium text-muted-foreground">
                   Width (ft)
                 </Label>
@@ -3100,7 +3100,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                   className="rounded-lg"
                 />
               </div>
-              <div className="flex-1 space-y-1.5">
+              <div className="flex-1 space-y-2">
                 <Label htmlFor="ez-h" className="text-xs font-medium text-muted-foreground">
                   Height (ft)
                 </Label>
@@ -3116,7 +3116,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                 />
               </div>
             </div>
-            <p className="text-[10px] text-muted-foreground/60 leading-snug">
+            <p className="text-xs text-muted-foreground/60 leading-snug">
               Shrinking below existing elements&apos; extents will not delete them, but they may sit
               outside the visible grid until you move or resize them.
             </p>
@@ -3193,7 +3193,7 @@ function RegionTypeAndVarietyPicker({
 
   return (
     <>
-      <div className="space-y-1.5">
+      <div className="space-y-2">
         <Label htmlFor="r-type" className="text-xs font-medium text-muted-foreground">
           What is this?
         </Label>
@@ -3243,7 +3243,7 @@ function RegionTypeAndVarietyPicker({
 
       {/* Variety picker — only when a crop is selected AND that crop has varieties */}
       {isCropSelection && filteredVarieties.length > 0 && (
-        <div className="space-y-1.5">
+        <div className="space-y-2">
           <Label htmlFor="r-variety" className="text-xs font-medium text-muted-foreground">
             Variety (optional)
           </Label>

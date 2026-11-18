@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { CROP_PROBLEMS } from '@/lib/crop-problems';
 import { Bug, Leaf, AlertTriangle, ChevronDown, FlaskConical, ArrowRight } from 'lucide-react';
+import { SectionHeader } from '@/components/ui/section-header';
 import Link from 'next/link';
 import { getProblemImagePaths } from '@/lib/image-paths';
 import { RefImage } from '@/components/ref-image';
@@ -54,15 +55,10 @@ export function CropProblemsPanel({ cropGroupName }: { cropGroupName: string | n
   const filtered = problems.filter((p) => p.type === filter);
 
   return (
-    <div>
+    <section className="card panel">
       <details open className="group/section">
-        <summary className="flex items-center justify-between mb-3 cursor-pointer list-none [&::-webkit-details-marker]:hidden select-none">
-          <div className="flex items-center gap-2">
-            <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground">
-              Common Problems
-            </p>
-            <span className="text-[10px] text-muted-foreground/50">({filtered.length})</span>
-          </div>
+        <summary className="mb-4 flex cursor-pointer list-none items-center gap-3 select-none [&::-webkit-details-marker]:hidden">
+          <SectionHeader className="flex-1" title="Common problems" meta={filtered.length} />
           <div className="flex items-center gap-2">
             <div className="flex gap-1">
               {(['disease', 'insect'] as const).map((f) => (
@@ -72,7 +68,7 @@ export function CropProblemsPanel({ cropGroupName }: { cropGroupName: string | n
                     e.preventDefault();
                     setFilter(f);
                   }}
-                  className={`text-xs font-medium px-2.5 py-0.5 rounded-full transition-colors ${
+                  className={`text-xs font-medium px-3 py-1 rounded-full transition-colors ${
                     filter === f
                       ? 'bg-emerald-600 text-white'
                       : 'text-muted-foreground/50 hover:text-muted-foreground'
@@ -86,7 +82,7 @@ export function CropProblemsPanel({ cropGroupName }: { cropGroupName: string | n
           </div>
         </summary>
 
-        <div className="space-y-1.5">
+        <div className="space-y-2">
           {filtered.map((problem) => {
             const isExpanded = expanded === problem.name;
             const tc = typeConfig[problem.type];
@@ -100,7 +96,7 @@ export function CropProblemsPanel({ cropGroupName }: { cropGroupName: string | n
               >
                 <button
                   onClick={() => setExpanded(isExpanded ? null : problem.name)}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-muted/30 transition-colors"
+                  className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-muted/30 transition-colors"
                 >
                   <div
                     className={`flex items-center justify-center w-6 h-6 rounded-md ${tc.bg} shrink-0`}
@@ -111,7 +107,7 @@ export function CropProblemsPanel({ cropGroupName }: { cropGroupName: string | n
                     <span className="text-xs font-medium truncate block">{problem.name}</span>
                   </div>
                   <span
-                    className={`rounded-full text-[9px] font-semibold px-1.5 py-0 ring-1 ${sc.bg} ${sc.text} ${sc.ring}`}
+                    className={`rounded-full text-xs font-semibold px-2 py-0 ring-1 ${sc.bg} ${sc.text} ${sc.ring}`}
                   >
                     {sc.label}
                   </span>
@@ -121,7 +117,7 @@ export function CropProblemsPanel({ cropGroupName }: { cropGroupName: string | n
                 </button>
 
                 {isExpanded && (
-                  <div className="px-3 pb-3 space-y-2 text-[11px] leading-relaxed">
+                  <div className="px-3 pb-3 space-y-2 text-xs leading-relaxed">
                     {/* Reference image */}
                     {cropGroupName && (
                       <RefImage
@@ -153,26 +149,26 @@ export function CropProblemsPanel({ cropGroupName }: { cropGroupName: string | n
                       <p className="text-muted-foreground">{problem.conditions}</p>
                     </div>
 
-                    <div className={`rounded-lg px-2.5 py-2 ${tc.bg} ring-1 ${tc.ring}`}>
+                    <div className={`rounded-lg px-3 py-2 ${tc.bg} ring-1 ${tc.ring}`}>
                       <p className="font-semibold text-foreground/80 mb-0.5">
                         Treatment & Prevention
                       </p>
                       <p className="text-muted-foreground">{problem.remediation}</p>
                       {problem.products.length > 0 && (
-                        <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                        <div className="flex items-center gap-1 mt-2 flex-wrap">
                           <FlaskConical className="w-3 h-3 text-muted-foreground/50" />
                           {problem.products.map((p) => (
                             <Link
                               key={p}
                               href={`/products?q=${encodeURIComponent(p)}`}
-                              className="rounded-full bg-paper-2 px-1.5 py-0 text-[10px] font-medium ring-1 ring-line hover:bg-leaf-tint hover:ring-leaf-lt transition-colors"
+                              className="rounded-full bg-paper-2 px-2 py-0 text-xs font-medium ring-1 ring-line hover:bg-leaf-tint hover:ring-leaf-lt transition-colors"
                             >
                               {p}
                             </Link>
                           ))}
                           <Link
                             href={`/products?q=${encodeURIComponent(problem.products[0])}`}
-                            className="inline-flex items-center gap-0.5 text-[10px] text-leaf font-medium hover:text-leaf ml-1"
+                            className="inline-flex items-center gap-0.5 text-xs text-leaf font-medium hover:text-leaf ml-1"
                           >
                             See treatments <ArrowRight className="w-2.5 h-2.5" />
                           </Link>
@@ -186,6 +182,6 @@ export function CropProblemsPanel({ cropGroupName }: { cropGroupName: string | n
           })}
         </div>
       </details>
-    </div>
+    </section>
   );
 }

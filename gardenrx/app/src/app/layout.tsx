@@ -71,33 +71,35 @@ export default async function RootLayout({
             <Sidebar settings={settings} />
             <div className="main">
               <header className="topbar">
-                <div className="max-[499px]:hidden min-[881px]:hidden">
-                  <Clock />
-                </div>
-                <Link
-                  href="/"
-                  className="flex min-h-10 items-center gap-2 min-[881px]:hidden"
-                  aria-label="GardenRX — Today"
-                >
-                  <span className="brand-mark size-10">
-                    <Leaf className="size-[18px]" />
-                  </span>
-                  <span className="brand-name text-base max-[499px]:hidden">GardenRx</span>
-                </Link>
-                <div className="topbar-spacer" />
-                {settings.weather_bar && <WeatherChip />}
-                <Suspense fallback={null}>
-                  <SearchWrapper />
-                </Suspense>
-                <Link
-                  href="/settings"
-                  aria-label="Settings"
-                  className="topbar-ctl grid size-10 place-items-center rounded-full text-ink-2 transition-colors hover:bg-paper-2 min-[881px]:hidden"
-                >
-                  <Settings className="size-5" />
-                </Link>
-                <div className="min-[881px]:hidden">
-                  <ThemeSwitcher settings={settings} />
+                <div className="topbar-in">
+                  <div className="max-[639.98px]:hidden min-[900px]:hidden">
+                    <Clock />
+                  </div>
+                  <Link
+                    href="/"
+                    className="flex min-h-10 items-center gap-2 min-[900px]:hidden"
+                    aria-label="GardenRX — Today"
+                  >
+                    <span className="brand-mark size-10">
+                      <Leaf className="size-4" />
+                    </span>
+                    <span className="brand-name text-base max-[639.98px]:hidden">GardenRx</span>
+                  </Link>
+                  <div className="topbar-spacer" />
+                  {settings.weather_bar && <WeatherChip />}
+                  <Suspense fallback={null}>
+                    <SearchWrapper />
+                  </Suspense>
+                  <Link
+                    href="/settings"
+                    aria-label="Settings"
+                    className="topbar-ctl grid size-10 place-items-center rounded-full text-ink-2 transition-colors hover:bg-paper-2 min-[900px]:hidden"
+                  >
+                    <Settings className="size-5" />
+                  </Link>
+                  <div className="min-[900px]:hidden">
+                    <ThemeSwitcher settings={settings} />
+                  </div>
                 </div>
               </header>
               {children}

@@ -4,6 +4,7 @@ import { useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Crop } from '@/lib/database.types';
 import { CropAvatar } from '@/components/crop-glyph';
 import { cropIconColor } from '@/components/crop-icon';
+import { SectionHeader } from '@/components/ui/section-header';
 
 interface VarietySlice {
   id: number;
@@ -306,21 +307,21 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
 
   return (
     <section className="space-y-3">
-      <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground">Charts</p>
+      <SectionHeader title="Charts" />
 
       {/* cumulative trend — running total, or broken down by crop */}
       {dates.length > 1 && (
         <div className="rounded-xl bg-card ring-1 ring-black/[0.05] shadow-sm p-3">
-          <div className="flex items-center justify-between gap-2 mb-1.5">
-            <div className="flex items-baseline gap-1.5 min-w-0">
-              <span className="text-[11px] font-medium text-foreground/70 capitalize truncate">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="flex items-baseline gap-2 min-w-0">
+              <span className="text-xs font-medium text-foreground/70 capitalize truncate">
                 Cumulative {metricWord}
               </span>
               <span className="shrink-0 text-sm font-heading font-semibold text-emerald-700 tabular-nums">
                 {headPrimary}
               </span>
               {headSecondary && (
-                <span className="shrink-0 text-[11px] font-normal text-muted-foreground/60 tabular-nums">
+                <span className="shrink-0 text-xs font-normal text-muted-foreground/60 tabular-nums">
                   · {headSecondary}
                 </span>
               )}
@@ -339,7 +340,7 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
                     setMode('total');
                     setHidden(new Set());
                   }}
-                  className={`rounded-md px-2 py-0.5 text-[10px] font-medium transition-all ${
+                  className={`rounded-md px-2 py-0.5 text-xs font-medium transition-all ${
                     mode === 'total'
                       ? 'bg-background text-foreground shadow-sm ring-1 ring-border/60'
                       : 'text-muted-foreground hover:text-foreground'
@@ -353,7 +354,7 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
                   role="tab"
                   aria-selected={mode === 'byCrop'}
                   onClick={() => setMode('byCrop')}
-                  className={`rounded-md px-2 py-0.5 text-[10px] font-medium transition-all ${
+                  className={`rounded-md px-2 py-0.5 text-xs font-medium transition-all ${
                     mode === 'byCrop'
                       ? 'bg-background text-foreground shadow-sm ring-1 ring-border/60'
                       : 'text-muted-foreground hover:text-foreground'
@@ -432,7 +433,7 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
                   style={{ left: `${leftPct(act)}%`, top: `${topPct(topSeries[act])}%` }}
                 />
                 <div
-                  className={`pointer-events-none absolute top-0.5 ${act > (dates.length - 1) / 2 ? 'left-0.5' : 'right-0.5'} flex items-baseline gap-1 whitespace-nowrap rounded-md bg-card/95 px-1.5 py-0.5 text-[9px] tabular-nums shadow-sm ring-1 ring-black/10`}
+                  className={`pointer-events-none absolute top-0.5 ${act > (dates.length - 1) / 2 ? 'left-0.5' : 'right-0.5'} flex items-baseline gap-1 whitespace-nowrap rounded-md bg-card/95 px-2 py-0.5 text-xs tabular-nums shadow-sm ring-1 ring-black/10`}
                 >
                   <span className="font-medium text-foreground/80">{fmtTick(dates[act])}</span>
                   <span className="font-semibold text-emerald-700">{fmt(topSeries[act])}</span>
@@ -464,7 +465,7 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
               ),
             ];
             return (
-              <div className="mt-1 flex justify-between text-[9px] text-muted-foreground/60 tabular-nums">
+              <div className="mt-1 flex justify-between text-xs text-muted-foreground/60 tabular-nums">
                 {idxs.map((idx) => (
                   <span key={idx}>{fmtTick(dates[idx])}</span>
                 ))}
@@ -472,7 +473,7 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
             );
           })()}
 
-          <p className="mt-1.5 text-[10px] text-muted-foreground/45">
+          <p className="mt-2 text-xs text-muted-foreground/45">
             {showByCrop
               ? 'Drag to inspect a date · tap a crop below to select/deselect it'
               : 'Drag across to read the total on any date'}
@@ -482,17 +483,17 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
 
       {/* by crop — bar list. Doubles as the trend's legend & controls in By-crop
           mode, and reports values "as of" the scrubbed date. */}
-      <div className="rounded-xl bg-card ring-1 ring-black/[0.05] shadow-sm p-3.5">
+      <div className="rounded-xl bg-card ring-1 ring-black/[0.05] shadow-sm p-4">
         <div className="flex items-baseline justify-between mb-3 gap-2">
-          <span className="text-[11px] font-medium text-foreground/70 capitalize truncate">
+          <span className="text-xs font-medium text-foreground/70 capitalize truncate">
             {metricWord} by crop
             {act != null && (
-              <span className="ml-1.5 font-normal text-muted-foreground/60 normal-case">
+              <span className="ml-2 font-normal text-muted-foreground/60 normal-case">
                 as of {fmtTick(dates[act])}
               </span>
             )}
           </span>
-          <span className="shrink-0 text-[11px] text-muted-foreground/50">
+          <span className="shrink-0 text-xs text-muted-foreground/50">
             {crops.length} {crops.length === 1 ? 'crop' : 'crops'}
           </span>
         </div>
@@ -521,12 +522,12 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
                         : `Deselect ${c.crop.name}`
                       : undefined
                   }
-                  className={`-mx-1.5 flex w-full items-center gap-2.5 rounded-lg px-1.5 py-1 text-left transition ${showByCrop ? 'cursor-pointer hover:bg-muted/40' : 'cursor-default'}`}
+                  className={`-mx-2 flex w-full items-center gap-3 rounded-lg px-2 py-1 text-left transition ${showByCrop ? 'cursor-pointer hover:bg-muted/40' : 'cursor-default'}`}
                 >
                   <CropAvatar name={c.crop.name} size={28} className="shrink-0" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-[13px] font-medium truncate">
+                      <span className="text-sm font-medium truncate">
                         {c.crop.name}
                         {c.picks && act == null ? (
                           <span className="font-normal text-muted-foreground/55">
@@ -535,16 +536,16 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
                           </span>
                         ) : null}
                       </span>
-                      <span className="shrink-0 text-[13px] font-semibold tabular-nums tracking-tight">
+                      <span className="shrink-0 text-sm font-semibold tabular-nums tracking-tight">
                         {primary}
                         {secondary && (
-                          <span className="ml-1.5 text-[11px] font-normal text-muted-foreground/60">
+                          <span className="ml-2 text-xs font-normal text-muted-foreground/60">
                             {secondary}
                           </span>
                         )}
                       </span>
                     </div>
-                    <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-muted/40">
+                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted/40">
                       <div
                         className="h-full rounded-full transition-all"
                         style={{ width: `${w}%`, backgroundColor: off ? MUTED_BAR : color }}
@@ -563,7 +564,7 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
                     {varieties.map((v) => (
                       <li
                         key={v.key}
-                        className="flex items-baseline justify-between gap-2 text-[11px] leading-snug"
+                        className="flex items-baseline justify-between gap-2 text-xs leading-snug"
                       >
                         <span
                           className={`truncate ${v.id == null ? 'italic text-muted-foreground/45' : 'text-muted-foreground/75'}`}
@@ -587,15 +588,12 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
           {/* Uncategorized band — picks logged against no crop. Every crop has
               its own row above, so this is the only thing left in the tail. */}
           {showByCrop && hasOther && (
-            <div className="flex items-center gap-2.5 px-1.5 pt-0.5 text-[11px] text-muted-foreground/70">
+            <div className="flex items-center gap-3 px-2 pt-0.5 text-xs text-muted-foreground/70">
               <span
-                className="grid h-7 w-7 shrink-0 place-items-center rounded-[9px]"
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-md"
                 style={{ background: `color-mix(in srgb, ${OTHER_COLOR} 16%, transparent)` }}
               >
-                <span
-                  className="h-2.5 w-2.5 rounded-[3px]"
-                  style={{ backgroundColor: OTHER_COLOR }}
-                />
+                <span className="h-2.5 w-2.5 rounded-md" style={{ backgroundColor: OTHER_COLOR }} />
               </span>
               <span className="flex-1">Picks with no crop</span>
               <span className="tabular-nums font-medium text-foreground/70">

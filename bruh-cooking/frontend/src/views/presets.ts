@@ -299,19 +299,19 @@ export class Presets extends LitElement {
         font-size: 14px;
       }
       h3 {
-        margin: 4px 0 6px;
-        font-size: 13px;
+        margin: 4px 0 8px;
+        font-size: 14px;
         font-weight: 600;
         color: var(--bc-muted);
         text-transform: none;
       }
       h3:not(:first-of-type) {
-        margin-top: 14px;
+        margin-top: 16px;
       }
       .list {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr));
-        gap: 6px;
+        gap: 8px;
         margin: 0;
         padding: 0;
         list-style: none;
@@ -362,7 +362,7 @@ export class Presets extends LitElement {
       }
       .summary {
         color: var(--bc-muted-inset);
-        font-size: 12.5px;
+        font-size: 12px;
         font-variant-numeric: tabular-nums;
       }
       .warning {
@@ -425,7 +425,7 @@ export class Presets extends LitElement {
         flex: 1 1 12em;
         min-height: 40px;
         box-sizing: border-box;
-        padding: 6px 12px;
+        padding: 8px 12px;
         border: 1px solid var(--bc-divider);
         border-radius: 10px;
         background: transparent;
@@ -435,27 +435,27 @@ export class Presets extends LitElement {
       .hint,
       .note,
       .disclaimer {
-        margin: 6px 0 0;
+        margin: 8px 0 0;
         color: var(--bc-muted);
-        font-size: 12.5px;
+        font-size: 12px;
         line-height: 1.45;
       }
       .note {
         margin: 0 0 8px;
-        font-size: 13px;
+        font-size: 14px;
       }
       .status:empty {
         display: none;
       }
       .status {
-        margin: 10px 0 0;
+        margin: 12px 0 0;
         color: var(--bc-text);
-        font-size: 13px;
+        font-size: 14px;
       }
       .error {
         margin: 8px 0 0;
         color: var(--bc-error-text);
-        font-size: 13px;
+        font-size: 14px;
       }
       .disclaimer {
         margin-top: 12px;

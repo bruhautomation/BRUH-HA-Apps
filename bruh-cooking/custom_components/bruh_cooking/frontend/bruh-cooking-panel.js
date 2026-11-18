@@ -87,7 +87,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: 8px;
     min-height: 40px;
     padding: 8px 16px;
     border: none;
@@ -157,7 +157,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
     flex: none;
     max-width: 60%;
     overflow: hidden;
-    padding: 3px 10px;
+    padding: 4px 12px;
     border-radius: 999px;
     font-size: 12px;
     font-weight: 600;
@@ -186,7 +186,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
     align-items: center;
     justify-content: center;
     min-width: 7.5em;
-    padding: 6px 14px 5px;
+    padding: 8px 16px 4px;
     box-sizing: border-box;
     border-radius: 8px;
     /* Dark glass with a faint glare across its upper half. */
@@ -216,20 +216,20 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
   }
   .lcd .caption {
     margin-top: 4px;
-    font-size: 11px;
+    font-size: 12px;
     color: #9a9da2;
     white-space: nowrap;
   }
 
   .info {
     display: grid;
-    gap: 3px;
+    gap: 4px;
     margin: 0;
-    padding: 7px 12px;
+    padding: 8px 12px;
     border-radius: 12px;
     background: var(--bc-inset-bg);
     box-shadow: inset 0 0 0 1px var(--bc-inset-edge);
-    font-size: 13.5px;
+    font-size: 14px;
     line-height: 1.35;
   }
   .info .row {
@@ -262,7 +262,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
     flex-wrap: wrap;
     align-items: center;
     gap: 8px;
-    padding: 8px 10px 8px 14px;
+    padding: 8px 12px 8px 16px;
     border-radius: 12px;
     border: 1px solid var(--bc-accent);
     background: var(--bc-inset-bg);
@@ -1140,7 +1140,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
   }
   .hint {
     color: var(--bc-muted, #6b7178);
-    font-size: 12.5px;
+    font-size: 12px;
     white-space: pre-line;
   }
   .widget {
@@ -1155,9 +1155,9 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
   .error {
     display: flex;
     align-items: flex-start;
-    gap: 6px;
-    margin-top: 6px;
-    font-size: 12.5px;
+    gap: 8px;
+    margin-top: 8px;
+    font-size: 12px;
   }
   .reason {
     color: var(--bc-muted, #6b7178);
@@ -1178,7 +1178,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
   .link {
     display: inline-block;
     margin-top: 4px;
-    font-size: 12.5px;
+    font-size: 12px;
     font-weight: 500;
     color: var(--bc-accent, #03a9f4);
   }
@@ -1205,19 +1205,19 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
   .segmented {
     display: inline-flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 8px;
     max-width: 100%;
   }
   .segmented button {
     flex: 0 0 auto;
     min-height: 40px;
-    padding: 6px 14px;
+    padding: 8px 16px;
     border: none;
     border-radius: 999px;
     background: var(--bc-control-bg, rgba(127, 127, 127, 0.14));
     color: inherit;
     font: inherit;
-    font-size: 13.5px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
@@ -1248,7 +1248,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
   .tiles {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
-    gap: 6px;
+    gap: 8px;
     width: 100%;
   }
   .tile {
@@ -1256,11 +1256,11 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
     align-items: center;
     justify-content: center;
     min-height: 44px;
-    padding: 6px 10px;
+    padding: 8px 12px;
     box-sizing: border-box;
     border-radius: 12px;
     background: var(--bc-control-bg, rgba(127, 127, 127, 0.14));
-    font-size: 13.5px;
+    font-size: 14px;
     font-weight: 600;
     line-height: 1.2;
     text-align: center;
@@ -1307,7 +1307,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
   .dropdown select {
     max-width: 100%;
     min-height: 40px;
-    padding: 7px 36px 7px 14px;
+    padding: 8px 32px 8px 16px;
     border: none;
     border-radius: 999px;
     background: var(--bc-control-bg, rgba(127, 127, 127, 0.14));
@@ -1332,7 +1332,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
     right: 12px;
     width: 18px;
     height: 18px;
-    margin-top: -9px;
+    margin-top: -8px;
     fill: currentColor;
     pointer-events: none;
   }
@@ -1391,7 +1391,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
     display: inline-flex;
     align-items: center;
     gap: 2px;
-    padding: 3px;
+    padding: 4px;
     border-radius: 999px;
     background: var(--bc-control-bg, rgba(127, 127, 127, 0.14));
   }
@@ -1424,7 +1424,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
   }
   .stepper output {
     min-width: 4.2em;
-    font-size: 17px;
+    font-size: 16px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
     text-align: center;
@@ -1432,7 +1432,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
   /* On the stepper's grey, the muted color falls short of 4.5:1; the text color, softened, doesn't. */
   .stepper output .unit {
     margin-inline-start: 1px;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 500;
     color: color-mix(in srgb, var(--bc-text, #1f2328) 72%, transparent);
   }
@@ -1449,12 +1449,12 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
   .chips {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 8px;
   }
   .chips .bc-button {
     min-height: 40px;
-    padding: 6px 14px;
-    font-size: 13.5px;
+    padding: 8px 16px;
+    font-size: 14px;
   }
   .chips .bc-button[aria-pressed="true"] {
     background: var(--bc-accent-fill, var(--bc-accent, #03a9f4));
@@ -1478,7 +1478,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
   input[type="time"] {
     min-height: 40px;
     box-sizing: border-box;
-    padding: 6px 12px;
+    padding: 8px 12px;
     border: 1px solid var(--bc-divider, rgba(127, 127, 127, 0.35));
     border-radius: 10px;
     background: transparent;
@@ -1498,7 +1498,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
   }
   .slider span {
     color: var(--bc-muted, #6b7178);
-    font-size: 13px;
+    font-size: 14px;
   }
   .slider output {
     font-variant-numeric: tabular-nums;
@@ -1814,9 +1814,9 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
         line-height: 1.45;
       }
       .note {
-        margin: 6px 0 10px;
+        margin: 8px 0 12px;
         color: var(--bc-muted);
-        font-size: 13px;
+        font-size: 14px;
         line-height: 1.45;
       }
       figure {
@@ -1836,7 +1836,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
       .axis,
       .unit {
         fill: var(--bc-muted);
-        font-size: 11px;
+        font-size: 12px;
         font-variant-numeric: tabular-nums;
       }
       .current,
@@ -1864,14 +1864,14 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
         display: flex;
         flex-wrap: wrap;
         gap: 4px 16px;
-        margin-top: 6px;
+        margin-top: 8px;
         color: var(--bc-muted);
-        font-size: 12.5px;
+        font-size: 12px;
       }
       .legend span {
         display: inline-flex;
         align-items: center;
-        gap: 6px;
+        gap: 8px;
       }
       .key {
         display: inline-block;
@@ -1886,17 +1886,17 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
         border-top: 1.5px dashed var(--bc-chart-target);
       }
       .bc-button {
-        margin-top: 10px;
+        margin-top: 12px;
       }
       table {
         width: 100%;
-        margin-top: 10px;
+        margin-top: 12px;
         border-collapse: collapse;
         font-variant-numeric: tabular-nums;
       }
       th,
       td {
-        padding: 5px 8px;
+        padding: 4px 8px;
         border-top: 1px solid var(--bc-divider);
         text-align: start;
         font-weight: 400;
@@ -1990,19 +1990,19 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
         font-size: 14px;
       }
       h3 {
-        margin: 4px 0 6px;
-        font-size: 13px;
+        margin: 4px 0 8px;
+        font-size: 14px;
         font-weight: 600;
         color: var(--bc-muted);
         text-transform: none;
       }
       h3:not(:first-of-type) {
-        margin-top: 14px;
+        margin-top: 16px;
       }
       .list {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr));
-        gap: 6px;
+        gap: 8px;
         margin: 0;
         padding: 0;
         list-style: none;
@@ -2053,7 +2053,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
       }
       .summary {
         color: var(--bc-muted-inset);
-        font-size: 12.5px;
+        font-size: 12px;
         font-variant-numeric: tabular-nums;
       }
       .warning {
@@ -2116,7 +2116,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
         flex: 1 1 12em;
         min-height: 40px;
         box-sizing: border-box;
-        padding: 6px 12px;
+        padding: 8px 12px;
         border: 1px solid var(--bc-divider);
         border-radius: 10px;
         background: transparent;
@@ -2126,27 +2126,27 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
       .hint,
       .note,
       .disclaimer {
-        margin: 6px 0 0;
+        margin: 8px 0 0;
         color: var(--bc-muted);
-        font-size: 12.5px;
+        font-size: 12px;
         line-height: 1.45;
       }
       .note {
         margin: 0 0 8px;
-        font-size: 13px;
+        font-size: 14px;
       }
       .status:empty {
         display: none;
       }
       .status {
-        margin: 10px 0 0;
+        margin: 12px 0 0;
         color: var(--bc-text);
-        font-size: 13px;
+        font-size: 14px;
       }
       .error {
         margin: 8px 0 0;
         color: var(--bc-error-text);
-        font-size: 13px;
+        font-size: 14px;
       }
       .disclaimer {
         margin-top: 12px;
@@ -2263,7 +2263,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
         display: flex;
         flex-direction: column;
         gap: 12px;
-        padding: 14px 16px 18px;
+        padding: 16px;
       }
       .hero-head {
         display: flex;
@@ -2276,12 +2276,12 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
       .status {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 12px;
       }
       .hero-head .pill {
         max-width: none;
         padding: 4px 12px;
-        font-size: 13px;
+        font-size: 14px;
       }
       .ring {
         position: relative;
@@ -2309,7 +2309,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
         transition: stroke-dasharray 0.6s ease;
       }
       .ring-value {
-        font-size: 10.5px;
+        font-size: 12px;
         font-weight: 700;
         font-variant-numeric: tabular-nums;
       }
@@ -2363,15 +2363,15 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
         transform: rotate(180deg);
       }
       .body {
-        padding: 0 16px 12px;
+        padding: 0 16px 16px;
       }
       .control {
-        padding: 10px 0;
+        padding: 12px 0;
         border-top: 1px solid var(--bc-divider);
       }
       /* Values to read sit closer than controls to use, like Home Assistant's device info. */
       .control:has(> bc-reading, > bc-countdown) {
-        padding: 7px 0;
+        padding: 8px 0;
       }
       .control:first-child,
       .note + .control {
@@ -2379,15 +2379,15 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
         border-top: none;
       }
       .note {
-        margin: 0 0 6px;
+        margin: 0 0 8px;
         color: var(--bc-muted);
       }
       .note.shared {
         display: flex;
         align-items: flex-start;
-        gap: 6px;
-        margin-bottom: 10px;
-        font-size: 13px;
+        gap: 8px;
+        margin-bottom: 12px;
+        font-size: 14px;
       }
       .note.shared svg {
         flex: none;
@@ -2449,7 +2449,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
         flex-direction: column;
         box-sizing: border-box;
         min-width: 0;
-        padding: 12px 14px 14px;
+        padding: 16px;
         border: var(--bc-border-width) solid var(--bc-border);
         border-radius: var(--bc-radius);
         background: var(--bc-card-bg);
@@ -2488,7 +2488,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
       .head {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 12px;
         min-height: 28px;
         margin-bottom: 8px;
       }
@@ -2497,7 +2497,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
         min-width: 0;
         margin: 0;
         overflow: hidden;
-        font-size: 17px;
+        font-size: 16px;
         font-weight: 600;
         line-height: 1.3;
         white-space: nowrap;
@@ -2553,7 +2553,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
       }
       .stage.has-display .drawing {
         box-sizing: border-box;
-        padding-top: 52px;
+        padding-top: 48px;
       }
       .stage .lcd {
         position: absolute;
@@ -2592,15 +2592,17 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
     </div>`}};Dt.properties={hass:{attribute:!1},appliances:{attribute:!1},shared:{attribute:!1},now:{attribute:!1}},Dt.styles=[ae,ie,P`
       :host {
         display: block;
+        max-width: 1400px;
+        margin: 0 auto;
         color: var(--bc-text);
       }
       .area + .area {
-        margin-top: 28px;
+        margin-top: 24px;
       }
       /* A section title over the cards, not a caption: as strong as the card names under it. */
       h2 {
-        margin: 0 4px 10px;
-        font-size: 18px;
+        margin: 0 0 12px;
+        font-size: 16px;
         font-weight: 500;
         line-height: 1.4;
         color: var(--bc-text);
@@ -2698,7 +2700,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
         align-items: center;
         box-sizing: border-box;
         height: var(--bc-toolbar-height);
-        padding: var(--bc-inset-top) calc(12px + var(--bc-inset-right)) 0 calc(12px + var(--bc-inset-left));
+        padding: var(--bc-inset-top) calc(16px + var(--bc-inset-right)) 0 calc(16px + var(--bc-inset-left));
         background: var(--app-header-background-color, var(--bc-page-bg));
         color: var(--app-header-text-color, var(--bc-text));
         border-bottom: var(--app-header-border-bottom, none);
@@ -2706,7 +2708,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
       .title {
         flex: 1;
         min-width: 0;
-        margin: 0 0 0 12px;
+        margin: 0;
         overflow: hidden;
         font-size: 20px;
         font-weight: 400;
@@ -2715,7 +2717,7 @@ var Bt=globalThis,jt=Bt.ShadowRoot&&(Bt.ShadyCSS===void 0||Bt.ShadyCSS.nativeSha
         text-overflow: ellipsis;
       }
       .with-button .title {
-        margin-inline-start: 24px;
+        margin-inline-start: 8px;
       }
       .icon-button {
         display: grid;

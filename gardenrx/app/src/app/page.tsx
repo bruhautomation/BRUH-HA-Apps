@@ -30,6 +30,8 @@ import {
 import { QueuedSprayCard } from '@/components/queued-spray-card';
 import { RainSummaryLine } from '@/components/rain-tracker';
 import { dailyRainfall } from '@/lib/rainfall';
+import { PageShell } from '@/components/ui/page-shell';
+import { SectionHeader } from '@/components/ui/section-header';
 
 export const dynamic = 'force-dynamic';
 
@@ -338,13 +340,11 @@ export default async function TodayPage() {
     ? dailyHighs.slice(0, 7).reduce((s, t) => s + t, 0) / Math.min(7, dailyHighs.length)
     : null;
 
-  return (
-    <div className="page animate-stagger">
-      <div className="section-title" style={{ marginBottom: 16 }}>
-        <h2 style={{ fontSize: 22 }}>{greeting}</h2>
-        <span className="meta">{dateFull}</span>
-      </div>
+  const hasLeft = attention.length > 0 || comingUp.length > 0;
+  const hasRight = somethingDue || queuedSprayData.length > 0 || rainDaily.length > 0;
 
+  return (
+    <PageShell stagger title={greeting} meta={dateFull}>
       <VerdictHero
         rating={currentRating}
         temp={weather?.current.temp ?? null}
@@ -362,51 +362,52 @@ export default async function TodayPage() {
         phiCount={phiCount}
       />
 
-      <div className="detail-grid" style={{ marginTop: 'var(--gap)' }}>
-        <div>
-          <NeedsAttention items={attention} />
-          <ComingUp items={comingUp} />
-        </div>
-        <div>
-          {somethingDue &&
-            (weather ? (
-              <SprayConditions
-                rating={currentRating}
-                temp={weather.current.temp}
-                wind={weather.current.windSpeed}
-                humidity={weather.current.humidity}
-                description={weather.current.description}
-                hourly={weather.hourly}
-                daily={weather.daily}
-              />
-            ) : (
-              <WeatherUnavailable />
-            ))}
-          {queuedSprayData.length > 0 && (
-            <section className="t-sec">
-              <div className="t-sec-h">
-                <h2>Queued sprays</h2>
-                <span className="n">{queuedSprayData.length}</span>
-              </div>
-              <div className="flex flex-col gap-2.5">
-                {queuedSprayData.map((qs) => (
-                  <QueuedSprayCard key={qs.id} spray={qs} />
-                ))}
-              </div>
-            </section>
-          )}
-          {rainDaily.length > 0 && (
-            <section className="t-sec">
-              <RainSummaryLine
-                daily={rainDaily}
-                avgHighF={avgHigh7}
-                humidityPct={weather?.current?.humidity ?? null}
-                dormant={mostlyResting(cropData.map((c) => c.stages))}
-              />
-            </section>
-          )}
-        </div>
+      <div className={`detail-grid${hasLeft && hasRight ? '' : ' is-single'}`}>
+        {hasLeft && (
+          <div className="sections">
+            <NeedsAttention items={attention} />
+            <ComingUp items={comingUp} />
+          </div>
+        )}
+        {hasRight && (
+          <div className="sections">
+            {somethingDue &&
+              (weather ? (
+                <SprayConditions
+                  rating={currentRating}
+                  temp={weather.current.temp}
+                  wind={weather.current.windSpeed}
+                  humidity={weather.current.humidity}
+                  description={weather.current.description}
+                  hourly={weather.hourly}
+                  daily={weather.daily}
+                />
+              ) : (
+                <WeatherUnavailable />
+              ))}
+            {queuedSprayData.length > 0 && (
+              <section className="sec">
+                <SectionHeader title="Queued sprays" meta={queuedSprayData.length} />
+                <div className="stack">
+                  {queuedSprayData.map((qs) => (
+                    <QueuedSprayCard key={qs.id} spray={qs} />
+                  ))}
+                </div>
+              </section>
+            )}
+            {rainDaily.length > 0 && (
+              <section className="sec">
+                <RainSummaryLine
+                  daily={rainDaily}
+                  avgHighF={avgHigh7}
+                  humidityPct={weather?.current?.humidity ?? null}
+                  dormant={mostlyResting(cropData.map((c) => c.stages))}
+                />
+              </section>
+            )}
+          </div>
+        )}
       </div>
-    </div>
+    </PageShell>
   );
 }

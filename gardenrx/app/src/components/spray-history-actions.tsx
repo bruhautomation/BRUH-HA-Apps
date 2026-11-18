@@ -76,17 +76,14 @@ function SearchableProductPicker({
     : [];
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       <Label className="text-xs font-medium text-muted-foreground">Products</Label>
 
       {/* Selected products */}
       {selected.length > 0 && (
         <div className="space-y-1">
           {selected.map((p) => (
-            <div
-              key={p.id}
-              className="rounded-lg bg-emerald-50 ring-1 ring-emerald-300 px-3 py-1.5"
-            >
+            <div key={p.id} className="rounded-lg bg-emerald-50 ring-1 ring-emerald-300 px-3 py-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium">
                   {productLabel(p.brand, ingredientMap.get(p.id))}
@@ -100,19 +97,19 @@ function SearchableProductPicker({
                 </button>
               </div>
               <div className="flex items-center gap-2 mt-1">
-                <label className="text-[10px] text-muted-foreground shrink-0">Rate:</label>
+                <label className="text-xs text-muted-foreground shrink-0">Rate:</label>
                 <Input
                   type="number"
                   step="0.1"
                   placeholder="e.g., 1.5"
                   value={rates[p.id] ?? ''}
                   onChange={(e) => onRateChange(p.id, e.target.value)}
-                  className="h-6 text-[11px] rounded-md w-20"
+                  className="h-6 text-xs rounded-md w-20"
                 />
                 <select
                   value={units[p.id] ?? 'fl oz/gal'}
                   onChange={(e) => onUnitChange(p.id, e.target.value)}
-                  className="h-6 text-[10px] rounded-md ring-1 ring-border/60 bg-card px-1 focus:outline-none"
+                  className="h-6 text-xs rounded-md ring-1 ring-border/60 bg-card px-1 focus:outline-none"
                 >
                   {RATE_UNITS.map((u) => (
                     <option key={u} value={u}>
@@ -134,7 +131,7 @@ function SearchableProductPicker({
           placeholder="Search products to add..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg ring-1 ring-border/60 bg-card focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+          className="w-full pl-8 pr-3 py-2 text-xs rounded-lg ring-1 ring-border/60 bg-card focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
         />
         {search && (
           <button
@@ -158,7 +155,7 @@ function SearchableProductPicker({
                 onToggle(p.id);
                 setSearch('');
               }}
-              className="w-full flex items-center gap-2 rounded px-2.5 py-1.5 text-xs text-left hover:bg-emerald-50 transition-colors"
+              className="w-full flex items-center gap-2 rounded-md px-3 py-2 text-xs text-left hover:bg-emerald-50 transition-colors"
             >
               <Plus className="w-3 h-3 text-emerald-500 shrink-0" />
               <span>{productLabel(p.brand, ingredientMap.get(p.id))}</span>
@@ -167,7 +164,7 @@ function SearchableProductPicker({
         </div>
       )}
       {search && searchResults.length === 0 && (
-        <p className="text-[11px] text-muted-foreground/50 text-center py-2">
+        <p className="text-xs text-muted-foreground/50 text-center py-2">
           No products match &ldquo;{search}&rdquo;
         </p>
       )}
@@ -254,7 +251,7 @@ export function AddSprayButton({ products, crops, cropGroups, ingredientMap }: P
     <>
       <button
         onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1.5 rounded-full bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-emerald-700"
+        className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-emerald-700"
       >
         <Plus className="w-3.5 h-3.5" />
         Log Spray
@@ -272,7 +269,7 @@ export function AddSprayButton({ products, crops, cropGroups, ingredientMap }: P
         <div className="space-y-4 mt-1 max-h-[60vh] overflow-y-auto">
           {/* Date + total mix volume */}
           <div className="flex gap-2">
-            <div className="flex-1 space-y-1.5">
+            <div className="flex-1 space-y-2">
               <Label className="text-xs font-medium text-muted-foreground">Date</Label>
               <Input
                 type="date"
@@ -281,7 +278,7 @@ export function AddSprayButton({ products, crops, cropGroups, ingredientMap }: P
                 className="rounded-lg"
               />
             </div>
-            <div className="w-28 space-y-1.5">
+            <div className="w-28 space-y-2">
               <Label className="text-xs font-medium text-muted-foreground">Volume (gal)</Label>
               <Input
                 type="number"
@@ -315,7 +312,7 @@ export function AddSprayButton({ products, crops, cropGroups, ingredientMap }: P
           />
 
           {/* Crops */}
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label className="text-xs font-medium text-muted-foreground">Crops Sprayed</Label>
             <CropChips
               crops={crops}
@@ -333,7 +330,7 @@ export function AddSprayButton({ products, crops, cropGroups, ingredientMap }: P
           </div>
 
           {/* Notes */}
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label className="text-xs font-medium text-muted-foreground">Notes</Label>
             <Textarea
               placeholder="Optional notes..."
@@ -460,17 +457,17 @@ export function SprayEventActions({
   return (
     <>
       {/* Action buttons */}
-      <div className="flex gap-1 mt-2 pt-1.5 border-t border-black/[0.04]">
+      <div className="flex gap-1 mt-2 pt-2 border-t border-black/[0.04]">
         <button
           onClick={() => setEditing(true)}
-          className="flex items-center gap-1 text-[11px] text-muted-foreground/60 hover:text-emerald-700 transition-colors px-1.5 py-0.5 rounded"
+          className="flex items-center gap-1 text-xs text-muted-foreground/60 hover:text-emerald-700 transition-colors px-2 py-0.5 rounded-md"
         >
           <Pencil className="w-3 h-3" />
           Edit
         </button>
         <button
           onClick={() => setDeleting(true)}
-          className="flex items-center gap-1 text-[11px] text-muted-foreground/60 hover:text-terra-700 transition-colors px-1.5 py-0.5 rounded"
+          className="flex items-center gap-1 text-xs text-muted-foreground/60 hover:text-terra-700 transition-colors px-2 py-0.5 rounded-md"
         >
           <Trash2 className="w-3 h-3" />
           Delete
@@ -486,7 +483,7 @@ export function SprayEventActions({
       >
         <div className="space-y-4 mt-1 max-h-[60vh] overflow-y-auto">
           <div className="flex gap-2">
-            <div className="flex-1 space-y-1.5">
+            <div className="flex-1 space-y-2">
               <Label className="text-xs font-medium text-muted-foreground">Date</Label>
               <Input
                 type="date"
@@ -495,7 +492,7 @@ export function SprayEventActions({
                 className="rounded-lg"
               />
             </div>
-            <div className="w-28 space-y-1.5">
+            <div className="w-28 space-y-2">
               <Label className="text-xs font-medium text-muted-foreground">Volume (gal)</Label>
               <Input
                 type="number"
@@ -527,7 +524,7 @@ export function SprayEventActions({
             onUnitChange={(pid, val) => setForm({ ...form, units: { ...form.units, [pid]: val } })}
           />
 
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label className="text-xs font-medium text-muted-foreground">Crops</Label>
             <CropChips
               crops={allCrops}
@@ -544,7 +541,7 @@ export function SprayEventActions({
             />
           </div>
 
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label className="text-xs font-medium text-muted-foreground">Notes</Label>
             <Textarea
               value={form.notes}

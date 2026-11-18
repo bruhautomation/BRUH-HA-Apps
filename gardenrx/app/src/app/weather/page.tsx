@@ -14,6 +14,8 @@ import { RatingPill } from '@/components/status';
 import { SprayWindow3Day } from '@/components/today/spray-window-3day';
 import { RainTracker } from '@/components/rain-tracker';
 import { Wind, Droplets, CloudRain, Thermometer, Sprout } from 'lucide-react';
+import { PageShell } from '@/components/ui/page-shell';
+import { SectionHeader } from '@/components/ui/section-header';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,12 +42,9 @@ export default async function WeatherPage() {
   ]);
   if (!weather) {
     return (
-      <div className="page">
-        <div className="section-title">
-          <h2>Weather</h2>
-        </div>
+      <PageShell title="Weather">
         <div className="card panel text-center text-ink-3">Weather is unavailable right now.</div>
-      </div>
+      </PageShell>
     );
   }
 
@@ -84,12 +83,7 @@ export default async function WeatherPage() {
   const goodNow = rating === 'EXCELLENT' || rating === 'GOOD';
 
   return (
-    <div className="page animate-stagger">
-      <div className="section-title">
-        <h2>Weather</h2>
-        <span className="meta">Home orchard · Zone 7b</span>
-      </div>
-
+    <PageShell stagger title="Weather" meta="Home orchard · Zone 7b">
       {/* spray-window recommendation */}
       <div className="window-rec">
         <div className="wr-ico">
@@ -120,9 +114,9 @@ export default async function WeatherPage() {
         {/* conditions now */}
         <div className="card panel">
           <div className="mb-3 flex items-center gap-3">
-            <div className="text-4xl">{wxEmoji(current.weatherCode)}</div>
+            <div className="text-(length:--fs-display)">{wxEmoji(current.weatherCode)}</div>
             <div>
-              <div className="font-display text-3xl font-semibold leading-none">
+              <div className="font-display text-2xl font-semibold leading-none">
                 {Math.round(current.temp)}°
               </div>
               <div className="text-sm text-ink-3">{current.description}</div>
@@ -131,7 +125,7 @@ export default async function WeatherPage() {
               <RatingPill rating={rating} />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-px overflow-hidden rounded-[var(--r-md)] bg-line">
+          <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md bg-line">
             <Metric
               icon={<Wind className="size-3.5" />}
               k="Wind"
@@ -157,78 +151,77 @@ export default async function WeatherPage() {
 
         {/* 3-day spray window */}
         <div className="card panel">
-          <div className="panel-h">
-            <Sprout className="size-[18px] text-leaf" />
-            <h3>3-day spray window</h3>
-          </div>
+          <SectionHeader
+            inCard
+            icon={<Sprout className="size-4 text-leaf" />}
+            title="3-day spray window"
+          />
           <SprayWindow3Day hourly={hourly} daily={daily} />
         </div>
       </div>
 
       {/* forecast strip */}
-      <div className="section-title">
-        <h2>7-day forecast</h2>
-      </div>
-      <div
-        className="forecast-strip"
-        style={{ ['--fc-cols' as string]: Math.min(7, daily.length) }}
-      >
-        {daily.slice(0, 7).map((d, i) => {
-          const win = dayWindows.get(d.date);
-          const chip = !sprayDue
-            ? null
-            : win
-              ? win.hours < SHORT_SPRAY_WINDOW_HOURS
-                ? { cls: 'ok', txt: `Short ${win.label}` }
-                : { cls: 'good', txt: `Spray ${win.label}` }
-              : forecastDates.has(d.date)
-                ? { cls: 'no', txt: 'Hold' }
-                : null;
-          return (
-            <div key={d.date} className={`fc-day${i === 0 ? ' today' : ''}`}>
-              <div className="fc-dow">
-                {i === 0
-                  ? 'Today'
-                  : new Date(d.date + 'T12:00:00').toLocaleDateString('en-US', {
-                      weekday: 'short',
-                    })}
+      <section className="sec">
+        <SectionHeader title="7-day forecast" />
+        <div
+          className="forecast-strip"
+          style={{ ['--fc-cols' as string]: Math.min(7, daily.length) }}
+        >
+          {daily.slice(0, 7).map((d, i) => {
+            const win = dayWindows.get(d.date);
+            const chip = !sprayDue
+              ? null
+              : win
+                ? win.hours < SHORT_SPRAY_WINDOW_HOURS
+                  ? { cls: 'ok', txt: `Short ${win.label}` }
+                  : { cls: 'good', txt: `Spray ${win.label}` }
+                : forecastDates.has(d.date)
+                  ? { cls: 'no', txt: 'Hold' }
+                  : null;
+            return (
+              <div key={d.date} className={`fc-day${i === 0 ? ' today' : ''}`}>
+                <div className="fc-dow">
+                  {i === 0
+                    ? 'Today'
+                    : new Date(d.date + 'T12:00:00').toLocaleDateString('en-US', {
+                        weekday: 'short',
+                      })}
+                </div>
+                <div className="fc-date">
+                  {new Date(d.date + 'T12:00:00').toLocaleDateString('en-US', {
+                    month: 'numeric',
+                    day: 'numeric',
+                  })}
+                </div>
+                <div className="fc-ico">{wxEmoji(d.weatherCode)}</div>
+                <div className="fc-hi">{Math.round(d.tempHigh)}°</div>
+                <div className="fc-lo">{Math.round(d.tempLow)}°</div>
+                {d.precipSum > 0.01 && <div className="fc-rain">{d.precipSum.toFixed(2)}″</div>}
+                {chip && <div className={`fc-spray ${chip.cls}`}>{chip.txt}</div>}
               </div>
-              <div className="fc-date">
-                {new Date(d.date + 'T12:00:00').toLocaleDateString('en-US', {
-                  month: 'numeric',
-                  day: 'numeric',
-                })}
-              </div>
-              <div className="fc-ico">{wxEmoji(d.weatherCode)}</div>
-              <div className="fc-hi">{Math.round(d.tempHigh)}°</div>
-              <div className="fc-lo">{Math.round(d.tempLow)}°</div>
-              {d.precipSum > 0.01 && <div className="fc-rain">{d.precipSum.toFixed(2)}″</div>}
-              {chip && <div className={`fc-spray ${chip.cls}`}>{chip.txt}</div>}
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      </section>
 
       {/* rainfall */}
       {rainSummary && (
-        <div className="mt-[var(--gap)]">
-          <RainTracker
-            daily={rainDaily}
-            summary={rainSummary}
-            avgHighF={avgHigh7}
-            humidityPct={current.humidity}
-            dormant={dormant}
-          />
-        </div>
+        <RainTracker
+          daily={rainDaily}
+          summary={rainSummary}
+          avgHighF={avgHigh7}
+          humidityPct={current.humidity}
+          dormant={dormant}
+        />
       )}
-    </div>
+    </PageShell>
   );
 }
 
 function Metric({ icon, k, v }: { icon: React.ReactNode; k: string; v: string }) {
   return (
-    <div className="bg-card px-3.5 py-2.5">
-      <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-3">
+    <div className="bg-card px-4 py-3">
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.05em] text-ink-3">
         {icon} {k}
       </div>
       <div className="mono mt-0.5 text-base font-semibold">{v}</div>

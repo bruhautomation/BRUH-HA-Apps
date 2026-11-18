@@ -1,7 +1,7 @@
 """Constants for the GardenRX integration."""
 
 DOMAIN = "gardenrx"
-VERSION = "0.1.13"
+VERSION = "0.2.0"
 
 CONF_HOST = "host"
 CONF_PORT = "port"

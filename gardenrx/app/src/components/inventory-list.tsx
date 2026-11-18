@@ -128,7 +128,7 @@ function StockSlider({
       </div>
       <span className={`text-xs font-semibold tabular-nums shrink-0 ${pctColor}`}>
         {disabled ? '—' : `${Math.round(shown)}%`}
-        <span className="text-[9px] font-normal text-muted-foreground/50 ml-0.5">left</span>
+        <span className="text-xs font-normal text-muted-foreground/50 ml-0.5">left</span>
       </span>
     </div>
   );
@@ -348,7 +348,7 @@ export function InventoryList({
   }
 
   const numCls =
-    'w-24 h-10 text-right text-base tabular-nums rounded-md ring-1 ring-border/50 bg-card px-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-400/50';
+    'w-24 h-10 text-right text-base tabular-nums rounded-md ring-1 ring-border/50 bg-card px-2 focus:outline-none focus:ring-2 focus:ring-emerald-400/50';
   const unitCls =
     'h-10 text-base rounded-md ring-1 ring-border/50 bg-card pl-1 pr-0.5 focus:outline-none';
   const lblCls = 'text-xs font-medium text-muted-foreground';
@@ -366,13 +366,13 @@ export function InventoryList({
         className={`rounded-xl bg-card ring-1 ring-black/[0.05] shadow-sm p-3 transition-opacity ${dimmed ? 'opacity-55 hover:opacity-100' : ''}`}
       >
         {/* header: product + reorder/remove */}
-        <div className="flex items-center gap-2.5 mb-2">
+        <div className="flex items-center gap-3 mb-2">
           <ProductAvatar
             productId={product.id}
             type={avatarType(product.id)}
             brand={product.brand}
             imageUrl={product.image_url}
-            className="w-9 h-9 shrink-0"
+            className="w-10 h-10 shrink-0"
             iconClassName="w-4 h-4"
             rounded="rounded-md"
           />
@@ -419,7 +419,7 @@ export function InventoryList({
           <div className="mt-3 flex flex-col gap-3 border-t border-border/40 pt-3">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
               <label
-                className="flex items-center gap-1.5"
+                className="flex items-center gap-2"
                 title={`Full size of one ${noun} (what you bought)`}
               >
                 <span className={lblCls}>{cap(noun)} size</span>
@@ -447,7 +447,7 @@ export function InventoryList({
                 </select>
               </label>
               <label
-                className="flex items-center gap-1.5"
+                className="flex items-center gap-2"
                 title={`How many ${containerNoun(form, 2)} you keep on hand (the level bar measures across all of them)`}
               >
                 <span className={lblCls}>{cap(containerNoun(form, 2))}</span>
@@ -460,7 +460,7 @@ export function InventoryList({
                   className={numCls}
                 />
               </label>
-              <label className="flex items-center gap-1.5">
+              <label className="flex items-center gap-2">
                 <span
                   className={lblCls}
                   title={`Price for ONE ${noun} (not your total). Drives spray-cost math across the app.`}
@@ -472,7 +472,7 @@ export function InventoryList({
                   onCommit={(v) => updateField(inv.id, 'cost_dollars', v)}
                   placeholder="—"
                   prefix="$"
-                  className="w-24 h-10 text-right text-base tabular-nums rounded-md ring-1 ring-border/50 bg-card px-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+                  className="w-24 h-10 text-right text-base tabular-nums rounded-md ring-1 ring-border/50 bg-card px-2 focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
                 />
               </label>
             </div>
@@ -484,7 +484,7 @@ export function InventoryList({
                   return (
                     <span
                       key={a}
-                      className={`inline-flex items-center gap-1 rounded-full text-xs font-medium px-2.5 py-1 ring-1 ${AREA_STYLE[a].badge}`}
+                      className={`inline-flex items-center gap-1 rounded-full text-xs font-medium px-3 py-1 ring-1 ${AREA_STYLE[a].badge}`}
                     >
                       <Icon className="w-3 h-3" />
                       {a}
@@ -502,7 +502,7 @@ export function InventoryList({
                   }
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex h-10 items-center gap-1.5 rounded-full px-3 text-sm font-medium text-leaf ring-1 ring-border/60"
+                  className="inline-flex h-10 items-center gap-2 rounded-full px-3 text-sm font-medium text-leaf ring-1 ring-border/60"
                 >
                   <ExternalLink className="w-4 h-4" /> Reorder · $
                   {Number(product.price_dollars).toFixed(2)}
@@ -510,7 +510,7 @@ export function InventoryList({
               )}
               <button
                 onClick={() => removeFromInventory(inv.id)}
-                className="inline-flex h-10 items-center gap-1.5 rounded-full px-3 text-sm font-medium text-terra-600 ring-1 ring-border/60"
+                className="inline-flex h-10 items-center gap-2 rounded-full px-3 text-sm font-medium text-terra-600 ring-1 ring-border/60"
               >
                 <Trash2 className="w-4 h-4" /> Remove from stock
               </button>
@@ -531,7 +531,7 @@ export function InventoryList({
           placeholder="Add a product to your stock..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full h-11 pl-9 pr-11 text-base rounded-xl ring-1 ring-black/[0.06] bg-card shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+          className="w-full h-10 pl-9 pr-11 text-base rounded-xl ring-1 ring-black/[0.06] bg-card shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
         />
         {search && (
           <button
@@ -551,21 +551,21 @@ export function InventoryList({
               key={p.id}
               onClick={() => addToInventory(p.id)}
               disabled={saving}
-              className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-emerald-50/50 transition-colors"
+              className="w-full flex items-center gap-3 px-3 py-3 text-left hover:bg-emerald-50/50 transition-colors"
             >
               <ProductAvatar
                 productId={p.id}
                 type={avatarType(p.id)}
                 brand={p.brand}
                 imageUrl={p.image_url}
-                className="w-9 h-9"
+                className="w-10 h-10"
                 iconClassName="w-4 h-4"
                 rounded="rounded-lg"
               />
               <div className="min-w-0 flex-1">
                 <span className="font-medium text-sm truncate block">{p.brand}</span>
                 {aiNames(p.id) && (
-                  <span className="text-[11px] text-muted-foreground truncate block">
+                  <span className="text-xs text-muted-foreground truncate block">
                     {aiNames(p.id)}
                   </span>
                 )}
@@ -584,10 +584,10 @@ export function InventoryList({
       {/* Filter + sort controls */}
       {inStock.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={() => setAreaFilter(null)}
-              className={`min-h-10 text-[13px] font-medium px-3 rounded-full ring-1 transition-all ${
+              className={`min-h-10 text-sm font-medium px-3 rounded-full ring-1 transition-all ${
                 !areaFilter
                   ? 'bg-foreground text-card ring-foreground shadow-sm'
                   : 'bg-card text-muted-foreground ring-border/60 hover:ring-border'
@@ -603,7 +603,7 @@ export function InventoryList({
                 <button
                   key={a}
                   onClick={() => setAreaFilter(active ? null : a)}
-                  className={`inline-flex min-h-10 items-center gap-1 text-[13px] font-medium px-3 rounded-full ring-1 transition-all ${
+                  className={`inline-flex min-h-10 items-center gap-1 text-sm font-medium px-3 rounded-full ring-1 transition-all ${
                     active
                       ? AREA_STYLE[a].chip
                       : 'bg-card text-muted-foreground ring-border/60 hover:ring-border'
@@ -621,7 +621,7 @@ export function InventoryList({
               <button
                 key={k}
                 onClick={() => setSortBy(k)}
-                className={`min-h-10 text-[13px] font-medium px-2.5 rounded-md transition-colors ${
+                className={`min-h-10 text-sm font-medium px-3 rounded-md transition-colors ${
                   sortBy === k
                     ? 'bg-emerald-100 text-emerald-800'
                     : 'text-muted-foreground hover:text-foreground'
@@ -661,7 +661,7 @@ export function InventoryList({
             <>
               <div className="flex items-center gap-2 mt-5 mb-2">
                 <div className="h-px flex-1 bg-border/50" />
-                <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/50">
+                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground/50">
                   Not used in {areaFilter}
                 </span>
                 <div className="h-px flex-1 bg-border/50" />
@@ -672,7 +672,7 @@ export function InventoryList({
             </>
           )}
 
-          <p className="text-[10px] text-muted-foreground/50 px-1 py-1.5">
+          <p className="text-xs text-muted-foreground/50 px-1 py-2">
             Drag the level bar to set how much is left; tap the pencil to edit size, count and cost.{' '}
             {inStock.length} {inStock.length === 1 ? 'product' : 'products'} in stock.
           </p>

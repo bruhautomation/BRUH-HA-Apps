@@ -49,15 +49,15 @@ export function HarvestStatusCards({
   // Nothing to pick, hold or watch: one line instead of three cards of 0.
   if (doNotHarvest.length + ready.length + developing.length === 0)
     return (
-      <p className="mb-[var(--gap)] text-[14px] text-ink-3">
+      <p className="text-sm text-ink-3">
         Nothing to pick or hold right now · {offSeason} {offSeason === 1 ? 'crop' : 'crops'} off
         season
       </p>
     );
 
   return (
-    <div className="mb-[var(--gap)]">
-      <div className="grid gap-[var(--gap)] sm:grid-cols-3">
+    <div className="stack">
+      <div className="grid gap-3 sm:grid-cols-3">
         {CARDS.map(({ key, label, color, Icon, sub }) => {
           const list = lists[key === 'dev' ? 'developing' : key];
           const isOpen = open === key;
@@ -87,7 +87,7 @@ export function HarvestStatusCards({
               {isOpen && (
                 <div className="hv-expand card panel">
                   {list.length === 0 ? (
-                    <div className="py-2 text-center text-[13px] text-ink-3">No crops here.</div>
+                    <div className="py-2 text-center text-sm text-ink-3">No crops here.</div>
                   ) : (
                     <div className="row-list !border-0 !shadow-none">
                       {list.map((c) => (
@@ -95,7 +95,7 @@ export function HarvestStatusCards({
                           <CropAvatar name={c.name} group={c.group} size={32} />
                           <div className="ri-body">
                             <div className="ri-name">{c.name}</div>
-                            <div className="text-[11px] text-ink-3">{c.note}</div>
+                            <div className="text-xs text-ink-3">{c.note}</div>
                           </div>
                           <ChevronDown className="size-4 shrink-0 -rotate-90 text-ink-3" />
                         </Link>
@@ -109,7 +109,7 @@ export function HarvestStatusCards({
         })}
       </div>
       {offSeason > 0 && (
-        <p className="mt-2 text-[13px] text-ink-3">
+        <p className="text-sm text-ink-3">
           {offSeason} {offSeason === 1 ? 'crop is' : 'crops are'} off season (dormant or past
           harvest, as on Crops) and not counted above.
         </p>
