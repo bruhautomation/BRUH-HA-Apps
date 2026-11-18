@@ -520,7 +520,7 @@ def _check_written(source: str) -> bool:
     """A check's row whose words the display pass may say plainly."""
     source = str(source or "")
     return (source.startswith("check:") and source not in PLAIN_EXEMPT_CHECKS
-            and not source.startswith("check:safety."))
+            and not source.startswith(("check:safety.", "check:sec.")))
 
 
 def _model_written(source: str) -> bool:
@@ -998,14 +998,17 @@ def _names_itself(reason, entry: dict) -> bool:
     return False
 
 
-def _plainly(text, entry: dict, files: bool = True) -> str:
+def _plainly(text, entry: dict, files: bool = True,
+             figures: bool = True) -> str:
     """`house_words.said_plainly` with the panel's names map, read only
     when the text holds something to name."""
-    if not isinstance(text, str) or not house_words.lint(text, files):
+    if (not isinstance(text, str)
+            or not house_words.lint(text, files, figures=figures)):
         return text
     return house_words.said_plainly(
         text, _names_now(), files=files,
-        known=clean_technical((entry or {}).get("technical")))
+        known=clean_technical((entry or {}).get("technical")),
+        figures=figures)
 
 
 def shown_words(entry: dict) -> dict:
@@ -1029,11 +1032,16 @@ def shown_words(entry: dict) -> dict:
         said = entry.get(key)
         if isinstance(said, str) and said:
             if checked:
-                plain_said = _plainly(said, entry)
+                # A measurement keeps its figure and unit (figures=False):
+                # a check's own numbers are what the row is about.
+                plain_said = _plainly(said, entry, figures=False)
+                if plain_said != said:
+                    plain_said = textclip.finished(plain_said,
+                                                   step=key == "fix")
                 if plain_said != said and (plain_said
                                            or key not in ("text", "fix")):
                     out[key] = plain_said
-                    for token in house_words.lint(said):
+                    for token in house_words.lint(said, figures=False):
                         if token not in technical:
                             technical.append(token)
                     continue

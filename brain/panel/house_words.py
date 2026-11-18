@@ -861,7 +861,7 @@ _FILE_RE = re.compile(
     + r")" + _LINE, re.I)
 _HEX_RE = re.compile(
     r"\s*\(\s*0x[0-9a-f]{1,16}\s*\)"
-    r"|\b(?:(?:an?\s+)?(?:error|fault|status|result)\s+)?(?:code\s+)?"
+    r"|\b(?:(?:an?\s+)?(?:error|fault|status|result)\s+(?:code\s+)?|code\s+)"
     r"0x[0-9a-f]{1,16}\b", re.I)
 # A pre-release marker ("-rc3") is kept as words: "2.4.1-rc3_build77" is a
 # test build OF 2.4.1, and saying "2.4.1" would name a release the device
@@ -1019,7 +1019,8 @@ def code_words(token: str, names: Mapping | None = None) -> str:
 
 
 def technical(text: str, files: bool = True,
-              names: Mapping | None = None) -> tuple[str, list[str]]:
+              names: Mapping | None = None,
+              figures: bool = True) -> tuple[str, list[str]]:
     """``(text, found)``: ``text`` with the strings only a developer reads
     taken out of the sentence, and those strings. Text with none comes back
     exactly as it was, with an empty list. ``files=False`` leaves a file's
@@ -1034,6 +1035,14 @@ def technical(text: str, files: bool = True,
         token = token.strip().strip("`").strip()
         if token and token not in found:
             found.append(token)
+
+    def file_words(m: re.Match) -> str:
+        keep(m.group(0))
+        lead = m.group(0)[:len(m.group(0)) - len(m.group(0).lstrip())]
+        ext = re.search(r"\.(\w+)(?::\d+)?\s*$", m.group(0).strip())
+        kind = {"db": "database", "log": "log"}.get(
+            ext.group(1).lower() if ext else "", "configuration")
+        return f"{lead}a {kind} file"
 
     def swap(words: str):
         def sub(m: re.Match) -> str:
@@ -1093,14 +1102,15 @@ def technical(text: str, files: bool = True,
         out = _DATE_BUILD_RE.sub(dated, out)
         out = _VOICE_ASIDE_RE.sub(voice_aside, out)
         out = _VOICE_SAID_RE.sub(voice, out)
-        out = dbm_words(out, keep)
+        if figures:
+            out = dbm_words(out, keep)
         out = _HEX_RE.sub(hexcode, out)
         out = _MCP_RE.sub(swap("one of brAIn's tools"), out)
         tools = _tool_re()
         if tools is not None:
             out = tools.sub(swap("one of brAIn's tools"), out)
         if files:
-            out = _FILE_RE.sub(swap("a configuration file"), out)
+            out = _FILE_RE.sub(file_words, out)
         else:
             out = _PATH_RE.sub(swap("a configuration file"), out)
             out = _LINE_AT_RE.sub(swap(""), out)
@@ -1114,9 +1124,13 @@ def technical(text: str, files: bool = True,
     out = re.sub(r"\(\s*\)", "", out).strip()
     # "the x.py file" is "a configuration file", not "the a configuration
     # file file".
-    out = re.sub(r"\b(?:the|a|an|its|that)\s+(a configuration file)"
-                 r"(?:\s+file)?\b", r"\1", out, flags=re.I)
-    out = re.sub(r"\ba configuration file file\b", "a configuration file", out)
+    out = re.sub(r"\b(?:the|a|an|its|that)\s+(a (?:configuration|database|log) "
+                 r"file)(?:\s+file)?\b", r"\1", out, flags=re.I)
+    out = re.sub(r"\b(a (?:configuration|database|log) file) file\b", r"\1",
+                 out)
+    # "the recorder database x.db" is "the recorder database file".
+    out = re.sub(r"\b(database|log)\s+a (?:database|log) file\b", r"\1 file",
+                 out, flags=re.I)
     # "Code 0xFF failed" became "an error code failed": a sentence that
     # began with a capital still does.
     if text[:1].isupper() and out[:1].islower():
@@ -1206,7 +1220,15 @@ def ids(text: str, names: Mapping | None = None) -> tuple[str, list[str]]:
                 found.append(eid)
             before = out + text[pos:m.start()]
             after_at = m.end()
-            if eid in known:
+            if (eid in known and re.search(r"\(\s*$", before)
+                    and re.match(r"\s*\)", text[after_at:])
+                    and known[eid].lower() in re.sub(
+                        r"\s*\(\s*$", "", before)[-80:].lower()):
+                # "Front door lock (lock.front_door)": already named.
+                before = re.sub(r"\s*\(\s*$", "", before)
+                after_at += re.match(r"\s*\)", text[after_at:]).end()
+                said = ""
+            elif eid in known:
                 said = known[eid]
             elif re.search(r"\(\s*$", before) and re.match(r"\s*\)",
                                                           text[after_at:]):
@@ -1452,16 +1474,17 @@ def dbm_words(text: str, found=None) -> str:
 
 
 def said_plainly(text: str, names: Mapping | None = None, files: bool = True,
-                 known: list | tuple = ()) -> str:
+                 known: list | tuple = (), figures: bool = True) -> str:
     """``text`` as a surface shows it (#774, #791): developer strings out
     (`technical`), ids by name or kind (`ids`), the old "an internal name"
     repaired — after an article it simply goes ("the event"), and elsewhere
     it is the one code name the row kept in ``known`` (its Technical
     line), said in words — and then any sentence `lint` still flags is
     dropped. Text the lint finds nothing in comes back as it was."""
-    if not isinstance(text, str) or not text or not lint(text, files):
+    if (not isinstance(text, str) or not text
+            or not lint(text, files, figures=figures)):
         return text
-    out = technical(text, files, names)[0]
+    out = technical(text, files, names, figures=figures)[0]
     out = ids(out, names)[0]
     if _LEGACY_RE.search(out):
         out = _LEGACY_AFTER_ARTICLE_RE.sub(r"\1", out)
