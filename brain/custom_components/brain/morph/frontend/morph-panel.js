@@ -1675,11 +1675,11 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
       // row of its own kind: beside plain strips of its type it was a
       // row of two heights (the engine's §5 rule).
       const items = cards.map((c) => { const it = this.itemOf(c); return this.leadsWithReason(c.id) ? { ...it, hk: it.hk + ':lead' } : it; });
-      if (this.s.edit && gi === sec.groups.length - 1) items.push({ id: `add@${sec.id}@${gi}`, span: 2, grow: 2, dir: 'down', want: 6, hk: 'x:add' });
+      if (this.s.edit && gi === sec.groups.length - 1) items.push({ id: `add@${sec.id}@${gi}`, span: 2, grow: 2, dir: 'down', want: 6, hk: 'x:add', compact: true });
       if (!items.length) return; // a group that only carried title-row cards, or whose cards were lifted
       groups.push({ key: sec.id + ':' + gi, label: g.label || '', items });
     });
-    if (this.s.edit && !(sec.groups || []).length) groups.push({ key: sec.id + ':new', label: '', items: [{ id: `add@${sec.id}@0`, span: 2, grow: 2, dir: 'down', want: 6, hk: 'x:add' }] });
+    if (this.s.edit && !(sec.groups || []).length) groups.push({ key: sec.id + ':new', label: '', items: [{ id: `add@${sec.id}@0`, span: 2, grow: 2, dir: 'down', want: 6, hk: 'x:add', compact: true }] });
     sections.push({ id: sec.id, w: (sec.width || 2) * 2, floor: rank, floorId: fl.id, groups });
   }
 

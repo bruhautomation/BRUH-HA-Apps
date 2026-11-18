@@ -729,8 +729,8 @@ const CLIMATE_CSS = `<style>
 .cl-sq:hover{background:var(--chip);color:var(--text)}
 .cl-ctl{margin-top:12px;padding-top:8px;border-top:1px solid var(--line);container-type:inline-size}
 .cl-in{display:flex;flex-wrap:nowrap;align-items:center;gap:6px 0;white-space:nowrap}
-.cl-seg{display:inline-flex;gap:3px}
-.cl-seg button{position:relative;border:0;margin:0;font:inherit;font-size:13px;font-weight:600;color:var(--muted);background:color-mix(in oklab,var(--text) 5%,transparent);padding:0 8px;min-height:28px;border-radius:999px;white-space:nowrap;cursor:pointer;transition:background-color .2s ease,color .2s ease}
+.cl-seg{display:inline-flex;gap:4px}
+.cl-seg button{position:relative;border:0;margin:0;font:inherit;font-size:12px;font-weight:600;color:var(--muted);background:color-mix(in oklab,var(--text) 5%,transparent);padding:0 12px;min-height:var(--btn-h-sm);border-radius:999px;white-space:nowrap;cursor:pointer;transition:background-color .2s ease,color .2s ease}
 .cl-seg button:hover{color:var(--text);background:color-mix(in oklab,var(--text) 10%,transparent)}
 .cl-seg button::before{content:"";position:absolute;inset:-8px -1px}
 .cl-sq:focus-visible,.cl-seg button:focus-visible{outline:2px solid var(--sky);outline-offset:2px}

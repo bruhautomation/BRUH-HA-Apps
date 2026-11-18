@@ -125,9 +125,13 @@ export const LOCAL = `
 :host{display:block}
 :host([grid]){height:100%}
 ha-card{overflow:hidden;height:100%}
-.morph.mc{min-height:0;background:transparent;font-family:var(--ha-font-family-body,var(--primary-font-family,inherit));font-size:15px}
+.morph.mc{min-height:0;background:transparent;font-family:var(--ha-font-family-body,var(--primary-font-family,inherit));font-size:14px}
 .mc .mtile{position:relative;inset:auto;border-radius:0;background:transparent;outline:none}
 .mc .tc{position:relative}
+/* The card fills its cell, so a tint (a person's strip, a note) runs to the card's edges instead of stopping under the content; HA's own card draws the border and the radius. */
+ha-card>div,.morph.mc,.mc .mtile,.mc .tc,.mc .face{height:100%}
+.mc .face>.strip{height:100%;min-height:56px}
+.mc .note,.mc .notecard{border-radius:0;height:100%}
 :host([grid]) ha-card>div,:host([grid]) .morph.mc,:host([grid]) .mc .mtile{height:100%}
 :host([grid]) .mc .tc{height:100%;display:flex;flex-direction:column}
 :host([grid]) .mc .face{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
@@ -151,7 +155,7 @@ ha-card{overflow:hidden;height:100%}
 .mc[data-h="s"] .box>.row.small:last-child{display:none}
 :host([grid]) .mc .chart svg{max-height:none}
 .mc[data-h="s"] .box>svg:last-child,.mc[data-h="s"] .box>.cols:last-child{min-height:8px}
-.mc[data-h="xs"] .box{flex-direction:row;align-items:center;gap:10px;padding:0 14px}
+.mc[data-h="xs"] .box{flex-direction:row;align-items:center;gap:12px;padding:0 16px}
 .mc[data-h="xs"] .box>*:not(:first-child):not(.rowb){display:none}
 .mc[data-h="xs"] .box>:first-child{flex:1 1 auto;min-width:0}
 .mc[data-h="xs"] .box>.rowb{flex:0 0 auto}
@@ -161,10 +165,10 @@ ha-card{overflow:hidden;height:100%}
 .mc .mcicon{flex-shrink:0;display:inline-flex}
 .mc .mcdetail:empty{display:none}
 .mc .strip,.mc .box,.mc .camtile{box-shadow:none!important;border-radius:0}
-.mc .more{padding:4px 14px 14px}
+.mc .more{padding:4px 16px 16px}
 .mc .hint{display:none}
-.mc .moreinfo{display:flex;gap:0 18px;flex-wrap:wrap;margin-top:6px}
-.mc .mcerr{padding:14px 16px}
+.mc .moreinfo{display:flex;gap:0 16px;flex-wrap:wrap;margin-top:8px}
+.mc .mcerr{padding:16px}
 `;
 
 let SHEET = null;

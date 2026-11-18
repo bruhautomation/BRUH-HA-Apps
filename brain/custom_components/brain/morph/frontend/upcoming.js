@@ -630,7 +630,8 @@ function editHtml(m) {
     const on = kk.color === `var(--${p})`;
     return `<button type="button" class="cu-sw${on ? ' on' : ''}" data-act="upc-color" data-v="${esc(kk.id + '|' + p)}" aria-pressed="${on}" aria-label="${esc(kk.label)} ${p}" style="--c:var(--${p})"></button>`;
   }).join('')}</span>`).join('')}${Object.keys(picked).length ? '<button type="button" class="cu-key" data-act="upc-color" data-v="reset">Reset</button>' : ''}</div>` : '';
-  return `<div class="cu-keys"><button type="button" class="cu-key" data-act="upc-paint" aria-expanded="${painting}">Colors</button></div>${pal}`;
+  // The word is in the strip's own header, beside its zoom and fold marks; the swatches open under it.
+  return `<button type="button" class="cu-key cu-colors" data-act="upc-paint" aria-expanded="${painting}">Colors</button>${pal}`;
 }
 
 const KEY_CSS = `<style>
@@ -643,6 +644,7 @@ const KEY_CSS = `<style>
 .cu .cu-ln:focus-visible{outline:2px solid var(--sky);outline-offset:2px;border-radius:6px}
 .cu-axis{position:absolute;left:0;right:0;bottom:0;height:22px;cursor:ew-resize}
 .cu-zb{position:absolute;right:36px;top:7px;z-index:3;display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 6px;border:0;border-radius:11px;background:none;color:var(--quiet);font:600 12px/1 'Manrope',sans-serif;font-variant-numeric:tabular-nums;cursor:pointer;transition:color .2s ease,background-color .2s ease}
+.cu-colors{position:absolute;top:2px;right:84px;z-index:3;min-height:var(--btn-h-sm);padding:0 8px}.cu:has(.cu-colors) .cu-what{right:148px}
 .cu-zb:hover{color:var(--text)}.cu-zb.on{color:var(--text);background:color-mix(in oklab,var(--text) 8%,transparent)}
 .cu-zb::before{content:"";position:absolute;inset:-5px -4px}.cu-zb.solo{right:0}
 .cu-back{right:44px!important}
