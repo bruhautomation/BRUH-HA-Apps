@@ -111,11 +111,19 @@ const css = (morph) => `
     --b-surface: ${morph ? 'var(--surface)' : 'var(--ha-card-background, var(--card-background-color, #fff))'};
     --b-sunk: ${morph ? 'var(--sunk)' : 'var(--secondary-background-color, #f1f3f5)'};
     --b-text: ${morph ? 'var(--text)' : 'var(--primary-text-color, #14202b)'};
-    --b-muted: ${morph ? 'var(--muted)' : 'var(--secondary-text-color, #5b6b79)'};
+    --b-muted: ${morph ? 'var(--muted)' : 'color-mix(in srgb, var(--secondary-text-color, #5b6b79) 45%, var(--primary-text-color, #14202b))'};
     --b-line: ${morph ? 'var(--line)' : 'var(--divider-color, #d9e0e6)'};
     --b-accent: ${morph ? 'var(--sky)' : 'var(--primary-color, #1e9fe0)'};
     --b-live: ${morph ? 'var(--lime)' : 'var(--success-color, #1f9d55)'};
     --b-bad: ${morph ? 'var(--rose)' : 'var(--error-color, #c62828)'};
+    /* Text in the error colour, and the filled button's fill. HA's own grey
+       and red are tuned for large headings, not 12-14px text, and white on
+       its default blue #03a9f4 is 2.63:1. The fill is the theme's primary
+       pulled 28% toward black (white on it: 5.0:1); the text is the error
+       colour pulled toward the reading colour. Same formula as the BRUH
+       Print and GardenRX cards. */
+    --b-fill: ${morph ? 'var(--sky)' : 'color-mix(in srgb, var(--primary-color, #03a9f4) 72%, #000)'};
+    --b-bad-text: ${morph ? 'var(--rose)' : 'color-mix(in srgb, var(--error-color, #c62828) 70%, var(--primary-text-color, #14202b))'};
     --b-warn: #c77700;
     font-family: ${morph ? "'Manrope', sans-serif" : 'inherit'}; color: var(--b-text); }
   .wrap { padding: ${morph ? '4px 2px' : '16px'}; display: grid; gap: 12px; }
@@ -128,7 +136,7 @@ const css = (morph) => `
   .state i { width: 8px; height: 8px; border-radius: 50%; background: var(--b-muted); }
   .state.live i { background: var(--b-live); }
   .state.warn i { background: var(--b-warn); }
-  .state.bad { color: var(--b-bad); }
+  .state.bad { color: var(--b-bad-text); }
   .state.bad i { background: var(--b-bad); }
   /* The picture at a size a dashboard can carry, in the stream's own shape. */
   .cam { position: relative; aspect-ratio: 16 / 9; width: min(100%, 320px); justify-self: center;
@@ -156,8 +164,8 @@ const css = (morph) => `
   button, select { font: inherit; font-size: 14px; font-weight: 600; min-height: 44px; padding: 0 16px;
     border-radius: 8px; border: 1px solid var(--b-line); background: var(--b-surface);
     color: var(--b-text); cursor: pointer; }
-  button.primary { background: var(--b-accent); border-color: var(--b-accent); color: ${morph ? '#fff' : 'var(--text-primary-color, #fff)'}; }
-  button.danger { color: var(--b-bad); }
+  button.primary { background: var(--b-fill); border-color: var(--b-fill); color: #fff; }
+  button.danger { color: var(--b-bad-text); }
   button.armed { background: var(--b-bad); border-color: var(--b-bad); color: #fff; }
   button.more { width: 44px; padding: 0; border-color: transparent; background: transparent;
     font-size: 20px; line-height: 1; color: var(--b-muted); }
@@ -168,7 +176,7 @@ const css = (morph) => `
   .drawer > div { min-height: 0; overflow: hidden; display: grid; gap: 8px; }
   .drawer.shut > div { visibility: hidden; }
   .drawer:not(.shut) { grid-template-rows: 1fr; padding: 8px 0 2px; border-top: 1px solid var(--b-line); }
-  .err { color: var(--b-bad); font-size: 12px; }
+  .err { color: var(--b-bad-text); font-size: 12px; }
   .empty { color: var(--b-muted); }
   .watch { display: grid; gap: 6px; padding: 8px 12px; border-radius: 8px; background: var(--b-sunk); font-size: 14px; }
   .watch.quiet { padding: 0; background: none; color: var(--b-muted); }
