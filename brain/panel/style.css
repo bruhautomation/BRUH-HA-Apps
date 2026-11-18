@@ -2796,14 +2796,6 @@ body.kb-lift:not(.term-classic) #viewTerminal.active {
 @media (max-width: 899.98px) {
   body:not(.term-classic) .chatrail .crnewchat { display: flex; }
 }
-/* A bar pinned to the foot of the page, which the UI audit reads as a bar
-   (sticky is the pin it knows). The list above ends at its top edge and
-   clips there, but a row scrolled half under that edge still answers a box
-   that runs on beneath the bar, and the audit reported every such row and
-   its ⋯ as lying on the message box and Send. Pinned, the box is measured
-   as what it is: the bar the list scrolls up to. Where it sits does not
-   change: it is the last child and already at the bottom. */
-.chatrail .crnewchat { position: sticky; bottom: 0; }
 .chathead .btn.icon { width: 44px; height: 44px; flex: none; }
 .chathead .chtitle {
   flex: 1;
