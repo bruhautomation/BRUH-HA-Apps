@@ -1059,6 +1059,13 @@ async def collect(now: float | None = None) -> dict:
         snap["faulty"] = corrections.known_faulty(now)
     except Exception as exc:  # noqa: BLE001
         log.debug("could not read the devices said to be finished: %s", exc)
+    # Stricter: the sensors the owner said, about that sensor alone, are
+    # broken (`House.said_broken`: the freeze check and the heat model).
+    try:
+        import corrections  # noqa: PLC0415
+        snap["said_broken"] = corrections.sensor_said_broken(now)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not read the sensors said to be broken: %s", exc)
 
     # What each entity IS (`world_model`): the readings whose fingerprint
     # still matches the registry this pass fetched. Read, never built —

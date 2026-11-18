@@ -303,9 +303,11 @@ NOT_COOLING = ("it did not cool faster on colder nights: something heats it "
 # What `unmeasured[eid]["kind"]` says, for the readers that must know a
 # thermometer is not a room's air (`checks._util.House.room_air_verdict`):
 # `marked` the owner said so, `not_air` it is a machine's, outdoors or a
-# derived figure, `held` something keeps it warm at night. A reason with no
+# derived figure, `held` something keeps it warm at night, `broken` the
+# owner called it broken (read live by the checks off their answer, never
+# off this store, so an answer taken back counts at once). A reason with no
 # kind (too few nights, no reading) is no verdict about the air.
-UNMEASURED_KINDS = ("marked", "not_air", "held")
+UNMEASURED_KINDS = ("marked", "not_air", "held", "broken")
 
 
 def fit_loss_why(points: list[tuple[float, float]]) -> tuple[dict | None, str]:
@@ -1235,7 +1237,8 @@ def room_candidates(states: dict, outdoor: str, unit: str,
 
 def room_candidates_why(states: dict, outdoor: str, unit: str,
                         areas: dict | None = None, world=None,
-                        marked=frozenset(), kinds: dict | None = None
+                        marked=frozenset(), kinds: dict | None = None,
+                        broken: dict | None = None
                         ) -> tuple[list[str], dict[str, str]]:
     """`room_candidates`, and why each thermometer IN A ROOM was left out.
 
@@ -1245,11 +1248,13 @@ def room_candidates_why(states: dict, outdoor: str, unit: str,
     with no area, or one in the garden, is not a room to explain.
 
     ``marked`` are the sensors the owner said do not measure the room's
-    air (`exception:room_air`); ``kinds``, when handed a dict, is filled
+    air (`exception:room_air`); ``broken`` the ones the owner called
+    broken (`said_broken`); ``kinds``, when handed a dict, is filled
     with `UNMEASURED_KINDS` for the ones left out for what they ARE.
     """
     areas = areas or {}
     kinds = {} if kinds is None else kinds
+    broken = broken or {}
     out = []
     why: dict[str, str] = {}
     for eid, st, own in _temperature_sensors(states):
@@ -1260,6 +1265,12 @@ def room_candidates_why(states: dict, outdoor: str, unit: str,
             if room:
                 why[eid] = "you said it does not measure the room's air"
                 kinds[eid] = "marked"
+            continue
+        if eid in broken:
+            if room:
+                why[eid] = ("you said this sensor is broken, so the room "
+                            "is not measured from it")
+                kinds[eid] = "broken"
             continue
         if _looks_outdoor(eid, st, world):
             if room:
@@ -1457,6 +1468,36 @@ def marked_not_air() -> frozenset:
         return frozenset()
 
 
+def said_broken(states: dict, registries: dict | None = None,
+                said: dict | None = None) -> dict[str, str]:
+    """``{entity_id: the owner's words}`` for every thermometer here the
+    owner said is broken (#1202), read through the same `House.said_broken`
+    the checks read — the owner's answer about that sensor alone
+    (`corrections.sensor_said_broken`) under the room-air mark's floors.
+    Unreadable is none: the checks read the same answer live."""
+    try:
+        import corrections  # noqa: PLC0415 — panel-local
+        from checks._util import House  # noqa: PLC0415
+        said = corrections.sensor_said_broken() if said is None else said
+        if not said:
+            return {}
+        registries = registries or {}
+        house = House({"states": states,
+                       "entities": registries.get("entities") or [],
+                       "devices": registries.get("devices") or [],
+                       "said_broken": said,
+                       "corrections": {"never": corrections.never_table()}})
+        out = {}
+        for eid, _st, _unit in _temperature_sensors(states):
+            words = house.said_broken(eid)
+            if words:
+                out[eid] = words
+        return out
+    except Exception as exc:  # noqa: BLE001
+        log.debug("thermal: could not read the sensors called broken: %s", exc)
+        return {}
+
+
 async def build(session, states: dict, registries: dict | None = None,
                 now: float | None = None, path: str | None = None,
                 world: dict | None = None) -> dict:
@@ -1489,7 +1530,13 @@ async def build(session, states: dict, registries: dict | None = None,
     except Exception as exc:  # noqa: BLE001 — a choice nobody could read
         # is a choice not made, which is the ranked pick.
         log.debug("thermal: could not read the outdoor choice: %s", exc)
-    choice = choose_outdoor(states, areas,
+    # A thermometer the owner called broken (#1202) is no input to the
+    # model: not a room, and not the outdoor reference brAIn picks itself
+    # (one chosen by name in the settings is still the owner's choice).
+    broken = said_broken(states, registries)
+    ref_states = {eid: st for eid, st in states.items()
+                  if eid not in broken or eid == override}
+    choice = choose_outdoor(ref_states, areas,
                             (registries or {}).get("entities"), override,
                             world=world)
     outdoor, unit = choice["entity_id"], choice["unit"]
@@ -1512,7 +1559,8 @@ async def build(session, states: dict, registries: dict | None = None,
 
     kinds: dict[str, str] = {}
     ids, left_out = room_candidates_why(states, outdoor, unit, areas, world,
-                                        marked=marked_not_air(), kinds=kinds)
+                                        marked=marked_not_air(), kinds=kinds,
+                                        broken=broken)
     payload["asked"] = len(ids)
 
     def _not_measured(eid: str, reason: str, kind: str = "") -> None:
@@ -1601,5 +1649,5 @@ __all__ = [
     "OUTDOOR_TRIALS", "choose_outdoor", "daily_swing", "rank_outdoor",
     "percentile", "pick_outdoor", "progress", "recent_fall",
     "room_candidates", "room_candidates_why", "save", "NOT_COOLING",
-    "UNMEASURED_KINDS", "marked_not_air",
+    "UNMEASURED_KINDS", "marked_not_air", "said_broken",
 ]

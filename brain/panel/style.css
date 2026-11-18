@@ -5603,6 +5603,11 @@ body.term-classic #termMode .ico-out { display: block; }
   #setModal .diagrunrow,
   #setModal .row > .btn,
   #setModal .drow .btn.tiny { min-height: 44px; }
+  /* A bare one-word disclosure ("More", "Details") is as wide as its word,
+     29px, which a thumb misses. Wider is only room to its right: the word
+     stays where it was, left-aligned in an inline-flex box. */
+  #setModal .authdetails > summary,
+  #setModal .techdetails > summary { min-width: 44px; }
   /* A filter chip is how you reach a view at all, and at 33px it was under
      a thumb on every phone. Raised on the CLASS rather than on the Findings
      tab's strip, because the To-do tab renders the same control and a floor

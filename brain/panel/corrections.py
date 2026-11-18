@@ -472,6 +472,13 @@ def gone_for_good(note: str) -> bool:
     return bool(_GONE_RE.search(text)) and not temporary(text)
 
 
+# What `facts_store.exception_text` writes when the Wrong carried no reason
+# of its own: the report's words, never the owner's.
+_REPORT_ECHO_RE = re.compile(
+    r'^(?:".*" was reported and marked wrong|A report was marked wrong)$',
+    re.S)
+
+
 def known_faulty(now: float | None = None) -> dict[str, str]:
     """``{entity_id: reason}`` for every entity somebody said is broken or
     finished with, read off the rules a Wrong wrote (`gone_for_good`).
@@ -484,11 +491,136 @@ def known_faulty(now: float | None = None) -> dict[str, str]:
     try:
         for eid, texts in facts_store.exception_reasons(now).items():
             for text in texts:
+                # A bare Wrong stores the REPORT's words (`facts_store.
+                # exception_text`), and a report that said "the sensor is
+                # broken", marked wrong, is the owner saying it is not.
+                if _REPORT_ECHO_RE.match(text.strip()):
+                    continue
                 if gone_for_good(text):
                     out[eid] = text
                     break
     except Exception as exc:  # noqa: BLE001 — unread holds nothing back
         log.debug("known_faulty: %s", exc)
+    return out
+
+
+# "This sensor is broken", strictly (#1202): the one reason that takes a
+# thermometer out of the freeze check and the heat model. `gone_for_good`
+# reads "the heater is broken" or "no longer used" as the device finished
+# with, which is fine for a battery reminder and a frozen pipe here. So a
+# reason counts only when EVERY clause of it is one of these, and at least
+# one says the sensor is broken: the subject is a sensor, a thermometer, a
+# probe or a reading (with at most three words naming which), or a bare
+# "it / this / that" or nothing at all. Anything else in the sentence — a
+# heater, a window, "sensor fine", "not broken", "retired" — and it is not.
+_SENSOR_HEAD = (r"(?:(?:temperature|temp)\s+)?(?:sensors?|thermometers?|"
+                r"probes?|readings?|thermostat\s+sensor)")
+_BROKEN_WORD = (r"(?:completely\s+|totally\s+|just\s+|really\s+|clearly\s+)?"
+                r"(?:broken|faulty|defective|dead|junk|a\s+dud|bust|busted)")
+_COPULA = r"(?:\s+(?:is|are|was|were|has\s+been|have\s+been)|'s)?"
+_OPENER = r"(?:(?:yes|yeah|no|nope|sorry|actually|fyi|well)\s+)*"
+# the (kitchen) sensor is broken / broken sensor
+_NAMED_BROKEN_RE = re.compile(
+    _OPENER + r"(?:(?:(?:the|this|that|my|our|its|that\s+one|this\s+one)\s+)?"
+    r"(?:[a-z0-9]+\s+){0,3}?" + _SENSOR_HEAD + _COPULA + r"\s+" + _BROKEN_WORD
+    + r"|" + _BROKEN_WORD + r"\s+" + _SENSOR_HEAD + r")", re.I)
+# it / this / that (one) is broken, or just "broken"
+_BARE_BROKEN_RE = re.compile(
+    _OPENER + r"(?:(?:it|this|that|this\s+one|that\s+one)" + _COPULA
+    + r"\s+)?" + _BROKEN_WORD, re.I)
+_SENSOR_FILLER_RE = re.compile(
+    r"(?:please\s+)?(?:ignore|disregard)(?:\s+(?:it|this|that|this\s+one|"
+    r"(?:the|this|that|its)\s+(?:" + _SENSOR_HEAD + r")))?(?:\s+please)?"
+    r"|(?:it|this|that)\s+(?:reads|is\s+reading)\s+wrong", re.I)
+_CLAUSE_SPLIT_RE = re.compile(r"[.,;:!?()\n—–-]+\s*|\s+(?:and|but|so|or)\s+",
+                              re.I)
+# Any word that says it is NOT broken, anywhere in the reason, and it is
+# not read as broken: "sensor fine, heater broken", "it isn't broken".
+_NEGATION_RE = re.compile(r"\b(?:not|never|fine|ok|okay|works|working|"
+                          r"accurate|correct|right)\b|n't\b", re.I)
+
+
+def says_sensor_broken(note: str, *, bare: bool = True) -> bool:
+    """Whether a reason says, about nothing but the sensor, that it is
+    broken. Strict on purpose: in doubt it is not. ``bare=False`` takes
+    only a reason that names the sensor ("it is broken" under a row about
+    a room's heat could mean the heating)."""
+    text = str(note or "").replace("’", "'").strip().lower()
+    if not text or _REPORT_ECHO_RE.match(text) or _NEGATION_RE.search(text):
+        return False
+    if temporary(text):
+        return False
+    said = False
+    for clause in _CLAUSE_SPLIT_RE.split(text):
+        clause = clause.strip()
+        if not clause:
+            continue
+        if _NAMED_BROKEN_RE.fullmatch(clause) or (
+                bare and _BARE_BROKEN_RE.fullmatch(clause)):
+            said = True
+        elif not _SENSOR_FILLER_RE.fullmatch(clause):
+            return False
+    return said
+
+
+def sensor_said_broken(now: float | None = None) -> dict[str, str]:
+    """``{entity_id: the owner's words}`` for every sensor the owner said,
+    in a reason of their own, is broken (#1202) — the freeze check's and the
+    heat model's answer, stricter than `known_faulty` by structure:
+
+    * a live exception rule (what a Wrong wrote) whose ONLY subject is that
+      entity — never one fanned out over every entity a case or a row
+      cited (another rule under the same report, `finding_key`, or the same
+      words and report, under a different subject, is a fan-out too);
+    * whose words pass `says_sensor_broken` (naming the sensor, on a
+      climate check's row).
+    Unreadable is none: a missed exemption is a warning they can dismiss.
+    """
+    now = time.time() if now is None else float(now)
+    out: dict[str, str] = {}
+    try:
+        rows = [r for r in facts_store.export_rows()
+                if str(r.get("predicate") or "").startswith(
+                    facts_store.EXCEPTION_PREFIX)
+                and not facts_store._expired(r, now)]  # noqa: SLF001
+    except Exception as exc:  # noqa: BLE001
+        log.debug("sensor_said_broken: %s", exc)
+        return {}
+
+    def subjects(row: dict) -> list[str]:
+        got = row.get("subjects")
+        if isinstance(got, list) and got:
+            return [str(s) for s in got if s]
+        return [str(row.get("subject") or "")]
+
+    by_key: dict[str, set[str]] = {}
+    by_words: dict[tuple[str, str], set[str]] = {}
+    for row in rows:
+        names = set(subjects(row))
+        key = str(row.get("finding_key") or "")
+        if key:
+            by_key.setdefault(key, set()).update(names)
+        words = (str(row.get("text") or ""), str(row.get("about") or ""))
+        by_words.setdefault(words, set()).update(names)
+    for row in rows:
+        names = subjects(row)
+        if len(names) != 1 or not names[0] or names[0] in out:
+            continue
+        eid = names[0]
+        if facts_store.subject_kind(eid) != "entity":
+            continue
+        key = str(row.get("finding_key") or "")
+        if key and by_key.get(key, set()) != {eid}:
+            continue
+        words = (str(row.get("text") or ""), str(row.get("about") or ""))
+        if by_words.get(words, set()) != {eid}:
+            continue
+        # On a climate check's row (a room cooling, a window, the heating)
+        # "it is broken" may be the heating or the window: the sensor named.
+        check = str(row.get("predicate") or "")[
+            len(facts_store.EXCEPTION_PREFIX):]
+        if says_sensor_broken(words[0], bare=not check.startswith("climate.")):
+            out[eid] = words[0]
     return out
 
 
@@ -1372,6 +1504,17 @@ def _resume_of(expires: str) -> str:
         return ""
 
 
+def never_table(protected=None) -> dict:
+    """The floors `House._never_covered` reads, as `scope_map` carries them
+    under `never`: for a reader that builds a `House` with no snapshot
+    (the nightly heat model) and must hold the same floors."""
+    if protected is None:
+        raw = os.environ.get("BRAIN_PROTECTED_ENTITIES", "").split(",")
+        protected = [p.strip().lower() for p in raw if p.strip()]
+    return {"checks": sorted(NEVER_CHECKS), "domains": sorted(NEVER_DOMAINS),
+            "classes": sorted(NEVER_CLASSES), "protected": list(protected)}
+
+
 def scope_map(now: float | None = None, *, protected=None) -> dict:
     """Every live correction, by scope, for `House.should_report`.
 
@@ -1384,14 +1527,8 @@ def scope_map(now: float | None = None, *, protected=None) -> dict:
     leaves the key out then, and `House` falls back to `snap["facts"]`.
     """
     now = time.time() if now is None else float(now)
-    if protected is None:
-        raw = os.environ.get("BRAIN_PROTECTED_ENTITIES", "").split(",")
-        protected = [p.strip().lower() for p in raw if p.strip()]
     table = {"entity": {}, "area": {}, "check": {},
-             "never": {"checks": sorted(NEVER_CHECKS),
-                       "domains": sorted(NEVER_DOMAINS),
-                       "classes": sorted(NEVER_CLASSES),
-                       "protected": list(protected)}}
+             "never": never_table(protected)}
     for row in facts_store.export_rows():
         predicate = str(row.get("predicate") or "")
         if not predicate.startswith(facts_store.EXCEPTION_PREFIX):
