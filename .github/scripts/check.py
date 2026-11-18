@@ -12,6 +12,9 @@ It answers one question: would this change break an install? In order:
             integration's manifest and the changelog agree on the version
   bump      (with --base) an add-on whose files changed has a new version,
             or Home Assistant never offers the update
+  ui        the shared UI token block matches branding/ui/tokens.css, and no
+            stylesheet uses more distinct spacing, radius, font-size or
+            media-query values than .github/scripts/ui_baseline.json allows
   tests     the small suite in tests/: the action gate, protected entities,
             the tripwire, house rules, camera policy, service gates,
             redaction, add-on download hashes, the devloop's own gates
@@ -147,6 +150,15 @@ def tests() -> None:
         problems.append("pytest:\n" + done.stdout[-6000:] + done.stderr[-2000:])
 
 
+def ui() -> None:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import ui_ratchet
+    found, hints = ui_ratchet.check()
+    problems.extend(found)
+    for hint in hints:
+        print(hint, flush=True)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--base", help="also require a version bump against this ref")
@@ -157,6 +169,7 @@ def main() -> int:
     step("manifests", manifests)
     if args.base:
         step("bump", lambda: bump(args.base))
+    step("ui", ui)
     step("tests", tests)
     print(f"{'FAILED' if problems else 'passed'} in {time.monotonic() - started:.1f}s")
     for problem in problems:

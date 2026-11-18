@@ -1,0 +1,33 @@
+:root {
+  /* Spacing: a 4px grid and nothing else. 1-2px only for a border or an optical nudge. */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;  --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-8: 32px;  --sp-12: 48px;
+  /* The page: one gutter, set once on the shell, and three widths. */
+  --gutter: 24px;
+  --page-read: 760px;
+  --page: 1120px;
+  --page-wide: 1400px;
+  /* Between sections (gap on the parent), between cards, inside a card. */
+  --section-gap: 24px;
+  --card-gap: 12px;
+  --card-pad: 16px;
+  /* Type: four sizes and no fifth. */
+  --fs-title: 20px;  --lh-title: 28px;  --fw-title: 600;
+  --fs-card: 16px;   --lh-card: 24px;   --fw-card: 600;
+  --fs-body: 14px;   --lh-body: 20px;   --fw-body: 400;
+  --fs-meta: 12px;   --lh-meta: 16px;   --fw-meta: 500;
+  --fs-control: 14px;
+  /* Radius. */
+  --card-radius: 12px;
+  --control-radius: 8px;
+  --pill-radius: 999px;
+  /* Controls: buttons, inputs and selects share one height; one small size. */
+  --btn-h: 40px;
+  --btn-h-sm: 32px;
+}
+@media (max-width: 639.98px) {
+  :root { --gutter: 16px; --card-pad: 12px; }
+}
+@media (pointer: coarse) {
+  :root { --btn-h: 44px; --fs-control: 16px; }
+}

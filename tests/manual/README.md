@@ -331,3 +331,21 @@ Its last pass loads the real panel at 390 (touch): the chat face of Ask must
 open on the list of your chats with a way back from a transcript, the classic
 face must open straight on the terminal with no list over it, and Chat
 options and Full-screen terminal must be on screen in both.
+
+## `shoot-all.mjs`
+
+Screenshots every app at 390, 768, 1280 and 1920px, for a before-and-after
+pair when a change touches layout (`docs/notes/ui-standard.md`).
+
+```bash
+SHOT_DIR=/tmp/before node tests/manual/shoot-all.mjs            # every app
+SHOT_DIR=/tmp/after  node tests/manual/shoot-all.mjs --app print
+```
+
+It starts and stops the demo servers it needs and writes
+`SHOT_DIR/<app>/<view>-<width>.png`. brAIn, Print, BRight and Task Manager
+run on their demo panels; Minecraft, Bambu and Browser are the real panel
+files served statically with the API answered from `shoot-stubs.mjs`, so a
+reply shape that changes in a server has to change there too. GardenRX and
+Cooking need an npm build and are not covered, and neither is Morph. Bambu's
+3D view is blank unless `BAMBU_VENDOR` names a folder holding three.js.
