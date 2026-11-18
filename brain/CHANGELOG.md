@@ -2,6 +2,18 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.0
+
+### Changed
+
+- Morph's page now has the same left and right edge as brAIn's own tabs (24 pixels, 16 on a phone, up to 1400 wide), so switching tabs no longer moves the page.
+- Morph's tiles keep the same 12 pixel gap at every screen width, and a room's name, its tiles and the floor heading share one inset.
+- Rooms are only as tall as their tiles, and the last room in a row reaches the row's edge.
+- The hero text, the Ask answer, the Coming up strip and the floor headings follow the shared spacing; no text is under 12 pixels.
+- Buttons and chips are 32, 40 or (on a touch screen) 44 pixels tall. Climate's mode chips and legend chips are one chip.
+- In Edit, the Add card tile is the same size as its neighbours, and "Colors" sits in Coming up's header.
+- Cards on Home Assistant dashboards fill their cell, so a person's tint and a note run to the card's edges.
+
 ## 5.4.0
 
 ### Changed
