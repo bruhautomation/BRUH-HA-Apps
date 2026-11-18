@@ -159,50 +159,16 @@
   ]
  },
  "bruh-bambu-studio/panel/style.css": {
-  "font": [
-   "11px",
-   "13px",
-   "15px",
-   "18px",
-   "19px"
-  ],
-  "media": [
-   "560px",
-   "600px"
-  ],
-  "radius": [
-   "1px",
-   "2px",
-   "3px",
-   "4px",
-   "6px",
-   "10px",
-   "14px"
-  ],
-  "space": [
-   "3px",
-   "5px",
-   "6px",
-   "10px",
-   "11px",
-   "14px",
-   "18px",
-   "40px"
-  ]
+  "font": [],
+  "media": [],
+  "radius": [],
+  "space": []
  },
  "bruh-browser/panel/style.css": {
-  "font": [
-   "17px",
-   "18px"
-  ],
+  "font": [],
   "media": [],
-  "radius": [
-   "10px"
-  ],
-  "space": [
-   "6px",
-   "10px"
-  ]
+  "radius": [],
+  "space": []
  },
  "bruh-minecraft-server/panel/style.css": {
   "font": [
@@ -293,28 +259,10 @@
   ]
  },
  "bruh-task-manager/panel/style.css": {
-  "font": [
-   "11px",
-   "13px",
-   "18px"
-  ],
-  "media": [
-   "720px",
-   "721px",
-   "1000px"
-  ],
-  "radius": [
-   "3px"
-  ],
-  "space": [
-   "3px",
-   "6px",
-   "10px",
-   "14px",
-   "18px",
-   "26px",
-   "40px"
-  ]
+  "font": [],
+  "media": [],
+  "radius": [],
+  "space": []
  },
  "gardenrx/app/src/app/globals.css": {
   "font": [],

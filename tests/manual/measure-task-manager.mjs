@@ -43,7 +43,7 @@ const audit = (width) => {
     if (!r.width || !r.height) continue;
     if (n.closest('dialog:not([open])')) continue;
     if (n.type === 'checkbox') continue;
-    if (r.height < 40) out.push(`${n.id || n.textContent.trim() || n.className} is ${r.height.toFixed(0)}px tall`);
+    if (r.height < (n.classList.contains('small') && width >= 640 ? 32 : 40)) out.push(`${n.id || n.textContent.trim() || n.className} is ${r.height.toFixed(0)}px tall`);
     if (r.right > width + 1) out.push(`${n.id || n.textContent.trim()} ends at ${r.right.toFixed(0)}px`);
   }
   return out;

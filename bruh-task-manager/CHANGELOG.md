@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0
+
+### Changed
+
+- The header lines up with the page: the title, the CPU, Memory, Load and Up meters and the tabs sit on the same edges as the lists under them, instead of stretching across a wide screen on their own.
+- On a phone the title and the meters scroll away with the page and only the tabs stay at the top, so a quarter of the screen is no longer taken up by a sticky header.
+- On a phone an app is three short rows (name and labels, CPU beside memory, then its buttons) instead of a tall card, and a long name wraps instead of being cut off.
+- In Settings, Level 2 is split into three clear parts: Level 2: show every process, End processes, and Runaway apps. The Never end these list and its Save button now sit together in one block.
+- In the Processes tab the kind of group (App, Operating system...) and its explanation line up with the group's name.
+- Spacing, text sizes and rounded corners follow the shared BRUH standard: nothing is smaller than 12px, buttons and fields are one height, and the small buttons are really smaller on a computer screen.
+
 ## 0.1.4
 
 ### Fixed

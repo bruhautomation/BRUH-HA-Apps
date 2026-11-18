@@ -12,6 +12,7 @@
 </head>
 <body>
 <header class="top">
+ <div class="top-in">
   <div class="brandrow">
     <h1>Task Manager</h1>
     <span class="ver">v{{VERSION}}</span>
@@ -28,6 +29,7 @@
     <button class="tab" role="tab" data-view="processes" aria-selected="false">Processes</button>
     <button class="tab" role="tab" data-view="settings" aria-selected="false">Settings</button>
   </nav>
+ </div>
 </header>
 
 <main>
@@ -66,19 +68,21 @@
   </section>
 
   <section id="viewSettings" class="view" hidden>
-    <div class="card level2">
+    <section class="section level2">
       <h2>Level 2: show every process</h2>
       <p id="l2Sentence" class="lead"></p>
-      <label class="switchrow">
-        <span><strong>Show every process</strong><span class="sub">Off by default. Read the list of every process on this machine and show each one's CPU and memory, grouped by the app it belongs to.</span></span>
-        <input id="optProcessView" type="checkbox" role="switch">
-      </label>
-      <ol class="steps" id="l2Steps">
-        <li data-step="option"><span class="tick"></span><span>Switched on here.</span></li>
-        <li data-step="protection_off"><span class="tick"></span><span>Protection mode turned <strong>off</strong> on this add-on's Info page. Only you can do this; the add-on cannot change it.</span></li>
-        <li data-step="visible"><span class="tick"></span><span>The add-on restarted since, so the change took effect.</span></li>
-      </ol>
-      <p><a id="infoLink" class="btn" target="_top" href="#">Open the add-on's Info page</a></p>
+      <div class="card stack">
+        <label class="switchrow">
+          <span><strong>Show every process</strong><span class="sub">Off by default. Read the list of every process on this machine and show each one's CPU and memory, grouped by the app it belongs to.</span></span>
+          <input id="optProcessView" type="checkbox" role="switch">
+        </label>
+        <ol class="steps" id="l2Steps">
+          <li data-step="option"><span class="tick"></span><span>Switched on here.</span></li>
+          <li data-step="protection_off"><span class="tick"></span><span>Protection mode turned <strong>off</strong> on this add-on's Info page. Only you can do this; the add-on cannot change it.</span></li>
+          <li data-step="visible"><span class="tick"></span><span>The add-on restarted since, so the change took effect.</span></li>
+        </ol>
+        <p><a id="infoLink" class="btn" target="_top" href="#">Open the add-on's Info page</a></p>
+      </div>
       <details class="explain" open>
         <summary>What turning Protection mode off does</summary>
         <ul>
@@ -90,27 +94,37 @@
         </ul>
         <p>When you are finished, switch Level 2 off here and turn Protection mode back on.</p>
       </details>
-      <label class="switchrow" id="endRow">
-        <span><strong>Allow ending processes</strong><span class="sub">Offers End process on processes inside apps. It asks the process to stop first and offers Force end only if it is still running a few seconds later. Never offered for Home Assistant, the Supervisor, Supervisor plugins or the operating system; use Restart on the app for those.</span></span>
-        <input id="optEnding" type="checkbox" role="switch">
-      </label>
-      <label class="field">
-        <span>Never end these <span class="sub">One per line: a process name or an app slug. Wildcards work, for example mosquitto or *_frigate.</span></span>
-        <textarea id="optProtected" rows="3" spellcheck="false"></textarea>
-      </label>
-      <button id="saveProtected" class="btn">Save the list</button>
-    </div>
+    </section>
 
-    <div class="card">
-      <h2>Runaway apps</h2>
-      <p class="sub">An app using at least this share of the whole machine's CPU for this long is marked as running away, and the Home Assistant sensor turns on. Nothing is stopped automatically.</p>
-      <div class="row3">
-        <label class="field"><span>Threshold (% of CPU)</span><input id="optThreshold" type="number" min="10" max="100" inputmode="numeric"></label>
-        <label class="field"><span>For at least (minutes)</span><input id="optMinutes" type="number" min="1" max="240" inputmode="numeric"></label>
-        <label class="field"><span>Measure every (seconds)</span><input id="optSample" type="number" min="2" max="60" inputmode="numeric"></label>
+    <section class="section">
+      <h2>End processes</h2>
+      <div class="card stack">
+        <label class="switchrow" id="endRow">
+          <span><strong>Allow ending processes</strong><span class="sub">Offers End process on processes inside apps. It asks the process to stop first and offers Force end only if it is still running a few seconds later. Never offered for Home Assistant, the Supervisor, Supervisor plugins or the operating system; use Restart on the app for those.</span></span>
+          <input id="optEnding" type="checkbox" role="switch">
+        </label>
+        <div class="formblock">
+          <label class="field">
+            <span>Never end these <span class="sub">One per line: a process name or an app slug. Wildcards work, for example mosquitto or *_frigate.</span></span>
+            <textarea id="optProtected" rows="3" spellcheck="false"></textarea>
+          </label>
+          <button id="saveProtected" class="btn">Save the list</button>
+        </div>
       </div>
-      <button id="saveRunaway" class="btn">Save</button>
-    </div>
+    </section>
+
+    <section class="section">
+      <h2>Runaway apps</h2>
+      <div class="card stack">
+        <p class="sub">An app using at least this share of the whole machine's CPU for this long is marked as running away, and the Home Assistant sensor turns on. Nothing is stopped automatically.</p>
+        <div class="row3">
+          <label class="field"><span>Threshold (% of CPU)</span><input id="optThreshold" type="number" min="10" max="100" inputmode="numeric"></label>
+          <label class="field"><span>For at least (minutes)</span><input id="optMinutes" type="number" min="1" max="240" inputmode="numeric"></label>
+          <label class="field"><span>Measure every (seconds)</span><input id="optSample" type="number" min="2" max="60" inputmode="numeric"></label>
+        </div>
+        <div><button id="saveRunaway" class="btn">Save</button></div>
+      </div>
+    </section>
     <p id="settingsSource" class="hint"></p>
   </section>
 </main>

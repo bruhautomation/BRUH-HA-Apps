@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0
+
+### Changed
+
+- The page is no longer one endless scroll. The errand and the live browser stay up front; Your shopping profile, Browsers this account has connected and Recent errands are now folded away, each saying what is inside (for example "1 store", "2 connected", "4 errands"). Open one and it stays open while the page refreshes.
+- The top bar lines up with the page: its content sits on the same left and right edges as the cards under it on every screen size.
+- Text is 14px, with 12px for the small grey lines, instead of 16px everywhere; headings and the errand's question are 16px.
+- On a phone every row of buttons behaves the same way (Use by default, Check again, Clear profile and the rest share the row instead of some stretching and some not).
+- Spacing, rounded corners and button heights follow the shared BRUH standard.
+
 ## 0.1.3
 
 ### Fixed

@@ -177,7 +177,7 @@ function appRow(app, snap) {
       el("div", { class: "cpuline" }, el("span", { class: "numlabel", text: "CPU" }), el("span", { class: "num", text: pct(app.cpu) })),
       el("div", { class: "barwrap" }, el("i", { style: `width:${width}%` })),
       sp),
-    el("div", {}, el("span", { class: "numlabel", text: "Memory" }), el("span", { class: "num", text: bytes(app.mem_bytes) })),
+    el("div", { class: "mem" }, el("span", { class: "numlabel", text: "Memory" }), el("span", { class: "num", text: bytes(app.mem_bytes) })),
     el("div", { class: "io" },
       el("div", { text: `Net ↓ ${rate(app.net_rx_rate)} ↑ ${rate(app.net_tx_rate)}` }),
       el("div", { text: `Disk r ${rate(app.disk_read_rate)} w ${rate(app.disk_write_rate)}` })),

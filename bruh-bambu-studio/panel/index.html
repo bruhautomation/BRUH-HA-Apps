@@ -10,6 +10,7 @@
 </head>
 <body>
 <header class="bar">
+<div class="bar-in">
   <div class="brand"><strong>BRUH</strong> Bambu Studio</div>
   <nav class="tabs" role="tablist" aria-label="Sections">
     <button class="tab" data-view="studio" role="tab"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M21,16H3V4H21M21,2H3C1.89,2 1,2.89 1,4V16A2,2 0 0,0 3,18H10V20H8V22H16V20H14V18H21A2,2 0 0,0 23,16V4C23,2.89 22.1,2 21,2Z"/></svg><span>Studio</span></button>
@@ -18,6 +19,7 @@
     <button class="tab" data-view="design" role="tab" id="designTab" hidden><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M21,16.5C21,16.88 20.79,17.21 20.47,17.38L12.57,21.82C12.41,21.94 12.21,22 12,22C11.79,22 11.59,21.94 11.43,21.82L3.53,17.38C3.21,17.21 3,16.88 3,16.5V7.5C3,7.12 3.21,6.79 3.53,6.62L11.43,2.18C11.59,2.06 11.79,2 12,2C12.21,2 12.41,2.06 12.57,2.18L20.47,6.62C20.79,6.79 21,7.12 21,7.5V16.5M12,4.15L6.04,7.5L12,10.85L17.96,7.5L12,4.15Z"/></svg><span>Design</span></button>
     <button class="tab" data-view="settings" role="tab"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.34 19.43,11L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.5,5.32 14.87,5.07L14.5,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.21,8.95 2.27,9.22 2.46,9.37L4.57,11C4.53,11.34 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.21,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.03 4.95,18.95L7.44,17.94C7.96,18.34 8.5,18.68 9.13,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.5,21.58L14.87,18.93C15.5,18.67 16.04,18.34 16.56,17.94L19.05,18.95C19.27,19.03 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z"/></svg><span>Settings</span></button>
   </nav>
+</div>
 </header>
 
 <main>
@@ -56,11 +58,11 @@
   </section>
 
   <section id="viewFiles" class="view" data-view="files" hidden>
-    <div class="card">
-      <div class="cardhead">
-        <div class="grow"><h2>Library</h2><p class="hint" id="libraryRoot"></p></div>
-        <label class="button primary">Upload<input type="file" id="upload" accept=".3mf,.stl,.step,.stp,.obj,.amf" hidden></label>
-      </div>
+    <div class="pagehead">
+      <div class="grow"><h2>Library</h2><p class="hint" id="libraryRoot"></p></div>
+      <label class="button primary">Upload<input type="file" id="upload" accept=".3mf,.stl,.step,.stp,.obj,.amf" hidden></label>
+    </div>
+    <div class="card stack">
       <form id="importForm" class="importbar">
         <input id="importUrl" type="url" inputmode="url" autocomplete="off"
                placeholder="Paste a Printables link, or a link to an .stl / .3mf"
@@ -69,11 +71,13 @@
       </form>
       <p class="hint">MakerWorld models need your Bambu sign-in: open them from Bambu Studio's MakerWorld page on the Studio tab.</p>
       <div id="jobList"></div>
+    </div>
+    <div class="section">
       <div class="filebar">
         <input id="fileSearch" type="search" autocomplete="off" placeholder="Search the library" aria-label="Search the library">
         <select id="fileSort" aria-label="Sort files"><option value="new">Newest first</option><option value="name">Name</option></select>
       </div>
-      <div id="fileList"></div>
+      <div id="fileList" class="card list"></div>
     </div>
   </section>
   <section id="viewDesign" class="view" data-view="design" hidden>
@@ -170,6 +174,7 @@
     </div>
   </section>
   <section id="viewSettings" class="view settings" data-view="settings" hidden>
+    <section class="section">
     <h2 class="group">Printers</h2>
     <div class="card" id="savedPrinters"></div>
     <div class="card" id="findPrinters">
@@ -179,7 +184,7 @@
         <button class="primary" type="button" id="scanBtn">Find printers</button>
       </div>
       <div id="scanResults"></div>
-      <details id="scanOther">
+      <details id="scanOther" class="fold">
         <summary>Search a different network</summary>
         <form id="scanForm" class="importbar">
           <input id="scanSubnet" inputmode="decimal" autocomplete="off" placeholder="192.168.2.0/24"
@@ -187,7 +192,7 @@
           <button type="submit">Search</button>
         </form>
       </details>
-      <details id="addPrinter">
+      <details id="addPrinter" class="fold">
         <summary>Add a printer by hand</summary>
         <p class="hint">On the printer's screen: the IP address is under Network, the
           access code under LAN settings, the serial number under Device. Turn on
@@ -204,10 +209,14 @@
         </form>
       </details>
     </div>
+    </section>
 
+    <section class="section">
     <h2 class="group">Print failure detection</h2>
     <div class="card" id="watchSettings"></div>
+    </section>
 
+    <section class="section">
     <h2 class="group">brAIn</h2>
     <form class="card formgrid" id="brainSettings">
       <p class="hint" id="brainNote">Which model brAIn uses here, and what you want it to do every time.</p>
@@ -224,20 +233,25 @@
                   placeholder="e.g. Textured PEI plate. 0.2 mm layers, 3 walls, 15 % gyroid. Brim on anything taller than 60 mm. Prefer PETG for parts that live outside."></textarea>
         <small class="hint">Followed when brAIn picks print settings or starts a print (Auto print).</small></label>
       <div class="row"><button class="primary" type="submit">Save</button><span class="hint" id="brainSaved"></span></div>
-      <details id="briefBox">
+      <details id="briefBox" class="fold">
         <summary>brAIn's built-in design instructions</summary>
         <pre class="brief" id="designBrief"></pre>
       </details>
     </form>
+    </section>
 
+    <section class="section">
     <h2 class="group">3D view</h2>
     <div class="card">
       <label class="check setting"><input type="checkbox" id="invertY">
         <span>Invert vertical drag<small class="hint">On: dragging down raises the view. Off: dragging down lowers it, as Fusion 360 does.</small></span></label>
     </div>
+    </section>
 
+    <section class="section">
     <h2 class="group">Home Assistant</h2>
     <section class="card ha" id="haCard" aria-live="polite"></section>
+    </section>
 
     <p class="hint about">BRUH Bambu Studio is experimental. Bambu Studio itself is Bambu Lab's, downloaded on first start.</p>
   </section>

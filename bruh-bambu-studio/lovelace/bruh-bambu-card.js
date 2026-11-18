@@ -118,13 +118,13 @@ const css = (morph) => `
     --b-bad: ${morph ? 'var(--rose)' : 'var(--error-color, #c62828)'};
     --b-warn: #c77700;
     font-family: ${morph ? "'Manrope', sans-serif" : 'inherit'}; color: var(--b-text); }
-  .wrap { padding: ${morph ? '4px 2px' : '12px 16px 14px'}; display: grid; gap: 12px; }
+  .wrap { padding: ${morph ? '4px 2px' : '16px'}; display: grid; gap: 12px; }
   .printer { display: grid; gap: 6px; min-width: 0; }
   .printer + .printer { border-top: 1px solid var(--b-line); padding-top: 12px; }
   .head { display: flex; align-items: center; gap: 8px; min-height: 44px; }
-  .name { font-weight: 700; font-size: 16px; flex: 1; min-width: 0;
+  .name { font-weight: 600; font-size: 16px; flex: 1; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .state { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--b-muted); white-space: nowrap; }
+  .state { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--b-muted); white-space: nowrap; }
   .state i { width: 8px; height: 8px; border-radius: 50%; background: var(--b-muted); }
   .state.live i { background: var(--b-live); }
   .state.warn i { background: var(--b-warn); }
@@ -132,7 +132,7 @@ const css = (morph) => `
   .state.bad i { background: var(--b-bad); }
   /* The picture at a size a dashboard can carry, in the stream's own shape. */
   .cam { position: relative; aspect-ratio: 16 / 9; width: min(100%, 320px); justify-self: center;
-    border-radius: 12px; overflow: hidden; background: var(--b-sunk); }
+    border-radius: 8px; overflow: hidden; background: var(--b-sunk); }
   .cam img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
   .job { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 10px; row-gap: 0; }
   .pct { font-family: ${morph ? "'Bricolage Grotesque', sans-serif" : 'inherit'};
@@ -142,10 +142,10 @@ const css = (morph) => `
   /* The print's name: its own line, wrapping between words. */
   .title { font-size: 14px; font-weight: 600; overflow-wrap: break-word; }
   .job > button { grid-row: 1 / span 3; grid-column: 2; }
-  .muted { color: var(--b-muted); font-size: 13px; overflow-wrap: anywhere; }
+  .muted { color: var(--b-muted); font-size: 12px; overflow-wrap: anywhere; }
   .bar { height: 4px; border-radius: 2px; background: var(--b-sunk); overflow: hidden; }
   .bar > i { display: block; height: 100%; background: var(--b-accent); }
-  .stats { display: flex; gap: 4px 14px; flex-wrap: wrap; font-size: 13px; color: var(--b-muted); }
+  .stats { display: flex; gap: 4px 16px; flex-wrap: wrap; font-size: 12px; color: var(--b-muted); }
   .stats b { font-weight: 600; color: var(--b-text); }
   .ams { display: flex; gap: 6px; flex-wrap: wrap; }
   .tray { display: inline-flex; align-items: center; gap: 4px; font-size: 12px;
@@ -153,10 +153,10 @@ const css = (morph) => `
   .tray i { width: 10px; height: 10px; border-radius: 50%; border: 1px solid var(--b-line); }
   .tray.active { border-color: var(--b-live); box-shadow: 0 0 0 1px var(--b-live); }
   .controls { display: flex; gap: 6px; flex-wrap: wrap; }
-  button, select { font: inherit; font-size: 14px; min-height: 44px; padding: 0 14px;
-    border-radius: 10px; border: 1px solid var(--b-line); background: var(--b-surface);
+  button, select { font: inherit; font-size: 14px; font-weight: 600; min-height: 44px; padding: 0 16px;
+    border-radius: 8px; border: 1px solid var(--b-line); background: var(--b-surface);
     color: var(--b-text); cursor: pointer; }
-  button.primary { background: var(--b-accent); border-color: var(--b-accent); color: #fff; }
+  button.primary { background: var(--b-accent); border-color: var(--b-accent); color: ${morph ? '#fff' : 'var(--text-primary-color, #fff)'}; }
   button.danger { color: var(--b-bad); }
   button.armed { background: var(--b-bad); border-color: var(--b-bad); color: #fff; }
   button.more { width: 44px; padding: 0; border-color: transparent; background: transparent;
@@ -168,9 +168,9 @@ const css = (morph) => `
   .drawer > div { min-height: 0; overflow: hidden; display: grid; gap: 8px; }
   .drawer.shut > div { visibility: hidden; }
   .drawer:not(.shut) { grid-template-rows: 1fr; padding: 8px 0 2px; border-top: 1px solid var(--b-line); }
-  .err { color: var(--b-bad); font-size: 13px; }
+  .err { color: var(--b-bad); font-size: 12px; }
   .empty { color: var(--b-muted); }
-  .watch { display: grid; gap: 6px; padding: 8px 10px; border-radius: 12px; background: var(--b-sunk); font-size: 13px; }
+  .watch { display: grid; gap: 6px; padding: 8px 12px; border-radius: 8px; background: var(--b-sunk); font-size: 14px; }
   .watch.quiet { padding: 0; background: none; color: var(--b-muted); }
   .watch.warn { background: color-mix(in srgb, #f0a63c 20%, var(--b-surface)); }
   .watch.bad { background: color-mix(in srgb, var(--b-bad) 18%, var(--b-surface)); }

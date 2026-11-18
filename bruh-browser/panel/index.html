@@ -9,9 +9,11 @@
 </head>
 <body>
 <header class="bar">
-  <div class="brand"><strong>BRUH</strong> Browser</div>
-  <span id="pill" class="pill">Loading…</span>
-  <button type="button" id="setupToggle" class="ghost" aria-expanded="false">Setup</button>
+  <div class="bar-in">
+    <div class="brand"><strong>BRUH</strong> Browser</div>
+    <span id="pill" class="pill">Loading…</span>
+    <button type="button" id="setupToggle" class="ghost" aria-expanded="false">Setup</button>
+  </div>
 </header>
 
 <main>
@@ -45,20 +47,22 @@
     <iframe id="screen" title="The BRUH Browser Chrome" allow="clipboard-read; clipboard-write"></iframe>
   </section>
 
-  <section id="profilesCard" class="card" aria-labelledby="profilesTitle">
-    <h2 id="profilesTitle">Your shopping profile</h2>
-    <div id="profilesBody"></div>
-  </section>
+  <div class="folds">
+    <details id="profilesCard" class="card fold" aria-labelledby="profilesTitle">
+      <summary><h2 id="profilesTitle">Your shopping profile</h2><span id="profilesCount" class="count"></span></summary>
+      <div id="profilesBody"></div>
+    </details>
 
-  <section id="browsersCard" class="card" aria-labelledby="browsersTitle">
-    <h2 id="browsersTitle">Browsers this account has connected</h2>
-    <div id="browsersBody"></div>
-  </section>
+    <details id="browsersCard" class="card fold" aria-labelledby="browsersTitle">
+      <summary><h2 id="browsersTitle">Browsers this account has connected</h2><span id="browsersCount" class="count"></span></summary>
+      <div id="browsersBody"></div>
+    </details>
 
-  <section class="card" aria-labelledby="historyTitle">
-    <h2 id="historyTitle">Recent errands</h2>
-    <ul id="history" class="history"></ul>
-  </section>
+    <details id="historyCard" class="card fold" aria-labelledby="historyTitle">
+      <summary><h2 id="historyTitle">Recent errands</h2><span id="historyCount" class="count"></span></summary>
+      <ul id="history" class="history"></ul>
+    </details>
+  </div>
 </main>
 
 <div id="toast" class="toast" role="status" hidden></div>
