@@ -6916,7 +6916,7 @@ const todayState = {
 // the two secondary presses ride behind the card's ⋯ instead — the primary,
 // Snooze and Ignore (the way to say no) stay on its face. The routes and
 // wire ids do not move; only where the press sits does.
-const ROW_NARROW = window.matchMedia ? window.matchMedia("(max-width: 640px)") : null;
+const ROW_NARROW = window.matchMedia ? window.matchMedia("(max-width: 639.98px)") : null;
 const FOLDED_VERBS = new Set(["recheck", "dismiss"]);
 function foldsSecondary() {
   return !!(ROW_NARROW && ROW_NARROW.matches);
@@ -9729,7 +9729,7 @@ function pickFactSubject(subject) {
   factsView.subject = factsView.subject === subject ? "" : subject;
   loadFacts(true);
   const host = $("#kKnown");
-  if (host && host.scrollIntoView && window.matchMedia("(max-width: 899px)").matches) {
+  if (host && host.scrollIntoView && window.matchMedia("(max-width: 899.98px)").matches) {
     host.scrollIntoView({ block: "start", behavior: "smooth" });
   }
 }
@@ -11586,7 +11586,7 @@ function docGroups() {
 // (its summary is not rendered there); where it stacks above the page it
 // starts shut, closes again once a section is picked, and opens while a
 // search is typed so the hits are what you see.
-const DOCS_NARROW = "(max-width: 860px)";
+const DOCS_NARROW = "(max-width: 899.98px)";
 function docsNarrow() {
   return Boolean(window.matchMedia && window.matchMedia(DOCS_NARROW).matches);
 }
@@ -13693,7 +13693,7 @@ function shellInset() {
 
 // Two rows: a phone inside the shell, where the tabs are the second row.
 function shellTwoRows() {
-  return SHELL && window.matchMedia("(max-width: 640px)").matches;
+  return SHELL && window.matchMedia("(max-width: 639.98px)").matches;
 }
 
 // How far the header slides to leave its first row: everything under the
@@ -13813,7 +13813,7 @@ if (SHELL) {
     if (ev.key === "Escape") { setSearchOpen(false); $("#searchBtn").focus(); }
   });
   // Turning a phone into a wider screen leaves one row: nothing slid away.
-  window.matchMedia("(max-width: 640px)").addEventListener?.("change", () => setBarHidden(false));
+  window.matchMedia("(max-width: 639.98px)").addEventListener?.("change", () => setBarHidden(false));
   setInterval(shellRaiseCheck, 250);
   syncShellClock();
   setInterval(syncShellClock, 10000);
