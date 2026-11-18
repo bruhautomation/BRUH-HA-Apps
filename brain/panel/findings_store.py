@@ -508,6 +508,21 @@ IDENTITY = None
 SELF_CARE = None
 
 
+# A check's rows are worded by its code, which names things the way the
+# house does; but a check passes along what a device or a log said, so its
+# rows read the same display pass as a model's (`shown_words`), less the
+# lanes that report a hazard: those say what they say.
+PLAIN_EXEMPT_CHECKS = frozenset({"check:climate.freeze",
+                                 "check:base.heater_idle"})
+
+
+def _check_written(source: str) -> bool:
+    """A check's row whose words the display pass may say plainly."""
+    source = str(source or "")
+    return (source.startswith("check:") and source not in PLAIN_EXEMPT_CHECKS
+            and not source.startswith("check:safety."))
+
+
 def _model_written(source: str) -> bool:
     """A producer whose sentences a model wrote: no colon, not exempt."""
     source = str(source or "")
@@ -1002,6 +1017,9 @@ def shown_words(entry: dict) -> dict:
     lane, a person's correction) comes back with nothing changed."""
     entry = entry if isinstance(entry, dict) else {}
     model = _model_written(entry.get("source"))
+    # A check's words are its own, except what a device or a log put in
+    # them: an id, a path, a build string goes to Details like a model's.
+    checked = _check_written(entry.get("source"))
     out = {}
     # What the pass takes out of a sentence is kept for Details (#1133):
     # the row's Technical line, never lost and never in the sentence.
@@ -1010,6 +1028,15 @@ def shown_words(entry: dict) -> dict:
     for key in ("text", "claim", "detail", "fix"):
         said = entry.get(key)
         if isinstance(said, str) and said:
+            if checked:
+                plain_said = _plainly(said, entry)
+                if plain_said != said and (plain_said
+                                           or key not in ("text", "fix")):
+                    out[key] = plain_said
+                    for token in house_words.lint(said):
+                        if token not in technical:
+                            technical.append(token)
+                    continue
             if not model:
                 # A check's or a person's words are theirs; only a cut that
                 # was stored ending "…" or "and N more." is said whole

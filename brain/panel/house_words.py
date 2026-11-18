@@ -502,6 +502,12 @@ _BRAIN_QUICK_RUN = re.compile(
     re.I)
 
 
+# brAIn's own piece inside Home Assistant is "integration" only to its
+# developer (#1205): "the brAIn integration", "brAIn's custom integration".
+_BRAIN_INTEGRATION = re.compile(
+    r"\b(?:the\s+)?brAIn(?:['’]s)?\s+(?:custom\s+)?integration\b", re.I)
+
+
 def one_name(text: str) -> str:
     """``text`` with the assistant's other names turned to "brAIn" (#832):
     "the companion", "the in-game companion" (brAIn in the game), "the
@@ -526,6 +532,10 @@ def one_name(text: str) -> str:
         return f"{ask.split()[0]} brAIn" if ask else "brAIn"
 
     out = _BRAIN_CHAT_SESSION.sub(session, out)
+    out = _BRAIN_INTEGRATION.sub(
+        lambda m: _cap_at_start(m.string, m.start(),
+                                "the link between brAIn and Home Assistant"),
+        out)
     return _BRAIN_QUICK_RUN.sub(quick, out)
 
 
@@ -843,7 +853,7 @@ def household(text: str) -> str:
 
 _PATH = (r"(?<![\w/.])/(?:config|data|opt|usr|etc|var|share|ssl|addons?|"
          r"media|tmp|homeassistant)(?:/[\w.\-]+)+/?")
-_FILE = (r"(?<![\w/.])[\w-]+(?:\.[\w-]+)*\.(?:md|json|ya?ml|py|sh|txt|log|"
+_FILE = (r"(?<![\w/.])(?:[\w.\-]+/)*[\w-]+(?:\.[\w-]+)*\.(?:md|json|ya?ml|py|sh|txt|log|"
          r"toml|db|conf|jsonl)\b")
 _LINE = r"(?:\s+(?:at\s+|on\s+)?line\s+\d+|:\d+\b)?"
 _FILE_RE = re.compile(
@@ -867,6 +877,9 @@ _BARE_BUILD_RE = re.compile(
     r"\s*\(\s*(?:firmware\s+)?build\s+(?=[\w.\-]*\d)[A-Za-z0-9][\w.\-]{3,}\s*\)"
     r"|\b(firmware\s+)?build\s+(?=[\w.\-]*\d)[A-Za-z0-9][\w.\-]{2,}[A-Za-z0-9]",
     re.I)
+# A build number after a version ("2024.3.1 build 77", "v2.4, build 188"):
+# the version is the household's, the build behind it is not (#1205).
+_TRAIL_BUILD_RE = re.compile(r"(?<=\d)\s*,?\s+build\s+\d+\b", re.I)
 # A voice's id (#1133): a Piper voice ("en_US-kristin-medium") or a cloud
 # one ("en-US-Wavenet-D"). Beside the word "voice" it is an aside and goes
 # ("speak with the voice service, voice en_US-…"); anywhere else it is "a
@@ -1075,6 +1088,7 @@ def technical(text: str, files: bool = True,
 
     try:
         out = _BUILD_RE.sub(build, text)
+        out = _TRAIL_BUILD_RE.sub(lambda m: (keep(m.group(0)), "")[1], out)
         out = _BARE_BUILD_RE.sub(bare_build, out)
         out = _DATE_BUILD_RE.sub(dated, out)
         out = _VOICE_ASIDE_RE.sub(voice_aside, out)
@@ -1098,6 +1112,11 @@ def technical(text: str, files: bool = True,
         return text, []
     out = re.sub(r"\s+([,.;:!?])", r"\1", re.sub(r"[ \t]{2,}", " ", out))
     out = re.sub(r"\(\s*\)", "", out).strip()
+    # "the x.py file" is "a configuration file", not "the a configuration
+    # file file".
+    out = re.sub(r"\b(?:the|a|an|its|that)\s+(a configuration file)"
+                 r"(?:\s+file)?\b", r"\1", out, flags=re.I)
+    out = re.sub(r"\ba configuration file file\b", "a configuration file", out)
     # "Code 0xFF failed" became "an error code failed": a sentence that
     # began with a capital still does.
     if text[:1].isupper() and out[:1].islower():
@@ -1151,6 +1170,9 @@ _ID_NOUNS = {
     "zone": "zone", "notify": "notification service",
     "persistent_notification": "notification",
     "homeassistant": "Home Assistant action",
+    # Service ids: what the code calls an action, said as what it does.
+    "python_script": "script", "shell_command": "command",
+    "rest_command": "command", "ai_task": "assistant task",
 }
 _ID_RE = re.compile(
     r"`?(?<![\w./])([a-z][a-z_]*)\.([a-z0-9][a-z0-9_]*)(?![\w]|\.\w)`?")
@@ -1241,7 +1263,8 @@ def lint(text: str, files: bool = True, figures: bool = True) -> list[str]:
         return []
     out: list[str] = []
     for pattern in ((_FILE_RE if files else _PATH_RE), _LINE_NO_RE, _HEX_RE,
-                    _BUILD_RE, _BARE_BUILD_RE, _DATE_BUILD_RE, _VOICE_ID_RE,
+                    _BUILD_RE, _BARE_BUILD_RE, _TRAIL_BUILD_RE, _DATE_BUILD_RE,
+                    _VOICE_ID_RE,
                     *((_DBM_RE,) if figures else ()),
                     _MCP_RE, _SNAKE_RE, _LEGACY_RE):
         out += [m.group(0).strip() for m in pattern.finditer(text)]
