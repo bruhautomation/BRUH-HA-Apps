@@ -472,6 +472,13 @@ def gone_for_good(note: str) -> bool:
     return bool(_GONE_RE.search(text)) and not temporary(text)
 
 
+# What `facts_store.exception_text` writes when the Wrong carried no reason
+# of its own: the report's words, never the owner's.
+_REPORT_ECHO_RE = re.compile(
+    r'^(?:".*" was reported and marked wrong|A report was marked wrong)$',
+    re.S)
+
+
 def known_faulty(now: float | None = None) -> dict[str, str]:
     """``{entity_id: reason}`` for every entity somebody said is broken or
     finished with, read off the rules a Wrong wrote (`gone_for_good`).
@@ -484,6 +491,11 @@ def known_faulty(now: float | None = None) -> dict[str, str]:
     try:
         for eid, texts in facts_store.exception_reasons(now).items():
             for text in texts:
+                # A bare Wrong stores the REPORT's words (`facts_store.
+                # exception_text`), and a report that said "the sensor is
+                # broken", marked wrong, is the owner saying it is not.
+                if _REPORT_ECHO_RE.match(text.strip()):
+                    continue
                 if gone_for_good(text):
                     out[eid] = text
                     break
@@ -1372,6 +1384,17 @@ def _resume_of(expires: str) -> str:
         return ""
 
 
+def never_table(protected=None) -> dict:
+    """The floors `House._never_covered` reads, as `scope_map` carries them
+    under `never`: for a reader that builds a `House` with no snapshot
+    (the nightly heat model) and must hold the same floors."""
+    if protected is None:
+        raw = os.environ.get("BRAIN_PROTECTED_ENTITIES", "").split(",")
+        protected = [p.strip().lower() for p in raw if p.strip()]
+    return {"checks": sorted(NEVER_CHECKS), "domains": sorted(NEVER_DOMAINS),
+            "classes": sorted(NEVER_CLASSES), "protected": list(protected)}
+
+
 def scope_map(now: float | None = None, *, protected=None) -> dict:
     """Every live correction, by scope, for `House.should_report`.
 
@@ -1384,14 +1407,8 @@ def scope_map(now: float | None = None, *, protected=None) -> dict:
     leaves the key out then, and `House` falls back to `snap["facts"]`.
     """
     now = time.time() if now is None else float(now)
-    if protected is None:
-        raw = os.environ.get("BRAIN_PROTECTED_ENTITIES", "").split(",")
-        protected = [p.strip().lower() for p in raw if p.strip()]
     table = {"entity": {}, "area": {}, "check": {},
-             "never": {"checks": sorted(NEVER_CHECKS),
-                       "domains": sorted(NEVER_DOMAINS),
-                       "classes": sorted(NEVER_CLASSES),
-                       "protected": list(protected)}}
+             "never": never_table(protected)}
     for row in facts_store.export_rows():
         predicate = str(row.get("predicate") or "")
         if not predicate.startswith(facts_store.EXCEPTION_PREFIX):

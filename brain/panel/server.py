@@ -18706,6 +18706,35 @@ def _closure_rows(store: dict) -> list[dict]:
     return rows
 
 
+def _broken_thermometers(rooms: dict) -> set[str]:
+    """The modelled thermometers the owner has called broken since the
+    nightly pass (#1202): `corrections.broken_answer` over their stored
+    answer, under the room-air mark's floors (`_cannot_mark_room_air`)."""
+    try:
+        faulty = corrections.known_faulty()
+    except Exception:  # noqa: BLE001 — unread settles nothing
+        return set()
+    if not faulty:
+        return set()
+    protected = automation_writer.protected_patterns()
+    out: set[str] = set()
+    for eid in rooms:
+        if eid not in faulty:
+            continue
+        _family, classes, _device = _device_family(eid)
+
+        def floored(_e: str, _c: str, eid: str = eid,
+                    classes: set = classes) -> bool:
+            return corrections.never_covered(
+                eid, "", device_class=_device_class(eid),
+                protected=protected, device_classes=classes)
+
+        if corrections.broken_answer(eid, "", faulty=faulty, never=floored,
+                                     note=lambda _row: None):
+            out.add(eid)
+    return out
+
+
 def _thermal_payload(store: dict) -> dict:
     """The rooms, with the one derived number a person can act on.
 
@@ -18726,6 +18755,9 @@ def _thermal_payload(store: dict) -> dict:
     # A sensor the owner marked as not reading the room's air since the
     # nightly pass is shown as the pass will file it, not as a room (#1082).
     marked = thermal.marked_not_air()
+    # And one the owner called broken since (#1202): not measured, never
+    # a room with numbers that look fine.
+    broken = _broken_thermometers(store.get("rooms") or {})
 
     def _where(eid: str) -> dict:
         area_id = str(entity_areas.get(eid) or "")
@@ -18733,7 +18765,7 @@ def _thermal_payload(store: dict) -> dict:
                 "area_aliases": [str(a) for a in area_aliases.get(area_id) or []]}
 
     for eid, entry in sorted((store.get("rooms") or {}).items()):
-        if not isinstance(entry, dict) or eid in marked:
+        if not isinstance(entry, dict) or eid in marked or eid in broken:
             continue
         ends = (entry.get("coolest"), entry.get("warmest"))
         warm = None
@@ -18767,6 +18799,13 @@ def _thermal_payload(store: dict) -> dict:
                                "area": entry.get("area"),
                                "reason": "you said it does not measure the "
                                          "room's air"}
+    for eid in broken:
+        entry = (store.get("rooms") or {}).get(eid)
+        if isinstance(entry, dict) and eid not in marked:
+            unmeasured[eid] = {"name": entry.get("name"),
+                               "area": entry.get("area"),
+                               "reason": "you said this sensor is broken, so "
+                                         "the room is not measured from it"}
     for eid, left in sorted(unmeasured.items()):
         if not isinstance(left, dict) or eid in measured_ids:
             continue

@@ -556,23 +556,66 @@ class House:
         """``(kind, why)`` when this thermometer is known NOT to read the
         air of its room, else ``("", "")``.
 
-        ``marked``: the owner said so (`ROOM_AIR_RULE`). ``not_air``: the
+        ``marked``: the owner said so (`ROOM_AIR_RULE`). ``broken``: the
+        owner said this sensor is broken (`said_broken`), so its reading is
+        evidence of nothing. ``not_air``: the
         nightly heat model left it out for what it is (a machine's probe,
         a derived reading, a reading that jumps like equipment). ``held``:
         the model found something keeps it warm at night, so it does not
-        follow outdoors. All three are structured, read off the snapshot:
-        the facts table and the thermal store's `unmeasured[eid]["kind"]`.
+        follow outdoors. All four are structured, read off the snapshot:
+        the facts table, the owner's stored answers (`snap["faulty"]`) and
+        the thermal store's `unmeasured[eid]["kind"]`.
         A sensor the model simply lacked nights for has no verdict.
         """
         table = self.snap.get("facts")
         if isinstance(table, dict) and ROOM_AIR_RULE in (
                 table.get(entity_id) or ()):
             return "marked", "you said it does not measure the room's air"
+        if self.said_broken(entity_id):
+            return "broken", "you said this sensor is broken"
         left = (((self.snap.get("thermal") or {}).get("unmeasured") or {})
                 .get(entity_id))
         if isinstance(left, dict) and left.get("kind") in ("not_air", "held"):
             return str(left["kind"]), str(left.get("reason") or "")
         return "", ""
+
+    def said_broken(self, entity_id: str) -> str:
+        """The owner's own words calling THIS sensor broken for good, or ""
+        (#1202).
+
+        Off `snap["faulty"]` (`corrections.known_faulty`: the reason typed
+        on a Wrong, never a report's words) through the one helper every
+        reader shares (`corrections.broken_answer`, `gone_for_good`'s
+        wording, so "broken for now" is not this). Under the floors the
+        room-air mark has (`server._cannot_mark_room_air`): never a lock,
+        an alarm, a protected entity, nor anything on a device that carries
+        a leak, smoke, gas or safety class (`_never_whole` with no check).
+        Only an answer about this entity, not one about another entity of
+        its device: it takes a reading out of the freeze check, so it is
+        read as narrowly as it was given. No trail entry here; each reader
+        says in its own sentence what it did not rely on.
+        """
+        faulty = self.snap.get("faulty")
+        if not isinstance(faulty, dict) or not faulty.get(entity_id):
+            return ""
+        try:
+            import corrections  # noqa: PLC0415 — lazy: it imports the stores
+        except Exception:  # noqa: BLE001 — unread settles nothing
+            return ""
+        never = (self.snap.get("corrections") or {}).get("never")
+        protected = (never or {}).get("protected") if isinstance(
+            never, dict) else None
+
+        def floored(_eid: str, _check: str) -> bool:
+            # The snapshot's table, and the fixed lists when it has none.
+            return (self._never_whole(entity_id, "")
+                    or corrections.never_covered(
+                        entity_id, "", protected=corrections.never_table(
+                            protected)["protected"]))
+
+        return corrections.broken_answer(entity_id, "", faulty=faulty,
+                                         never=floored,
+                                         note=lambda _row: None)
 
     def exists(self, entity_id: str) -> bool:
         return entity_id in self.states or entity_id in self.registry

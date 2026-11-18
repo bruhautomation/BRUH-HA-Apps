@@ -178,8 +178,8 @@ def _room_air(house: House, rooms: dict, check_id: str) -> dict:
     as the device's own, or one on a device that is a manifold, a coil, a
     pipe or a tank (`thermal.on_a_machine`), or a printer's or a computer's
     (`devices.machine_of`), or one the owner marked as not measuring the
-    room's air (`House.room_air_verdict`). Each left out is one `explained`
-    trail line. Not read by `climate.freeze`: a pipe heading for freezing is
+    room's air or called broken (`House.room_air_verdict`). Each left out
+    is one `explained` trail line. Not read by `climate.freeze`: a pipe heading for freezing is
     still news (it skips the owner's mark alone, `freezing_rooms`).
     """
     import thermal  # noqa: PLC0415 — panel-local, like every other check
@@ -189,7 +189,7 @@ def _room_air(house: House, rooms: dict, check_id: str) -> dict:
     out = {}
     for eid, entry in rooms.items():
         kind, said = house.room_air_verdict(eid)
-        if kind in ("marked", "not_air"):
+        if kind in ("marked", "not_air", "broken"):
             house.gave_up(check_id, [{"entity_id": eid}],
                           f"{said}, so it is not read as a room",
                           kind="explained")
@@ -693,11 +693,18 @@ def _live(snap: dict) -> tuple[dict, dict, str, float | None]:
     return rooms, recent, unit, (seen[1] if seen else None)
 
 
-def freezing_rooms(snap: dict, now: float) -> list[dict]:
+def freezing_rooms(snap: dict, now: float,
+                   set_aside: list | None = None) -> list[dict]:
     """Rooms falling now that reach the freeze floor inside the horizon.
 
     Shared, so `climate.window` can stand down for a room this claims
     rather than reporting the same room under a second fix.
+
+    A thermometer the owner called broken (#1202, `House.said_broken`) is
+    not evidence of freezing: what it would have claimed goes into
+    ``set_aside`` when the caller hands a list, so `freeze` can say it did
+    not rely on it, and it is never a hit. Every other room is read as
+    before.
     """
     import thermal  # noqa: PLC0415
 
@@ -719,7 +726,10 @@ def freezing_rooms(snap: dict, now: float) -> list[dict]:
         # they called broken, a thermometer inside a box) is not, and
         # a room they said nothing heats (#1200) is marked for `freeze` to
         # leave out (still claimed here, so `window` does not take it up).
-        if house.room_air_verdict(eid)[0] == "marked":
+        # One the owner called broken (#1202) is set aside, never a hit;
+        # `window` leaves it out too (`_room_air`).
+        verdict = house.room_air_verdict(eid)[0]
+        if verdict == "marked":
             continue
         rows = recent.get(eid) or []
         seen = thermal.latest(rows)
@@ -735,11 +745,27 @@ def freezing_rooms(snap: dict, now: float) -> list[dict]:
         hours = thermal.hours_to_fall(entry, indoor, outside, floor)
         if hours is None or hours > FREEZE_HORIZON_H:
             continue
-        out.append({"entity_id": eid, "entry": entry, "indoor": indoor,
-                    "outside": outside, "hours": hours, "unit": unit,
-                    "floor": floor,
-                    "said_unheated": house.area_id_of(eid) in unheated})
+        hit = {"entity_id": eid, "entry": entry, "indoor": indoor,
+               "outside": outside, "hours": hours, "unit": unit,
+               "floor": floor,
+               "said_unheated": house.area_id_of(eid) in unheated}
+        if verdict == "broken":
+            if set_aside is not None:
+                set_aside.append(hit)
+            continue
+        out.append(hit)
     return out
+
+
+def _other_thermometers(house: House, rooms: dict, eid: str) -> list[str]:
+    """The modelled thermometers in the same area as ``eid`` that the freeze
+    check still reads — none marked, none called broken."""
+    area = house.area_id_of(eid)
+    if not area:
+        return []
+    return [other for other in sorted(rooms) if other != eid
+            and house.area_id_of(other) == area
+            and house.room_air_verdict(other)[0] not in ("marked", "broken")]
 
 
 def _deg_absolute(celsius: float, unit: str) -> float:
@@ -755,10 +781,29 @@ def freeze(snap: dict, now: float) -> list[dict]:
     # design, "check the heating is reaching it" has no heating to check,
     # and its cold night is `climate.frost_ahead`'s to warn about, as the
     # unheated space it is — the warning they can answer.
-    hits = [h for h in freezing_rooms(snap, now)
+    set_aside: list[dict] = []
+    hits = [h for h in freezing_rooms(snap, now, set_aside)
             if not (h["said_unheated"] and _left_unheated(
                 house, h["entity_id"], unheated, "climate.freeze"))
             and house.should_report(h["entity_id"], "climate.freeze")]
+    # What a sensor the owner called broken would have said is not a
+    # warning (#1202), and the trail says so in words. A room it was the
+    # only thermometer for is NOT MEASURED, never fine: the sentence says
+    # brAIn cannot tell, so "why didn't you warn me" has its answer.
+    _, rooms = _rooms(snap)
+    for hit in set_aside:
+        eid, unit = hit["entity_id"], hit["unit"]
+        area = house.area_of(eid)
+        room = f"the {area}" if area else "this room"
+        others = _other_thermometers(house, rooms, eid)
+        house.gave_up("climate.freeze", [{"entity_id": eid}], (
+            f"it reads {hit['indoor']:.1f}{unit} and is falling, but you "
+            "said this sensor is broken, so brAIn did not warn about "
+            "freezing from it — "
+            + (f"the other thermometers in {room} are still read"
+               if others else
+               f"nothing else measures {room}, so whether it is cold "
+               "there is not measured")), kind="explained")
     if not hits or len(hits) > MAX_FREEZE:
         return []
     hits.sort(key=lambda h: h["hours"])
