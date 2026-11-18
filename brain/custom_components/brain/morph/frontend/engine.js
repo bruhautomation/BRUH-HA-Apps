@@ -58,6 +58,19 @@ const STRETCH = 2;
 // screen it is exactly one column anyway); bigger cards fill their row, and
 // the page itself stops at 1480px.
 const TILE_MAX_PX = 260;
+// Spacing and breakpoints mirror the shared UI tokens (branding/ui/tokens.css,
+// docs/notes/ui-standard.md); layout runs in JS, so the numbers are repeated
+// here and must move with the tokens.
+const BP_PHONE = 640;        // the one phone breakpoint (CSS: max-width 639.98px)
+const GAP_WIDE = 16;         // --sp-4: gap between sections (and columns) on a wide board
+const GAP_PHONE = 12;        // --sp-3: the same on a phone
+const TILE_GAP = 12;         // --card-gap: between the tiles of a room
+const PAD = 16;              // --sp-4: the one inset of a section (title, tiles and floor heading)
+const GROUP_GAP = 16;        // --sp-4: between a room's groups
+const GROUP_LABEL_H = 24;    // --sp-6: a group label's row
+const COL_MIN = 204;         // the narrowest a column gets: a compact tile's content (188) plus the room's inset
+const FLOOR_GAP = 48;        // --sp-12: above a floor's heading
+const FLOOR_HEAD_PAD = 16;   // --sp-4: under a floor's heading
 const ROOM_MAX = 4; // the widest a room of controls gets, in columns
 
 export class Engine {
@@ -194,13 +207,13 @@ export class Engine {
     if (this._mo) this.note(this._mo.takeRecords());
     const W = boardEl.clientWidth;
     if (!W) return;
-    const G = W < 700 ? 12 : 16, TG = 6, PAD = 10, GP = 0, GLH = 24, GGAP = 14;
+    const G = W < BP_PHONE ? GAP_PHONE : GAP_WIDE, TG = TILE_GAP, GP = 0, GLH = GROUP_LABEL_H, GGAP = GROUP_GAP;
     // A phone gets two half-columns (one section column): sections and big
     // cards take both, so names and values have room to breathe; the page
     // lengthens, and cards fold (house change). The grid is twice as fine as
     // before (house change): sections and big cards span pairs of these
     // columns; compact tiles take one.
-    const N = W < 480 ? 2 : Math.max(2, Math.floor((W + G) / (188 + G)));
+    const N = Math.max(2, Math.floor((W + G) / (COL_MIN + G)));
     // A phone or a narrow window: every section takes the whole width.
     const narrow = N <= 3;
     const u = (W - G * (N - 1)) / N;
@@ -279,12 +292,10 @@ export class Engine {
       return rows;
     };
     const widthOf = (cs, w) => cs * cwOf(w) + (cs - 1) * TG;
-    // Every control tile on a wide screen is one exact width: a tile's width in
-    // a 2-column room, centered in its column slot, so rooms of any width show
-    // identical tiles and only the gaps absorb the difference (household, Oct 2026).
-    const CT = cwOf(2);
-    const compactId = {}; M.sections.forEach((sx) => sx.groups.forEach((g) => g.items.forEach((it) => { if (it.compact) compactId[it.id] = true; })));
-    const tileW = (id, cs, w) => (!narrow && compactId[id] && Math.abs(cs - 1) < 1e-6 && id !== openId ? Math.min(CT, cwOf(w)) : null);
+    // A tile is its column, left-aligned in its slot, so the gap between tiles
+    // is TILE_GAP in every room on every screen (it used to be centred in a
+    // capped slot, which made the gap 6px on a phone and 11px on a desktop).
+    const tileW = () => null;
     const openSpan = (g, w) => {
       let at = null;
       rowsOf(g, w).forEach((row) => row.forEach((p) => { if (p.it.id === openId) at = p; }));
@@ -413,7 +424,7 @@ export class Engine {
     // side by side (each of them never wraps by itself). Its chips (a door,
     // motion) may drop to a second line rather than widen the section.
     const natural = (he) => {
-      let wd = 22 + 12; // the heading's own padding
+      let wd = 2 * PAD; // the heading's own padding
       const line = he.querySelector('.secline');
       if (line) {
         const h2 = line.querySelector('h2'), meta = line.querySelector('.secmeta'), sc = line.querySelectorAll('.secscenes > *');
@@ -503,7 +514,7 @@ export class Engine {
       const one = (pt, y0) => {
         const g = pt.g, bw = pt.bw, c0 = pt.c0;
         let py = y0; const top = py; py += GP;
-        if (g.label) { labs[g.key] = { x: colX(c0) + 6, y: py + 2, w: bw * cw + (bw - 1) * TG - 2 * GP - 12, h: 20 }; py += GLH; }
+        if (g.label) { labs[g.key] = { x: colX(c0), y: py + 2, w: bw * cw + (bw - 1) * TG - 2 * GP, h: 20 }; py += GLH; }
         // Content-sized packing: a tile sits straight under whatever is
         // above it in ITS columns (a skyline), not under the tallest tile of
         // the row above, so a short tile never leaves a void beneath it.
@@ -679,6 +690,8 @@ export class Engine {
           }
         }
         const rows = []; for (let j = n; j > 0; j = dp[j].i) rows.unshift({ seg: list.slice(dp[j].i, j), ws: dp[j].ws });
+        // The last room of every row but the floor's last reaches the row's edge, so the right edge is straight.
+        rows.forEach((r, ri) => { const left = N - sum(r.ws); if (ri < rows.length - 1 && left > 0) r.ws[r.ws.length - 1] += left; });
         const out = {}; let y = 0;
         rows.forEach((r, ri) => {
           let c = 0, H = 0;
@@ -706,11 +719,11 @@ export class Engine {
       const A = this.base.pos[a.id], B = this.base.pos[b.id];
       return (a.floor - b.floor) || (A.y - B.y) || ((b === openSec) - (a === openSec)) || (A.c - B.c);
     });
-    const FH = W < 700 ? 76 : 72, FGAP = W < 700 ? 22 : 34;
+    const FGAP = FLOOR_GAP;
     let fpos = {}; const FLH = {};
-    r.querySelectorAll('[data-floor]').forEach((el) => { const inn = el.querySelector('[data-flin]'); FLH[el.getAttribute('data-floor')] = inn ? hgt(inn) + (W < 700 ? 14 : 16) + 6 : 0; });
+    r.querySelectorAll('[data-floor]').forEach((el) => { const inn = el.querySelector('[data-flin]'); FLH[el.getAttribute('data-floor')] = inn ? hgt(inn) + FLOOR_HEAD_PAD : 0; });
     // A floor drawn without a heading, or whose heading is off, takes no room (house change).
-    const fhOf = (f) => (this.floorHead[String(f)] === 0 || !(String(f) in FLH) ? 0 : Math.max(FH, FLH[String(f)]));
+    const fhOf = (f) => (this.floorHead[String(f)] === 0 || !(String(f) in FLH) ? 0 : FLH[String(f)]);
     const stretch = {};
     const place = (oc, ow, hts) => {
       const pl = []; const fp = {}; let cursor = 0, curF = null, top = 0, rowEnd = [];
@@ -723,13 +736,8 @@ export class Engine {
         const ri = (this.base.rowIx || {})[s.id];
         // A room row starts below the whole row before it (room rows, above).
         const y = ri == null ? yAt(c, w) : Math.max(yAt(c, w), ri > 0 && rowEnd[ri - 1] != null ? rowEnd[ri - 1] + G : top);
-        let h = hts(s, w);
-        // ...and every room in a row is as tall as the row, unless it is the
-        // opened one or folded to its title (nothing stretches to an opened card).
-        const mates = (this.base.rowMates || {})[s.id];
-        // A section that is one custom card (the assistant's own card) keeps its own height: it draws no box, so stretching it only leaves a gap under it.
-        const soloLv = !!(SE[s.id] && SE[s.id].classList.contains('solo-lv'));
-        if (mates && s !== openSec && !s.folded && !soloLv) mates.forEach((id) => { const q = secOf[id]; if (q && q !== openSec && !q.folded) h = Math.max(h, hts(q, wmap[id])); });
+        const h = hts(s, w);
+        // A room is as tall as its own content (a box never stretches past its tiles); the next row starts below the tallest room of this one.
         if (ri != null) rowEnd[ri] = Math.max(rowEnd[ri] == null ? 0 : rowEnd[ri], y + h);
         pl.push({ id: s.id, f: s.floor, c: c, y: y, w: w, h: h }); cursor = Math.max(cursor, y + h);
       });

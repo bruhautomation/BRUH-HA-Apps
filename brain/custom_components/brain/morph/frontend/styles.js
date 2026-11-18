@@ -134,7 +134,7 @@ section.sec.solo:not(.solo-lv) .mtile:not(.isopen){background:var(--surface)!imp
 .secscenes{display:inline-flex;gap:8px 12px;flex-wrap:wrap}
 .secscenes .wd{font-size:14px;color:var(--muted)}
 .needs{font-size:12px;color:var(--rose);white-space:nowrap}
-.trace{background:none;border:0;padding:0;margin:0;font:inherit;font-size:12px;cursor:pointer;min-height:28px;white-space:nowrap}
+.trace{background:none;border:0;padding:0;margin:0;font:inherit;font-size:12px;cursor:pointer;min-height:var(--btn-h-sm);white-space:nowrap}
 .secbecause{flex-basis:100%;font-size:12px;margin:-2px 0 0}
 
 .chip{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--muted);white-space:nowrap}
@@ -145,7 +145,7 @@ section.sec[data-state="asleep"]{opacity:.45}
 section.sec[data-state="asleep"] .secmeta{color:var(--indigo)}
 section.sec[data-state="asleep"] .mtile{opacity:1}
 .flrooms,.roomline{display:flex;flex-wrap:wrap;align-items:baseline;gap:0 16px;margin-top:8px}
-.roomw{background:none;border:0;padding:0;margin:0;font:inherit;font-size:14px;cursor:pointer;min-height:30px;display:inline-flex;align-items:center;gap:8px;color:var(--muted)}
+.roomw{background:none;border:0;padding:0;margin:0;font:inherit;font-size:14px;cursor:pointer;min-height:var(--btn-h-sm);display:inline-flex;align-items:center;gap:8px;color:var(--muted)}
 .roomw.rs-idle{color:var(--quiet)}.roomw.rs-active,.roomw.rs-occupied,.roomw.rs-attention{color:var(--text)}.roomw.rs-asleep{opacity:.45}
 .rdot{width:4px;height:4px;border-radius:50%;background:var(--rose)}
 .rlfloor{font-family:var(--m-font-display);font-size:20px;font-weight:300;margin-left:8px}
@@ -166,17 +166,17 @@ section.sec[data-state="asleep"] .mtile{opacity:1}
 .replyrow{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .morph .replyin{flex:1 1 200px;min-width:0;background:transparent;border:0;border-bottom:1px solid var(--cc,var(--line2));border-radius:0;padding:8px 0;font-size:16px;color:var(--text);outline:none}
 .replyin::placeholder{color:var(--quiet)}
-.replysend{flex:none;min-height:36px;padding:0 16px;border-radius:var(--m-tile-radius);border:1px solid var(--cc,var(--line2));background:transparent;color:var(--text);font:inherit;font-size:14px;font-weight:600;cursor:pointer}
+.replysend{flex:none;min-height:var(--btn-h-sm);padding:0 16px;border-radius:var(--m-tile-radius);border:1px solid var(--cc,var(--line2));background:transparent;color:var(--text);font:inherit;font-size:14px;font-weight:600;cursor:pointer}
 .replysend:active{background:var(--cc,var(--line2));color:#fff}
 .casewords{display:inline-flex;flex-wrap:wrap;gap:0 16px}
-.casewords .wd{font-size:14px;min-height:40px}
+.casewords .wd{font-size:14px}
 .todolist{display:flex;flex-direction:column;padding:2px 12px 8px}
 .todorow{display:flex;align-items:center;gap:12px;min-height:44px;padding:8px 8px;border-top:1px solid var(--line);cursor:pointer;touch-action:pan-y;user-select:none;-webkit-user-select:none;transition:transform .2s var(--ease)}
 .todorow:first-child{border-top:0}
 .todorow .lx span:first-child{font-size:14px}
-.actword{flex:none;display:inline-flex;align-items:center;gap:8px;box-sizing:border-box;min-height:36px;padding:0 12px;border:1px solid color-mix(in oklab,var(--ac) 65%,transparent);border-radius:999px;font-size:14px;font-weight:700;color:color-mix(in oklab,var(--ac) 75%,var(--text));white-space:nowrap}
+.actword{flex:none;display:inline-flex;align-items:center;gap:8px;box-sizing:border-box;min-height:var(--btn-h-sm);padding:0 12px;border:1px solid color-mix(in oklab,var(--ac) 65%,transparent);border-radius:999px;font-size:14px;font-weight:700;color:color-mix(in oklab,var(--ac) 75%,var(--text));white-space:nowrap}
 .actword.armed{color:var(--ink);background:var(--ac);border-color:var(--ac)}
-@media (pointer:coarse){.actword{min-height:40px}}
+@media (pointer:coarse){.actword{min-height:var(--btn-h)}}
 /* A narrow TILE (not a narrow window: a five-column room at 1200 has them too) gives the button's words up: the noun goes, and a button that has an icon is only the icon (its name is its aria-label), so the state beside it keeps its words whole. */
 @container (max-width:260px){.actnoun{display:none}.actword{padding:0 8px;font-size:12px}.actword.hasicon{width:40px;padding:0;justify-content:center}.actword.hasicon .acttext{display:none}}
 .keeprow .wd{font-size:14px}
@@ -203,17 +203,17 @@ h1.hello{font-family:var(--m-font-display);font-weight:400;font-size:var(--m-dis
 .flex1{flex:1}
 .nm{background:none;border:0;padding:0;margin:0;font:inherit;color:inherit;cursor:pointer;text-align:left;text-decoration:underline;text-decoration-style:dotted;text-decoration-color:var(--line2);text-decoration-thickness:1.5px;text-underline-offset:.32em;transition:text-decoration-color .3s var(--ease)}
 .nm:hover,.nm[aria-expanded="true"]{text-decoration-style:solid;text-decoration-color:currentColor}
-.wd{background:none;border:0;margin:0;font:inherit;cursor:pointer;color:var(--quiet);min-height:40px;min-width:40px;padding:0 1px;transition:color .25s var(--ease)}
+.wd{background:none;border:0;margin:0;font:inherit;cursor:pointer;color:var(--quiet);min-height:var(--btn-h);min-width:var(--btn-h);padding:0 1px;transition:color .25s var(--ease)}
 .wd:hover{color:var(--text)}
 .wd[aria-pressed]{position:relative}.wd[aria-pressed]::after{content:"";position:absolute;left:1px;right:1px;bottom:8px;height:2px;border-radius:8px;background:currentColor;transform:scaleX(0);transform-origin:left center;transition:transform .4s var(--ease)}.wd[aria-pressed="true"]{color:var(--text)}.wd[aria-pressed="true"]::after{transform:scaleX(1)}
 /* A scene or routine chip is a target, not a word: the shared .wd floor in height AND width, room between neighbours, wrapping rather than clipping. */
-.scenes .wd,.scenesline .wd,.secscenes .wd{min-width:40px;padding:0 8px;text-align:center}
+.scenes .wd,.scenesline .wd,.secscenes .wd{min-width:var(--btn-h);padding:0 8px;text-align:center}
 .wd.go{font-weight:700;color:var(--teal)}
 .wd.bad{color:var(--rose)}
 .wd.strong{font-weight:600;color:var(--text)}
-.sq{width:40px;height:40px;border-radius:12px;border:0;background:var(--chip);display:grid;place-items:center;cursor:pointer;transition:background-color .2s var(--ease)}
+.sq{width:var(--btn-h);height:var(--btn-h);border-radius:12px;border:0;background:var(--chip);display:grid;place-items:center;cursor:pointer;transition:background-color .2s var(--ease)}
 .sq:hover{background:var(--line2)}
-.go{background:none;border:0;padding:0;margin:0;font:inherit;cursor:pointer;font-weight:700;min-height:40px}
+.go{background:none;border:0;padding:0;margin:0;font:inherit;cursor:pointer;font-weight:700;min-height:var(--btn-h)}
 .go:hover{text-decoration:underline;text-underline-offset:6px;text-decoration-thickness:1.5px}
 .scenesline{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px}
 .scenesline .wd{font-family:var(--m-font-display);font-size:20px;letter-spacing:-.01em}
@@ -263,7 +263,7 @@ h1.hello{font-family:var(--m-font-display);font-weight:400;font-size:var(--m-dis
 .cu-l1{display:flex;align-items:center;gap:8px;min-width:0;flex:0 1 auto}
 .cu-l1 .cu-dot{transition:none}
 .cu-name{font-size:16px;font-weight:600;overflow:hidden;text-overflow:ellipsis;min-width:0;text-align:left;line-height:1.3}
-.cu-name.go{min-height:28px;display:block}
+.cu-name.go{min-height:var(--btn-h-sm);display:block}
 .cu-name.quiet{font-weight:500;color:var(--muted)}
 .cu-l2{font-size:12px;color:var(--quiet);overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1000 auto}
 .cu-back{position:absolute;right:0;bottom:0;font-size:14px;color:var(--teal);min-height:32px;padding:0 4px 0 16px;background:linear-gradient(90deg,transparent,var(--bg) 14px)}
@@ -414,11 +414,11 @@ ${STATUS_RULES}
 .ovenvi .age{font-size:12px;color:var(--quiet)}
 .ovenvi b{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
 @media (max-width:639.98px){.ovside{width:104px}}
-.legend .wd{min-height:30px;font-size:12px}
+.legend .wd{min-height:var(--btn-h-sm);font-size:12px}
 .field{position:relative;height:120px;border-radius:12px;cursor:crosshair;background:linear-gradient(to bottom,rgba(255,255,255,.75),rgba(255,255,255,0)),linear-gradient(90deg,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)}
 .field i{position:absolute;width:14px;height:14px;margin:-8px 0 0 -8px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5);pointer-events:none}
 .swatches{display:flex;gap:8px;flex-wrap:wrap}
-.sw{width:36px;height:36px;border-radius:8px;border:0;cursor:pointer;box-shadow:inset 0 0 0 1px var(--line2)}
+.sw{width:var(--btn-h-sm);height:var(--btn-h-sm);border-radius:8px;border:0;cursor:pointer;box-shadow:inset 0 0 0 1px var(--line2)}
 .mrange{-webkit-appearance:none;appearance:none;width:100%;height:40px;cursor:pointer;margin:0;display:block;background:transparent}
 .mrange::-webkit-slider-runnable-track{height:6px;border-radius:8px;background:var(--line2)}
 .mrange::-moz-range-track{height:6px;border-radius:8px;background:var(--line2)}
@@ -447,7 +447,7 @@ ${STATUS_RULES}
 .bnin{display:flex;flex-direction:column;min-width:0;gap:2px}
 .bnote .say{font-size:14px;line-height:1.5;color:var(--muted)}
 .bnote .sub{font-size:12px;line-height:1.45;color:var(--quiet)}
-.bnote .wd{font-size:14px;font-weight:600;min-height:36px;color:var(--quiet)}
+.bnote .wd{font-size:14px;font-weight:600;min-height:var(--btn-h-sm);color:var(--quiet)}
 .bnote .wd.first{color:var(--text)}
 .bnote .fld{margin-top:8px}
 .notecard{border-radius:var(--m-tile-radius)}
@@ -463,7 +463,7 @@ ${STATUS_RULES}
 .step i{width:6px;height:6px;border-radius:50%;flex-shrink:0}
 .bstep{font-size:12px}
 .bstep i{width:5px;height:5px;opacity:.7}
-.earlier summary{cursor:pointer;min-height:28px;line-height:28px;font-size:12px;color:var(--quiet)}
+.earlier summary{cursor:pointer;min-height:var(--btn-h-sm);line-height:32px;font-size:12px;color:var(--quiet)}
 .earlier .step{padding-left:2px}
 .working{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--text);min-height:24px}
 .pulse{width:8px;height:8px;border-radius:50%;flex-shrink:0;background:var(--violet);animation:breathe 1.6s ease-in-out infinite}
@@ -489,12 +489,12 @@ ${STATUS_RULES}
 .activity .lx{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0}
 .activity .lx b{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .activity .lx span{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.payload summary{cursor:pointer;min-height:28px;line-height:28px;font-size:12px;color:var(--quiet)}
+.payload summary{cursor:pointer;min-height:var(--btn-h-sm);line-height:32px;font-size:12px;color:var(--quiet)}
 .payload pre{font-family:ui-monospace,monospace;margin-top:8px;max-height:240px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.5;color:var(--muted);background:var(--sunk);border-radius:8px;padding:12px 12px}
 .edit{display:flex;flex-direction:column;gap:12px;padding:12px 16px 16px}
 .flab{display:flex;flex-direction:column;gap:8px;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--quiet)}
 .hues{display:flex;flex-wrap:wrap;gap:4px}
-.hue{width:36px;height:36px;border:0;padding:0;background:none;display:grid;place-items:center;cursor:pointer}
+.hue{width:var(--btn-h-sm);height:var(--btn-h-sm);border:0;padding:0;background:none;display:grid;place-items:center;cursor:pointer}
 .hue span{width:22px;height:22px;border-radius:8px}
 .llnone{display:block;font-size:12px;color:var(--quiet);padding:8px 4px}
 .code{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12px;line-height:1.55;padding:12px 16px;border-radius:12px;background:var(--sunk);white-space:pre;overflow-x:auto;margin:0;color:var(--muted);user-select:text}
@@ -527,7 +527,7 @@ ${STATUS_RULES}
 .fit+.fit{border-top:1px solid var(--line)}
 .fk{font-weight:700;color:var(--text);margin-right:4px}
 .fbody .acts,.facts{display:flex;flex-wrap:wrap;gap:0 16px}
-.fbody .wd,.facts .wd{min-height:34px;font-size:14px;font-weight:600}
+.fbody .wd,.facts .wd{min-height:var(--btn-h-sm);font-size:14px;font-weight:600}
 .wd.first{color:var(--text)}
 /* The bar: words, not tabs (rule 3); each one a 44px target. */
 .barw{display:inline-flex;align-items:center;gap:8px;margin-left:8px;padding:0 8px;min-height:44px;font-size:14px;font-weight:700;color:var(--muted)}
@@ -536,8 +536,8 @@ ${STATUS_RULES}
 .bartoast:empty{display:none}
 .yamlbox{display:flex;flex-direction:column;gap:8px;margin-top:16px}
 /* Small words that act (Undo, Show me, Turn off) keep their look and get a 44px reach. */
-.wd.mini{min-height:28px;position:relative}.wd.mini::before{content:"";position:absolute;inset:-8px -4px}
-.wd.sug{font-size:14px;min-height:44px}.wd.sug.small{font-size:14px}
+.wd.mini{min-height:var(--btn-h-sm);position:relative}.wd.mini::before{content:"";position:absolute;inset:-8px -4px}
+.wd.sug{font-size:14px;min-height:var(--btn-h)}.wd.sug.small{font-size:14px}
 .wd.opt{font-size:14px;font-weight:600;text-transform:none;letter-spacing:0}.wd.opt.light{font-weight:inherit}
 /* The story's opened tables. */
 .stbl{display:block}
@@ -558,7 +558,7 @@ ${STATUS_RULES}
 .secline{align-items:center;row-gap:8px}
 .secline .secscenes,.secscenes{order:9;flex:1 1 100%;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:2px;max-width:min(100%,calc(var(--n,4) * 104px));padding:2px;margin:0;border-radius:8px;background:color-mix(in oklab,var(--sunk) 70%,transparent);box-shadow:inset 0 0 0 1px var(--line);overflow:visible;-webkit-mask:none;mask:none}
 .secscenes>:first-child,.secscenes>:last-child,.secline .secscenes>:first-child{margin:0}
-.secscenes .wd,.secline .secscenes .wd{min-height:30px;padding:0 8px;border-radius:8px;font:600 14px/1 var(--m-font);letter-spacing:0;color:var(--muted);text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background .25s var(--ease),color .25s var(--ease),box-shadow .25s var(--ease)}
+.secscenes .wd,.secline .secscenes .wd{min-height:var(--btn-h-sm);padding:0 8px;border-radius:8px;font:600 14px/1 var(--m-font);letter-spacing:0;color:var(--muted);text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background .25s var(--ease),color .25s var(--ease),box-shadow .25s var(--ease)}
 .secscenes .wd::before{inset:-6px 0}
 .secscenes .wd::after{display:none}
 .secscenes .wd:hover{color:var(--text);background:color-mix(in oklab,var(--text) 5%,transparent)}
@@ -569,7 +569,7 @@ ${STATUS_RULES}
 /* A room's other things, as the smallest marks: faint while idle, a word while busy. */
 .sleepask{flex-basis:100%;display:flex;align-items:center;gap:8px;margin:2px 16px 2px 0;padding:8px 8px 8px 12px;border-radius:8px;background:color-mix(in oklab,var(--indigo) 14%,transparent);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--indigo) 35%,transparent);color:var(--indigo);font:600 14px var(--m-font);animation:rise .3s var(--ease)}
 .sleepask span{flex:1;min-width:0}
-.sleepask .wd{min-height:30px;padding:0 12px;border-radius:8px;font:700 14px var(--m-font);color:var(--text);background:color-mix(in oklab,var(--indigo) 30%,transparent)}.sleepask .wd::after{display:none}
+.sleepask .wd{min-height:var(--btn-h-sm);padding:0 12px;border-radius:8px;font:700 14px var(--m-font);color:var(--text);background:color-mix(in oklab,var(--indigo) 30%,transparent)}.sleepask .wd::after{display:none}
 .lanes{gap:0}.lane+.lane::before{content:"";position:absolute;left:0;right:0;top:0;height:1px;background:color-mix(in oklab,var(--line) 70%,transparent);z-index:1}
 .todorow{flex-wrap:wrap;align-items:flex-start;padding:12px 8px;transition:transform .2s var(--ease),opacity .4s ease}
 .todorow .lx{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;padding-top:1px}
@@ -617,14 +617,14 @@ ${STATUS_RULES}
 .wrap>[data-region="top"]:has(>.topsec:empty:only-child){display:none}
 .inshell .wrap>[data-region="bar"]:has(.toastline .bartoast:empty){margin-bottom:calc(var(--sp-3) - var(--section-gap))}
 /* A row of chips (rooms, a chart's legend, a note's words) is a row of targets on touch: 40px, like every other chip (#786). */
-@media (pointer:coarse){.morph .roomw,.morph .legend .wd,.morph .bnote .wd{min-height:40px}}
+@media (pointer:coarse){.morph .roomw,.morph .legend .wd,.morph .bnote .wd{min-height:var(--btn-h)}}
 /* Every button is a 40px target on a phone, in both directions (the audit counts width too): a room's jump word, the sidebar button and a coming-up title were 26-30px. The height is taken from the margin, so the page's layout does not move. */
 /* A scene segment and the Edit pencil are 40px tall under a finger (the pencil's extra height is borrowed back from its row). */
-@media (pointer:coarse){.morph .secline .secscenes .wd,.morph .secscenes .wd{min-height:40px}.morph .toastline .editq{min-height:40px;margin-block:-4px}.morph .bar>.editq{min-width:40px;min-height:40px;display:inline-flex;align-items:center;justify-content:center}}
+@media (pointer:coarse){.morph .secline .secscenes .wd,.morph .secscenes .wd{min-height:var(--btn-h)}.morph .toastline .editq{min-height:var(--btn-h);margin-block:-4px}.morph .bar>.editq{min-width:var(--btn-h);min-height:var(--btn-h);display:inline-flex;align-items:center;justify-content:center}}
 /* Coming up's name stays a block on a phone: as a flex box (5.3.15) its text lost the ellipsis and was cut mid-word (#1126). The 40px is its line height. */
-@media (pointer:coarse){.morph .roomw,.morph .menu{min-width:40px;justify-content:center}.morph .cu-name.go{min-height:40px;line-height:40px;margin-block:-8px;display:block}}
+@media (pointer:coarse){.morph .roomw,.morph .menu{min-width:var(--btn-h);justify-content:center}.morph .cu-name.go{min-height:var(--btn-h);line-height:var(--btn-h);margin-block:-8px;display:block}}
 /* Coming up's zoom and fold are 40px a side on a phone, centred where the smaller marks were drawn, so they sit as before and are not mis-hit for each other. */
-@media (pointer:coarse){.morph .cu-zb{min-width:40px;height:40px;top:-2px;justify-content:center}.morph .cu-zb:not(.solo){right:40px}.morph .cu-fold{width:40px;height:40px;top:-2px}}
+@media (pointer:coarse){.morph .cu-zb{min-width:var(--btn-h);height:var(--btn-h);top:-2px;justify-content:center}.morph .cu-zb:not(.solo){right:40px}.morph .cu-fold{width:var(--btn-h);height:var(--btn-h);top:-2px}}
 .morph input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=color]),.morph textarea,.morph select{font-size:16px}
 `;
 /* The 16px text floor, on every screen (a phone with a desktop-width page or a pointer that says it is fine still zooms): below it iOS zooms the page when a field takes focus (#677). Every field Morph draws, and the same floor handed to a card's own shadow root by morph-panel.js (FIELD_FLOOR). */
