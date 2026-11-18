@@ -14,6 +14,7 @@
 <body>
   <div class="page-header">
     <header class="topbar">
+     <div class="bar-in">
       <div class="brand">
         <!-- The square lockup, not the gable alone: the roof is the family mark and
              says nothing about which add-on this is. It carries its own dark ground
@@ -41,9 +42,11 @@
         <button id="btn-restart" class="btn btn-warn" title="Restart the server">Restart</button>
         <button id="btn-stop" class="btn btn-danger" title="Stop the server">Stop</button>
       </div>
+     </div>
     </header>
 
     <nav class="tabs" role="tablist">
+     <div class="tabs-in">
       <button class="tab active" data-tab="dashboard" role="tab">Dashboard</button>
       <button class="tab" data-tab="console" role="tab">Console</button>
       <button class="tab" data-tab="players" role="tab">Players</button>
@@ -51,6 +54,7 @@
       <button class="tab" data-tab="addons" role="tab">Add-ons</button>
       <button class="tab" data-tab="backups" role="tab">Backups</button>
       <button class="tab" data-tab="worlds" role="tab">Worlds</button>
+     </div>
     </nav>
   </div>
 
@@ -154,7 +158,7 @@
           </label>
         </fieldset>
 
-        <h4 style="margin-top: 18px;">Bedrock cross-play (iOS, Android, Xbox, Switch, PS, Win10/11)</h4>
+        <h4>Bedrock cross-play (iOS, Android, Xbox, Switch, PS, Win10/11)</h4>
         <p class="muted">Bedrock players run a different version of Minecraft than the Java server. <strong>Geyser</strong> + <strong>Floodgate</strong> are plugins that translate between the two so Java and Bedrock players share one world. Only works with Paper / Purpur / Folia (your earlier pick), and the add-on installs both for you.</p>
         <fieldset class="setup-cards">
           <label class="setup-pick recommended">
@@ -318,13 +322,13 @@
         <h3>7. Plugins</h3>
         <p class="muted">Curated, well-known Bukkit plugins the add-on can install automatically. Each toggle resolves the latest Paper-compatible build from Modrinth on every boot. <strong>Available only for Paper / Purpur / Folia</strong> — skipped on Vanilla/Fabric/Forge.</p>
 
-        <h4 style="margin-top: 14px;">Essential — leave on</h4>
+        <h4>Essential — leave on</h4>
         <div class="setup-essential-callout">
           <div><strong>ViaVersion + ViaBackwards <span class="setup-tag">always on</span></strong>
           <span class="muted">Protocol bridges so clients on a different Minecraft version than your server can still connect — hides the gap between a Mojang release and the matching Paper build (the "Outdated server!" / "This server does not support Java Edition X.Y" kicks). No gameplay impact. Toggleable in the Configuration tab if you really need to disable, but almost no one wants to.</span></div>
         </div>
 
-        <h4 style="margin-top: 18px;">Optional — pick what you want</h4>
+        <h4>Optional — pick what you want</h4>
         <p class="muted" id="setup-plugins-note"></p>
         <div id="setup-plugins-grid" class="setup-plugins">
           <label class="setup-check setup-plugin"><input type="checkbox" data-plugin="install_essentialsx" /><div><strong>EssentialsX</strong><span class="muted">/home, /tpa, /spawn, /warp, /kit, /heal, /feed, /msg, economy, jail/mute. The "everyday QoL" bundle most servers run.</span></div></label>
@@ -678,11 +682,15 @@
 
     <!-- Players -->
     <section id="tab-players" class="tab-panel">
-      <h2>Players</h2>
-      <p class="muted">Everyone who has joined or is on the whitelist. Pick what to do from the menu beside a name.</p>
-      <p id="players-empty" class="muted" hidden>No one has joined yet. Add a name below to let someone in.</p>
-      <ul class="player-list" id="players-list" hidden></ul>
+      <div class="sec">
+        <h2>Players</h2>
+        <p class="muted">Everyone who has joined or is on the whitelist. Pick what to do from the menu beside a name.</p>
+        <p id="players-empty" class="muted" hidden>No one has joined yet. Add a name below to let someone in.</p>
+        <ul class="player-list" id="players-list" hidden></ul>
+      </div>
+      <div class="sec">
       <h2>Add or manage by name</h2>
+      <div class="card">
       <form id="f-player-action" class="inline-form">
         <input id="player-name" type="text" placeholder="PlayerName" maxlength="16" aria-label="Player name" autocapitalize="off" autocomplete="off" />
         <select id="player-action" aria-label="What to do">
@@ -699,10 +707,13 @@
       </form>
       <p class="muted">Bedrock players (iPad, phone, console) join with a dot in front of their name, for example <code>.Steve</code>. Type the dot too.</p>
       <pre id="player-reply" class="reply"></pre>
+      </div>
+      </div>
     </section>
 
     <!-- Properties -->
     <section id="tab-properties" class="tab-panel">
+     <div class="sec">
       <p class="props-context">
         Editing world <strong><code id="props-active-world">…</code></strong>
         — these settings are <strong>per-world</strong>. Switch worlds from the
@@ -715,10 +726,12 @@
         <thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>
         <tbody></tbody>
       </table>
+     </div>
     </section>
 
     <!-- Add-ons: everything in this world, and the browser to add more -->
     <section id="tab-addons" class="tab-panel">
+      <div class="sec">
       <h2>Add-ons in this world</h2>
       <p class="muted" id="addons-lede">
         Plugins, data packs and resource packs in the <strong>active world</strong>.
@@ -734,20 +747,24 @@
       </div>
       <div id="addon-world" class="addon-world"></div>
       <p class="muted" id="addon-world-empty" hidden>Nothing added to this world yet — search below.</p>
-
-      <div class="software" id="software">
-        <div class="software-head">
-          <h3>Server software</h3>
-          <button class="btn btn-ghost" id="software-check" type="button">Check for updates</button>
-        </div>
-        <div id="software-rows" class="software-rows"><p class="muted">Checking…</p></div>
-        <p class="muted software-foot" id="software-foot"></p>
-        <div class="software-actions">
-          <button class="btn" id="software-update" type="button">Update everything now</button>
-        </div>
-        <p class="addon-note" id="software-note" aria-live="polite"></p>
       </div>
 
+      <div class="sec" id="software-sec">
+        <div class="sec-head">
+          <h2>Server software</h2>
+          <button class="btn btn-ghost" id="software-check" type="button">Check for updates</button>
+        </div>
+        <div class="card software" id="software">
+          <div id="software-rows" class="software-rows"><p class="muted">Checking…</p></div>
+          <p class="muted software-foot" id="software-foot"></p>
+          <div class="software-actions">
+            <button class="btn" id="software-update" type="button">Update everything now</button>
+          </div>
+          <p class="addon-note" id="software-note" aria-live="polite"></p>
+        </div>
+      </div>
+
+      <div class="sec">
       <h2 id="addon-add-heading">Add more</h2>
       <form id="f-addon-search" class="inline-form addon-search">
         <input id="addon-q" type="search" placeholder="Search Modrinth — e.g. vein miner, chairs, trees, textures" autocomplete="off" />
@@ -764,6 +781,7 @@
           <button class="btn btn-primary" id="addon-tray-add" type="button">Add all to world</button>
         </div>
         <p class="addon-note" id="addon-tray-note"></p>
+      </div>
       </div>
 
       <details class="addon-own">
@@ -796,13 +814,16 @@
 
     <!-- Backups -->
     <section id="tab-backups" class="tab-panel">
-      <h2>Backups</h2>
-      <p class="muted">Git-mode backups keep a history of the world. Backups are <strong>per-world</strong> — switch worlds from the Worlds tab to browse another profile's history.</p>
-      <div id="backups-panel"></div>
+      <div class="sec">
+        <h2>Backups</h2>
+        <p class="muted">Git-mode backups keep a history of the world. Backups are <strong>per-world</strong> — switch worlds from the Worlds tab to browse another profile's history.</p>
+        <div id="backups-panel"></div>
+      </div>
     </section>
 
     <!-- Worlds (switchable server profiles, new in 1.3.0) -->
     <section id="tab-worlds" class="tab-panel">
+      <div class="sec">
       <h2>Worlds</h2>
       <p class="muted">One world runs at a time. <strong>Switch</strong> restarts the add-on to load another; the panel is back in about 30 seconds.</p>
       <table class="table" id="worlds-table">
@@ -823,22 +844,28 @@
           The header's <strong>Restart</strong> button only restarts the game server, which is faster but does not change which world is loaded: use <strong>Switch</strong> for that.
         </p>
       </details>
+      </div>
 
-      <h3>Featured worlds</h3>
+      <div class="sec">
+      <h2>Featured worlds</h2>
       <p class="muted">
         One-click, fully <strong>server-side</strong> installs of large community worlds — the world save and its datapacks are downloaded onto the server, so anyone (including <strong>iPad / iPhone players over Geyser</strong>) can join and explore with <strong>zero local installs</strong>. The resource pack is hosted for Java players and auto-converted to a Bedrock pack that Geyser pushes to phones/tablets on join (best-effort — custom 3D models can't convert). Installing stages a new world; your current world is untouched until you <strong>Switch</strong> to it above. Switching pins the server to the version the world needs and turns Bedrock support on.
       </p>
       <div id="curated-list" class="curated-list"></div>
       <div id="curated-progress" class="curated-progress" hidden></div>
+      </div>
 
-      <h3>Create a new world</h3>
+      <div class="sec">
+      <h2>Create a new world</h2>
       <p class="muted">
         Spin up a fresh world with its own gamemode, difficulty, and player rules — walked-through one step at a time.
       </p>
-      <button id="btn-newworld" class="btn btn-primary" type="button">Create new world…</button>
+      <div><button id="btn-newworld" class="btn btn-primary" type="button">Create new world…</button></div>
       <pre id="world-reply" class="reply"></pre>
+      </div>
 
-      <h3>Import an existing world (.zip)</h3>
+      <div class="sec">
+      <h2>Import an existing world (.zip)</h2>
       <p class="muted">
         Drop in a Minecraft world export — the contents of a <code>world/</code> folder, zipped — and we'll stage it as a new switchable world. Anything ending in <code>.zip</code> up to 2 GB works. Common shapes (level.dat at root, <code>SomeName/level.dat</code> one level deep, or a re-zipped backup) all get found automatically.
       </p>
@@ -848,6 +875,7 @@
         <button class="btn btn-primary">Import</button>
       </form>
       <pre id="world-import-reply" class="reply"></pre>
+      </div>
     </section>
 
     <!-- Resource Packs -->

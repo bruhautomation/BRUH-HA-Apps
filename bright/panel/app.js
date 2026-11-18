@@ -13,6 +13,9 @@
     for (const tab of tabs.querySelectorAll(".tab")) {
       tab.classList.toggle("active", tab === button);
     }
+    // On a phone the tab strip scrolls sideways inside itself: bring the one
+    // pressed fully into view.
+    try { button.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (e) { /* older engines */ }
     const name = button.dataset.tab;
     for (const pane of document.querySelectorAll(".pane")) {
       pane.classList.toggle("active", pane.id === "pane-" + name);

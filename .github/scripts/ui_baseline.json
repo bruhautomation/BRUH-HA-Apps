@@ -130,33 +130,10 @@
   ]
  },
  "bright/panel/style.css": {
-  "font": [
-   "13px",
-   "15px",
-   "18px",
-   "28px"
-  ],
-  "media": [
-   "700px"
-  ],
-  "radius": [
-   "1px",
-   "4px",
-   "6px",
-   "7px",
-   "10px"
-  ],
-  "space": [
-   "3px",
-   "5px",
-   "6px",
-   "7px",
-   "10px",
-   "11px",
-   "14px",
-   "22px",
-   "40px"
-  ]
+  "font": [],
+  "media": [],
+  "radius": [],
+  "space": []
  },
  "bruh-bambu-studio/panel/style.css": {
   "font": [],
@@ -171,92 +148,16 @@
   "space": []
  },
  "bruh-minecraft-server/panel/style.css": {
-  "font": [
-   "0.7em",
-   "0.75em",
-   "0.85em",
-   "0.88em",
-   "0.9em",
-   "0.92em",
-   "0.95em",
-   "10px",
-   "11px",
-   "13px",
-   "15px",
-   "28px",
-   "36px"
-  ],
-  "media": [
-   "400px",
-   "520px",
-   "560px",
-   "720px"
-  ],
-  "radius": [
-   "2px",
-   "3px",
-   "4px",
-   "6px",
-   "10px",
-   "13px",
-   "14px",
-   "20px"
-  ],
-  "space": [
-   "3px",
-   "5px",
-   "6px",
-   "7px",
-   "9px",
-   "10px",
-   "14px",
-   "18px",
-   "28px"
-  ]
+  "font": [],
+  "media": [],
+  "radius": [],
+  "space": []
  },
  "bruh-print/panel/style.css": {
-  "font": [
-   "4.5px",
-   "5px",
-   "5.5px",
-   "10px",
-   "11px",
-   "13px",
-   "15px",
-   "17px"
-  ],
-  "media": [
-   "379px",
-   "480px",
-   "499px",
-   "700px",
-   "1099px",
-   "1100px"
-  ],
-  "radius": [
-   "2px",
-   "3px",
-   "4px",
-   "9px",
-   "10px",
-   "11px"
-  ],
-  "space": [
-   "3px",
-   "5px",
-   "6px",
-   "7px",
-   "9px",
-   "10px",
-   "11px",
-   "13px",
-   "14px",
-   "15px",
-   "18px",
-   "22px",
-   "26px",
-   "60px"
-  ]
+  "font": [],
+  "media": [],
+  "radius": [],
+  "space": []
  },
  "bruh-task-manager/panel/style.css": {
   "font": [],

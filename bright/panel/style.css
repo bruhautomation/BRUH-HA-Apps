@@ -1,6 +1,44 @@
-/* BRight panel. Dark stage, azure family accent. Touch targets ≥44px, and no
-   text control under 16px on touch — iOS Safari zooms in on focus below that
-   and never zooms back out inside an ingress iframe. */
+/* ui-tokens:start (synced from branding/ui/tokens.css; do not edit here) */
+:root {
+  /* Spacing: a 4px grid and nothing else. 1-2px only for a border or an optical nudge. */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;  --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-8: 32px;  --sp-12: 48px;
+  /* The page: one gutter, set once on the shell, and three widths. */
+  --gutter: 24px;
+  --page-read: 760px;
+  --page: 1120px;
+  --page-wide: 1400px;
+  /* Between sections (gap on the parent), between cards, inside a card. */
+  --section-gap: 24px;
+  --card-gap: 12px;
+  --card-pad: 16px;
+  /* Type: four sizes and no fifth. */
+  --fs-title: 20px;  --lh-title: 28px;  --fw-title: 600;
+  --fs-card: 16px;   --lh-card: 24px;   --fw-card: 600;
+  --fs-body: 14px;   --lh-body: 20px;   --fw-body: 400;
+  --fs-meta: 12px;   --lh-meta: 16px;   --fw-meta: 500;
+  --fs-control: 14px;
+  /* Radius. */
+  --card-radius: 12px;
+  --control-radius: 8px;
+  --pill-radius: 999px;
+  /* Controls: buttons, inputs and selects share one height; one small size. */
+  --btn-h: 40px;
+  --btn-h-sm: 32px;
+}
+@media (max-width: 639.98px) {
+  :root { --gutter: 16px; --card-pad: 12px; }
+}
+@media (pointer: coarse) {
+  :root { --btn-h: 44px; --fs-control: 16px; }
+}
+/* ui-tokens:end */
+
+/* BRight panel. Dark stage, azure family accent. The spacing, page widths, type,
+   radii and control heights are the UI standard's (docs/notes/ui-standard.md);
+   the colours are this app's own. Controls are --btn-h tall (44px on touch) and
+   no text control is under 16px on touch — iOS Safari zooms in on focus below
+   that and never zooms back out inside an ingress iframe; --fs-control is that. */
 :root {
   --bg: #0B1016;
   --panel: #121a24;
@@ -8,6 +46,8 @@
   --muted: #8fa3b5;
   --azure: #1E9FE0;
   --azure-light: #5AC4F2;
+  /* The ink on an azure fill (a primary button). */
+  --on-azure: #0B1016;
   --line: #1f2c3a;
   /* Verdict colours, tuned for the dark stage rather than borrowed from a
      light one. They carry a *second* signal only — every place they are
@@ -30,6 +70,7 @@
     --muted: #4f6174;
     --azure: #0b78b8;
     --azure-light: #0b6fa8;
+    --on-azure: #ffffff;
     --line: #cfd9e3;
     --ok: #17804f;
     --warn: #8a5f00;
@@ -38,89 +79,111 @@
 }
 
 * { box-sizing: border-box; }
+h1, h2, h3, h4 { margin: 0; }
+h2 { font-size: var(--fs-card); line-height: var(--lh-card); font-weight: var(--fw-card); }
+h3, h4 { font-size: var(--fs-card); line-height: var(--lh-card); font-weight: var(--fw-card); }
+p { margin: 0; }
 html, body { margin: 0; padding: 0; }
 body {
   background: var(--bg);
   color: var(--ink);
-  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: var(--fw-body) var(--fs-body)/var(--lh-body) system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
 .topbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 16px;
-  padding: 8px 16px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
 }
-.brand { display: flex; align-items: center; gap: 10px; }
-.brand-tile { width: 32px; height: 32px; border-radius: 7px; }
-.brand-name { font-weight: 700; font-size: 18px; letter-spacing: .02em; }
-.brand-sub { color: var(--muted); font-size: 13px; }
+.bar-in {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-4);
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: var(--sp-2) var(--gutter);
+}
+.brand { display: flex; align-items: center; gap: var(--sp-3); }
+.brand-tile { width: 32px; height: 32px; border-radius: var(--control-radius); }
+.brand-name { font-weight: 700; font-size: var(--fs-card); line-height: var(--lh-card); letter-spacing: .02em; }
+.brand-sub { color: var(--muted); font-size: var(--fs-meta); line-height: var(--lh-meta); }
 
-.tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.tabs { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
 .tab {
-  min-height: 44px;
-  padding: 10px 14px;
+  min-height: var(--btn-h);
+  padding: 0 var(--sp-3);
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--control-radius);
   background: transparent;
   color: var(--muted);
-  font-size: 15px;
+  font-size: var(--fs-body);
   cursor: pointer;
+  white-space: nowrap;
+  flex: none;
 }
 .tab:hover { color: var(--ink); background: rgba(90, 196, 242, 0.08); }
 .tab.active { color: var(--ink); background: rgba(30, 159, 224, 0.18); }
 
-.wrap { max-width: 1080px; margin: 0 auto; padding: 20px 16px 40px; }
+.wrap { max-width: var(--page); margin: 0 auto; padding: var(--sp-6) var(--gutter) var(--sp-12); }
 .pane { display: none; }
-.pane.active { display: block; }
-.pane h2 { margin: 8px 0 6px; font-size: 20px; }
-.muted { color: var(--muted); max-width: 62ch; }
+.pane.active { display: flex; flex-direction: column; gap: var(--card-gap); }
+.pane h2 { font-size: var(--fs-title); line-height: var(--lh-title); font-weight: var(--fw-title); margin: 0; }
+.muted { color: var(--muted); max-width: 72ch; }
 
-.foot { margin-top: 40px; color: var(--muted); font-size: 13px; }
+.foot { margin-top: var(--sp-6); color: var(--muted); font-size: var(--fs-meta); line-height: var(--lh-meta); }
 
 .card {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 14px 16px;
-  margin: 14px 0;
+  border-radius: var(--card-radius);
+  padding: var(--card-pad);
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
 }
 .card-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
 }
-.card h3, .card-head h3 { margin: 0 0 8px; font-size: 16px; }
+.card h3, .card-head h3 { margin: 0; font-size: var(--fs-card); line-height: var(--lh-card); font-weight: var(--fw-card); }
 .card-head h3 { margin: 0; }
-.small { font-size: 13px; }
+.small { font-size: var(--fs-meta); line-height: var(--lh-meta); }
 
 .btn {
-  min-height: 44px;
-  padding: 8px 14px;
-  border: 1px solid var(--azure);
-  border-radius: 8px;
-  background: rgba(30, 159, 224, 0.14);
+  min-height: var(--btn-h);
+  padding: 0 var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: var(--control-radius);
+  background: var(--bg);
   color: var(--ink);
-  font-size: 15px;
+  font-size: var(--fs-control);
+  font-weight: 600;
   cursor: pointer;
 }
-.btn:hover { background: rgba(30, 159, 224, 0.28); }
+.btn:hover { border-color: var(--azure); background: rgba(30, 159, 224, 0.1); }
 .btn:disabled { opacity: 0.5; cursor: default; }
-.btn.small { min-height: 40px; padding: 6px 10px; font-size: 14px; }
+.btn.small { min-height: var(--btn-h-sm); padding: 0 var(--sp-3); font-size: var(--fs-body); }
 
 .demo-controls {
   display: flex;
-  gap: 12px;
-  align-items: center;
+  gap: var(--sp-3);
+  align-items: flex-end;
   flex-wrap: wrap;
-  margin: 10px 0;
+  margin: 0;
 }
-.demo-controls label { color: var(--muted); font-size: 14px; max-width: 100%; }
+.demo-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  color: var(--muted);
+  font-size: var(--fs-body);
+  max-width: 100%;
+}
 /* Every text control in the panel, not only the ones inside .demo-controls.
    That scoping was the bug: the role picker on each light in the Light Map
    is a bare <select>, so it rendered at the browser's default 19px — a
@@ -131,10 +194,10 @@ input, select, textarea {
   background: var(--bg);
   color: var(--ink);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 16px;
-  min-height: 44px;
+  border-radius: var(--control-radius);
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-control);
+  min-height: var(--btn-h);
 }
 input[type="number"] { width: 90px; }
 select { max-width: 100%; min-width: 0; }
@@ -143,39 +206,41 @@ select { max-width: 100%; min-width: 0; }
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
-  padding: 10px 0;
+  padding: var(--sp-3) 0;
   border-top: 1px solid var(--line);
 }
 .row-main { display: flex; flex-direction: column; gap: 2px; min-width: 200px; }
-.row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.row-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
 .rtt { color: var(--azure-light); }
 
 .report {
   overflow-x: auto;
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px;
-  font-size: 13px;
+  border-radius: var(--control-radius);
+  padding: var(--card-pad);
+  margin: 0;
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
 }
 
-#haProbeResult { margin-top: 8px; color: var(--azure-light); }
+#haProbeResult { margin: 0; color: var(--azure-light); }
 
-.cal-status { margin-top: 10px; color: var(--azure-light); min-height: 1.4em; }
+.cal-status { margin: 0; color: var(--azure-light); }
 
 .map-floor {
   position: relative;
   width: 100%;
   height: 340px;
-  margin: 10px 0;
+  margin: 0;
   background:
     linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 40px 40px,
     linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 40px 40px,
     var(--bg);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--control-radius);
   touch-action: none; /* the dots are draggable; the page must not scroll */
   overflow: hidden;
 }
@@ -183,11 +248,11 @@ select { max-width: 100%; min-width: 0; }
   position: absolute;
   width: 44px;
   height: 44px;
-  margin: -22px 0 0 -22px;
+  translate: -50% -50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
+  font-size: var(--fs-title);
   background: rgba(30, 159, 224, 0.25);
   border: 2px solid var(--azure);
   border-radius: 50%;
@@ -212,8 +277,8 @@ select { max-width: 100%; min-width: 0; }
   white-space: nowrap;
   font-size: 12px;
   line-height: 1.3;
-  padding: 1px 5px;
-  border-radius: 6px;
+  padding: 0 var(--sp-1);
+  border-radius: var(--control-radius);
   /* Its own dark halo and its own light ink, in both schemes: the label
      sits on the floor, which follows the page theme, so ink that follows
      the theme too is black on near-black in the light one. */
@@ -222,7 +287,7 @@ select { max-width: 100%; min-width: 0; }
   pointer-events: none;   /* the label must never eat the drag */
 }
 /* On a phone the floor is ~350px and a 120px label is a third of it. */
-@media (max-width: 640px) { .dot-name { max-width: 96px; } }
+@media (max-width: 639.98px) { .dot-name { max-width: 96px; } }
 .map-dot.edge-right .dot-name { right: 0; text-align: right; }
 .map-dot.edge-left .dot-name { left: 0; text-align: left; }
 .map-dot.selected {
@@ -234,10 +299,10 @@ select { max-width: 100%; min-width: 0; }
 .map-dot.selected .dot-name { background: #0b5f93; color: #fff; font-weight: 600; }
 /* Lights that share a spot are one dot with a count; tapping it opens the
    pick list in the bar under the floor. */
-.map-dot.cluster { background: #0b5f93; border-color: #f4f8fb; font-weight: 700; font-size: 18px; color: #fff; }
+.map-dot.cluster { background: #0b5f93; border-color: #f4f8fb; font-weight: 700; font-size: var(--fs-card); color: #fff; }
 .map-dot.cluster.open { box-shadow: 0 0 0 4px rgba(90, 196, 242, 0.55); z-index: 2; }
-.cluster-pick { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
-.cluster-pick .btn { font-size: 16px; }
+.cluster-pick { display: flex; flex-wrap: wrap; gap: var(--sp-2); width: 100%; }
+.cluster-pick .btn { font-size: var(--fs-control); }
 
 /* The selected light, named, with the two things you would want to do to it
    — so the map and the list below are one thing rather than two. */
@@ -245,54 +310,51 @@ select { max-width: 100%; min-width: 0; }
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
-  min-height: 44px;
-  padding: 6px 10px;
+  gap: var(--sp-2) var(--sp-3);
+  min-height: var(--btn-h);
+  padding: var(--sp-2) var(--card-pad);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--control-radius);
   background: var(--panel);
 }
 .row.selected {
   border-color: var(--azure);
   box-shadow: inset 3px 0 0 var(--azure);
-  padding-left: 10px;     /* the bar sits beside the text, not under it */
+  padding-left: var(--sp-3);     /* the bar sits beside the text, not under it */
 }
 .tap-btn {
   display: block;
   width: 100%;
   min-height: 120px;
-  margin-top: 10px;
-  font-size: 28px;
+  margin: 0;
+  font-size: var(--fs-title);
   font-weight: 700;
   letter-spacing: 0.1em;
 }
 
-@media (pointer: coarse) {
-  /* One floor for everything added later, not a per-control patch. */
-  input, select, textarea, button { font-size: 16px; }
-}
+/* The 16px floor on touch comes from --fs-control, which the token block sets on a coarse pointer. */
 
 /* The playback check: six steps, and the eye has to land on the broken one
    without reading the other five. Colour is the fast channel and the mark
    is the reliable one — a red row and a green row are the same row to a
    colour-blind reader, so ✓/✕/! carries the meaning and the tint follows. */
-.check-step { align-items: flex-start; gap: 10px; }
+.check-step { align-items: flex-start; gap: var(--sp-3); }
 .check-mark {
   flex: none;
   width: 22px;
-  font-size: 16px;
+  font-size: var(--fs-card);
   font-weight: 700;
-  line-height: 1.4;
+  line-height: var(--lh-body);
   text-align: center;
 }
 .check-step.good .check-mark { color: var(--ok); }
 .check-step.warn .check-mark { color: var(--warn); }
 .check-step.bad .check-mark { color: var(--bad); }
-.check-step.bad, .check-step.warn { padding-left: 8px; }
+.check-step.bad, .check-step.warn { padding-left: var(--sp-2); }
 .check-step.bad { border-left: 3px solid var(--bad); }
 .check-step.warn { border-left: 3px solid var(--warn); }
-.check-fix { margin-top: 4px; color: var(--muted); }
-.check-verdict { font-weight: 600; margin: 8px 0 0; }
+.check-fix { margin-top: var(--sp-1); color: var(--muted); }
+.check-verdict { font-weight: 600; margin: 0; }
 
 /* ---------------------------------------------------------------------------
    The effect builder
@@ -304,34 +366,36 @@ select { max-width: 100%; min-width: 0; }
 .fx-params {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 10px 14px;
-  margin-top: 10px;
+  gap: var(--sp-3);
+  margin: 0;
+  align-items: end;
 }
 .fx-param {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 16px;
+  gap: var(--sp-1);
+  font-size: var(--fs-body);
   color: var(--muted);
 }
 .fx-param > span:first-child { color: var(--ink); }
-.fx-param.fx-param-flag { flex-direction: row; align-items: center; gap: 10px; min-height: 44px; }
+.fx-param.fx-param-flag { flex-direction: row; align-items: center; gap: var(--sp-3); min-height: var(--btn-h); }
 .fx-param.fx-param-flag > span { color: var(--ink); }
 .fx-param input[type="number"], .fx-param input[type="text"],
-.fx-param select { min-height: 40px; }
+.fx-param select { width: 100%; }
 .fx-param input[type="checkbox"] { width: 22px; height: 22px; }
 
 .fx-flag {
   display: flex;
+  flex-direction: row;
   align-items: center;
-  gap: 10px;
-  margin-top: 12px;
-  min-height: 44px;
+  gap: var(--sp-3);
+  margin: 0;
+  min-height: var(--btn-h);
   color: var(--muted);
 }
 .fx-flag input { width: 22px; height: 22px; }
 
-.fx-quick { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.fx-quick { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 
 /* Ticking lights is the most-used control on this tab, so the rows are
    real targets rather than a dense list — and they wrap into columns so a
@@ -339,15 +403,15 @@ select { max-width: 100%; min-width: 0; }
 .fx-fixtures {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 4px 12px;
+  gap: var(--sp-1) var(--sp-3);
 }
 .fx-fixture {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 44px;
-  padding: 0 8px;
-  border-radius: 8px;
+  gap: var(--sp-3);
+  min-height: var(--btn-h);
+  padding: 0 var(--sp-2);
+  border-radius: var(--control-radius);
 }
 .fx-fixture:hover { background: rgba(90, 196, 242, 0.08); }
 .fx-fixture input { width: 20px; height: 20px; flex: none; }
@@ -370,12 +434,12 @@ select { max-width: 100%; min-width: 0; }
 .fx-timeline {
   display: block;
   width: 100%;
-  margin-top: 10px;
+  margin: 0;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--control-radius);
   background: var(--bg);
 }
-.fx-scrub { width: 100%; margin-top: 8px; min-height: 44px; }
+.fx-scrub { width: 100%; margin: 0; min-height: var(--btn-h); }
 .cal-status.warn { color: var(--warn); }
 
 /* The show file. A monospaced editor big enough to see a scene without
@@ -383,15 +447,15 @@ select { max-width: 100%; min-width: 0; }
 .script-editor {
   width: 100%;
   min-height: 320px;
-  margin-top: 10px;
-  padding: 10px;
+  margin: 0;
+  padding: var(--sp-3);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
-  line-height: 1.45;
+  font-size: var(--fs-meta);
+  line-height: var(--lh-body);
   color: var(--ink);
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--control-radius);
   resize: vertical;
   tab-size: 2;
 }
@@ -408,13 +472,13 @@ select { max-width: 100%; min-width: 0; }
 
 /* Notes to the director: ordinary prose in an ordinary box — this is
    feedback, not code, and it should not look like the editor below it. */
-.revise-box { margin-top: 14px; }
+.revise-box { margin: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
 .revise-input {
   width: 100%;
-  margin-top: 6px;
-  padding: 10px;
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
   font: inherit;
-  font-size: 16px;
+  font-size: var(--fs-control);
   color: var(--ink);
   background: var(--bg);
   border: 1px solid var(--line);
@@ -423,10 +487,10 @@ select { max-width: 100%; min-width: 0; }
 }
 
 .party-form {
-  margin: 10px 0;
-  padding: 10px;
+  margin: 0;
+  padding: var(--card-pad);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--control-radius);
   background: var(--bg);
 }
 
@@ -442,9 +506,9 @@ select { max-width: 100%; min-width: 0; }
    which is scaled for the device pixel ratio. */
 .ed-timeline {
   position: relative;
-  margin-top: 10px;
+  margin: 0;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--control-radius);
   background: var(--bg);
   overflow: hidden;
 }
@@ -460,13 +524,13 @@ select { max-width: 100%; min-width: 0; }
   bottom: 3px;
   display: flex;
   align-items: center;
-  padding: 0 6px;
-  font-size: 12px;
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-meta);
   font-weight: 600;
   color: var(--ink);
   background: rgba(90, 196, 242, 0.16);
   border: 1px solid rgba(90, 196, 242, 0.5);
-  border-radius: 6px;
+  border-radius: var(--control-radius);
   overflow: hidden;
   white-space: nowrap;
   cursor: pointer;
@@ -479,12 +543,12 @@ select { max-width: 100%; min-width: 0; }
   top: 0;
   bottom: 0;
   width: 22px;
-  margin-left: -11px;
+  translate: -50% 0;
   border: 0;
   background: none;
   cursor: pointer;
   color: var(--warn);
-  font-size: 13px;
+  font-size: var(--fs-meta);
   line-height: 44px;
   text-align: center;
 }
@@ -501,50 +565,50 @@ select { max-width: 100%; min-width: 0; }
   pointer-events: none;
 }
 
-.ed-transport { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.ed-transport { display: flex; align-items: center; gap: var(--sp-3); margin: 0; }
 .ed-transport .btn { flex: none; }
-.ed-scrub { flex: 1; min-height: 44px; min-width: 80px; }
+.ed-scrub { flex: 1; min-height: var(--btn-h); min-width: 80px; }
 .ed-clock {
   flex: none;
   font-variant-numeric: tabular-nums;
-  font-size: 13px;
+  font-size: var(--fs-meta);
   color: var(--muted);
 }
 
 /* The scenes, as the thing you edit rather than the thing you read. */
-.ed-script { margin-top: 12px; }
+.ed-script { margin: 0; display: flex; flex-direction: column; gap: var(--card-gap); }
 .ed-block {
-  margin-bottom: 10px;
+  margin: 0;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--card-radius);
   background: var(--bg);
 }
 .ed-block.selected { border-color: var(--azure); }
 .ed-block-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
-  min-height: 48px;
-  padding: 6px 10px;
+  min-height: var(--btn-h);
+  padding: var(--sp-2) var(--card-pad);
 }
 .ed-block-head > strong { flex: 1 1 auto; min-width: 0; }
-.ed-when { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
-.ed-swatches { display: flex; gap: 3px; flex: none; }
-.ed-swatch { width: 16px; height: 16px; border-radius: 4px; border: 1px solid var(--line); }
+.ed-when { font-variant-numeric: tabular-nums; color: var(--muted); font-size: var(--fs-meta); }
+.ed-swatches { display: flex; gap: var(--sp-1); flex: none; }
+.ed-swatch { width: 16px; height: 16px; border-radius: var(--control-radius); border: 1px solid var(--line); }
 .ed-fx { border-top: 1px solid var(--line); }
 .ed-fx-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 48px;
-  padding: 4px 10px;
+  gap: var(--sp-3);
+  min-height: var(--btn-h);
+  padding: var(--sp-1) var(--card-pad);
 }
 .ed-fx-row > span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ed-fx-row .btn { flex: none; }
 
-.ed-code { margin-top: 14px; }
-.ed-code > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+.ed-code { margin: 0; }
+.ed-code > summary { min-height: var(--btn-h); display: flex; align-items: center; cursor: pointer; }
 
 /* One dialog for editing any effect. Fixed, scrollable, and capped to the
    viewport: an effect form is tall and a phone is not. */
@@ -555,7 +619,7 @@ select { max-width: 100%; min-width: 0; }
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 12px;
+  padding: var(--sp-3);
   background: rgba(0, 0, 0, 0.55);
 }
 .modal[hidden] { display: none; }
@@ -563,24 +627,23 @@ select { max-width: 100%; min-width: 0; }
   width: min(680px, 100%);
   max-height: min(86vh, 900px);
   overflow-y: auto;
-  padding: 14px;
+  padding: var(--card-pad);
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--card-radius);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
 }
 
 /* Which of Core's media sources BRight builds ids with. Renders only when
    there is something to say — a line reporting `local` on the install
    where `local` is right is a line nobody needs, and the whole point of
    the discovery is that it is invisible when it works. */
-.media-source {
-  margin-top: 10px;
-  font-size: 13px;
-  line-height: 1.5;
-}
+.media-source { margin: 0; font-size: var(--fs-meta); line-height: var(--lh-meta); }
 .media-source:empty { display: none; }
 .media-source .ms-bad { color: var(--bad, #d9534f); }
-.media-source button { margin-top: 8px; }
+.media-source button { margin-top: var(--sp-2); }
 
 /* The zone field on the map's selection bar. Same 44px floor as the role
    picker beside it — the floor is set once for controls in this bar rather
@@ -588,48 +651,44 @@ select { max-width: 100%; min-width: 0; }
    the browser's default 19px because the rule covered only what existed
    when it was written. */
 .zone-pick {
-  min-height: 44px;
+  min-height: var(--btn-h);
   min-width: 120px;
   flex: 0 1 160px;
-  padding: 0 10px;
-  border-radius: 8px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--control-radius);
   border: 1px solid var(--line, #d5d8de);
   background: var(--bg, #fff);
   color: inherit;
   font: inherit;
+  font-size: var(--fs-control);
 }
-@media (pointer: coarse) { .zone-pick { font-size: 16px; } }
 
 /* The director's brief. A long monospace document inside a card, so it
    scrolls in its own box rather than making the page do it — and it wraps,
    because the prompt contains lines longer than any phone. */
-.prompt-box { margin: 10px 0 4px; }
+.prompt-box { margin: 0; }
 .prompt-box > summary {
   cursor: pointer;
-  padding: 8px 2px;
-  min-height: 44px;
+  padding: 0;
+  min-height: var(--btn-h);
   display: flex;
   align-items: center;
-  font-weight: 600;
 }
 .prompt-text {
   max-height: 42vh;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
   background: var(--bg-sunken, rgba(127, 127, 127, 0.08));
-  border-radius: 8px;
-  padding: 10px 12px;
-  margin: 6px 0 0;
+  border-radius: var(--control-radius);
+  padding: var(--sp-3) var(--card-pad);
+  margin: 0;
 }
 @media (pointer: coarse) {
-  /* iOS zooms the page in on any text under 16px and never zooms back
-     out, which inside an ingress iframe strands the panel at an arbitrary
-     scale. The brief is long, so it is small on a desktop and readable
-     here rather than clever. */
-  .prompt-text { font-size: 16px; }
+  /* The brief is long, so it is small on a desktop and readable on touch. */
+  .prompt-text { font-size: var(--fs-control); line-height: var(--lh-body); }
 }
 
 /* The song itself, above the show that is hung off it. Same width and the
@@ -639,11 +698,11 @@ select { max-width: 100%; min-width: 0; }
   display: block;
   width: 100%;
   height: 72px;
-  border-radius: 8px 8px 0 0;
+  border-radius: var(--control-radius) var(--control-radius) 0 0;
   cursor: pointer;
   touch-action: none;
 }
-.ed-wave-note { padding: 2px 4px 4px; }
+.ed-wave-note { padding: 2px var(--sp-1) var(--sp-1); }
 
 /* The song's own lanes, and the effects' lanes, in the same wrapper and
    at the same width as the wave and the strip — the whole point is that
@@ -654,22 +713,23 @@ select { max-width: 100%; min-width: 0; }
 .ed-lanes { display: block; width: 100%; height: 104px; cursor: pointer;
             touch-action: none; }
 .ed-fxlanes { display: block; width: 100%; }
-.ed-now { padding: 6px 2px 0; min-height: 1.2em; }
+.ed-now { padding: 0 2px; min-height: 0; }
+.ed-now:empty, .ed-wave-note:empty { display: none; }
 
 /* The party's live picture. The wave is shorter than the editor's (it is
    a glance, not a workbench) and the floor keeps the map's aspect so the
    dots land where the person put them. */
-.party-wave { height: 64px; border-radius: 8px; }
-.party-floor { margin-top: 8px; }
-#partyLive { margin-top: 10px; }
-.party-now { font-weight: 600; margin-bottom: 8px; }
+.party-wave { height: 64px; border-radius: var(--control-radius); }
+#partyLive { display: flex; flex-direction: column; gap: var(--sp-3); }
+#partyLive[hidden] { display: none; }
+.party-now { font-weight: 600; margin: 0; }
 .party-trim { align-items: center; }
-#partyUpNext { margin-top: 6px; }
+#partyUpNext:empty { display: none; }
 
 /* The one line each tab opens with, now that the headings repeating the
    tab strip are gone. Tight above (the bar already separates), a little
    air below before the first card. */
-.tab-intro { margin: 4px 0 14px; max-width: 640px; }
+.tab-intro { margin: 0; max-width: 72ch; }
 
 /* The set: the library with tick boxes, which is the party. Shown a page
    at a time (see pagePartySet) so a library of three hundred songs does
@@ -677,14 +737,14 @@ select { max-width: 100%; min-width: 0; }
    box, whose clipped rows stay laid out under whatever follows. */
 .party-set {
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 0 10px;
+  border-radius: var(--control-radius);
+  padding: 0 var(--card-pad);
 }
 .party-pick {
   cursor: pointer;
   /* A whole row is the target, not the 16px box in it — this list is
      used on a phone with the music already playing. */
-  min-height: 44px;
+  min-height: var(--btn-h);
 }
 .party-pick input { flex: none; }
 .party-order { margin-left: auto; }
@@ -705,7 +765,7 @@ select { max-width: 100%; min-width: 0; }
 #pane-manual.active {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--card-gap);
   /* Scrolls rather than clips on a window too short to hold the rows at
      their floors — a control you cannot reach is worse than one you have
      to scroll to, and clipping is how you get the first. */
@@ -735,9 +795,9 @@ body.mn-open .foot { display: none; }
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--sp-2);
   flex: none;
-  min-height: 46px;
+  min-height: var(--btn-h);
 }
 /* The beat. Its size and glow are written per frame from the local grid,
    which is the only honest way to show "am I in time" — a dot driven by
@@ -760,7 +820,7 @@ body.mn-open .foot { display: none; }
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-variant-numeric: tabular-nums;
 }
 .mn-bpm { font-weight: 700; }
@@ -769,19 +829,19 @@ body.mn-open .foot { display: none; }
    with, so TAP and ⤓1 are not rendered beside it. */
 .mn-src {
   flex: none;
-  padding: 3px 8px;
+  padding: var(--sp-1) var(--sp-2);
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-meta);
   white-space: nowrap;
 }
 .mn-src[hidden] { display: none; }
 .mn-tt {
   flex: none;
-  min-height: 44px;
-  padding: 0 10px;
-  font-size: 14px;
+  min-height: var(--btn-h);
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-body);
   font-weight: 700;
 }
 /* nowrap on purpose: the caret and the row it opens are one line, and a
@@ -792,7 +852,7 @@ body.mn-open .foot { display: none; }
   display: flex;
   align-items: center;
   flex-wrap: nowrap;
-  gap: 8px;
+  gap: var(--sp-2);
   flex: 1 1 190px;
   min-width: 0;
 }
@@ -808,8 +868,8 @@ body.mn-open .foot { display: none; }
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  min-height: 44px;
+  width: 32px;
+  min-height: var(--btn-h);
   color: var(--muted);
   cursor: pointer;
   flex: none;
@@ -828,7 +888,7 @@ body.mn-open .foot { display: none; }
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--sp-2);
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -839,10 +899,10 @@ body.mn-open .foot { display: none; }
    is. */
 .mn-stop {
   flex: none;
-  min-height: 44px;
-  width: 46px;
+  min-height: var(--btn-h);
+  width: 48px;
   padding: 0;
-  font-size: 15px;
+  font-size: var(--fs-body);
 }
 
 /* One line, and it is the only place a warning or a refusal lands — it
@@ -857,7 +917,7 @@ body.mn-open .foot { display: none; }
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--azure-light);
-  font-size: 14px;
+  font-size: var(--fs-body);
   line-height: 18px;
 }
 .mn-status.warn { color: var(--warn); }
@@ -914,27 +974,27 @@ body.mn-open .foot { display: none; }
 .mn-rec {
   display: flex;
   align-items: stretch;
-  gap: 6px;
+  gap: var(--sp-2);
   flex: none;
-  min-height: 46px;
+  min-height: var(--btn-h);
 }
 .mn-seg {
   display: flex;
   flex: none;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--control-radius);
   overflow: hidden;
   background: var(--panel);
 }
 .mn-seg button {
   min-width: 30px;
-  min-height: 44px;
+  min-height: var(--btn-h);
   padding: 0 2px;
   border: 0;
   border-left: 1px solid var(--line);
   background: transparent;
   color: var(--muted);
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 700;
   cursor: pointer;
 }
@@ -950,13 +1010,13 @@ body.mn-open .foot { display: none; }
   position: relative;
   flex: 1 1 auto;
   min-width: 88px;
-  min-height: 46px;
-  padding: 0 8px;
+  min-height: var(--btn-h);
+  padding: 0 var(--sp-2);
   border: 1px solid var(--bad);
-  border-radius: 10px;
+  border-radius: var(--control-radius);
   background: rgba(239, 95, 95, 0.14);
   color: var(--ink);
-  font-size: 15px;
+  font-size: var(--fs-body);
   font-weight: 700;
   overflow: hidden;
   cursor: pointer;
@@ -984,7 +1044,7 @@ body.mn-open .foot { display: none; }
 .mn-cliprail {
   display: flex;
   align-items: stretch;
-  gap: 8px;
+  gap: var(--sp-2);
   flex: none;
   min-height: 76px;
   overflow-x: auto;
@@ -998,7 +1058,7 @@ body.mn-open .foot { display: none; }
 .mn-cliprail .mn-empty {
   align-self: center;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-meta);
 }
 .mn-clip {
   position: relative;
@@ -1008,10 +1068,10 @@ body.mn-open .foot { display: none; }
   grid-template-columns: 42px 1fr;
   grid-template-rows: auto auto;
   align-items: center;
-  gap: 3px 7px;
-  padding: 6px 8px;
+  gap: var(--sp-1) var(--sp-2);
+  padding: var(--sp-2);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--control-radius);
   background: var(--panel);
   cursor: pointer;
   touch-action: pan-x;
@@ -1019,7 +1079,7 @@ body.mn-open .foot { display: none; }
 .mn-clip.muted { opacity: 0.42; }
 .mn-clip-ring { grid-row: 1 / span 2; width: 42px; height: 42px; }
 .mn-clip-name {
-  font-size: 13px;
+  font-size: var(--fs-meta);
   color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
@@ -1031,7 +1091,7 @@ body.mn-open .foot { display: none; }
 .mn-clip-strip {
   position: relative;
   height: 18px;
-  border-radius: 4px;
+  border-radius: var(--control-radius);
   background: rgba(255, 255, 255, 0.05);
   overflow: hidden;
 }
@@ -1041,7 +1101,7 @@ body.mn-open .foot { display: none; }
   bottom: 3px;
   width: 2px;
   margin-left: -1px;
-  border-radius: 1px;
+  border-radius: 0;
   background: var(--clip-ink, var(--azure-light));
 }
 .mn-clip-head {
@@ -1060,9 +1120,9 @@ body.mn-open .foot { display: none; }
   display: none;
   position: absolute;
   inset: 0;
-  gap: 4px;
-  padding: 6px;
-  border-radius: 10px;
+  gap: var(--sp-1);
+  padding: var(--sp-2);
+  border-radius: var(--control-radius);
   background: var(--panel);
   align-items: center;
 }
@@ -1070,13 +1130,13 @@ body.mn-open .foot { display: none; }
 .mn-clip-confirm button {
   flex: 1 1 0;
   min-width: 0;
-  min-height: 46px;
+  min-height: var(--btn-h);
   padding: 0 2px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--control-radius);
   background: transparent;
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--fs-meta);
   cursor: pointer;
 }
 .mn-clip-confirm button.danger { border-color: var(--bad); color: var(--bad); }
@@ -1088,15 +1148,15 @@ body.mn-open .foot { display: none; }
 .mn-pads {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: var(--sp-3);
   flex: none;
 }
 .mn-pad {
   min-height: 76px;
-  font-size: 20px;
+  font-size: var(--fs-title);
   font-weight: 700;
   letter-spacing: 0.04em;
-  border-radius: 12px;
+  border-radius: var(--card-radius);
 }
 .mn-drop {
   background: #05070a;
@@ -1116,7 +1176,7 @@ body.mn-open .foot { display: none; }
    and never the height of a grid. */
 .mn-fx {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-2);
   flex: none;
   overflow-x: auto;
   overflow-y: hidden;
@@ -1125,9 +1185,9 @@ body.mn-open .foot { display: none; }
 }
 .mn-fx .btn {
   flex: none;
-  min-height: 44px;
-  padding: 6px 12px;
-  font-size: 14px;
+  min-height: var(--btn-h);
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-body);
   white-space: nowrap;
 }
 .mn-fx .btn.on {
@@ -1138,67 +1198,104 @@ body.mn-open .foot { display: none; }
 
 /* Plain-words rows: Shows tracks, bulb checks, library folders. Text stays
    at 16px and every control at 44px. */
-.row-note { font-size: 16px; color: var(--azure-light); overflow-wrap: anywhere; }
+.row-note { font-size: var(--fs-body); color: var(--azure-light); overflow-wrap: anywhere; }
 .row-note.muted { color: var(--muted); }
 .row.slim { flex-wrap: wrap; }
 .row.slim .row-main { flex: 1 1 140px; min-width: 0; }
 .row.slim .row-actions { flex-wrap: nowrap; align-items: center; flex: none; }
-.row.slim .btn { min-height: 44px; font-size: 16px; }
-.more-toggle { min-width: 44px; font-size: 20px; }
+.row.slim .btn { min-height: var(--btn-h); font-size: var(--fs-control); }
+.more-toggle { min-width: var(--btn-h); font-size: var(--fs-title); }
 /* The ⋯ menu is a line of the row, below the row's own controls and above
    the next row, in the flow: a floating box covered the next row's buttons. */
 .more-menu {
-  flex: 1 1 100%; display: flex; flex-direction: column; gap: 6px;
-  padding: 8px; background: var(--panel); border: 1px solid var(--line);
-  border-radius: 10px;
+  flex: 1 1 100%; display: flex; flex-direction: column; gap: var(--sp-2);
+  padding: var(--card-pad); background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--control-radius);
 }
 .more-menu[hidden] { display: none; }
 .more-menu .btn { text-align: left; white-space: normal; width: 100%; }
-.info-toggle { margin: 8px 0; }
-.info-toggle > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; font-size: 16px; color: var(--azure-light); }
-.info-toggle p { font-size: 16px; }
+.info-toggle { margin: 0; }
+.info-toggle > summary { cursor: pointer; min-height: var(--btn-h); display: flex; align-items: center; }
+.info-toggle p { font-size: var(--fs-body); }
 .folder-row .row-actions { flex-wrap: wrap; }
 #btnSetAll, #btnSetNone, #btnSyncAll, #btnSyncNone, #btnFxAll, #btnFxNone { min-width: 56px; }
 #showVibe { width: 100%; }
-.demo-controls .btn.small { font-size: 16px; min-height: 44px; }
+
 .folder-row .path { overflow-wrap: anywhere; }
-.form-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
+.form-row { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; margin: 0; }
 .form-row input[type="text"] { flex: 1 1 100%; min-width: 0; }
 #showPlayer { width: 100%; max-width: 100%; }
-#pane-shows .card-head > span { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; min-width: 0; }
-#pane-shows .card-head > span .btn { min-height: 44px; }
+#pane-shows .card-head > span { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); width: 100%; min-width: 0; }
+
 
 /* Name and Save are two lines of their own below the list. The list
    scrolls inside its box, so it is painted inside it and can never sit
    over what follows. */
-.party-save { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin: 12px 0 0; clear: both; }
+.party-save { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-3); margin: 0; }
 .party-save input { width: 100%; }
-.menu-info { margin: 2px 4px 4px; font-size: 16px; overflow-wrap: anywhere; }
-.folder-summary > summary::after { content: "▾"; margin-left: 8px; }
+.menu-info { margin: 2px var(--sp-1) var(--sp-1); font-size: var(--fs-body); overflow-wrap: anywhere; }
+.folder-summary > summary::after { content: "▾"; margin-left: var(--sp-2); }
 
 /* A class rule beats the touch floor above, so the two textareas that set
    their own size say it again here, after them: iPhone Safari zooms the
    page into any field under 16px. */
-@media (pointer: coarse), (max-width: 700px) {
-  .script-editor, .revise-input { font-size: 16px; }
+@media (pointer: coarse), (max-width: 639.98px) {
+  .script-editor, .revise-input { font-size: var(--fs-control); }
 }
-.player-note { margin: 4px 0; }
+.player-note { margin: 0; }
 .party-set .party-later { display: none; }
-#partyMore { margin-top: 8px; }
+
 #partyMore[hidden] { display: none; }
 /* The describe-it box takes the card's whole width and wraps, so the
    example sentence in it is never cut off on a phone. */
-.fx-ask { font-family: inherit; display: block; width: 100%; box-sizing: border-box; resize: vertical; margin: 10px 0 0; min-height: 64px; }
+.fx-ask { font-family: inherit; display: block; width: 100%; box-sizing: border-box; resize: vertical; margin: 0; min-height: 64px; }
 /* Light Map: Remove is set apart from the role picker beside it and reads
    as the one thing on the row that takes something away. */
 #mapList .row-actions { align-items: center; }
 .btn-remove { color: var(--bad); border-color: var(--bad); background: transparent; }
-#mapList .btn-remove { margin-left: 16px; }
+#mapList .btn-remove { margin-left: var(--sp-4); }
 .btn-remove[data-armed] { background: var(--bad); color: #fff; }
-.map-add { margin-top: 14px; padding-top: 6px; border-top: 1px solid var(--line); }
-.map-add h4 { margin: 6px 0 0; font-size: 16px; }
+.map-add { display: flex; flex-direction: column; gap: var(--sp-3); }
+.map-add h4 { margin: 0; }
 .map-add .demo-controls[hidden] { display: none; }
 #bulbCandidate { max-width: 100%; }
 /* The bulb list's one-line verdict, before any row. */
-.lifx-summary { margin: 4px 0 8px; font-size: 16px; }
+.lifx-summary { margin: 0; font-size: var(--fs-body); }
 .lifx-unchecked[hidden] { display: none; }
+
+/* On a phone the tab strip is one row that scrolls sideways inside itself,
+   not two rows of wrapped tabs: a header of 149px is a fifth of the screen
+   spent on navigation. A tab cut at the edge is the cue that there are more. */
+@media (max-width: 639.98px) {
+  .tabs { flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; margin: 0 calc(-1 * var(--gutter)); padding: 0 var(--gutter); }
+  .tabs::-webkit-scrollbar { display: none; }
+}
+
+.card > .btn { align-self: flex-start; }
+.card > .cal-status:empty, .card > .media-source:empty, .card > #haProbeResult:empty,
+.card > .muted:empty, .cal-status:empty { display: none; }
+.card > .list:empty { display: none; }
+
+.btn.primary { background: var(--azure); border-color: var(--azure); color: var(--on-azure); }
+.btn.primary:hover { background: var(--azure-light); border-color: var(--azure-light); }
+@media (pointer: coarse) { .btn.small { min-height: var(--btn-h); } }
+
+textarea { padding: var(--sp-2) var(--sp-3); }
+/* A form is a grid of fields, each label above its control, so nothing sits
+   beside its label in one row and above it in the next. A tick box is a row
+   of its own that lines up with the controls beside it. */
+.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: var(--sp-3); align-items: end; }
+.form-grid label { min-width: 0; }
+.form-grid input[type="text"], .form-grid input[type="number"], .form-grid select { width: 100%; }
+
+/* Sub-sections inside a card are one thing: a hairline above and a 14/600
+   heading (an h4, or the summary of a fold), whatever the content. */
+.card > details, .card > .map-add, .card > .card-head:has(#scriptProblemsHead) { border-top: 1px solid var(--line); padding-top: var(--sp-1); }
+.card > details > summary, .map-add h4 { font-size: var(--fs-body); line-height: var(--lh-body); font-weight: 600; color: var(--ink); }
+.card > details[open] { display: flex; flex-direction: column; gap: var(--sp-3); }
+
+/* The effect rack scrolls inside its own row; a fade on the right says there
+   are more, below the width where they all fit. */
+@media (max-width: 1199.98px) {
+  .mn-fx { mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); }
+}

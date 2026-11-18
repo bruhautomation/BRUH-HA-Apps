@@ -31,7 +31,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PANEL = path.resolve(HERE, '..', '..', 'bright', 'panel');
 
 const WIDTHS = [390, 430, 768, 1200];
-const MIN_TARGET = 40;
+// --btn-h-sm, the standard's small size (the full size is 40px, 44px on touch).
+const MIN_TARGET = 32;
 
 // Corners on purpose: x=0.02 and x=0.98 are where the label would hang off
 // the floor, and a room's lights live in its corners.

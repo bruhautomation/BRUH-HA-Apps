@@ -10,6 +10,7 @@
 <body>
 
 <header class="topbar" id="topbar">
+ <div class="bar-in">
   <div class="bar-main">
     <div class="wordmark" aria-label="BRUH Print">
       <span class="wm-ink">BRUH</span><span class="wm-accent">PRINT</span>
@@ -42,6 +43,7 @@
     <button class="tab" data-view="printer" role="tab"><span class="ti">🖨</span><span>Printer</span></button>
     <button class="tab" data-view="history" role="tab"><span class="ti">↻</span><span>History</span></button>
   </nav>
+ </div>
 </header>
 
 <main class="wrap">
@@ -88,7 +90,7 @@
     </div>
 
     <div class="quick-do">
-      <div class="printrow">
+      <div class="pane printrow">
         <button class="btn primary big wide" id="quickPrint" disabled>Print</button>
         <p class="printson" id="quickPrintsOn"></p>
       </div>
@@ -308,11 +310,13 @@
 
 <!-- ── History ───────────────────────────────────────────────────────── -->
 <section class="view" id="viewHistory">
+  <div class="sec">
   <h2>Printed</h2>
   <!-- No lede. It described what the two buttons on every row do, which is
        what a tooltip on those buttons is for — and it is a caption above a
        list that is empty until there is something in it. -->
   <div class="hlist" id="historyList"></div>
+  </div>
   <button class="btn danger" id="clearHistory">Clear the history</button>
 </section>
 

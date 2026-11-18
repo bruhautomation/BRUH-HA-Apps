@@ -1,3 +1,42 @@
+/* ui-tokens:start (synced from branding/ui/tokens.css; do not edit here) */
+:root {
+  /* Spacing: a 4px grid and nothing else. 1-2px only for a border or an optical nudge. */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;  --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-8: 32px;  --sp-12: 48px;
+  /* The page: one gutter, set once on the shell, and three widths. */
+  --gutter: 24px;
+  --page-read: 760px;
+  --page: 1120px;
+  --page-wide: 1400px;
+  /* Between sections (gap on the parent), between cards, inside a card. */
+  --section-gap: 24px;
+  --card-gap: 12px;
+  --card-pad: 16px;
+  /* Type: four sizes and no fifth. */
+  --fs-title: 20px;  --lh-title: 28px;  --fw-title: 600;
+  --fs-card: 16px;   --lh-card: 24px;   --fw-card: 600;
+  --fs-body: 14px;   --lh-body: 20px;   --fw-body: 400;
+  --fs-meta: 12px;   --lh-meta: 16px;   --fw-meta: 500;
+  --fs-control: 14px;
+  /* Radius. */
+  --card-radius: 12px;
+  --control-radius: 8px;
+  --pill-radius: 999px;
+  /* Controls: buttons, inputs and selects share one height; one small size. */
+  --btn-h: 40px;
+  --btn-h-sm: 32px;
+}
+@media (max-width: 639.98px) {
+  :root { --gutter: 16px; --card-pad: 12px; }
+}
+@media (pointer: coarse) {
+  :root { --btn-h: 44px; --fs-control: 16px; }
+}
+/* ui-tokens:end */
+
+/* The UI standard (docs/notes/ui-standard.md): the token block above carries the
+   spacing, page widths, type, radii and control heights; the colours below are
+   this app's own. */
 :root {
   --bg: #0f1419;
   --bg-card: #161c23;
@@ -22,6 +61,9 @@
   --primary-btn: #1a66d6;
   --primary-btn-hover: #1758bb;
   --mono: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  /* The content column: the page width less the gutter each side. The header's
+     inner wrapper, the tab row and the page all use it, so they share edges. */
+  --column: calc(var(--page-wide) - 2 * var(--gutter));
 }
 @media (prefers-color-scheme: light) {
   :root {
@@ -79,8 +121,8 @@ body {
   background: var(--bg);
   color: var(--fg);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-size: 14px;
-  line-height: 1.45;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
   display: flex;
   flex-direction: column;
 }
@@ -97,62 +139,75 @@ body {
   isolation: isolate;
 }
 
-/* Topbar */
+/* Headings: explicit everywhere, never the browser's. */
+h1, h2, h3, h4 { margin: 0; color: var(--fg); }
+h1 { font-size: var(--fs-card); line-height: var(--lh-card); font-weight: var(--fw-card); }
+h2 { font-size: var(--fs-card); line-height: var(--lh-card); font-weight: var(--fw-card); }
+h3, h4 { font-size: var(--fs-body); line-height: var(--lh-body); font-weight: 600; }
+p { margin: 0; }
+
+/* Topbar. The bar is full bleed; what is inside it takes the page's column. */
 .topbar {
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+}
+.bar-in {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 20px;
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--border);
-  gap: 16px;
+  gap: var(--sp-4);
   flex-wrap: wrap;
+  max-width: var(--page-wide);
+  margin: 0 auto;
+  padding: var(--sp-3) var(--gutter);
 }
-.brand { display: flex; align-items: center; gap: 12px; }
+.brand { display: flex; align-items: center; gap: var(--sp-3); }
 .brand .logo {
   /* The mark is a self-contained tile — its own ground, its own radius — so it
      gets no background, no gradient and no plate here. */
   width: 44px; height: 44px;
   display: block;
   flex: none;
-  border-radius: 8px;
+  border-radius: var(--control-radius);
   box-shadow: 0 2px 8px rgba(0,0,0,.2);
 }
-.brand h1 {
-  margin: 0; font-size: 16px; font-weight: 600;
-}
-#brand-subtitle { margin: 0; color: var(--muted); font-size: 12px; }
+#brand-subtitle { color: var(--muted); font-size: var(--fs-meta); line-height: var(--lh-meta); }
 /* The version and its changelog link (#594), visible at every width. */
-.brand-version { margin: 2px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+.brand-version { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--sp-2); font-size: var(--fs-meta); line-height: var(--lh-meta); }
 .version-link { color: var(--muted); text-decoration: underline; text-underline-offset: 2px; }
 .version-link:hover { color: var(--fg); }
 .version-link:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .version-new { font-weight: 600; color: var(--accent-ink); }
 .version-new[hidden] { display: none; }
-.feed-warning { margin: 0 0 12px; padding: 10px 12px; border-left: 4px solid var(--warn); background: var(--bg-card); color: var(--fg); border-radius: 6px; overflow-wrap: anywhere; }
+.feed-warning { padding: var(--sp-3) var(--card-pad); border-left: 4px solid var(--warn); background: var(--bg-card); color: var(--fg); border-radius: var(--control-radius); overflow-wrap: anywhere; }
 .feed-warning[hidden] { display: none; }
-.changelog-dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-card); color: var(--fg); }
+.changelog-dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; border: 1px solid var(--border); border-radius: var(--card-radius); background: var(--bg-card); color: var(--fg); }
 .changelog-dialog::backdrop { background: rgba(0, 0, 0, .55); }
-.changelog-head { position: sticky; top: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px; background: var(--bg-card); border-bottom: 1px solid var(--border); }
-.changelog-head h2 { margin: 0; font-size: 16px; }
-.changelog-body { padding: 8px 16px 16px; overflow-wrap: anywhere; }
-.changelog-body section { border-bottom: 1px solid var(--border); padding: 8px 0; }
-.changelog-body h3 { font-size: 15px; margin: 8px 0 4px; display: flex; gap: 8px; align-items: baseline; }
-.changelog-body h4 { font-size: 13px; margin: 8px 0 2px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
-.changelog-body ul { margin: 4px 0; padding-left: 20px; }
-.changelog-body li { margin: 2px 0; }
-.changelog-new { font-size: 12px; font-weight: 600; color: var(--accent-ink); }
+.changelog-head { position: sticky; top: 0; display: flex; justify-content: space-between; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--card-pad); background: var(--bg-card); border-bottom: 1px solid var(--border); }
+.changelog-body { padding: var(--sp-2) var(--card-pad) var(--card-pad); overflow-wrap: anywhere; }
+.changelog-body section { border-bottom: 1px solid var(--border); padding: var(--sp-2) 0; }
+.changelog-body h3 { margin: var(--sp-2) 0 var(--sp-1); display: flex; gap: var(--sp-2); align-items: baseline; }
+.changelog-body h4 { font-size: var(--fs-meta); line-height: var(--lh-meta); margin: var(--sp-2) 0 var(--sp-1); color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.changelog-body ul { margin: var(--sp-1) 0; padding-left: var(--sp-5); }
+.changelog-body li { margin: var(--sp-1) 0; }
+.changelog-new { font-size: var(--fs-meta); font-weight: 600; color: var(--accent-ink); }
 .companion-absent { margin: 0; }
 .companion-absent[hidden], .companion[hidden] { display: none; }
-.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
 
-/* Tabs */
+/* Tabs: the bar is full bleed, the scrolling row inside it takes the same
+   column as the header and the page. The row is inset by the tab's own padding
+   so the first tab's label lines up with the brand and the content. */
 .tabs {
-  display: flex;
-  gap: 2px;
-  padding: 0 12px;
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
+}
+.tabs-in {
+  display: flex;
+  gap: var(--sp-1);
+  max-width: var(--page-wide);
+  margin: 0 auto;
+  padding: 0 calc(var(--gutter) - var(--sp-3));
   overflow-x: auto;
   /* Momentum scrolling on iOS so the horizontal tab row feels native */
   -webkit-overflow-scrolling: touch;
@@ -160,27 +215,27 @@ body {
 }
 /* A fade on the side that has more tabs (app.js sets the classes from the
    scroll position), so a row cut at the edge reads as one that scrolls. */
-.tabs.more-right { mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent); -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent); }
-.tabs.more-left { mask-image: linear-gradient(to left, #000 calc(100% - 48px), transparent); -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 48px), transparent); }
-.tabs.more-left.more-right { mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent); -webkit-mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent); }
+.tabs-in.more-right { mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent); -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent); }
+.tabs-in.more-left { mask-image: linear-gradient(to left, #000 calc(100% - 48px), transparent); -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 48px), transparent); }
+.tabs-in.more-left.more-right { mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent); -webkit-mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent); }
 .tab {
   background: transparent;
   border: none;
   color: var(--muted);
   font: inherit;
-  padding: 12px 14px;
+  padding: 0 var(--sp-3);
   cursor: pointer;
   border-bottom: 2px solid transparent;
   white-space: nowrap;
   scroll-snap-align: start;
-  /* 44px minimum height meets iOS HIG + Material touch-target recommendations */
-  min-height: 44px;
+  /* The control height: 40px, 44px on a touch screen (HIG / Material target). */
+  min-height: var(--btn-h);
 }
 .tab:hover { color: var(--fg); }
 .tab.active { color: var(--fg); border-bottom-color: var(--accent-ink); }
 /* Hide scrollbar on the tab row for cleaner look (still scrollable). */
-.tabs::-webkit-scrollbar { height: 2px; }
-.tabs::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.tabs-in::-webkit-scrollbar { height: 2px; }
+.tabs-in::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
 
 /* <main> is the SINGLE scrollable container.
    - `flex: 1 1 auto` makes it fill the space between the static header
@@ -193,25 +248,28 @@ body {
      mode we're avoiding. (See https://css-tricks.com/flexbox-truncated-text/) */
 main {
   flex: 1 1 auto;
-  padding: 20px;
+  padding: var(--sp-6) var(--gutter);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   min-height: 0;
 }
-.tab-panel { display: none; }
-.tab-panel.active { display: block; }
+/* The page: one centred column; its sections are --section-gap apart. */
+.tab-panel { display: none; max-width: var(--column); margin: 0 auto; }
+.tab-panel.active { display: flex; flex-direction: column; gap: var(--section-gap); }
+#tab-console.active { gap: 0; }
 
-/* Headings outside a card (the Players, Add-ons, Backups and Worlds tabs);
-   the .card, .setup-card and companion rules below are more specific. */
-h2 { font-size: 16px; font-weight: 600; margin: 24px 0 12px; }
-h2:first-child { margin-top: 0; }
-h3 { font-size: 14px; font-weight: 600; margin: 16px 0 8px; }
+/* A section: a heading (an optional lede and count with it), then its content,
+   a card or a list. The page puts --section-gap between sections. */
+.sec { display: flex; flex-direction: column; gap: var(--card-gap); min-width: 0; }
+.sec-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2) var(--sp-3); }
+.sec > .muted, .sec > p, .sec-lede { max-width: 72ch; }
+.sec > .reply { margin: 0; }
 
 /* Cards / grid */
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 14px;
+  gap: var(--card-gap);
 }
 /* From a desktop width, three columns for the three stat cards, so a wide card
    below never sits under empty tracks. */
@@ -221,49 +279,59 @@ h3 { font-size: 14px; font-weight: 600; margin: 16px 0 8px; }
 .card {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 16px;
+  border-radius: var(--card-radius);
+  padding: var(--card-pad);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
 }
 .card.wide { grid-column: 1 / -1; }
-.card h2 { margin: 0 0 12px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
-.card h3 { margin: 14px 0 6px; font-size: 13px; color: var(--muted); }
-dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; }
+.card > .muted, .card > p { max-width: 72ch; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--sp-1) var(--sp-3); margin: 0; }
 dt { color: var(--muted); }
 dd { margin: 0; font-variant-numeric: tabular-nums; }
 
-.metric { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 16px; }
-.dot { font-size: 14px; color: var(--muted); }
+.metric { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-card); line-height: var(--lh-card); }
+.dot { font-size: var(--fs-body); color: var(--muted); }
 .dot.running { color: var(--accent-ink); }
 .dot.stopped { color: var(--danger); }
 .dot.starting { color: var(--warn); }
-.big-number { font-size: 36px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.big-number .slash { color: var(--muted); margin: 0 4px; }
+.big-number { font-size: var(--fs-title); line-height: var(--lh-title); font-weight: var(--fw-title); font-variant-numeric: tabular-nums; }
+.big-number .slash { color: var(--muted); margin: 0 var(--sp-1); }
 
-.players-mini { list-style: none; padding: 0; margin: 12px 0 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.players-mini { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 .players-mini li {
   background: var(--bg-raise);
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 3px 10px;
-  font-size: 12px;
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-body);
 }
 
-/* Buttons */
+/* Buttons: one height, one radius, one small size. */
 .btn {
   background: var(--bg-raise);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 10px 14px;
+  border-radius: var(--control-radius);
+  padding: 0 var(--sp-4);
   font: inherit;
+  font-size: var(--fs-control);
   cursor: pointer;
   transition: background .15s, border-color .15s;
-  /* Touch-target minimum. Applies on all viewports — desktop users
-     benefit from a larger click target too. */
-  min-height: 40px;
-  min-width: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  /* Touch-target minimum on every viewport: desktop users benefit from a
+     larger click target too. */
+  min-height: var(--btn-h);
+  min-width: var(--btn-h);
 }
 .btn:hover { background: var(--border); }
+.btn-sm { min-height: var(--btn-h-sm); min-width: var(--btn-h-sm); padding: 0 var(--sp-3); }
 .btn-primary { background: var(--primary-btn); color: #fff; border-color: transparent; }
 .btn-primary:hover { background: var(--primary-btn-hover); }
 .btn-warn { background: var(--warn); color: #111; border-color: transparent; }
@@ -272,7 +340,7 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
 
 /* Forms */
 .inline-form {
-  display: flex; gap: 6px; align-items: center; margin-top: 8px;
+  display: flex; gap: var(--sp-2); align-items: center; margin: 0;
   flex-wrap: wrap;
 }
 .inline-form input[type="text"],
@@ -284,34 +352,36 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
   background: var(--bg-raise);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 10px;
+  border-radius: var(--control-radius);
+  padding: 0 var(--sp-3);
   font: inherit;
-  min-height: 40px;
+  font-size: var(--fs-control);
+  min-height: var(--btn-h);
 }
 .reply:empty { display: none; }
 .reply {
   background: var(--bg-raise);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 10px;
+  border-radius: var(--control-radius);
+  padding: var(--sp-2) var(--sp-3);
   max-height: 200px;
   overflow: auto;
-  margin: 8px 0 0;
+  margin: 0;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 /* Console */
 .console-toolbar {
-  display: flex; gap: 12px; align-items: center;
+  display: flex; gap: var(--sp-3); align-items: center;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-bottom: none;
-  border-radius: 8px 8px 0 0;
-  padding: 8px 12px;
+  border-radius: var(--card-radius) var(--card-radius) 0 0;
+  padding: var(--sp-2) var(--card-pad);
   flex-wrap: wrap;
 }
 .console-toolbar form { flex: 1; margin: 0; }
@@ -327,11 +397,11 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
   background: #07090d;
   color: #d4d8dd;
   font-family: var(--mono);
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: var(--fs-meta);
+  line-height: var(--lh-body);
   border: 1px solid var(--border);
-  border-radius: 0 0 8px 8px;
-  padding: 12px 14px;
+  border-radius: 0 0 var(--card-radius) var(--card-radius);
+  padding: var(--card-pad);
   min-height: 420px;
   max-height: min(70vh, 600px);
   overflow: auto;
@@ -345,91 +415,89 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
 
 /* Tables. On narrow viewports we want horizontal scrolling so long
    rows (backup SHAs, plugin filenames) don't clip off-screen. The
-   `.table-wrap` element wraps the table in JS-added lists; for
-   backwards compat with existing markup the .table itself also
-   gets `display: block` + overflow on small screens via the media
-   query at the bottom of this file. Now that <main> is the page
+   .table itself gets `display: block` + overflow on small screens via the
+   media query at the bottom of this file. Now that <main> is the page
    scroller, the table's internal horizontal scroll is a separate
-   axis and doesn't interfere. */
-.table-wrap {
-  width: 100%;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  border-radius: 8px;
-}
+   axis and doesn't interfere. A table is a card: bordered, rows divided by
+   hairlines, every cell inset by the card padding. */
 .table {
   width: 100%;
   border-collapse: collapse;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--card-radius);
   overflow: hidden;
-  margin: 12px 0;
+  margin: 0;
 }
 .table th, .table td {
-  padding: 10px 12px;
+  padding: var(--sp-3) var(--card-pad);
   border-bottom: 1px solid var(--border);
   text-align: left;
 }
 .table th {
   background: var(--bg-raise);
   font-weight: 600;
-  font-size: 12px;
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: .04em;
 }
 .table tr:last-child td { border-bottom: none; }
 .table[hidden] { display: none; }
-.table td.actions { display: flex; gap: 6px; flex-wrap: wrap; }
-.table code { font-family: var(--mono); font-size: 12px; }
+.table code { font-family: var(--mono); font-size: var(--fs-meta); }
+/* A row's buttons stay together, in one group. */
+.row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
 
 .muted { color: var(--muted); }
 
-/* Backups panel: one short row per snapshot, Restore inside the row. */
-#backups-panel h3 { margin: 18px 0 6px; font-size: 14px; color: var(--muted); }
-.snap-list { list-style: none; margin: 8px 0 12px; padding: 0; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; }
-.snap { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+/* Backups: a card per list, one short row per snapshot, Restore inside the row. */
+.snap-list { list-style: none; margin: 0; padding: 0; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--card-radius); overflow: hidden; }
+.snap { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-2) var(--card-pad); border-bottom: 1px solid var(--border); }
 .snap:last-child { border-bottom: none; }
-.snap-text { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; min-width: 0; }
+.snap-text { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-3); align-items: baseline; min-width: 0; }
 .snap .btn { flex: none; }
+#backups-panel { display: flex; flex-direction: column; gap: var(--section-gap); }
 
 /* Worlds: the list first, the explanation folded under it. */
 .world-active { color: var(--accent-ink); font-weight: 600; white-space: nowrap; }
-.explain { margin: 4px 0 16px; color: var(--muted); }
-.explain summary { cursor: pointer; color: var(--fg); padding: 10px 0; }
-.explain[open] summary { margin-bottom: 4px; }
+.explain { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--card-radius); padding: 0 var(--card-pad); color: var(--muted); }
+.explain summary { cursor: pointer; color: var(--fg); min-height: var(--btn-h); display: flex; align-items: center; font-weight: 600; }
+.explain[open] summary { border-bottom: 1px solid var(--border); margin-bottom: var(--sp-3); }
 .explain summary::marker { color: var(--muted); }
+.explain > p { margin: 0 0 var(--sp-3); }
 
-/* Server Properties: every control a touch target, text no smaller than 16px on a phone. */
+/* Server Properties: every control a touch target. */
 #props-table input, #props-table select {
-  min-height: 40px;
+  min-height: var(--btn-h);
   width: 100%;
   max-width: 360px;
   background: var(--bg-raise);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 10px;
+  border-radius: var(--control-radius);
+  padding: 0 var(--sp-3);
   font: inherit;
+  font-size: var(--fs-control);
 }
 
 footer {
   flex: 0 0 auto;
-  padding: 10px 20px;
-  font-size: 12px;
+  padding: var(--sp-2) var(--gutter);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
   color: var(--muted);
   border-top: 1px solid var(--border);
   background: var(--bg-card);
   display: flex;
-  gap: 10px;
+  gap: var(--sp-2);
   justify-content: space-between;
   flex-wrap: wrap;
 }
 .sep { opacity: .5; }
 
 /* ------------------------------------------------------------------
-   Responsive breakpoints
+   Responsive breakpoints: 640 / 900 / 1200 only (the grid above is the 900).
    ------------------------------------------------------------------
    The panel is served inside HA's ingress iframe, which on phones is
    the full width of the HA Companion app. Before 1.2.6, wide tables
@@ -437,23 +505,17 @@ footer {
    users reported they couldn't reach some tabs at all. These rules
    put the panel squarely in mobile-first territory.
    ------------------------------------------------------------------ */
-@media (max-width: 720px) {
-  /* Tighter outer padding so the content uses the available pixels. */
-  main { padding: 12px; }
-  .topbar { padding: 10px 12px; flex-direction: column; align-items: stretch; }
-  .brand h1 { font-size: 15px; }
+@media (max-width: 639.98px) {
+  main { padding: var(--sp-4) var(--gutter); }
+  .bar-in { flex-direction: column; align-items: stretch; gap: var(--sp-2); padding: var(--sp-2) var(--gutter); }
   .actions { width: 100%; justify-content: stretch; }
   .actions .btn { flex: 1 1 0; min-width: 0; }
-
-  /* Tabs already scroll horizontally; bump the typing target size a
-     bit so a fat finger can tap without zooming in. */
-  .tab { padding: 14px 16px; font-size: 14px; }
 
   /* Console sits above the fold nicely at ~280px min-height on
      phones; the 60vh cap (capped at 480px to handle vh quirks) still
      leaves room for the toolbar above it. */
-  .console { min-height: 240px; max-height: min(60vh, 480px); font-size: 12px; }
-  .console-toolbar { padding: 10px; gap: 8px; }
+  .console { min-height: 240px; max-height: min(60vh, 480px); }
+  .console-toolbar { gap: var(--sp-2); }
   .console-toolbar form { width: 100%; }
 
   /* Stack inline forms so a "say" input doesn't get squished under
@@ -465,7 +527,6 @@ footer {
   .inline-form select {
     width: 100%;
     min-width: 0;
-    font-size: 16px; /* 16px avoids iOS Safari auto-zoom on focus */
   }
   .inline-form .btn { width: 100%; }
 
@@ -474,49 +535,51 @@ footer {
      than the viewport. The horizontal scroll axis is independent of
      <main>'s vertical scroll axis — no conflict. */
   .table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .table td.actions { flex-wrap: wrap; }
 
   /* Server Properties stacks: the key on its own line, then its value and
      Save side by side, so the value fits inside the window. */
   #props-table { overflow-x: visible; }
   #props-table thead { display: none; }
   #props-table tbody { display: block; }
-  #props-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  #props-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-2); align-items: center; padding: var(--sp-3) var(--card-pad); border-bottom: 1px solid var(--border); }
   #props-table tr:last-child { border-bottom: none; }
   #props-table td { display: block; padding: 0; border: none; min-width: 0; }
   #props-table td:first-child { grid-column: 1 / -1; }
   #props-table td:nth-child(2) { overflow-wrap: anywhere; }
-  #props-table input, #props-table select { max-width: none; font-size: 16px; }
+  #props-table input, #props-table select { max-width: none; }
 
   /* Worlds stack too: name and whether it is running, then its settings
      and size, then its buttons, all inside the window. */
   #worlds-table { overflow-x: visible; }
   #worlds-table thead { display: none; }
   #worlds-table tbody { display: block; }
-  #worlds-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name active" "settings size" "actions actions"; gap: 6px 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  #worlds-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name active" "settings size" "actions actions"; gap: var(--sp-2); align-items: center; padding: var(--sp-3) var(--card-pad); border-bottom: 1px solid var(--border); }
   #worlds-table tr:last-child { border-bottom: none; }
   #worlds-table td { display: block; padding: 0; border: none; min-width: 0; }
   #worlds-table td:nth-child(1) { grid-area: name; }
   #worlds-table td:nth-child(2) { grid-area: size; color: var(--muted); }
   #worlds-table td:nth-child(3) { grid-area: settings; }
   #worlds-table td:nth-child(4) { grid-area: active; }
-  #worlds-table td.actions { grid-area: actions; display: flex; }
+  #worlds-table td:nth-child(5) { grid-area: actions; }
 
   /* Grid collapses to a single column on narrow widths. */
-  .grid { grid-template-columns: 1fr; gap: 10px; }
-  .big-number { font-size: 28px; }
+  .grid { grid-template-columns: 1fr; }
+  dl { grid-template-columns: 1fr; gap: 0; }
+  dd { padding-bottom: var(--sp-1); }
 
-  footer { padding: 8px 12px; flex-direction: column; align-items: flex-start; gap: 2px; }
+  footer { flex-direction: column; align-items: flex-start; gap: 0; }
   footer .sep { display: none; }
-}
 
-/* Extra-narrow (phones in portrait, e.g. iPhone SE). Drop padding
-   further and stack the Say/Command forms tightly. */
-@media (max-width: 400px) {
-  main { padding: 10px; }
-  .card { padding: 12px; }
-  dl { grid-template-columns: 1fr; }
-  dd { padding-bottom: 4px; }
+  .addon-row { grid-template-columns: 40px minmax(0, 1fr); }
+  .addon-row .addon-status { grid-column: 2; justify-self: start; }
+  .software-row { grid-template-columns: minmax(0, 1fr); }
+  .software-row .addon-status, .software-when { justify-self: start; }
+  .player-row { flex-direction: column; align-items: stretch; }
+  .player-pick { width: 100%; }
+  .setup-card { padding: var(--card-pad); }
+  .setup-header { flex-direction: column; }
+  .setup-progress { text-align: left; min-width: 0; width: 100%; }
+  .companion-buttons .btn { flex: 1 1 auto; }
 }
 
 /* Reduce motion for users who asked for it (iOS Settings → Motion). */
@@ -532,11 +595,11 @@ footer {
 
 .tps-badge {
   display: inline-block;
-  margin-left: 6px;
-  padding: 2px 6px;
-  font-size: 0.75em;
+  margin-left: var(--sp-2);
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-meta);
   font-weight: 600;
-  border-radius: 4px;
+  border-radius: var(--control-radius);
   vertical-align: middle;
 }
 .tps-badge.tps-good { color: var(--accent-ink); }
@@ -559,7 +622,7 @@ footer {
   background: rgba(0, 0, 0, 0.62);
   backdrop-filter: blur(4px);
   display: flex; align-items: flex-start; justify-content: center;
-  padding: 32px 16px;
+  padding: var(--sp-8) var(--sp-4);
   z-index: 1000;
   overflow-y: auto;
 }
@@ -568,40 +631,39 @@ footer {
   color: var(--fg);
   max-width: 760px; width: 100%;
   border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 24px 28px;
+  border-radius: var(--card-radius);
+  padding: var(--sp-6);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
-  line-height: 1.5;
+  display: flex; flex-direction: column; gap: var(--sp-3);
 }
-.setup-card h2 { margin: 0 0 4px; color: var(--fg); }
-.setup-card h3 { margin: 20px 0 8px; color: var(--fg); }
-.setup-card p { margin: 4px 0 10px; color: var(--fg); }
+.setup-card h2, .setup-card h3 { color: var(--fg); }
+.setup-card p { color: var(--fg); }
 .setup-card .muted { color: var(--muted); }
 .setup-card a { color: var(--accent-ink); }
 .setup-card a:hover { color: var(--accent-hover); }
 .setup-card code {
   font-family: var(--mono);
-  font-size: 0.92em;
+  font-size: var(--fs-meta);
   background: var(--bg-raise);
   color: var(--fg);
-  padding: 1px 5px;
-  border-radius: 4px;
+  padding: 0 var(--sp-1);
+  border-radius: var(--control-radius);
 }
 
 .setup-header {
-  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-4);
   border-bottom: 1px solid var(--border);
-  padding-bottom: 14px; margin-bottom: 8px;
+  padding-bottom: var(--sp-3);
   flex-wrap: wrap;
 }
-.setup-header > div:first-child { flex: 1 1 320px; min-width: 0; }
+.setup-header > div:first-child { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
 .setup-progress {
   text-align: right; min-width: 140px;
-  color: var(--muted); font-size: 0.9em;
+  color: var(--muted);
 }
 .setup-progress strong { color: var(--fg); }
 .setup-progress-bar {
-  margin-top: 6px;
+  margin-top: var(--sp-2);
   height: 6px; border-radius: 999px;
   background: var(--bg-raise);
   overflow: hidden;
@@ -613,34 +675,36 @@ footer {
   transition: width 0.2s ease;
 }
 
-.setup-step { padding-top: 6px; }
+/* A wizard step: its heading, lede and fields are --sp-3 apart. */
+.setup-step { display: flex; flex-direction: column; gap: var(--sp-3); }
+.setup-step h4 { margin: var(--sp-2) 0 0; color: var(--muted); font-size: var(--fs-meta); line-height: var(--lh-meta); text-transform: uppercase; letter-spacing: .05em; }
 
 /* Radio-card pickers (server type, gamemode, difficulty, terrain, audience) */
 .setup-cards {
-  border: none; padding: 0; margin: 4px 0 0;
-  display: grid; gap: 10px;
+  border: none; padding: 0; margin: 0; min-width: 0;
+  display: grid; gap: var(--sp-2);
 }
 .setup-cards.compact { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 .setup-pick {
-  display: grid; grid-template-columns: 22px 1fr; gap: 12px; align-items: start;
-  padding: 12px 14px;
-  border: 1px solid var(--border); border-radius: 10px;
+  display: grid; grid-template-columns: 22px 1fr; gap: var(--sp-3); align-items: start;
+  padding: var(--sp-3) var(--card-pad);
+  border: 1px solid var(--border); border-radius: var(--card-radius);
   cursor: pointer; background: var(--bg);
   color: var(--fg);
   transition: border-color 0.15s, background 0.15s;
 }
 .setup-pick:hover { border-color: var(--accent-ink); background: var(--bg-raise); }
-.setup-pick > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; color: var(--fg); }
+.setup-pick > div { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; color: var(--fg); }
 .setup-pick strong { color: var(--fg); }
-.setup-pick .muted { font-size: 0.92em; color: var(--muted); }
-.setup-pick input[type="radio"] { margin-top: 3px; accent-color: var(--accent-ink); }
+.setup-pick .muted { color: var(--muted); }
+.setup-pick input[type="radio"] { margin-top: var(--sp-1); accent-color: var(--accent-ink); }
 .setup-pick:has(input:checked) { border-color: var(--accent-ink); background: var(--bg-raise); }
 .setup-pick.recommended { border-color: var(--accent-ink); }
 
 .setup-tag {
   display: inline-block;
-  font-size: 0.7em; font-weight: 600;
-  margin-left: 6px; padding: 2px 8px;
+  font-size: var(--fs-meta); font-weight: 600;
+  margin-left: var(--sp-2); padding: 0 var(--sp-2);
   border-radius: 999px;
   background: var(--accent); color: #0f1419;
   text-transform: uppercase; letter-spacing: 0.04em;
@@ -648,52 +712,52 @@ footer {
 .setup-tag.warn { background: var(--warn); }
 
 /* Form fields */
-.setup-field { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; color: var(--fg); }
+.setup-field { display: flex; flex-direction: column; gap: var(--sp-2); color: var(--fg); }
 .setup-field > label { font-weight: 600; color: var(--fg); }
-.setup-field > .muted { font-size: 0.85em; color: var(--muted); }
+.setup-field > .muted { color: var(--muted); }
 .setup-field input[type="text"],
 .setup-field input[type="number"],
 .setup-card select {
   width: 100%;
-  padding: 9px 10px;
-  border-radius: 8px;
+  padding: 0 var(--sp-3);
+  min-height: var(--btn-h);
+  border-radius: var(--control-radius);
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
   font: inherit;
+  font-size: var(--fs-control);
 }
 .setup-field input:focus,
 .setup-card select:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
 .setup-field-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-  margin-top: 8px;
+  gap: var(--sp-3);
 }
 
 .setup-check {
-  display: grid; grid-template-columns: 22px 1fr; gap: 12px; align-items: start;
-  cursor: pointer; padding: 8px 0;
+  display: grid; grid-template-columns: 22px 1fr; gap: var(--sp-3); align-items: start;
+  cursor: pointer; padding: var(--sp-2) 0;
   color: var(--fg);
 }
 .setup-check input[type="checkbox"] {
-  width: 18px; height: 18px; margin-top: 2px;
+  width: 18px; height: 18px; margin-top: var(--sp-1);
   accent-color: var(--accent-ink);
 }
 .setup-check strong { color: var(--fg); }
-.setup-check .muted { font-size: 0.92em; color: var(--muted); }
+.setup-check .muted { color: var(--muted); }
 
 /* Plugin grid */
 .setup-plugins {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 8px;
-  margin-top: 8px;
+  gap: var(--sp-2);
 }
 .setup-plugin {
-  padding: 10px 12px;
+  padding: var(--sp-3) var(--card-pad);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--control-radius);
   background: var(--bg);
   color: var(--fg);
 }
@@ -703,11 +767,9 @@ footer {
 }
 
 .setup-rec-summary {
-  padding: 10px 12px;
+  padding: var(--sp-3) var(--card-pad);
   border: 1px dashed var(--border);
-  border-radius: 8px;
-  margin-bottom: 12px;
-  font-size: 0.92em;
+  border-radius: var(--control-radius);
   background: var(--bg);
   color: var(--fg);
 }
@@ -715,121 +777,115 @@ footer {
 .setup-review {
   display: grid;
   grid-template-columns: max-content 1fr;
-  gap: 6px 16px;
-  margin: 4px 0 0;
-  padding: 12px 14px;
+  gap: var(--sp-2) var(--sp-4);
+  margin: 0;
+  padding: var(--card-pad);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--control-radius);
   background: var(--bg);
 }
-.setup-review dt { color: var(--muted); font-size: 0.9em; }
+.setup-review dt { color: var(--muted); }
 .setup-review dd { margin: 0; color: var(--fg); }
 
 .setup-footer {
-  display: flex; align-items: center; gap: 12px;
-  margin-top: 24px; padding-top: 16px;
+  display: flex; align-items: center; gap: var(--sp-3);
+  margin-top: var(--sp-3); padding-top: var(--sp-4);
   border-top: 1px solid var(--border);
   flex-wrap: wrap;
 }
 .setup-footer #setup-next,
 .setup-footer #setup-submit { margin-left: auto; }
 .setup-footer #setup-status { flex-basis: 100%; color: var(--muted); }
-.setup-fine { font-size: 0.85em; color: var(--muted); margin-top: 12px; }
+.setup-fine { font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--muted); }
 
-@media (max-width: 560px) {
-  .setup-card { padding: 18px 16px; }
-  .setup-header { flex-direction: column; }
-  .setup-progress { text-align: left; min-width: 0; width: 100%; }
-}
-
-/* Crash banner */
+/* Crash banner: a bordered surface on the page's column. */
 .crash-banner {
+  flex: none;
   background: rgba(224, 75, 75, 0.12);
   border: 1px solid var(--danger);
   border-left: 4px solid var(--danger);
-  border-radius: 8px;
-  margin: 12px 16px;
-  padding: 12px 16px;
+  border-radius: var(--control-radius);
+  width: calc(100% - 2 * var(--gutter));
+  max-width: var(--column);
+  margin: var(--sp-3) auto 0;
+  padding: var(--card-pad);
+  display: flex; flex-direction: column; gap: var(--sp-2);
 }
+.crash-banner[hidden] { display: none; }
 .crash-head {
-  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap;
 }
 .crash-head strong { color: var(--danger); }
 .crash-head .btn { margin-left: auto; }
 .crash-excerpt {
   background: var(--bg, #15161a);
-  padding: 10px;
-  border-radius: 6px;
+  padding: var(--sp-3);
+  border-radius: var(--control-radius);
   max-height: 200px;
   overflow: auto;
-  font-size: 0.85em;
-  margin: 8px 0 4px;
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  margin: 0;
   white-space: pre-wrap;
 }
 
-/* Tune button: room above it, and one line on what it does. */
-#btn-tune { margin-top: 14px; }
-.tune-hint { margin: 6px 0 0; font-size: 13px; }
+/* Tune button: one line on what it does under it. */
+#btn-tune { align-self: flex-start; }
+.tune-hint { font-size: var(--fs-meta); line-height: var(--lh-meta); }
 
 /* Smart performance hint under the TPS card */
 .perf-hint {
-  margin: 10px 0 0;
-  padding: 8px 10px;
+  padding: var(--sp-2) var(--sp-3);
   background: rgba(224, 160, 32, 0.12);
-  border-left: 3px solid var(--warn);
-  border-radius: 4px;
-  font-size: 0.9em;
-  line-height: 1.4;
+  border-left: 4px solid var(--warn);
+  border-radius: var(--control-radius);
 }
 
 /* Performance preview block (1.12.0) shown under the step-6 perf inputs. */
-.setup-perf-preview { margin-top: 12px; }
+.setup-perf-preview:empty { display: none; }
 .setup-preview-row {
-  padding: 10px 12px;
+  padding: var(--sp-3) var(--card-pad);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--control-radius);
   background: var(--bg-raise);
   color: var(--fg);
 }
 .setup-preview-emph { color: var(--accent-ink); font-weight: 600; }
 .setup-preview-warn {
-  list-style: none; padding: 0; margin: 8px 0 0;
+  list-style: none; padding: 0; margin: var(--sp-2) 0 0;
 }
 .setup-preview-warn li {
-  padding: 8px 10px;
-  margin-top: 6px;
+  padding: var(--sp-2) var(--sp-3);
+  margin-top: var(--sp-2);
   background: rgba(224, 160, 32, 0.10);
-  border-left: 3px solid var(--warn);
-  border-radius: 4px;
-  font-size: 0.9em;
+  border-left: 4px solid var(--warn);
+  border-radius: var(--control-radius);
   color: var(--fg);
 }
 .setup-preview-ok {
-  margin: 8px 0 0; padding: 8px 10px;
+  margin: var(--sp-2) 0 0; padding: var(--sp-2) var(--sp-3);
   background: rgba(111, 191, 67, 0.10);
-  border-left: 3px solid var(--accent);
-  border-radius: 4px;
-  font-size: 0.9em;
+  border-left: 4px solid var(--accent);
+  border-radius: var(--control-radius);
   color: var(--fg);
 }
 
 /* Worlds tab — per-world settings inline summary. */
-.world-settings { font-size: 0.9em; color: var(--fg); }
+.world-settings { color: var(--fg); }
 .world-settings code {
   background: var(--bg-raise);
-  padding: 1px 5px;
-  border-radius: 3px;
+  padding: 0 var(--sp-1);
+  border-radius: var(--control-radius);
   font-family: var(--mono);
 }
 
 /* "Editing world X" context badge above the Server Properties table. */
 .props-context {
-  padding: 10px 12px;
+  padding: var(--sp-3) var(--card-pad);
   background: var(--bg-raise);
-  border-left: 3px solid var(--accent);
-  border-radius: 6px;
+  border-left: 4px solid var(--accent);
+  border-radius: var(--control-radius);
   color: var(--fg);
-  margin: 0 0 12px;
 }
 .props-context code { color: var(--accent-ink); font-family: var(--mono); }
 
@@ -838,9 +894,9 @@ footer {
    world is a no-op. */
 .wgo-badge {
   display: inline-block;
-  margin-left: 8px;
-  padding: 1px 7px;
-  font-size: 12px;
+  margin-left: var(--sp-2);
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-meta);
   font-weight: 600;
   border-radius: 999px;
   background: var(--warn);
@@ -853,57 +909,57 @@ footer {
 
 /* Essential-plugins callout in the first-run wizard plugin step. */
 .setup-essential-callout {
-  padding: 12px 14px;
+  padding: var(--sp-3) var(--card-pad);
   border: 1px solid var(--accent);
-  border-radius: 10px;
+  border-radius: var(--card-radius);
   background: rgba(111, 191, 67, 0.10);
   color: var(--fg);
-  margin: 8px 0 0;
 }
 .setup-essential-callout strong { color: var(--fg); }
-.setup-essential-callout .muted { font-size: 0.92em; color: var(--muted); display: block; margin-top: 4px; }
-.setup-card h4 { margin: 14px 0 6px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.setup-essential-callout .muted { color: var(--muted); display: block; margin-top: var(--sp-1); }
 
 /* ── Featured / curated worlds (Worlds tab, 1.14.0) ───────────────────── */
 .curated-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px;
-  margin: 8px 0;
+  gap: var(--card-gap);
 }
 .curated-card {
   border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-raise);
-  padding: 14px;
-}
-.curated-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
-.curated-head strong { font-size: 15px; color: var(--fg); }
-.curated-tagline { color: var(--fg); margin: 6px 0; font-size: 0.95em; }
-.curated-notes { font-size: 0.88em; font-style: italic; }
-.curated-pill {
-  font-size: 11px;
-  padding: 2px 7px;
-  border-radius: 999px;
+  border-radius: var(--card-radius);
   background: var(--bg-card);
+  padding: var(--card-pad);
+  display: flex; flex-direction: column; gap: var(--sp-2);
+}
+.curated-card p { margin: 0; }
+.curated-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2); }
+.curated-head strong { font-size: var(--fs-card); line-height: var(--lh-card); color: var(--fg); }
+.curated-tagline { color: var(--fg); }
+.curated-notes { font-style: italic; }
+.curated-pill {
+  font-size: var(--fs-meta);
+  padding: 0 var(--sp-2);
+  border-radius: 999px;
+  background: var(--bg-raise);
   border: 1px solid var(--border);
   color: var(--muted);
 }
-.curated-actions { margin-top: 10px; }
-.curated-installed { color: var(--accent-ink); font-size: 0.92em; }
+.curated-actions { margin-top: auto; }
+.curated-installed { color: var(--accent-ink); }
 .curated-badge {
   display: inline-block;
-  font-size: 10px;
+  font-size: var(--fs-meta);
   font-weight: 600;
-  padding: 1px 7px;
+  padding: 0 var(--sp-2);
   border-radius: 999px;
   background: rgba(111, 191, 67, 0.15);
   border: 1px solid var(--accent);
   color: var(--accent-ink);
   vertical-align: middle;
 }
-.curated-progress { margin: 10px 0; }
-.curated-status { font-weight: 600; margin: 4px 0; }
+.curated-progress { display: flex; flex-direction: column; gap: var(--sp-2); }
+.curated-progress[hidden] { display: none; }
+.curated-status { font-weight: 600; }
 .curated-status-running { color: var(--accent-ink); }
 .curated-status-done { color: var(--accent-ink); }
 .curated-status-error { color: var(--warn, #e05252); }
@@ -911,60 +967,58 @@ footer {
 /* ---------------------------------------------------------------------
    Add-on browser
    --------------------------------------------------------------------- */
-.addon-kinds { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
+.addon-kinds { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 .addon-kinds .chip {
-  min-height: 40px; padding: 0 14px; border-radius: 20px;
+  min-height: var(--btn-h); padding: 0 var(--sp-4); border-radius: 999px;
   border: 1px solid var(--border); background: var(--bg-raise); color: var(--fg);
-  font: inherit; cursor: pointer;
+  font: inherit; font-size: var(--fs-control); cursor: pointer;
 }
 .addon-kinds .chip.active { border-color: var(--accent-ink); color: var(--accent-ink); }
-.addon-search input[type="search"] { flex: 1 1 220px; min-width: 0; font-size: 16px; }
-.addon-reach { margin: 4px 0 12px; }
+.addon-search input[type="search"] { flex: 1 1 220px; min-width: 0; }
 .addon-grid {
-  display: grid; gap: 12px;
+  display: grid; gap: var(--card-gap);
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
-  margin-bottom: 16px;
 }
 .addon-card {
-  display: flex; flex-direction: column; gap: 8px; min-width: 0;
-  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 12px;
+  display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--card-radius); padding: var(--card-pad);
 }
-.addon-head { display: flex; gap: 10px; align-items: center; min-width: 0; }
-.addon-icon { width: 40px; height: 40px; border-radius: 8px; flex: none; object-fit: cover; }
+.addon-head { display: flex; gap: var(--sp-3); align-items: center; min-width: 0; }
+.addon-icon { width: 40px; height: 40px; border-radius: var(--control-radius); flex: none; object-fit: cover; }
 .addon-icon-kind { background: var(--bg-raise); color: var(--muted); display: flex; align-items: center; justify-content: center; }
-.addon-remove { color: var(--danger-ink); font-size: 13px; }
+.addon-remove { color: var(--danger-ink); }
 .addon-title { display: flex; flex-direction: column; min-width: 0; }
 .addon-title strong, .addon-title .muted { overflow-wrap: anywhere; }
-.addon-title .muted { font-size: 12px; }
-.addon-desc { margin: 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
-.addon-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
-.addon-actions .btn { min-height: 40px; }
+.addon-title .muted { font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.addon-desc { margin: 0; color: var(--muted); overflow-wrap: anywhere; }
+.addon-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: auto; }
 .addon-added { color: var(--accent-ink); font-weight: 600; align-self: center; }
-.addon-note { font-size: 12px; color: var(--muted); }
+.addon-note { font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--muted); }
 .addon-note:empty { display: none; }
 .addon-note.bad, .bad { color: var(--danger); }
-.addon-more { text-align: center; margin-bottom: 16px; }
+.addon-more { text-align: center; }
+.addon-more:has(.btn[hidden]) { display: none; }
 /* The world list: everything in this world, one row each. */
-.addon-world { display: flex; flex-direction: column; gap: 16px; margin-bottom: 20px; }
-.addon-group h3 { margin: 0 0 8px; font-size: 15px; }
+.addon-world { display: flex; flex-direction: column; gap: var(--sp-4); }
+.addon-world:empty { display: none; }
+.addon-group { display: flex; flex-direction: column; gap: var(--card-gap); }
 .addon-group h3 .muted { font-weight: 400; }
 .addon-row {
-  display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 4px 12px;
-  align-items: center; padding: 10px 12px; margin-bottom: 8px;
-  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+  display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: var(--sp-1) var(--sp-3);
+  align-items: center; padding: var(--card-pad);
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--card-radius);
 }
 .addon-row .addon-icon { grid-row: span 2; }
 .addon-row-main { display: flex; flex-direction: column; min-width: 0; }
 .addon-row-main strong { overflow-wrap: anywhere; }
-.addon-row-main .muted { font-size: 12px; overflow-wrap: anywhere; }
-.addon-row-actions { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+.addon-row-main .muted { font-size: var(--fs-meta); line-height: var(--lh-meta); overflow-wrap: anywhere; }
+.addon-row-actions { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 .addon-row-actions:empty { display: none; }
-.addon-row-actions .btn { min-height: 40px; }
 .addon-row .addon-note { grid-column: 2 / -1; }
 /* Status is said in words; the colour only reinforces it. */
 .addon-status {
-  justify-self: end; white-space: nowrap; font-size: 13px; font-weight: 600;
-  padding: 3px 10px; border-radius: 999px; border: 1px solid currentColor;
+  justify-self: end; white-space: nowrap; font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: 600;
+  padding: var(--sp-1) var(--sp-3); border-radius: 999px; border: 1px solid currentColor;
   background: var(--bg-raise);
 }
 .addon-status-active { color: var(--accent-ink); }
@@ -972,87 +1026,67 @@ footer {
 .addon-status-next_start { color: var(--muted); }
 .addon-status-unused { color: var(--muted); border-style: dashed; }
 .addon-actions .addon-status { align-self: center; white-space: normal; }
-@media (max-width: 520px) {
-  .addon-row { grid-template-columns: 40px minmax(0, 1fr); }
-  .addon-row .addon-status { grid-column: 2; justify-self: start; }
-}
 .addon-restart {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
-  margin: 0 0 16px; padding: 12px 14px; border-radius: 10px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-4);
+  padding: var(--card-pad); border-radius: var(--card-radius);
   border: 1px solid var(--warn); background: var(--bg-raise);
 }
 .addon-restart[hidden] { display: none; }
 .addon-restart.is-info, .addon-restart.is-busy { border-color: var(--border); }
-.addon-restart-text { flex: 1 1 240px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.addon-restart-text span { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
-.addon-restart .btn { min-height: 40px; }
+.addon-restart-text { flex: 1 1 240px; display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
+.addon-restart-text span { color: var(--muted); overflow-wrap: anywhere; }
 .addon-kind {
-  display: inline-block; font-size: 11px; font-weight: 600; text-transform: uppercase;
+  display: inline-block; font-size: var(--fs-meta); font-weight: 600; text-transform: uppercase;
   letter-spacing: 0.03em; color: var(--fg); background: var(--bg-raise);
-  padding: 1px 6px; border-radius: 4px; margin-right: 4px;
+  padding: 0 var(--sp-1); border-radius: var(--control-radius); margin-right: var(--sp-1);
 }
-.addon-own { margin: 8px 0 24px; }
-.addon-own summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; font-weight: 600; }
-.addon-own h3 { font-size: 15px; margin: 12px 0 6px; }
+/* "Add your own": a fold in a card, one rule under its summary when open. */
+.addon-own { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--card-radius); padding: 0 var(--card-pad); }
+.addon-own summary { cursor: pointer; min-height: var(--btn-h); display: flex; align-items: center; font-weight: 600; }
+.addon-own[open] summary { border-bottom: 1px solid var(--border); margin-bottom: var(--sp-3); }
+.addon-own[open] { padding-bottom: var(--card-pad); }
+.addon-own > * + *:not(summary) { margin-top: var(--sp-3); }
 .addon-card.selected { border-color: var(--accent-ink); }
 .addon-actions .btn.is-selected { border-color: var(--accent-ink); color: var(--accent-ink); }
 /* The batch tray: sticky so "Add all" stays in reach while you keep
    searching and selecting further down the list. */
 .addon-tray {
-  position: sticky; bottom: 12px; z-index: 5;
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
-  margin: 0 0 16px; padding: 10px 12px;
-  background: var(--bg-raise); border: 1px solid var(--accent); border-radius: 10px;
+  position: sticky; bottom: var(--sp-3); z-index: 5;
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3);
+  padding: var(--sp-3) var(--card-pad);
+  background: var(--bg-raise); border: 1px solid var(--accent); border-radius: var(--card-radius);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 .addon-tray[hidden] { display: none; }
 .addon-tray-text { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
-.addon-tray-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.addon-tray-actions .btn { min-height: 40px; }
+.addon-tray-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 .addon-tray .addon-note { flex: 1 1 100%; margin: 0; }
-@media (pointer: coarse) {
-  .addon-kinds .chip, .addon-actions .btn, .addon-tray-actions .btn,
-  .addon-row-actions .btn, .addon-restart .btn { min-height: 44px; }
-}
 
-/* Server software: the server and the crossplay plugins under it. */
-.software {
-  margin: 0 0 20px; padding: 12px 14px; border-radius: 10px;
-  background: var(--bg-card); border: 1px solid var(--border);
-}
-.software-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
-.software-head h3 { margin: 0; font-size: 15px; }
-.software-rows { display: flex; flex-direction: column; }
+/* Server software: the server and the crossplay plugins under it, one card. */
+.software-rows { display: flex; flex-direction: column; margin: 0 calc(-1 * var(--card-pad)); }
 .software-row {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px;
-  align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border);
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-1) var(--sp-3);
+  align-items: center; padding: var(--sp-3) var(--card-pad); border-bottom: 1px solid var(--border);
 }
+.software-row:first-child { padding-top: 0; }
 .software-row:last-child { border-bottom: 0; }
 .software-row .addon-row-actions { grid-column: 1 / -1; }
-.software-when { font-size: 12px; white-space: nowrap; }
-.software-foot { font-size: 12px; margin: 8px 0; }
-.software-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.software-actions .btn, .software-head .btn { min-height: 40px; }
-@media (max-width: 520px) {
-  .software-row { grid-template-columns: minmax(0, 1fr); }
-  .software-row .addon-status, .software-when { justify-self: start; }
-}
-@media (pointer: coarse) {
-  .software-actions .btn, .software-head .btn, .software-row .btn { min-height: 44px; }
-}
+.software-when { font-size: var(--fs-meta); line-height: var(--lh-meta); white-space: nowrap; }
+.software-foot { font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.software-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 
 /* Companion in the game: the action log and questions */
-.companion-list { list-style: none; padding: 0; margin: 0 0 12px; }
-.companion-list li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border, rgba(127,127,127,.2)); flex-wrap: wrap; }
+.companion-list { list-style: none; padding: 0; margin: 0; }
+.companion-list li { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-2); padding: var(--sp-2) 0; border-bottom: 1px solid var(--border, rgba(127,127,127,.2)); flex-wrap: wrap; }
+.companion-list li:last-child { border-bottom: none; }
 .companion-list li span { overflow-wrap: anywhere; }
 
 /* The Companion card: a setup flow (status, family, bedtime, places, ask) */
-.companion-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.companion-head h2 { margin: 0; }
-.companion-switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; min-height: 40px; font-weight: 600; }
+.companion-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; }
+.companion-switch { display: inline-flex; align-items: center; gap: var(--sp-3); cursor: pointer; min-height: var(--btn-h); font-weight: 600; }
 .companion-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .companion-switch-track {
-  position: relative; width: 46px; height: 26px; border-radius: 13px; flex: none;
+  position: relative; width: 46px; height: 26px; border-radius: 999px; flex: none;
   background: var(--bg-raise); border: 1px solid var(--border); transition: background .15s;
 }
 .companion-switch-track::after {
@@ -1063,116 +1097,111 @@ footer {
 .companion-switch input:checked + .companion-switch-track::after { transform: translateX(20px); background: #fff; }
 .companion-switch input:focus-visible + .companion-switch-track { outline: 2px solid var(--primary); outline-offset: 2px; }
 .companion-status {
-  margin: 12px 0 6px; padding: 10px 12px; border-radius: 8px; font-size: 16px;
+  padding: var(--sp-3) var(--card-pad); border-radius: var(--control-radius); font-size: var(--fs-card); line-height: var(--lh-card);
   background: var(--bg-raise); border-left: 4px solid var(--muted); overflow-wrap: anywhere;
 }
 .companion-status[data-code="ready"], .companion-status[data-code="acting"],
 .companion-status[data-code="asking"], .companion-status[data-code="waiting"] { border-left-color: var(--accent-ink); }
 .companion-status[data-code="off"] { border-left-color: var(--warn); }
 .companion-status.bad { border-left-color: var(--danger); color: var(--fg); }
-.companion-intro { margin: 0 0 4px; }
-.companion-step { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 4px; }
-.companion-step h3 { display: flex; align-items: center; gap: 8px; font-size: 15px; color: var(--fg); }
+.companion-step { border-top: 1px solid var(--border); padding-top: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-3); }
+.companion-step h3 { display: flex; align-items: center; gap: var(--sp-2); color: var(--fg); }
 .companion-num {
   display: inline-flex; align-items: center; justify-content: center; flex: none;
   width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #0f1419;
-  font-size: 13px; font-weight: 700;
+  font-size: var(--fs-meta); font-weight: 700;
 }
-.companion-step p.muted { margin: 4px 0 8px; overflow-wrap: anywhere; }
-.companion-form, .companion-person { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: flex-start; }
+.companion-step p.muted { overflow-wrap: anywhere; max-width: 72ch; }
+.companion-form, .companion-person { display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: flex-start; }
 .companion-person {
-  padding: 10px; margin-bottom: 8px; border: 1px solid var(--border); border-radius: 8px;
+  padding: var(--card-pad); border: 1px solid var(--border); border-radius: var(--control-radius);
   background: var(--bg-raise);
 }
-.companion-field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 200px; min-width: 0; }
+.companion-field { display: flex; flex-direction: column; gap: var(--sp-1); flex: 1 1 200px; min-width: 0; }
 .companion-field-wide { flex: 2 1 320px; }
 .companion-field-num { flex: 1 1 110px; }
-.companion-field label, .companion-choice > label { font-weight: 600; color: var(--fg); font-size: 14px; }
-.companion-field p.muted { margin: 0; font-size: 13px; }
+.companion-field label, .companion-choice > label { font-weight: 600; color: var(--fg); }
+.companion-field p.muted { margin: 0; }
 .companion input[type="text"], .companion input[type="number"], .companion select {
-  width: 100%; min-width: 0; min-height: 40px; padding: 8px 10px; border-radius: 6px;
-  background: var(--bg); color: var(--fg); border: 1px solid var(--border); font: inherit;
+  width: 100%; min-width: 0; min-height: var(--btn-h); padding: 0 var(--sp-3); border-radius: var(--control-radius);
+  background: var(--bg); color: var(--fg); border: 1px solid var(--border); font: inherit; font-size: var(--fs-control);
 }
 .companion-person input[type="text"], .companion-person select { background: var(--bg-card); }
 .companion input:focus, .companion select:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
 .companion-choice {
-  flex: 1 1 240px; min-width: 0; margin: 0; padding: 8px 10px 10px; border: 1px solid var(--border);
-  border-radius: 8px; display: flex; flex-direction: column; gap: 4px;
+  flex: 1 1 240px; min-width: 0; margin: 0; padding: var(--sp-2) var(--sp-3) var(--sp-3); border: 1px solid var(--border);
+  border-radius: var(--control-radius); display: flex; flex-direction: column; gap: var(--sp-1);
 }
-.companion-choice legend { padding: 0 4px; font-weight: 600; }
-.companion-buttons { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; width: 100%; }
+.companion-choice legend { padding: 0 var(--sp-1); font-weight: 600; }
+.companion-buttons { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: flex-end; width: 100%; }
 .companion-person .companion-buttons { width: auto; align-self: flex-end; }
-.companion-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 8px; }
-.companion-chips > .muted { width: 100%; font-size: 13px; }
+.companion-chips { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; }
+.companion-chips:empty { display: none; }
+.companion-chips > .muted { width: 100%; }
 .companion .chip {
-  min-height: 40px; padding: 0 14px; border-radius: 20px; max-width: 100%;
+  min-height: var(--btn-h); padding: 0 var(--sp-4); border-radius: 999px; max-width: 100%;
   border: 1px solid var(--border); background: var(--bg-raise); color: var(--fg);
-  font: inherit; cursor: pointer; overflow-wrap: anywhere;
+  font: inherit; font-size: var(--fs-control); cursor: pointer; overflow-wrap: anywhere;
 }
 .companion .chip:hover { border-color: var(--accent-ink); }
-.companion-msg { margin: 6px 0 0; min-height: 0; width: 100%; overflow-wrap: anywhere; }
+.companion-msg { min-height: 0; width: 100%; overflow-wrap: anywhere; }
 .companion-msg:empty { display: none; }
 .companion-msg.good { color: var(--accent-ink); }
 .companion-msg.bad { color: var(--danger-ink); }
 .companion-why { color: var(--muted); }
-.companion-empty { margin: 0 0 8px; }
+.companion-empty { margin: 0; }
 .companion button:disabled { opacity: .55; cursor: not-allowed; }
-@media (max-width: 720px) {
-  .companion input[type="text"], .companion input[type="number"], .companion select { font-size: 16px; }
-  .companion-buttons .btn { flex: 1 1 auto; }
-}
-@media (pointer: coarse) {
-  .companion input[type="text"], .companion input[type="number"], .companion select { font-size: 16px; min-height: 44px; }
-  .companion .chip, .companion .btn { min-height: 44px; }
-}
 
 /* Header: Stop sits apart from Restart; Update only exists when there is one. */
 .actions .btn[hidden] { display: none; }
-.actions .btn-danger { margin-left: 14px; }
+.actions .btn-danger { margin-left: var(--sp-4); }
+@media (max-width: 639.98px) {
+  .actions .btn-danger { margin-left: 0; }
+}
 
 /* Backups: older snapshots fold under their day; Restore is a quiet button. */
-.snap-day { margin: 6px 0; }
-.snap-day summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: 6px; }
-.snap-restore { min-height: 44px; }
+.snap-day { display: flex; flex-direction: column; gap: var(--sp-2); }
+.snap-day + .snap-day, .snap-list + .snap-day { margin-top: var(--sp-2); }
+.snap-day summary { cursor: pointer; min-height: var(--btn-h); display: flex; align-items: center; gap: var(--sp-2); }
 
 /* Players */
-.player-list { list-style: none; margin: 8px 0 16px; padding: 0; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; }
-.player-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.player-list { list-style: none; margin: 0; padding: 0; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--card-radius); overflow: hidden; }
+.player-list[hidden] { display: none; }
+.player-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-2) var(--card-pad); border-bottom: 1px solid var(--border); }
 .player-row:last-child { border-bottom: none; }
-.player-who { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; min-width: 0; overflow-wrap: anywhere; }
-.ptag { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+.player-who { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-2); align-items: center; min-width: 0; overflow-wrap: anywhere; }
+.ptag { font-size: var(--fs-meta); line-height: var(--lh-meta); padding: 0 var(--sp-2); border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
 .ptag-on { color: var(--accent-ink); border-color: currentColor; }
 .ptag-bad { color: var(--danger-ink); border-color: currentColor; }
+/* Every row's menu is the same width, so the column of them lines up. */
 .player-pick, #player-action {
-  min-height: 44px; font: inherit; font-size: 16px; flex: none; max-width: 100%;
-  background: var(--bg-raise); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+  min-height: var(--btn-h); font: inherit; font-size: var(--fs-control); flex: none; max-width: 100%;
+  background: var(--bg-raise); color: var(--fg); border: 1px solid var(--border); border-radius: var(--control-radius); padding: 0 var(--sp-3);
 }
-@media (max-width: 520px) {
-  .player-row { flex-direction: column; align-items: stretch; }
-  .player-pick { width: 100%; }
-}
+.player-pick { width: 200px; }
 
-/* File pickers read as one button, at least 44px tall, 16px text (no iOS zoom). */
+/* File pickers read as one button, at the control height. */
 input[type="file"] {
-  font: inherit; font-size: 16px; color: var(--muted);
-  min-height: 44px; flex: 1; min-width: 0; max-width: 100%;
+  font: inherit; font-size: var(--fs-control); color: var(--muted);
+  min-height: var(--btn-h); flex: 1; min-width: 0; max-width: 100%;
   display: flex; align-items: center;
 }
 input[type="file"]::file-selector-button {
-  font: inherit; font-size: 16px; min-height: 44px; padding: 8px 16px; margin-right: 12px;
-  background: var(--bg-raise); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+  font: inherit; font-size: var(--fs-control); min-height: var(--btn-h); padding: 0 var(--sp-4); margin-right: var(--sp-3);
+  background: var(--bg-raise); color: var(--fg); border: 1px solid var(--border); border-radius: var(--control-radius); cursor: pointer;
 }
 
 /* Backups: snapshots minutes apart fold into one line; the rows inside sit flat. */
 .snap-clump { border-bottom: 1px solid var(--border); list-style: none; }
 .snap-clump:last-child { border-bottom: none; }
-.snap-clump summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 12px; flex-wrap: wrap; }
+.snap-clump summary { cursor: pointer; min-height: var(--btn-h); display: flex; align-items: center; gap: var(--sp-2); padding: 0 var(--card-pad); flex-wrap: wrap; }
 .snap-inner { margin: 0; border: none; border-top: 1px solid var(--border); border-radius: 0; background: var(--bg-raise); }
-.snap-note { margin: 0 0 8px; }
+.snap-note { margin: 0; }
 
-/* Worlds: every row's buttons keep their own width and their whole label,
-   44px tall, in one order (Switch, Rename, Download); Delete stands apart
-   at the far end, on its own line when the row is narrow (#1183). */
-#worlds-table td.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-#worlds-table td.actions .btn { flex: 0 0 auto; min-width: 0; min-height: 44px; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; }
-#worlds-table td.actions .btn-danger { margin-left: auto; }
+/* Worlds: every row's buttons keep their own width and their whole label, in
+   one order (Switch, Rename, Download, Delete) and in one group (#1183). */
+#worlds-table .row-actions .btn { flex: 0 0 auto; min-width: 0; white-space: nowrap; }
+@media (max-width: 639.98px) {
+  /* Four buttons in a row of a phone: a tighter inset so they stay together. */
+  #worlds-table .row-actions .btn { padding: 0 var(--sp-3); }
+}

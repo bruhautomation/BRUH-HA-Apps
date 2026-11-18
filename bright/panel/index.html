@@ -11,6 +11,7 @@
 </head>
 <body>
 <header class="topbar">
+ <div class="bar-in">
   <div class="brand">
     <img src="favicon.svg" alt="" class="brand-tile">
     <span class="brand-name">BRight</span>
@@ -26,6 +27,7 @@
     <button class="tab" data-tab="calibrate">Calibrate</button>
     <button class="tab" data-tab="party">Party</button>
   </nav>
+ </div>
 </header>
 
 <main class="wrap">
@@ -37,7 +39,7 @@
     <div class="card">
       <div class="card-head">
         <h3>LIFX bulbs — direct LAN</h3>
-        <button id="btnDiscover" class="btn">Discover bulbs</button>
+        <button id="btnDiscover" class="btn primary">Discover bulbs</button>
       </div>
       <div class="form-row">
         <button id="btnProbeAll" class="btn">Probe all unprobed</button>
@@ -70,7 +72,7 @@
         The probe toggles the device a few times and puts it back.</p>
       <div class="demo-controls">
         <select id="haEntity"><option value="">— pick an entity —</option></select>
-        <button id="btnHaProbe" class="btn">Measure latency</button>
+        <button id="btnHaProbe" class="btn primary">Measure latency</button>
       </div>
       <div id="haProbeResult"></div>
     </div>
@@ -91,7 +93,7 @@
       <div class="demo-controls">
         <select id="syncTrack"><option value="">— analyzed track —</option></select>
         <select id="syncPlayer"><option value="">Choose a speaker</option></select>
-        <button id="btnSyncStart" class="btn">Start</button>
+        <button id="btnSyncStart" class="btn primary">Start</button>
         <button id="btnSyncStop" class="btn" hidden>Stop &amp; restore</button>
       </div>
       <div class="demo-controls">
@@ -143,7 +145,7 @@
           <select id="bulbRole" aria-label="Role"></select>
           <input type="text" id="bulbZone" placeholder="zone, e.g. Kitchen (optional)"
                  aria-label="Zone" maxlength="32">
-          <button id="btnAddBulb" class="btn small">Add this bulb</button>
+          <button id="btnAddBulb" class="btn primary small">Add this bulb</button>
           <button id="btnRefreshBulbs" class="btn small">Refresh list</button>
         </div>
         <div class="demo-controls">
@@ -156,7 +158,7 @@
             <option value="party">party</option>
             <option value="laser">laser</option>
           </select>
-          <button id="btnAuxSave" class="btn small">Add</button>
+          <button id="btnAuxSave" class="btn primary small">Add</button>
         </div>
       </div>
     </div>
@@ -182,7 +184,7 @@
                 aria-label="Describe the effect"
                 placeholder="bounce a warm pulse between the two window lamps"></textarea>
       <div class="demo-controls">
-        <button id="btnFxAsk" class="btn">Write it</button>
+        <button id="btnFxAsk" class="btn primary">Write it</button>
         <button id="btnFxInvent" class="btn small"
                 title="Claude proposes effects built for your light map">Or
           suggest some</button>
@@ -197,7 +199,7 @@
         <select id="fxType"></select>
       </div>
       <p id="fxBlurb" class="muted small"></p>
-      <div class="demo-controls">
+      <div class="demo-controls form-grid">
         <label>Name <input type="text" id="fxName" maxlength="48"
                            placeholder="peak chase"></label>
         <label>BPM <input type="number" id="fxBpm" value="120" min="30"
@@ -242,7 +244,7 @@
       <div class="card-head">
         <h3>Preview</h3>
         <span>
-          <button id="btnFxPreview" class="btn">Preview</button>
+          <button id="btnFxPreview" class="btn primary">Preview</button>
           <button id="btnFxPlay" class="btn small">▶ Play</button>
           <button id="btnFxLive" class="btn">Run it on the lights</button>
         </span>
@@ -261,7 +263,7 @@
         <span>
           <input type="text" id="fxPresetName" maxlength="48"
                  placeholder="name it">
-          <button id="btnFxSave" class="btn small">Save this effect</button>
+          <button id="btnFxSave" class="btn primary small">Save this effect</button>
         </span>
       </div>
       <p class="muted small">A saved effect keeps its lights as well as its
@@ -273,7 +275,7 @@
     <div class="card">
       <div class="card-head">
         <h3>Put it in a show</h3>
-        <button id="btnFxAddToShow" class="btn">Add to the chosen scene</button>
+        <button id="btnFxAddToShow" class="btn primary">Add to the chosen scene</button>
       </div>
       <p class="muted small">Adds this effect to one scene of one track's
         show, then recompiles. The show stays completely editable
@@ -294,7 +296,7 @@
       <div class="card-head">
         <h3>Music folders</h3>
         <span>
-          <button id="btnScanLibrary" class="btn">Scan folders</button>
+          <button id="btnScanLibrary" class="btn primary">Scan folders</button>
           <button id="btnAnalyzeAll" class="btn">Analyze new tracks</button>
         </span>
       </div>
@@ -306,7 +308,7 @@
     <div class="card">
       <div class="card-head">
         <h3>Folders to scan</h3>
-        <button id="btnBrowseMedia" class="btn">Browse media</button>
+        <button id="btnBrowseMedia" class="btn primary">Browse media</button>
       </div>
       <p class="muted small">Everything Home Assistant keeps in its media
         folder. Open a folder to go into it, and tick the ones to scan —
@@ -360,7 +362,7 @@
         <h3>The show</h3>
         <span>
           <button id="btnScriptReload" class="btn small">Reload from file</button>
-          <button id="btnScriptSave" class="btn">Save &amp; compile</button>
+          <button id="btnScriptSave" class="btn primary">Save &amp; compile</button>
         </span>
       </div>
       <div id="scriptWhich" class="muted small">Pick a track above to open its show.</div>
@@ -494,7 +496,7 @@
         </div>
         <div id="edFxForm"></div>
         <div class="demo-controls">
-          <button id="btnEdFxApply" class="btn">Apply</button>
+          <button id="btnEdFxApply" class="btn primary">Apply</button>
           <button id="btnEdFxCancel" class="btn small">Cancel</button>
         </div>
       </div>
@@ -527,7 +529,7 @@
           <option value="">— no music —</option>
         </select>
         <select id="mnPlayer"><option value="">— speaker —</option></select>
-        <button id="btnMnStart" class="btn">▶ Start</button>
+        <button id="btnMnStart" class="btn primary">▶ Start</button>
       </details>
       <button id="btnMnStop" class="btn mn-stop" hidden
               title="Stop &amp; restore the room">■</button>
@@ -579,7 +581,7 @@
       </div>
       <div class="demo-controls">
         <select id="calPlayer"><option value="">— pick a media player —</option></select>
-        <button id="btnTestPlayback" class="btn">Test playback</button>
+        <button id="btnTestPlayback" class="btn primary">Test playback</button>
         <button id="btnCalStop" class="btn">■ Stop the sound</button>
       </div>
       <p class="muted small">Start here if nothing has ever played. Test
@@ -597,7 +599,7 @@
         speaker while this page listens. The clicks are unevenly spaced on
         purpose — the pattern only lines up one way, so the answer can't be
         off by a beat.</p>
-      <button id="btnMicWizard" class="btn">Play clicks &amp; listen</button>
+      <button id="btnMicWizard" class="btn primary">Play clicks &amp; listen</button>
       <div id="micStatus" class="cal-status"></div>
     </div>
 
@@ -606,7 +608,7 @@
       <p class="muted small">Plays the same clicks; you tap the big button on
         each one. Your reaction time rides along (~100ms), so prefer the
         microphone when you can.</p>
-      <button id="btnTapWizard" class="btn">Play clicks &amp; tap</button>
+      <button id="btnTapWizard" class="btn primary">Play clicks &amp; tap</button>
       <button id="btnTap" class="btn tap-btn" hidden>TAP</button>
       <div id="tapStatus" class="cal-status"></div>
     </div>
@@ -624,7 +626,7 @@
           <input type="number" id="manualOffset" value="0" min="-2000"
                  max="10000" step="50">
         </label>
-        <button id="btnManualOffset" class="btn">Save for this speaker</button>
+        <button id="btnManualOffset" class="btn primary">Save for this speaker</button>
       </div>
       <div id="manualStatus" class="cal-status"></div>
     </div>
@@ -659,7 +661,7 @@
           Shuffle</label>
       </div>
       <div class="demo-controls">
-        <button id="btnPartyStart" class="btn">🎉 Play</button>
+        <button id="btnPartyStart" class="btn primary">🎉 Play</button>
         <button id="btnPartyStop" class="btn" hidden>■ Stop &amp; restore
           lights</button>
       </div>
@@ -727,7 +729,7 @@
       <div class="party-save">
         <input type="text" id="partySetName" maxlength="48"
                placeholder="name this set (optional)">
-        <button id="btnPartySave" class="btn">Save as a set</button>
+        <button id="btnPartySave" class="btn primary">Save as a set</button>
       </div>
       <div id="pfStatus" class="cal-status"></div>
     </div>

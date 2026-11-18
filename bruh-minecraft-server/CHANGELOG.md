@@ -5,6 +5,15 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.20.0
+
+### Changed
+
+- The panel follows the shared look every BRUH panel now uses: the page is one centred column, and the header, the tabs and the content start and end on the same edges at every width.
+- Every section on Players, Add-ons, Backups and Worlds is a heading with its content in a card, 24 pixels apart, and the dashboard cards use the same heading size instead of small grey capitals.
+- Buttons, text boxes and menus share one height and corner, text is one of four sizes, and the dashboard's big player count is the page's title size.
+- On a phone the Worlds buttons (Switch, Rename, Download, Delete) stay together as one group, and each player's menu is the same width so the column lines up.
+
 ## 1.19.15
 
 ### Fixed
