@@ -284,16 +284,16 @@ a.btn {
   margin: 0 auto;
   padding: var(--wrap-top) var(--gutter) var(--sp-12);
 }
-/* A screen is its own wrapper: the title and the body sit inside the same
-   centred width (docs/notes/ui-standard.md). The card grid takes
-   --page-wide; every other screen takes --page, with its prose held to a
-   readable line. Ask keeps its own centred message column. */
+/* One shell width for every screen: the bar, the sub-nav and each view start
+   on the same left edge at every width, and the shell is --page-wide
+   (docs/notes/ui-standard.md). Lists and grids take the whole shell; Settings
+   and the Guide are a nav and a body from the shell's left edge at their own
+   natural widths; Ask keeps its own layout. */
 #viewInsights, #viewFindings, #viewArchive, #viewActivity, #viewHousebook,
 #viewMemory, #viewDocs, #viewSettings, #viewIdeas, #viewProposals,
 .segnav {
-  width: 100%; max-width: var(--page); margin-inline: auto;
+  width: 100%; max-width: none;
 }
-#viewInsights, .wrap:has(#viewInsights.active) > .segnav { max-width: var(--page-wide); }
 /* A line of prose is never longer than a person can read. */
 .prose { max-width: 72ch; }
 
@@ -807,7 +807,7 @@ a.btn {
 .setup input:focus { border-color: var(--accent); }
 .setup .row { display: flex; gap: var(--sp-2); align-items: center; margin-top: var(--sp-3); flex-wrap: wrap; }
 .setup .hint { font-size: var(--fs-meta); color: var(--ink-3); margin-top: var(--sp-2); }
-.setup .hint code { background: var(--surface-2); padding: 1px var(--sp-2); border-radius: var(--control-radius); }
+.setup .hint code { background: var(--surface-2); padding: 1px var(--sp-2); border-radius: var(--sp-1); }
 .setup .urlbox {
   margin-top: var(--sp-3);
   padding: var(--sp-3) var(--sp-4);
@@ -841,7 +841,7 @@ a.btn {
 .setup .notice code {
   background: var(--surface-2);
   padding: 1px var(--sp-2);
-  border-radius: var(--control-radius);
+  border-radius: var(--sp-1);
 }
 .steps { margin: 0 0 var(--sp-1); padding-left: var(--sp-4); color: var(--ink-2); font-size: var(--fs-body); }
 .steps li { margin: var(--sp-1) 0; }
@@ -938,7 +938,7 @@ body.modal-open {
   resize: vertical;
 }
 .edit-body textarea:focus, .edit-body input[type="number"]:focus { border-color: var(--accent); }
-.edit-body input[type="number"] { max-width: 130px; }
+.edit-body input[type="number"] { max-width: 130px; min-height: var(--btn-h); padding-top: 0; padding-bottom: 0; }
 .edit-body .hint { font-size: var(--fs-meta); color: var(--ink-3); margin: var(--sp-2) 0 0; }
 .edit-body .row { display: flex; gap: var(--sp-2); align-items: center; margin-top: var(--sp-4); flex-wrap: wrap; }
 .edit-body input[type="text"],
@@ -1220,7 +1220,7 @@ body.modal-open {
 .kmd code {
   font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   background: var(--surface-2);
-  border-radius: var(--control-radius);
+  border-radius: var(--sp-1);
   padding: 1px var(--sp-1);
 }
 .kmd a { color: var(--accent-ink); }
@@ -2242,7 +2242,7 @@ body.modal-open {
 .docsbody code {
   background: var(--surface-2);
   padding: 0.12em 0.4em;
-  border-radius: var(--control-radius);
+  border-radius: var(--sp-1);
   font-size: var(--fs-meta);
 }
 
@@ -2285,7 +2285,7 @@ body.modal-open {
 .docsbody mark {
   background: color-mix(in srgb, var(--accent) 40%, transparent);
   color: var(--ink);
-  border-radius: var(--control-radius);
+  border-radius: var(--sp-1);
   padding: 0 2px;
 }
 
@@ -3153,7 +3153,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 .msg.bot li { margin: var(--sp-1) 0; }
 .msg.bot code {
   padding: 1px var(--sp-1);
-  border-radius: var(--control-radius);
+  border-radius: var(--sp-1);
   background: var(--surface-2);
   font-size: var(--fs-meta);
 }
@@ -4319,7 +4319,7 @@ body.term-classic #termMode .ico-out { display: block; }
   line-height: var(--lh-body);
   background: var(--surface-2);
   padding: 0 var(--sp-2);
-  border-radius: var(--control-radius);
+  border-radius: var(--sp-1);
   color: var(--ink-2);
 }
 
@@ -5209,7 +5209,7 @@ body.term-classic #termMode .ico-out { display: block; }
   max-width: 560px;
 }
 .kheatday { color: var(--ink-3); font-size: var(--fs-meta); }
-.kcell { display: block; height: 12px; border-radius: var(--control-radius); background: var(--accent); }
+.kcell { display: block; height: 12px; border-radius: var(--sp-1); background: var(--accent); }
 .kcell.unwatched {
   background: none;
   border: 1px dashed var(--hairline);
@@ -5852,7 +5852,7 @@ body.term-classic #termMode .ico-out { display: block; }
   line-height: 1.5;
   color: var(--ink-2);
   background: var(--surface-2);
-  border-radius: var(--control-radius);
+  border-radius: var(--sp-1);
   padding: 1px var(--sp-2);
 }
 .upchip.kind { font-weight: 600; }
@@ -5861,7 +5861,7 @@ body.term-classic #termMode .ico-out { display: block; }
   font-size: var(--fs-body);
   color: var(--ink);
   padding: var(--sp-1) var(--sp-2);
-  border-radius: var(--control-radius);
+  border-radius: var(--sp-1);
   background: color-mix(in srgb, var(--warning) 14%, var(--surface));
 }
 .uprefused summary, .upedit summary {
@@ -6202,7 +6202,7 @@ input[type="checkbox"] {
   height: 18px;
   margin: 0;
   border: 2px solid var(--ink-3);
-  border-radius: var(--control-radius);
+  border-radius: var(--sp-1);
   background: var(--surface);
   cursor: pointer;
   flex: none;
@@ -7681,7 +7681,7 @@ html.in-shell .hl .d { color: var(--ink-3); }
    The select stays in the page, hidden, as the one place the value lives.
    Each row is at the touch floor and no taller than its text needs. */
 select.choicesrc { display: none; }
-.choicelist { display: flex; flex-direction: column; max-width: 520px; margin: 2px 0 var(--sp-2);
+.choicelist { display: flex; flex-direction: column; width: 100%; margin: 2px 0 var(--sp-2);
   border: 1px solid var(--hairline); border-radius: var(--card-radius); background: var(--surface); }
 #setModal .setsecbody .choicelist label.choice, .choicelist .choice { display: flex; align-items: center;
   gap: var(--sp-3); min-height: 44px; padding: var(--sp-2) var(--sp-3); margin: 0; box-sizing: border-box;
@@ -7727,3 +7727,12 @@ select.choicesrc { display: none; }
 .kknow > .kfolds + .kfolds { margin-top: calc(-1 * var(--section-gap)); }
 /* Personality: the header block ends at its Save; what follows is a new block. */
 #setModal .row.persacts:has(#hdrSave) { margin-bottom: var(--section-gap); }
+
+/* A card's sentences are held to a readable line when the column is wide. */
+.qcard :is(p, .qtext, .findwhy, .findtext) { max-width: 72ch; }
+/* A group's cards sit two abreast once there is room (the same pair-wise
+   reading order the old feed promised); each is as tall as what it holds. */
+@media (min-width: 1200px) {
+  .qgroupbody { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+  .qgroupbody > :not(.qcard) { grid-column: 1 / -1; }
+}

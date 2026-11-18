@@ -5,6 +5,7 @@
  *   node tests/manual/shoot-all.mjs --app minecraft # one (repeat --app for more)
  *   SHOT_DIR=/tmp/before node tests/manual/shoot-all.mjs
  *   SHOT_DIR=/tmp/after  node tests/manual/shoot-all.mjs   # then compare the folders
+ *   SHOT_SCHEME=dark, SHOT_QUERY='?shell=1' (brain only): dark scheme, or the in-shell page
  *
  * Output: SHOT_DIR/<app>/<view>-<width>.png (default SHOT_DIR /tmp/ui-shots),
  * full page, light scheme, at 390 (an emulated touch phone), 768, 1280 and 1920.
@@ -76,12 +77,14 @@ const browser = await chromium.launch(
 async function open(app, w, prepare) {
   const phone = w < 500;
   const ctx = await browser.newContext({
-    viewport: { width: w, height: phone ? 844 : 900 }, deviceScaleFactor: 1, colorScheme: 'light',
+    viewport: { width: w, height: phone ? 844 : 900 }, deviceScaleFactor: 1, colorScheme: process.env.SHOT_SCHEME || 'light',
     isMobile: phone, hasTouch: phone,
   });
   const page = await ctx.newPage();
   // Without real three.js (BAMBU_VENDOR) Bambu's 3D view throws; that is expected.
   page.on('pageerror', (e) => app === 'bambu' && !process.env.BAMBU_VENDOR ? null : failures.push(`${app} ${w}: page error ${String(e.message).split('\n')[0]}`));
+  // SHOT_INSHELL=1: the brAIn page as it is drawn inside Morph's shell (the class the page sets when framed).
+  if (process.env.SHOT_INSHELL) await page.addInitScript(() => document.addEventListener('DOMContentLoaded', () => document.documentElement.classList.add('in-shell')));
   if (prepare) await prepare(page);
   return { ctx, page };
 }
@@ -141,7 +144,7 @@ const APPS = {
     const SECS = ['usage', 'permissions', 'diagnostics', 'personality', 'features', 'notifications'];
     for (const w of WIDTHS) {
       const { ctx, page } = await open('brain', w);
-      await page.goto(url, { waitUntil: 'networkidle' });
+      await page.goto(url + (process.env.SHOT_QUERY || ''), { waitUntil: 'networkidle' });
       await page.waitForTimeout(900);
       for (const v of VIEWS) {
         await step('brain', v, w, async () => {
