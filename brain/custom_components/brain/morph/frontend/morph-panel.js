@@ -909,7 +909,7 @@ class MorphPanel extends HTMLElement {
       const asks = this.s.asks;
       const busy = asks.some((a) => a.busy);
       const sugs = !asks.length ? (edit ? TELL_SUGS.dashboard : ['Why is it warm upstairs?', 'What’s left on?', 'Is everything locked?']) : [];
-      ask = `<div data-ask="1" aria-busy="${busy}" style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+      ask = `<div data-ask="1" aria-busy="${busy}" style="display:flex;flex-direction:column;gap:var(--sp-3)">
 <label class="askrow">${SPARK}<input class="askin" type="text" data-keep="ask" data-act-enter="ask" placeholder="${edit ? `Tell ${esc(this.who())} how to change this dashboard…` : 'Ask or tell the house…'}" aria-label="${edit ? `Tell ${esc(this.who())} how to change this dashboard` : 'Ask or tell the house'}">${busy ? '<span class="pulse askbusy" aria-hidden="true"></span>' : ''}</label>
 ${this.tellBox('dashboard')}
 ${sugs.length && !(this.s.tell && this.s.tell.kind === 'dashboard') ? `<div class="sugs">${sugs.map((s) => `<button type="button" class="wd" data-act="ask-sug" data-v="${esc(s)}" style="font-size:14px;min-height:34px">${esc(s)}</button>`).join('')}</div>` : ''}
@@ -922,7 +922,7 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
     const note = this.data.state && this.data.state.note ? `<div class="banner">${esc(this.data.state.note)}</div>` : '';
     const inner = `${hello}${note}${story}${clk ? `<div class="topline">${ask || '<div></div>'}${clk}</div>` : ask}`;
     if (!inner) return '';
-    return `<section aria-label="Now" class="topsec" style="display:flex;flex-direction:column;gap:14px;max-width:980px">${inner}</section>`;
+    return `<section aria-label="Now" class="topsec" style="display:flex;flex-direction:column;gap:var(--sp-4);max-width:var(--page)">${inner}</section>`;
   }
 
   // One asked question and its answer (or what brAIn is doing about it).
