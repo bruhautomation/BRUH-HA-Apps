@@ -20,11 +20,13 @@ import { chromium } from 'playwright';
 
 const URL = process.env.PANEL_URL || 'http://127.0.0.1:8095/';
 const WIDTHS = [390, 820, 1280];
-const TOUCH_FLOOR = 44;
+// The UI standard: a control is --btn-h tall (40px; 44px on a touch screen, which
+// these desktop-pointer runs do not emulate) and the small size is 32px.
+const TOUCH_FLOOR = 40;
 // The panel's documented exception: secondary chip-style buttons sit at
 // 40px across every tab. This measure is not the place to relitigate that,
 // so it holds them to the floor they actually have.
-const CHIP_FLOOR = 40;
+const CHIP_FLOOR = 32;
 
 const browser = await chromium.launch(
 	process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH, args: ['--no-sandbox'] } : { args: ['--no-sandbox'] }

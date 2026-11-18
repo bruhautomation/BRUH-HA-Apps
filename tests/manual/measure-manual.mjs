@@ -32,8 +32,10 @@ const URL = process.env.PANEL_URL || 'http://127.0.0.1:8095/';
 // the one-screen claim is made about, so it is measured at exactly that.
 const WIDTHS = [390, 820, 1280];
 const HEIGHT = 760;
-const TOUCH_FLOOR = 44;
-const CHIP_FLOOR = 40;
+// The UI standard: a control is --btn-h tall (40px; 44px on a touch screen, which
+// these desktop-pointer runs do not emulate) and the small size is 32px.
+const TOUCH_FLOOR = 40;
+const CHIP_FLOOR = 32;
 const PAD_FLOOR = 70;
 
 // Everything the hand reaches for. The transport is on the list because a

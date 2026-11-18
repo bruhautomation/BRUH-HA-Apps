@@ -15,7 +15,9 @@ import { chromium } from 'playwright';
 
 const URL = process.env.PANEL_URL || 'http://127.0.0.1:8095/';
 const WIDTHS = [390, 820, 1280];
-const TOUCH_FLOOR = 44;
+// The UI standard: a control is --btn-h tall (40px; 44px on a touch screen, which
+// these desktop-pointer runs do not emulate) and the small size is 32px.
+const TOUCH_FLOOR = 40;
 
 const browser = await chromium.launch(
 	process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH, args: ['--no-sandbox'] } : { args: ['--no-sandbox'] }
@@ -150,7 +152,7 @@ for (const width of WIDTHS) {
 	for (const id of ['btnNudgeLater', 'btnNudgeEarlier', 'btnNudgeKeep']) {
 		const box = await page.$eval('#' + id,
 			(el) => el.getBoundingClientRect());
-		if (box.height < 40) fail(`${id} is ${Math.round(box.height)}px tall`);
+		if (box.height < 32) fail(`${id} is ${Math.round(box.height)}px tall`);
 	}
 	await page.unroute('**/api/show/state');
 

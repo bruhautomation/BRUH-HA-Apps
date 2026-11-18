@@ -5,6 +5,16 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.24.0
+
+### Changed
+
+- The panel follows the shared look every BRUH panel now uses: one centred page column, with the header and the content starting and ending on the same edges, and body text at 14 pixels instead of 15.
+- Buttons now have a hierarchy. Every button used to wear the blue outline and tint; now a button is plain, and the one main action of each card or form (Discover bulbs, Write it, Save & compile, Start, Play and so on) is filled blue.
+- The Effects "What it does" form is one grid with every label above its box, instead of some labels beside their boxes and some above, and tick boxes line up with the boxes beside them.
+- Sub-sections inside a card (the folds and the "Add lights" part of the Light Map) look the same: a thin line above and a heading in one size. Cards no longer end in a blank strip, and the line of text at the top of a card no longer leaves the right half of the card empty above wide fields.
+- On a phone the tabs are one row you scroll sideways, instead of two wrapped rows, so the header takes far less of the screen. On the Manual tab the effect rack fades at the right edge to show it scrolls, and the controls on every tab share one height (40 pixels, 44 on a touch screen).
+
 ## 0.23.12
 
 ### Fixed
