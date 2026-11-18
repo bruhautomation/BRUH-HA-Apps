@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.0
+
+### Changed
+
+- Printers, Files and Settings now sit on the same page width and the same left edge, and the top bar lines up with them at every screen size. Studio and Design stay full width, as they need the room.
+- On a printer's card, the right-hand column is one thing: Failure detection, On the printer and Temperatures and G-code are boxes of the same shape, with their text and arrows in the same place.
+- Settings sections have proper headings, and the folds in Settings use the same arrow as the ones on the printer card.
+- Files is three clear parts: the library's title and Upload, the import box (link, notes and import progress), and the file list with its search above it. On a phone, Print and the three dots sit under a file's title, so a name is no longer squeezed into three lines.
+- Design's list of parts is one card with its rows divided by lines, and its title lines up with the part's name.
+- Spacing, text sizes and rounded corners follow the shared BRUH standard: body text is 14, buttons and fields are one height, and every card has the same padding.
+- The Home Assistant card (bruh-bambu-card) follows the shared card layout: 16 padding, title 16 semibold, 44px buttons with 8px corners, and the theme's primary colour.
+
 ## 0.4.9
 
 ### Fixed
