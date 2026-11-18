@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+### Changed
+
+- The panel's overview lines up on one 16 px edge: the title, the room headings and the appliance cards all start at the same place, and the card contents have the same 16 px padding on every side.
+- On wide screens the overview is centred and capped, so the cards no longer pack to the left and get narrower than on a smaller screen; the appliance view is capped to the same standard width.
+- Text sizes and spacing in the panel follow the shared design standard (12, 14 and 16 px text, no half sizes; spacing on a 4 px grid). Colours are unchanged.
+
 ## 0.1.13
 
 ### Changed

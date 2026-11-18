@@ -100,7 +100,7 @@ export const buttonStyles = css`
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: 8px;
     min-height: 40px;
     padding: 8px 16px;
     border: none;

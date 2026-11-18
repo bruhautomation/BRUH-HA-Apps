@@ -115,7 +115,7 @@ export class ApplianceCard extends LitElement {
         flex-direction: column;
         box-sizing: border-box;
         min-width: 0;
-        padding: 12px 14px 14px;
+        padding: 16px;
         border: var(--bc-border-width) solid var(--bc-border);
         border-radius: var(--bc-radius);
         background: var(--bc-card-bg);
@@ -154,7 +154,7 @@ export class ApplianceCard extends LitElement {
       .head {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 12px;
         min-height: 28px;
         margin-bottom: 8px;
       }
@@ -163,7 +163,7 @@ export class ApplianceCard extends LitElement {
         min-width: 0;
         margin: 0;
         overflow: hidden;
-        font-size: 17px;
+        font-size: 16px;
         font-weight: 600;
         line-height: 1.3;
         white-space: nowrap;
@@ -219,7 +219,7 @@ export class ApplianceCard extends LitElement {
       }
       .stage.has-display .drawing {
         box-sizing: border-box;
-        padding-top: 52px;
+        padding-top: 48px;
       }
       .stage .lcd {
         position: absolute;

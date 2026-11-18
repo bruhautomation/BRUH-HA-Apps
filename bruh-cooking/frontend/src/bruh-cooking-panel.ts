@@ -325,7 +325,7 @@ class BrevilleCookingPanel extends LitElement {
         align-items: center;
         box-sizing: border-box;
         height: var(--bc-toolbar-height);
-        padding: var(--bc-inset-top) calc(12px + var(--bc-inset-right)) 0 calc(12px + var(--bc-inset-left));
+        padding: var(--bc-inset-top) calc(16px + var(--bc-inset-right)) 0 calc(16px + var(--bc-inset-left));
         background: var(--app-header-background-color, var(--bc-page-bg));
         color: var(--app-header-text-color, var(--bc-text));
         border-bottom: var(--app-header-border-bottom, none);
@@ -333,7 +333,7 @@ class BrevilleCookingPanel extends LitElement {
       .title {
         flex: 1;
         min-width: 0;
-        margin: 0 0 0 12px;
+        margin: 0;
         overflow: hidden;
         font-size: 20px;
         font-weight: 400;
@@ -342,7 +342,7 @@ class BrevilleCookingPanel extends LitElement {
         text-overflow: ellipsis;
       }
       .with-button .title {
-        margin-inline-start: 24px;
+        margin-inline-start: 8px;
       }
       .icon-button {
         display: grid;

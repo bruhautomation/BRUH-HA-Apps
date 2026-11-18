@@ -102,15 +102,17 @@ export class Overview extends LitElement {
     css`
       :host {
         display: block;
+        max-width: 1400px;
+        margin: 0 auto;
         color: var(--bc-text);
       }
       .area + .area {
-        margin-top: 28px;
+        margin-top: 24px;
       }
       /* A section title over the cards, not a caption: as strong as the card names under it. */
       h2 {
-        margin: 0 4px 10px;
-        font-size: 18px;
+        margin: 0 0 12px;
+        font-size: 16px;
         font-weight: 500;
         line-height: 1.4;
         color: var(--bc-text);
