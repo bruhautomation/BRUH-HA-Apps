@@ -2947,6 +2947,8 @@ _UNIT = (r"(miles?|mi|km|kilomet(?:er|re)s?|days?|weeks?|months?|hours?|"
          r"hrs?)")
 _NUMBER = r"(\d[\d,]*(?:\.\d+)?)"
 _LATE_WORD = r"(?:overdue|past due|late|past (?:its|the|their) (?:due )?(?:date|time))"
+_ODOMETER_RE = re.compile(_NUMBER + r"\s*" + _UNIT
+                          + r"\s+(?:overdue|past due|late)\b", re.I)
 _OVERDUE_RES = (
     # "19,766 miles overdue", "19,766 miles past its date"
     re.compile(_NUMBER + r"\s*" + _UNIT + r"\s+" + _LATE_WORD + r"\b", re.I),
@@ -3014,9 +3016,12 @@ def misread_reminder(row: dict) -> dict | None:
             for found in _OVERDUE_RES:
                 head = found.sub("far overdue", head)
             head = re.sub(r"\s+", " ", head).strip().rstrip(".!?")
-            if head == str(row.get("text") or "").strip().rstrip(".!?"):
-                head = "A reminder is far overdue"      # no figure to take out
-            said = f"{head}. Is the reminder's setting right?"
+            # No figure to cut out: the row's own headline stays, so the
+            # question always names the reminder it is about (two reminders
+            # never share one text, and a Wrong is theirs alone).
+            head = head or "A reminder is far overdue"
+            said = (head if head.endswith("setting right")
+                    else f"{head}. Is the reminder's setting right?")
             return {"text": said, "claim": said,
                     "detail": (f"It reads {late.group(1)} {late.group(2)} "
                                f"past its date on a {m.group(1)}-"
@@ -3041,7 +3046,9 @@ def odometer_counter(row: dict) -> bool:
     producer down for that entity as for any other row."""
     words = " ".join(str(row.get(k) or "") for k in
                      ("text", "claim", "detail", "fix"))
-    late = _overdue(words)
+    # Only the shape #827 read ("N miles overdue"); the wider shapes
+    # `misread_reminder` reads are not this rule's.
+    late = _ODOMETER_RE.search(words)
     return bool(late and _UNIT_KEY.get(late.group(2).lower(), "")
                 in _DISTANCE_UNITS)
 
