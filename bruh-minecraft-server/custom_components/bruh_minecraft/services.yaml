@@ -287,10 +287,10 @@ install_addon:
 
 remove_addon:
   name: Remove add-on
-  description: Take an add-on installed by the browser out of the active world.
+  description: Take an add-on out of the active world, whether the browser installed it or it was put there by hand.
   fields:
     id:
-      name: Project id
+      name: Project id or key
       required: true
       selector:
         text: {}

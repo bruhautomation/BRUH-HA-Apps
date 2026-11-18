@@ -319,11 +319,11 @@
     },
     "remove_addon": {
       "name": "Remove add-on",
-      "description": "Take an add-on installed by the browser out of the active world.",
+      "description": "Take an add-on out of the active world, whether the browser installed it or it was put there by hand.",
       "fields": {
         "id": {
-          "name": "Project id",
-          "description": "The Modrinth project id."
+          "name": "Project id or key",
+          "description": "The Modrinth project id of a browser-installed add-on, or the key from the list (kind:file) of one put there by hand."
         }
       }
     },

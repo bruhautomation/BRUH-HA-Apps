@@ -5,6 +5,12 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.20.1
+
+### Fixed
+
+- Add-on browser: a plugin, data pack or resource pack that was put on the server by hand can now be removed, from the panel and by brAIn (by the name the list shows). The Remove button only appears where it will work, and a file the browser installed is still removed with its dependency check (1222).
+
 ## 1.20.0
 
 ### Changed

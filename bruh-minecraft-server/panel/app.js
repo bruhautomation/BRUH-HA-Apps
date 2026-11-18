@@ -1643,7 +1643,7 @@
     if (item.updatable) {
       actions.push(`<button class="btn" data-world-update="${esc(item.id)}" data-kind="${esc(item.kind)}">Update</button>`);
     }
-    {
+    if (item.removable) {
       actions.push(`<button class="btn btn-ghost addon-remove" data-world-remove="${esc(item.file)}" data-kind="${esc(item.kind)}" data-title="${esc(item.title)}">Remove</button>`);
     }
     row.innerHTML = `
