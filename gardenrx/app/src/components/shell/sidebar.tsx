@@ -34,7 +34,7 @@ export function Sidebar({ settings }: { settings: AppSettings }) {
             className={`nav-item${active ? ' active' : ''}`}
             aria-current={active ? 'page' : undefined}
           >
-            <Icon className="size-[18px]" />
+            <Icon className="size-4" />
             {label}
           </Link>
         );
@@ -50,7 +50,7 @@ export function Sidebar({ settings }: { settings: AppSettings }) {
             href="/settings"
             aria-label="Settings"
             aria-current={pathname.startsWith('/settings') ? 'page' : undefined}
-            className={`grid size-7 place-items-center rounded-md transition-colors hover:bg-paper-2 hover:text-leaf ${pathname.startsWith('/settings') ? 'text-leaf' : 'text-ink-3'}`}
+            className={`grid size-8 place-items-center rounded-md transition-colors hover:bg-paper-2 hover:text-leaf ${pathname.startsWith('/settings') ? 'text-leaf' : 'text-ink-3'}`}
           >
             <Settings className="size-4" />
           </Link>

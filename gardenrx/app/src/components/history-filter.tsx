@@ -26,10 +26,10 @@ export function HistoryFilter({ areas }: { areas: CropCategory[] }) {
   if (present.length === 0) return null;
 
   return (
-    <div className="flex gap-1.5 flex-wrap mb-4">
+    <div className="flex gap-2 flex-wrap mb-4">
       <button
         onClick={() => setArea(null)}
-        className={`text-[11px] font-medium px-2.5 py-1 rounded-full ring-1 transition-all ${
+        className={`text-xs font-medium px-3 py-1 rounded-full ring-1 transition-all ${
           !activeArea
             ? 'bg-foreground text-card ring-foreground shadow-sm'
             : 'bg-card text-muted-foreground ring-border/60 hover:ring-border'
@@ -44,7 +44,7 @@ export function HistoryFilter({ areas }: { areas: CropCategory[] }) {
           <button
             key={a}
             onClick={() => setArea(active ? null : a)}
-            className={`inline-flex items-center gap-1 text-[11px] font-medium px-2.5 py-1 rounded-full ring-1 transition-all ${
+            className={`inline-flex items-center gap-1 text-xs font-medium px-3 py-1 rounded-full ring-1 transition-all ${
               active
                 ? AREA_STYLE[a].chip
                 : 'bg-card text-muted-foreground ring-border/60 hover:ring-border'

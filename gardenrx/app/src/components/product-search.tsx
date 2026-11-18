@@ -60,7 +60,7 @@ export function ProductSearch({
       </div>
 
       {/* Type pills */}
-      <div className="flex gap-1.5 flex-wrap">
+      <div className="flex gap-2 flex-wrap">
         {typeKeys.map((type) => {
           const isActive = searchParams.get('type') === type;
           const style = typeFilterStyles[type];
@@ -68,7 +68,7 @@ export function ProductSearch({
             <button
               key={type}
               onClick={() => updateParam('type', isActive ? '' : type)}
-              className={`text-[11px] font-medium tracking-wide px-2.5 py-1 rounded-full transition-all duration-200 ${
+              className={`text-xs font-medium tracking-wide px-3 py-1 rounded-full transition-all duration-200 ${
                 isActive ? style.active : style.inactive
               }`}
             >
@@ -83,15 +83,15 @@ export function ProductSearch({
           that crop's group. */}
       {crops.length > 0 && (
         <div className="space-y-2">
-          <p className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground/60">
+          <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground/60">
             Labeled for my crops
           </p>
           {CATEGORY_ORDER.filter((cat) => crops.some((c) => c.category === cat)).map((cat) => (
             <div key={cat}>
-              <p className="mb-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/45">
+              <p className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground/45">
                 {cat}
               </p>
-              <div className="flex gap-1.5 flex-wrap">
+              <div className="flex gap-2 flex-wrap">
                 {crops
                   .filter((c) => c.category === cat)
                   .map((c) => {
@@ -100,7 +100,7 @@ export function ProductSearch({
                       <button
                         key={c.id}
                         onClick={() => updateParam('crop', isActive ? '' : String(c.id))}
-                        className={`text-[11px] font-medium tracking-wide px-2.5 py-1 rounded-full transition-all duration-200 ${
+                        className={`text-xs font-medium tracking-wide px-3 py-1 rounded-full transition-all duration-200 ${
                           isActive
                             ? 'bg-emerald-700 text-white shadow-sm'
                             : 'bg-card text-foreground/70 ring-1 ring-border/60 hover:ring-emerald-300 hover:bg-emerald-50/40'

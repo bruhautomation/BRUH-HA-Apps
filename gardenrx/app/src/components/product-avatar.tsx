@@ -28,7 +28,7 @@ export function ProductAvatar({
   type,
   brand,
   imageUrl,
-  className = 'w-11 h-11',
+  className = 'w-10 h-10',
   rounded = 'rounded-xl',
   iconClassName = 'w-5 h-5',
 }: {

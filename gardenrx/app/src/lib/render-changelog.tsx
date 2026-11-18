@@ -237,7 +237,7 @@ function renderInline(text: string): React.ReactNode[] {
         nodes.push(
           <code
             key={key++}
-            className="rounded bg-foreground/[0.06] px-1 py-0.5 text-[0.88em] font-mono text-foreground/85"
+            className="rounded-md bg-foreground/[0.06] px-1 py-0.5 text-[0.88em] font-mono text-foreground/85"
           >
             {text.slice(i + 1, end)}
           </code>
@@ -347,19 +347,19 @@ function ReleaseCard({ release, isLatest }: { release: Release; isLatest: boolea
         <div className="flex items-baseline gap-3 min-w-0">
           <h2
             className={`font-heading font-semibold tracking-tight ${
-              unreleased ? 'text-foreground/60 text-lg' : 'text-2xl text-foreground'
+              unreleased ? 'text-foreground/60 text-base' : 'text-2xl text-foreground'
             }`}
           >
             {unreleased ? 'Unreleased' : `v${release.version}`}
           </h2>
           {isLatest && (
-            <span className="text-[10px] font-semibold tracking-[0.18em] uppercase text-emerald-700 bg-emerald-100 ring-1 ring-emerald-300/60 rounded-full px-2 py-0.5">
+            <span className="text-xs font-semibold tracking-[0.18em] uppercase text-emerald-700 bg-emerald-100 ring-1 ring-emerald-300/60 rounded-full px-2 py-0.5">
               Latest
             </span>
           )}
         </div>
         {release.date && (
-          <time className="text-[11px] font-mono tabular-nums text-muted-foreground/70 shrink-0">
+          <time className="text-xs font-mono tabular-nums text-muted-foreground/70 shrink-0">
             {formatDate(release.date)}
           </time>
         )}
@@ -368,7 +368,7 @@ function ReleaseCard({ release, isLatest }: { release: Release; isLatest: boolea
       {/* Body */}
       <div className="px-5 py-4 space-y-4">
         {release.preamble.length > 0 && (
-          <div className="space-y-2 text-[14px] text-foreground/75 leading-relaxed">
+          <div className="space-y-2 text-sm text-foreground/75 leading-relaxed">
             {release.preamble.map((p, idx) => (
               <p key={idx}>{renderInline(p)}</p>
             ))}
@@ -376,7 +376,7 @@ function ReleaseCard({ release, isLatest }: { release: Release; isLatest: boolea
         )}
 
         {empty && (
-          <p className="text-[13px] text-muted-foreground/60 italic">
+          <p className="text-sm text-muted-foreground/60 italic">
             Nothing yet — track work in progress here.
           </p>
         )}
@@ -388,7 +388,7 @@ function ReleaseCard({ release, isLatest }: { release: Release; isLatest: boolea
             <section key={idx} className="space-y-2">
               <div className="flex items-center gap-2">
                 <span
-                  className={`inline-flex items-center gap-1.5 rounded-full text-[10px] font-semibold tracking-[0.14em] uppercase px-2 py-0.5 ring-1 ${style.badge} ${style.ring}`}
+                  className={`inline-flex items-center gap-2 rounded-full text-xs font-semibold tracking-[0.14em] uppercase px-2 py-0.5 ring-1 ${style.badge} ${style.ring}`}
                 >
                   <Icon className="w-3 h-3" />
                   {section.kind}
@@ -396,7 +396,7 @@ function ReleaseCard({ release, isLatest }: { release: Release; isLatest: boolea
                 <div className="flex-1 h-px bg-border/30" />
               </div>
               <ul
-                className={`list-disc pl-6 space-y-1.5 text-[14px] text-foreground/80 leading-relaxed ${style.accent}`}
+                className={`list-disc pl-6 space-y-2 text-sm text-foreground/80 leading-relaxed ${style.accent}`}
               >
                 {section.items.map((item, j) => (
                   <li key={j}>{renderInline(item)}</li>
@@ -419,7 +419,7 @@ export function renderChangelog(md: string): React.ReactNode {
   return (
     <div className="space-y-5 animate-stagger">
       {parsed.intro.length > 0 && (
-        <div className="space-y-2 text-[14px] text-foreground/70 leading-relaxed mb-2">
+        <div className="space-y-2 text-sm text-foreground/70 leading-relaxed mb-2">
           {parsed.intro.map((p, idx) => (
             <p key={idx}>{renderInline(p)}</p>
           ))}

@@ -74,12 +74,12 @@ export function SprayWindowTimeline({
         return (
           <div key={dayLabel}>
             <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] font-medium text-foreground/70">
+              <span className="text-xs font-medium text-foreground/70">
                 {dayLabel}
-                {dayIdx === 0 && <span className="text-leaf ml-1 text-[9px]">Today</span>}
+                {dayIdx === 0 && <span className="text-leaf ml-1 text-xs">Today</span>}
               </span>
               <span
-                className={`text-[10px] font-semibold px-1.5 py-0 rounded-full ${ratingColorsLight[bestRating]}`}
+                className={`text-xs font-semibold px-2 py-0 rounded-full ${ratingColorsLight[bestRating]}`}
               >
                 {bestRating}
               </span>
@@ -110,13 +110,13 @@ export function SprayWindowTimeline({
 
             {/* Tooltip for selected hour */}
             {tooltip && tooltip.dayLabel === dayLabel && (
-              <div className="mt-1 rounded-lg bg-card px-2.5 py-1.5 ring-1 ring-black/[0.06] shadow-sm text-[11px]">
+              <div className="mt-1 rounded-lg bg-card px-3 py-2 ring-1 ring-black/[0.06] shadow-sm text-xs">
                 <span className="font-medium">
                   {tooltip.hour === 0 ? '12' : tooltip.hour > 12 ? tooltip.hour - 12 : tooltip.hour}
                   :00 {tooltip.hour >= 12 ? 'PM' : 'AM'}
                 </span>
                 <span
-                  className={`ml-2 px-1.5 py-0 rounded-full text-[9px] font-semibold ${ratingColorsLight[tooltip.rating]}`}
+                  className={`ml-2 px-2 py-0 rounded-full text-xs font-semibold ${ratingColorsLight[tooltip.rating]}`}
                 >
                   {tooltip.rating}
                 </span>
@@ -128,9 +128,9 @@ export function SprayWindowTimeline({
 
             {!compact && (
               <div className="flex justify-between mt-0.5">
-                <span className="text-[9px] text-muted-foreground/70">5am</span>
-                <span className="text-[9px] text-muted-foreground/70">noon</span>
-                <span className="text-[9px] text-muted-foreground/70">12am</span>
+                <span className="text-xs text-muted-foreground/70">5am</span>
+                <span className="text-xs text-muted-foreground/70">noon</span>
+                <span className="text-xs text-muted-foreground/70">12am</span>
               </div>
             )}
           </div>
@@ -142,7 +142,7 @@ export function SprayWindowTimeline({
         {(['EXCELLENT', 'GOOD', 'FAIR', 'POOR'] as const).map((r) => (
           <div key={r} className="flex items-center gap-1">
             <div className={`w-2 h-2 rounded-sm ${ratingColors[r]}`} />
-            <span className="text-[9px] text-muted-foreground capitalize">{r.toLowerCase()}</span>
+            <span className="text-xs text-muted-foreground capitalize">{r.toLowerCase()}</span>
           </div>
         ))}
       </div>

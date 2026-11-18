@@ -39,6 +39,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { withBase } from '@/lib/base-path';
+import { SectionHeader } from '@/components/ui/section-header';
 
 export type { SprayPlannerProps } from './types';
 
@@ -220,9 +221,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
       {/* ── Queued Sprays ── */}
       {queuedSprayCards.length > 0 && (
         <section>
-          <h2 className="text-[11px] font-semibold tracking-[0.18em] uppercase text-foreground/70 mb-3">
-            Queued Sprays
-          </h2>
+          <SectionHeader as="h2" title="Queued Sprays" />
           <div className="space-y-2">
             {queuedSprayCards.map((qs) => {
               const isExpQ = expandedMix === `queued-${qs.id}`;
@@ -254,20 +253,20 @@ export function SprayPlanner(props: SprayPlannerProps) {
                 >
                   <button
                     onClick={() => setExpandedMix(isExpQ ? null : `queued-${qs.id}`)}
-                    className="w-full flex items-center gap-3 px-3.5 py-3 text-left hover:bg-emerald-50/40 transition-colors"
+                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-emerald-50/40 transition-colors"
                   >
-                    <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-emerald-100 ring-1 ring-emerald-200/50 shrink-0">
+                    <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-100 ring-1 ring-emerald-200/50 shrink-0">
                       <Crosshair className="w-3.5 h-3.5 text-emerald-700" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-semibold text-emerald-800">
                         {qs.crops.map((qc) => qc.crop!.name).join(', ')}
                       </p>
-                      <p className="text-[10px] text-ink-3 truncate">
+                      <p className="text-xs text-ink-3 truncate">
                         {qs.products.map((qp) => qp.product!.brand).join(' + ')}
                       </p>
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex items-center gap-2 shrink-0">
                       {!rainOk && <CloudRain className="w-3.5 h-3.5 text-amber-500" />}
                       <ChevronDown
                         className={`w-4 h-4 text-emerald-500/50 transition-transform ${isExpQ ? 'rotate-180' : ''}`}
@@ -297,12 +296,12 @@ export function SprayPlanner(props: SprayPlannerProps) {
                     />
                   )}
                   {isExpQ && editingQueued !== qs.id && (
-                    <div className="border-t border-emerald-200/30 px-3.5 py-3.5 space-y-3">
-                      <div className="flex flex-wrap gap-1.5">
+                    <div className="border-t border-emerald-200/30 px-4 py-4 space-y-3">
+                      <div className="flex flex-wrap gap-2">
                         {qs.products.map((qp) => (
                           <span
                             key={qp.product_id}
-                            className="rounded-full text-[11px] font-medium px-2 py-0.5 bg-leaf-tint text-leaf-dk ring-1 ring-leaf-lt"
+                            className="rounded-full text-xs font-medium px-2 py-0.5 bg-leaf-tint text-leaf-dk ring-1 ring-leaf-lt"
                           >
                             {productLabel(qp.product!.brand, ingMap.get(qp.product_id))}
                             {qp.rate_applied ? ` ${qp.rate_applied} ${qp.rate_unit}` : ''}
@@ -311,8 +310,8 @@ export function SprayPlanner(props: SprayPlannerProps) {
                       </div>
 
                       {props.weatherHourly.length > 0 && (
-                        <div className="rounded-lg bg-card/60 p-2.5 ring-1 ring-leaf-lt">
-                          <p className="text-[10px] font-medium tracking-widest uppercase text-emerald-600/60 mb-2">
+                        <div className="rounded-lg bg-card/60 p-3 ring-1 ring-leaf-lt">
+                          <p className="text-xs font-medium tracking-widest uppercase text-emerald-600/60 mb-2">
                             Spray Windows
                           </p>
                           <SprayWindowTimeline hourly={props.weatherHourly} compact />
@@ -320,7 +319,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                       )}
 
                       <div
-                        className={`rounded-lg px-3 py-2 ring-1 text-[11px] ${rainOk ? 'bg-emerald-50/60 ring-emerald-200/40 text-emerald-700' : 'bg-amber-50 ring-amber-200/50 text-amber-700'}`}
+                        className={`rounded-lg px-3 py-2 ring-1 text-xs ${rainOk ? 'bg-emerald-50/60 ring-emerald-200/40 text-emerald-700' : 'bg-amber-50 ring-amber-200/50 text-amber-700'}`}
                       >
                         <span className="font-semibold">Rain-fast:</span> Need {maxRainFast}h.
                         {hUntilRain !== null
@@ -329,7 +328,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                       </div>
 
                       {coverages.length > 0 && (
-                        <div className="text-[11px] text-emerald-700">
+                        <div className="text-xs text-emerald-700">
                           <span className="font-semibold">Coverage:</span>{' '}
                           {coverages.map((c) => `${c.brand} ${c.days}d`).join(', ')}
                         </div>
@@ -395,9 +394,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
           </p>
         )}
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-[11px] font-semibold tracking-[0.18em] uppercase text-foreground/70">
-            Select Crops
-          </h2>
+          <SectionHeader as="h2" title="Select Crops" />
           {selectedCropIds.length < props.crops.length && (
             <button onClick={selectAll} className="text-xs text-leaf font-medium hover:text-leaf">
               Select all
@@ -413,17 +410,17 @@ export function SprayPlanner(props: SprayPlannerProps) {
           )}
         </div>
 
-        <div className="space-y-3.5">
+        <div className="space-y-4">
           {cropsByCategory(props.crops, props.cropGroups).map(({ category, crops }) => {
             const Icon = AREA_STYLE[category].icon;
             return (
               <div key={category}>
-                <div className="flex items-center gap-1.5 mb-1.5 px-0.5">
+                <div className="flex items-center gap-2 mb-2 px-0.5">
                   <Icon className="w-3 h-3 text-muted-foreground/55" />
-                  <p className="text-[10px] font-semibold tracking-[0.16em] uppercase text-muted-foreground/55">
+                  <p className="text-xs font-semibold tracking-[0.16em] uppercase text-muted-foreground/55">
                     {category}
                   </p>
-                  <span className="text-[10px] text-muted-foreground/40">{crops.length}</span>
+                  <span className="text-xs text-muted-foreground/40">{crops.length}</span>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   {crops.map((crop) => {
@@ -439,7 +436,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                       <button
                         key={crop.id}
                         onClick={() => toggleCrop(crop.id)}
-                        className={`relative flex items-center gap-2 rounded-xl px-3 py-2.5 text-left transition-all ring-1 shadow-sm ${
+                        className={`relative flex items-center gap-2 rounded-xl px-3 py-3 text-left transition-all ring-1 shadow-sm ${
                           selected ? 'shadow-md' : 'hover:ring-2'
                         }`}
                         style={{
@@ -461,7 +458,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                         </div>
                         <span className="font-medium text-sm truncate">{crop.name}</span>
                         {inBloom && (
-                          <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-pink-600 ml-auto shrink-0">
+                          <span className="inline-flex items-center gap-0.5 text-xs font-medium text-pink-600 ml-auto shrink-0">
                             <Flower2 className="w-3 h-3" />
                             Bloom
                           </span>
@@ -479,9 +476,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
       {/* ── Crop Needs Summary ── */}
       {showMixes && cropNeeds.length > 0 && (
         <section>
-          <h2 className="text-[11px] font-semibold tracking-[0.18em] uppercase text-foreground/70 mb-2">
-            Coverage Status
-          </h2>
+          <SectionHeader as="h2" title="Coverage Status" />
           <div className="space-y-1">
             {cropNeeds.map((cn) => {
               const cfg = urgencyConfig[cn.urgency];
@@ -489,12 +484,12 @@ export function SprayPlanner(props: SprayPlannerProps) {
                 <div key={cn.crop.id} className="flex items-center gap-2 text-sm py-1">
                   <div className={`w-2 h-2 rounded-full shrink-0 ${cfg.dot}`} />
                   <span
-                    className="inline-flex items-center rounded-full ring-1 text-[11px] font-semibold px-1.5 py-0.5"
+                    className="inline-flex items-center rounded-full ring-1 text-xs font-semibold px-2 py-0.5"
                     style={cropPillStyle(cn.crop.id)}
                   >
                     {cn.crop.name}
                   </span>
-                  <span className="text-[11px] text-muted-foreground ml-auto">
+                  <span className="text-xs text-muted-foreground ml-auto">
                     {cn.needsFungicide && cn.needsInsecticide
                       ? 'Fungicide + insecticide'
                       : cn.needsFungicide
@@ -518,9 +513,9 @@ export function SprayPlanner(props: SprayPlannerProps) {
               {cropNeeds.some((cn) => cn.needsFungicide || cn.needsInsecticide) ? (
                 <>
                   <div className="mx-auto w-14 h-14 rounded-full bg-amber-100 flex items-center justify-center">
-                    <AlertTriangle className="w-7 h-7 text-amber-600" />
+                    <AlertTriangle className="w-8 h-8 text-amber-600" />
                   </div>
-                  <p className="font-heading font-semibold text-lg text-amber-800">
+                  <p className="font-heading font-semibold text-base text-amber-800">
                     No matching products in inventory
                   </p>
                   <p className="text-sm text-muted-foreground mb-2">
@@ -548,9 +543,9 @@ export function SprayPlanner(props: SprayPlannerProps) {
               ) : (
                 <>
                   <div className="mx-auto w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center">
-                    <Shield className="w-7 h-7 text-leaf" />
+                    <Shield className="w-8 h-8 text-leaf" />
                   </div>
-                  <p className="font-heading font-semibold text-lg text-emerald-800">
+                  <p className="font-heading font-semibold text-base text-emerald-800">
                     All selected crops are protected
                   </p>
                   <p className="text-sm text-muted-foreground mb-2">
@@ -568,9 +563,9 @@ export function SprayPlanner(props: SprayPlannerProps) {
           ) : (
             <>
               <div className="flex items-baseline justify-between mb-3">
-                <h2 className="text-[11px] font-semibold tracking-[0.18em] uppercase text-foreground/70">
+                <h2 className="text-xs font-semibold tracking-[0.18em] uppercase text-foreground/70">
                   Recommended Mixes
-                  <span className="ml-1.5 text-muted-foreground/60 font-normal tracking-normal normal-case">
+                  <span className="ml-2 text-muted-foreground/60 font-normal tracking-normal normal-case">
                     {mixPlans.filter((p) => !dismissedMixes.includes(p.id)).length}
                   </span>
                 </h2>
@@ -616,7 +611,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                         <div className="flex items-center">
                           <button
                             onClick={() => setExpandedMix(isExpanded ? null : plan.id)}
-                            className="flex-1 flex items-center gap-3 px-4 py-3.5 text-left hover:bg-muted/30 transition-colors"
+                            className="flex-1 flex items-center gap-3 px-4 py-4 text-left hover:bg-muted/30 transition-colors"
                           >
                             <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-50 ring-1 ring-emerald-200/50 shrink-0">
                               {isLogged ? (
@@ -637,7 +632,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                                   {activePlan.crops.map((c) => (
                                     <span
                                       key={c.id}
-                                      className="rounded-full text-[11px] font-semibold ring-1 px-1.5 py-0.5"
+                                      className="rounded-full text-xs font-semibold ring-1 px-2 py-0.5"
                                       style={cropPillStyle(c.id)}
                                     >
                                       {c.name}
@@ -645,7 +640,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                                   ))}
                                 </div>
                               )}
-                              <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                              <p className="text-xs text-muted-foreground mt-0.5 truncate">
                                 {activePlan.products.map((p) => p.product.brand).join(' + ')}
                                 {' · '}
                                 {activePlan.coverageTypes.join(' + ')}
@@ -658,7 +653,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                           {!isLogged && (
                             <button
                               onClick={() => setDismissedMixes([...dismissedMixes, plan.id])}
-                              className="px-3 py-3.5 text-muted-foreground/50 hover:text-terra-500 transition-colors shrink-0"
+                              className="px-3 py-4 text-muted-foreground/50 hover:text-terra-500 transition-colors shrink-0"
                               title="Skip this mix"
                             >
                               <X className="w-3.5 h-3.5" />
@@ -689,12 +684,12 @@ export function SprayPlanner(props: SprayPlannerProps) {
                                 return (
                                   <div key={mp.product.id} className="px-4 py-3 space-y-2">
                                     {/* Row 1: identity + swap/remove */}
-                                    <div className="flex items-start gap-2.5">
+                                    <div className="flex items-start gap-3">
                                       <div
-                                        className={`w-2 h-2 rounded-full shrink-0 mt-1.5 ${roleDot[mp.role] ?? 'bg-muted'}`}
+                                        className={`w-2 h-2 rounded-full shrink-0 mt-2 ${roleDot[mp.role] ?? 'bg-muted'}`}
                                       />
                                       <div className="flex-1 min-w-0">
-                                        <div className="flex items-baseline gap-1.5 flex-wrap">
+                                        <div className="flex items-baseline gap-2 flex-wrap">
                                           <button
                                             onClick={() =>
                                               setSwapping({
@@ -725,12 +720,12 @@ export function SprayPlanner(props: SprayPlannerProps) {
                                                       modeOfAction: moa,
                                                     })
                                                   }
-                                                  className="inline-flex items-center gap-0.5 text-[10px] font-medium text-emerald-700 tabular-nums rounded-full px-1.5 py-0.5 ring-1 ring-emerald-200/50 hover:bg-emerald-50 hover:text-emerald-800 transition-colors"
+                                                  className="inline-flex items-center gap-0.5 text-xs font-medium text-emerald-700 tabular-nums rounded-full px-2 py-0.5 ring-1 ring-emerald-200/50 hover:bg-emerald-50 hover:text-emerald-800 transition-colors"
                                                   aria-label={`What is ${scheme} group ${fracGroup}?`}
                                                   title={`Tap: what does ${scheme} ${fracGroup} mean?`}
                                                 >
                                                   {scheme} {fracGroup}
-                                                  <span className="text-[9px] opacity-60">ⓘ</span>
+                                                  <span className="text-xs opacity-60">ⓘ</span>
                                                 </button>
                                               );
                                             })()}
@@ -743,7 +738,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                                               groupIds: plan.cropGroupIds,
                                             })
                                           }
-                                          className="text-[11px] text-muted-foreground capitalize text-left hover:text-foreground transition-colors"
+                                          className="text-xs text-muted-foreground capitalize text-left hover:text-foreground transition-colors"
                                         >
                                           {mp.role.replace('-', ' ')} · {mp.coverageType} · tap to
                                           swap
@@ -797,16 +792,16 @@ export function SprayPlanner(props: SprayPlannerProps) {
                                             });
                                           }}
                                           aria-label={`Rate for ${mp.product.brand} in ${mp.rateUnit}`}
-                                          className="w-14 text-right text-[11px] font-mono tabular-nums rounded-md ring-1 ring-border/60 bg-card px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+                                          className="w-14 text-right text-xs font-mono tabular-nums rounded-md ring-1 ring-border/60 bg-card px-2 py-1 focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
                                         />
-                                        <span className="text-[11px] font-mono text-muted-foreground w-10 truncate">
+                                        <span className="text-xs font-mono text-muted-foreground w-10 truncate">
                                           {mp.rateUnit.replace('/gal', '')}
                                         </span>
                                       </div>
                                     </div>
 
                                     {/* Row 3: dose inline */}
-                                    <div className="flex items-baseline gap-2 text-[12px]">
+                                    <div className="flex items-baseline gap-2 text-xs">
                                       <ArrowRight className="w-3 h-3 text-ink-3 shrink-0" />
                                       <span className="text-muted-foreground">Add</span>
                                       <span className="font-heading font-semibold text-emerald-800">
@@ -815,7 +810,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                                       <span className="text-muted-foreground">
                                         to {dose.totalGallons} gal tank
                                       </span>
-                                      <span className="text-muted-foreground/50 ml-auto tabular-nums flex items-baseline gap-1.5">
+                                      <span className="text-muted-foreground/50 ml-auto tabular-nums flex items-baseline gap-2">
                                         <span>{dose.mL}&nbsp;mL</span>
                                         {costStr ? (
                                           <button
@@ -830,7 +825,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                                           <button
                                             type="button"
                                             onClick={() => setInventoryEditProductId(mp.product.id)}
-                                            className="text-[10px] text-ink-3 hover:text-leaf hover:underline font-medium"
+                                            className="text-xs text-ink-3 hover:text-leaf hover:underline font-medium"
                                             title="Enter inventory + price to estimate spray cost"
                                           >
                                             + price
@@ -845,11 +840,11 @@ export function SprayPlanner(props: SprayPlannerProps) {
 
                             {/* Interlocks — inline warnings, above summary */}
                             {(blocks.length > 0 || warnings.length > 0) && (
-                              <div className="px-4 pt-3 space-y-1.5">
+                              <div className="px-4 pt-3 space-y-2">
                                 {blocks.map((b, i) => (
                                   <div
                                     key={`b${i}`}
-                                    className="flex items-start gap-2 text-[11px] leading-snug"
+                                    className="flex items-start gap-2 text-xs leading-snug"
                                   >
                                     <AlertTriangle className="w-3.5 h-3.5 text-terra-500 shrink-0 mt-0.5" />
                                     <div>
@@ -863,7 +858,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                                 {warnings.map((w, i) => (
                                   <div
                                     key={`w${i}`}
-                                    className="flex items-start gap-2 text-[11px] leading-snug"
+                                    className="flex items-start gap-2 text-xs leading-snug"
                                   >
                                     <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
                                     <div>
@@ -911,10 +906,10 @@ export function SprayPlanner(props: SprayPlannerProps) {
                               ).join(', ');
                               if (!hasCost && !ppe) return null;
                               return (
-                                <dl className="px-4 pt-3 text-[11px] space-y-1">
+                                <dl className="px-4 pt-3 text-xs space-y-1">
                                   {hasCost && (
                                     <div className="flex items-baseline gap-2">
-                                      <dt className="text-muted-foreground/60 tracking-wide uppercase text-[10px] shrink-0 w-10">
+                                      <dt className="text-muted-foreground/60 tracking-wide uppercase text-xs shrink-0 w-10">
                                         Cost
                                       </dt>
                                       <dd className="font-mono tabular-nums text-foreground">
@@ -924,7 +919,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                                   )}
                                   {ppe && (
                                     <div className="flex items-baseline gap-2">
-                                      <dt className="text-muted-foreground/60 tracking-wide uppercase text-[10px] shrink-0 w-10">
+                                      <dt className="text-muted-foreground/60 tracking-wide uppercase text-xs shrink-0 w-10">
                                         PPE
                                       </dt>
                                       <dd className="text-muted-foreground">{ppe}</dd>
@@ -953,7 +948,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                                 <button
                                   onClick={() => handleQueueSpray(activePlan)}
                                   disabled={blocks.length > 0 || logging === plan.id}
-                                  className="w-full bg-emerald-700 text-white hover:bg-emerald-800 disabled:opacity-50 rounded-xl h-11 font-medium text-sm transition-colors"
+                                  className="w-full bg-emerald-700 text-white hover:bg-emerald-800 disabled:opacity-50 rounded-xl h-10 font-medium text-sm transition-colors"
                                 >
                                   {logging === plan.id ? 'Queuing...' : 'Queue This Spray'}
                                 </button>
@@ -992,7 +987,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
           <div className="relative w-full max-w-sm bg-popover rounded-t-2xl sm:rounded-2xl shadow-xl ring-1 ring-foreground/10 overflow-hidden">
             <div className="px-4 pt-4 pb-3 border-b border-border/40 flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-[11px] font-semibold tracking-[0.18em] uppercase text-foreground/70">
+                <p className="text-xs font-semibold tracking-[0.18em] uppercase text-foreground/70">
                   {groupInfo.scheme} Group {groupInfo.group}
                 </p>
                 <p className="font-heading font-semibold text-base mt-0.5 truncate">
@@ -1010,14 +1005,14 @@ export function SprayPlanner(props: SprayPlannerProps) {
             <div className="px-4 py-3 space-y-3 text-sm">
               {groupInfo.modeOfAction && (
                 <div>
-                  <p className="text-[10px] font-semibold tracking-[0.18em] uppercase text-muted-foreground/60 mb-1">
+                  <p className="text-xs font-semibold tracking-[0.18em] uppercase text-muted-foreground/60 mb-1">
                     Mode of action
                   </p>
                   <p className="text-foreground/80 leading-snug">{groupInfo.modeOfAction}</p>
                 </div>
               )}
               <div>
-                <p className="text-[10px] font-semibold tracking-[0.18em] uppercase text-muted-foreground/60 mb-1">
+                <p className="text-xs font-semibold tracking-[0.18em] uppercase text-muted-foreground/60 mb-1">
                   What this is
                 </p>
                 <p className="text-foreground/80 leading-snug">
@@ -1038,7 +1033,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                   )}
                 </p>
               </div>
-              <div className="rounded-lg bg-emerald-50/60 ring-1 ring-emerald-200/40 px-3 py-2 text-[12px] text-emerald-800 leading-snug">
+              <div className="rounded-lg bg-emerald-50/60 ring-1 ring-emerald-200/40 px-3 py-2 text-xs text-emerald-800 leading-snug">
                 <strong>Rotation tip:</strong> don&apos;t use Group {groupInfo.group} twice in a
                 row. Pick a different {groupInfo.scheme} group next spray to keep resistance
                 pressure low.
@@ -1051,7 +1046,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                 }
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-[11px] font-medium text-leaf hover:text-leaf"
+                className="inline-flex items-center gap-1 text-xs font-medium text-leaf hover:text-leaf"
               >
                 Learn more on {groupInfo.scheme}.info
                 <ArrowRight className="w-3 h-3" />
@@ -1071,7 +1066,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
           <div className="relative w-full max-w-md max-h-[70vh] bg-popover rounded-t-2xl sm:rounded-2xl shadow-xl ring-1 ring-foreground/10 overflow-hidden flex flex-col">
             <div className="px-4 pt-4 pb-2 border-b border-border/40 flex items-center justify-between shrink-0">
               <div>
-                <p className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground/60">
+                <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground/60">
                   Swap {swapping.mixProduct.role.replace('-', ' ')}
                 </p>
                 <p className="font-heading font-semibold text-sm">
@@ -1081,7 +1076,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
               </div>
               <button
                 onClick={() => setSwapping(null)}
-                className="p-1.5 rounded-lg hover:bg-muted transition-colors"
+                className="p-2 rounded-lg hover:bg-muted transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1134,28 +1129,26 @@ export function SprayPlanner(props: SprayPlannerProps) {
                         : 'hover:bg-emerald-50/60 hover:ring-1 hover:ring-emerald-200/50'
                     }`}
                   >
-                    <div className="flex items-start gap-2.5">
-                      <div
-                        className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${roleDot[alt.role]}`}
-                      />
+                    <div className="flex items-start gap-3">
+                      <div className={`w-2 h-2 rounded-full mt-2 shrink-0 ${roleDot[alt.role]}`} />
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-2">
                           <span className="font-medium text-sm">
                             {productLabel(alt.product.brand, alt.ingredients)}
                           </span>
                           {alt.ingredients[0]?.frac_irac_hrac_group && (
-                            <span className="text-[10px] text-muted-foreground bg-parchment-100 px-1.5 py-0 rounded-full">
+                            <span className="text-xs text-muted-foreground bg-parchment-100 px-2 py-0 rounded-full">
                               Group {alt.ingredients[0].frac_irac_hrac_group}
                             </span>
                           )}
                         </div>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                        <p className="text-xs text-muted-foreground mt-0.5">
                           {alt.ingredients.map((i) => i.name).join(', ')}
                           {alt.ingredients[0]?.mode_of_action &&
                             ` — ${alt.ingredients[0].mode_of_action}`}
                         </p>
                         {alt.blocked && alt.blockReason && (
-                          <p className="text-[11px] text-terra-600 mt-0.5 font-medium">
+                          <p className="text-xs text-terra-600 mt-0.5 font-medium">
                             {alt.blockReason}
                           </p>
                         )}
@@ -1242,7 +1235,7 @@ function InventoryQuickEdit({
       <div className="relative w-full max-w-sm bg-popover rounded-t-2xl sm:rounded-2xl shadow-xl ring-1 ring-foreground/10 overflow-hidden">
         <div className="px-4 pt-4 pb-3 border-b border-border/40 flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-[11px] font-semibold tracking-[0.18em] uppercase text-foreground/70">
+            <p className="text-xs font-semibold tracking-[0.18em] uppercase text-foreground/70">
               Inventory & price
             </p>
             <p className="font-heading font-semibold text-base mt-0.5 truncate">{product.brand}</p>
@@ -1258,7 +1251,7 @@ function InventoryQuickEdit({
         <div className="px-4 py-3 space-y-3">
           <div className="flex gap-2">
             <div className="flex-1">
-              <label className="text-[10px] font-medium tracking-[0.14em] uppercase text-muted-foreground/60 block mb-1">
+              <label className="text-xs font-medium tracking-[0.14em] uppercase text-muted-foreground/60 block mb-1">
                 On hand
               </label>
               <input
@@ -1268,17 +1261,17 @@ function InventoryQuickEdit({
                 value={quantity}
                 onChange={(e) => setQuantity(e.target.value)}
                 placeholder="0"
-                className="w-full h-9 rounded-lg ring-1 ring-border/60 bg-card px-2.5 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+                className="w-full h-10 rounded-lg ring-1 ring-border/60 bg-card px-3 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
               />
             </div>
             <div className="w-24">
-              <label className="text-[10px] font-medium tracking-[0.14em] uppercase text-muted-foreground/60 block mb-1">
+              <label className="text-xs font-medium tracking-[0.14em] uppercase text-muted-foreground/60 block mb-1">
                 Unit
               </label>
               <select
                 value={unit}
                 onChange={(e) => setUnit(e.target.value)}
-                className="w-full h-9 rounded-lg ring-1 ring-border/60 bg-card px-1.5 text-sm focus:outline-none"
+                className="w-full h-10 rounded-lg ring-1 ring-border/60 bg-card px-2 text-sm focus:outline-none"
               >
                 {['fl oz', 'mL', 'gal', 'qt', 'pt', 'tbsp', 'tsp', 'oz', 'lb', 'g', 'packets'].map(
                   (u) => (
@@ -1292,7 +1285,7 @@ function InventoryQuickEdit({
           </div>
           <div className="flex gap-2">
             <div className="flex-1">
-              <label className="text-[10px] font-medium tracking-[0.14em] uppercase text-muted-foreground/60 block mb-1">
+              <label className="text-xs font-medium tracking-[0.14em] uppercase text-muted-foreground/60 block mb-1">
                 Bottle size
               </label>
               <input
@@ -1302,11 +1295,11 @@ function InventoryQuickEdit({
                 value={bottleSize}
                 onChange={(e) => setBottleSize(e.target.value)}
                 placeholder={quantity || 'e.g. 32'}
-                className="w-full h-9 rounded-lg ring-1 ring-border/60 bg-card px-2.5 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+                className="w-full h-10 rounded-lg ring-1 ring-border/60 bg-card px-3 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
               />
             </div>
             <div className="flex-1">
-              <label className="text-[10px] font-medium tracking-[0.14em] uppercase text-muted-foreground/60 block mb-1">
+              <label className="text-xs font-medium tracking-[0.14em] uppercase text-muted-foreground/60 block mb-1">
                 Cost ($)
               </label>
               <input
@@ -1316,11 +1309,11 @@ function InventoryQuickEdit({
                 value={cost}
                 onChange={(e) => setCost(e.target.value)}
                 placeholder="0.00"
-                className="w-full h-9 rounded-lg ring-1 ring-border/60 bg-card px-2.5 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+                className="w-full h-10 rounded-lg ring-1 ring-border/60 bg-card px-3 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
               />
             </div>
           </div>
-          <p className="text-[10px] text-muted-foreground/60 leading-snug">
+          <p className="text-xs text-muted-foreground/60 leading-snug">
             Bottle size is what you paid for; on-hand is what&apos;s left. If bottle size is blank,
             cost estimates fall back to on-hand as the basis.
           </p>

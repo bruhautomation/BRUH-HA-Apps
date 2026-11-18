@@ -21,10 +21,10 @@ export function CropChips({
     <div className="space-y-2">
       {groups.map(({ category, crops }) => (
         <div key={category}>
-          <p className="text-[10px] font-semibold tracking-[0.16em] uppercase text-muted-foreground/55 mb-1">
+          <p className="text-xs font-semibold tracking-[0.16em] uppercase text-muted-foreground/55 mb-1">
             {category}
           </p>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-2">
             {crops.map((c) => {
               const selected = selectedIds.includes(c.id);
               return (
@@ -32,7 +32,7 @@ export function CropChips({
                   key={c.id}
                   type="button"
                   onClick={() => onToggle(c.id)}
-                  className={`text-xs font-medium px-3 py-1.5 rounded-full transition-all ${
+                  className={`text-xs font-medium px-3 py-2 rounded-full transition-all ${
                     selected
                       ? 'bg-emerald-600 text-white shadow-sm'
                       : 'bg-card text-muted-foreground ring-1 ring-border/60 hover:ring-border'

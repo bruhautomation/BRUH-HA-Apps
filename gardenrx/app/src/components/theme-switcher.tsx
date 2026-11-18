@@ -59,7 +59,7 @@ export function ThemeSwitcher({ settings }: { settings: AppSettings }) {
           aria-pressed={pref.theme_mode === id}
           onClick={() => update({ theme_mode: id })}
         >
-          <Icon className="size-[15px]" />
+          <Icon className="size-4" />
         </button>
       ))}
     </div>

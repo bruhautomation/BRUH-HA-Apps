@@ -15,6 +15,8 @@ import type {
 import type { CoverageInfo } from '@/lib/protection';
 import type { CropPhi } from '@/lib/phi';
 import { Input } from '@/components/ui/input';
+import { PageShell } from '@/components/ui/page-shell';
+import { SectionHeader } from '@/components/ui/section-header';
 import { Label } from '@/components/ui/label';
 import { DialogFooter } from '@/components/ui/dialog';
 import { FormDialog, ConfirmDialog } from '@/components/ui/form-dialog';
@@ -122,7 +124,7 @@ function MonitorRow({
 }) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-xl bg-paper-2 px-3 py-2 ring-1 ring-line">
-      <span className="inline-flex items-center gap-1.5 text-[13px] font-medium text-ink-2">
+      <span className="inline-flex items-center gap-2 text-sm font-medium text-ink-2">
         <Icon className="size-3.5 text-ink-3" /> {label}
       </span>
       <div
@@ -135,7 +137,7 @@ function MonitorRow({
           aria-pressed={tracked}
           disabled={disabled}
           onClick={() => onChange(true)}
-          className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${tracked ? 'bg-leaf text-on-leaf shadow-sm' : 'text-ink-3 hover:text-ink-2'}`}
+          className={`rounded-md px-3 py-1 text-xs font-semibold transition-colors ${tracked ? 'bg-leaf text-on-leaf shadow-sm' : 'text-ink-3 hover:text-ink-2'}`}
         >
           Monitored
         </button>
@@ -144,7 +146,7 @@ function MonitorRow({
           aria-pressed={!tracked}
           disabled={disabled}
           onClick={() => onChange(false)}
-          className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${!tracked ? 'bg-ink text-paper shadow-sm' : 'text-ink-3 hover:text-ink-2'}`}
+          className={`rounded-md px-3 py-1 text-xs font-semibold transition-colors ${!tracked ? 'bg-ink text-paper shadow-sm' : 'text-ink-3 hover:text-ink-2'}`}
         >
           As needed
         </button>
@@ -350,45 +352,50 @@ export function CropDetailView({
   }
 
   return (
-    <div className="page animate-stagger">
-      <Link href="/crops" className="btn btn-ghost mb-3.5">
-        <ChevronLeft className="size-4" /> Crops
-      </Link>
+    <PageShell
+      stagger
+      header={
+        <>
+          <Link href="/crops" className="btn btn-ghost self-start">
+            <ChevronLeft className="size-4" /> Crops
+          </Link>
 
-      {/* Header */}
-      <div className="mb-[var(--gap)] flex flex-wrap items-center gap-4">
-        <CropAvatar name={crop.name} group={cropGroup?.name ?? null} size={56} />
-        <div className="min-w-[200px] flex-1">
-          <h1 className="text-[26px] font-semibold tracking-tight">{crop.name}</h1>
-          <div className="mono mt-0.5 text-[13px] text-ink-3">
-            {cropGroup?.name ?? 'Uncategorized'} · {varieties.length}{' '}
-            {varieties.length === 1 ? 'variety' : 'varieties'}
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {topStage && (
-            <span
-              className="badge badge-stage"
-              style={{ ['--stg' as string]: stageVarColor(topStage) }}
-            >
-              <span className="dot" /> {stageLabel(topStage)}
-            </span>
-          )}
-          {phiCleared && (
-            <span className="badge badge-safe">
-              <ShieldCheck className="size-3" /> Safe to harvest
-            </span>
-          )}
-          <button
-            onClick={() => setDeleteCropConfirm(true)}
-            className="icon-btn"
-            title="Delete crop"
-          >
-            <Trash2 className="size-4" />
-          </button>
-        </div>
-      </div>
-
+          {/* Header */}
+          <SectionHeader
+            level={1}
+            icon={<CropAvatar name={crop.name} group={cropGroup?.name ?? null} size={48} />}
+            title={crop.name}
+            meta={`${cropGroup?.name ?? 'Uncategorized'} · ${varieties.length} ${
+              varieties.length === 1 ? 'variety' : 'varieties'
+            }`}
+            actions={
+              <>
+                {topStage && (
+                  <span
+                    className="badge badge-stage"
+                    style={{ ['--stg' as string]: stageVarColor(topStage) }}
+                  >
+                    <span className="dot" /> {stageLabel(topStage)}
+                  </span>
+                )}
+                {phiCleared && (
+                  <span className="badge badge-safe">
+                    <ShieldCheck className="size-3" /> Safe to harvest
+                  </span>
+                )}
+                <button
+                  onClick={() => setDeleteCropConfirm(true)}
+                  className="icon-btn"
+                  title="Delete crop"
+                >
+                  <Trash2 className="size-4" />
+                </button>
+              </>
+            }
+          />
+        </>
+      }
+    >
       {/* PHI bar (loud) — only while the fruit is in season */}
       {phiFlag && (
         <div className="phi-bar">
@@ -404,7 +411,7 @@ export function CropDetailView({
       )}
 
       {/* Metric trio */}
-      <div className="metric-row mb-[var(--gap)]">
+      <div className="metric-row">
         <div className="metric">
           <div className="m-k">Growth stage</div>
           <div className="m-v" style={{ color: topStage ? stageVarColor(topStage) : 'var(--ink)' }}>
@@ -471,40 +478,42 @@ export function CropDetailView({
 
       {/* Growth timeline */}
       {topStage && (
-        <div className="card panel mb-[var(--gap)]">
-          <div className="panel-h">
-            <Sprout className="size-[18px] text-leaf" />
-            <h3>Growth timeline</h3>
-            <span className="ph-meta">{cropGroup?.name ?? 'stages'}</span>
-          </div>
+        <div className="card panel">
+          <SectionHeader
+            inCard
+            icon={<Sprout className="size-4 text-leaf" />}
+            title="Growth timeline"
+            meta={cropGroup?.name ?? 'stages'}
+          />
           <StageTimeline stages={stageInfos} currentIndex={currentIndex} />
         </div>
       )}
 
       {/* Protection coverage */}
-      <div className="card panel mb-[var(--gap)]">
-        <div className="panel-h">
-          <Gauge className="size-[18px] text-leaf" />
-          <h3>Protection coverage</h3>
-          <span className="ph-meta">
-            {bothManual
+      <div className="card panel">
+        <SectionHeader
+          inCard
+          icon={<Gauge className="size-4 text-leaf" />}
+          title="Protection coverage"
+          meta={
+            bothManual
               ? 'manual'
               : resting
                 ? 'resting'
                 : worst === 'untracked'
                   ? 'no spray history'
-                  : covLabel(worst as 'red' | 'yellow' | 'green')}
-          </span>
-        </div>
+                  : covLabel(worst as 'red' | 'yellow' | 'green')
+          }
+        />
 
         {/* Monitoring mode — track coverage or treat as-needed, per type */}
-        <p className="mb-2.5 text-[12px] leading-snug text-ink-3">
+        <p className="mb-3 text-xs leading-snug text-ink-3">
           <span className="font-semibold text-ink-2">Monitored</span> tracks spray coverage and
           flags this crop on the dashboard when it lapses.{' '}
           <span className="font-semibold text-ink-2">As needed</span> means you treat it manually —
           it&apos;s never shown as due.
         </p>
-        <div className="mb-[18px] grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
           <MonitorRow
             label="Fungicide"
             icon={Beaker}
@@ -521,7 +530,7 @@ export function CropDetailView({
           />
         </div>
 
-        <div className="grid grid-cols-1 gap-[22px] sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
           {trackFung ? (
             <CoverageMeter cov={fungCoverage} type="fungicide" resting={resting} />
           ) : (
@@ -542,28 +551,22 @@ export function CropDetailView({
 
       {/* Harvest value */}
       {!noHarvestValue && (
-        <div className="mb-[var(--gap)]">
-          <HarvestValueEditor
-            cropId={crop.id}
-            pricePerLb={crop.price_market_per_lb}
-            avgLbPerCount={crop.avg_lb_per_count}
-          />
-        </div>
+        <HarvestValueEditor
+          cropId={crop.id}
+          pricePerLb={crop.price_market_per_lb}
+          avgLbPerCount={crop.avg_lb_per_count}
+        />
       )}
 
       {/* Treatment history + Varieties */}
-      <div
-        className="detail-grid"
-        style={varieties.length === 0 ? { gridTemplateColumns: '1fr' } : undefined}
-      >
+      <div className={`detail-grid${varieties.length === 0 ? ' is-single' : ''}`}>
         <div className="card panel">
-          <div className="panel-h">
-            <FlaskConical className="size-[18px] text-warn" />
-            <h3>Treatment history</h3>
-            <span className="ph-meta">
-              {recentSprays.length} application{recentSprays.length === 1 ? '' : 's'}
-            </span>
-          </div>
+          <SectionHeader
+            inCard
+            icon={<FlaskConical className="size-4 text-warn" />}
+            title="Treatment history"
+            meta={`${recentSprays.length} application${recentSprays.length === 1 ? '' : 's'}`}
+          />
           {recentSprays.length ? (
             <div className="spray-list">
               {recentSprays.map((spray) => (
@@ -609,7 +612,7 @@ export function CropDetailView({
                       </div>
                     )}
                     {spray.notes && (
-                      <div className="mt-2 flex gap-1.5 text-[12.5px] text-ink-2">
+                      <div className="mt-2 flex gap-2 text-xs text-ink-2">
                         <Info className="mt-0.5 size-3.5 shrink-0 text-ink-3" /> {spray.notes}
                       </div>
                     )}
@@ -619,7 +622,7 @@ export function CropDetailView({
               ))}
             </div>
           ) : (
-            <div className="py-5 text-center text-[13px] text-ink-3">
+            <div className="py-5 text-center text-sm text-ink-3">
               No treatments logged for {crop.name}.
             </div>
           )}
@@ -627,17 +630,20 @@ export function CropDetailView({
 
         {varieties.length > 0 && (
           <div className="card panel">
-            <div className="panel-h">
-              <Sprout className="size-[18px] text-leaf" />
-              <h3>Varieties</h3>
-              <button
-                onClick={() => setAddVarietyOpen(true)}
-                className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-leaf hover:text-leaf-dk"
-              >
-                <Plus className="size-3" /> Add
-              </button>
-            </div>
-            <div className="space-y-1.5">
+            <SectionHeader
+              inCard
+              icon={<Sprout className="size-4 text-leaf" />}
+              title="Varieties"
+              actions={
+                <button
+                  onClick={() => setAddVarietyOpen(true)}
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-leaf hover:text-leaf-dk"
+                >
+                  <Plus className="size-3" /> Add
+                </button>
+              }
+            />
+            <div className="space-y-2">
               {varieties.map((v) => {
                 const vs = stageByVariety.get(v.id);
                 const stage = vs?.stage ?? 'dormant';
@@ -658,7 +664,7 @@ export function CropDetailView({
                     key={v.id}
                     className="group/variety overflow-hidden rounded-lg bg-card ring-1 ring-border/60"
                   >
-                    <summary className="flex cursor-pointer list-none select-none items-center gap-2.5 px-3 py-2 transition-colors hover:bg-muted/40 [&::-webkit-details-marker]:hidden">
+                    <summary className="flex cursor-pointer list-none select-none items-center gap-3 px-3 py-2 transition-colors hover:bg-muted/40 [&::-webkit-details-marker]:hidden">
                       <RefImage
                         paths={imgPaths}
                         alt={v.name}
@@ -670,7 +676,7 @@ export function CropDetailView({
                       <div className="min-w-0 flex-1">
                         <span className="block truncate text-xs font-medium">{v.name}</span>
                         {profile && (
-                          <span className="block truncate text-[10px] text-muted-foreground/60">
+                          <span className="block truncate text-xs text-muted-foreground/60">
                             {profile.harvestWindow}
                           </span>
                         )}
@@ -684,7 +690,7 @@ export function CropDetailView({
                         className="shrink-0"
                       >
                         <span
-                          className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-semibold ring-1 transition-all hover:ring-2 ${sc.bg} ${sc.text} ${sc.ring}`}
+                          className={`inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-xs font-semibold ring-1 transition-all hover:ring-2 ${sc.bg} ${sc.text} ${sc.ring}`}
                         >
                           {isBloom && <Flower2 className="size-2.5" />}
                           {formatStage(stage)}
@@ -694,24 +700,24 @@ export function CropDetailView({
                     </summary>
                     <div className="space-y-3 border-t border-border/40 px-3 pb-3">
                       {profile ? (
-                        <div className="space-y-2.5 pt-3 text-[12px] leading-snug">
+                        <div className="space-y-3 pt-3 text-xs leading-snug">
                           <p className="text-foreground/80">{profile.description}</p>
                           <div>
-                            <p className="mb-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground/60">
+                            <p className="mb-0.5 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground/60">
                               Flavor
                             </p>
                             <p className="text-foreground/80">{profile.taste}</p>
                           </div>
-                          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
                             <div>
-                              <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground/60">
+                              <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground/60">
                                 Harvest
                               </p>
                               <p className="text-foreground/80">{profile.harvestWindow}</p>
                             </div>
                             {profile.chillHours && (
                               <div>
-                                <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground/60">
+                                <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground/60">
                                   Chill hrs
                                 </p>
                                 <p className="text-foreground/80">{profile.chillHours}</p>
@@ -719,7 +725,7 @@ export function CropDetailView({
                             )}
                             {profile.diseaseNotes && (
                               <div className="col-span-2">
-                                <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground/60">
+                                <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground/60">
                                   Disease notes
                                 </p>
                                 <p className="leading-snug text-foreground/80">
@@ -730,12 +736,12 @@ export function CropDetailView({
                           </div>
                           {profile.features.length > 0 && (
                             <div>
-                              <p className="mb-1 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground/60">
+                              <p className="mb-1 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground/60">
                                 Key features
                               </p>
-                              <ul className="space-y-0.5 text-[11px] leading-snug text-foreground/75">
+                              <ul className="space-y-0.5 text-xs leading-snug text-foreground/75">
                                 {profile.features.map((f, i) => (
-                                  <li key={i} className="flex gap-1.5">
+                                  <li key={i} className="flex gap-2">
                                     <span className="shrink-0 text-leaf/60">•</span>
                                     <span>{f}</span>
                                   </li>
@@ -745,7 +751,7 @@ export function CropDetailView({
                           )}
                         </div>
                       ) : (
-                        <p className="pt-3 text-[12px] italic text-muted-foreground/60">
+                        <p className="pt-3 text-xs italic text-muted-foreground/60">
                           No catalog profile for this variety yet.
                         </p>
                       )}
@@ -756,7 +762,7 @@ export function CropDetailView({
                             e.preventDefault();
                             setDeleteConfirm({ id: v.id, name: v.name });
                           }}
-                          className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/50 transition-colors hover:text-destructive"
+                          className="inline-flex items-center gap-1 text-xs text-muted-foreground/50 transition-colors hover:text-destructive"
                         >
                           <Trash2 className="size-3" /> Remove variety
                         </button>
@@ -772,7 +778,7 @@ export function CropDetailView({
 
       {/* Add variety inline (when none) */}
       {varieties.length === 0 && (
-        <div className="mt-[var(--gap)] text-center">
+        <div className="text-center">
           <button onClick={() => setAddVarietyOpen(true)} className="btn">
             <Plus className="size-4" /> Add a variety
           </button>
@@ -780,13 +786,11 @@ export function CropDetailView({
       )}
 
       {/* Problems & disease reference */}
-      <div className="mt-[var(--gap)]">
-        <CropProblemsPanel cropGroupName={cropGroup?.name ?? null} />
-      </div>
+      <CropProblemsPanel cropGroupName={cropGroup?.name ?? null} />
 
       {/* Labeled products */}
       {labeledProducts.length > 0 && (
-        <details className="info-banner mt-[var(--gap)]">
+        <details className="info-banner">
           <summary>
             <FlaskConical className="size-4 !text-leaf" />
             <b>Labeled products</b>
@@ -794,7 +798,7 @@ export function CropDetailView({
               {labeledProducts.length} for {cropGroup?.name ?? 'this crop'}
             </span>
           </summary>
-          <div className="ib-body space-y-1.5">
+          <div className="ib-body space-y-2">
             {labeledProducts.map((lp, i) => {
               const isExpanded = expandedProduct === i;
               const dose = lp.rate_max
@@ -805,7 +809,7 @@ export function CropDetailView({
                 <div key={i} className="overflow-hidden rounded-lg bg-card ring-1 ring-border/60">
                   <button
                     onClick={() => setExpandedProduct(isExpanded ? null : i)}
-                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-muted/40"
+                    className="flex w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-muted/40"
                   >
                     <div className="grid size-6 shrink-0 place-items-center rounded-md bg-paper-2">
                       <FlaskConical className="size-3 text-ink-2" />
@@ -819,7 +823,7 @@ export function CropDetailView({
                     />
                   </button>
                   {isExpanded && (
-                    <div className="space-y-2 px-3 pb-3 text-[11px] leading-relaxed">
+                    <div className="space-y-2 px-3 pb-3 text-xs leading-relaxed">
                       <div>
                         <p className="mb-0.5 font-semibold text-foreground/80">
                           Active ingredients
@@ -854,14 +858,14 @@ export function CropDetailView({
                         )}
                       </div>
                       {lp.restrictions_text && (
-                        <div className="rounded-lg bg-paper-2 px-2.5 py-2 ring-1 ring-border/60">
+                        <div className="rounded-lg bg-paper-2 px-3 py-2 ring-1 ring-border/60">
                           <p className="mb-0.5 font-semibold text-foreground/80">Restrictions</p>
                           <p className="text-muted-foreground">{lp.restrictions_text}</p>
                         </div>
                       )}
                       <Link
                         href={`/products/${lp.product.id}`}
-                        className="inline-flex items-center gap-1 text-[11px] font-medium text-leaf hover:text-leaf-dk"
+                        className="inline-flex items-center gap-1 text-xs font-medium text-leaf hover:text-leaf-dk"
                       >
                         View full product details <Shield className="size-2.5" />
                       </Link>
@@ -877,7 +881,7 @@ export function CropDetailView({
       {/* Dialogs */}
       <FormDialog open={addVarietyOpen} onOpenChange={setAddVarietyOpen} title="Add Variety">
         <form action={addVariety} className="mt-1 space-y-4">
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="var-name" className="text-xs font-medium text-muted-foreground">
               Name
             </Label>
@@ -914,7 +918,7 @@ export function CropDetailView({
         title="Set Growth Stage"
         className="sm:max-w-md"
       >
-        <div className="mt-1 max-h-[60vh] space-y-1.5 overflow-y-auto pb-2 pr-1">
+        <div className="mt-1 max-h-[60vh] space-y-2 overflow-y-auto pb-2 pr-1">
           {stageInfos.map((info) => {
             const s = info.stage;
             const isCurrent = stageEdit?.current === s;
@@ -940,14 +944,14 @@ export function CropDetailView({
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-semibold">{info.label}</span>
                       {isCurrent && (
-                        <span className="rounded-full bg-leaf-lt px-1.5 py-0 text-[10px] font-semibold text-leaf-dk">
+                        <span className="rounded-full bg-leaf-lt px-2 py-0 text-xs font-semibold text-leaf-dk">
                           Current
                         </span>
                       )}
                       {isBloom && !isCurrent && <Flower2 className="size-3 text-bloom" />}
                     </div>
                     {info.description && (
-                      <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+                      <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                         {info.description}
                       </p>
                     )}
@@ -976,7 +980,7 @@ export function CropDetailView({
         onConfirm={deleteCrop}
         loading={saving}
       />
-    </div>
+    </PageShell>
   );
 }
 
@@ -1014,10 +1018,7 @@ function HarvestValueEditor({
   }
   return (
     <section className="card panel space-y-3">
-      <div className="panel-h !mb-0">
-        <Info className="size-[18px] text-ink-3" />
-        <h3>Harvest value</h3>
-      </div>
+      <SectionHeader icon={<Info className="size-4 text-ink-3" />} title="Harvest value" />
       <MoneyPerLbField value={pricePerLb} onSave={(v) => save({ price_market_per_lb: v })} />
       <ContainerCalc onApply={(perLb) => save({ price_market_per_lb: perLb })} />
       <WeightEachField value={avgLbPerCount} onSave={(v) => save({ avg_lb_per_count: v })} />
@@ -1045,10 +1046,10 @@ function MoneyPerLbField({
   }
   return (
     <label className="block">
-      <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/60">
+      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground/60">
         Price per pound
       </span>
-      <span className="mt-1 flex items-center gap-1 rounded-lg bg-card px-2.5 py-2 ring-1 ring-border/60 focus-within:ring-2 focus-within:ring-ring/50">
+      <span className="mt-1 flex items-center gap-1 rounded-lg bg-card px-3 py-2 ring-1 ring-border/60 focus-within:ring-2 focus-within:ring-ring/50">
         <span className="text-sm text-muted-foreground">$</span>
         <input
           type="text"
@@ -1077,17 +1078,17 @@ function ContainerCalc({ onApply }: { onApply: (perLb: number) => void }) {
   const lb = !isNaN(q) && q > 0 ? toLbDetail(q, unit) : null;
   const perLb = lb != null && !isNaN(p) && p >= 0 ? p / lb : null;
   return (
-    <div className="space-y-2 rounded-lg bg-muted/40 p-2.5 ring-1 ring-border/50">
-      <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/60">
+    <div className="space-y-2 rounded-lg bg-muted/40 p-3 ring-1 ring-border/50">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground/60">
         Set from a store price
       </p>
-      <div className="flex flex-wrap items-center gap-1.5 text-sm">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
         <input
           inputMode="decimal"
           value={qty}
           onChange={(e) => setQty(e.target.value)}
           placeholder="16"
-          className="h-8 w-12 rounded-md bg-card px-1.5 text-right tabular-nums ring-1 ring-border/60 focus:outline-none focus:ring-2 focus:ring-ring/50"
+          className="h-8 w-12 rounded-md bg-card px-2 text-right tabular-nums ring-1 ring-border/60 focus:outline-none focus:ring-2 focus:ring-ring/50"
         />
         <select
           value={unit}
@@ -1101,7 +1102,7 @@ function ContainerCalc({ onApply }: { onApply: (perLb: number) => void }) {
           ))}
         </select>
         <span className="text-muted-foreground/70">for</span>
-        <span className="flex h-8 items-center rounded-md bg-card px-1.5 ring-1 ring-border/60 focus-within:ring-2 focus-within:ring-ring/50">
+        <span className="flex h-8 items-center rounded-md bg-card px-2 ring-1 ring-border/60 focus-within:ring-2 focus-within:ring-ring/50">
           <span className="text-xs text-muted-foreground">$</span>
           <input
             inputMode="decimal"
@@ -1158,11 +1159,11 @@ function WeightEachField({
   }
   return (
     <label className="block">
-      <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/60">
+      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground/60">
         Avg weight each
       </span>
-      <span className="mt-1 flex items-center gap-1.5">
-        <span className="flex flex-1 items-center rounded-lg bg-card px-2.5 py-2 ring-1 ring-border/60 focus-within:ring-2 focus-within:ring-ring/50">
+      <span className="mt-1 flex items-center gap-2">
+        <span className="flex flex-1 items-center rounded-lg bg-card px-3 py-2 ring-1 ring-border/60 focus-within:ring-2 focus-within:ring-ring/50">
           <input
             type="text"
             inputMode="decimal"
@@ -1179,7 +1180,7 @@ function WeightEachField({
         <select
           value={unit}
           onChange={(e) => setUnit(e.target.value)}
-          className="h-[38px] rounded-lg bg-card px-1.5 text-xs ring-1 ring-border/60 focus:outline-none"
+          className="h-10 rounded-lg bg-card px-2 text-xs ring-1 ring-border/60 focus:outline-none"
         >
           {WEIGHT_UNITS.map((u) => (
             <option key={u} value={u}>
@@ -1188,7 +1189,7 @@ function WeightEachField({
           ))}
         </select>
       </span>
-      <span className="mt-1 block text-[10px] text-muted-foreground/50">
+      <span className="mt-1 block text-xs text-muted-foreground/50">
         Used to value picks logged by the count (e.g. &ldquo;3 ct&rdquo;).
       </span>
     </label>

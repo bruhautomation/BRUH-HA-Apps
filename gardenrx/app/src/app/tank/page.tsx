@@ -17,6 +17,7 @@ import { fetchWeather, findBestSprayWindows, getCurrentSprayRating } from '@/lib
 import { applyPhenology } from '@/lib/phenology';
 import { SprayPlanner } from '@/components/spray-planner/index';
 import { SectionTabs, SPRAY_TABS } from '@/components/shell/section-tabs';
+import { PageShell } from '@/components/ui/page-shell';
 
 export const dynamic = 'force-dynamic';
 
@@ -69,39 +70,33 @@ export default async function TankPage(props: PageProps<'/tank'>) {
     .filter((n) => Number.isInteger(n) && validCropIds.has(n));
 
   return (
-    <div className="page">
-      <div className="section-title">
-        <h2>Spray</h2>
-        <span className="meta">Tank-mix builder</span>
-      </div>
-      <div className="mx-auto max-w-2xl">
-        <SectionTabs tabs={SPRAY_TABS} />
-        <SprayPlanner
-          crops={crops}
-          varieties={varieties}
-          varietyStages={effectiveStages}
-          products={products}
-          cropGroups={cropGroups}
-          cropUses={cropUses}
-          tankMixRules={tankMixRules}
-          ingredientMap={ingredientMap}
-          sprayEvents={sprayEvents}
-          sprayEventProducts={sprayEventProducts}
-          sprayEventCrops={sprayEventCrops}
-          precipHistory={weather?.precipHistory ?? []}
-          weatherCurrent={weather?.current ?? null}
-          weatherHourly={weather?.hourly ?? []}
-          weatherDaily={weather?.daily ?? []}
-          sprayWindows={weather ? findBestSprayWindows(weather.hourly, 5) : []}
-          currentRating={weather ? getCurrentSprayRating(weather.current, weather.hourly) : null}
-          queuedSprays={queuedSprays}
-          queuedSprayProducts={queuedSprayProducts}
-          queuedSprayCrops={queuedSprayCrops}
-          inventoryProductIds={inventoryProductIds}
-          inventoryData={inventory}
-          initialCropIds={initialCropIds}
-        />
-      </div>
-    </div>
+    <PageShell width="narrow" title="Spray" meta="Tank-mix builder">
+      <SectionTabs tabs={SPRAY_TABS} />
+      <SprayPlanner
+        crops={crops}
+        varieties={varieties}
+        varietyStages={effectiveStages}
+        products={products}
+        cropGroups={cropGroups}
+        cropUses={cropUses}
+        tankMixRules={tankMixRules}
+        ingredientMap={ingredientMap}
+        sprayEvents={sprayEvents}
+        sprayEventProducts={sprayEventProducts}
+        sprayEventCrops={sprayEventCrops}
+        precipHistory={weather?.precipHistory ?? []}
+        weatherCurrent={weather?.current ?? null}
+        weatherHourly={weather?.hourly ?? []}
+        weatherDaily={weather?.daily ?? []}
+        sprayWindows={weather ? findBestSprayWindows(weather.hourly, 5) : []}
+        currentRating={weather ? getCurrentSprayRating(weather.current, weather.hourly) : null}
+        queuedSprays={queuedSprays}
+        queuedSprayProducts={queuedSprayProducts}
+        queuedSprayCrops={queuedSprayCrops}
+        inventoryProductIds={inventoryProductIds}
+        inventoryData={inventory}
+        initialCropIds={initialCropIds}
+      />
+    </PageShell>
   );
 }

@@ -8,6 +8,7 @@ import { COVERAGE_DEFAULTS } from '@/config/thresholds';
 import { Textarea } from '@/components/ui/textarea';
 import { SprayWindowTimeline } from '@/components/spray-window-timeline';
 import { CloudRain, Shield, Timer, CalendarClock } from 'lucide-react';
+import { SectionHeader } from '@/components/ui/section-header';
 
 export function SprayTimingPanel({
   plan,
@@ -79,16 +80,14 @@ export function SprayTimingPanel({
         <div>
           <div className="flex items-baseline gap-2 mb-2">
             <CalendarClock className="w-3.5 h-3.5 text-leaf shrink-0 self-center" />
-            <h3 className="text-[11px] font-semibold tracking-[0.18em] uppercase text-foreground/70">
-              Next 72 hours
-            </h3>
+            <SectionHeader as="h3" title="Next 72 hours" />
           </div>
           <SprayWindowTimeline hourly={weatherHourly} />
         </div>
       )}
 
       {/* Single check list — rain-fast / coverage / harvest — no per-item cards */}
-      <dl className="space-y-2.5 text-[12px]">
+      <dl className="space-y-3 text-xs">
         <div className="flex items-baseline gap-2">
           <CloudRain
             className={`w-3.5 h-3.5 shrink-0 self-center ${rainFastOk ? 'text-leaf' : 'text-warn'}`}
@@ -147,7 +146,7 @@ export function SprayTimingPanel({
       {/* Session volume — how many gallons of mix will actually be sprayed.
           This gets multiplied by each product's rate to compute real product-used
           and cost numbers. Defaults to the user's sprayer preference. */}
-      <div className="flex items-baseline gap-2 text-[12px]">
+      <div className="flex items-baseline gap-2 text-xs">
         <label htmlFor="spray-volume" className="font-medium text-foreground shrink-0">
           Volume
         </label>
@@ -175,14 +174,14 @@ export function SprayTimingPanel({
       <div className="flex gap-2">
         <button
           onClick={onBack}
-          className="flex-1 rounded-xl h-11 font-medium text-sm transition-colors ring-1 ring-border hover:bg-muted"
+          className="flex-1 rounded-xl h-10 font-medium text-sm transition-colors ring-1 ring-border hover:bg-muted"
         >
           Back
         </button>
         <button
           onClick={() => onLog(volumeGallons)}
           disabled={hasBlocks || logging}
-          className="flex-[2] bg-emerald-700 text-white hover:bg-emerald-800 disabled:opacity-50 rounded-xl h-11 font-medium text-sm transition-colors"
+          className="flex-[2] bg-emerald-700 text-white hover:bg-emerald-800 disabled:opacity-50 rounded-xl h-10 font-medium text-sm transition-colors"
         >
           {logging ? 'Logging...' : 'Log Spray Now'}
         </button>

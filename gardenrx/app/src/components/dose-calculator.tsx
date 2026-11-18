@@ -30,7 +30,7 @@ export function DoseCalculator({
   const tankSizes = [1, 2, 4] as const;
 
   return (
-    <div className="mt-3 rounded-lg bg-parchment-100/50 p-3 ring-1 ring-border/40 space-y-2.5">
+    <div className="mt-3 rounded-lg bg-parchment-100/50 p-3 ring-1 ring-border/40 space-y-3">
       <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground/60">
         Dose Calculator
       </p>
@@ -57,7 +57,7 @@ export function DoseCalculator({
       {/* Tank size pills */}
       <div className="space-y-1">
         <label className="text-xs text-muted-foreground">Tank</label>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
           {tankSizes.map((size) => (
             <button
               key={size}
@@ -111,7 +111,7 @@ export function DoseCalculator({
       </div>
 
       {/* Dose result */}
-      <div className="rounded-lg bg-card p-2.5 ring-1 ring-emerald-200/40">
+      <div className="rounded-lg bg-card p-3 ring-1 ring-emerald-200/40">
         <p className="text-xs text-muted-foreground">Add</p>
         <p className="font-heading font-semibold text-emerald-800">{dose.bestDisplay}</p>
         <p className="text-xs text-muted-foreground">

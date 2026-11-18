@@ -292,7 +292,7 @@ export function CropAvatar({
   const color = cropIconColor(name, group);
   return (
     <div
-      className={`grid shrink-0 place-items-center rounded-[11px] ${className}`}
+      className={`grid shrink-0 place-items-center rounded-md ${className}`}
       style={{
         width: size,
         height: size,

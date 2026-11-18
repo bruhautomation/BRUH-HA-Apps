@@ -23,7 +23,7 @@
  * is blank the day it is down.
  */
 
-const CARD_VERSION = '0.1.5';
+const CARD_VERSION = '0.2.0';
 const DOMAIN = 'gardenrx';
 
 console.info(
@@ -81,46 +81,46 @@ const css = (morph) => `
     --g-text: ${morph ? 'var(--text)' : 'var(--primary-text-color, #14202b)'};
     --g-muted: ${morph ? 'var(--muted)' : 'var(--secondary-text-color, #5b6b79)'};
     --g-line: ${morph ? 'var(--line)' : 'var(--divider-color, #d9e0e6)'};
-    --g-accent: ${morph ? 'var(--lime)' : 'var(--success-color, #1f7a4d)'};
-    --g-on-accent: ${morph ? 'var(--bg, #111)' : '#fff'};
+    --g-accent: ${morph ? 'var(--lime)' : 'var(--primary-color, #03a9f4)'};
+    --g-on-accent: ${morph ? 'var(--bg, #111)' : 'var(--text-primary-color, #fff)'};
     --g-warn: ${morph ? 'var(--amber)' : 'var(--warning-color, #b7791f)'};
     --g-bad: ${morph ? 'var(--rose)' : 'var(--error-color, #c62828)'};
     font-family: ${morph ? "'Manrope', sans-serif" : 'inherit'}; color: var(--g-text); }
-  .wrap { padding: ${morph ? '4px 2px' : '16px'}; display: grid; gap: 14px; }
-  .title { font-weight: 600; font-size: 15px; }
+  .wrap { padding: ${morph ? '4px 2px' : '16px'}; display: grid; gap: 16px; }
+  .title { font-weight: 600; font-size: 16px; }
   .hero { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
   .big { font-family: ${morph ? "'Bricolage Grotesque', sans-serif" : 'inherit'};
     font-size: 30px; font-weight: 700; line-height: 1; }
-  .muted { color: var(--g-muted); font-size: 13px; }
+  .muted { color: var(--g-muted); font-size: 12px; }
   .list { display: grid; gap: 8px; }
   .row { display: flex; align-items: center; gap: 10px; justify-content: space-between; min-height: 32px; }
   .row .grow { flex: 1; min-width: 0; }
   .name { font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
   .amt { white-space: nowrap; flex-shrink: 0; }
-  .bar { height: 6px; border-radius: 3px; background: var(--g-sunk); overflow: hidden; margin-top: 4px; }
-  .bar > i { display: block; height: 100%; background: var(--g-accent); border-radius: 3px; }
+  .bar { height: 6px; border-radius: 8px; background: var(--g-sunk); overflow: hidden; margin-top: 4px; }
+  .bar > i { display: block; height: 100%; background: var(--g-accent); border-radius: 8px; }
   .bar.low > i { background: var(--g-bad); }
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-  .chip { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--g-sunk); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { font-size: 12px; padding: 4px 8px; border-radius: 999px; background: var(--g-sunk); }
   .chip.bad { background: color-mix(in srgb, var(--g-bad) 16%, transparent); color: var(--g-bad); }
   .section { display: grid; gap: 8px; }
   .label { font-size: 12px; font-weight: 600; color: var(--g-muted); letter-spacing: .02em; }
   button, select, input { font: inherit; font-size: 14px; color: var(--g-text); }
-  button { min-height: 44px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--g-line);
+  button { min-height: 44px; padding: 0 16px; border-radius: 8px; font-weight: 600; border: 1px solid var(--g-line);
     background: var(--g-surface); cursor: pointer; }
   button.primary { background: var(--g-accent); border-color: var(--g-accent); color: var(--g-on-accent); font-weight: 600; }
   button.armed { background: var(--g-bad); border-color: var(--g-bad); color: #fff; }
   button:disabled { opacity: .55; cursor: default; }
-  select, input { min-height: 44px; padding: 0 10px; border-radius: 10px; border: 1px solid var(--g-line);
+  select, input { min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--g-line);
     background: var(--g-surface); min-width: 0; }
   @media (pointer: coarse) { select, input { font-size: 16px; } }
   .form { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
   .form .wide { grid-column: 1 / -1; }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; }
-  .err { color: var(--g-bad); font-size: 13px; }
-  .ok { color: var(--g-accent); font-size: 13px; }
-  .warn { color: var(--g-warn); font-size: 13px; }
-  .empty { color: var(--g-muted); font-size: 13px; }
+  .err { color: var(--g-bad); font-size: 12px; }
+  .ok { color: var(--g-accent); font-size: 12px; }
+  .warn { color: var(--g-warn); font-size: 12px; }
+  .empty { color: var(--g-muted); font-size: 12px; }
 `;
 
 class GardenCard extends HTMLElement {

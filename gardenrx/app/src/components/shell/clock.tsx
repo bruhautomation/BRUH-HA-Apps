@@ -35,7 +35,7 @@ export function Clock({ withDate = false, className }: { withDate?: boolean; cla
     <div
       className={
         className ??
-        'hidden min-[420px]:inline-flex items-center gap-1.5 font-mono text-sm font-semibold text-ink-2 tabular-nums whitespace-nowrap select-none'
+        'hidden sm:inline-flex items-center gap-2 font-mono text-sm font-semibold text-ink-2 tabular-nums whitespace-nowrap select-none'
       }
       aria-label="Current time"
       suppressHydrationWarning

@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { CloudRain, Droplets, ChevronRight } from 'lucide-react';
 import type { DailyRain, RainSummary } from '@/lib/rainfall';
 import { DROUGHT_META, WATERING_META, wateringAdvice } from '@/lib/rainfall';
+import { SectionHeader } from '@/components/ui/section-header';
 
 /** Weather's rainfall card: a watering call-to-action (rain vs. evapotranspiration
  *  demand), 30-day daily bars, week/month totals, drought status. */
@@ -30,15 +31,13 @@ export function RainTracker({
 
   return (
     <section className="rounded-2xl bg-card ring-1 ring-black/[0.05] shadow-sm px-4 py-3">
-      <div className="flex items-center justify-between mb-2.5">
-        <div className="flex items-center gap-1.5">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
           <CloudRain className="w-4 h-4 text-sky-500" />
-          <h2 className="text-[10px] font-semibold tracking-[0.18em] uppercase text-foreground/60">
-            Rainfall
-          </h2>
+          <SectionHeader as="h2" title="Rainfall" />
         </div>
         <span
-          className={`text-[10px] font-semibold tracking-wide uppercase px-2 py-0.5 rounded-full ring-1 ${meta.badge}`}
+          className={`text-xs font-semibold tracking-wide uppercase px-2 py-0.5 rounded-full ring-1 ${meta.badge}`}
         >
           {meta.label}
         </span>
@@ -46,12 +45,12 @@ export function RainTracker({
 
       {/* watering call-to-action — rain vs. evapotranspiration demand */}
       <div
-        className={`mb-3 flex items-start gap-2.5 rounded-lg px-3 py-2 ring-1 ${adviceMeta.badge}`}
+        className={`mb-3 flex items-start gap-3 rounded-lg px-3 py-2 ring-1 ${adviceMeta.badge}`}
       >
         <Droplets className="w-4 h-4 mt-0.5 shrink-0" />
         <div className="min-w-0">
-          <p className="text-[13px] font-semibold leading-tight">{advice.headline}</p>
-          <p className="text-[11px] leading-snug mt-0.5 opacity-90">{advice.detail}</p>
+          <p className="text-sm font-semibold leading-tight">{advice.headline}</p>
+          <p className="text-xs leading-snug mt-0.5 opacity-90">{advice.detail}</p>
         </div>
       </div>
 
@@ -69,7 +68,7 @@ export function RainTracker({
           </span>
           <span className="text-xs text-muted-foreground">in · 30 days</span>
         </div>
-        <div className="ml-auto text-right text-[11px] text-muted-foreground/70">
+        <div className="ml-auto text-right text-xs text-muted-foreground/70">
           {summary.daysSinceRain === null
             ? 'no rain logged'
             : summary.daysSinceRain === 0
@@ -96,14 +95,14 @@ export function RainTracker({
           );
         })}
       </div>
-      <div className="flex justify-between mt-1 text-[9px] text-muted-foreground/60">
+      <div className="flex justify-between mt-1 text-xs text-muted-foreground/60">
         <span>{fmtDay(daily[0].date)}</span>
         <span>{fmtDay(daily[midIdx].date)}</span>
         <span>Today</span>
       </div>
 
       {summary.wettest && summary.wettest.inches > 0 && (
-        <p className="text-[11px] text-muted-foreground/70 mt-2">
+        <p className="text-xs text-muted-foreground/70 mt-2">
           Wettest day: {summary.wettest.inches.toFixed(2)}″ on {fmtDay(summary.wettest.date)}.
         </p>
       )}
@@ -129,10 +128,10 @@ export function RainSummaryLine({
   return (
     <Link
       href="/weather"
-      className={`flex min-h-11 items-center gap-2.5 rounded-lg px-3 py-2 ring-1 ${WATERING_META[advice.status].badge}`}
+      className={`flex min-h-10 items-center gap-3 rounded-lg px-3 py-2 ring-1 ${WATERING_META[advice.status].badge}`}
     >
       <Droplets className="w-4 h-4 shrink-0" />
-      <span className="min-w-0 flex-1 text-[14px] leading-snug">
+      <span className="min-w-0 flex-1 text-sm leading-snug">
         <span className="font-semibold">{advice.headline}</span>
         <span className="opacity-80"> · {advice.rain7.toFixed(2)}″ rain this week</span>
       </span>

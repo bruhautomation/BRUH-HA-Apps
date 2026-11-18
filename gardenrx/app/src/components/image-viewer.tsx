@@ -82,20 +82,20 @@ export function ImageViewer({ src, alt, description, onClose }: Props) {
       {/* Popup card — matches app width */}
       <div className="w-full max-w-lg mx-4 max-h-[85vh] flex flex-col rounded-2xl overflow-hidden bg-card shadow-2xl ring-1 ring-black/[0.08]">
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/40 shrink-0">
-          <div className="flex items-center gap-1.5">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border/40 shrink-0">
+          <div className="flex items-center gap-2">
             <button
               onClick={zoomOut}
-              className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
             >
               <ZoomOut className="w-4 h-4" />
             </button>
-            <span className="text-muted-foreground/50 text-[11px] font-mono tabular-nums min-w-[2.5rem] text-center">
+            <span className="text-muted-foreground/50 text-xs font-mono tabular-nums min-w-[2.5rem] text-center">
               {Math.round(scale * 100)}%
             </span>
             <button
               onClick={zoomIn}
-              className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
             >
               <ZoomIn className="w-4 h-4" />
             </button>
@@ -105,7 +105,7 @@ export function ImageViewer({ src, alt, description, onClose }: Props) {
           </p>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
           >
             <X className="w-4 h-4" />
           </button>

@@ -51,12 +51,12 @@ export function QueuedSprayCard({ spray }: { spray: QueuedSpray }) {
         {/* Header */}
         <div className="flex items-start justify-between mb-3">
           <div className="flex items-center gap-2">
-            <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-emerald-100 ring-1 ring-emerald-200/50">
+            <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-100 ring-1 ring-emerald-200/50">
               <Crosshair className="w-3.5 h-3.5 text-emerald-700" />
             </div>
             <div>
               <p className="text-xs font-semibold text-emerald-800">Queued Spray</p>
-              <p className="text-[10px] text-emerald-700/70">{spray.crops.join(', ')}</p>
+              <p className="text-xs text-emerald-700/70">{spray.crops.join(', ')}</p>
             </div>
           </div>
           <button
@@ -70,11 +70,11 @@ export function QueuedSprayCard({ spray }: { spray: QueuedSpray }) {
         </div>
 
         {/* Products */}
-        <div className="flex flex-wrap gap-1.5 mb-3">
+        <div className="flex flex-wrap gap-2 mb-3">
           {spray.products.map((p, i) => (
             <span
               key={i}
-              className="rounded-full text-[11px] font-medium px-2 py-0.5 bg-leaf-tint text-leaf-dk ring-1 ring-leaf-lt"
+              className="rounded-full text-xs font-medium px-2 py-0.5 bg-leaf-tint text-leaf-dk ring-1 ring-leaf-lt"
             >
               {productLabel(p.brand, p.ingredients)}
               {p.rateApplied ? ` ${p.rateApplied} ${p.rateUnit}` : ''}
@@ -83,7 +83,7 @@ export function QueuedSprayCard({ spray }: { spray: QueuedSpray }) {
         </div>
 
         {/* Impact summary */}
-        <div className="space-y-1.5 text-sm mb-3">
+        <div className="space-y-2 text-sm mb-3">
           <div className="flex items-start gap-2">
             <Shield className="w-3.5 h-3.5 text-leaf mt-0.5 shrink-0" />
             <div className="text-xs">
@@ -122,7 +122,7 @@ export function QueuedSprayCard({ spray }: { spray: QueuedSpray }) {
         {/* Action — go to mix page to log */}
         <Link
           href="/tank"
-          className="flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 text-white px-3 py-2.5 text-xs font-medium transition-colors hover:bg-emerald-700"
+          className="flex items-center justify-center gap-2 rounded-lg bg-emerald-600 text-white px-3 py-3 text-xs font-medium transition-colors hover:bg-emerald-700"
         >
           Log Spray
           <ArrowRight className="w-3 h-3" />

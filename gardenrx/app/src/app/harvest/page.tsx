@@ -19,6 +19,7 @@ import { parseHarvestWindow } from '@/lib/harvest-windows';
 import { applyPhenology } from '@/lib/phenology';
 import { needsCoverageNow, cropStages } from '@/lib/coverage-season';
 import { VARIETY_CATALOG } from '@/lib/variety-catalog';
+import { PageShell } from '@/components/ui/page-shell';
 
 export const dynamic = 'force-dynamic';
 
@@ -165,32 +166,24 @@ export default async function HarvestPage() {
   }
 
   return (
-    <div className="page">
-      <div className="section-title">
-        <h2>Harvest</h2>
-        <span className="meta">Track your yield</span>
-      </div>
-      <div className="mx-auto max-w-3xl">
-        <HarvestStatusCards
-          doNotHarvest={doNotHarvest}
-          ready={ready}
-          developing={developing}
-          offSeason={offSeason}
-        />
-        <HarvestTracker
-          harvests={harvests ?? []}
-          varieties={varieties}
-          crops={crops}
-          cropGroups={cropGroups}
-          sprayCost={sprayCost}
-          phiSprays={phiSprays}
-        />
+    <PageShell title="Harvest" meta="Track your yield">
+      <HarvestStatusCards
+        doNotHarvest={doNotHarvest}
+        ready={ready}
+        developing={developing}
+        offSeason={offSeason}
+      />
+      <HarvestTracker
+        harvests={harvests ?? []}
+        varieties={varieties}
+        crops={crops}
+        cropGroups={cropGroups}
+        sprayCost={sprayCost}
+        phiSprays={phiSprays}
+      />
 
-        {/* Expected harvest windows — reference, kept at the bottom */}
-        <div className="mt-8 pb-24">
-          <HarvestCalendar crops={crops} varieties={varieties} cropGroups={cropGroups} />
-        </div>
-      </div>
-    </div>
+      {/* Expected harvest windows — reference, kept at the bottom */}
+      <HarvestCalendar crops={crops} varieties={varieties} cropGroups={cropGroups} />
+    </PageShell>
   );
 }

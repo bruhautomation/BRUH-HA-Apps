@@ -1,6 +1,8 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import Link from 'next/link';
+import { PageShell } from '@/components/ui/page-shell';
+import { SectionHeader } from '@/components/ui/section-header';
 import { ChevronLeft } from 'lucide-react';
 import { renderChangelog } from '@/lib/render-changelog';
 import { APP_VERSION } from '@/lib/version';
@@ -27,20 +29,21 @@ export default async function ChangelogPage() {
   const md = await loadChangelog();
 
   return (
-    <div className="page">
-      <Link href="/" className="btn btn-ghost mb-3.5">
-        <ChevronLeft className="size-4" /> Today
-      </Link>
+    <PageShell
+      width="narrow"
+      header={
+        <>
+          <Link href="/" className="btn btn-ghost self-start">
+            <ChevronLeft className="size-4" /> Today
+          </Link>
+          <SectionHeader level={1} title="Changelog" meta={`Release notes · v${APP_VERSION}`} />
+        </>
+      }
+    >
+      <article>{renderChangelog(md)}</article>
 
-      <div className="section-title">
-        <h2>Changelog</h2>
-        <span className="meta">Release notes · v{APP_VERSION}</span>
-      </div>
-
-      <article className="mx-auto max-w-3xl">{renderChangelog(md)}</article>
-
-      <footer className="mx-auto mt-10 max-w-3xl border-t border-border/40 pt-6 text-center">
-        <p className="text-[11px] text-muted-foreground/60">
+      <footer className="border-t border-border/40 pt-6 text-center">
+        <p className="text-xs text-muted-foreground/60">
           Format follows{' '}
           <a
             href="https://keepachangelog.com/en/1.1.0/"
@@ -61,6 +64,6 @@ export default async function ChangelogPage() {
           </a>
         </p>
       </footer>
-    </div>
+    </PageShell>
   );
 }

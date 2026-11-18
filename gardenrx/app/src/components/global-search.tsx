@@ -168,7 +168,7 @@ export function GlobalSearch({
                 <X className="w-4 h-4 text-muted-foreground/50" />
               </button>
             )}
-            <kbd className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">
+            <kbd className="rounded-md bg-muted px-2 py-0.5 text-xs font-mono text-muted-foreground">
               ESC
             </kbd>
           </div>
@@ -195,7 +195,7 @@ export function GlobalSearch({
                     <button
                       key={`${r.type}-${i}`}
                       onClick={() => navigate(r.href)}
-                      className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-emerald-50/60 transition-colors"
+                      className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-emerald-50/60 transition-colors"
                     >
                       <div
                         className={`flex items-center justify-center w-8 h-8 rounded-lg shrink-0 ${
@@ -212,9 +212,9 @@ export function GlobalSearch({
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">{r.title}</p>
-                        <p className="text-[11px] text-muted-foreground truncate">{r.subtitle}</p>
+                        <p className="text-xs text-muted-foreground truncate">{r.subtitle}</p>
                       </div>
-                      <span className="text-[10px] text-muted-foreground/50 shrink-0 capitalize">
+                      <span className="text-xs text-muted-foreground/50 shrink-0 capitalize">
                         {r.type}
                       </span>
                     </button>

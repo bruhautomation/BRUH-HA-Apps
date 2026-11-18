@@ -4,6 +4,7 @@ import type { HourlyForecast, DailyForecast, SprayRating } from '@/lib/weather';
 import { CropAvatar } from '@/components/crop-glyph';
 import { CovDot, RatingPill } from '@/components/status';
 import { SprayWindow3Day } from '@/components/today/spray-window-3day';
+import { SectionHeader } from '@/components/ui/section-header';
 
 export type AttentionItem = {
   cropId: number;
@@ -19,11 +20,8 @@ export function NeedsAttention({ items }: { items: AttentionItem[] }) {
   const shown = items.slice(0, 6);
   const extra = items.length - shown.length;
   return (
-    <section className="t-sec">
-      <div className="t-sec-h">
-        <h2>Needs attention</h2>
-        <span className="n">{items.length}</span>
-      </div>
+    <section className="sec">
+      <SectionHeader title="Needs attention" meta={items.length} />
       <div className="row-list">
         {shown.map((it) => (
           <Link key={it.cropId} href={`/tank?crops=${it.cropId}`} className="row-item">
@@ -55,10 +53,7 @@ export function NeedsAttention({ items }: { items: AttentionItem[] }) {
           </Link>
         ))}
         {extra > 0 && (
-          <Link
-            href="/crops"
-            className="row-item justify-center text-[13px] font-semibold text-ink-3"
-          >
+          <Link href="/crops" className="row-item justify-center text-sm font-semibold text-ink-3">
             +{extra} more
           </Link>
         )}
@@ -72,10 +67,8 @@ export type ComingUpItem = { cropId: number; cropName: string; type: string; day
 export function ComingUp({ items }: { items: ComingUpItem[] }) {
   if (items.length === 0) return null;
   return (
-    <section className="t-sec">
-      <div className="t-sec-h">
-        <h2>Coming up</h2>
-      </div>
+    <section className="sec">
+      <SectionHeader title="Coming up" />
       <div className="row-list">
         {items.map((it) => (
           <Link key={`${it.cropId}-${it.type}`} href={`/crops/${it.cropId}`} className="row-item">
@@ -112,17 +105,18 @@ export function SprayConditions({
   daily: DailyForecast[];
 }) {
   return (
-    <section className="t-sec">
-      <div className="t-sec-h">
-        <h2>Spray window — 3 days</h2>
-        <div className="spacer" />
-        <Link href="/weather" className="more">
-          Weather <ChevronRight className="size-3.5" />
-        </Link>
-      </div>
-      <div className="card panel" style={{ padding: 18 }}>
-        <div className="mb-4 flex items-center gap-3.5 border-b border-line pb-4">
-          <div className="grid size-10 shrink-0 place-items-center rounded-[10px] bg-water-bg">
+    <section className="sec">
+      <SectionHeader
+        title="Spray window — 3 days"
+        actions={
+          <Link href="/weather" className="more">
+            Weather <ChevronRight className="size-3.5" />
+          </Link>
+        }
+      />
+      <div className="card panel">
+        <div className="mb-4 flex items-center gap-4 border-b border-line pb-4">
+          <div className="grid size-10 shrink-0 place-items-center rounded-md bg-water-bg">
             <CloudSun className="size-5 text-water" />
           </div>
           <div>
@@ -135,7 +129,7 @@ export function SprayConditions({
             </div>
           </div>
           <div className="ml-auto text-right">
-            <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-ink-3">
+            <div className="mb-1 text-xs font-semibold uppercase tracking-[0.1em] text-ink-3">
               Right now
             </div>
             {rating && <RatingPill rating={rating} />}
@@ -149,21 +143,19 @@ export function SprayConditions({
 
 export function WeatherUnavailable() {
   return (
-    <section className="t-sec">
-      <div className="t-sec-h">
-        <h2>Spray window — 3 days</h2>
-      </div>
-      <div className="card panel" style={{ padding: 18 }}>
-        <div className="flex items-center gap-3.5">
+    <section className="sec">
+      <SectionHeader title="Spray window — 3 days" />
+      <div className="card panel">
+        <div className="flex items-center gap-4">
           <div
-            className="grid size-10 shrink-0 place-items-center rounded-[10px]"
+            className="grid size-10 shrink-0 place-items-center rounded-md"
             style={{ background: 'var(--warn-bg)' }}
           >
             <CloudOff className="size-5" style={{ color: 'var(--warn)' }} />
           </div>
           <div>
-            <div className="font-display text-[15px] font-semibold">Weather unavailable</div>
-            <div className="mt-0.5 text-[13px] text-ink-2">
+            <div className="font-display text-base font-semibold">Weather unavailable</div>
+            <div className="mt-0.5 text-sm text-ink-2">
               Couldn&apos;t load conditions right now. Check wind, temperature, and rain timing
               yourself before spraying.
             </div>

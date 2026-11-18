@@ -9,9 +9,9 @@ export function SprayerTankSetting() {
   const [gallons, setGallons] = useSprayerGallons();
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-      <div className="flex items-center gap-1.5 rounded-xl bg-paper-2 px-3 py-2 ring-1 ring-line">
+      <div className="flex items-center gap-2 rounded-xl bg-paper-2 px-3 py-2 ring-1 ring-line">
         <FlaskConical className="size-4 text-ink-3" />
-        <span className="text-[13px] text-ink-2">Tank size</span>
+        <span className="text-sm text-ink-2">Tank size</span>
         <input
           type="number"
           min={0.25}
