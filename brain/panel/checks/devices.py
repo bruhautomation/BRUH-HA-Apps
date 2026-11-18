@@ -856,6 +856,10 @@ def _derived_rows(snap: dict, house: House, derived: list, now: float) -> list:
                 # alarm still is (`House.settled_device`'s floor).
                 named = [m for m in members if not house.settled_device(
                     house.device_of(m), m, "dev.unavailable")]
+                if not named:
+                    # Every member is one the household settled: nothing
+                    # left to name, so no row.
+                    continue
                 fix = (f"It is a {kind}"
                        + (f" of {join_names([house.label(m) for m in named])}"
                           if named else "")
@@ -1741,10 +1745,12 @@ def zwave_dead(snap: dict, now: float) -> list[dict]:
     # A node somebody disabled, labelled not in use, or said to be finished
     # with or broken is not named again (`network.not_in_use`, #1204); a
     # lock or an alarm still is (`House.settled_device`'s floor).
-    dead = [n["name"] for n in _zwave_dead_nodes(house)
-            if not network.not_in_use(
-                house, house.devices.get(n["device_id"]), n["entity_id"])]
-    dead = sorted(set(dead))
+    # One entry per device (two devices that share a name are both named).
+    by_device = {n["device_id"]: n["name"] for n in _zwave_dead_nodes(house)
+                 if not network.not_in_use(
+                     house, house.devices.get(n["device_id"]),
+                     n["entity_id"])}
+    dead = sorted(by_device.values())
     if not dead:
         return []
     dead.sort()
