@@ -18707,31 +18707,27 @@ def _closure_rows(store: dict) -> list[dict]:
 
 
 def _broken_thermometers(rooms: dict) -> set[str]:
-    """The modelled thermometers the owner has called broken since the
-    nightly pass (#1202): `corrections.broken_answer` over their stored
-    answer, under the room-air mark's floors (`_cannot_mark_room_air`)."""
+    """The modelled thermometers the owner has said are broken since the
+    nightly pass (#1202): their answer about that sensor alone
+    (`corrections.sensor_said_broken`), under the room-air mark's floors
+    (`_cannot_mark_room_air`)."""
     try:
-        faulty = corrections.known_faulty()
+        said = corrections.sensor_said_broken()
     except Exception:  # noqa: BLE001 — unread settles nothing
         return set()
-    if not faulty:
+    if not said:
         return set()
     protected = automation_writer.protected_patterns()
     out: set[str] = set()
     for eid in rooms:
-        if eid not in faulty:
+        if not corrections.says_sensor_broken(said.get(eid) or ""):
             continue
         _family, classes, _device = _device_family(eid)
-
-        def floored(_e: str, _c: str, eid: str = eid,
-                    classes: set = classes) -> bool:
-            return corrections.never_covered(
+        if corrections.never_covered(
                 eid, "", device_class=_device_class(eid),
-                protected=protected, device_classes=classes)
-
-        if corrections.broken_answer(eid, "", faulty=faulty, never=floored,
-                                     note=lambda _row: None):
-            out.add(eid)
+                protected=protected, device_classes=classes):
+            continue
+        out.add(eid)
     return out
 
 

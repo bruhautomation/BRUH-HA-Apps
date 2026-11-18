@@ -563,7 +563,7 @@ class House:
         a derived reading, a reading that jumps like equipment). ``held``:
         the model found something keeps it warm at night, so it does not
         follow outdoors. All four are structured, read off the snapshot:
-        the facts table, the owner's stored answers (`snap["faulty"]`) and
+        the facts table, the owner's stored answers (`snap["said_broken"]`) and
         the thermal store's `unmeasured[eid]["kind"]`.
         A sensor the model simply lacked nights for has no verdict.
         """
@@ -580,42 +580,42 @@ class House:
         return "", ""
 
     def said_broken(self, entity_id: str) -> str:
-        """The owner's own words calling THIS sensor broken for good, or ""
-        (#1202).
+        """The owner's own words saying THIS sensor is broken, or "" (#1202).
 
-        Off `snap["faulty"]` (`corrections.known_faulty`: the reason typed
-        on a Wrong, never a report's words) through the one helper every
-        reader shares (`corrections.broken_answer`, `gone_for_good`'s
-        wording, so "broken for now" is not this). Under the floors the
-        room-air mark has (`server._cannot_mark_room_air`): never a lock,
-        an alarm, a protected entity, nor anything on a device that carries
-        a leak, smoke, gas or safety class (`_never_whole` with no check).
-        Only an answer about this entity, not one about another entity of
-        its device: it takes a reading out of the freeze check, so it is
-        read as narrowly as it was given. No trail entry here; each reader
-        says in its own sentence what it did not rely on.
+        Off `snap["said_broken"]` (`corrections.sensor_said_broken`): a rule
+        a Wrong wrote under this entity alone — never one fanned out over
+        every entity a row or a case cited — whose reason says, about the
+        sensor and nothing else, that it is broken (`says_sensor_broken`:
+        not "the heater is broken", not "sensor fine", not "retired").
+        Deliberately NOT `snap["faulty"]`, whose wording takes any subject.
+        Under the floors the room-air mark has (`server.
+        _cannot_mark_room_air`): never a lock, an alarm, a protected entity,
+        nor anything on a device that carries a leak, smoke, gas or safety
+        class (`_never_whole` with no check). It takes a reading out of the
+        freeze check, so in doubt it is not broken. No trail entry here;
+        each reader says in its own sentence what it did not rely on.
         """
-        faulty = self.snap.get("faulty")
-        if not isinstance(faulty, dict) or not faulty.get(entity_id):
+        said_map = self.snap.get("said_broken")
+        if not isinstance(said_map, dict):
+            return ""
+        said = str(said_map.get(entity_id) or "")
+        if not said:
             return ""
         try:
             import corrections  # noqa: PLC0415 — lazy: it imports the stores
         except Exception:  # noqa: BLE001 — unread settles nothing
             return ""
+        if not corrections.says_sensor_broken(said):
+            return ""
         never = (self.snap.get("corrections") or {}).get("never")
         protected = (never or {}).get("protected") if isinstance(
             never, dict) else None
-
-        def floored(_eid: str, _check: str) -> bool:
-            # The snapshot's table, and the fixed lists when it has none.
-            return (self._never_whole(entity_id, "")
-                    or corrections.never_covered(
-                        entity_id, "", protected=corrections.never_table(
-                            protected)["protected"]))
-
-        return corrections.broken_answer(entity_id, "", faulty=faulty,
-                                         never=floored,
-                                         note=lambda _row: None)
+        # The snapshot's table, and the fixed lists when it has none.
+        if self._never_whole(entity_id, "") or corrections.never_covered(
+                entity_id, "",
+                protected=corrections.never_table(protected)["protected"]):
+            return ""
+        return said
 
     def exists(self, entity_id: str) -> bool:
         return entity_id in self.states or entity_id in self.registry

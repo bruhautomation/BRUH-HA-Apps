@@ -1469,29 +1469,29 @@ def marked_not_air() -> frozenset:
 
 
 def said_broken(states: dict, registries: dict | None = None,
-                faulty: dict | None = None) -> dict[str, str]:
+                said: dict | None = None) -> dict[str, str]:
     """``{entity_id: the owner's words}`` for every thermometer here the
-    owner called broken (#1202), read through the same `House.said_broken`
-    the checks read — the owner's stored answer (`corrections.known_faulty`)
-    under the room-air mark's floors. Unreadable is none: the checks read
-    the same answer live, so a missed one here is one night."""
+    owner said is broken (#1202), read through the same `House.said_broken`
+    the checks read — the owner's answer about that sensor alone
+    (`corrections.sensor_said_broken`) under the room-air mark's floors.
+    Unreadable is none: the checks read the same answer live."""
     try:
         import corrections  # noqa: PLC0415 — panel-local
         from checks._util import House  # noqa: PLC0415
-        faulty = corrections.known_faulty() if faulty is None else faulty
-        if not faulty:
+        said = corrections.sensor_said_broken() if said is None else said
+        if not said:
             return {}
         registries = registries or {}
         house = House({"states": states,
                        "entities": registries.get("entities") or [],
                        "devices": registries.get("devices") or [],
-                       "faulty": faulty,
+                       "said_broken": said,
                        "corrections": {"never": corrections.never_table()}})
         out = {}
         for eid, _st, _unit in _temperature_sensors(states):
-            said = house.said_broken(eid)
-            if said:
-                out[eid] = said
+            words = house.said_broken(eid)
+            if words:
+                out[eid] = words
         return out
     except Exception as exc:  # noqa: BLE001
         log.debug("thermal: could not read the sensors called broken: %s", exc)
