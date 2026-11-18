@@ -53,16 +53,21 @@ _GAP = re.compile(
 # process note, never a reading, so it is counted as a gap (a card made of
 # only these is not news) and is never kept as a gap line beside real
 # content (`trim_gaps`).
+# Only a sentence whose subject IS brAIn's reply or run: it opens with the
+# note ("No home data needed.", "A check could not be run.") or names the
+# reply as what needs nothing. "The leak checks could not run because the
+# hub is offline" and "the doorbell needed to answer" are about the house.
 _RUN_NOTE = re.compile(
-    r"\bno (?:\w+ )?data (?:is |was |were )?(?:needed|required|necessary)\b"
-    r"|\b(?:needs?|needed|requires?) no (?:\w+ )?(?:data|check|checks)\b"
-    r"|\bno checks? (?:is |are |was |were )?(?:possible|needed|required|"
+    r"^\W*no (?:\w+ )?data (?:is |was |were )?(?:needed|required|necessary)\b"
+    r"|\bno (?:\w+ )?data (?:is |was |were )?(?:needed|required|necessary)\b"
+    r"[^.;]{0,30}?\b(?:reply|answer|response|question)\b"
+    r"|^\W*no checks? (?:is |are |was |were )?(?:possible|needed|required|"
     r"available|applicable)\b"
     r"|\b(?:this|the|that) (?:reply|answer|response)\b[^.;]{0,40}?"
-    r"\b(?:needs? no|does(?:n['’]t| not) (?:need|require))\b"
-    r"|\b(?:needed|needs?) (?:to|for) (?:answer|reply|respond)\b"
-    r"|\bchecks? (?:could(?:n['’]t| not)|can(?:not|['’]t)|was(?:n['’]t| not)|"
-    r"were(?:n['’]t| not)) (?:be )?(?:possible|run|made|done|performed)\b",
+    r"\b(?:needs? no|does(?:n['\u2019]t| not) (?:need|require))\b"
+    r"|^\W*(?:a|that)?\s*checks?\s+(?:could(?:n['\u2019]t| not)|was(?:n['\u2019]t| not)|"
+    r"were(?:n['\u2019]t| not))\s+(?:be\s+)?(?:possible|run|made|done|"
+    r"performed)\b(?![^.]*\bbecause\b)",
     re.I)
 _GAP = re.compile(_GAP.pattern + "|" + _RUN_NOTE.pattern, re.I)
 
