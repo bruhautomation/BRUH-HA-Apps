@@ -630,19 +630,21 @@ function editHtml(m) {
     const on = kk.color === `var(--${p})`;
     return `<button type="button" class="cu-sw${on ? ' on' : ''}" data-act="upc-color" data-v="${esc(kk.id + '|' + p)}" aria-pressed="${on}" aria-label="${esc(kk.label)} ${p}" style="--c:var(--${p})"></button>`;
   }).join('')}</span>`).join('')}${Object.keys(picked).length ? '<button type="button" class="cu-key" data-act="upc-color" data-v="reset">Reset</button>' : ''}</div>` : '';
-  return `<div class="cu-keys"><button type="button" class="cu-key" data-act="upc-paint" aria-expanded="${painting}">Colors</button></div>${pal}`;
+  // The word is in the strip's own header, beside its zoom and fold marks; the swatches open under it.
+  return `<button type="button" class="cu-key cu-colors" data-act="upc-paint" aria-expanded="${painting}">Colors</button>${pal}`;
 }
 
 const KEY_CSS = `<style>
 .cu-what{right:76px}
 .cu-fold{position:absolute;top:2px;right:0;width:32px;height:32px;display:flex;align-items:center;justify-content:center;padding:0;border:0;border-radius:8px;background:none;color:var(--quiet);cursor:pointer;transition:color .2s var(--ease)}.cu-fold:hover{color:var(--text)}.cu-fold:focus-visible{outline:2px solid var(--sky);outline-offset:0}
 .cu .cu-lanes{pointer-events:none;z-index:2}
-.cu .cu-ln{pointer-events:auto;background:linear-gradient(90deg,var(--bg) 70%,transparent);border:0;margin:0;font:inherit;font-size:11px;font-weight:600;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:color .25s ease,opacity .25s ease}
+.cu .cu-ln{pointer-events:auto;background:linear-gradient(90deg,var(--bg) 70%,transparent);border:0;margin:0;font:inherit;font-size:12px;font-weight:600;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:color .25s ease,opacity .25s ease}
 .cu .cu-ln::before{content:"";position:absolute;inset:-6px -2px}
 .cu .cu-ln.off{color:var(--quiet)!important;opacity:.55;text-decoration:line-through;text-decoration-color:var(--line2)}
 .cu .cu-ln:focus-visible{outline:2px solid var(--sky);outline-offset:2px;border-radius:6px}
 .cu-axis{position:absolute;left:0;right:0;bottom:0;height:22px;cursor:ew-resize}
-.cu-zb{position:absolute;right:36px;top:7px;z-index:3;display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 6px;border:0;border-radius:11px;background:none;color:var(--quiet);font:600 11px/1 'Manrope',sans-serif;font-variant-numeric:tabular-nums;cursor:pointer;transition:color .2s ease,background-color .2s ease}
+.cu-zb{position:absolute;right:36px;top:7px;z-index:3;display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 6px;border:0;border-radius:11px;background:none;color:var(--quiet);font:600 12px/1 'Manrope',sans-serif;font-variant-numeric:tabular-nums;cursor:pointer;transition:color .2s ease,background-color .2s ease}
+.cu-colors{position:absolute;top:2px;right:84px;z-index:3;min-height:var(--btn-h-sm);padding:0 8px}.cu:has(.cu-colors) .cu-what{right:148px}
 .cu-zb:hover{color:var(--text)}.cu-zb.on{color:var(--text);background:color-mix(in oklab,var(--text) 8%,transparent)}
 .cu-zb::before{content:"";position:absolute;inset:-5px -4px}.cu-zb.solo{right:0}
 .cu-back{right:44px!important}
@@ -653,10 +655,10 @@ const KEY_CSS = `<style>
 .cu-ib{display:flex;flex-direction:column;gap:2px;min-width:0}
 .cu-ib b{font-size:15px;font-weight:600;color:var(--text)}
 .cu-iw{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
-.cu-is{font-size:12.5px;color:var(--quiet)}
+.cu-is{font-size:12px;color:var(--quiet)}
 .cu-id{margin:4px 0 0;font-size:13px;line-height:1.45;color:var(--muted);white-space:pre-wrap}
 .cu-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
-.cu-act{min-height:32px;padding:0 12px;border:0;border-radius:9px;background:color-mix(in oklab,var(--text) 7%,transparent);color:var(--text);font:600 12.5px 'Manrope',sans-serif;cursor:pointer}
+.cu-act{min-height:32px;padding:0 12px;border:0;border-radius:9px;background:color-mix(in oklab,var(--text) 7%,transparent);color:var(--text);font:600 12px 'Manrope',sans-serif;cursor:pointer}
 .cu-keys{display:flex;gap:14px;margin-top:2px}
 .cu-key{display:inline-flex;align-items:center;gap:6px;background:none;border:0;padding:6px 0;margin:0;font:inherit;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;position:relative;min-height:32px}
 .cu-sw{position:relative}.cu-sw::after{content:"";position:absolute;inset:-11px -2px}

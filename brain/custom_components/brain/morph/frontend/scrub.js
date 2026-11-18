@@ -81,7 +81,7 @@ export const SCRUB_CSS = `
 .mrail.open .mrail-seg.here{background:color-mix(in oklab,var(--text) 45%,transparent)}
 .mrail.open .mrail-seg.cur{background:var(--rc,var(--text));box-shadow:0 0 10px color-mix(in oklab,var(--rc,var(--text)) 50%,transparent)}
 .mrail-fls{position:absolute;inset:0;pointer-events:none}
-.mrail-fl{position:absolute;right:26px;transform:translateY(-70%);padding:3px 6px;border-radius:6px;background:color-mix(in oklab,var(--bg) 82%,transparent);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);font:700 8.5px/1 'Manrope',sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--quiet);white-space:nowrap;opacity:0;transition:opacity .2s ease}
+.mrail-fl{position:absolute;right:26px;transform:translateY(-70%);padding:3px 6px;border-radius:6px;background:color-mix(in oklab,var(--bg) 82%,transparent);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);font:700 12px/1 'Manrope',sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--quiet);white-space:nowrap;opacity:0;transition:opacity .2s ease}
 .mrail.open .mrail-fl{opacity:.85}
 .mrail-seg{--h:var(--text);flex:1 1 0;min-height:2px;border-radius:2px;background:color-mix(in oklab,var(--text) 22%,transparent);transition:background-color .3s ease}
 .mrail-seg.fl{margin-top:${FLOOR_GAP}px}.mrail-seg+.mrail-seg:not(.fl){margin-top:${ROOM_GAP}px}
@@ -91,14 +91,14 @@ export const SCRUB_CSS = `
 .mrail-glide.on{opacity:.45}.mrail.shown .mrail-glide.on{opacity:1}.mrail.open .mrail-glide,.mrail.pulling .mrail-glide{opacity:0}
 /* The tip beside a finger resting on the closed rail. */
 .mrail-tw{position:absolute;right:26px;top:0;pointer-events:none;will-change:transform}
-.mrail-tip{display:flex;align-items:center;gap:8px;margin-top:-17px;padding:8px 12px 8px 10px;border-radius:12px;white-space:nowrap;font:600 12.5px/1.2 'Manrope',sans-serif;color:var(--text);background:color-mix(in oklab,var(--surface) 94%,transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);box-shadow:0 0 0 1px var(--line2),0 10px 28px rgba(0,0,0,.3);opacity:0;visibility:hidden;transform:translateX(10px) scale(.96);transform-origin:100% 50%;transition:opacity .18s ease,transform .26s var(--ease),visibility 0s .26s}
+.mrail-tip{display:flex;align-items:center;gap:8px;margin-top:-17px;padding:8px 12px 8px 10px;border-radius:12px;white-space:nowrap;font:600 12px/1.2 'Manrope',sans-serif;color:var(--text);background:color-mix(in oklab,var(--surface) 94%,transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);box-shadow:0 0 0 1px var(--line2),0 10px 28px rgba(0,0,0,.3);opacity:0;visibility:hidden;transform:translateX(10px) scale(.96);transform-origin:100% 50%;transition:opacity .18s ease,transform .26s var(--ease),visibility 0s .26s}
 .mrail-tip.on{opacity:1;visibility:visible;transform:none;transition:opacity .18s ease,transform .26s var(--ease)}
 .mrail-tip .tp-ar{position:relative;width:22px;height:4px;border-radius:2px;background:color-mix(in oklab,var(--text) 16%,transparent);overflow:hidden;flex:none}
 .mrail-tip .tp-ar::after{content:'';position:absolute;inset:0;border-radius:2px;background:var(--text);transform-origin:100% 50%;transform:scaleX(var(--pull,0))}
 .mrail-tip .tp-ch{font:700 14px/1 'Manrope',sans-serif;color:var(--muted);flex:none}
 .mrail-tip.nudge .tp-ch{animation:mrailnudge 1.1s var(--ease) infinite}
 @keyframes mrailnudge{0%,100%{transform:none}45%{transform:translateX(-5px)}}
-.mrail-tip .tp-sub{display:block;font-weight:500;font-size:11.5px;color:var(--muted);margin-top:2px}
+.mrail-tip .tp-sub{display:block;font-weight:500;font-size:12px;color:var(--muted);margin-top:2px}
 .mrail.open .mrail-tw{visibility:hidden}
 /* Open: the same notches, wider, held still; an invisible surface takes the finger. */
 .mrail-pan{position:absolute;inset:0;display:none;touch-action:none;cursor:ns-resize}
