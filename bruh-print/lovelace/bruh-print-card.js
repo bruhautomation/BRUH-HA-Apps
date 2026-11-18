@@ -60,17 +60,20 @@ const css = `
     /* Home Assistant's own greys and its default blue are tuned for a
        large heading, not for 11-15px text: the grey on its grey tile is
        3.8:1 and white on its blue is 2.6:1. Text here is pulled toward the
-       theme's reading colour until it clears 4.5:1, and a filled button is
-       darkened under its white label; both follow the theme, light or dark. */
+       theme's reading colour until it clears 4.5:1, and follows the theme,
+       light or dark. The sizes are the shared BRUH card spec: 16px content
+       padding, a 16/600 title, 14px body, 12px secondary text, 44px buttons
+       at 14/600 with an 8px radius, and the theme's primary colour for the
+       one filled button. */
     --bp-muted: color-mix(in srgb, var(--secondary-text-color) 45%, var(--primary-text-color));
     --bp-accent: color-mix(in srgb, var(--primary-color) 50%, var(--primary-text-color));
-    --bp-fill: color-mix(in srgb, var(--primary-color) 50%, #000); }
+    }
   ha-card { padding: 16px; }
-  .head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-  .head h2 { margin: 0; font-size: 18px; font-weight: 600; flex: 1 1 auto;
+  .head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .head h2 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; flex: 1 1 auto;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pill { display: inline-flex; align-items: center; gap: 6px;
-    padding: 4px 10px; border-radius: 999px; font-size: 12px;
+    padding: 4px 8px; border-radius: 999px; font-size: 12px;
     background: var(--secondary-background-color);
     color: var(--bp-muted); white-space: nowrap; }
   .pill .dot { width: 8px; height: 8px; border-radius: 50%;
@@ -84,19 +87,19 @@ const css = `
   .pill.unknown .dot { background: var(--bp-muted); }
 
   .rolls { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    margin-bottom: 14px; }
-  .roll { padding: 9px 11px; border-radius: 10px;
+    margin-bottom: 12px; }
+  .roll { padding: 8px 12px; border-radius: 8px;
     background: var(--secondary-background-color); }
-  .roll .who { font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+  .roll .who { font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
     color: var(--bp-muted); }
   /* A roll's name wraps: the one that tells two rolls apart is the end of it. */
-  .roll .what { font-size: 14px; font-weight: 550; margin: 2px 0 5px;
+  .roll .what { font-size: 14px; font-weight: 600; margin: 4px 0;
     overflow-wrap: anywhere; }
-  .roll .bar { height: 5px; border-radius: 999px; overflow: hidden;
+  .roll .bar { height: 4px; border-radius: 999px; overflow: hidden;
     background: var(--divider-color); }
   .roll .bar > i { display: block; height: 100%;
     background: var(--primary-color); }
-  .roll .est { font-size: 11px; color: var(--bp-muted); margin-top: 4px; }
+  .roll .est { font-size: 12px; color: var(--bp-muted); margin-top: 4px; }
   /* A roll box is a button when there is a choice to make, and a readout
      when there is not — one loaded roll is not a selection. Both draw the
      same, so the card does not change shape when a second roll is set. */
@@ -109,35 +112,35 @@ const css = `
   button.roll:focus-visible { outline: 2px solid var(--primary-color);
     outline-offset: 2px; }
 
-  .field { display: block; margin-bottom: 10px; }
+  .field { display: block; margin-bottom: 12px; }
   .field > span { display: block; font-size: 12px; font-weight: 600;
     color: var(--bp-muted); margin-bottom: 4px; }
   input, select, textarea {
-    width: 100%; box-sizing: border-box; padding: 10px 11px; min-height: 44px;
-    font: inherit; font-size: 16px; border-radius: 9px;
+    width: 100%; box-sizing: border-box; padding: 8px 12px; min-height: 44px;
+    font: inherit; font-size: 16px; border-radius: 8px;
     border: 1px solid var(--divider-color);
     background: var(--card-background-color); color: var(--primary-text-color);
   }
   textarea { resize: vertical; min-height: 60px; }
-  .row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+  .row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
   .row .field { flex: 1 1 120px; margin-bottom: 0; }
   .row .field.narrow { flex: 0 0 96px; }
 
   .quick { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
   button {
-    font: inherit; font-size: 15px; font-weight: 550; cursor: pointer;
-    min-height: 44px; padding: 0 16px; border-radius: 9px;
+    font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+    min-height: 44px; padding: 0 16px; border-radius: 8px;
     border: 1px solid var(--divider-color);
     background: var(--secondary-background-color);
     color: var(--primary-text-color);
   }
-  button.primary { background: var(--bp-fill);
-    border-color: var(--bp-fill); color: #fff; }
+  button.primary { background: var(--primary-color);
+    border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
   button[disabled] { opacity: .5; cursor: progress; }
-  .actions { display: flex; gap: 10px; align-items: center; margin-top: 14px;
+  .actions { display: flex; gap: 8px; align-items: center; margin-top: 12px;
     flex-wrap: wrap; }
-  .msg { margin-top: 12px; padding: 10px 12px; border-radius: 9px;
-    font-size: 13.5px; line-height: 1.45; }
+  .msg { margin-top: 12px; padding: 8px 12px; border-radius: 8px;
+    font-size: 14px; line-height: 20px; }
   .msg.ok { background: color-mix(in srgb, var(--success-color, #1f9254) 14%, transparent); }
   .msg.err { background: color-mix(in srgb, var(--error-color, #c0392b) 14%, transparent);
     color: var(--error-color, #c0392b); }
@@ -146,13 +149,13 @@ const css = `
   /* The card cannot work. Not styled as an error — nothing has gone
      wrong at the printer — but it has to be read before the form under
      it, which is why it sits directly under the title. */
-  .trouble { margin-bottom: 14px; padding: 11px 13px; border-radius: 10px;
+  .trouble { margin-bottom: 12px; padding: 12px; border-radius: 8px;
     background: var(--secondary-background-color);
     border-left: 4px solid var(--warning-color, #e0a30c); }
-  .trouble p { margin: 0 0 6px; font-size: 13.5px; line-height: 1.45; }
+  .trouble p { margin: 0 0 8px; font-size: 14px; line-height: 20px; }
   .trouble p:last-child { margin-bottom: 0; }
   .trouble .what { font-weight: 600; }
-  .trouble .who { font-size: 11.5px; color: var(--bp-muted); }
+  .trouble .who { font-size: 12px; color: var(--bp-muted); }
 `;
 
 class BruhPrintCard extends HTMLElement {

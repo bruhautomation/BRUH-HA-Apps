@@ -894,7 +894,7 @@ function fitCanvas() {
   const image = $('designPreview');
   if (!image.naturalWidth) return;
   const scroll = $('canvas-scroll') || document.querySelector('.canvas-scroll');
-  const available = Math.max(160, (scroll?.clientWidth || 600) - 28);
+  const available = Math.max(160, (scroll?.clientWidth || 600) - 24);
   const zoom = Math.min(1, available / image.naturalWidth,
                         CANVAS_MAX_H / image.naturalHeight);
   canvas.style.width = Math.round(image.naturalWidth * zoom) + 'px';
@@ -3037,7 +3037,7 @@ const svgText = (x, y, text, attrs) => {
  * field cannot come out looking like different things. */
 function svgBadge(group, x, y, letter) {
   group.append(svgEl('circle', { cx: x, cy: y, r: 6.4, class: 'calb' }));
-  group.append(svgText(x, y + 2.1, letter, { class: 'calbt' }));
+  group.append(svgText(x, y + 2.1, letter, { class: 'calbt', 'font-size': 5.5 }));
 }
 
 function calDrawing() {
@@ -3089,7 +3089,7 @@ function calDrawing() {
                                class: 'calrung' }));
     if (n % 5 === 0)
       svg.append(svgText(GX - 5, y + 1.7, String(n * 5),
-                         { class: 'calnum', 'text-anchor': 'end' }));
+                         { class: 'calnum', 'text-anchor': 'end', 'font-size': 4.5 }));
   }
 
   /* The label, overlapping the top of the grid — the ordinary roll, where
@@ -3101,7 +3101,7 @@ function calDrawing() {
                              class: 'calblank' }));
   svg.append(svgEl('rect', { x: LX, y: LTOP, width: LW, height: LBOT - LTOP,
                              class: 'calpaper' }));
-  svg.append(svgText(LX + LW / 2, GY - 4.4, 'no ink here', { class: 'calt' }));
+  svg.append(svgText(LX + LW / 2, GY - 4.4, 'no ink here', { class: 'calt', 'font-size': 5 }));
 
   /* X1 and X2: the label's two side edges, carried up out of the grid to
    * their own badges. The leader is on the edge because the edge is what is

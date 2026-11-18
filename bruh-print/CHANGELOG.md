@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.15.0
+
+### Changed
+
+- The panel follows the shared look every BRUH panel now uses: one centred page column, with the top bar, the tabs and the content starting and ending on the same edges at every width, and body text at 14 pixels instead of 15.
+- The Printer tab's sections (Printer, What is loaded, Label stock, Settings) are spaced apart and each holds its content in a card. Settings is one card, no wider than a form needs to be, instead of bare fields with a line of text far narrower than the menus under it. The label stock list and the History list are each one card with a line between rows.
+- On Quick, the Print button and the "Prints on" line sit in a card of their own. On Design the add buttons wrap instead of running off the edge on a phone, and Print takes its own full-width row.
+- Buttons, text boxes and menus share one height and corner, text is one of four sizes, and the panel uses the same three screen-width breakpoints as the rest.
+- The Lovelace card follows the shared card layout: 16 pixel padding, a 16 pixel title, 14 pixel text, 44 pixel buttons with 8 pixel corners, and the theme's own primary colour on the Print button.
+
 ## 0.14.11
 
 ### Fixed
