@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.9
+
+### Fixed
+
+- The Home Assistant card on Settings keeps the normal card padding and rounded corners when it shows a warning.
+- The Top, Front, Right and Iso buttons under the 3D view are no longer squeezed or cut off on a phone; the row wraps instead.
+- In Settings › Print failure detection, a line now divides the Alerts go to row from the first printer.
+
 ## 0.4.8
 
 ### Changed

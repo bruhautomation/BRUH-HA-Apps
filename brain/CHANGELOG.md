@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.3.27
+
+### Fixed
+
+- In Memory › Knowledge, the Teach box no longer touches the list of facts above it, and the folds under it (Suggested reports, Tools) are divided by a single line instead of two lines 16 pixels apart.
+
 ## 5.3.26
 
 ### Fixed

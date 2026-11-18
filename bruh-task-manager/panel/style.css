@@ -62,7 +62,7 @@ h2 { font-size: 16px; margin: 0 0 8px; }
 }
 .meter {
   background: var(--surface2); border-radius: 8px; padding: 6px 10px;
-  display: grid; grid-template-columns: auto 1fr; align-items: center;
+  display: grid; grid-template-columns: auto 1fr; align-items: center; align-content: start;
   column-gap: 8px; min-width: 0;
 }
 .mlabel { color: var(--muted); font-size: 12px; }
@@ -151,7 +151,7 @@ textarea { width: 100%; resize: vertical; }
 .gwhy { color: var(--muted); font-size: 12px; padding: 0 12px 8px 26px; }
 .procs { border-top: 1px solid var(--line); }
 .proc {
-  display: grid; grid-template-columns: minmax(0, 1fr) 64px 72px auto; gap: 10px;
+  display: grid; grid-template-columns: minmax(0, 1fr) 64px 72px 132px; gap: 10px;
   align-items: center; padding: 6px 12px; border-top: 1px solid var(--line);
 }
 .proc:first-child { border-top: 0; }

@@ -95,7 +95,8 @@ body {
   gap: 12px;
   flex-wrap: wrap;
 }
-.card-head h3 { margin: 0; font-size: 16px; }
+.card h3, .card-head h3 { margin: 0 0 8px; font-size: 16px; }
+.card-head h3 { margin: 0; }
 .small { font-size: 13px; }
 
 .btn {
@@ -1164,7 +1165,8 @@ body.mn-open .foot { display: none; }
 .form-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
 .form-row input[type="text"] { flex: 1 1 100%; min-width: 0; }
 #showPlayer { width: 100%; max-width: 100%; }
-#pane-shows .card-head > span { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; min-width: 0; }
+#pane-shows .card-head > span { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; min-width: 0; }
+#pane-shows .card-head > span .btn { min-height: 44px; }
 
 /* Name and Save are two lines of their own below the list. The list
    scrolls inside its box, so it is painted inside it and can never sit

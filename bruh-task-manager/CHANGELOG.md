@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.4
+
+### Fixed
+
+- On the Processes tab, the CPU and memory numbers line up on every row, including rows that have no End button.
+- The CPU, Memory, Load and Up labels at the top now sit at the same height.
+
 ## 0.1.3
 
 ### Changed
