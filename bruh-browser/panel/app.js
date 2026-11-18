@@ -330,6 +330,9 @@ async function listBrowsers() {
 
 function renderBrowsers(view) {
   const box = $("#browsersBody");
+  $("#browsersCount").textContent = !view ? "Not available"
+    : view.native ? "This app's Chrome only"
+      : view.browsers.length ? `${view.browsers.length} connected` : "None connected";
   if (!view) { box.replaceChildren(el("p", { class: "muted", text: "Not available." })); return; }
   const kids = [];
   if (view.native) {
@@ -380,6 +383,7 @@ function profileItemRow(p, kind, key, label, sub) {
 
 function renderProfiles(rows) {
   const box = $("#profilesBody");
+  $("#profilesCount").textContent = rows.length ? `${rows.length} store${rows.length === 1 ? "" : "s"}` : "None yet";
   if (!rows.length) {
     box.replaceChildren(el("p", { class: "muted",
       text: "None yet. Ask brAIn to look at your old orders at a store, for example “look at my old Walmart orders and learn what I usually buy”. What it reads is kept here, on this add-on only, and used the next time you ask for your usual order. It never lets an errand buy anything." }));
@@ -408,6 +412,7 @@ function renderProfiles(rows) {
 
 function renderHistory(rows) {
   const list = $("#history");
+  $("#historyCount").textContent = rows.length ? `${rows.length} errand${rows.length === 1 ? "" : "s"}` : "Nothing yet";
   if (!rows.length) {
     list.replaceChildren(el("li", { class: "muted", text: "Nothing yet." }));
     return;
