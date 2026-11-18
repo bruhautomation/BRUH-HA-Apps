@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.1
+
+### Fixed
+
+- The Print button on the dashboard card is readable on Home Assistant's default blue: its label measured 2.6 to 1 against the fill and is now 4.8 to 1. The card's error text is darker too (1233).
+
 ## 0.15.0
 
 ### Changed
