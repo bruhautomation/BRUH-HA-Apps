@@ -575,7 +575,17 @@ _ASKS_WHERE = re.compile(
 # only with an operation in it ("how is it powered?" is not).
 _ASKS_HOW = re.compile(
     r"^\s*how\s+(?:do|does|can|could|should|would|to)\b", re.I)
-_ASKS_HOW_PASSIVE = re.compile(r"^\s*how\s+(?:is|are|was|were|gets?)\b", re.I)
+_ASKS_HOW_PASSIVE = re.compile(
+    r"^\s*how\s+(?:is|are|was|were|gets?)\b"
+    # "What is the way to disarm it?", "What's the way to ..."
+    r"|^\s*(?:what|which)(?:['\u2019]s|\s+is)?\s+(?:the\s+)?(?:\w+\s+){0,2}?"
+    r"(?:way|steps?|method)\s+to\b"
+    # "What disarms the alarm?", "Which automation turns it off?"
+    r"|^\s*(?:what|which)\b[^?.]{0,30}?\b(?:disarm|arm|unlock|lock|open|"
+    r"close|start|stop|turn|switch)(?:s|es)\b"
+    # "Is there something that disarms it?"
+    r"|^\s*is\s+there\s+(?:an?\s+|any\s+)?[^?.]{0,25}?\b(?:that|which)\b",
+    re.I)
 # The operation a how-question asks about, as the services that do it.
 _OPERATIONS = (
     (re.compile(r"\bdisarm(?:ed|s|ing)?\b", re.I), ("alarm_disarm",)),
@@ -584,23 +594,28 @@ _OPERATIONS = (
     (re.compile(r"\block(?:ed|s|ing)?\b", re.I), ("lock",)),
     (re.compile(r"\bopen(?:ed|s|ing)?\b", re.I), ("open", "unlock")),
     (re.compile(r"\bclos(?:e|ed|es|ing)\b", re.I), ("close",)),
-    (re.compile(r"\b(?:turn|switch)(?:ed|s|ing)?\s+on\b|\bstart(?:ed|s)?\b",
+    (re.compile(r"\b(?:turn|switch)(?:ed|s|ing)?\s+(?:the\s+)?(?:[\w']+\s+){0,3}?on\b|\bstart(?:ed|s)?\b",
                 re.I), ("turn_on", "toggle", "start")),
-    (re.compile(r"\b(?:turn|switch)(?:ed|s|ing)?\s+off\b|\bstop(?:ped|s)?\b",
+    (re.compile(r"\b(?:turn|switch)(?:ed|s|ing)?\s+(?:the\s+)?(?:[\w']+\s+){0,3}?off\b|\bstop(?:ped|s)?\b",
                 re.I), ("turn_off", "toggle", "stop")),
 )
 # What a where-question asks about: the words after "where is", or between
 # "which room is" and "in".
 _WHERE_OBJECT = re.compile(
-    r"\bwhere\s+(?:is|are)\s+(?P<a>[^?.,;:]+)"
-    r"|\b(?:which|what)\s+(?:room|area)\s+(?:is|are)\s+(?P<b>[^?.,;:]+?)\s+in\b",
+    r"\bwhere(?:\s+(?:is|are|was|were|does|do|did)|['\u2019]s)\s+"
+    r"(?P<a>[^?.,;:]+)"
+    r"|\b(?:which|what)\s+(?:room|area)\s+(?:is|are|does|do|did)\s+"
+    r"(?P<b>[^?.,;:]+?)\s+(?:in|sit|sits|live|lives|go|goes|belong|belongs)\b"
+    r"|\bin\s+(?:which|what)\s+(?:room|area)\s+(?:is|are|does|do|did)\s+"
+    r"(?P<c>[^?.,;:]+)",
     re.I)
 # Words a question puts after a thing's name that do not make it another
 # thing: "the landing motion SENSOR", "the hall PIR MOUNTED".
 _THING_WORDS = frozenset({
     "sensor", "sensors", "detector", "device", "unit", "plug", "switch",
     "button", "remote", "panel", "controller", "mounted", "located",
-    "installed", "placed", "fitted", "kept", "physically", "now", "exactly"})
+    "installed", "placed", "fitted", "kept", "physically", "now", "exactly",
+    "sit", "sits", "live", "lives", "go", "goes", "put", "belong", "belongs"})
 _ARTICLES = frozenset({"the", "your", "a", "an", "our", "this", "that"})
 
 
@@ -747,7 +762,7 @@ def lookup(text: str, about: str, dig: dict) -> dict | None:
         if about and about in placed:
             return room_line(about)
         for m in _WHERE_OBJECT.finditer(text):
-            phrase = m.group("a") or m.group("b") or ""
+            phrase = m.group("a") or m.group("b") or m.group("c") or ""
             for eid in sorted(placed & set(names)):
                 if eid.lower() in phrase.lower() or any(
                         _is_the_thing(phrase, n) for n in names[eid]):
