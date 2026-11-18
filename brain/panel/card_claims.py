@@ -48,6 +48,29 @@ _GAP = re.compile(
     r"samples|days)\b"
     r"|\bblind spot\b|\b(?:not|isn['’]t|wasn['’]t) recorded\b", re.I)
 
+# A sentence about brAIn's OWN run rather than the house: whether the reply
+# needed data, whether a check could be made (#1203). It is the run's
+# process note, never a reading, so it is counted as a gap (a card made of
+# only these is not news) and is never kept as a gap line beside real
+# content (`trim_gaps`).
+# Only a sentence whose subject IS brAIn's reply or run: it opens with the
+# note ("No home data needed.", "A check could not be run.") or names the
+# reply as what needs nothing. "The leak checks could not run because the
+# hub is offline" and "the doorbell needed to answer" are about the house.
+_RUN_NOTE = re.compile(
+    r"^\W*no (?:\w+ )?data (?:is |was |were )?(?:needed|required|necessary)\b"
+    r"|\bno (?:\w+ )?data (?:is |was |were )?(?:needed|required|necessary)\b"
+    r"[^.;]{0,30}?\b(?:reply|answer|response|question)\b"
+    r"|^\W*no checks? (?:is |are |was |were )?(?:possible|needed|required|"
+    r"available|applicable)\b"
+    r"|\b(?:this|the|that) (?:reply|answer|response)\b[^.;]{0,40}?"
+    r"\b(?:needs? no|does(?:n['\u2019]t| not) (?:need|require))\b"
+    r"|^\W*(?:a|that)?\s*checks?\s+(?:could(?:n['\u2019]t| not)|was(?:n['\u2019]t| not)|"
+    r"were(?:n['\u2019]t| not))\s+(?:be\s+)?(?:possible|run|made|done|"
+    r"performed)\b(?![^.]*\bbecause\b)",
+    re.I)
+_GAP = re.compile(_GAP.pattern + "|" + _RUN_NOTE.pattern, re.I)
+
 # A headline about nothing having happened.
 _NON_EVENT = re.compile(
     r"\bno (?:cooling|heating|runs?|cycles?|openings?|"
@@ -130,6 +153,13 @@ def blind_lead(obj: dict, verdict: str = "") -> str:
     if verdict in ("worth a look", "needs action") or _acts(obj):
         return ""
     claim = _claim(str(obj.get("title") or ""))
+    parts = [p for p in _SENTENCE_END.split(str(obj.get("summary") or "")
+                                            .strip()) if p.strip()]
+    if (parts and all(_RUN_NOTE.search(p) for p in parts)
+            and not obj.get("highlights")):
+        # A card whose whole body is brAIn's note about its own run (#1203)
+        # has read nothing, whatever its title says.
+        return "a data gap"
     if not claim.strip() or _NEWS.search(claim):
         return ""
     if re.search(r"\bnothing to compare\b|\bno comparison\b", claim, re.I):
@@ -198,7 +228,10 @@ def trim_gaps(out: dict, changed: list[str]) -> None:
     summary = str(out.get("summary") or "")
     parts = [p for p in _SENTENCE_END.split(summary.strip()) if p]
     kept, gaps = [], 0
+    content = [p for p in parts if not _RUN_NOTE.search(p)]
     for part in parts:
+        if _RUN_NOTE.search(part) and content:
+            continue                    # brAIn's own process, never kept
         if is_gap(part):
             if gaps or len(part) > GAP_LINE_MAX:
                 continue

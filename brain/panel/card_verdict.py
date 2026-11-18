@@ -629,11 +629,18 @@ def review(obj: dict, previous: dict | None = None,
             "no fine verdict over an open finding", "no fine verdict over a rise",
             "a figure that disagrees with an open finding")):
         verdict = LOOK
+    step = next_step(out, verdict, open_rows)
+    if (verdict == LOOK and not step and nothing_to_act(out)
+            and open_row_named(out, open_rows) is None):
+        # "Worth a look" with nothing to look at (no finding, no offer, no
+        # tile marked) and nothing to do about it is a plain note, not a
+        # chip that asks for attention (#1203).
+        verdict = ""
+        changed.append("worth a look with no reason or step")
     if verdict:
         out["verdict"] = verdict
     else:
         out.pop("verdict", None)
-    step = next_step(out, verdict, open_rows)
     if step:
         out["next"] = step
     else:

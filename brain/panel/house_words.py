@@ -502,6 +502,12 @@ _BRAIN_QUICK_RUN = re.compile(
     re.I)
 
 
+# brAIn's own piece inside Home Assistant is "integration" only to its
+# developer (#1205): "the brAIn integration", "brAIn's custom integration".
+_BRAIN_INTEGRATION = re.compile(
+    r"\b(?:the\s+)?brAIn(?:['’]s)?\s+(?:custom\s+)?integration\b", re.I)
+
+
 def one_name(text: str) -> str:
     """``text`` with the assistant's other names turned to "brAIn" (#832):
     "the companion", "the in-game companion" (brAIn in the game), "the
@@ -526,6 +532,10 @@ def one_name(text: str) -> str:
         return f"{ask.split()[0]} brAIn" if ask else "brAIn"
 
     out = _BRAIN_CHAT_SESSION.sub(session, out)
+    out = _BRAIN_INTEGRATION.sub(
+        lambda m: _cap_at_start(m.string, m.start(),
+                                "the link between brAIn and Home Assistant"),
+        out)
     return _BRAIN_QUICK_RUN.sub(quick, out)
 
 
@@ -843,7 +853,7 @@ def household(text: str) -> str:
 
 _PATH = (r"(?<![\w/.])/(?:config|data|opt|usr|etc|var|share|ssl|addons?|"
          r"media|tmp|homeassistant)(?:/[\w.\-]+)+/?")
-_FILE = (r"(?<![\w/.])[\w-]+(?:\.[\w-]+)*\.(?:md|json|ya?ml|py|sh|txt|log|"
+_FILE = (r"(?<![\w/.])(?:[\w.\-]+/)*[\w-]+(?:\.[\w-]+)*\.(?:md|json|ya?ml|py|sh|txt|log|"
          r"toml|db|conf|jsonl)\b")
 _LINE = r"(?:\s+(?:at\s+|on\s+)?line\s+\d+|:\d+\b)?"
 _FILE_RE = re.compile(
@@ -851,7 +861,7 @@ _FILE_RE = re.compile(
     + r")" + _LINE, re.I)
 _HEX_RE = re.compile(
     r"\s*\(\s*0x[0-9a-f]{1,16}\s*\)"
-    r"|\b(?:(?:an?\s+)?(?:error|fault|status|result)\s+)?(?:code\s+)?"
+    r"|\b(?:(?:an?\s+)?(?:error|fault|status|result)\s+(?:code\s+)?|code\s+)"
     r"0x[0-9a-f]{1,16}\b", re.I)
 # A pre-release marker ("-rc3") is kept as words: "2.4.1-rc3_build77" is a
 # test build OF 2.4.1, and saying "2.4.1" would name a release the device
@@ -867,6 +877,9 @@ _BARE_BUILD_RE = re.compile(
     r"\s*\(\s*(?:firmware\s+)?build\s+(?=[\w.\-]*\d)[A-Za-z0-9][\w.\-]{3,}\s*\)"
     r"|\b(firmware\s+)?build\s+(?=[\w.\-]*\d)[A-Za-z0-9][\w.\-]{2,}[A-Za-z0-9]",
     re.I)
+# A build number after a version ("2024.3.1 build 77", "v2.4, build 188"):
+# the version is the household's, the build behind it is not (#1205).
+_TRAIL_BUILD_RE = re.compile(r"(?<=\d)\s*,?\s+build\s+\d+\b", re.I)
 # A voice's id (#1133): a Piper voice ("en_US-kristin-medium") or a cloud
 # one ("en-US-Wavenet-D"). Beside the word "voice" it is an aside and goes
 # ("speak with the voice service, voice en_US-…"); anywhere else it is "a
@@ -1006,7 +1019,8 @@ def code_words(token: str, names: Mapping | None = None) -> str:
 
 
 def technical(text: str, files: bool = True,
-              names: Mapping | None = None) -> tuple[str, list[str]]:
+              names: Mapping | None = None,
+              figures: bool = True) -> tuple[str, list[str]]:
     """``(text, found)``: ``text`` with the strings only a developer reads
     taken out of the sentence, and those strings. Text with none comes back
     exactly as it was, with an empty list. ``files=False`` leaves a file's
@@ -1021,6 +1035,14 @@ def technical(text: str, files: bool = True,
         token = token.strip().strip("`").strip()
         if token and token not in found:
             found.append(token)
+
+    def file_words(m: re.Match) -> str:
+        keep(m.group(0))
+        lead = m.group(0)[:len(m.group(0)) - len(m.group(0).lstrip())]
+        ext = re.search(r"\.(\w+)(?::\d+)?\s*$", m.group(0).strip())
+        kind = {"db": "database", "log": "log"}.get(
+            ext.group(1).lower() if ext else "", "configuration")
+        return f"{lead}a {kind} file"
 
     def swap(words: str):
         def sub(m: re.Match) -> str:
@@ -1075,18 +1097,20 @@ def technical(text: str, files: bool = True,
 
     try:
         out = _BUILD_RE.sub(build, text)
+        out = _TRAIL_BUILD_RE.sub(lambda m: (keep(m.group(0)), "")[1], out)
         out = _BARE_BUILD_RE.sub(bare_build, out)
         out = _DATE_BUILD_RE.sub(dated, out)
         out = _VOICE_ASIDE_RE.sub(voice_aside, out)
         out = _VOICE_SAID_RE.sub(voice, out)
-        out = dbm_words(out, keep)
+        if figures:
+            out = dbm_words(out, keep)
         out = _HEX_RE.sub(hexcode, out)
         out = _MCP_RE.sub(swap("one of brAIn's tools"), out)
         tools = _tool_re()
         if tools is not None:
             out = tools.sub(swap("one of brAIn's tools"), out)
         if files:
-            out = _FILE_RE.sub(swap("a configuration file"), out)
+            out = _FILE_RE.sub(file_words, out)
         else:
             out = _PATH_RE.sub(swap("a configuration file"), out)
             out = _LINE_AT_RE.sub(swap(""), out)
@@ -1098,6 +1122,15 @@ def technical(text: str, files: bool = True,
         return text, []
     out = re.sub(r"\s+([,.;:!?])", r"\1", re.sub(r"[ \t]{2,}", " ", out))
     out = re.sub(r"\(\s*\)", "", out).strip()
+    # "the x.py file" is "a configuration file", not "the a configuration
+    # file file".
+    out = re.sub(r"\b(?:the|a|an|its|that)\s+(a (?:configuration|database|log) "
+                 r"file)(?:\s+file)?\b", r"\1", out, flags=re.I)
+    out = re.sub(r"\b(a (?:configuration|database|log) file) file\b", r"\1",
+                 out)
+    # "the recorder database x.db" is "the recorder database file".
+    out = re.sub(r"\b(database|log)\s+a (?:database|log) file\b", r"\1 file",
+                 out, flags=re.I)
     # "Code 0xFF failed" became "an error code failed": a sentence that
     # began with a capital still does.
     if text[:1].isupper() and out[:1].islower():
@@ -1151,6 +1184,9 @@ _ID_NOUNS = {
     "zone": "zone", "notify": "notification service",
     "persistent_notification": "notification",
     "homeassistant": "Home Assistant action",
+    # Service ids: what the code calls an action, said as what it does.
+    "python_script": "script", "shell_command": "command",
+    "rest_command": "command", "ai_task": "assistant task",
 }
 _ID_RE = re.compile(
     r"`?(?<![\w./])([a-z][a-z_]*)\.([a-z0-9][a-z0-9_]*)(?![\w]|\.\w)`?")
@@ -1184,7 +1220,15 @@ def ids(text: str, names: Mapping | None = None) -> tuple[str, list[str]]:
                 found.append(eid)
             before = out + text[pos:m.start()]
             after_at = m.end()
-            if eid in known:
+            if (eid in known and re.search(r"\(\s*$", before)
+                    and re.match(r"\s*\)", text[after_at:])
+                    and known[eid].lower() in re.sub(
+                        r"\s*\(\s*$", "", before)[-80:].lower()):
+                # "Front door lock (lock.front_door)": already named.
+                before = re.sub(r"\s*\(\s*$", "", before)
+                after_at += re.match(r"\s*\)", text[after_at:]).end()
+                said = ""
+            elif eid in known:
                 said = known[eid]
             elif re.search(r"\(\s*$", before) and re.match(r"\s*\)",
                                                           text[after_at:]):
@@ -1241,7 +1285,8 @@ def lint(text: str, files: bool = True, figures: bool = True) -> list[str]:
         return []
     out: list[str] = []
     for pattern in ((_FILE_RE if files else _PATH_RE), _LINE_NO_RE, _HEX_RE,
-                    _BUILD_RE, _BARE_BUILD_RE, _DATE_BUILD_RE, _VOICE_ID_RE,
+                    _BUILD_RE, _BARE_BUILD_RE, _TRAIL_BUILD_RE, _DATE_BUILD_RE,
+                    _VOICE_ID_RE,
                     *((_DBM_RE,) if figures else ()),
                     _MCP_RE, _SNAKE_RE, _LEGACY_RE):
         out += [m.group(0).strip() for m in pattern.finditer(text)]
@@ -1429,16 +1474,17 @@ def dbm_words(text: str, found=None) -> str:
 
 
 def said_plainly(text: str, names: Mapping | None = None, files: bool = True,
-                 known: list | tuple = ()) -> str:
+                 known: list | tuple = (), figures: bool = True) -> str:
     """``text`` as a surface shows it (#774, #791): developer strings out
     (`technical`), ids by name or kind (`ids`), the old "an internal name"
     repaired — after an article it simply goes ("the event"), and elsewhere
     it is the one code name the row kept in ``known`` (its Technical
     line), said in words — and then any sentence `lint` still flags is
     dropped. Text the lint finds nothing in comes back as it was."""
-    if not isinstance(text, str) or not text or not lint(text, files):
+    if (not isinstance(text, str) or not text
+            or not lint(text, files, figures=figures)):
         return text
-    out = technical(text, files, names)[0]
+    out = technical(text, files, names, figures=figures)[0]
     out = ids(out, names)[0]
     if _LEGACY_RE.search(out):
         out = _LEGACY_AFTER_ARTICLE_RE.sub(r"\1", out)

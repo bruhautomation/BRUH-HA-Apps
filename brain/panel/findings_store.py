@@ -508,6 +508,21 @@ IDENTITY = None
 SELF_CARE = None
 
 
+# A check's rows are worded by its code, which names things the way the
+# house does; but a check passes along what a device or a log said, so its
+# rows read the same display pass as a model's (`shown_words`), less the
+# lanes that report a hazard: those say what they say.
+PLAIN_EXEMPT_CHECKS = frozenset({"check:climate.freeze",
+                                 "check:base.heater_idle"})
+
+
+def _check_written(source: str) -> bool:
+    """A check's row whose words the display pass may say plainly."""
+    source = str(source or "")
+    return (source.startswith("check:") and source not in PLAIN_EXEMPT_CHECKS
+            and not source.startswith(("check:safety.", "check:sec.")))
+
+
 def _model_written(source: str) -> bool:
     """A producer whose sentences a model wrote: no colon, not exempt."""
     source = str(source or "")
@@ -983,14 +998,17 @@ def _names_itself(reason, entry: dict) -> bool:
     return False
 
 
-def _plainly(text, entry: dict, files: bool = True) -> str:
+def _plainly(text, entry: dict, files: bool = True,
+             figures: bool = True) -> str:
     """`house_words.said_plainly` with the panel's names map, read only
     when the text holds something to name."""
-    if not isinstance(text, str) or not house_words.lint(text, files):
+    if (not isinstance(text, str)
+            or not house_words.lint(text, files, figures=figures)):
         return text
     return house_words.said_plainly(
         text, _names_now(), files=files,
-        known=clean_technical((entry or {}).get("technical")))
+        known=clean_technical((entry or {}).get("technical")),
+        figures=figures)
 
 
 def shown_words(entry: dict) -> dict:
@@ -1002,6 +1020,9 @@ def shown_words(entry: dict) -> dict:
     lane, a person's correction) comes back with nothing changed."""
     entry = entry if isinstance(entry, dict) else {}
     model = _model_written(entry.get("source"))
+    # A check's words are its own, except what a device or a log put in
+    # them: an id, a path, a build string goes to Details like a model's.
+    checked = _check_written(entry.get("source"))
     out = {}
     # What the pass takes out of a sentence is kept for Details (#1133):
     # the row's Technical line, never lost and never in the sentence.
@@ -1010,6 +1031,20 @@ def shown_words(entry: dict) -> dict:
     for key in ("text", "claim", "detail", "fix"):
         said = entry.get(key)
         if isinstance(said, str) and said:
+            if checked:
+                # A measurement keeps its figure and unit (figures=False):
+                # a check's own numbers are what the row is about.
+                plain_said = _plainly(said, entry, figures=False)
+                if plain_said != said:
+                    plain_said = textclip.finished(plain_said,
+                                                   step=key == "fix")
+                if plain_said != said and (plain_said
+                                           or key not in ("text", "fix")):
+                    out[key] = plain_said
+                    for token in house_words.lint(said, figures=False):
+                        if token not in technical:
+                            technical.append(token)
+                    continue
             if not model:
                 # A check's or a person's words are theirs; only a cut that
                 # was stored ending "…" or "and N more." is said whole
@@ -2919,11 +2954,24 @@ REMINDER_MISREAD_X = 10
 _UNIT = (r"(miles?|mi|km|kilomet(?:er|re)s?|days?|weeks?|months?|hours?|"
          r"hrs?)")
 _NUMBER = r"(\d[\d,]*(?:\.\d+)?)"
-_OVERDUE_RE = re.compile(_NUMBER + r"\s*" + _UNIT
-                         + r"\s+(?:overdue|past due|late)\b", re.I)
-_INTERVAL_RE = re.compile(
-    r"\b(?:every|each|interval(?:\s+(?:is|of))?:?|repeats? every)\s+"
-    + _NUMBER + r"[\s-]*" + _UNIT, re.I)
+_LATE_WORD = r"(?:overdue|past due|late|past (?:its|the|their) (?:due )?(?:date|time))"
+_ODOMETER_RE = re.compile(_NUMBER + r"\s*" + _UNIT
+                          + r"\s+(?:overdue|past due|late)\b", re.I)
+_OVERDUE_RES = (
+    # "19,766 miles overdue", "19,766 miles past its date"
+    re.compile(_NUMBER + r"\s*" + _UNIT + r"\s+" + _LATE_WORD + r"\b", re.I),
+    # "overdue by 19,766 miles"
+    re.compile(r"\b(?:overdue|past due)\s+by\s+" + _NUMBER + r"\s*" + _UNIT
+               + r"\b", re.I),
+)
+# "every 1,000 miles", "interval is 1,000 miles", and the other way round:
+# "a 5,000-mile interval".
+_INTERVAL_RES = (
+    re.compile(r"\b(?:every|each|interval(?:\s+(?:is|of))?:?|repeats? every)\s+"
+               + _NUMBER + r"[\s-]*" + _UNIT, re.I),
+    re.compile(_NUMBER + r"[\s-]*" + _UNIT + r"[\s-]+(?:service\s+)?interval\b",
+               re.I),
+)
 _UNIT_KEY = {"mile": "mi", "miles": "mi", "mi": "mi", "km": "km",
              "kilometer": "km", "kilometers": "km", "kilometre": "km",
              "kilometres": "km", "day": "d", "days": "d", "week": "w",
@@ -2938,31 +2986,59 @@ def _figure(text: str) -> float:
     return float(text.replace(",", ""))
 
 
+def _overdue(words: str):
+    """The first "N <unit> overdue" a text states, in either order."""
+    for pattern in _OVERDUE_RES:
+        found = pattern.search(words)
+        if found:
+            return found
+    return None
+
+
 def misread_reminder(row: dict) -> dict | None:
     """The fields that turn a row stating an impossible overdue figure into
-    a question about the reminder's setting, or None."""
+    a question about the reminder's setting, or None.
+
+    The question is worded off the row's own headline with the figure taken
+    out ("Oil change reminder is far overdue"): the figure changes every day
+    the counter runs on, and an answer is kept by the words, so a Wrong on
+    "19,766 miles" must be the same words tomorrow at "19,812" (#1201) -
+    and each reminder keeps the name its headline gave it, so a Wrong on
+    one is not an answer about every other."""
     words = " ".join([str(row.get(k) or "") for k in
                       ("text", "claim", "detail", "fix")]
                      + [str(e.get("value") or "") for e in
                         row.get("evidence") or [] if isinstance(e, dict)])
-    late = _OVERDUE_RE.search(words)
+    late = _overdue(words)
     if not late:
         return None
     unit = _UNIT_KEY.get(late.group(2).lower(), "")
-    for m in _INTERVAL_RE.finditer(words):
-        if _UNIT_KEY.get(m.group(2).lower(), "") != unit or not unit:
-            continue
-        figure, interval = _figure(late.group(1)), _figure(m.group(1))
-        if interval <= 0 or figure <= REMINDER_MISREAD_X * interval:
-            continue
-        said = (f"A reminder reads {late.group(1)} {late.group(2)} past its "
-                f"date on a {m.group(1)}-{m.group(2).rstrip('s')} interval. "
-                "Is the reminder's setting right?")
-        return {"text": said, "claim": said,
-                "detail": (f"That is more than {REMINDER_MISREAD_X} times "
-                           "the interval, which a reminder set up wrong "
-                           "reads and a real one does not."),
-                "fix": REMINDER_FIX, "kind": "question", "severity": "info"}
+    for pattern in _INTERVAL_RES:
+        for m in pattern.finditer(words):
+            if _UNIT_KEY.get(m.group(2).lower(), "") != unit or not unit:
+                continue
+            figure, interval = _figure(late.group(1)), _figure(m.group(1))
+            if interval <= 0 or figure <= REMINDER_MISREAD_X * interval:
+                continue
+            head = str(row.get("text") or "")
+            for found in _OVERDUE_RES:
+                head = found.sub("far overdue", head)
+            head = re.sub(r"\s+", " ", head).strip().rstrip(".!?")
+            # No figure to cut out: the row's own headline stays, so the
+            # question always names the reminder it is about (two reminders
+            # never share one text, and a Wrong is theirs alone).
+            head = head or "A reminder is far overdue"
+            said = (head if head.endswith("setting right")
+                    else f"{head}. Is the reminder's setting right?")
+            return {"text": said, "claim": said,
+                    "detail": (f"It reads {late.group(1)} {late.group(2)} "
+                               f"past its date on a {m.group(1)}-"
+                               f"{m.group(2).rstrip('s')} interval. That is "
+                               f"more than {REMINDER_MISREAD_X} times the "
+                               "interval, which a reminder set up wrong "
+                               "reads and a real one does not."),
+                    "fix": REMINDER_FIX, "kind": "question",
+                    "severity": "info"}
     return None
 
 
@@ -2978,7 +3054,9 @@ def odometer_counter(row: dict) -> bool:
     producer down for that entity as for any other row."""
     words = " ".join(str(row.get(k) or "") for k in
                      ("text", "claim", "detail", "fix"))
-    late = _OVERDUE_RE.search(words)
+    # Only the shape #827 read ("N miles overdue"); the wider shapes
+    # `misread_reminder` reads are not this rule's.
+    late = _ODOMETER_RE.search(words)
     return bool(late and _UNIT_KEY.get(late.group(2).lower(), "")
                 in _DISTANCE_UNITS)
 
