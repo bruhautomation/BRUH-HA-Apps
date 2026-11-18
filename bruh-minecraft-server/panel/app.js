@@ -138,7 +138,7 @@
 
   // The tab row scrolls sideways on a phone: a fade on the side that has
   // more tabs says so, and nothing fades when every tab fits.
-  const tabRow = $('.tabs');
+  const tabRow = $('.tabs-in');
   const tabCue = () => {
     const more = tabRow.scrollWidth - tabRow.clientWidth;
     tabRow.classList.toggle('more-left', more > 1 && tabRow.scrollLeft > 1);
@@ -907,7 +907,7 @@
         <td>${fmtSize(w.size_bytes)}</td>
         <td>${settingsCell}</td>
         <td>${activeBadge}</td>
-        <td class="actions">${actions}</td>
+        <td><div class="row-actions">${actions}</div></td>
       `;
       tbody.appendChild(tr);
     });
@@ -1240,8 +1240,8 @@
 
     host.innerHTML = `
       <p class="muted snap-note">Restore puts the whole world (and its nether and end) back as it was at that time and restarts the server. Anything built or changed since is lost.</p>
-      <h3>Git snapshots</h3>${renderGit()}
-      <h3>Archives</h3>${renderArchives()}
+      <section class="sec"><h2>Git snapshots</h2>${renderGit()}</section>
+      <section class="sec"><h2>Archives</h2>${renderArchives()}</section>
     `;
     host.querySelectorAll('button[data-restore]').forEach((b) => {
       b.addEventListener('click', async () => {
