@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.1
+
+### Fixed
+
+- brAIn no longer warns about freezing from a thermometer you told it is broken, and no longer uses it in the heat model. A room that only that thermometer covered now reads as not measured, never as fine. A warning any other thermometer supports still fires, and a thermometer on a device that also senses leaks, smoke or gas is still read. Only a plain statement that the sensor itself is broken counts: "the heater is broken" or "the window is broken" changes nothing (1202).
+- In Settings on a phone, "More" and "Details" are wide enough to tap (they were as narrow as their word) (1234).
+- In Morph on a phone, the room chips over a chart, the chart's zoom reset and the "All lights" slider are tall enough to tap.
+
 ## 5.5.0
 
 ### Changed
