@@ -23,7 +23,7 @@
  * is blank the day it is down.
  */
 
-const CARD_VERSION = '0.2.0';
+const CARD_VERSION = '0.2.1';
 const DOMAIN = 'gardenrx';
 
 console.info(
@@ -82,8 +82,16 @@ const css = (morph) => `
     --g-muted: ${morph ? 'var(--muted)' : 'var(--secondary-text-color, #5b6b79)'};
     --g-line: ${morph ? 'var(--line)' : 'var(--divider-color, #d9e0e6)'};
     --g-accent: ${morph ? 'var(--lime)' : 'var(--primary-color, #03a9f4)'};
-    --g-on-accent: ${morph ? 'var(--bg, #111)' : 'var(--text-primary-color, #fff)'};
-    --g-warn: ${morph ? 'var(--amber)' : 'var(--warning-color, #b7791f)'};
+    /* The filled button: HA's default blue #03a9f4 under a white label is
+       2.63:1, so outside Morph the fill is the theme's primary pulled 28%
+       toward black (white on it: 5.0:1) and the label is plain white. Text in
+       the accent or error colour is pulled toward the reading colour the same
+       way. Same formula as the BRUH Print and BRUH Bambu cards. */
+    --g-fill: ${morph ? 'var(--lime)' : 'color-mix(in srgb, var(--primary-color, #03a9f4) 72%, #000)'};
+    --g-on-accent: ${morph ? 'var(--bg, #111)' : '#fff'};
+    --g-accent-text: ${morph ? 'var(--lime)' : 'color-mix(in srgb, var(--primary-color, #03a9f4) 50%, var(--primary-text-color, #14202b))'};
+    --g-bad-text: ${morph ? 'var(--rose)' : 'color-mix(in srgb, var(--error-color, #c62828) 70%, var(--primary-text-color, #14202b))'};
+    --g-warn: ${morph ? 'var(--amber)' : 'color-mix(in srgb, var(--warning-color, #b7791f) 45%, var(--primary-text-color, #14202b))'};
     --g-bad: ${morph ? 'var(--rose)' : 'var(--error-color, #c62828)'};
     font-family: ${morph ? "'Manrope', sans-serif" : 'inherit'}; color: var(--g-text); }
   .wrap { padding: ${morph ? '4px 2px' : '16px'}; display: grid; gap: 16px; }
@@ -102,13 +110,13 @@ const css = (morph) => `
   .bar.low > i { background: var(--g-bad); }
   .chips { display: flex; flex-wrap: wrap; gap: 8px; }
   .chip { font-size: 12px; padding: 4px 8px; border-radius: 999px; background: var(--g-sunk); }
-  .chip.bad { background: color-mix(in srgb, var(--g-bad) 16%, transparent); color: var(--g-bad); }
+  .chip.bad { background: color-mix(in srgb, var(--g-bad) 16%, transparent); color: var(--g-bad-text); }
   .section { display: grid; gap: 8px; }
   .label { font-size: 12px; font-weight: 600; color: var(--g-muted); letter-spacing: .02em; }
   button, select, input { font: inherit; font-size: 14px; color: var(--g-text); }
   button { min-height: 44px; padding: 0 16px; border-radius: 8px; font-weight: 600; border: 1px solid var(--g-line);
     background: var(--g-surface); cursor: pointer; }
-  button.primary { background: var(--g-accent); border-color: var(--g-accent); color: var(--g-on-accent); font-weight: 600; }
+  button.primary { background: var(--g-fill); border-color: var(--g-fill); color: var(--g-on-accent); font-weight: 600; }
   button.armed { background: var(--g-bad); border-color: var(--g-bad); color: #fff; }
   button:disabled { opacity: .55; cursor: default; }
   select, input { min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--g-line);
@@ -117,8 +125,8 @@ const css = (morph) => `
   .form { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
   .form .wide { grid-column: 1 / -1; }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; }
-  .err { color: var(--g-bad); font-size: 12px; }
-  .ok { color: var(--g-accent); font-size: 12px; }
+  .err { color: var(--g-bad-text); font-size: 12px; }
+  .ok { color: var(--g-accent-text); font-size: 12px; }
   .warn { color: var(--g-warn); font-size: 12px; }
   .empty { color: var(--g-muted); font-size: 12px; }
 `;

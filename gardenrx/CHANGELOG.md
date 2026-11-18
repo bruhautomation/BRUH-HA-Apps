@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1
+
+### Security
+
+- Next.js is updated from 16.4.2 to 16.4.5, a security release.
+
+### Fixed
+
+- The dashboard cards' Mark sprayed button and their status text are readable on Home Assistant's default theme, light and dark.
+
 ## 0.2.0
 
 ### Changed

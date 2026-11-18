@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1
+
+### Fixed
+
+- The dashboard card's main button, its Stop button and the text on warning and failure notices are readable on Home Assistant's default theme, light and dark.
+
 ## 0.5.0
 
 ### Changed

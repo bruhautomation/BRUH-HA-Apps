@@ -67,6 +67,12 @@ const css = `
        one filled button. */
     --bp-muted: color-mix(in srgb, var(--secondary-text-color) 45%, var(--primary-text-color));
     --bp-accent: color-mix(in srgb, var(--primary-color) 50%, var(--primary-text-color));
+    /* The filled button's fill: the theme's primary pulled 28% toward
+       black, so the white label on it clears 4.5:1 (white on HA's #03a9f4
+       is 2.63:1; at 72% it is 5.0:1) and a custom theme's colour is still
+       the colour. */
+    --bp-fill: color-mix(in srgb, var(--primary-color, #03a9f4) 72%, #000);
+    --bp-bad: color-mix(in srgb, var(--error-color, #c0392b) 70%, var(--primary-text-color));
     }
   ha-card { padding: 16px; }
   .head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
@@ -79,7 +85,7 @@ const css = `
   .pill .dot { width: 8px; height: 8px; border-radius: 50%;
     background: var(--success-color, #1f9254); }
   .pill.bad { background: color-mix(in srgb, var(--error-color, #c0392b) 16%, transparent);
-    color: var(--error-color, #c0392b); }
+    color: var(--bp-bad); }
   .pill.bad .dot { background: var(--error-color, #c0392b); }
   /* Nothing is wrong at the printer — this card just cannot find the
      entities that would say. A green dot beside "no status" is the
@@ -134,8 +140,8 @@ const css = `
     background: var(--secondary-background-color);
     color: var(--primary-text-color);
   }
-  button.primary { background: var(--primary-color);
-    border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
+  button.primary { background: var(--bp-fill);
+    border-color: var(--bp-fill); color: #fff; }
   button[disabled] { opacity: .5; cursor: progress; }
   .actions { display: flex; gap: 8px; align-items: center; margin-top: 12px;
     flex-wrap: wrap; }
@@ -143,7 +149,7 @@ const css = `
     font-size: 14px; line-height: 20px; }
   .msg.ok { background: color-mix(in srgb, var(--success-color, #1f9254) 14%, transparent); }
   .msg.err { background: color-mix(in srgb, var(--error-color, #c0392b) 14%, transparent);
-    color: var(--error-color, #c0392b); }
+    color: var(--bp-bad); }
   .empty { color: var(--bp-muted); font-size: 14px; }
 
   /* The card cannot work. Not styled as an error — nothing has gone
