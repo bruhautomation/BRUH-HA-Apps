@@ -851,8 +851,15 @@ def _derived_rows(snap: dict, house: House, derived: list, now: float) -> list:
                        f"{'s' if len(missing) == 1 else ''} — edit the "
                        "group's members rather than reloading it.")
             else:
-                fix = (f"It is a {kind} of "
-                       f"{join_names([house.label(m) for m in members])}; a group "
+                # A member the household settled (finished with, broken,
+                # Stop watching) is not named again (#1204); a lock or an
+                # alarm still is (`House.settled_device`'s floor).
+                named = [m for m in members if not house.settled_device(
+                    house.device_of(m), m, "dev.unavailable")]
+                fix = (f"It is a {kind}"
+                       + (f" of {join_names([house.label(m) for m in named])}"
+                          if named else "")
+                       + "; a group "
                        "goes unavailable when its members do, so check "
                        "those rather than the group.")
         else:
@@ -1729,9 +1736,15 @@ def zwave_dead(snap: dict, now: float) -> list[dict]:
     dead says the *mesh* has lost the node, and the fix is a mesh fix — move
     it, re-interview it, or replace a failed node — not a restart.
     """
+    from . import network  # noqa: PLC0415 — network imports this module
     house = House(snap)
-    dead = [house.device_name(house.devices[d])
-            for d in _zwave_dead_devices(house)]
+    # A node somebody disabled, labelled not in use, or said to be finished
+    # with or broken is not named again (`network.not_in_use`, #1204); a
+    # lock or an alarm still is (`House.settled_device`'s floor).
+    dead = [n["name"] for n in _zwave_dead_nodes(house)
+            if not network.not_in_use(
+                house, house.devices.get(n["device_id"]), n["entity_id"])]
+    dead = sorted(set(dead))
     if not dead:
         return []
     dead.sort()
