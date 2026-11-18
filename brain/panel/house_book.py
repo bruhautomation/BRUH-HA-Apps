@@ -580,11 +580,13 @@ _ASKS_HOW_PASSIVE = re.compile(
     # "What is the way to disarm it?", "What's the way to ..."
     r"|^\s*(?:what|which)(?:['\u2019]s|\s+is)?\s+(?:the\s+)?(?:\w+\s+){0,2}?"
     r"(?:way|steps?|method)\s+to\b"
-    # "What disarms the alarm?", "Which automation turns it off?"
-    r"|^\s*(?:what|which)\b[^?.]{0,30}?\b(?:disarm|arm|unlock|lock|open|"
-    r"close|start|stop|turn|switch)(?:s|es)\b"
-    # "Is there something that disarms it?"
-    r"|^\s*is\s+there\s+(?:an?\s+|any\s+)?[^?.]{0,25}?\b(?:that|which)\b",
+    # "Which automation disarms the alarm?": only when the question is
+    # about what the house itself does (an automation, routine, script,
+    # scene or schedule is the subject). "Which breaker turns it off?" and
+    # "which key opens the door?" are about the physical house, and asked.
+    r"|^\s*(?:what|which)\s+(?:\w+\s+){0,2}?(?:automations?|routines?|scripts?|"
+    r"scenes?|schedules?)\b[^?.]{0,30}?\b(?:disarm|arm|unlock|lock|open|"
+    r"close|start|stop|turn|switch)(?:s|es)\b",
     re.I)
 # The operation a how-question asks about, as the services that do it.
 _OPERATIONS = (
@@ -605,7 +607,7 @@ _WHERE_OBJECT = re.compile(
     r"\bwhere(?:\s+(?:is|are|was|were|does|do|did)|['\u2019]s)\s+"
     r"(?P<a>[^?.,;:]+)"
     r"|\b(?:which|what)\s+(?:room|area)\s+(?:is|are|does|do|did)\s+"
-    r"(?P<b>[^?.,;:]+?)\s+(?:in|sit|sits|live|lives|go|goes|belong|belongs)\b"
+    r"(?P<b>[^?.,;:]+?)\s+(?:in|sit|sits|live|lives|belong|belongs)\b"
     r"|\bin\s+(?:which|what)\s+(?:room|area)\s+(?:is|are|does|do|did)\s+"
     r"(?P<c>[^?.,;:]+)",
     re.I)
@@ -615,7 +617,7 @@ _THING_WORDS = frozenset({
     "sensor", "sensors", "detector", "device", "unit", "plug", "switch",
     "button", "remote", "panel", "controller", "mounted", "located",
     "installed", "placed", "fitted", "kept", "physically", "now", "exactly",
-    "sit", "sits", "live", "lives", "go", "goes", "put", "belong", "belongs"})
+    "sit", "sits", "live", "lives", "put", "belong", "belongs"})
 _ARTICLES = frozenset({"the", "your", "a", "an", "our", "this", "that"})
 
 
