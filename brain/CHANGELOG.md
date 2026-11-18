@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.2
+
+### Fixed
+
+- Findings written by brAIn's house checks say things by name: a file path, an entity id or a build number no longer sits in the sentence, and is kept under Details instead. A measurement keeps its figure, and safety, security and freeze findings are left exactly as written (1205).
+- A device you said is not in use is no longer named again in the list of dead Z-Wave devices or in a finding about a group. A lock is always named, and two devices that share a name both show (1204).
+- A service reminder with an impossible overdue figure is asked as a question about the reminder's setting, and the question no longer carries the figure, so a Wrong on it holds when the figure changes the next day. Each question names its own reminder: a Wrong on one never silences another (1201).
+- Insight cards no longer carry a note about brAIn's own run (that no data was needed for a reply, that a check could not be run), and a card marked "worth a look" with nothing to look at is a plain note. A sentence about the house, such as checks that could not run because a hub is offline, stays (1203).
+- The house book answers more ways of asking where a sensor or device is, or how something an automation does is done, instead of asking you. Anything it cannot know from the house (which breaker, which key, where a vent leads) is still asked (1206).
+
 ## 5.5.1
 
 ### Fixed
