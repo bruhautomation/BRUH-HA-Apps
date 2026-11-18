@@ -2588,12 +2588,10 @@ async def api_addons_remove_file(request: web.Request) -> web.Response:
         except addons.AddonError as exc:
             return web.json_response({"error": str(exc)}, status=409)
     else:
-        folder = addons.destination(kind, ctx.server_dir, ctx.level_name, ctx.packs_dir)
-        target = _under(folder, name)
-        if target.is_dir() and kind == "datapack":
-            shutil.rmtree(target)
-        elif target.is_file():
-            target.unlink()
+        try:
+            addons.remove_manual(ctx, kind, name)
+        except addons.AddonError as exc:
+            return web.json_response({"error": str(exc)}, status=409)
     if kind == "resourcepack" and name == _active_pack():
         props = _read_properties()
         props["resource-pack"] = ""

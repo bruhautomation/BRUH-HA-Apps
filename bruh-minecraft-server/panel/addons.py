@@ -47,6 +47,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import tempfile
 import time
 import urllib.parse
@@ -560,12 +561,92 @@ async def install_many(client: Modrinth, ctx: Context, items: list) -> list[dict
     return results
 
 
-def remove(ctx: Context, project_id: str, force: bool = False) -> dict:
-    """Take one add-on out of this world, or refuse and say what needs it."""
+def _owned_by_row(items: dict[str, dict], kind: str, name: str) -> str:
+    """The project id whose manifest row owns this file, or ''."""
+    for pid, row in items.items():
+        if row.get("kind") == kind and os.path.basename(str(row.get("file") or "")) == name:
+            return pid
+    return ""
+
+
+def _manual_target(ctx: Context, kind: str, name: str) -> Path:
+    """The one entry a hand-installed add-on is, proven to sit in its own folder.
+
+    The name only chooses an entry in the kind's destination: it may not
+    hold a separator or `..`, the entry must be a regular file (or, for a
+    data pack, a real folder), never a link, and its resolved parent must be
+    the resolved destination. Anything a browser-installed add-on owns is
+    refused here, because that goes through its manifest row.
+    """
+    if kind not in KINDS:
+        raise AddonError("Say which kind it is: plugin, datapack, mod or resourcepack.")
+    if (not name or name != os.path.basename(name) or "\\" in name or name.startswith(".")
+            or name in (".", "..")):
+        raise AddonError("That is not a file name in this world.")
+    if kind != "datapack" and not SAFE_FILE.match(name):
+        raise AddonError("That is not a file name in this world.")
+    if _bundled(kind, name):
+        raise AddonError("That plugin is what lets Bedrock, iPad and console players join, "
+                         "so it is not removed from here.")
+    if _owned_by_row(read_manifest(ctx.server_dir), kind, name):
+        raise AddonError("The browser installed that one; it is removed by its project id.")
+    folder = destination(kind, ctx.server_dir, ctx.level_name, ctx.packs_dir)
+    path = folder / name
+    if path.is_symlink():
+        raise AddonError("That is a link to somewhere else, so it is not removed from here.")
+    if kind == "datapack" and (name.lower() in BUNDLED_DATAPACKS
+                               or not (path.is_dir() or path.suffix.lower() == ".zip")):
+        raise AddonError("That is not a data pack.")
+    if not (path.is_file() or (kind == "datapack" and path.is_dir())):
+        raise AddonError("That is not in this world any more.")
+    if path.resolve().parent != folder.resolve():
+        raise AddonError("That is not inside this world's folder, so it is not removed.")
+    return path
+
+
+def remove_manual(ctx: Context, kind: str, name: str) -> dict:
+    """Delete one hand-installed add-on and nothing else; the manifest stays as it is."""
+    path = _manual_target(ctx, kind, name)
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+    return {"id": f"{kind}:{name}", "title": _title_from_file(name), "kind": kind,
+            "file": name, "file_removed": True, "source": "manual"}
+
+
+def _find_manual(ctx: Context, ref: str) -> tuple[str, str]:
+    """(kind, file) for a list key `kind:file`, or a bare file name in one folder."""
+    if ":" in ref:
+        kind, _, name = ref.partition(":")
+        return kind, name
+    where = [k for k in KINDS
+             if ref == os.path.basename(ref) and ref not in ("", ".", "..")
+             and (destination(k, ctx.server_dir, ctx.level_name, ctx.packs_dir) / ref).exists()]
+    if len(where) == 1:
+        return where[0], ref
+    if where:
+        raise AddonError(f"{ref} is in more than one place ({', '.join(where)}); "
+                         f"use kind:{ref} to say which.")
+    raise AddonError("That add-on is not installed in this world.")
+
+
+def remove(ctx: Context, ref: str, force: bool = False) -> dict:
+    """Take one add-on out of this world, or refuse and say what needs it.
+
+    `ref` is a browser-installed add-on's project id, or the key the list
+    gives an item (`kind:file`) or its bare file name. A file the browser
+    installed is always removed through its manifest row, with the
+    dependency check; a hand-installed one is deleted as that one entry.
+    """
     items = read_manifest(ctx.server_dir)
-    row = items.get(project_id)
-    if row is None:
-        raise AddonError("That add-on is not installed in this world.")
+    project_id = ref
+    if project_id not in items:
+        kind, name = _find_manual(ctx, ref)
+        project_id = _owned_by_row(items, kind, name)
+        if not project_id:
+            return remove_manual(ctx, kind, name)
+    row = items[project_id]
     users = needed_by(items, project_id)
     if users and not force:
         raise AddonError(f"{row.get('title')} is needed by {', '.join(users)}; remove that first.")
@@ -621,6 +702,15 @@ def _bundled(kind: str, name: str) -> bool:
     if kind == "datapack":
         return low in BUNDLED_DATAPACKS
     return False
+
+
+def _removable(ctx: Context, kind: str, name: str) -> bool:
+    """Whether remove() would delete this hand-installed entry; offered only then."""
+    try:
+        _manual_target(ctx, kind, name)
+    except AddonError:
+        return False
+    return True
 
 
 def _title_from_file(name: str) -> str:
@@ -709,7 +799,7 @@ def world_contents(ctx: Context, *, running: bool, started_at: float | None,
                 "needed_by": needed_by(manifest, pid) if pid else [],
                 "status": status,
                 "status_text": STATUS_TEXT[status],
-                "removable": True,
+                "removable": bool(row) or _removable(ctx, kind, path.name),
                 "updatable": bool(pid),
                 "reach": REACH[kind],
             })
