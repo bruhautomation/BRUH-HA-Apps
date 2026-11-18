@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.3
+
+### Fixed
+
+- On the errand page, the errand's prompt, its details, the report and the cart table now have room between them, and the same for the browser and shopping-profile lists; they used to touch.
+- The Send button next to the answer box keeps its normal height instead of stretching to the box.
+- Shopping-profile rows have the same spacing as the other lists, and the cart table's text lines up with the rest of the page.
+
 ## 0.1.2
 
 ### Added

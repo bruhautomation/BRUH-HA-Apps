@@ -79,6 +79,7 @@ body {
 
 h2 { font-size: 17px; margin: 22px 0 6px; letter-spacing: -.01em; }
 h2:first-child { margin-top: 0; }
+h3 { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
 p { margin: 0 0 12px; }
 .lede { color: var(--ink-2); font-size: 14px; max-width: 62ch; }
 .muted { color: var(--ink-3); }

@@ -247,10 +247,8 @@ dialog.choices { width: min(460px, calc(100vw - 32px)); padding: 18px; }
   gap: 0; background: var(--bg); width: 100vw; height: 100vh; height: 100dvh; }
 .viewerwrap:fullscreen .viewer, .viewerwrap.filled .viewer { flex: 1; height: auto; resize: none; }
 body.has-filled { overflow: hidden; }
-.viewtools { display: flex; flex-wrap: nowrap; gap: 6px; align-items: center; margin-top: 8px;
-  overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
-.viewtools::-webkit-scrollbar { display: none; }
-.viewtools button { flex: none; }
+.viewtools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; padding-bottom: 2px; }
+.viewtools > * { flex: none; }
 .viewtools .seg button { min-height: 38px; font-size: 14px; }
 .viewer canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 .viewer .center[hidden] { display: none; }
@@ -559,11 +557,11 @@ details.more > summary { list-style: none; }
 .srow select { max-width: 55%; }
 .setting { align-items: flex-start; padding: 4px 0; }
 .setting small { margin-top: 2px; }
-.wprinter + .wprinter { margin-top: var(--s4); padding-top: var(--s4); border-top: 1px solid var(--line); }
+.srow + .wprinter, .wprinter + .wprinter { margin-top: var(--s4); padding-top: var(--s4); border-top: 1px solid var(--line); }
 .wprinter h3 { margin-bottom: 6px; }
 .brief { max-height: 320px; background: var(--sunk); padding: 10px; border-radius: var(--r-sm); }
 .about { text-align: center; margin: var(--s6) 0; }
-.card.ha.warn { border-color: var(--warn); background: color-mix(in srgb, var(--warn-bg) 60%, var(--surface)); }
+.card.ha.warn { padding: var(--s4); border-radius: var(--r-md); border-color: var(--warn); background: color-mix(in srgb, var(--warn-bg) 60%, var(--surface)); }
 .card.ha.ok h3::after { content: " ✓"; color: var(--live); }
 .card.ha > p { margin: 10px 0 0; }
 .cardlist { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 14px; }

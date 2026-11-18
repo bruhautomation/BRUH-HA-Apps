@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.11
+
+### Fixed
+
+- Template titles and the other small headings now use the app's own size (15 px, semi-bold) instead of the browser's default, so the template pane's title lines up with the list beside it.
+
 ## 0.14.10
 
 ### Added

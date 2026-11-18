@@ -68,6 +68,7 @@ Read the matching file before changing what it covers. Search across all of them
 
 - `docs/notes/structure.md` — Repository structure. The file tree with one line per file.
 - `docs/notes/branding.md` — Branding. The brand sources and the rules for the marks.
+- `docs/notes/ui-standard.md` — UI standard. The shared spacing, width, type, radius and control tokens, the section pattern, the token-block sync and the ratchet that `check.py` runs.
 
 ## Container Environment
 - Base: Home Assistant Alpine Linux 3.24 (Dockerfile `ARG BUILD_FROM` default; `build.yaml` only applies to Supervisor < 2026.04)

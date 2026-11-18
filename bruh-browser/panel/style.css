@@ -43,6 +43,7 @@ main { max-width: 1200px; margin: 0 auto; padding: var(--s4); display: grid; gap
 }
 .cardhead { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
 .cardhead h2 { margin-right: auto; }
+#errandBody, #profilesBody, #browsersBody { display: grid; gap: var(--s3); min-width: 0; }
 .muted { color: var(--muted); }
 .note { background: var(--sunk); border-radius: 8px; padding: var(--s3); }
 
@@ -108,7 +109,7 @@ button.option {
 }
 @media (hover: hover) { button.option:hover { background: var(--sunk); } }
 .answer-label { font-weight: 600; }
-.answer-row { display: flex; gap: var(--s2); align-items: stretch; }
+.answer-row { display: flex; gap: var(--s2); align-items: flex-end; }
 .answer-row textarea {
   flex: 1; min-width: 0; min-height: 44px; font: inherit; font-size: 16px; color: var(--ink);
   background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
@@ -134,7 +135,7 @@ button.danger-ink { color: var(--bad); }
 .profile ul { list-style: none; margin: 0; padding: 0; display: grid; }
 .profile li {
   display: grid; grid-template-columns: 1fr auto; gap: 4px var(--s3); align-items: center;
-  padding: 6px 0; border-bottom: 1px solid var(--line);
+  padding: var(--s3) 0; border-bottom: 1px solid var(--line);
 }
 .profile li:last-child { border-bottom: 0; }
 .profile .what { display: grid; min-width: 0; overflow-wrap: anywhere; }
@@ -145,6 +146,8 @@ button.danger-ink { color: var(--bad); }
 
 .cart { width: 100%; border-collapse: collapse; }
 .cart th, .cart td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.cart th:first-child, .cart td:first-child { padding-left: 0; }
+.cart th:last-child, .cart td:last-child { padding-right: 0; }
 .cart td.n, .cart th.n { text-align: right; white-space: nowrap; }
 .cart tfoot td { font-weight: 700; border-bottom: 0; }
 
@@ -178,7 +181,7 @@ button.danger-ink { color: var(--bad); }
   .actions button, .actions .button { flex: 1 1 100%; }
   .history li { grid-template-columns: 1fr; }
   .options button.option { flex: 1 1 100%; }
-  .answer-row { flex-direction: column; }
+  .answer-row { flex-direction: column; align-items: stretch; }
   .browsers li { grid-template-columns: 1fr; }
   .profile .actions button { flex: 0 1 auto; }
   .browsers .tags { justify-content: flex-start; }

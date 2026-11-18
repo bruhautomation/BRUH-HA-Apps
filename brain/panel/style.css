@@ -6947,7 +6947,7 @@ button.kfactsubj:hover { color: var(--accent-2);
 
 /* What it knows: a fact is a row; pressing it opens who taught it, when,
    and the run it came from. */
-.kknow .kadd { margin-top: 0; }
+.kknow .kadd { margin-top: var(--card-gap); }
 .kfact .kfactopen {
   display: grid;
   gap: 2px;
@@ -7585,6 +7585,9 @@ html.in-shell .hl .d { color: var(--ink-3); }
 .kfolds { display: grid; gap: 0; margin: 0 0 var(--sp-4);
   border-top: 1px solid var(--hairline); }
 .kfold { border-bottom: 1px solid var(--hairline); }
+/* Two groups back to back share one rule: the second draws no top line and
+   takes back the first's bottom margin. */
+.kfolds + .kfolds { border-top: 0; margin-top: calc(var(--sp-4) * -1); }
 .kfoldhead { display: flex; align-items: center; gap: var(--sp-3); min-height: 52px; }
 .kfoldname {
   appearance: none; border: 0; background: none; padding: 4px 0; margin: 0;

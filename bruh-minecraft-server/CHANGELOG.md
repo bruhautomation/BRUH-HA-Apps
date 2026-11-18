@@ -5,6 +5,13 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.19.15
+
+### Fixed
+
+- Headings outside a card (on Players, Add-ons, Backups and Worlds) are sized and spaced like the rest of the panel instead of at the browser's large default.
+- On the dashboard, the three status cards fill the row on a wide screen, with no empty columns beside them.
+
 ## 1.19.14
 
 ### Fixed

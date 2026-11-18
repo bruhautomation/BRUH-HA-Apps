@@ -1,0 +1,373 @@
+{
+ "brain/custom_components/brain/morph/frontend/styles.js": {
+  "font": [
+   "0.6em",
+   "10px",
+   "11px",
+   "13px",
+   "15px",
+   "17px",
+   "18px",
+   "19px",
+   "21px",
+   "22px",
+   "24px",
+   "27px",
+   "28px",
+   "30px",
+   "32px",
+   "36px",
+   "42px",
+   "44px",
+   "48px",
+   "56px",
+   "58px",
+   "64px",
+   "96px"
+  ],
+  "media": [
+   "520px",
+   "700px"
+  ],
+  "radius": [
+   "1px",
+   "2px",
+   "3px",
+   "4px",
+   "6px",
+   "9px",
+   "10px",
+   "11px",
+   "18px",
+   "22px",
+   "30px"
+  ],
+  "space": [
+   "3px",
+   "3.5px",
+   "5px",
+   "6px",
+   "7px",
+   "9px",
+   "10px",
+   "11px",
+   "13px",
+   "14px",
+   "18px",
+   "22px",
+   "26px",
+   "28px",
+   "30px",
+   "40px",
+   "44px",
+   "56px",
+   "64px",
+   "96px",
+   "120px"
+  ]
+ },
+ "brain/panel/style.css": {
+  "font": [
+   "11px",
+   "13px",
+   "15px",
+   "17px",
+   "18px"
+  ],
+  "media": [
+   "480px",
+   "520px",
+   "600px",
+   "641px",
+   "860px",
+   "869px",
+   "870px",
+   "899px",
+   "1100px",
+   "1300px",
+   "1900px"
+  ],
+  "radius": [
+   "2px",
+   "3px",
+   "4px",
+   "5px",
+   "6px",
+   "7px",
+   "9px",
+   "10px",
+   "11px",
+   "14px",
+   "16px",
+   "18px",
+   "20px"
+  ],
+  "space": [
+   "2.5px",
+   "3px",
+   "5px",
+   "6px",
+   "7px",
+   "9px",
+   "10px",
+   "11px",
+   "13px",
+   "14px",
+   "18px",
+   "22px",
+   "26px",
+   "28px",
+   "30px",
+   "34px",
+   "36px",
+   "40px",
+   "44px",
+   "56px",
+   "60px",
+   "62px",
+   "80px",
+   "108px"
+  ]
+ },
+ "bright/panel/style.css": {
+  "font": [
+   "13px",
+   "15px",
+   "18px",
+   "28px"
+  ],
+  "media": [
+   "700px"
+  ],
+  "radius": [
+   "1px",
+   "4px",
+   "6px",
+   "7px",
+   "10px"
+  ],
+  "space": [
+   "3px",
+   "5px",
+   "6px",
+   "7px",
+   "10px",
+   "11px",
+   "14px",
+   "22px",
+   "40px"
+  ]
+ },
+ "bruh-bambu-studio/panel/style.css": {
+  "font": [
+   "11px",
+   "13px",
+   "15px",
+   "18px",
+   "19px"
+  ],
+  "media": [
+   "560px",
+   "600px"
+  ],
+  "radius": [
+   "1px",
+   "2px",
+   "3px",
+   "4px",
+   "6px",
+   "10px",
+   "14px"
+  ],
+  "space": [
+   "3px",
+   "5px",
+   "6px",
+   "10px",
+   "11px",
+   "14px",
+   "18px",
+   "40px"
+  ]
+ },
+ "bruh-browser/panel/style.css": {
+  "font": [
+   "17px",
+   "18px"
+  ],
+  "media": [],
+  "radius": [
+   "10px"
+  ],
+  "space": [
+   "6px",
+   "10px"
+  ]
+ },
+ "bruh-minecraft-server/panel/style.css": {
+  "font": [
+   "0.7em",
+   "0.75em",
+   "0.85em",
+   "0.88em",
+   "0.9em",
+   "0.92em",
+   "0.95em",
+   "10px",
+   "11px",
+   "13px",
+   "15px",
+   "28px",
+   "36px"
+  ],
+  "media": [
+   "400px",
+   "520px",
+   "560px",
+   "720px"
+  ],
+  "radius": [
+   "2px",
+   "3px",
+   "4px",
+   "6px",
+   "10px",
+   "13px",
+   "14px",
+   "20px"
+  ],
+  "space": [
+   "3px",
+   "5px",
+   "6px",
+   "7px",
+   "9px",
+   "10px",
+   "14px",
+   "18px",
+   "28px"
+  ]
+ },
+ "bruh-print/panel/style.css": {
+  "font": [
+   "4.5px",
+   "5px",
+   "5.5px",
+   "10px",
+   "11px",
+   "13px",
+   "15px",
+   "17px"
+  ],
+  "media": [
+   "379px",
+   "480px",
+   "499px",
+   "700px",
+   "1099px",
+   "1100px"
+  ],
+  "radius": [
+   "2px",
+   "3px",
+   "4px",
+   "9px",
+   "10px",
+   "11px"
+  ],
+  "space": [
+   "3px",
+   "5px",
+   "6px",
+   "7px",
+   "9px",
+   "10px",
+   "11px",
+   "13px",
+   "14px",
+   "15px",
+   "18px",
+   "22px",
+   "26px",
+   "60px"
+  ]
+ },
+ "bruh-task-manager/panel/style.css": {
+  "font": [
+   "11px",
+   "13px",
+   "18px"
+  ],
+  "media": [
+   "720px",
+   "721px",
+   "1000px"
+  ],
+  "radius": [
+   "3px"
+  ],
+  "space": [
+   "3px",
+   "6px",
+   "10px",
+   "14px",
+   "18px",
+   "26px",
+   "40px"
+  ]
+ },
+ "gardenrx/app/src/app/globals.css": {
+  "font": [
+   "9px",
+   "9.5px",
+   "10px",
+   "10.5px",
+   "11px",
+   "13px",
+   "15px",
+   "17px",
+   "18px",
+   "22px",
+   "24px",
+   "26px",
+   "30px",
+   "34px"
+  ],
+  "media": [
+   "520px",
+   "600px",
+   "880px"
+  ],
+  "radius": [
+   "3px",
+   "4px",
+   "5px",
+   "6px",
+   "7px",
+   "9px",
+   "10px",
+   "11px",
+   "99px"
+  ],
+  "space": [
+   "3px",
+   "5px",
+   "6px",
+   "7px",
+   "9px",
+   "10px",
+   "11px",
+   "13px",
+   "14px",
+   "15px",
+   "17px",
+   "18px",
+   "19px",
+   "22px",
+   "26px",
+   "28px",
+   "30px",
+   "90px"
+  ]
+ }
+}

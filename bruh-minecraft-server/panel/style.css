@@ -201,11 +201,22 @@ main {
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
 
+/* Headings outside a card (the Players, Add-ons, Backups and Worlds tabs);
+   the .card, .setup-card and companion rules below are more specific. */
+h2 { font-size: 16px; font-weight: 600; margin: 24px 0 12px; }
+h2:first-child { margin-top: 0; }
+h3 { font-size: 14px; font-weight: 600; margin: 16px 0 8px; }
+
 /* Cards / grid */
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 14px;
+}
+/* From a desktop width, three columns for the three stat cards, so a wide card
+   below never sits under empty tracks. */
+@media (min-width: 900px) {
+  .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 .card {
   background: var(--bg-card);

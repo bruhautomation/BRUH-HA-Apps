@@ -5,6 +5,13 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.23.12
+
+### Fixed
+
+- Every card title on the Calibrate tab starts at the same distance from the top of its card as on the other tabs.
+- On Shows, the buttons next to Tracks (Refresh and Test the Claude director) are all the same height and sit on one line.
+
 ## 0.23.11
 
 ### Changed
