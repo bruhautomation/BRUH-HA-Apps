@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.15.3
+
+### Fixed
+
+- The label picker on the Design bar shows the whole label name with its size, wrapping on a phone instead of cutting it to "Address …", so two labels can be told apart (1283).
+- The dashboard card's roll tiles say "Left roll" and "Right roll", mark the roll text prints on, and show "about N left" only when counting is on. "Not counted" is gone (1284).
+
 ## 0.15.2
 
 ### Fixed
