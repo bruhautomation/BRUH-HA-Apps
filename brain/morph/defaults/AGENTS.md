@@ -337,14 +337,18 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   "Normal" over a number the card itself shows outside its band, and a status
   worked out from the mode alone is wrong the moment the reading and the mode
   disagree. Compare the reading with its band before choosing the word.
-- **A tile's status is ONE line, composed to fit.** A name and one short line
-  under it ("20 of 31 on"), never two lines of status: a tile is one row tall
+- **A tile's status is ONE line that ends, composed to fit.** A name and one
+  short line under it ("20 of 31 on", "Finished yesterday 6:10 PM"), never two
+  lines of status and never a longer sentence cut off mid-word with an
+  ellipsis: write the short phrase, checked at 390px. A tile is one row tall
   and a status that wraps runs over its edge and its texture. Say the fact
   that matters first and add the rest only when the tile is wide enough
   ("20 of 31 on · mixed · 2 unavailable" on a wide tile, "20 of 31 on" on a
   narrow one), by leaving the later parts out, never by letting the line wrap
   or be cut in the middle of a fact. What a tile has no room for (which lights
-  are unavailable, each brightness) belongs in the opened card, labelled.
+  are unavailable, each brightness) belongs in the opened card, labelled, where
+  a value wraps onto a second line rather than clip. A stretch with nothing in
+  it says so plainly ("Nothing ran in the last day").
   Morph's own tiles do this with `statusHtml` (`cards.js`); a built card does
   it with a container query (`@container (min-width: …)`) that shows the
   later parts, and `white-space: nowrap` on the line.
@@ -401,9 +405,10 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   wall of bare pictures that look alike while they load or fail. Cameras that
   all have nothing to show fold to one line that names them. A card never
   fetches pictures more often than the `camera` card does.
-- **A part with nothing in it is left out, or says how to fill it.** An empty
-  list ("Sequence · Empty") is not drawn as a dimmed tile: it is hidden, or in
-  one line says what to add ("Add zones to build a sequence").
+- **A tile with nothing in it is hidden, or says what it is for.** An empty
+  list ("Sequence · Empty") is not drawn as a dimmed tile with a name and
+  "Empty" under it: it is hidden, or in one line says what it is for and what
+  to add ("Nothing queued · add zones to fill it").
 - **A setting reads as a setting, and a tile always has its value.** A run
   length or other `input_number` shows its value with its unit and says it is
   a length ("Runs for 60 min · last ran Oct 30"), so it is never read as
@@ -432,11 +437,16 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   a total beside a part that is far smaller) get a one-line note naming the
   likely reason ("the tracker recorded only part of the night"), or a dash
   for the doubtful one. When asleep is under about half of in-bed time, say so.
-- **Every button and chip is a 40px target.** A scene chip, a mode button or
-  a word you can press is at least 40px tall and 40px wide (`min-height` and
-  `min-width`, never a fixed `height` under it), with a gap between
-  neighbours, so a finger on a phone hits the one it means. A row of chips
-  wraps rather than shrinking them.
+- **Everything you can press is a 40px target.** A scene chip, a mode button,
+  a small text button, a refresh icon, a row that opens a person, a reading
+  chip that does something when tapped (a `div` with a click handler is a
+  target too) is at least 40px tall and 40px wide (`min-height` and
+  `min-width`, never a fixed `height` under it), at 390px and at 1200px, with
+  a gap between neighbours, so a finger on a phone hits the one it means. A
+  row of chips wraps rather than shrinking them. Where a 40px box would move
+  the layout (a word inside a sentence, a slim chip), keep the look and pad
+  the hit area: `padding-block` with an equal negative `margin-block`, or a
+  transparent `::before` that reaches 40px (not inside a box that clips it).
   Morph does not resize a built card's buttons for it (a blanket rule pushed a
   twelve-column hour grid out of its card), so a grid of buttons that does not
   fit at 40px has fewer columns, wraps, or scrolls sideways inside its own box:
