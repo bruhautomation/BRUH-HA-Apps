@@ -186,8 +186,14 @@ def _room_air(house: House, rooms: dict, check_id: str) -> dict:
 
     from . import devices  # noqa: PLC0415 — it imports this package's util
 
+    unheated = said_unconditioned(house)
     out = {}
     for eid, entry in rooms.items():
+        # A room the household said nothing heats follows outside (#1200,
+        # #1317): how fast it cools, or warms, is the weather's, never a
+        # fault of the house's heating.
+        if _left_unheated(house, eid, unheated, check_id):
+            continue
         kind, said = house.room_air_verdict(eid)
         if kind in ("marked", "not_air", "broken"):
             house.gave_up(check_id, [{"entity_id": eid}],
@@ -456,6 +462,36 @@ def said_unconditioned(house: House) -> set[str]:
     areas = {str(a) for a in said.get("areas") or () if a}
     areas |= {house.area_id_of(str(e)) for e in said.get("entities") or ()}
     return {a for a in areas if a}
+
+
+def follows_outside(house: House, eid: str) -> str:
+    """Why this thermometer's slow drift is the weather, by the household's
+    own word, or "" (#1317).
+
+    A temperature reading of a room's air in a space the household said
+    nothing heats (`said_unconditioned`) follows outside: weeks of it
+    falling into winter is the season, not the house losing heat. Only a
+    reading the heat model measured AS a room (`snap["thermal"]["rooms"]`,
+    which every room-air test has passed: in the band a room sits in, not
+    named or behaving as a machine) and nothing since set aside
+    (`House.room_air_verdict`, a probe's device): a freezer's probe in an
+    unheated garage is never a room there, and is judged as before.
+    """
+    import thermal  # noqa: PLC0415 — panel-local, like every other check
+
+    from . import devices  # noqa: PLC0415 — it imports this package's util
+
+    if house.area_id_of(eid) not in said_unconditioned(house):
+        return ""
+    if eid not in _rooms(house.snap)[1]:
+        return ""
+    if house.room_air_verdict(eid)[0]:
+        return ""
+    if thermal.on_a_machine(house.registry.get(eid), house.device_of(eid)) \
+            or devices.machine_of(house, eid):
+        return ""
+    return ("you said nothing heats this space, so its temperature follows "
+            "outside and a drift over weeks is the season")
 
 
 def _left_unheated(house: House, eid: str, unheated: set[str],
@@ -846,7 +882,6 @@ def window(snap: dict, now: float) -> list[dict]:
 
     house = House(snap)
     rooms = _room_air(house, rooms, "climate.window")
-    unheated = said_unconditioned(house)
     hits = []
     for eid, entry in sorted(rooms.items()):
         if eid in claimed or not entry.get("k"):
@@ -877,8 +912,6 @@ def window(snap: dict, now: float) -> list[dict]:
         if fall["rate"] < expected * WINDOW_FACTOR:
             continue
         if fall["rate"] - expected < min_excess:
-            continue
-        if _left_unheated(house, eid, unheated, "climate.window"):
             continue
         if not house.should_report(eid, "climate.window"):
             continue

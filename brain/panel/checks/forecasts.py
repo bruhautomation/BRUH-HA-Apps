@@ -16,6 +16,7 @@ import numfmt
 
 from . import baseline as baseline_check
 from . import devices
+from . import thermal as thermal_check
 from ._util import DAY, House, num
 
 # A runway shorter than this is worth a row; longer is not yet news.
@@ -193,6 +194,11 @@ def decline(snap: dict, now: float) -> list[dict]:
                 unit, DECLINE_MIN_MOVE):
             continue
         if outside_cause(house, eid, st, unit):
+            continue
+        unheated = thermal_check.follows_outside(house, eid)
+        if unheated:
+            house.gave_up("forecast.decline", [{"entity_id": eid}], unheated,
+                          kind="drift")
             continue
         season = same_weeks_last_year(moved, unit)
         if season:

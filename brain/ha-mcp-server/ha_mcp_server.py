@@ -2026,7 +2026,10 @@ def room_physics(area):
                      "the time constant in hours), `gain` the degrees per "
                      "hour with the heating on, `hours_to_warm` measured "
                      "between the room's own `coolest` and `warmest` on the "
-                     "coldest night the month held.")}
+                     "coldest night the month held. A room with "
+                     "`conditioned: false` is one the household said nothing "
+                     "heats: it follows outside, so its loss rate is not a "
+                     "fault and is never a finding about heat loss.")}
 
 
 def appliance_status(entity_id):
