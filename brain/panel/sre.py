@@ -1070,11 +1070,12 @@ def digest(collected: dict, now: float, set_aside=frozenset(),
            explained_keys=frozenset()) -> dict:
     """The records a pass reasons over, with ids.
 
-    ``set_aside`` is the entities the owner set aside on the offline check
-    (answered Wrong, snoozed): a log line about one of them — by an entity
-    it names, or the device it is on — is held back the way that check
-    holds its row, so the overnight pass does not file the same device
-    under a new name. ``explained_keys`` is the automation errors the owner
+    ``set_aside`` is the entities the owner set aside on the offline and
+    link checks (answered Wrong, snoozed, said to be out of use): a log
+    line about one of them — by an entity it names, or the device it is
+    on — and the device's own Zigbee or Z-Wave record are held back the way
+    that check holds its row, so the overnight pass does not file the same
+    device under a new name. ``explained_keys`` is the automation errors the owner
     explained (`explained`): those records are not handed to the run."""
     zha = _zha_records(collected.get("zha") or [], now,
                        collected.get("areas") or {})
@@ -1128,10 +1129,16 @@ def digest(collected: dict, now: float, set_aside=frozenset(),
                 rec["called_by"] = callers
         kept.append(rec)
     logs = kept
-    records = (logs + zha
-               + _zwave_records(collected.get("states") or {},
-                                collected.get("entities") or [],
-                                collected.get("devices") or [])
+    # And the mesh's own records the same way (#1263, #1264): a device set
+    # aside on a link or offline check, held by "don't remind me", or said
+    # to be out of use is not handed to the run as Zigbee or Z-Wave trouble
+    # either, which is the same device under the mesh's name.
+    zha = [r for r in zha if str(r.get("device_id") or "") not in aside_devices]
+    zwave = [r for r in _zwave_records(collected.get("states") or {},
+                                       collected.get("entities") or [],
+                                       collected.get("devices") or [])
+             if str(r.get("id") or "").removeprefix("zw:") not in aside_devices]
+    records = (logs + zha + zwave
                + _router_switch_records(collected.get("automations") or [],
                                         zha, collected.get("entities") or []))
     # An automation error the owner explained is that error, answered: it

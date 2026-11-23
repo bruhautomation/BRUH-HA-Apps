@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.5
+
+### Fixed
+
+- Saying a device is not in use, on any card including the overnight check's, now reaches every check: its Zigbee link, health and offline findings stand down for that device, and the overnight check no longer reads its mesh records. A leak, smoke or other safety device is never set aside this way (1264, 1263).
+- "It is not in use, take it out of the automations" is read as a clean-up request. brAIn lists the automations that mention the device and, on Yes, files a card to take it out of them, which changes nothing until you read the plan and press Apply (1315).
+- A finding you have already asked not to be reminded about, and ask again after it changes, stands that check down for that thing instead of holding it until the next change. History › Ignored shows it once as "Stood down after N Wrong answers", with one Restore. Safety, security and protected things are never stood down this way (1263, 1323).
+
 ## 5.5.4
 
 ### Fixed

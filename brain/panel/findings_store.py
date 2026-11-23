@@ -1922,6 +1922,8 @@ def _shape(entry: dict) -> dict:
         out["detail"] = (out["detail"] + " " + said.strip()).strip()
     if entry.get("record_hold") and entry.get("status") == "triaging":
         out["record_hold"] = str(entry["record_hold"])
+    if int(entry.get("held_before") or 0) > 0:
+        out["held_before"] = int(entry["held_before"])
     # Which answer is holding it (#602), while it is held: the card says
     # it was muted and by what, and History shows it under Snoozed.
     hold = entry.get("snooze_hold")
@@ -4177,6 +4179,9 @@ def _wake_hold(entry: dict) -> None:
     hold = entry.pop("snooze_hold", None)
     entry["snoozed_until"] = 0
     entry.pop("snooze_worse", None)
+    # How many holds this row has woken from: the next "don't remind me"
+    # on it is the answer given again (`server._answered_again`, #1263).
+    entry["held_before"] = int(entry.get("held_before") or 0) + 1
     entry["earlier_answer"] = hold_changed_sentence(
         (hold or {}).get("said") if isinstance(hold, dict) else "")
 
@@ -4277,7 +4282,8 @@ def release_of(entry: dict) -> str:
 
 
 @_mutates
-def settle_and_clear(ts: int, kind: str, note: str = "") -> dict | None:
+def settle_and_clear(ts: int, kind: str, note: str = "",
+                     answers: int = 0) -> dict | None:
     """Finish with a finding: remember the answer, drop the row.
 
     A settled finding used to sit in the list for good — the tab filled up
@@ -4296,7 +4302,9 @@ def settle_and_clear(ts: int, kind: str, note: str = "") -> dict | None:
     you already answered comes back.
 
     ``note`` is the homeowner's reason, kept verbatim on the ledger entry so
-    the analyst reads why rather than only what.
+    the analyst reads why rather than only what. ``answers`` is how many
+    times this check has been answered about this thing counting this one,
+    when this Wrong stood it down for that (`server._answered_again`).
     """
     if kind not in SETTLE_KINDS:
         raise ValueError(f"unknown settlement: {kind}")
@@ -4311,7 +4319,7 @@ def settle_and_clear(ts: int, kind: str, note: str = "") -> dict | None:
     if settled is None:
         return None
     _write(kept)
-    _remember_settled(settled, kind, note=note)
+    _remember_settled(settled, kind, note=note, answers=answers)
     settled["note"] = str(note or "").strip()[:MAX_NOTE]
     release = current_release()
     if release:
@@ -4321,7 +4329,7 @@ def settle_and_clear(ts: int, kind: str, note: str = "") -> dict | None:
 
 def _remember_settled(shaped: dict, kind: str, when: int = 0,
                       note: str = "", key: str = "",
-                      release: str | None = None) -> None:
+                      release: str | None = None, answers: int = 0) -> None:
     """Write the answer into the ledger, replacing anything under that key.
 
     ``key`` is normally derived from the text, which is the only key any
@@ -4385,6 +4393,12 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
         **({"wrong_count": (int(prior.get("wrong_count") or 1)
                             if _wrong_at(prior) else 0) + 1}
            if kind == "ignored" else {}),
+        # A Wrong that stood the check down for this thing after the same
+        # answer was given before (`server._answered_again`): how many, for
+        # History to say so. Kept apart from `wrong_count`, which the
+        # scorecard reads: the earlier answers were holds, not Wrongs.
+        **({"stood_down_after": int(answers)}
+           if kind == "ignored" and int(answers or 0) > 1 else {}),
         "note": str(note or "").strip()[:MAX_NOTE],
         # Who raised it. An ending is a label — "I did it" says the report
         # was right, "Wrong" says it was not — and without the producer on
