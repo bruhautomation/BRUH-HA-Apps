@@ -1544,8 +1544,12 @@ def _leftover(house: House, item: dict) -> str:
     Home Assistant only restored (nothing provides it)."""
     eid = item.get("entity_id") or ""
     if not eid:
-        # A registry that could not be read names nothing: not a leftover.
-        if not any(e.get("platform") == "automation" for e in house.entities):
+        # A YAML automation with no `id` is valid and runs, and has no
+        # registry entry to match: only a config WITH an id that no
+        # registered automation carries is a leftover. A registry that
+        # could not be read names nothing either.
+        if not item.get("id") or not any(
+                e.get("platform") == "automation" for e in house.entities):
             return ""
         return "no automation in Home Assistant comes from this config"
     st = house.states.get(eid)
