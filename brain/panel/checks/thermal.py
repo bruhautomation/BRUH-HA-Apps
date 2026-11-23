@@ -1009,6 +1009,17 @@ def _frost_night(forecast: dict, now: float) -> dict | None:
         else float(low["temp"])
     if celsius > FROST_WARN_C:
         return None
+    # The warning lasts until the last near-freezing hour after the low has
+    # passed (#1265): past it, the night it was about is over.
+    until = float(low["t"])
+    for row in sorted(rows, key=lambda r: float(r["t"])):
+        t = float(row["t"])
+        if t <= until:
+            continue
+        temp = float(row["temp"])
+        if ((temp - 32.0) * 5.0 / 9.0 if fahrenheit else temp) > FROST_WARN_C:
+            break
+        until = t
     night = str(low.get("date") or "")
     try:
         if int(low.get("hour", 12)) < 12:
@@ -1021,6 +1032,7 @@ def _frost_night(forecast: dict, now: float) -> dict | None:
     except (TypeError, ValueError):
         night_words, day_words = night, ""
     return {"temp": float(low["temp"]), "unit": unit,
+            "until": int(until + 3600), "t": float(low["t"]),
             "hm": str(low.get("hm") or ""), "date": str(low.get("date") or ""),
             "night": night, "night_words": night_words,
             "day_words": day_words}
@@ -1071,6 +1083,46 @@ def _frost_kind(house: House, eid: str, conditioned: set[str],
     return ""
 
 
+# A space whose own measured heat loss keeps it at least this far above
+# freezing through the forecast low needs nothing done (#1312).
+FROST_SAFE_MARGIN_C = 1.0
+
+
+def _to_celsius(value: float, unit: str) -> float:
+    return (value - 32.0) * 5.0 / 9.0 if unit == "°F" else value
+
+
+def _space_holds(house: House, eid: str, night: dict, now: float) -> str:
+    """Why this thermometer's space stays above freezing through the night
+    without anything done, or "" (#1312).
+
+    Measured, never assumed: the space's own heat-loss figure (the heat
+    model's `k` for this thermometer) coasting from its live reading with
+    the outside held at the forecast low the whole time, which is colder
+    than any real night, still `FROST_SAFE_MARGIN_C` above freezing at the
+    low's hour. No model, no live reading, or a unit nobody can convert
+    is "" — the space stays named."""
+    import thermal  # noqa: PLC0415
+
+    entry = _rooms(house.snap)[1].get(eid)
+    if not isinstance(entry, dict) or not entry.get("k"):
+        return ""
+    unit = str((house.snap.get("thermal") or {}).get("unit") or "")
+    attrs = (house.states.get(eid) or {}).get("attributes") or {}
+    if str(attrs.get("unit_of_measurement") or unit) != unit \
+            or unit not in ("°C", "°F"):
+        return ""
+    reading = num((house.states.get(eid) or {}).get("state"))
+    if reading is None:
+        return ""
+    low = _to_celsius(night["temp"], night["unit"])
+    hours = max(0.0, (night["t"] - now) / 3600.0)
+    ahead = thermal.coast(entry, _to_celsius(reading, unit), low, hours)
+    if ahead is None or ahead < FROST_SAFE_MARGIN_C:
+        return ""
+    return f"{reading:.0f}{unit} now"
+
+
 def frost_ahead(snap: dict, now: float) -> list[dict]:
     """A near-freezing night in the forecast, and what here holds water
     where the heating does not reach. One row a night."""
@@ -1097,6 +1149,7 @@ def frost_ahead(snap: dict, now: float) -> list[dict]:
     # the porch answered Wrong one night was named again the next (#1200).
     keys: dict[str, list[str]] = {}
     seen: set[str] = set()
+    safe: dict[str, tuple[str, str]] = {}
     for eid in sorted(set(house.states) | set(house.registry)):
         if not house.enabled(eid):
             continue
@@ -1116,6 +1169,13 @@ def frost_ahead(snap: dict, now: float) -> list[dict]:
         if kind == "space":
             what = house.area_of(eid) or house.label(eid)
             key = f"area:{area_id}" if area_id else eid
+            # Safe only while EVERY thermometer of it says so.
+            if what:
+                holds = _space_holds(house, eid, night, now)
+                if what.lower() not in safe:
+                    safe[what.lower()] = (what, holds)
+                elif not holds:
+                    safe[what.lower()] = (what, "")
         else:
             device = house.device_of(eid)
             what = house.device_name(device) if device else house.label(eid)
@@ -1128,6 +1188,15 @@ def frost_ahead(snap: dict, now: float) -> list[dict]:
         held = keys.setdefault(what.lower(), [])
         if key not in held:
             held.append(key)
+    # What is already safe is said once, never listed as at risk (#1312).
+    held = [(what, why) for what, why in safe.values() if why]
+    for what, why in held:
+        found["space"] = [n for n in found["space"] if n != what]
+        house.gave_up(FROST_CHECK, [{"entity_id": k}
+                                    for k in keys.get(what.lower()) or ()],
+                      f"it reads {why}, and at the rate it loses heat it "
+                      "stays above freezing through the forecast low",
+                      kind="explained")
     names = [n for k in FROST_KINDS for n in found[k]]
     if not names:
         return []
@@ -1135,6 +1204,24 @@ def frost_ahead(snap: dict, now: float) -> list[dict]:
     items = list(dict.fromkeys(k for n in named for k in keys[n.lower()]))
     temp, unit = night["temp"], night["unit"]
     low = f"{temp:.0f}{unit}".replace("-", "−")
+    # How far from freezing the low is, in the forecast's own degrees.
+    freezing = 32.0 if unit == "°F" else 0.0
+    margin = round(temp - freezing)
+    below = margin <= 0
+    margin_words = (
+        "right at freezing" if margin == 0 else
+        f"{abs(margin)}{unit} {'below' if margin < 0 else 'above'} freezing")
+    margin_words += (
+        ", so water left in these will freeze" if below else
+        ", so only water in the most exposed spots is at risk")
+    nothing = ""
+    if held:
+        nothing = (" Nothing needed for "
+                   + join_names([f"{what} ({why})" for what, why in held])
+                   + (": at the rate each loses heat, each stays"
+                      if len(held) > 1 else
+                      ": at the rate it loses heat, it stays")
+                   + " above freezing through the low.")
     steps = []
     if found["irrigation"]:
         steps.append("shut off and drain the outdoor taps and irrigation")
@@ -1145,12 +1232,13 @@ def frost_ahead(snap: dict, now: float) -> list[dict]:
                      "leave a tap dripping)")
     fix = "; ".join(steps)
     return [{
-        "text": f"Near freezing the night of {night['night_words']}: protect "
-                "what holds water outside",
+        "text": f"{'Below' if below else 'Near'} freezing the night of "
+                f"{night['night_words']}: protect what holds water outside",
         "detail": (f"The forecast low is {low} around {night['hm']} "
-                   f"{night['day_words']}. At risk here: "
+                   f"{night['day_words']}, {margin_words}. At risk here: "
                    + join_names(names[:MAX_FROST_NAMES],
-                                limit=FROST_SENTENCE_NAMES) + "."),
+                                limit=FROST_SENTENCE_NAMES) + "."
+                   + nothing),
         "fix": fix[:1].upper() + fix[1:] + ".",
         "severity": "warning",
         "fixable": False,
@@ -1161,6 +1249,9 @@ def frost_ahead(snap: dict, now: float) -> list[dict]:
         "item_names": named,
         "evidence": [{"entity": "", "value": f"forecast low {low}",
                       "when": f"{night['date']} {night['hm']}"}],
+        # Retired once the cold hours are over, even by a pass that could
+        # not read a forecast (`findings_store.resolve_clear`).
+        "valid_until": night["until"],
     }]
 
 
