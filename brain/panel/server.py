@@ -2448,7 +2448,40 @@ async def _weekly_state(now: float) -> dict:
     rows = await asyncio.to_thread(findings_store.list_all, "live")
     settled = await asyncio.to_thread(findings_store.settled_listing)
     return weekly.gather(rows, settled, power, since, now=now,
-                         humidity=list(_HUMIDITY_WEEK))
+                         humidity=list(_HUMIDITY_WEEK),
+                         where=_energy_where(power.get("devices") or {}))
+
+
+def _energy_where(devices: dict) -> dict:
+    """Where each separately measured device is, for the weekly report's
+    "most went to" line (`weekly.energy_share`, #1324): its room off the
+    last checks pass, and why it is kept apart from the rooms — a space the
+    household said nothing heats (`_said_unconditioned_areas`, the reader
+    the heat model's rows use), or a device whose thermometer the heat
+    model set aside as a machine's rather than a room's (the thermal
+    store's `not_air`). Never raises: unread is no room."""
+    out: dict[str, dict] = {}
+    try:
+        entity_areas = _FACTS_CTX.get("entity_areas") or {}
+        unheated = _said_unconditioned_areas(entity_areas)
+        store = thermal.load()
+        machines = {
+            str((_NAMES.get(e) or {}).get("device") or "")
+            for e, row in (store.get("unmeasured") or {}).items()
+            if isinstance(row, dict) and row.get("kind") == "not_air"}
+        machines.discard("")
+        for sid in devices:
+            row = _NAMES.get(sid) or {}
+            spot = {"room": str(row.get("area") or ""),
+                    "name": str(row.get("name") or "")}
+            if row.get("device") and str(row["device"]) in machines:
+                spot["apart"] = "equipment"
+            elif str(entity_areas.get(sid) or "") in unheated:
+                spot["apart"] = "unconditioned"
+            out[sid] = spot
+    except Exception as exc:  # noqa: BLE001 — the report without the line
+        log.debug("could not place the measured devices: %s", exc)
+    return out
 
 
 async def _weekly_pick(state: dict, now: float, *,
