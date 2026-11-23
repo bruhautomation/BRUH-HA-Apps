@@ -188,16 +188,41 @@ p { margin: 0; }
 .chip .dot.good { background: var(--good); }
 .chip .dot.bad { background: var(--bad); }
 .chip .dot.warn { background: var(--warn); }
-.roll-chip .side { color: var(--ink-3); font-weight: 700; }
 .chip span:last-child { font-variant-numeric: tabular-nums; }
 .roll-chip.empty { color: var(--ink-3); border-style: dashed; }
+/* A roll is named by its NAME and its side in words (#1279), and a name has
+ * no fixed length, so it is capped and ellipsises — the side and the
+ * "prints text" tag sit outside the cut, because they are the words that
+ * say which bay and which one Quick uses. Full name and size are in the
+ * tooltip and on the Printer tab. */
+.chip .side { color: var(--ink-3); font-weight: 700; flex: none; }
+.chip .rname { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.chip .rtag { color: var(--accent); font-weight: 600; flex: none; }
+/* A wide bar's roll chip is two short lines — "Left · prints text" over
+ * the name — so two names and the printer still share the tab row at
+ * 1200px instead of wrapping it. */
+.roll-chip { display: inline-grid; grid-template-columns: auto 1fr; column-gap: var(--sp-1);
+  align-content: center; text-align: left; padding-top: 2px; padding-bottom: 2px; }
+.roll-chip .side, .roll-chip .rtag { font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.roll-chip .rname { grid-column: 1 / -1; grid-row: 2; max-width: 170px;
+  line-height: var(--lh-body); }
+.roll-chip .rname:first-child { grid-row: 1; }
+.roll-chip .rtag::before { content: "\00b7\00a0"; color: var(--ink-3); font-weight: 400; }
+/* The phone's one chip: a line per bay — "Left: name · prints text" — so
+ * both names fit a 390px row. */
+.chip-one #statusText { display: grid; min-width: 0; text-align: left; }
+.chip-one .bayline { display: flex; gap: var(--sp-1); align-items: baseline; min-width: 0;
+  line-height: var(--lh-body); }
+.chip-one .bayline .side::after { content: ":"; }
+.chip-one .bayline .rtag::before { content: "\00b7\00a0"; color: var(--ink-3); font-weight: 400; }
 /* One chip or three, never both. All three press through to the Printer
  * tab, so on a phone they are one control drawn as three — and three of
  * them was 497px of content in a 362px row, which is two wrapped lines of
  * permanent bar. Which one renders is a width, so it is settled here. */
 .chip-one { display: none; }
 @media (max-width: 639.98px) {
-  .chip-one { display: inline-flex; }
+  .chip-one { display: inline-flex; flex: 0 1 auto; max-width: 100%; min-width: 0;
+    padding-top: var(--sp-1); padding-bottom: var(--sp-1); }
   .chip-many { display: none; }
   /* Home Assistant's own header says "BRUH Print" in the row directly above
    * this panel, so on a phone the wordmark is a row spent saying it twice
@@ -644,9 +669,10 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 .psec > summary h2 { margin: 0; }
 .psec > :not(summary) { margin-top: var(--card-gap); }
 .psec > summary + * { margin-top: var(--sp-1); }
-.inuse { display: inline-flex; align-items: center; min-height: var(--btn-h);
-  padding: 0 var(--sp-1); font-size: var(--fs-body); font-weight: 600; color: var(--ink-2); }
-.inuse.busy { color: var(--accent); }
+.pstatus { margin: var(--sp-2) 0 0; font-size: var(--fs-body); line-height: var(--lh-body);
+  color: var(--ink-2); }
+.pstatus .pstate { color: var(--ink); }
+.pstatus.busy .pstate { color: var(--accent); }
 /* Settings are one card of fields, capped to a form's width: a select does
  * not need to be 1250px wide to be read, and the sentences under each field
  * are measured by the column rather than by a cap of their own. */
@@ -677,6 +703,8 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 /* A title and a date are read whole: they wrap, they are never cut. */
 .hrow .htext { display: grid; min-width: 0; flex: 1 1 220px; }
 .hrow .what { font-weight: 600; min-width: 0;
+  overflow-wrap: anywhere; }
+.hrow .from { font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2);
   overflow-wrap: anywhere; }
 .hrow .meta { font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--ink-2);
   font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
@@ -816,9 +844,14 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 .quick-do { display: grid; gap: var(--card-gap); align-content: start; }
 .btn.wide { width: 100%; }
 .printrow { display: grid; gap: var(--sp-2); }
-.printson { margin: 0; font-size: var(--fs-body); color: var(--ink-2); }
-.printson:empty { display: none; }
-.chip .bay-on { color: var(--accent); }
+.printson { margin: 0; padding: 0; border: none; background: none; font: inherit;
+  font-size: var(--fs-body); color: var(--ink-2); text-align: left; cursor: pointer;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--sp-2);
+  min-height: var(--btn-h); justify-self: start; }
+.printson[hidden] { display: none; }
+.printson:disabled { cursor: default; color: var(--ink-2); }
+.printson .act { color: var(--accent); font-weight: 600; }
+.printson:not(:disabled):hover .act { text-decoration: underline; }
 
 /* The secondary controls, behind one press. Nothing is unreachable — the
  * summary line says what is set and opening it is only for changing it. */
@@ -897,6 +930,7 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
    button over two small ones. */
 .bayactions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 .bayactions > .btn { flex: 1 1 140px; }
+.bayactions > .btn.secondary { flex: 0 0 auto; color: var(--ink-2); font-weight: 500; }
 /* Forget throws a measurement away: it lives inside "What it measured",
    apart from the everyday actions, and is a real target. */
 .caldetail .forgetcal { min-height: var(--btn-h); margin: var(--sp-1) 0 var(--sp-2); }
