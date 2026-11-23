@@ -531,10 +531,6 @@ GENERIC_FIX = ("Look at what it is measuring for a change brAIn cannot see, "
                "it.")
 
 
-def _fmt(value: float) -> str:
-    return f"{value:.1f}".rstrip("0").rstrip(".")
-
-
 def outdoor_reading(house: House, klass: str) -> str:
     """What the snapshot already says it is outside, for a reading of the
     room's air, or "". Pure over the snapshot: the thermal model's outdoor

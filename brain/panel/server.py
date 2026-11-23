@@ -13838,6 +13838,8 @@ def _note_registry(snapshot: dict) -> None:
         _note_live_readings(snapshot, driven)
         _OPERATED.clear()
         _OPERATED.update(house_book.operated_by(snapshot.get("automations")))
+        _SCRIPTED.clear()
+        _SCRIPTED.update(house_book.scripted_by(snapshot.get("scripts")))
     except Exception as exc:  # noqa: BLE001
         log.debug("driven-by note failed: %s", exc)
     _note_world(snapshot)
@@ -13962,6 +13964,8 @@ _LIVE_READINGS: dict[str, float | None] = {}
 # What each automation's actions do to an entity (`house_book.operated_by`),
 # for a question to the owner an automation already answers (#561).
 _OPERATED: dict[str, list[dict]] = {}
+# ...and each script's sequence (`house_book.scripted_by`, #1310).
+_SCRIPTED: dict[str, list[dict]] = {}
 
 
 async def _recent_history(ids: list[str], hours: float,
@@ -14089,6 +14093,7 @@ def _registry_answers(case: dict, subject: str = "") -> str:
            "names": {e: [v["name"]] for e, v in _NAMES.items()
                      if v.get("name")},
            "operated": _OPERATED,
+           "scripted": _SCRIPTED,
            # What the house was already told: an earlier answer, a fact
            # filed under the thing (#697).
            "facts": house_book._fact_rows(),
