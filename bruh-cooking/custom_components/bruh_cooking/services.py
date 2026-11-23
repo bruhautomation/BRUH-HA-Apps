@@ -13,6 +13,7 @@ always works.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import replace
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
@@ -47,6 +48,7 @@ from .const import (
 
 if TYPE_CHECKING:
     from .coordinator import Appliance, BrevilleCoordinator
+    from .presets import Preset
 
 SERVICE_GET_STATUS = "get_status"
 SERVICE_GET_PRESETS = "get_presets"
@@ -222,11 +224,132 @@ def _minutes(seconds: int | None) -> int | None:
     return None if seconds is None else round(seconds / 60)
 
 
+def _span(seconds: int) -> str:
+    """A cook time in words: "45 min", "1 h 30 min", "48 h"."""
+    hours, minutes = divmod(round(seconds / 60), 60)
+    parts = [f"{hours} h"] if hours else []
+    if minutes or not hours:
+        parts.append(f"{minutes} min")
+    return " ".join(parts)
+
+
+def _degrees(hass: HomeAssistant, celsius: float | None) -> str:
+    value = _temperature(hass, celsius)
+    return "no set temperature" if value is None else f"{value:g} {hass.config.units.temperature_unit}"
+
+
+def _same_cook(a: CookSettings, b: CookSettings) -> bool:
+    """The same cook, apart from the timer and keep-warm switches a preset leaves alone.
+
+    Temperatures within a tenth of a degree: a °F value set by hand and a
+    preset's whole °F convert to °C by different routes.
+    """
+    if (a.temperature_c is None) != (b.temperature_c is None):
+        return False
+    if a.temperature_c is not None and abs(a.temperature_c - b.temperature_c) > 0.1:
+        return False
+    return ((a.duration_s or 0), a.mode, a.level, a.convection, a.frozen) == (
+        (b.duration_s or 0), b.mode, b.level, b.convection, b.frozen
+    )
+
+
+def _presets_like(
+    hass: HomeAssistant, appliance: Appliance, presets: Iterable[Preset]
+) -> tuple[Preset | None, Preset | None]:
+    """The preset the next cook's settings are exactly, and one at its temperature.
+
+    The second is for a cook with no timer: a preset that cooks at that
+    temperature says how long such a cook usually takes.
+    """
+    from .presets import PresetError, applied_settings, preset_fits
+
+    fahrenheit = hass.config.units.temperature_unit == UnitOfTemperature.FAHRENHEIT
+    current = appliance.settings
+    exact = near = None
+    for preset in presets:
+        if not preset_fits(preset, appliance.model):
+            continue
+        try:
+            made = applied_settings(preset, appliance.model, current, fahrenheit=fahrenheit)
+        except PresetError:
+            continue
+        if _same_cook(made, current):
+            exact = exact or preset
+        elif near is None and _same_cook(made, replace(current, duration_s=made.duration_s)):
+            near = preset
+    return exact, near
+
+
+def next_cook_summary(
+    hass: HomeAssistant, appliance: Appliance, presets: Iterable[Preset] = ()
+) -> tuple[str, str | None]:
+    """What a start with the next cook's settings would do, in words, and the preset it matches.
+
+    The settings as Cook, the start service and the panel send them
+    (`build_manual_steps`), so a timer left empty is said as no timer rather
+    than left for the person to guess.
+    """
+    settings = appliance.settings
+    exact, near = _presets_like(hass, appliance, presets)
+    if appliance.model != MODEL_BOV950:
+        degrees = _degrees(hass, settings.temperature_c)
+        if not settings.duration_s:
+            text = f"Heat the water to {degrees} and hold it there until the cook is stopped: there is no timer."
+            if exact is None and near is not None and near.settings.get("duration_s"):
+                text += (
+                    f" The {near.spoken_name} preset cooks at this temperature for "
+                    f"{_span(near.settings['duration_s'])}; set a cook time for a timer."
+                )
+        elif settings.auto_start_timer:
+            text = (
+                f"Heat the water to {degrees}, then cook for {_span(settings.duration_s)}: "
+                "the timer starts once the water is up to temperature."
+            )
+        else:
+            text = (
+                f"Heat the water to {degrees} and wait for the food: the "
+                f"{_span(settings.duration_s)} timer starts when Continue is pressed."
+            )
+    else:
+        mode = OVEN_MODES.get(settings.mode or "") or OVEN_MODES["bake"]
+        what = mode.option.replace("_", " ").capitalize()
+        if mode.temp:
+            what += f" at {_degrees(hass, settings.temperature_c)}"
+        else:
+            from .panel_spec import LEVELS
+
+            level = next(
+                (name for name, value in LEVELS.get(mode.type, {}).items() if value == settings.level),
+                None,
+            )
+            if level:
+                what += f" on {level}"
+        seconds = settings.duration_s or mode.default_seconds(settings.level)
+        text = f"{what} for {_span(seconds)}. The oven waits for Start to be pressed on its panel"
+        if not mode.preheat:
+            text += ", then the timer starts."
+        elif settings.auto_start_timer:
+            text += ", preheats, then starts the timer by itself."
+        else:
+            text += ", preheats, then waits for Continue before the timer starts."
+        if settings.keep_warm and mode.keep_warm_allowed:
+            text += " When the time is up it keeps the food warm."
+        else:
+            text += " When the time is up it turns off."
+    if exact is None:
+        return text, None
+    return f"{text} These are the {exact.spoken_name} preset's settings.", exact.spoken_name
+
+
 def describe(
-    hass: HomeAssistant, coordinator: BrevilleCoordinator, appliance: Appliance
+    hass: HomeAssistant,
+    coordinator: BrevilleCoordinator,
+    appliance: Appliance,
+    presets: Iterable[Preset] = (),
 ) -> dict[str, Any]:
     """One appliance as brAIn reads it: what it is doing, and what the next cook would be."""
     status = appliance.status
+    summary, matching = next_cook_summary(hass, appliance, presets)
     info = MODELS[appliance.model]
     settings = appliance.settings
     device = _device(hass, appliance)
@@ -257,6 +380,9 @@ def describe(
             "duration_minutes": _minutes(settings.duration_s) or None,
             "auto_start_timer": settings.auto_start_timer,
             "settings_from": coordinator.settings_source(appliance),
+            # What pressing Cook would do, in words, and the preset these settings are.
+            "summary": summary,
+            "matching_preset": matching,
         },
     }
     out["last_contact"] = (
@@ -287,9 +413,13 @@ async def _custom_presets(hass: HomeAssistant) -> list[Any]:
 
 
 async def _get_status(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    from .presets import BUILTIN_PRESETS
+
+    presets = (*BUILTIN_PRESETS, *await _custom_presets(hass))
     if call.data.get(ATTR_APPLIANCE):
-        return {"appliances": [describe(hass, *find_appliance(hass, call.data[ATTR_APPLIANCE]))]}
-    return {"appliances": [describe(hass, c, a) for c, a in _all(hass)]}
+        found = find_appliance(hass, call.data[ATTR_APPLIANCE])
+        return {"appliances": [describe(hass, *found, presets)]}
+    return {"appliances": [describe(hass, c, a, presets) for c, a in _all(hass)]}
 
 
 async def _get_presets(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
