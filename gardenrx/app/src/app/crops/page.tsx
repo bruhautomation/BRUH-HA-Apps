@@ -18,7 +18,8 @@ import { harvestSeason } from '@/lib/harvest-windows';
 import { applyPhenology } from '@/lib/phenology';
 import { stageIndex, stageVarColor, stageLabel } from '@/lib/stage-color';
 import { CropsBoard, type CropCardModel, type CovCell } from '@/components/crops/crops-board';
-import { needsCoverageNow, dueTypes, cropStages } from '@/lib/coverage-season';
+import { needsCoverageNow, dueTypes, cropStages, groupStages } from '@/lib/coverage-season';
+import { isAnnualCrop } from '@/lib/crop-catalog';
 
 export const dynamic = 'force-dynamic';
 
@@ -86,10 +87,11 @@ export default async function CropsPage() {
   const now = new Date();
   // Stages advance with the Holly Springs phenology calendar (manual overrides kept).
   const effectiveStages = applyPhenology(varietyStages, varieties, crops, cropGroups, now);
+  const groupStage = groupStages(cropGroups, now);
 
   const cards: CropCardModel[] = crops.map((crop) => {
     const cropVarieties = varieties.filter((v) => v.crop_id === crop.id);
-    const stages = cropStages(crop.id, varieties, effectiveStages);
+    const stages = cropStages(crop.id, varieties, effectiveStages, groupStage(crop.crop_group_id));
     const topStage = stages.length
       ? stages.reduce((a, b) => (stageIndex(b) > stageIndex(a) ? b : a))
       : null;
@@ -137,6 +139,9 @@ export default async function CropsPage() {
             : 'green';
 
     const gName = crop.crop_group_id ? (groupName.get(crop.crop_group_id) ?? null) : null;
+    // An annual at rest is done for the year, not dormant: nothing comes back.
+    const annual = isAnnualCrop(crop.name, gName);
+    const finished = annual && resting && topStage != null;
     const category =
       (gName && GROUP_CATEGORY[gName]) ?? (ORCHARD_NONGROUP.has(crop.name) ? 'Orchard' : 'Garden');
 
@@ -146,7 +151,7 @@ export default async function CropsPage() {
       group: gName,
       category,
       varietyCount: cropVarieties.length,
-      stageLabel: topStage ? stageLabel(topStage) : null,
+      stageLabel: finished ? 'Finished for the year' : topStage ? stageLabel(topStage) : null,
       stageColor: topStage ? stageVarColor(topStage) : 'var(--ink-3)',
       inBloom,
       trackFung,
@@ -157,6 +162,7 @@ export default async function CropsPage() {
       phiDaysLeft: phi.daysLeft,
       protection,
       resting,
+      annual,
       due: due.length > 0,
     };
   });
