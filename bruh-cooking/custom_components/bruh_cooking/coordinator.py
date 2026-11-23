@@ -25,6 +25,7 @@ from homeassistant.exceptions import (
     ServiceValidationError,
 )
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -83,8 +84,16 @@ STORE_SAVE_DELAY = 5
 START_WAIT = timedelta(minutes=15)
 # Where a cook's settings came from when Home Assistant did not start it.
 STARTED_ELSEWHERE = "started on the appliance or in the app"
-# What the status says of an appliance whose cook it has never seen.
+# What the status says of the last cook when there is none to tell: none seen
+# while the appliance was in contact, or, when it has never been heard from,
+# that whether it cooked is not known.
 NO_COOK_YET = "no cook yet"
+NO_COOK_KNOWN = "unknown: it has not been heard from yet, so no cook could be seen"
+# An appliance out of contact this long turns its Problem sensor on: longer
+# than a Wi-Fi blip, short enough that a cook left running is noticed.
+OFFLINE_PROBLEM_AFTER = timedelta(minutes=10)
+# How often that is looked at: nothing else happens to an appliance that went quiet.
+OFFLINE_CHECK = timedelta(minutes=1)
 # Where the add-on reads how each account stands (its log is not Home
 # Assistant's): one file per config entry, no email and no token in it.
 ACCOUNT_DIR = ".bruh_cooking/accounts"
@@ -172,6 +181,14 @@ def _ago(seconds: float) -> str:
     return f"{hours // 24} days"
 
 
+def _clock(moment: datetime) -> str:
+    """A time a person reads: "14:05", or "14:05 on 20 Nov" when it is not today."""
+    local = dt_util.as_local(moment)
+    if local.date() == dt_util.now().date():
+        return f"{local:%H:%M}"
+    return f"{local:%H:%M} on {local.day} {local:%b}"
+
+
 class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
     """Keeps every appliance on the account up to date."""
 
@@ -208,6 +225,11 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
             hass, STORE_VERSION, f"{DOMAIN}.{entry.entry_id}.appliances"
         )
         self._remembered: dict[str, Any] = {}
+        # When this run began watching: how long an appliance never heard from
+        # has been out of contact is counted from here.
+        self.watching_since = dt_util.utcnow()
+        # The appliances whose Problem sensor is on for being out of contact.
+        self._offline_problems: frozenset[str] = frozenset()
 
     async def async_load_remembered(self) -> None:
         """Read what an earlier run kept: the last contact and last cook per appliance."""
@@ -254,10 +276,10 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         return "the cook settings in Home Assistant"
 
     def cook_summary(self, appliance: Appliance) -> dict[str, Any] | str:
-        """The last cook as a person reads it, in the house's unit; NO_COOK_YET before one."""
+        """The last cook as a person reads it, in the house's unit; with none, whether that is known."""
         cook = appliance.last_cook
         if not cook:
-            return NO_COOK_YET
+            return NO_COOK_YET if appliance.last_contact is not None else NO_COOK_KNOWN
         out: dict[str, Any] = {
             key: cook[key] for key in ("started_at", "ended_at", "finish_at") if cook.get(key)
         }
@@ -352,15 +374,58 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
             else None,
         }
 
-    def offline_report(self, appliance: Appliance) -> dict[str, Any] | None:
+    def out_of_contact_since(self, appliance: Appliance) -> datetime | None:
+        """Since when nothing has been heard from it; None while it is in contact.
+
+        Its last contact, which a restart keeps; with none, when this run
+        began watching it.
+        """
+        if self.in_contact(appliance):
+            return None
+        return appliance.last_contact or self.watching_since
+
+    def offline_problem(self, appliance: Appliance) -> bool:
+        """Out of contact for OFFLINE_PROBLEM_AFTER or longer: the Problem sensor says so."""
+        since = self.out_of_contact_since(appliance)
+        return since is not None and dt_util.utcnow() - since >= OFFLINE_PROBLEM_AFTER
+
+    def _offline_flags(self) -> frozenset[str]:
+        return frozenset(
+            serial
+            for serial, appliance in self.appliances.items()
+            if appliance.on_account and self.offline_problem(appliance)
+        )
+
+    @callback
+    def _note_offline(self) -> None:
+        """What the entities show now, after any update."""
+        self._offline_problems = self._offline_flags()
+
+    @callback
+    def _check_offline(self, _now: datetime | None = None) -> None:
+        """Update the entities when an appliance crosses OFFLINE_PROBLEM_AFTER, and only then."""
+        if self._offline_flags() != self._offline_problems:
+            self.async_update_listeners()
+
+    @callback
+    def async_start_offline_watch(self) -> None:
+        entry = self.config_entry
+        entry.async_on_unload(self.async_add_listener(self._note_offline))
+        entry.async_on_unload(
+            async_track_time_interval(self.hass, self._check_offline, OFFLINE_CHECK)
+        )
+
+    def offline_report(self, appliance: Appliance, *, live: bool = True) -> dict[str, Any] | None:
         """Why an appliance is offline and one thing to try; None while it is online.
 
         Decided from what is observed: Breville turning the sign-in down (an
         authentication error), the cloud connection being down (the websocket
         will not connect), or the connection being fine while the appliance
-        reports itself offline. How long is counted from the last contact,
-        the time the status shows beside it, which a restart of Home Assistant
-        keeps; with none, the report says it has not been heard from.
+        reports itself offline. The text names the time it was last heard
+        from, which a restart of Home Assistant keeps, or with none the time
+        this run began watching. `live` text (an answer read now) also says
+        how long that is; a state attribute is written once and read later,
+        so it says only the time, which does not go out of date.
         """
         if self.in_contact(appliance):
             return None
@@ -377,11 +442,26 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
             why = "Breville's cloud is reachable and the sign-in works, but the appliance is not answering"
             fix = f"Check that the appliance is plugged in and on Wi-Fi, and that the {self.brand} app shows it online"
         since = appliance.offline_since or appliance.last_contact
-        if appliance.last_contact is not None:
-            age = max(0.0, (dt_util.utcnow() - appliance.last_contact).total_seconds())
-            heard = f"Offline for {_ago(age)}, counted from when it was last heard from"
+        now = dt_util.utcnow()
+        if (contact := appliance.last_contact) is not None:
+            if live:
+                age = max(0.0, (now - contact).total_seconds())
+                heard = (
+                    f"Offline for {_ago(age)}, counted from when it was last heard from "
+                    f"({_clock(contact)})"
+                )
+            else:
+                heard = f"Offline since {_clock(contact)}, when it was last heard from"
         else:
-            heard = "Offline for an unknown time: not heard from since Home Assistant started"
+            started = self.watching_since
+            if live:
+                age = max(0.0, (now - started).total_seconds())
+                heard = (
+                    f"Offline for at least {_ago(age)}: not heard from since BRUH Cooking "
+                    f"started ({_clock(started)})"
+                )
+            else:
+                heard = f"Offline: not heard from since BRUH Cooking started ({_clock(started)})"
         text = f"{heard}. {why}. To try: {fix}."
         cook = appliance.last_cook
         if cook is not None and not cook.get("ended_at"):
