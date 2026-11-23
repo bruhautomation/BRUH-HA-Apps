@@ -531,10 +531,6 @@ GENERIC_FIX = ("Look at what it is measuring for a change brAIn cannot see, "
                "it.")
 
 
-def _fmt(value: float) -> str:
-    return f"{value:.1f}".rstrip("0").rstrip(".")
-
-
 def outdoor_reading(house: House, klass: str) -> str:
     """What the snapshot already says it is outside, for a reading of the
     room's air, or "". Pure over the snapshot: the thermal model's outdoor
@@ -547,7 +543,7 @@ def outdoor_reading(house: House, klass: str) -> str:
         if ref and value is not None:
             unit = str((st.get("attributes") or {}).get(
                 "unit_of_measurement") or "")
-            return f"{house.name(ref)} reads {_fmt(value)}{unit}"
+            return f"{house.name(ref)} reads {numfmt.quantity(value, unit)}"
     key = {"temperature": "temperature", "humidity": "humidity"}.get(klass)
     if not key:
         return ""
@@ -561,7 +557,7 @@ def outdoor_reading(house: House, klass: str) -> str:
         unit = ("%" if key == "humidity"
                 else str(wattrs.get("temperature_unit") or ""))
         return (f"the weather for {house.name(weid)} has it at "
-                f"{_fmt(value)}{unit} outside")
+                f"{numfmt.quantity(value, unit)} outside")
     return ""
 
 

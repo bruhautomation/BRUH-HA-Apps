@@ -319,6 +319,7 @@ def digest(snap: dict) -> dict:
               if (house.registry.get(e) or {}).get("area_id")
               or (house.device_of(e) or {}).get("area_id")}
     operated = operated_by(snap.get("automations"))
+    scripted = scripted_by(snap.get("scripts"))
     on_device: dict[str, list[str]] = {}
     for eid, reg in house.registry.items():
         if (reg or {}).get("device_id"):
@@ -327,8 +328,8 @@ def digest(snap: dict) -> dict:
     names: dict[str, list[str]] = {}
     fact_subjects = {str(f.get("subject") or "") for f in facts} & set(
         house.states)
-    for eid in (set(placed) | set(operated) | set(triggered) | fact_subjects
-                | {e["id"] for e in entities}):
+    for eid in (set(placed) | set(operated) | set(scripted) | set(triggered)
+                | fact_subjects | {e["id"] for e in entities}):
         device = house.device_of(eid)
         names[eid] = [n for n in (house.name(eid),
                                   house.device_name(device) if device else "")
@@ -336,7 +337,7 @@ def digest(snap: dict) -> dict:
     return {"automations": autos, "scripts": scripts, "scenes": scenes,
             "facts": facts, "areas": areas, "entities": entities,
             "index": index, "placed": placed, "operated": operated,
-            "triggered": triggered, "names": names}
+            "scripted": scripted, "triggered": triggered, "names": names}
 
 
 def operated_by(automations) -> dict[str, list[dict]]:
@@ -353,6 +354,25 @@ def operated_by(automations) -> dict[str, list[dict]]:
             for eid in call.get("entity_id") or ():
                 row = {"service": verb, "alias": alias,
                        "id": str(cfg.get("id") or "")}
+                if row not in out.setdefault(str(eid), []):
+                    out[str(eid)].append(row)
+    return out
+
+
+def scripted_by(scripts) -> dict[str, list[dict]]:
+    """``{entity: [{"service", "alias", "id"}]}`` — what each script does
+    to the entities its sequence names (#1310): "how is the alarm armed?"
+    is answered by a script a person runs as surely as by an automation."""
+    import shadow  # noqa: PLC0415 — panel-local, a leaf
+    out: dict[str, list[dict]] = {}
+    for sid, body in (scripts or {}).items() if isinstance(scripts, dict) else ():
+        if not isinstance(body, dict):
+            continue
+        alias = str(body.get("alias") or sid)[:80]
+        for call in shadow.would_do({"actions": body.get("sequence")}):
+            verb = str(call.get("service") or "").split(".", 1)[-1]
+            for eid in call.get("entity_id") or ():
+                row = {"service": verb, "alias": alias, "id": str(sid)}
                 if row not in out.setdefault(str(eid), []):
                     out[str(eid)].append(row)
     return out
@@ -761,10 +781,26 @@ def lookup(text: str, about: str, dig: dict) -> dict | None:
                       "shutoffs")
 
     if _ASKS_WHERE.search(text):
-        if about and about in placed:
+        phrases = [m.group("a") or m.group("b") or m.group("c") or ""
+                   for m in _WHERE_OBJECT.finditer(text)]
+        # The subject's room answers a where-question only when the question
+        # asks where the subject is: "where is the spare key for the back
+        # door?" is about a key, and the door's room is not its answer
+        # (#1310) — asked, saying the room brAIn did find.
+        # The subject's own kind ("lock" for a lock) is a thing-word too.
+        kind = set(_words(about.split(".", 1)[0]))
+
+        def the_subject(p: str) -> bool:
+            p = " ".join(w for w in _words(p) if w not in kind)
+            return (about.lower() in p or any(
+                _is_the_thing(p, n) for n in (names.get(about) or [about]))
+                or [w for w in _words(p) if w not in _THING_WORDS]
+                in ([], ["it"], ["they"]))
+
+        if about and about in placed and (
+                not phrases or any(the_subject(p) for p in phrases)):
             return room_line(about)
-        for m in _WHERE_OBJECT.finditer(text):
-            phrase = m.group("a") or m.group("b") or m.group("c") or ""
+        for phrase in phrases:
             for eid in sorted(placed & set(names)):
                 if eid.lower() in phrase.lower() or any(
                         _is_the_thing(phrase, n) for n in names[eid]):
@@ -806,7 +842,57 @@ def lookup(text: str, about: str, dig: dict) -> dict | None:
                     f"“{row['alias']}” {_does(row['service'])} {called(eid)}.",
                     [f"automation:{row['id']}"] if row.get("id") else [],
                     "automations")
+    # A script a person runs does it too (#1310), asked only for a named
+    # operation: a script that merely touches the thing says nothing of how.
+    scripted = dig.get("scripted") or {}
+    if asked:
+        picks = [about] if about in scripted else []
+        picks += [e for e in _named_in(text, dig, sorted(scripted))
+                  if e not in picks]
+        for eid in picks:
+            for row in scripted[eid]:
+                if any(row["service"].startswith(a) for a in asked):
+                    return _found(
+                        f"the script “{row['alias']}” does it "
+                        f"({row['service']} on {eid})",
+                        f"The script “{row['alias']}” "
+                        f"{_does(row['service'])} {called(eid)}.",
+                        [f"script:{row['id']}"], "automations")
     return None
+
+
+def looked_first(about: str, dig: dict) -> str:
+    """What brAIn looked up before asking, and did not find (#1310): the
+    sentence a house-book question carries so the person sees the registry
+    and the automations were read first. Built from the same maps
+    `lookup` read, never from the question's words."""
+    names = dig.get("names") or {}
+    rooms = dig.get("placed") if isinstance(dig.get("placed"), dict) else {}
+    if not about:
+        return ("brAIn looked in Home Assistant first: no room, automation "
+                "or script there answers this.")
+    called = (names.get(about) or [about])[0]
+    area = str((rooms or {}).get(about) or "")
+    room = _area_name(area, dig) if area else ""
+    if not room:
+        for e in dig.get("entities") or []:
+            if isinstance(e, dict) and e.get("id") == about and e.get("area"):
+                room = str(e["area"])
+    runs = [f"“{r['alias']}”"
+            for r in ((dig.get("operated") or {}).get(about) or [])]
+    runs += [f"the script “{r['alias']}”"
+             for r in ((dig.get("scripted") or {}).get(about) or [])]
+    runs = list(dict.fromkeys(runs))
+    where = (f"{called} is in the {room}" if room
+             else f"{called} has no room set")
+    if runs:
+        listed = " and ".join(runs[:2])
+        more = f" and {len(runs) - 2} more" if len(runs) > 2 else ""
+        what = f"{listed}{more} operate{'s' if len(runs) == 1 else ''} it, " \
+               "but none says this"
+    else:
+        what = "no automation or script operates it"
+    return f"brAIn looked in Home Assistant first: {where}, and {what}."
 
 
 def registry_answers(text: str, about: str, dig: dict) -> str:
@@ -916,7 +1002,10 @@ def parse(answer: dict | None, dig: dict, request: str = "",
         questions.append({"question": textclip.clip(text, MAX_QUESTION),
                           "why": textclip.clip(redact_text(str(q.get("why") or "")), 300),
                           "subject": key,
-                          "label": textclip.clip(index[key], MAX_LABEL)})
+                          "label": textclip.clip(index[key], MAX_LABEL),
+                          # What was looked up and not found (#1310).
+                          "looked": redact_text(looked_first(
+                              _about_entity(key, dig), dig))})
     sections = [{"key": k, "title": SECTIONS[k], "entries": out_sections[k]}
                 for k in SECTIONS if out_sections.get(k)]
     return {"sections": sections, "questions": questions,
@@ -942,7 +1031,11 @@ def question_rows(questions: list[dict], asked: list[str],
             "entity:") else ""
         out.append({
             "text": f"House book: {q['question']}",
-            "detail": q["why"] or f"About {q['label']}.",
+            # Why a reader needs it, then what brAIn looked up first and
+            # did not find there (#1310).
+            "detail": " ".join(x for x in (
+                q["why"] or f"About {q['label']}.", q.get("looked") or "")
+                if x),
             # Says what the house book is and never "answer it here": this
             # sentence reaches surfaces with no box to answer in (the
             # mirror, a development-loop review), and Needs you draws the

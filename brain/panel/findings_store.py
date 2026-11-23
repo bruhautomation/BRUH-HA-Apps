@@ -78,6 +78,7 @@ from pathlib import Path
 import answers
 import atomic_write
 import house_words
+import numfmt
 import personality
 import textclip
 import triage
@@ -1031,7 +1032,8 @@ def plain_said(text, step: bool = False) -> str:
     would empty comes back as it was."""
     if not isinstance(text, str) or not text:
         return text
-    said = _plainly(house_words.one_name(text), {}, figures=False)
+    said = numfmt.said_dates(
+        _plainly(house_words.one_name(text), {}, figures=False))
     if said == text:
         return text
     said = textclip.finished(said, step=step)
@@ -1104,6 +1106,13 @@ def shown_words(entry: dict) -> dict:
                 for token in house_words.lint(said):
                     if token not in technical:
                         technical.append(token)
+    # One date style on every row whoever wrote it (#1332): an ISO date in
+    # a sentence is said "22 Nov". The stored words, the key, are untouched.
+    for key in ("text", "claim", "detail", "fix"):
+        said = out.get(key, entry.get(key))
+        dated = numfmt.said_dates(said)
+        if dated != said:
+            out[key] = dated
     technical = clean_technical(technical)
     if technical != before:
         out["technical"] = technical
@@ -1178,7 +1187,8 @@ def shown_look(record: dict, entry: dict) -> dict:
     said = house_words.one_name(said)   # one assistant, one name
     # No id, path, line number or code name — and never "an internal
     # name" — under "brAIn checked" (#774, #791): `shown_words`' pass.
-    said = textclip.finished(_plainly(said, entry, files=False))
+    said = numfmt.said_dates(
+        textclip.finished(_plainly(said, entry, files=False)))
     if said == record["reason"]:
         return record
     return {**record, "reason": said}

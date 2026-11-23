@@ -247,7 +247,7 @@ def decline(snap: dict, now: float) -> list[dict]:
                 f"the last {round(moved['days'])} days "
                 f"({numfmt.quantity(moved['per_day'], unit, signed=True)} a "
                 f"day), against a normal wobble of "
-                f"{numfmt.quantity(moved['noise'], unit)} — "
+                f"{numfmt.quantity(moved['noise'], unit, delta=True)} — "
                 f"{numfmt.times(abs(moved['spreads']))} "
                 "it. Every single reading has been inside its usual range "
                 "the whole time, which is why nothing else has said so. "

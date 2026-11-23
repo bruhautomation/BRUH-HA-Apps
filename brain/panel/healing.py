@@ -86,6 +86,7 @@ import time
 from pathlib import Path
 
 import atomic_write
+import numfmt
 
 log = logging.getLogger("brain.healing")
 
@@ -352,8 +353,8 @@ def chronic_finding(candidate: dict, heals: list[int], tz=None,
         "{label} keeps needing to be fixed overnight",
         "Find out why it keeps happening — brAIn has stopped fixing it "
         + "every night, because that hides the reason."))
-    days = ", ".join(dt.datetime.fromtimestamp(t, tz or dt.timezone.utc)
-                     .strftime("%d %b") for t in heals[-CHRONIC_HEALS:])
+    days = ", ".join(numfmt.day(t, tz or dt.timezone.utc)
+                     for t in heals[-CHRONIC_HEALS:])
     return {
         "text": text.format(label=label),
         "detail": (f"brAIn {candidate.get('sentence') or 'fixed it'} "

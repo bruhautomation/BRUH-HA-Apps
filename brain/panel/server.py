@@ -2448,7 +2448,40 @@ async def _weekly_state(now: float) -> dict:
     rows = await asyncio.to_thread(findings_store.list_all, "live")
     settled = await asyncio.to_thread(findings_store.settled_listing)
     return weekly.gather(rows, settled, power, since, now=now,
-                         humidity=list(_HUMIDITY_WEEK))
+                         humidity=list(_HUMIDITY_WEEK),
+                         where=_energy_where(power.get("devices") or {}))
+
+
+def _energy_where(devices: dict) -> dict:
+    """Where each separately measured device is, for the weekly report's
+    "most went to" line (`weekly.energy_share`, #1324): its room off the
+    last checks pass, and why it is kept apart from the rooms — a space the
+    household said nothing heats (`_said_unconditioned_areas`, the reader
+    the heat model's rows use), or a device whose thermometer the heat
+    model set aside as a machine's rather than a room's (the thermal
+    store's `not_air`). Never raises: unread is no room."""
+    out: dict[str, dict] = {}
+    try:
+        entity_areas = _FACTS_CTX.get("entity_areas") or {}
+        unheated = _said_unconditioned_areas(entity_areas)
+        store = thermal.load()
+        machines = {
+            str((_NAMES.get(e) or {}).get("device") or "")
+            for e, row in (store.get("unmeasured") or {}).items()
+            if isinstance(row, dict) and row.get("kind") == "not_air"}
+        machines.discard("")
+        for sid in devices:
+            row = _NAMES.get(sid) or {}
+            spot = {"room": str(row.get("area") or ""),
+                    "name": str(row.get("name") or "")}
+            if row.get("device") and str(row["device"]) in machines:
+                spot["apart"] = "equipment"
+            elif str(entity_areas.get(sid) or "") in unheated:
+                spot["apart"] = "unconditioned"
+            out[sid] = spot
+    except Exception as exc:  # noqa: BLE001 — the report without the line
+        log.debug("could not place the measured devices: %s", exc)
+    return out
 
 
 async def _weekly_pick(state: dict, now: float, *,
@@ -13838,6 +13871,8 @@ def _note_registry(snapshot: dict) -> None:
         _note_live_readings(snapshot, driven)
         _OPERATED.clear()
         _OPERATED.update(house_book.operated_by(snapshot.get("automations")))
+        _SCRIPTED.clear()
+        _SCRIPTED.update(house_book.scripted_by(snapshot.get("scripts")))
     except Exception as exc:  # noqa: BLE001
         log.debug("driven-by note failed: %s", exc)
     _note_world(snapshot)
@@ -13962,6 +13997,8 @@ _LIVE_READINGS: dict[str, float | None] = {}
 # What each automation's actions do to an entity (`house_book.operated_by`),
 # for a question to the owner an automation already answers (#561).
 _OPERATED: dict[str, list[dict]] = {}
+# ...and each script's sequence (`house_book.scripted_by`, #1310).
+_SCRIPTED: dict[str, list[dict]] = {}
 
 
 async def _recent_history(ids: list[str], hours: float,
@@ -14057,6 +14094,26 @@ def _device_class(eid: str) -> str:
     return str((_NAMES.get(str(eid or "")) or {}).get("class") or "")
 
 
+def _act_of(row: dict, urgent: bool = False) -> str:
+    """How soon a card wants a person to act (`answers.act_tier`, #1327),
+    with the subject's own kind read here: food, water, heat or security is
+    `corrections.record_floor`, the one reading of those four that brAIn's
+    own record already keeps shown (#1320), over the row's entity and every
+    item it names. Never raises: an unreadable row reads as its severity."""
+    try:
+        subjects = [str(row.get("entity_id") or "")]
+        subjects += [str(i) for i in (row.get("items") or [])
+                     if isinstance(i, str)]
+        at_stake = any(corrections.record_floor(
+            eid, device_class=_device_class(eid),
+            name=str((_NAMES.get(eid) or {}).get("name") or ""))
+            for eid in subjects if "." in eid)
+        return answers_mod.act_tier(row, urgent, at_stake)
+    except Exception as exc:  # noqa: BLE001 — a word on a card, never the list
+        log.debug("could not weigh a card's stakes: %s", exc)
+        return answers_mod.act_tier(row, urgent)
+
+
 def _registry_answers(case: dict, subject: str = "") -> str:
     """What already answers a question an investigation would ask the
     owner — the entity's room, or the automation that does what it asks
@@ -14069,6 +14126,7 @@ def _registry_answers(case: dict, subject: str = "") -> str:
            "names": {e: [v["name"]] for e, v in _NAMES.items()
                      if v.get("name")},
            "operated": _OPERATED,
+           "scripted": _SCRIPTED,
            # What the house was already told: an earlier answer, a fact
            # filed under the thing (#697).
            "facts": house_book._fact_rows(),
@@ -22192,6 +22250,10 @@ def _cases_payload(now: float | None = None) -> dict:
             case["urgent"] = bool(notify_router.is_urgent(case))
         except Exception:  # noqa: BLE001 — a row that cannot be read is not urgent
             case["urgent"] = False
+        # How soon to act, from what is at stake (#1327): read before the
+        # chip, which never calls a row about food, water, heat or security
+        # a tidy-up.
+        case["act"] = _act_of(case, case["urgent"])
         case["chip"] = answers_mod.chip(case, case["urgent"])
         # Ignore's reason chips on the Resident's own reports
         # (`answers.reason_chips`): words for the box, never a press.
@@ -22528,6 +22590,8 @@ def _findings_payload() -> dict:
         except Exception:  # noqa: BLE001 — unreadable is not urgent; the
             urgent = False  # other rules still hold the chips back
         row["reason_chips"] = answers_mod.reason_chips(row, urgent)
+        # How soon to act (#1327), the same word a case carries.
+        row["act"] = _act_of(row, urgent)
     for row in open_claims:
         row["who"] = _who_for("yes", name=name)
     # The badge's number, and it is THE queue count (`cases.queue_count`)

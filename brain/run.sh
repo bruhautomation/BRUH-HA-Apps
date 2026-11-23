@@ -177,10 +177,17 @@ init_environment() {
     # reasons in local time instead of the container default (UTC). Cached
     # to a shared file the listeners/pool read; falls back to the previous
     # cache if HA Core isn't answering yet at boot.
-    local ha_tz=""
-    ha_tz=$(curl -s -m 5 -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
-        "http://supervisor/core/api/config" 2>/dev/null | jq -r '.time_zone // empty') || true
+    # The same read gives the house's temperature unit, which every
+    # sentence brAIn writes a temperature in is said in (numfmt.house_unit).
+    local ha_tz="" ha_config="" ha_temp_unit=""
+    ha_config=$(curl -s -m 5 -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+        "http://supervisor/core/api/config" 2>/dev/null) || true
+    ha_tz=$(printf '%s' "$ha_config" | jq -r '.time_zone // empty' 2>/dev/null) || true
+    ha_temp_unit=$(printf '%s' "$ha_config" | jq -r '.unit_system.temperature // empty' 2>/dev/null) || true
     mkdir -p /config/.brain/cache
+    if [ -n "$ha_temp_unit" ]; then
+        printf '%s' "$ha_temp_unit" > /config/.brain/cache/ha_temperature_unit
+    fi
     if [ -n "$ha_tz" ]; then
         printf '%s' "$ha_tz" > /config/.brain/cache/ha_timezone
     elif [ -r /config/.brain/cache/ha_timezone ]; then

@@ -11,6 +11,8 @@ import math
 import re
 from typing import Any, Iterable, Iterator
 
+import numfmt
+
 log = logging.getLogger("brain.checks")
 
 DAY = 86400.0
@@ -123,10 +125,7 @@ def when(value: Any) -> str:
     ts = parse_ts(value)
     if ts is None:
         return "an unknown time"
-    tz = house_tz()
-    d = dt.datetime.fromtimestamp(ts, tz=tz)
-    return d.strftime("%-d %b %Y") if d.year != dt.datetime.now(tz).year \
-        else d.strftime("%-d %b")
+    return numfmt.day(ts, house_tz()) or "an unknown time"
 
 
 def num(value: Any) -> float | None:

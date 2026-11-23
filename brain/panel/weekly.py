@@ -220,18 +220,74 @@ def one_thing(open_rows: list[dict], now: float | None = None) -> dict | None:
     return live[0]
 
 
+# Where the week's energy went (#1324): the rooms ranked, and what is not a
+# lived-in room kept apart. Two rooms at least, or "most went to" is the
+# only room there is.
+MIN_RANKED_ROOMS = 2
+MAX_APART = 3
+APART_WORDS = {"unconditioned": "which nothing heats",
+               "equipment": "a machine, not a room"}
+
+
+def energy_share(devices: dict, where: dict) -> list[str]:
+    """One line naming the room the week's measured energy mostly went to,
+    with its share, and one listing what was kept apart (#1324).
+
+    ``devices`` is ``{statistic id: this week's use}`` (`energy.week`'s
+    ``devices``); ``where`` is ``{statistic id: {"room", "apart"}}``, the
+    room each device is in and, for a space the household said nothing
+    heats or a device the heat model set aside as equipment, why it is
+    not ranked (``"unconditioned"`` / ``"equipment"``). Shares are of every
+    device measured; a device with no room counts in the whole and is
+    named nowhere. No line when fewer than two rooms can be ranked."""
+    whole = sum(float(v) for v in (devices or {}).values() if v and v > 0)
+    if whole <= 0:
+        return []
+    rooms: dict[str, float] = {}
+    apart: dict[tuple[str, str], float] = {}
+    for sid, used in devices.items():
+        spot = (where or {}).get(sid) or {}
+        room = str(spot.get("room") or "")
+        why = str(spot.get("apart") or "")
+        if why in APART_WORDS:
+            # A space is named by its room; a machine by its own name.
+            name = str(spot.get("name") or "")
+            label = (room or name) if why == "unconditioned" else (name or room)
+            if label:
+                apart[(label, why)] = apart.get((label, why), 0.0) + float(used)
+        elif room:
+            rooms[room] = rooms.get(room, 0.0) + float(used)
+    out = []
+    if len(rooms) >= MIN_RANKED_ROOMS:
+        top, used = max(rooms.items(), key=lambda kv: (kv[1], kv[0]))
+        out.append(f"Of the energy measured device by device, most went to "
+                   f"the {top}: {round(100 * used / whole)}% of the week's")
+    if out and apart:
+        kept = sorted(apart.items(), key=lambda kv: -kv[1])[:MAX_APART]
+        said = [f"the {label}, {APART_WORDS[why]} "
+                f"({round(100 * used / whole)}%)"
+                for (label, why), used in kept]
+        out.append("Kept apart and not ranked with the rooms: "
+                   + ", ".join(said))
+    return out
+
+
 def gather(open_rows: list[dict], settled: list[dict], power: dict,
            since: float, memory_path: str | None = None,
-           now: float | None = None, humidity=None) -> dict:
+           now: float | None = None, humidity=None, where=None) -> dict:
     """Everything the decision and the prompt read. No model, no network.
 
     ``humidity`` is one line a dehumidifier, worked out from the last
-    checks pass (`checks.chores.humidity_summaries`)."""
+    checks pass (`checks.chores.humidity_summaries`). ``where`` is where
+    each measured device is (`energy_share`)."""
     now = time.time() if now is None else now
+    power = power or {}
     return {
         "since": since,
         "now": now,
-        "energy": power or {},
+        "energy": power,
+        "share": energy_share(power.get("devices") or {}, where or {})
+        if power.get("available") else [],
         "humidity": [str(x) for x in humidity or () if str(x).strip()][:4],
         "findings": week_findings(open_rows, settled, since),
         "learned": learned(memory_path, since),
@@ -298,6 +354,7 @@ def week_lines(state: dict) -> list[str]:
     same words, so the two runs cannot disagree about what the week was.
     """
     out = list(_energy_lines(state.get("energy") or {}))
+    out += list(state.get("share") or [])
     out += list(state.get("humidity") or [])
     found = state.get("findings") or {}
     out.append(f"{found.get('settled', 0)} problem(s) answered this week, "
@@ -317,6 +374,14 @@ def frame(state: dict) -> str:
     body = _energy_lines(power)
     if body:
         lines += [f"- {b}" for b in body]
+        # Where it went (#1324): said as given, and what was kept apart is
+        # never called one of the rooms.
+        share = state.get("share") or []
+        lines += [f"- {b}" for b in share]
+        if share:
+            lines.append("  - Say where the energy mostly went, with its "
+                         "share, as given. What was kept apart is never "
+                         "called one of the rooms or ranked with them.")
     elif power.get("reason"):
         lines.append(f"- No energy figures this week: {power['reason']}. "
                      "Do not mention energy at all.")

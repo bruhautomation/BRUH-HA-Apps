@@ -752,6 +752,55 @@ def who_acts(case: dict, name: str = DEFAULT_NAME,
 
 # The one status chip on a card (docs/design/ui-redesign-2026-10.md,
 # "Visual standard"): a dot and one word, four kinds and no fifth.
+# How soon a row wants a person to act, from what is at stake (#1327): food,
+# water, heat or security first, then what is broken, then what can wait. A
+# word on every case and finding row and the first key of the list's order
+# inside each group; it hides nothing. Not `urgency.urgency_of`, which is
+# when a PHONE may hear a producer (quiet hours), keyed per producer.
+ACT_TIERS = ("today", "soon", "whenever")
+ACT_WORDS = {"today": "Act today", "soon": "Soon",
+             "whenever": "When convenient"}
+# The check families whose subject is heat or safety by what they measure.
+AT_STAKE_FAMILIES = ("check:climate.", "check:safety.")
+
+
+def at_stake_source(case: dict) -> bool:
+    """Whether the producer alone says food, water, heat or security is at
+    stake: the safety lane, the tripwire, a `sec.*` check, a climate or
+    safety check. The server adds the subject's own kind
+    (`corrections.record_floor`), which this leaf does not hold."""
+    src = str((case or {}).get("source") or "")
+    return is_security(case or {}) or src.startswith(AT_STAKE_FAMILIES)
+
+
+def act_tier(case: dict, urgent: bool = False, at_stake: bool = False) -> str:
+    """Which of `ACT_TIERS` this row is.
+
+    Act today: urgent, critical, high stakes a Resident run weighed, or a
+    problem (warning or worse) about food, water, heat or security. Soon:
+    any other warning or worse, and anything at stake filed as information
+    or asked as a question. When convenient: the rest — information, a
+    guess or house-book question, a suggestion, a chore, a change brAIn
+    already made (Undo is on it). Read off the severity a rule chose and
+    the subject's kind, never the row's words."""
+    case = case if isinstance(case, dict) else {}
+    severity = str(case.get("severity") or "warning")
+    at_stake = bool(at_stake) or at_stake_source(case)
+    if urgent or case.get("urgent") or severity == "critical":
+        return "today"
+    if (str(case.get("source") or "") == RESIDENT_SOURCE
+            and case.get("stakes") == "high"):
+        return "today"
+    kind = case.get("kind")
+    done = kind == "change" or case.get("finding_status") == "fixed"
+    asks = kind in ("question", "opportunity", "chore") or done
+    if asks:
+        return "soon" if at_stake and not done else "whenever"
+    if at_stake:
+        return "today" if severity != "info" else "soon"
+    return "whenever" if severity == "info" else "soon"
+
+
 CHIPS = ("urgent", "problem", "tidy", "suggestion", "question")
 CHIP_WORDS = {"urgent": "Urgent", "problem": "Problem", "tidy": "Tidy-up",
               "suggestion": "Suggestion", "question": "Question"}
@@ -773,8 +822,9 @@ def chip(case: dict, urgent: bool = False) -> str:
         return "suggestion"
     # A report about who can reach the house is never housekeeping, whatever
     # its severity: two `sec.*` checks file at `info`, and read that way
-    # they sat folded under Tidy-ups beside an unused helper.
-    if is_security(case):
+    # they sat folded under Tidy-ups beside an unused helper. Nor is one
+    # about food, water or heat (`act_tier` above `whenever`, #1327).
+    if is_security(case) or case.get("act") in ("today", "soon"):
         return "problem"
     if situation(case) == "tidy" or case.get("severity") == "info":
         return "tidy"
@@ -912,15 +962,18 @@ def group(case: dict, urgent: bool = False) -> str:
 
 
 def feed_key(case: dict) -> tuple:
-    """The feed's sort key: group, then urgent, then safety and security,
-    then a change after the faults it ended, then severity worst first. `sorted` is stable, so
-    cases equal on all four keep the order they were handed in (newest
+    """The feed's sort key: group, then urgent, then how soon to act
+    (`act_tier`, #1327), then safety and security, then a change after the
+    faults it ended, then severity worst first. `sorted` is stable, so
+    cases equal on all of them keep the order they were handed in (newest
     first, `cases._sort`)."""
     g = case.get("group") or group(case)
     is_change = case.get("kind") == "change" or case.get(
         "finding_status") == "fixed"
+    act = case.get("act") or act_tier(case)
     return (GROUPS.index(g) if g in GROUPS else len(GROUPS),
             0 if case.get("urgent") else 1,
+            ACT_TIERS.index(act) if act in ACT_TIERS else 1,
             0 if is_security(case) else 1,
             1 if is_change else 0,
             SEVERITY_RANK.get(case.get("severity") or "warning", 2))
