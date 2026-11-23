@@ -1667,13 +1667,130 @@ def _pattern_sentence(shape: dict | None) -> str:
             + f" ({shape['events']} times over {shape['days']} days).")
 
 
-def _pattern_fix(shape: dict | None) -> str:
-    if shape and ("from_hour" in shape or shape.get("when_days")):
-        return ("The times you override it are the condition it is "
-                "missing — add one that stands the automation down then. ")
-    return ("Change the automation's condition so it does not run when you "
-            "do not want it to; the times you overrode it are the "
-            "condition. ")
+def _overridden_names(house: House, entities: list[str]) -> list[str]:
+    """What was put back, one name a device (#1266).
+
+    Two entities of one device are one light to the person undoing it, and
+    an id Home Assistant numbered for a collision (`light.porch_2` beside
+    `light.porch`) is the same thing registered twice: both read as one
+    name, never "Porch light, Porch light".
+    """
+    present = set(entities)
+    names: list[str] = []
+    for eid in entities:
+        base = re.sub(r"_\d+$", "", eid)
+        if base != eid and base in present:
+            eid = base
+        device = house.device_of(eid)
+        name = house.device_name(device) if device else house.label(eid)
+        if name.lower() not in {n.lower() for n in names}:
+            names.append(name)
+    return names
+
+
+def _offered_conditions(snap: dict, history: dict, now: float) -> dict:
+    """`automation entity -> conditions.build object`: the one condition
+    the Proposals tab offers (or refuses, with its reason) for each
+    automation the ledger holds, built by the same producer the pass runs
+    after the findings, so the finding names exactly the change the card
+    carries. Empty when it cannot be read."""
+    try:
+        import automation_writer  # noqa: PLC0415 — see `_override_history`
+        import baselines  # noqa: PLC0415
+        import conditions  # noqa: PLC0415
+
+        tz, _name = baselines.house_timezone()
+        rows = [r for past in history.values() for r in past]
+        found = conditions.build(snap, rows, tz, now,
+                                 automation_writer.protected_patterns())
+    except Exception as exc:  # noqa: BLE001 — the finding stands without it
+        log.debug("conditions unavailable: %s", exc)
+        return {}
+    return {str((o.get("automation") or {}).get("entity_id") or ""): o
+            for o in found}
+
+
+def _proposal_state(offer: dict) -> str:
+    """Where the offered change stands: "open", "answered", "full" (the
+    Proposals tab has no room for it yet) or "new" (offered after this
+    pass). "" when the store cannot be read."""
+    try:
+        import proposals  # noqa: PLC0415 — see `_override_history`
+
+        key = proposals.key_for(offer)
+        rows = proposals.listing()
+        for row in rows:
+            if row.get("key") == key:
+                return ("open" if row.get("status") in proposals.OPEN_STATUSES
+                        else "answered")
+        if key in proposals.settled_keys():
+            return "answered"
+        if sum(1 for r in rows if r.get("status")
+               in proposals.OPEN_STATUSES) >= proposals.MAX_OPEN:
+            return "full"
+        return "new"
+    except Exception as exc:  # noqa: BLE001
+        log.debug("proposals unreadable: %s", exc)
+        return ""
+
+
+def _band_words(shape: dict) -> str:
+    days = {"weekdays": " on weekdays", "weekends": " on weekend days"}.get(
+        str(shape.get("when_days") or ""), "")
+    return (f"between {shape['from_hour']:02d}:00 and "
+            f"{shape['to_hour']:02d}:00{days}")
+
+
+def _override_fix(shape: dict | None, offer: dict | None,
+                  times: list[float]) -> str:
+    """One concrete condition, and what to press for it (#1266).
+
+    The condition is the one `conditions.build` offers as a change on the
+    Proposals tab, where Approve writes it through the automation writer
+    and Dismiss leaves the automation as it is; nothing is changed from
+    here. Where no condition can be offered the sentence says which one
+    fits and why it is not offered, or why no time condition fits.
+    """
+    if offer and offer.get("config") and not offer.get("refused"):
+        title = str(offer.get("title") or "")
+        state = _proposal_state(offer)
+        if state == "answered":
+            return (f"brAIn suggested one condition, “{title}”, and it has "
+                    "already been answered on the Proposals tab, so the "
+                    "automation is as you left it.")
+        where = ("will be on the Proposals tab once it has room"
+                 if state == "full" else "is on the Proposals tab")
+        return (f"brAIn suggests one condition: “{title}”. It {where}: "
+                "Approve adds it to the automation, Dismiss leaves the "
+                "automation as it is.")
+    if shape and "from_hour" in shape:
+        said = (f"The condition it is missing: do not run "
+                f"{_band_words(shape)}.")
+        if offer and offer.get("refused"):
+            return (f"{said} brAIn cannot offer it as a change: "
+                    f"{str(offer['refused']).replace('`', '')}.")
+        return (f"{said} Add it in the automation's editor: brAIn offers it "
+                "as a change only when the undos keep to weekdays or to "
+                "weekends.")
+    if shape:
+        return ("The undos do not keep to any hours, so no time condition "
+                "would fit: what the automation is triggered by, or what it "
+                "does, is what to change.")
+    if times:
+        import datetime as _dt  # noqa: PLC0415
+
+        try:
+            import baselines  # noqa: PLC0415
+            tz = baselines.house_timezone()[0]
+        except Exception:  # noqa: BLE001
+            tz = _dt.timezone.utc
+        at = [_dt.datetime.fromtimestamp(t, tz).strftime("%H:%M")
+              for t in sorted(times)]
+        return (f"The undos in the last day were at {join_names(at)}. brAIn suggests a "
+                "condition once the undos keep to the same hours on three "
+                "separate days.")
+    return ("brAIn suggests a condition once the undos keep to the same "
+            "hours on three separate days.")
 
 
 def overridden(snap: dict, now: float) -> list[dict]:
@@ -1693,8 +1810,11 @@ def overridden(snap: dict, now: float) -> list[dict]:
         if not key:
             continue
         g = groups.setdefault(key, {"name": o.get("by_name") or key,
-                                    "count": 0, "entities": [], "last": 0.0})
+                                    "count": 0, "entities": [], "last": 0.0,
+                                    "times": []})
         g["count"] += 1
+        if o.get("ts"):
+            g["times"].append(float(o["ts"]))
         if o["entity_id"] not in g["entities"]:
             g["entities"].append(o["entity_id"])
         g["last"] = max(g["last"], o.get("ts") or 0.0)
@@ -1702,6 +1822,7 @@ def overridden(snap: dict, now: float) -> list[dict]:
     moves = mined.get("moves") or {}
     history = _override_history()
     house = House(snap)
+    offers: dict | None = None
     out = []
     # A rule every trigger of which is a press is somebody's hand with a
     # rule in between (`_relays`): undoing what it did is the person changing
@@ -1749,20 +1870,21 @@ def overridden(snap: dict, now: float) -> list[dict]:
         else:
             lead = (f"{shape['events']} times across {shape['days']} "
                     "different days")
+        if offers is None:
+            offers = _offered_conditions(snap, history, now)
 
         out.append({
             # Stable across runs: every number in here moves, so they all
             # live in `detail` and the store can refresh them in place.
             "text": f"You keep undoing what '{name}' does",
             "detail": (lead + ", on "
-                       + join_names([house.label(e) for e in entities])
+                       + join_names(_overridden_names(house, entities))
                        + f". The last was {when(last)}."
                        + _pattern_sentence(shape)
                        + " The automation is working; it is doing the wrong "
                          "thing for this house."),
-            "fix": (_pattern_fix(shape)
-                    + "Ask brAIn to read the automation and the overrides "
-                      "together if it is not obvious."),
+            "fix": _override_fix(shape, offers.get(subject or key),
+                                 (g or {}).get("times") or []),
             "severity": "info",
             "fixable": False,
             "entity_id": subject,

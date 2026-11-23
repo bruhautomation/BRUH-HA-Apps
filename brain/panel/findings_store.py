@@ -1919,6 +1919,9 @@ def _shape(entry: dict) -> dict:
     if explained:
         # What a Wrong on this row explains (`server._record_exception`).
         out["explained"] = explained
+    until = clean_valid_until(entry.get("valid_until"))
+    if until:
+        out["valid_until"] = until
     # What ends a "for now" snooze early (`wake_returned`): the entities it
     # is about, which reporting again means the reason it slept is over.
     # Absent on every other row, and only while the snooze is set.
@@ -2281,6 +2284,13 @@ def clean_explained(value) -> list[float] | None:
     return [low, high]
 
 
+def clean_valid_until(value) -> int:
+    """A row's ``valid_until`` (epoch seconds), or 0 when it has none."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    return int(value) if math.isfinite(value) and value > 0 else 0
+
+
 def coerce(obj: dict) -> dict | None:
     """One wire-shaped finding — from a model reply or an inbox line — turned
     into a stored entry, or None if there is nothing there.
@@ -2355,6 +2365,14 @@ def coerce(obj: dict) -> dict | None:
     explained = clean_explained(obj.get("explained"))
     if explained:
         entry["explained"] = explained
+    until = (clean_valid_until(obj.get("valid_until"))
+             if entry["source"].startswith("check:") else 0)
+    if until:
+        # A warning about a forecast hour (#1265): `resolve_clear` retires
+        # it once this passes, whether or not its check could run again.
+        # Only a house check's, filed by code: a model's row never expires
+        # itself.
+        entry["valid_until"] = until
     ask = _clean_minecraft_approval(obj.get("minecraft_approval"))
     if ask:
         entry["minecraft_approval"] = ask
@@ -5223,6 +5241,11 @@ def refresh_details(objs: list[dict]) -> int:
         if entry.get("explained") and cur.get("explained") != entry["explained"]:
             cur["explained"] = entry["explained"]
             changed += 1
+        # And a forecast's warning lasts as long as its forecast says now.
+        if entry.get("valid_until") and \
+                cur.get("valid_until") != entry["valid_until"]:
+            cur["valid_until"] = entry["valid_until"]
+            changed += 1
         new_items = clean_items(entry.get("items"))
         if new_items and clean_items(cur.get("items")) != new_items:
             if _held_by_answer(cur) and set(new_items) - set(
@@ -5743,7 +5766,8 @@ def mark_checked(texts, when: float | None = None) -> int:
 
 def resolve_clear(items: list[dict], sources: set[str],
                   keep_keys: set[str],
-                  exempt: set[int] | None = None) -> tuple[list[dict], list[dict]]:
+                  exempt: set[int] | None = None,
+                  now: float | None = None) -> tuple[list[dict], list[dict]]:
     """Split rows into what survives a pass and what that pass cleared.
 
     Pure over a list, so the shadow store can hold the *same* rule rather
@@ -5753,15 +5777,23 @@ def resolve_clear(items: list[dict], sources: set[str],
     the real store; ``shadow_findings.clear_resolved`` is it against the
     other one. ``exempt`` names rows (by ts) this pass keeps whatever it
     reported — a held card waiting out an absence (`_hold_absences`).
+
+    A row whose ``valid_until`` has passed (#1265: a near-freezing night
+    that is over) goes too, whichever checks ran: the hour it warned about
+    is history, and a pass that could not read a new forecast must not
+    keep last night's warning on the list. Not when this pass reported it
+    again, and never a row somebody is acting on outside `CLEARABLE`.
     """
     kept: list[dict] = []
     gone: list[dict] = []
     exempt = exempt or set()
+    now = time.time() if now is None else float(now)
     for f in items:
-        if (f.get("source") in sources
-                and int(f.get("ts") or 0) not in exempt
-                and f.get("status") in CLEARABLE
-                and normalize(f.get("text", "")) not in keep_keys):
+        if f.get("status") in CLEARABLE \
+                and normalize(f.get("text", "")) not in keep_keys and (
+                    (f.get("source") in sources
+                     and int(f.get("ts") or 0) not in exempt)
+                    or 0 < clean_valid_until(f.get("valid_until")) <= now):
             gone.append(_shape(f))
             continue
         kept.append(f)
@@ -5788,7 +5820,8 @@ def clear_resolved(sources: set[str], keep_keys: set[str]) -> list[dict]:
     items = _load()
     # A card held by "don't remind me" outlives one pass that missed it.
     held, stamped = _hold_absences(items, sources, keep_keys, time.time())
-    kept, gone = resolve_clear(items, sources, keep_keys, exempt=held)
+    kept, gone = resolve_clear(items, sources, keep_keys, exempt=held,
+                               now=time.time())
     came = _came_back(kept, sources, keep_keys, time.time())
     if gone or came or stamped:
         _write(kept)

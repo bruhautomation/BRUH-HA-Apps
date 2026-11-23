@@ -18797,6 +18797,28 @@ def _broken_thermometers(rooms: dict) -> set[str]:
     return out
 
 
+def _said_unconditioned_areas(entity_areas: dict) -> set[str]:
+    """The area ids the household said nothing heats, off the facts store
+    as the checks pass reads it (`checks.thermal.unconditioned_from`), with
+    a named sensor read as its room. Empty when the store cannot be read."""
+    from checks import thermal as thermal_check  # noqa: PLC0415
+
+    try:
+        now = time.time()
+        said = thermal_check.unconditioned_from(
+            r for r in facts_store.export_rows()
+            if not facts_store._expired(r, now))  # noqa: SLF001
+    except Exception:  # noqa: BLE001 — unread says nothing about a room
+        return set()
+    areas = {str(a) for a in said.get("areas") or () if a}
+    areas |= {str(entity_areas.get(e) or "") for e in said.get("entities") or ()}
+    # A room with a thermostat of its own is heated whatever was said about
+    # its walls ("uninsulated" is said of heated rooms too).
+    heated = {str(a) for e, a in entity_areas.items()
+              if str(e).startswith("climate.")}
+    return {a for a in areas if a and a not in heated}
+
+
 def _thermal_payload(store: dict) -> dict:
     """The rooms, with the one derived number a person can act on.
 
@@ -18820,6 +18842,10 @@ def _thermal_payload(store: dict) -> dict:
     # And one the owner called broken since (#1202): not measured, never
     # a room with numbers that look fine.
     broken = _broken_thermometers(store.get("rooms") or {})
+    # And a room the household said nothing heats (#1317): its numbers are
+    # the outside reaching it, so the row says so, and nothing reading this
+    # takes its loss rate as a fault of a heated room.
+    unheated = _said_unconditioned_areas(entity_areas)
 
     def _where(eid: str) -> dict:
         area_id = str(entity_areas.get(eid) or "")
@@ -18847,6 +18873,12 @@ def _thermal_payload(store: dict) -> dict:
             "measured": True,
             **_where(eid),
         })
+        if rooms[-1]["area_id"] in unheated:
+            rooms[-1]["conditioned"] = False
+            rooms[-1]["why_unconditioned"] = (
+                "you said nothing heats this room, so it follows the outside "
+                "temperature: how fast it loses heat is not a fault, and it "
+                "is not compared with the heated rooms")
     # The rooms the nightly pass considered and could not measure, each with
     # its reason, as rows of their own: the `room_physics` tool answers from
     # this list, and "no measured room by that name" about a room with a
