@@ -2695,7 +2695,12 @@ async def h_live_ws(request: web.Request) -> web.WebSocketResponse:
 # Calibration — how long the speaker takes, measured, never configured
 # ---------------------------------------------------------------------------
 REFERENCE_WAV = MEDIA_DIR / "bright" / "calibration.wav"
-library.exclude_files([REFERENCE_WAV])
+# The same click track as the add-on wrote it under its earlier spelling
+# (BRigt, through 0.8.4). It is left on disk — /media is the person's — but
+# it is a calibration sound, not a song, so a folder holding it lists no
+# "calibration" track.
+LEGACY_REFERENCE_WAV = MEDIA_DIR / "brigt" / "calibration.wav"
+library.exclude_files([REFERENCE_WAV, LEGACY_REFERENCE_WAV])
 # What media_player.play_media is handed for the file above (HA maps the
 # /media mount to the local media source).
 REFERENCE_RELATIVE = "bright/calibration.wav"
