@@ -2961,10 +2961,10 @@ _OVERDUE_RES = (
     # "overdue by 19,766 miles"
     re.compile(r"\b(?:overdue|past due)\s+by\s+" + _NUMBER + r"\s*" + _UNIT
                + r"\b", re.I),
-    # "due 19,766 miles ago"
+    # "due 12,000 miles ago"
     re.compile(r"\bdue\s+" + _NUMBER + r"\s*" + _UNIT + r"\s+ago\b", re.I),
-    # A counter of what is left that has run past zero: "-19,766 miles",
-    # "reads -19,766 mi remaining" (#1325), with an ASCII or a typographic
+    # A counter of what is left that has run past zero: "-12,000 miles",
+    # "reads -12,000 mi remaining" (#1325), with an ASCII or a typographic
     # minus. The sign is the reading's own, so it is read as the figure past
     # due whatever words surround it; "5 -20 miles" is a range, not this.
     re.compile(r"(?<![\w.])(?<!\d )[-\u2212]" + _NUMBER + r"\s*" + _UNIT
