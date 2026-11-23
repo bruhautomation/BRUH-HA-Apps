@@ -180,6 +180,8 @@ function AsNeededMeter({ type }: { type: 'fungicide' | 'insecticide' }) {
 interface Props {
   crop: Crop;
   cropGroup: CropGroup | null;
+  /** The group's calendar stage today, which a crop with no varieties goes by. */
+  groupStage?: PhenologicalStage | null;
   varieties: Variety[];
   varietyStages: VarietyStage[];
   fungCoverage: CoverageInfo | null;
@@ -215,6 +217,7 @@ interface Props {
 export function CropDetailView({
   crop,
   cropGroup,
+  groupStage = null,
   varieties,
   varietyStages,
   fungCoverage,
@@ -249,10 +252,12 @@ export function CropDetailView({
     if (!stageByVariety.has(s.variety_id)) stageByVariety.set(s.variety_id, s);
   }
 
-  // Representative stage = most advanced across varieties.
-  const stages = varieties.map(
+  // Representative stage = most advanced across varieties; a crop with none
+  // goes by its group's calendar, as on Crops (cropStages).
+  const ownStages = varieties.map(
     (v) => (stageByVariety.get(v.id)?.stage ?? 'dormant') as PhenologicalStage
   );
+  const stages = ownStages.length === 0 && groupStage ? [groupStage] : ownStages;
   const inBloom = stages.includes('bloom');
   const topStage = stages.length
     ? stages.reduce((a, b) => (stageIndex(b) > stageIndex(a) ? b : a))
