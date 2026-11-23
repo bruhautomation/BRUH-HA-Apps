@@ -2365,10 +2365,13 @@ def coerce(obj: dict) -> dict | None:
     explained = clean_explained(obj.get("explained"))
     if explained:
         entry["explained"] = explained
-    until = clean_valid_until(obj.get("valid_until"))
+    until = (clean_valid_until(obj.get("valid_until"))
+             if entry["source"].startswith("check:") else 0)
     if until:
         # A warning about a forecast hour (#1265): `resolve_clear` retires
         # it once this passes, whether or not its check could run again.
+        # Only a house check's, filed by code: a model's row never expires
+        # itself.
         entry["valid_until"] = until
     ask = _clean_minecraft_approval(obj.get("minecraft_approval"))
     if ask:

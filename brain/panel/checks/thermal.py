@@ -186,14 +186,8 @@ def _room_air(house: House, rooms: dict, check_id: str) -> dict:
 
     from . import devices  # noqa: PLC0415 — it imports this package's util
 
-    unheated = said_unconditioned(house)
     out = {}
     for eid, entry in rooms.items():
-        # A room the household said nothing heats follows outside (#1200,
-        # #1317): how fast it cools, or warms, is the weather's, never a
-        # fault of the house's heating.
-        if _left_unheated(house, eid, unheated, check_id):
-            continue
         kind, said = house.room_air_verdict(eid)
         if kind in ("marked", "not_air", "broken"):
             house.gave_up(check_id, [{"entity_id": eid}],
@@ -432,6 +426,12 @@ def conditioned_areas(house: House) -> set[str]:
     unheated or uninsulated (`snap["unconditioned"]`, read off the facts
     store by the collector) is not one, thermostat or not.
     """
+    return heated_areas(house) - said_unconditioned(house)
+
+
+def heated_areas(house: House) -> set[str]:
+    """The area ids something heats by what is in them (a thermostat, a
+    heater switch), whatever the household said about the room."""
     heated: set[str] = set()
     for eid in set(house.states) | set(house.registry):
         domain = domain_of(eid)
@@ -442,7 +442,7 @@ def conditioned_areas(house: House) -> set[str]:
             area = house.area_id_of(eid)
             if area:
                 heated.add(area)
-    return heated - said_unconditioned(house)
+    return heated
 
 
 def said_unconditioned(house: House) -> set[str]:
@@ -481,7 +481,10 @@ def follows_outside(house: House, eid: str) -> str:
 
     from . import devices  # noqa: PLC0415 — it imports this package's util
 
-    if house.area_id_of(eid) not in said_unconditioned(house):
+    area = house.area_id_of(eid)
+    # "Uninsulated" is said of heated rooms too: a room with a thermostat
+    # or a heater of its own is heated whatever was said about its walls.
+    if area not in said_unconditioned(house) or area in heated_areas(house):
         return ""
     if eid not in _rooms(house.snap)[1]:
         return ""
@@ -882,6 +885,7 @@ def window(snap: dict, now: float) -> list[dict]:
 
     house = House(snap)
     rooms = _room_air(house, rooms, "climate.window")
+    unheated = said_unconditioned(house)
     hits = []
     for eid, entry in sorted(rooms.items()):
         if eid in claimed or not entry.get("k"):
@@ -912,6 +916,8 @@ def window(snap: dict, now: float) -> list[dict]:
         if fall["rate"] < expected * WINDOW_FACTOR:
             continue
         if fall["rate"] - expected < min_excess:
+            continue
+        if _left_unheated(house, eid, unheated, "climate.window"):
             continue
         if not house.should_report(eid, "climate.window"):
             continue
@@ -1085,7 +1091,11 @@ def _frost_kind(house: House, eid: str, conditioned: set[str],
 
 # A space whose own measured heat loss keeps it at least this far above
 # freezing through the forecast low needs nothing done (#1312).
-FROST_SAFE_MARGIN_C = 1.0
+FROST_SAFE_MARGIN_C = 2.0
+# And the outside is held this much colder than the forecast low for it:
+# a forecast low is routinely a few degrees off, and in doubt the space
+# is listed.
+FROST_FORECAST_ERROR_C = 3.0
 
 
 def _to_celsius(value: float, unit: str) -> float:
@@ -1098,9 +1108,9 @@ def _space_holds(house: House, eid: str, night: dict, now: float) -> str:
 
     Measured, never assumed: the space's own heat-loss figure (the heat
     model's `k` for this thermometer) coasting from its live reading with
-    the outside held at the forecast low the whole time, which is colder
-    than any real night, still `FROST_SAFE_MARGIN_C` above freezing at the
-    low's hour. No model, no live reading, or a unit nobody can convert
+    the outside held `FROST_FORECAST_ERROR_C` under the forecast low the
+    whole time, still `FROST_SAFE_MARGIN_C` above freezing at the last
+    near-freezing hour of the night. No model, no live reading, or a unit nobody can convert
     is "" — the space stays named."""
     import thermal  # noqa: PLC0415
 
@@ -1115,8 +1125,10 @@ def _space_holds(house: House, eid: str, night: dict, now: float) -> str:
     reading = num((house.states.get(eid) or {}).get("state"))
     if reading is None:
         return ""
-    low = _to_celsius(night["temp"], night["unit"])
-    hours = max(0.0, (night["t"] - now) / 3600.0)
+    low = _to_celsius(night["temp"], night["unit"]) - FROST_FORECAST_ERROR_C
+    # Through the last near-freezing hour of the night, not only to the
+    # low's hour: a long cold stretch keeps pulling the space down.
+    hours = max(0.0, (night["until"] - 3600 - now) / 3600.0)
     ahead = thermal.coast(entry, _to_celsius(reading, unit), low, hours)
     if ahead is None or ahead < FROST_SAFE_MARGIN_C:
         return ""

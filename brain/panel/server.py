@@ -18812,7 +18812,11 @@ def _said_unconditioned_areas(entity_areas: dict) -> set[str]:
         return set()
     areas = {str(a) for a in said.get("areas") or () if a}
     areas |= {str(entity_areas.get(e) or "") for e in said.get("entities") or ()}
-    return {a for a in areas if a}
+    # A room with a thermostat of its own is heated whatever was said about
+    # its walls ("uninsulated" is said of heated rooms too).
+    heated = {str(a) for e, a in entity_areas.items()
+              if str(e).startswith("climate.")}
+    return {a for a in areas if a and a not in heated}
 
 
 def _thermal_payload(store: dict) -> dict:
