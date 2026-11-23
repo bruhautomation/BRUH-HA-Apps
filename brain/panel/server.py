@@ -14057,6 +14057,26 @@ def _device_class(eid: str) -> str:
     return str((_NAMES.get(str(eid or "")) or {}).get("class") or "")
 
 
+def _act_of(row: dict, urgent: bool = False) -> str:
+    """How soon a card wants a person to act (`answers.act_tier`, #1327),
+    with the subject's own kind read here: food, water, heat or security is
+    `corrections.record_floor`, the one reading of those four that brAIn's
+    own record already keeps shown (#1320), over the row's entity and every
+    item it names. Never raises: an unreadable row reads as its severity."""
+    try:
+        subjects = [str(row.get("entity_id") or "")]
+        subjects += [str(i) for i in (row.get("items") or [])
+                     if isinstance(i, str)]
+        at_stake = any(corrections.record_floor(
+            eid, device_class=_device_class(eid),
+            name=str((_NAMES.get(eid) or {}).get("name") or ""))
+            for eid in subjects if "." in eid)
+        return answers_mod.act_tier(row, urgent, at_stake)
+    except Exception as exc:  # noqa: BLE001 — a word on a card, never the list
+        log.debug("could not weigh a card's stakes: %s", exc)
+        return answers_mod.act_tier(row, urgent)
+
+
 def _registry_answers(case: dict, subject: str = "") -> str:
     """What already answers a question an investigation would ask the
     owner — the entity's room, or the automation that does what it asks
@@ -22192,6 +22212,10 @@ def _cases_payload(now: float | None = None) -> dict:
             case["urgent"] = bool(notify_router.is_urgent(case))
         except Exception:  # noqa: BLE001 — a row that cannot be read is not urgent
             case["urgent"] = False
+        # How soon to act, from what is at stake (#1327): read before the
+        # chip, which never calls a row about food, water, heat or security
+        # a tidy-up.
+        case["act"] = _act_of(case, case["urgent"])
         case["chip"] = answers_mod.chip(case, case["urgent"])
         # Ignore's reason chips on the Resident's own reports
         # (`answers.reason_chips`): words for the box, never a press.
@@ -22528,6 +22552,8 @@ def _findings_payload() -> dict:
         except Exception:  # noqa: BLE001 — unreadable is not urgent; the
             urgent = False  # other rules still hold the chips back
         row["reason_chips"] = answers_mod.reason_chips(row, urgent)
+        # How soon to act (#1327), the same word a case carries.
+        row["act"] = _act_of(row, urgent)
     for row in open_claims:
         row["who"] = _who_for("yes", name=name)
     # The badge's number, and it is THE queue count (`cases.queue_count`)

@@ -7057,6 +7057,16 @@ function caseConfidence(value) {
   return "not sure";
 }
 
+// How soon to act, from what is at stake (`answers.act_tier`, #1327): the
+// first words after the chip on every finding's card. Not on an Urgent
+// card, whose chip already says it.
+const ACT_WORDS = { today: "Act today", soon: "Soon", whenever: "When convenient" };
+const ACT_RANK = { today: 0, soon: 1, whenever: 2 };
+function actWords(row) {
+  if (!row || row.urgent || row.chip === "urgent") return "";
+  return ACT_WORDS[row.act] || "";
+}
+
 // What the meta line says after the chip: where it came from, and the
 // item's state as words — "Snoozed until Wed", "Unchecked", "Applying".
 // A guess's topic is the id of the card it came out of ("user-1790086617"
@@ -7083,6 +7093,8 @@ function sourceName(row) {
 
 function caseMeta(row) {
   const out = [];
+  const act = actWords(row);
+  if (act) out.push(act);
   const src = sourceName(row);
   if (src) out.push(src);
   const fs = row.finding_status;
@@ -7785,8 +7797,8 @@ function makeLooseFinding(f) {
   const card = qCard({
     id: `f:${f.ts}`, chip: f.source === "house_book" ? "question" : asked ? "question"
       : f.severity === "critical" ? "urgent"
-      : f.severity === "info" ? "tidy" : "problem",
-    meta: [sourceName(f), f.waiting_look || !(f.triage || {}).verdict
+      : f.severity === "info" && !looseAtStake(f) ? "tidy" : "problem",
+    meta: [f.severity === "critical" ? "" : actWords(f), sourceName(f), f.waiting_look || !(f.triage || {}).verdict
       || (f.triage || {}).verdict === "untriaged" ? "Unchecked" : ""],
     title: f.text, body: f.detail, who: f.who,
   });
@@ -8367,8 +8379,14 @@ function caseGroup(c) {
 }
 
 function todayRank(c) {
-  return [c.urgent ? 0 : 1, c.security ? 0 : 1, c.change ? 1 : 0,
+  return [c.urgent ? 0 : 1, ACT_RANK[c.act] ?? 1, c.security ? 0 : 1, c.change ? 1 : 0,
     SEVERITY_RANK[c.severity] ?? 2];
+}
+
+// A loose row the server weighed as at stake (food, water, heat or
+// security) is a problem, never a tidy-up, whatever its severity (#1327).
+function looseAtStake(f) {
+  return f.act === "today" || f.act === "soon";
 }
 
 // Safety and security first after the urgent ones (`answers.is_security`):
@@ -8397,7 +8415,7 @@ function todayCards() {
   const extras = todayState.extras || {};
   const out = [];
   feed.forEach((c) => out.push({ id: c.id, group: caseGroup(c), urgent: !!c.urgent,
-    security: isSecuritySource(c.source),
+    act: c.act, security: isSecuritySource(c.source),
     change: c.kind === "change" || c.finding_status === "fixed", severity: c.severity,
     unchecked: !!(c.unchecked || c.waiting_look), make: () => makeCase(c) }));
   looseClaims.forEach((h) => out.push({ id: `h:${h.ts}`, group: "questions",
@@ -8408,8 +8426,8 @@ function todayCards() {
     out.push({ id: `f:${f.ts}`,
       group: f.source === "house_book" ? "questions"
         : f.asked === true && f.kind === "question" ? "questions"
-        : f.severity === "info" && !security ? "tidy" : "problems",
-      urgent: f.severity === "critical", severity: f.severity, security,
+        : f.severity === "info" && !security && !looseAtStake(f) ? "tidy" : "problems",
+      urgent: f.severity === "critical", act: f.act, severity: f.severity, security,
       unchecked: !!(f.waiting_look || !t.verdict || t.verdict === "untriaged"),
       make: () => makeLooseFinding(f) });
   });
@@ -8429,6 +8447,10 @@ function todayCards() {
 function todayGroups(cards) {
   const groups = Object.fromEntries(GROUP_ORDER.map((g) => [g, []]));
   cards.forEach((c) => (groups[c.group] || groups.problems).push(c));
+  // Every group by how soon to act (#1327), its own order kept for ties;
+  // the problems by the whole rank.
+  GROUP_ORDER.forEach((g) => groups[g].sort((a, b) =>
+    (ACT_RANK[a.act] ?? 2) - (ACT_RANK[b.act] ?? 2)));
   groups.problems.sort((a, b) => {
     const x = todayRank(a);
     const y = todayRank(b);
