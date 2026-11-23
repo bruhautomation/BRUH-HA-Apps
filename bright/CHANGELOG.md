@@ -5,6 +5,13 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.24.2
+
+### Fixed
+
+- Every row of the Party set list has the same layout: a song with several shows has the picker, one with a single show says "one show", one without says "no show yet" (1289).
+- The Shows page opens with one summary line instead of "Ready · never played" on every row, lists eight songs with "Show all", and tapping a song scrolls to its show. It says what Play and ⋯ do, and the Claude controls sit under the list with one plain line about what they are for ("Mood", "Check Claude") (1290).
+
 ## 0.24.1
 
 ### Fixed
