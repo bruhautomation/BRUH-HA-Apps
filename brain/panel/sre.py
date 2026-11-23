@@ -1027,6 +1027,38 @@ def explain_key(rec: dict) -> str:
     return f"{m.group(1)}:{m.group(2)}|{said}" if said else ""
 
 
+def reach_key(rec: dict, states: dict, entity_device: dict) -> str:
+    """A second identity for an automation's error about a device that is
+    not answering now (#1260): the automation and the devices it could not
+    reach, whatever the error's words say. A lamp switched off at the lamp
+    drops off the network, and the integration words "did not respond" a
+    different way from night to night, so the word identity alone came back
+    as news after the owner had said it is intended. Only while one of the
+    error's own entities is down at the review: the same automation failing
+    at a device that answers is a different error and is filed. "" for a
+    record that is not an automation's, names no entity, or whose entities
+    all answer."""
+    if not isinstance(rec, dict) or rec.get("kind") != "log":
+        return ""
+    m = _CALLER_LOGGER.match(str(rec.get("logger") or ""))
+    if not m or m.group(1) not in ("automation", "script"):
+        return ""
+    down = set()
+    for eid in rec.get("entities") or ():
+        st = (states or {}).get(str(eid))
+        if isinstance(st, dict) and str(st.get("state") or "") in _DOWN:
+            down.add(str((entity_device or {}).get(str(eid)) or eid))
+    if not down:
+        return ""
+    return f"{m.group(1)}:{m.group(2)}|did not reach {','.join(sorted(down))}"
+
+
+def explain_keys(rec: dict, reach: str = "") -> set[str]:
+    """Every identity an explanation of ``rec`` is remembered under: its
+    words (`explain_key`) and, for a device not answering, ``reach``."""
+    return {k for k in (explain_key(rec), reach) if k}
+
+
 MAX_EXPLAINED = 300
 
 
@@ -1144,9 +1176,16 @@ def digest(collected: dict, now: float, set_aside=frozenset(),
     # An automation error the owner explained is that error, answered: it
     # is not handed to the run again, and a different error is (#578).
     gone = {str(k) for k in explained_keys or ()}
+    reg_device = {str(e["entity_id"]): str(e.get("device_id") or "")
+                  for e in reg if e.get("device_id")}
+    states_read = collected.get("states") or {}
+    reach = {str(r.get("id") or ""): k for r in records
+             if (k := reach_key(r, states_read, reg_device))}
     explained_n = 0
     if gone:
-        kept = [r for r in records if explain_key(r) not in gone]
+        kept = [r for r in records
+                if not explain_keys(r, reach.get(str(r.get("id") or "")))
+                & gone]
         explained_n = len(records) - len(kept)
         records = kept
     # `subjects` rides beside the records and never in the prompt (`frame`
@@ -1227,6 +1266,8 @@ def digest(collected: dict, now: float, set_aside=frozenset(),
                 str(e.get("state") or ""))
     return {"records": records,
             "explained": explained_n,
+            # Beside the records, never in the prompt (`reach_key`).
+            "reach": reach,
             "states_now": states_now,
             "health": health, "entry_states": entry_states,
             "asleep": asleep,
@@ -2642,11 +2683,12 @@ def rows(causes: list[dict], dig: dict, state: dict,
         text = plain_slugs(text, dig)
         # What the card stands on, by the identity an owner's reason on it
         # explains (`explained`).
-        explains = sorted({k for k in (explain_key(by_id[r]) for r in
-                                       cause["records"] if r in by_id) if k})
+        reach = dig.get("reach") or {}
+        explains = sorted({k for r in cause["records"] if r in by_id
+                           for k in explain_keys(by_id[r], reach.get(r, ""))})
         anchors[cause["anchor"]] = {"text": text, "at": int(now),
                                     "entity": entity,
-                                    **({"explains": explains[:8]}
+                                    **({"explains": explains[:16]}
                                        if explains else {})}
         evidence = [{"entity": rid, "value": textclip.clip(
                          _record_label(by_id[rid]), 120),
