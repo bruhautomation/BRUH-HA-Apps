@@ -423,7 +423,7 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
  * 780, with the label itself ending at 485). What must never come back is
  * the five-row bar this replaced, which put the canvas at y=590. */
 .design-bar {
-  display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap;
+  display: flex; gap: var(--sp-2); align-items: stretch; flex-wrap: wrap;
   padding: var(--sp-2) var(--card-pad);
   background: var(--panel); border: 1px solid var(--line);
   border-radius: var(--card-radius); box-shadow: var(--shadow);
@@ -445,25 +445,29 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
  *
  * `flex: none` because the add strip is what gives way in this row: it
  * scrolls inside itself and is built to. */
-/* Capped, because this row is one flex line and a control that grows with
- * its text is what pushes the add strip onto a row of its own — measured,
- * and asserted by `designStockFits`. The NAME truncates inside the cap; the
- * caret never does.
+/* The picker says the whole name with the size under it (#1283): capped to
+ * one truncated line it read `Address …` at 390px, and two rolls of one
+ * brand were the same string. So the NAME wraps and nothing ellipsises.
  *
- * 150px is measured at 390px, and the width it is measured at is the point.
- * 180 was tried first, off a sweep that started at 900px — where the bar
- * holds one row up to 220 — and 390 takes a THIRD row at 180: the phone is
- * the binding width even though its bar has already given way to two rows,
- * because those two rows are what the canvas budget was measured against.
- * The break there is between 175 and 180, so this leaves 25px for a device
- * whose font is wider than this one's, and the ten pixels between 150 and
- * 160 are about one character of a name. `designStockFits` is what caught
- * it, one release after it was written. */
+ * Capped in width all the same, because this row is one flex line and a
+ * control that grows with its text is what pushes the add strip onto a row
+ * of its own — `designStockFits` holds one row from 900px up. The add strip
+ * is the part that gives way (it scrolls inside itself, floor 150px), and
+ * 220px is the most the picker can have and keep that one row at 900px.
+ * On a phone it takes the rest of its row beside ⋯ (the phone block below).
+ *
+ * The picker is two lines tall, so the bar stretches its rows
+ * (`.design-bar`'s `align-items`) and ⋯ is as tall as the picker beside it,
+ * while the add strip keeps its buttons at their own height in the middle. */
 .designstock {
-  flex: none; max-width: 150px;
-  white-space: nowrap; overflow: hidden;
+  flex: 0 1 auto; max-width: 220px; height: auto;
+  white-space: normal; text-align: left; justify-content: space-between;
+  padding-top: var(--sp-1); padding-bottom: var(--sp-1);
 }
-.designstockname { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.designstockwords { display: grid; min-width: 0; }
+.designstockname { overflow-wrap: anywhere; }
+.designstocksize { font-size: var(--fs-meta); line-height: var(--lh-meta);
+  font-weight: 400; color: var(--ink-3); }
 .designstock .caret { flex: none; }
 /* One row per stock in the dialog, full name under the size. A grid rather
  * than a flex row so a long vendor name wraps under the measurement instead
@@ -484,6 +488,7 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
  * next one's edge — enough to read as a strip that scrolls. The four buttons
  * are sized to fit a 390px phone whole, so nothing is cut at the edge there. */
 .addbar { display: flex; gap: var(--sp-1); flex: 1 1 auto; min-width: 150px;
+  align-items: center;
   flex-wrap: nowrap; overflow-x: auto;
   scrollbar-width: none; -webkit-overflow-scrolling: touch; }
 .addbar::-webkit-scrollbar { display: none; }
@@ -1138,6 +1143,7 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
    edge reads as a mistake. */
 @media (max-width: 639.98px) {
   .addbar { flex: 1 1 100%; flex-wrap: wrap; overflow: visible; mask-image: none; -webkit-mask-image: none; }
+  .designstock { flex: 1 1 0; max-width: none; }
 }
 
 /* A closed <details> still lays its children out (Chromium keeps them for

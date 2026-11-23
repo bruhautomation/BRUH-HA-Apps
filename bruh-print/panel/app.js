@@ -415,8 +415,7 @@ const stockOptionText = (stock) => `${stock.name} — ${stock.label}`;
  * still took 164px, which with ⋯ beside it left the add strip 15px wide
  * with its own buttons rendering underneath the picker — measured, and the
  * click that found it timed out on a control that was there and covered.
- * What the button shows is the SIZE, which is the half that identifies a
- * roll and the half a truncated <select> would have lost.
+ * The button shows the name, whole and wrapping, with the size under it.
  *
  * `dataset.value` rather than `.value`, and the id is unchanged: every
  * reader asks this control which stock is on screen and still does. */
@@ -426,25 +425,18 @@ function setStockButton(button, id) {
   const chosen = rows.find((s) => s.id === id)
     || rows.find((s) => s.id === S.settings.default_stock) || rows[0];
   button.dataset.value = chosen ? chosen.id : '';
-  /* The NAME, capped, with the size in the dialog this opens.
-   *
-   * It said the size, and the measurement that justified that is still
-   * true: the design bar is one flex line whose base sizes are its
-   * controls' own content, so a picker that grows with its text pushes the
-   * add strip onto a row of its own — one row to two at 900px, two to three
-   * at 390px. What was wrong was the conclusion. The fix for a control that
-   * must not grow is a CAP, not a shorter fact: `.designstock` is capped
-   * and the name ellipsises inside it, so a long catalog name loses its
-   * tail rather than taking the row, and the caret sits outside the
-   * truncation because a picker with no caret is not a picker.
-   *
-   * `designStockFits` asserts the row count at 390 and at 1100, which is
-   * what keeps that cap honest — re-run it rather than reasoning about the
-   * number, and note that 900px is the tightest width rather than the
-   * narrowest: below it the bar has already given way to two rows. */
-  const name = el('span', 'designstockname', chosen ? chosen.name : 'No label');
+  /* The NAME, whole, with the size under it (#1283). One capped line read
+   * `Address …` at 390px, and two rolls of one brand truncated to the same
+   * string. The width cap stays in the stylesheet (`.designstock`), because
+   * a picker that grows with its text takes the add strip's row; the name
+   * wraps inside it instead of losing its tail. `designStockFits` asserts
+   * the row count at 390 and at 1100 — re-run it rather than reasoning
+   * about the number. */
+  const words = el('span', 'designstockwords');
+  words.append(el('span', 'designstockname', chosen ? chosen.name : 'No label'));
+  if (chosen && chosen.label) words.append(el('span', 'designstocksize', chosen.label));
   button.textContent = '';
-  button.append(name, el('span', 'caret', '\u25be'));
+  button.append(words, el('span', 'caret', '\u25be'));
   button.title = chosen ? `${chosen.name} — ${chosen.label}` : '';
 }
 
