@@ -747,16 +747,21 @@ select { max-width: 100%; min-width: 0; }
      used on a phone with the music already playing. */
   min-height: var(--btn-h);
 }
+/* One layout for every song: tick, name, which show, tick order — the
+   same four columns whether the show slot holds a picker or the words
+   "one show", so no row looks different from its neighbours (#1289). A
+   long name wraps inside its own column instead of pushing the others
+   onto a second line. */
+.list .row.party-pick {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 9em 2em;
+  flex-wrap: nowrap;
+}
 .party-pick input { flex: none; }
-.party-order { margin-left: auto; }
-/* Narrow on purpose: it is a qualifier on the row, not the row's
-   subject, and at full width it competes with the song's name. */
-.party-version { max-width: 100%; flex: 0 1 14em; min-width: 0; }
-/* A song's row wraps its controls rather than laying them on one line: the
-   name, the version select and the tick order share a phone's width, and a
-   fixed-width select beside a long title is what put one on the other. */
-.party-pick { flex-wrap: wrap; }
-.party-pick .row-main { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
+.party-pick .row-main { min-width: 0; overflow-wrap: anywhere; }
+.party-version { width: 100%; min-width: 0; }
+.party-version-text { padding-left: var(--sp-2); }
+.party-order { text-align: right; }
 /* -- The Manual tab: the room is the instrument, the grid is the clock -- */
 /* One screen. The pane's height is measured at runtime (`mnFit`) rather
    than guessed at in vh, because the top bar's own height depends on how
@@ -1247,7 +1252,9 @@ body.mn-open .foot { display: none; }
   .script-editor, .revise-input { font-size: var(--fs-control); }
 }
 .player-note { margin: 0; }
-.party-set .party-later { display: none; }
+/* As specific as the grid that lays a song row out, and after it, or the
+   grid's display beats the fold. */
+.list .row.party-pick.party-later { display: none; }
 
 #partyMore[hidden] { display: none; }
 /* The describe-it box takes the card's whole width and wraps, so the
@@ -1305,3 +1312,13 @@ textarea { padding: var(--sp-2) var(--sp-3); }
 @media (max-width: 1199.98px) {
   .mn-fx { mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); }
 }
+/* Shows: the folded rows and the button that unfolds them. `.list .row`
+   sets display, which beats [hidden], so it is said here. A song row is
+   a tap target in its own right: it opens the song's show below. */
+#showList .row[hidden], #showMore[hidden] { display: none; }
+#showList .row { cursor: pointer; }
+#showList .row-note:empty { display: none; }
+#showMore { margin-top: var(--sp-2); }
+.claude-box { margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--line); }
+.claude-box p { margin: 0 0 var(--sp-2); }
+.claude-box #showVibe { flex: 1 1 14em; min-width: 0; }
