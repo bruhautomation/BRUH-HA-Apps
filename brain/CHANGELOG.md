@@ -2,6 +2,15 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.8
+
+### Fixed
+
+- brAIn goes by one name in what it writes: the name you gave it, everywhere, including the findings mirrored to Home Assistant's Repairs and To-do. The dashboard and brAIn's internal parts are never written as if they were someone else (1267).
+- Insight cards get the same plain-words pass as findings: no file paths, voice ids or raw build numbers, and a dated firmware build at the end of a sentence reads as a date (1313).
+- A finding's headline says what was measured: "Signal Repeater has been offline on the Zigbee network for 16 days" rather than "is struggling", "2 devices are off the network" rather than "keep dropping off" when they are simply silent, and a plugged-in repeater is told to check its power, not its battery (1326).
+- Lists of devices in a finding are grouped: entities on one device become one name, a numbered series is merged ("Porch light 1, 2 and 3"), and the list is given whole instead of being cut off with "and 3 more" while it fits (1334).
+
 ## 5.5.7
 
 ### Fixed
