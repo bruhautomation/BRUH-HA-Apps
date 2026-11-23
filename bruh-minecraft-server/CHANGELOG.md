@@ -5,6 +5,15 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.20.2
+
+### Fixed
+
+- WorldEdit and FastAsyncWorldEdit installed together are both marked on the Add-ons tab with a plain warning that they conflict and which one to remove. Nothing is removed for you, and the warning goes once one of them is gone (1291).
+- Backups are grouped by day with older days folded, runs of identical hourly snapshots fold into one line, and the list says how many there are and the oldest date. Every snapshot can still be restored, and Restore asks first, naming the snapshot's time (1292).
+- The tab bar wraps on a phone instead of scrolling sideways, and the header's Update button says what it updates ("Update Paper") (1293).
+- The "update ready" note and the other warning text meet the contrast floor, and the note says what to press (1294, 1254).
+
 ## 1.20.1
 
 ### Fixed
