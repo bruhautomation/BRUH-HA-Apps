@@ -1004,10 +1004,12 @@
         return;
       }
       list.innerHTML = "";
+      $("showSummary").textContent = summarizeShows(tracks);
       const copies = findCopies(tracks);
       for (const track of tracks) {
         const row = document.createElement("div");
         row.className = "row slim";
+        row.classList.toggle("selected", track.hash === scriptTrack);
         row.dataset.hash = track.hash;
         const show = track.show;
         row.dataset.played = show && show.last_played ? show.last_played : "";
@@ -1028,10 +1030,14 @@
           'detection">🧪 Test beats and drops</button>' +
           "</div>";
         row.querySelector("strong").textContent = displayName(track);
-        row.querySelector(".rtt").textContent = (show
-          ? describeShow(show)
-          : "No show yet") + (copies.has(track.hash)
-          ? " · " + copyNote(track, copies.get(track.hash), lib.folders) : "");
+        // The row says only what sets it apart: the line above the list
+        // already says how many are ready, and "Ready · never played" on
+        // twenty-three rows was the same words twenty-three times (#1290).
+        const note = [show ? describeShow(show) : "No show yet"];
+        if (copies.has(track.hash)) {
+          note.push(copyNote(track, copies.get(track.hash), lib.folders));
+        }
+        row.querySelector(".rtt").textContent = note.filter(Boolean).join(" · ");
         if (show) {
           const facts = document.createElement("p");
           facts.className = "muted menu-info";
@@ -1046,18 +1052,55 @@
         }
         list.appendChild(row);
       }
+      foldShows();
     } catch (error) {
       list.innerHTML = '<p class="muted">failed: ' + error.message + "</p>";
     }
   }
 
-  // A built show in plain words: whether it is ready and when it last
-  // played. The age of the build says nothing a person acts on (every show
-  // made in one sitting has the same one), so it lives behind the menu.
+  // The list's verdict, once, above it: how many songs have a show and
+  // whether any has been played.
+  function summarizeShows(tracks) {
+    const built = tracks.filter((t) => t.show).length;
+    const played = tracks.filter((t) => t.show && t.show.last_played).length;
+    const bits = [built === tracks.length
+      ? (built === 1 ? "1 song, its show ready"
+        : "All " + built + " songs have a show ready")
+      : built + " of " + tracks.length + " songs have a show ready"];
+    if (built) bits.push(played ? played + " played so far" : "none played yet");
+    return bits.join(" · ");
+  }
+
+  // The first few songs, then one button for the rest: twenty-three rows
+  // put the show editor a phone's three screens down. The open song is
+  // always shown.
+  const SHOWS_PAGE = 8;
+  let showsAll = false;
+  function foldShows() {
+    const rows = Array.from($("showList").querySelectorAll(".row"));
+    let hidden = 0;
+    rows.forEach((row, index) => {
+      const later = !showsAll && index >= SHOWS_PAGE &&
+        !row.classList.contains("selected");
+      row.hidden = later;
+      if (later) hidden += 1;
+    });
+    const more = $("showMore");
+    more.hidden = hidden === 0 && !(showsAll && rows.length > SHOWS_PAGE);
+    more.textContent = showsAll ? "Show fewer"
+      : "Show all " + rows.length + " songs";
+  }
+  $("showMore").addEventListener("click", () => {
+    showsAll = !showsAll;
+    foldShows();
+  });
+
+  // A built show in plain words: when it last played. "Ready" is said once
+  // above the list, and the age of the build says nothing a person acts on
+  // (every show made in one sitting has the same one), so it lives behind
+  // the menu.
   function describeShow(show) {
-    const played = show && show.last_played
-      ? "played " + ago(show.last_played) : "never played";
-    return "Ready · " + played;
+    return show && show.last_played ? "played " + ago(show.last_played) : "";
   }
 
   // The build details, for the ⋯ menu: who wrote it, how big, how old.
@@ -1132,6 +1175,9 @@
         other.classList.toggle("selected", other === row);
       }
       openScript(row.dataset.hash, row.querySelector("strong").textContent);
+      // The editor is below the whole list, so opening it without going
+      // there looked like the tap did nothing (#1290).
+      $("showEditor").scrollIntoView({ behavior: "smooth", block: "start" });
     }
   });
 
@@ -1184,7 +1230,8 @@
         const who = describeDirector(result.director);
         out.textContent = (result.director && result.director.fell_back && who)
           ? who
-          : describeShow({ last_played: Number(row.dataset.played) || 0 });
+          : describeShow({ last_played: Number(row.dataset.played) || 0 }) ||
+            "Show ready";
         openScript(row.dataset.hash, row.querySelector("strong").textContent);
       } else if (button.dataset.act === "play"
                  || button.dataset.act === "sync") {
@@ -4960,8 +5007,8 @@
         // Only what is out of the ordinary goes on the row: a song with a
         // show starts instantly, which is most of them, so saying so on
         // every row is a second line of the same words twenty times. A
-        // song without one is written while the party runs.
-        if (!track.show) bits.push("no show yet · written while the party runs");
+        // song without one says so in its show slot, and the line above
+        // the set says what happens to it.
         if (track.stale) bits.push("analysed by an older BRight");
         if (copies.has(track.hash)) {
           bits.push(copyNote(track, copies.get(track.hash), lib.folders));
@@ -4989,11 +5036,20 @@
           pinned.selected = true;
           pick.appendChild(pinned);
         }
-        // Only a song with a choice to make gets the picker: with one
-        // show there is nothing to pick, and a select on every row made
-        // the set twice as tall for nothing.
+        // Every row has the same slot in the same place, and only a song
+        // with a choice to make gets a picker in it: with one show there
+        // is nothing to pick, so the slot says so in words. A picker on
+        // some rows and nothing on others read as rows that were broken
+        // (#1289).
         const shows = track.show ? Number(track.show.versions || 1) : 0;
-        if (shows > 1 || partyPins[track.hash]) row.appendChild(pick);
+        if (shows > 1 || partyPins[track.hash]) {
+          row.appendChild(pick);
+        } else {
+          const one = document.createElement("span");
+          one.className = "muted party-version party-version-text";
+          one.textContent = shows ? "one show" : "no show yet";
+          row.appendChild(one);
+        }
 
         const order = document.createElement("span");
         order.className = "muted small party-order";
