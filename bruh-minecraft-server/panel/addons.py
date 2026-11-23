@@ -695,6 +695,39 @@ STATUS_TEXT = {
 }
 
 
+# Plugins that break each other when both load, as (remove, keep) by the name
+# each declares, lower case, letters and digits only. The kept one already
+# does the other's job. The list warns on both rows; nothing is removed for
+# the owner.
+CONFLICTS: tuple[tuple[str, str], ...] = (
+    # FastAsyncWorldEdit carries WorldEdit's commands and API itself.
+    ("worldedit", "fastasyncworldedit"),
+)
+
+
+def _ident(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+def mark_conflicts(items: list[dict]) -> None:
+    """Give each row of a known-conflicting pair `conflict`: the other row's
+    title and which of the two to remove. Read per kind, so a plugin never
+    conflicts with a mod of the same name."""
+    for remove, keep in CONFLICTS:
+        for kind in ("plugin", "mod"):
+            rows = [it for it in items if it["kind"] == kind]
+            gone = [it for it in rows if it.get("name_key") == remove]
+            kept = [it for it in rows if it.get("name_key") == keep]
+            if not (gone and kept):
+                continue
+            for it in gone:
+                it["conflict"] = {"with": kept[0]["title"], "remove": it["title"],
+                                  "keep": kept[0]["title"], "remove_this": True}
+            for it in kept:
+                it["conflict"] = {"with": gone[0]["title"], "remove": gone[0]["title"],
+                                  "keep": it["title"], "remove_this": False}
+
+
 def _bundled(kind: str, name: str) -> bool:
     low = name.lower()
     if kind == "plugin":
@@ -802,8 +835,10 @@ def world_contents(ctx: Context, *, running: bool, started_at: float | None,
                 "removable": bool(row) or _removable(ctx, kind, path.name),
                 "updatable": bool(pid),
                 "reach": REACH[kind],
+                "name_key": _ident(declared.get("name") or row.get("title") or ""),
             })
 
+    mark_conflicts(items)
     order = {"restart": 0, "next_start": 1, "active": 2, "unused": 3}
     kind_order = {k: i for i, k in enumerate(KINDS)}
     items.sort(key=lambda it: (kind_order[it["kind"]], order[it["status"]],

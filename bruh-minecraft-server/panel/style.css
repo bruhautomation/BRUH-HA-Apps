@@ -75,7 +75,7 @@
     --muted: #5a6874;
     --accent: #3ea828;
     --accent-ink: #2b7a1d;
-    --warn-ink: #9a6700;
+    --warn-ink: #8a5c00;  /* 5.2:1 on --bg-raise, where the status pills sit (#1294: #9a6700 was 4.32:1) */
     --danger-ink: #c42b2b;
   }
 }
@@ -195,29 +195,22 @@ p { margin: 0; }
 .companion-absent[hidden], .companion[hidden] { display: none; }
 .actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
 
-/* Tabs: the bar is full bleed, the scrolling row inside it takes the same
-   column as the header and the page. The row is inset by the tab's own padding
-   so the first tab's label lines up with the brand and the content. */
+/* Tabs: the bar is full bleed, the row inside it takes the same column as the
+   header and the page, inset by the tab's own padding so the first tab's label
+   lines up with the brand and the content. The row wraps rather than scrolls,
+   so every tab is in sight on a phone (#1293). */
 .tabs {
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
 }
 .tabs-in {
   display: flex;
-  gap: var(--sp-1);
+  flex-wrap: wrap;
+  gap: 0 var(--sp-1);
   max-width: var(--page-wide);
   margin: 0 auto;
   padding: 0 calc(var(--gutter) - var(--sp-3));
-  overflow-x: auto;
-  /* Momentum scrolling on iOS so the horizontal tab row feels native */
-  -webkit-overflow-scrolling: touch;
-  scroll-snap-type: x proximity;
 }
-/* A fade on the side that has more tabs (app.js sets the classes from the
-   scroll position), so a row cut at the edge reads as one that scrolls. */
-.tabs-in.more-right { mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent); -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent); }
-.tabs-in.more-left { mask-image: linear-gradient(to left, #000 calc(100% - 48px), transparent); -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 48px), transparent); }
-.tabs-in.more-left.more-right { mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent); -webkit-mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent); }
 .tab {
   background: transparent;
   border: none;
@@ -227,15 +220,11 @@ p { margin: 0; }
   cursor: pointer;
   border-bottom: 2px solid transparent;
   white-space: nowrap;
-  scroll-snap-align: start;
   /* The control height: 40px, 44px on a touch screen (HIG / Material target). */
   min-height: var(--btn-h);
 }
 .tab:hover { color: var(--fg); }
 .tab.active { color: var(--fg); border-bottom-color: var(--accent-ink); }
-/* Hide scrollbar on the tab row for cleaner look (still scrollable). */
-.tabs-in::-webkit-scrollbar { height: 2px; }
-.tabs-in::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
 
 /* <main> is the SINGLE scrollable container.
    - `flex: 1 1 auto` makes it fill the space between the static header
@@ -1015,6 +1004,11 @@ footer {
 .addon-row-actions { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 .addon-row-actions:empty { display: none; }
 .addon-row .addon-note { grid-column: 2 / -1; }
+.addon-conflict {
+  grid-column: 2 / -1; margin: 0; padding: var(--sp-2) var(--sp-3); color: var(--fg);
+  border-left: 4px solid var(--warn); background: var(--bg-raise); border-radius: var(--control-radius);
+  overflow-wrap: anywhere;
+}
 /* Status is said in words; the colour only reinforces it. */
 .addon-status {
   justify-self: end; white-space: nowrap; font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: 600;
@@ -1071,6 +1065,12 @@ footer {
 .software-row:first-child { padding-top: 0; }
 .software-row:last-child { border-bottom: 0; }
 .software-row .addon-row-actions { grid-column: 1 / -1; }
+.software-row .addon-status { white-space: normal; }
+/* After the base rule above, which an earlier phone query cannot override:
+   on a phone the status sits under the server's name, never beside it. */
+@media (max-width: 639.98px) {
+  .software-row { grid-template-columns: minmax(0, 1fr); }
+}
 .software-when { font-size: var(--fs-meta); line-height: var(--lh-meta); white-space: nowrap; }
 .software-foot { font-size: var(--fs-meta); line-height: var(--lh-meta); }
 .software-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
@@ -1161,7 +1161,7 @@ footer {
 
 /* Backups: older snapshots fold under their day; Restore is a quiet button. */
 .snap-day { display: flex; flex-direction: column; gap: var(--sp-2); }
-.snap-day + .snap-day, .snap-list + .snap-day { margin-top: var(--sp-2); }
+.snap-day + .snap-day, .snap-count + .snap-day { margin-top: var(--sp-2); }
 .snap-day summary { cursor: pointer; min-height: var(--btn-h); display: flex; align-items: center; gap: var(--sp-2); }
 
 /* Players */
@@ -1196,7 +1196,7 @@ input[type="file"]::file-selector-button {
 .snap-clump:last-child { border-bottom: none; }
 .snap-clump summary { cursor: pointer; min-height: var(--btn-h); display: flex; align-items: center; gap: var(--sp-2); padding: 0 var(--card-pad); flex-wrap: wrap; }
 .snap-inner { margin: 0; border: none; border-top: 1px solid var(--border); border-radius: 0; background: var(--bg-raise); }
-.snap-note { margin: 0; }
+.snap-note, .snap-count { margin: 0; }
 
 /* Worlds: every row's buttons keep their own width and their whole label, in
    one order (Switch, Rename, Download, Delete) and in one group (#1183). */
