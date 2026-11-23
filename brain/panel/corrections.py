@@ -766,6 +766,33 @@ _WARY_WORDS_RE = re.compile(
     r"smoke|moist)", re.I)
 
 
+# What brAIn's own record (`rule_record.resident_stand_down`) never holds
+# back, on top of `not_news_floor` (#1320): food, water, heat or security.
+# The record is about how brAIn's other reports were answered, and a fridge
+# warming was set aside on Wrongs about humidity. Read from the registry's
+# kind first (a temperature, moisture or door sensor, a climate, a valve,
+# a camera); the name is read only to KEEP a case shown, `strict_floor`'s
+# trade, because a fridge's plug carries no class that says food.
+RECORD_NEVER_DOMAINS = frozenset({
+    "lock", "alarm_control_panel", "camera", "siren", "climate",
+    "water_heater", "valve"})
+RECORD_NEVER_CLASSES = NOT_NEWS_CLASSES | {
+    "temperature", "moisture", "water", "door", "window", "garage_door",
+    "opening", "safety"}
+
+
+def record_floor(entity_id: str = "", *, device_class: str = "",
+                 name: str = "") -> str:
+    """Why brAIn's own record may NOT hold a case about this entity back,
+    or "" when it may (above)."""
+    eid = str(entity_id or "")
+    if (_domain(eid) in RECORD_NEVER_DOMAINS
+            or str(device_class or "") in RECORD_NEVER_CLASSES
+            or _WARY_WORDS_RE.search(f"{eid} {name or ''}")):
+        return "it is about food, water, heat or security"
+    return ""
+
+
 def strict_floor(entity_id: str = "", source: str = "", *,
                  severity: str = "", stakes: str = "",
                  device_class: str = "", name: str = "",

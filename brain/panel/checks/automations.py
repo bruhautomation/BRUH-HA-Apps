@@ -1468,12 +1468,13 @@ def trigger_unavailable(snap: dict, now: float) -> list[dict]:
     stop coming on".
     """
     house = House(snap)
+    from . import network  # noqa: PLC0415 — the one "not in use" reader
     out = []
     for item in _automations(house):
         state = (house.states.get(item["entity_id"]) or {}).get("state")
         if state == "off":
             continue  # a switched-off automation is auto.forgotten_off's
-        broken: list[str] = []
+        broken: dict[str, float] = {}
         for trig in _triggers(item["config"]):
             if _waits_on_unavailable(trig):
                 continue
@@ -1486,29 +1487,78 @@ def trigger_unavailable(snap: dict, now: float) -> list[dict]:
                 if st.get("state") != "unavailable":
                     continue
                 age = age_days(st.get("last_changed"), now)
-                if age is not None and age >= TRIGGER_DEAD_DAYS:
-                    broken.append(eid)
+                if age is None or age < TRIGGER_DEAD_DAYS:
+                    continue
+                # A device the household disabled, labelled or said is not
+                # in use, on any card about any of its entities (#1331):
+                # its trigger going quiet is their decision, not a fault.
+                if network.not_in_use(house, house.device_of(eid), eid):
+                    house.gave_up("auto.trigger_unavailable",
+                                  [{"entity_id": eid, "text": item["alias"]}],
+                                  "you said the device behind this trigger "
+                                  "is not in use", kind="explained")
+                    continue
+                broken[eid] = age
         if not broken:
             continue
-        broken = sorted(set(broken))
-        subject = item["entity_id"] or broken[0]
+        leftover = _leftover(house, item)
+        if leftover:
+            # An automation Home Assistant does not run cannot fire with or
+            # without its trigger (#1331): a leftover config is not a rule
+            # whose trigger stopped it.
+            house.gave_up("auto.trigger_unavailable",
+                          [{"entity_id": item["entity_id"] or next(iter(broken)),
+                            "text": item["alias"]}],
+                          leftover, kind="explained")
+            continue
+        names = sorted(broken)
+        subject = item["entity_id"] or names[0]
         if not house.should_report(subject, "auto.trigger_unavailable"):
             continue
+        said = [f"{house.label(e)} has been unavailable for "
+                f"{_days(broken[e])}" for e in names]
         out.append({
             "text": f"{_label('Automation', item)} is triggered by an "
                     "entity that is not reporting",
-            "detail": _sentence(join_names([house.label(e) for e in broken])
-                                + " has been unavailable for days, so this "
-                                  "automation cannot fire. It is switched "
-                                  "on, so nothing else will tell you."),
+            "detail": _sentence(join_names(said) + ", so this automation "
+                                "cannot fire. It is switched on, so nothing "
+                                "else will tell you."),
             "fix": "Fix or replace the device behind that entity, or point "
                    "the trigger at one that works.",
             "severity": "serious",
             "fixable": True,
             "entity_id": subject,
-            "evidence": evidence_for(broken, "unavailable for days"),
+            "evidence": evidence_for(names, "unavailable for days"),
         })
     return out
+
+
+def _days(age: float) -> str:
+    whole = max(int(age), 1)
+    return f"{whole} day" + ("" if whole == 1 else "s")
+
+
+def _leftover(house: House, item: dict) -> str:
+    """Why an automation's config is a leftover Home Assistant does not run,
+    or "": no automation entity registered for its id, none live, or one
+    Home Assistant only restored (nothing provides it)."""
+    eid = item.get("entity_id") or ""
+    if not eid:
+        # A YAML automation with no `id` is valid and runs, and has no
+        # registry entry to match: only a config WITH an id that no
+        # registered automation carries is a leftover. A registry that
+        # could not be read names nothing either.
+        if not item.get("id") or not any(
+                e.get("platform") == "automation" for e in house.entities):
+            return ""
+        return "no automation in Home Assistant comes from this config"
+    st = house.states.get(eid)
+    if st is None:
+        return "Home Assistant does not run this automation"
+    attrs = st.get("attributes") or {}
+    if st.get("state") == "unavailable" or attrs.get("restored"):
+        return "this automation is left over: nothing provides it"
+    return ""
 
 
 # ---------------------------------------------------------------------------
