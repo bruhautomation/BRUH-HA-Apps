@@ -96,8 +96,7 @@ const css = `
     margin-bottom: 12px; }
   .roll { padding: 8px 12px; border-radius: 8px;
     background: var(--secondary-background-color); }
-  .roll .who { font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
-    color: var(--bp-muted); }
+  .roll .who { font-size: 12px; color: var(--bp-muted); }
   /* A roll's name wraps: the one that tells two rolls apart is the end of it. */
   .roll .what { font-size: 14px; font-weight: 600; margin: 4px 0;
     overflow-wrap: anywhere; }
@@ -519,9 +518,11 @@ class BruhPrintCard extends HTMLElement {
       }
       const who = document.createElement('div');
       who.className = 'who';
-      who.textContent = loaded && choosable
-        ? (entity.attributes.stock === chosen ? 'printing on this' : 'tap to use')
-        : (side === 'left' ? 'left roll' : 'right roll');
+      /* A tile is named by its bay, the way the panel's bar names it; the
+       * chosen one is also told by its outline, and says so in the panel's
+       * words. */
+      who.textContent = (side === 'left' ? 'Left roll' : 'Right roll')
+        + (loaded && choosable && entity.attributes.stock === chosen ? ' · prints text' : '');
       const what = document.createElement('div');
       what.className = 'what';
       what.textContent = loaded
@@ -530,7 +531,8 @@ class BruhPrintCard extends HTMLElement {
       box.append(who, what);
       if (entity.attributes.loaded) {
         /* The sensor is `unknown` while the add-on is not counting. That is
-         * not an empty roll, so there is no bar and no zero. */
+         * not an empty roll, so there is no bar, no zero and no word about
+         * counting: the tile says only what is loaded. */
         const counted = entity.state !== '' && Number.isFinite(Number(entity.state))
           && !['unknown', 'unavailable'].includes(entity.state);
         const remaining = counted ? Number(entity.state) : 0;
@@ -547,11 +549,10 @@ class BruhPrintCard extends HTMLElement {
         bar.append(fill);
         const est = document.createElement('div');
         est.className = 'est';
-        est.textContent = counted
-          ? `about ${remaining} left · ${entity.attributes.size || ''}`
-          : `not counted · ${entity.attributes.size || ''}`;
+        est.textContent = [counted ? `about ${remaining} left` : '',
+          entity.attributes.size || ''].filter(Boolean).join(' · ');
         if (counted) box.append(bar);
-        box.append(est);
+        if (est.textContent) box.append(est);
       }
       wrap.append(box);
     }
