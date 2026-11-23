@@ -2,6 +2,18 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.9
+
+### Added
+
+- Every finding says how soon it needs you: Act today, Soon or When convenient, set by what is at stake (food, water, heat and security first), and the list is ordered by it. Nothing is hidden (1327).
+- The weekly report names the room where most of the measured energy went, and keeps an unheated space or an equipment enclosure apart instead of ranking it with the rooms (1324).
+
+### Fixed
+
+- Temperatures in findings and insight cards are written in the house's own unit, and dates in one short style ("22 Nov", with the year only when it is not this year), in brAIn's panel and its findings (1332).
+- Before the house book asks a question, it now says what it looked up in Home Assistant first, also reads scripts, and no longer answers a question about something near a device ("where is the spare key for the back door") with the device's room (1310).
+
 ## 5.5.8
 
 ### Fixed
