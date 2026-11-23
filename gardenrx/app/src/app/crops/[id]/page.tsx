@@ -17,7 +17,7 @@ import { fetchWeather } from '@/lib/weather';
 import { getSprayRecordsForCrop, computeCoverage } from '@/lib/protection';
 import { buildPhiByProductGroup, computeCropPhi } from '@/lib/phi';
 import { harvestSeason } from '@/lib/harvest-windows';
-import { applyPhenology } from '@/lib/phenology';
+import { applyPhenology, deriveStage } from '@/lib/phenology';
 
 export const dynamic = 'force-dynamic';
 
@@ -118,6 +118,7 @@ export default async function CropDetailPage(props: PageProps<'/crops/[id]'>) {
     <CropDetailView
       crop={crop}
       cropGroup={cropGroup ?? null}
+      groupStage={cropGroup ? deriveStage(cropGroup.name, now) : null}
       varieties={varieties}
       varietyStages={effectiveStages}
       fungCoverage={fungCoverage}

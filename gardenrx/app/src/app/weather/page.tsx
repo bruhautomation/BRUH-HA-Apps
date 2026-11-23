@@ -3,12 +3,13 @@ import {
   getCurrentSprayRating,
   nextSprayOpening,
   daySprayWindows,
+  rainAhead,
   SHORT_SPRAY_WINDOW_HOURS,
 } from '@/lib/weather';
 import { anySprayDue } from '@/lib/spray-due';
 import { fetchCrops, fetchVarieties, fetchVarietyStages, fetchCropGroups } from '@/lib/queries';
 import { applyPhenology } from '@/lib/phenology';
-import { mostlyResting, cropStages } from '@/lib/coverage-season';
+import { mostlyResting, cropStages, groupStages } from '@/lib/coverage-season';
 import { dailyRainfall, rainfallSummary } from '@/lib/rainfall';
 import { RatingPill } from '@/components/status';
 import { SprayWindow3Day } from '@/components/today/spray-window-3day';
@@ -75,12 +76,19 @@ export default async function WeatherPage() {
   // Most of the garden resting (dormant or past harvest) today, by the same
   // stage calendar Today and Crops use.
   const effectiveStages = applyPhenology(varietyStages, varieties, crops, cropGroups, new Date());
+  const groupStage = groupStages(cropGroups, new Date());
   const dormant = mostlyResting(
-    crops.map((c) => cropStages(c.id, varieties, effectiveStages).map((stage) => ({ stage })))
+    crops.map((c) =>
+      cropStages(c.id, varieties, effectiveStages, groupStage(c.crop_group_id)).map((stage) => ({
+        stage,
+      }))
+    )
   );
   const rainSummary = rainDaily.length ? rainfallSummary(rainDaily, { dormant }) : null;
 
-  const goodNow = rating === 'EXCELLENT' || rating === 'GOOD';
+  // Good now by the grid's own rule: a good rating in daylight (the grid greys dark hours).
+  const dark = current.isDay === false;
+  const goodNow = (rating === 'EXCELLENT' || rating === 'GOOD') && !dark;
 
   return (
     <PageShell stagger title="Weather" meta="Home orchard · Zone 7b">
@@ -102,7 +110,9 @@ export default async function WeatherPage() {
               ? `Conditions are ${rating.toLowerCase()} — ${Math.round(current.temp)}°, wind ${Math.round(current.windSpeed)} mph.`
               : nextRainHrs != null && nextRainHrs <= 6
                 ? `Rain expected in ~${nextRainHrs}h. Let coverage set first.`
-                : `Current conditions are ${rating.toLowerCase()}. Check the 3-day window below.`}
+                : dark
+                  ? 'It is dark now. The 3-day window below shows the hours ahead.'
+                  : `Current conditions are ${rating.toLowerCase()}. Check the 3-day window below.`}
           </div>
         </div>
         <div className="ml-auto">
@@ -212,6 +222,7 @@ export default async function WeatherPage() {
           avgHighF={avgHigh7}
           humidityPct={current.humidity}
           dormant={dormant}
+          ahead={rainAhead(hourly, daily)}
         />
       )}
     </PageShell>

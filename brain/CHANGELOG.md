@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.4
+
+### Fixed
+
+- Morph's own controls are 40 pixels to press on a phone however the browser reports its pointer, and at desktop width the Edit pencil, Coming up's zoom and fold, the scene segments, the climate − and + and the overlay chips are too (1307, 1253).
+- The rules brAIn builds dashboard cards by now say that everything pressable on a card, rows and reading chips included, is a 40-pixel target at both widths, that an empty tile is hidden or says what it is for, and that a tile's status is a short phrase that ends rather than a sentence cut off. brAIn asks to check the house's own cards against the new rules (1307, 1304, 1305).
+
 ## 5.5.3
 
 ### Fixed

@@ -129,7 +129,17 @@ const RESTING_WARM_F = 75;
 /** Resting plants draw roughly this share of a growing garden's weekly water. */
 const RESTING_SHARE = 0.5;
 
-export type WateringStatus = 'soak' | 'water-soon' | 'ok' | 'wet' | 'rest';
+/** Forecast rain this size or more in the next few days: wait for it rather than water. */
+export const RAIN_AHEAD_WAIT = 0.25;
+
+export type WateringStatus = 'soak' | 'water-soon' | 'ok' | 'wet' | 'rest' | 'wait';
+
+/** Rain the forecast expects soon (`rainAhead` in lib/weather). */
+export interface RainAhead {
+  inches: number;
+  /** The day the expected rain reaches RAIN_AHEAD_WAIT, in Today's words. */
+  by: string | null;
+}
 
 export interface WateringAdvice {
   status: WateringStatus;
@@ -138,6 +148,8 @@ export interface WateringAdvice {
   deficit: number; // shortfall vs target, inches (>= 0)
   headline: string; // the one instruction
   detail: string; // why, in one line
+  /** Rain the forecast expects soon, when it was asked. */
+  ahead: RainAhead | null;
 }
 
 /**
@@ -146,12 +158,47 @@ export interface WateringAdvice {
  * target that scales with evapotranspiration demand (hotter and drier air pull
  * more moisture) and with the season: a resting garden (most crops dormant or
  * past harvest) needs about half, and outside real heat it is never told to
- * water, only reminded to check the soil after a dry spell.
+ * water, only reminded to check the soil after a dry spell. When the forecast
+ * (`ahead`) has RAIN_AHEAD_WAIT or more coming, a call to water becomes "wait
+ * for the rain", unless a soak in real heat is short of what the rain will bring.
  */
 export function wateringAdvice(
   daily: DailyRain[],
-  opts: { avgHighF?: number | null; humidityPct?: number | null; dormant?: boolean } = {}
+  opts: {
+    avgHighF?: number | null;
+    humidityPct?: number | null;
+    dormant?: boolean;
+    ahead?: RainAhead | null;
+  } = {}
 ): WateringAdvice {
+  const base = pastRainAdvice(daily, opts);
+  const ahead = opts.ahead ?? null;
+  const advice = { ...base, ahead };
+  // The forecast has the last word on a call to water: rain on the way does the
+  // watering. In real heat a soak waits only when the rain coming covers the
+  // shortfall, since plants cannot go days short in that heat.
+  const asksToWater =
+    base.status === 'water-soon' ||
+    base.status === 'soak' ||
+    (base.status === 'rest' && base.deficit > base.targetWeekly * 0.6);
+  if (!ahead || !asksToWater || ahead.inches < RAIN_AHEAD_WAIT) return advice;
+  const due = `${ahead.inches.toFixed(2)}″ of rain is forecast${ahead.by ? ` by ${ahead.by}` : ''}`;
+  const hot = opts.avgHighF != null && opts.avgHighF >= 88;
+  if (base.status === 'soak' && hot && ahead.inches < base.deficit)
+    return { ...advice, detail: `${base.detail} ${due}, short of what is missing.` };
+  return {
+    ...advice,
+    status: 'wait',
+    headline: 'Wait for the rain',
+    detail: `${due}; ${base.rain7.toFixed(2)}″ fell in the last 7 days. If the soil is still dry a few inches down after it, water then.`,
+  };
+}
+
+/** The call from the last 7 days of rain alone, before the forecast is read. */
+function pastRainAdvice(
+  daily: DailyRain[],
+  opts: { avgHighF?: number | null; humidityPct?: number | null; dormant?: boolean }
+): Omit<WateringAdvice, 'ahead'> {
   const n = daily.length;
   const rain7 = round2(daily.slice(Math.max(0, n - 7)).reduce((s, d) => s + d.inches, 0));
   const high = opts.avgHighF ?? null;
@@ -244,5 +291,6 @@ export const WATERING_META: Record<WateringStatus, { badge: string; bar: string 
   'water-soon': { badge: 'bg-amber-100 text-amber-700 ring-amber-300/60', bar: 'bg-amber-400' },
   ok: { badge: 'bg-emerald-100 text-emerald-700 ring-emerald-300/60', bar: 'bg-emerald-400' },
   wet: { badge: 'bg-sky-100 text-sky-700 ring-sky-300/60', bar: 'bg-sky-400' },
+  wait: { badge: 'bg-sky-100 text-sky-700 ring-sky-300/60', bar: 'bg-sky-400' },
   rest: { badge: 'bg-muted/60 text-foreground/80 ring-border/60', bar: 'bg-muted' },
 };

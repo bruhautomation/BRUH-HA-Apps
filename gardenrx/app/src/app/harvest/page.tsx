@@ -17,7 +17,7 @@ import { HarvestStatusCards, type StatusCrop } from '@/components/harvest-status
 import { computeCropPhi } from '@/lib/phi';
 import { parseHarvestWindow } from '@/lib/harvest-windows';
 import { applyPhenology } from '@/lib/phenology';
-import { needsCoverageNow, cropStages } from '@/lib/coverage-season';
+import { needsCoverageNow, cropStages, groupStages } from '@/lib/coverage-season';
 import { VARIETY_CATALOG } from '@/lib/variety-catalog';
 import { PageShell } from '@/components/ui/page-shell';
 
@@ -101,8 +101,12 @@ export default async function HarvestPage() {
       .map((h) => h.crop_id)
   );
   // Resting (every variety dormant or past harvest) by the stages Crops shows.
-  const restingByStage = (cropId: number) =>
-    !needsCoverageNow(cropStages(cropId, varieties, effectiveStages).map((stage) => ({ stage })));
+  const groupStage = groupStages(cropGroups, now);
+  const restingByStage = (cropId: number) => {
+    const group = cropById.get(cropId)?.crop_group_id ?? null;
+    const stages = cropStages(cropId, varieties, effectiveStages, groupStage(group));
+    return !needsCoverageNow(stages.map((stage) => ({ stage })));
+  };
   const isResting = (cropId: number) => !pickedRecently.has(cropId) && restingByStage(cropId);
   const fmtShort = (d: Date | null) =>
     d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';

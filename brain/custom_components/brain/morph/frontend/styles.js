@@ -97,6 +97,8 @@ export const CSS = `${TOKENS.replaceAll(':root', ':host')}
    rest muted, each a jump, underlined 1px at half its colour. */
 .morph .vjump{background:none;border:0;padding:0;margin:0;font:inherit;cursor:pointer;text-align:left;color:var(--vc,var(--text));text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:.28em;text-decoration-color:color-mix(in oklab,var(--vc,var(--text)) 50%,transparent)}
 .morph .vjump.plain{color:var(--muted)}
+/* A jump in the story is words in a sentence: its 40px is padding the line does not see, so the sentence keeps its spacing (#1307). */
+.morph .vjump{padding-block:var(--sp-2);margin-block:calc(-1 * var(--sp-2))}
 .vq{color:var(--quiet);font-size:var(--fs-meta)}
 .needbrain{color:var(--text);padding:48px 0}
 .topsec{position:relative}
@@ -176,7 +178,7 @@ section.sec[data-state="asleep"] .mtile{opacity:1}
 .todorow .lx span:first-child{font-size:14px}
 .actword{flex:none;display:inline-flex;align-items:center;gap:8px;box-sizing:border-box;min-height:var(--btn-h-sm);padding:0 12px;border:1px solid color-mix(in oklab,var(--ac) 65%,transparent);border-radius:999px;font-size:14px;font-weight:700;color:color-mix(in oklab,var(--ac) 75%,var(--text));white-space:nowrap}
 .actword.armed{color:var(--ink);background:var(--ac);border-color:var(--ac)}
-@media (pointer:coarse){.actword{min-height:var(--btn-h)}}
+@media (pointer:coarse),(max-width:639.98px){.actword{min-height:var(--btn-h)}}
 /* A narrow TILE (not a narrow window: a five-column room at 1200 has them too) gives the button's words up: the noun goes, and a button that has an icon is only the icon (its name is its aria-label), so the state beside it keeps its words whole. */
 @container (max-width:260px){.actnoun{display:none}.actword{padding:0 8px;font-size:12px}.actword.hasicon{width:40px;padding:0;justify-content:center}.actword.hasicon .acttext{display:none}}
 .keeprow .wd{font-size:14px}
@@ -263,7 +265,7 @@ h1.hello{font-family:var(--m-font-display);font-weight:400;font-size:var(--m-dis
 .cu-l1{display:flex;align-items:center;gap:8px;min-width:0;flex:0 1 auto}
 .cu-l1 .cu-dot{transition:none}
 .cu-name{font-size:16px;font-weight:600;overflow:hidden;text-overflow:ellipsis;min-width:0;text-align:left;line-height:1.3}
-.cu-name.go{min-height:var(--btn-h-sm);display:block}
+.cu-name.go{min-height:var(--btn-h);line-height:var(--btn-h);margin-block:-4px;display:block}
 .cu-name.quiet{font-weight:500;color:var(--muted)}
 .cu-l2{font-size:12px;color:var(--quiet);overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1000 auto}
 .cu-back{position:absolute;right:0;bottom:0;font-size:14px;color:var(--teal);min-height:32px;padding:0 4px 0 16px;background:linear-gradient(90deg,transparent,var(--bg) 14px)}
@@ -606,7 +608,7 @@ ${STATUS_RULES}
 .morph .shtog[aria-pressed="true"]{color:var(--amber);border-color:color-mix(in oklab,var(--amber) 55%,transparent);background:color-mix(in oklab,var(--amber) 16%,transparent)}
 .morph .shtog:disabled{opacity:.45;cursor:default}
 .morph .shtog::before{content:"";position:absolute;inset:-8px -4px}
-@media (pointer:coarse){.morph .shtog{min-height:var(--btn-h)}}
+@media (pointer:coarse),(max-width:639.98px){.morph .shtog{min-height:var(--btn-h)}}
 .topsec:empty{display:none}
 .inshell .toastline{min-height:30px}
 /* No dead rows above the first card (house change, 3 Nov 2026: "so much
@@ -617,14 +619,17 @@ ${STATUS_RULES}
 .wrap>[data-region="top"]:has(>.topsec:empty:only-child){display:none}
 .inshell .wrap>[data-region="bar"]:has(.toastline .bartoast:empty){margin-bottom:calc(var(--sp-3) - var(--section-gap))}
 /* A row of chips (rooms, a chart's legend, a note's words) is a row of targets on touch: 40px, like every other chip (#786). */
-@media (pointer:coarse){.morph .roomw,.morph .legend .wd,.morph .bnote .wd{min-height:var(--btn-h)}}
+@media (pointer:coarse),(max-width:639.98px){.morph .roomw,.morph .legend .wd,.morph .bnote .wd{min-height:var(--btn-h)}}
 /* Every button is a 40px target on a phone, in both directions (the audit counts width too): a room's jump word, the sidebar button and a coming-up title were 26-30px. The height is taken from the margin, so the page's layout does not move. */
 /* A scene segment and the Edit pencil are 40px tall under a finger (the pencil's extra height is borrowed back from its row). */
-@media (pointer:coarse){.morph .secline .secscenes .wd,.morph .secscenes .wd{min-height:var(--btn-h)}.morph .toastline .editq{min-height:var(--btn-h);margin-block:-4px}.morph .bar>.editq{min-width:var(--btn-h);min-height:var(--btn-h);display:inline-flex;align-items:center;justify-content:center}}
+.morph .secline .secscenes .wd,.morph .secscenes .wd{min-height:var(--btn-h)}
+@media (pointer:coarse),(max-width:639.98px){.morph .toastline .editq{min-height:var(--btn-h);margin-block:-4px}.morph .bar>.editq{min-width:var(--btn-h);min-height:var(--btn-h);display:inline-flex;align-items:center;justify-content:center}}
 /* Coming up's name stays a block on a phone: as a flex box (5.3.15) its text lost the ellipsis and was cut mid-word (#1126). The 40px is its line height. */
-@media (pointer:coarse){.morph .roomw,.morph .menu{min-width:var(--btn-h);justify-content:center}.morph .cu-name.go{min-height:var(--btn-h);line-height:var(--btn-h);margin-block:-8px;display:block}}
+@media (pointer:coarse),(max-width:639.98px){.morph .roomw,.morph .menu{min-width:var(--btn-h);justify-content:center}.morph .cu-name.go{min-height:var(--btn-h);line-height:var(--btn-h);margin-block:-8px;display:block}}
 /* Coming up's zoom and fold are 40px a side on a phone, centred where the smaller marks were drawn, so they sit as before and are not mis-hit for each other. */
-@media (pointer:coarse){.morph .cu-zb{min-width:var(--btn-h);height:var(--btn-h);top:-2px;justify-content:center}.morph .cu-zb:not(.solo){right:40px}.morph .cu-fold{width:var(--btn-h);height:var(--btn-h);top:-2px}}
+/* With a mouse too: the bar's pencil was 13px wide and the zoom 25x22 at 1200 (#1307). */
+.morph .bar>.editq{min-width:var(--btn-h);min-height:var(--btn-h);display:inline-flex;align-items:center;justify-content:center}
+.morph .cu-zb{min-width:var(--btn-h);height:var(--btn-h);top:-2px;justify-content:center}.morph .cu-zb::before{content:none}.morph .cu-zb:not(.solo){right:40px}.morph .cu-fold{width:var(--btn-h);height:var(--btn-h);top:-2px}
 .morph input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=color]),.morph textarea,.morph select{font-size:16px}
 `;
 /* The 16px text floor, on every screen (a phone with a desktop-width page or a pointer that says it is fine still zooms): below it iOS zooms the page when a field takes focus (#677). Every field Morph draws, and the same floor handed to a card's own shadow root by morph-panel.js (FIELD_FLOOR). */

@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { CloudRain, Droplets, ChevronRight } from 'lucide-react';
-import type { DailyRain, RainSummary } from '@/lib/rainfall';
+import type { DailyRain, RainAhead, RainSummary } from '@/lib/rainfall';
 import { DROUGHT_META, WATERING_META, wateringAdvice } from '@/lib/rainfall';
 import { SectionHeader } from '@/components/ui/section-header';
 
@@ -12,6 +12,7 @@ export function RainTracker({
   avgHighF,
   humidityPct,
   dormant,
+  ahead,
 }: {
   daily: DailyRain[];
   summary: RainSummary;
@@ -19,10 +20,12 @@ export function RainTracker({
   humidityPct?: number | null;
   /** Most of the garden is dormant or past harvest. */
   dormant?: boolean;
+  /** Rain the forecast expects in the next few days. */
+  ahead?: RainAhead | null;
 }) {
   if (daily.length === 0) return null;
   const meta = DROUGHT_META[summary.status];
-  const advice = wateringAdvice(daily, { avgHighF, humidityPct, dormant });
+  const advice = wateringAdvice(daily, { avgHighF, humidityPct, dormant, ahead });
   const adviceMeta = WATERING_META[advice.status];
   const scaleMax = Math.max(0.25, ...daily.map((d) => d.inches));
   const fmtDay = (key: string) =>
@@ -117,14 +120,16 @@ export function RainSummaryLine({
   avgHighF,
   humidityPct,
   dormant,
+  ahead,
 }: {
   daily: DailyRain[];
   avgHighF?: number | null;
   humidityPct?: number | null;
   dormant?: boolean;
+  ahead?: RainAhead | null;
 }) {
   if (daily.length === 0) return null;
-  const advice = wateringAdvice(daily, { avgHighF, humidityPct, dormant });
+  const advice = wateringAdvice(daily, { avgHighF, humidityPct, dormant, ahead });
   return (
     <Link
       href="/weather"
@@ -133,7 +138,11 @@ export function RainSummaryLine({
       <Droplets className="w-4 h-4 shrink-0" />
       <span className="min-w-0 flex-1 text-sm leading-snug">
         <span className="font-semibold">{advice.headline}</span>
-        <span className="opacity-80"> · {advice.rain7.toFixed(2)}″ rain this week</span>
+        <span className="opacity-80">
+          {advice.status === 'wait' && advice.ahead
+            ? ` · ${advice.ahead.inches.toFixed(2)}″ due${advice.ahead.by ? ` by ${advice.ahead.by}` : ''}`
+            : ` · ${advice.rain7.toFixed(2)}″ rain this week`}
+        </span>
       </span>
       <ChevronRight className="w-4 h-4 shrink-0 opacity-70" />
     </Link>
