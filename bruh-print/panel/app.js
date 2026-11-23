@@ -73,9 +73,9 @@ function isPrintCall(path, options) {
   return path === '/api/quick' && /"print":\s*true/.test(options.body || '');
 }
 function showBusy() {
-  document.querySelectorAll('.inuse').forEach((n) => {
+  document.querySelectorAll('.pstatus .pstate').forEach((n) => {
     n.textContent = printsOpen ? 'Printing now' : 'Idle';
-    n.classList.toggle('busy', printsOpen > 0);
+    n.parentElement.classList.toggle('busy', printsOpen > 0);
   });
 }
 async function api(path, options = {}) {
@@ -245,18 +245,16 @@ function renderBar() {
     dot.className = 'dot bad';
     name.textContent = 'No printer';
   }
+  const twin = !S.printer || S.printer.twin;
   for (const roll of S.rolls) {
     const chip = $('roll' + roll.side[0].toUpperCase() + roll.side.slice(1));
     const stock = stockById(roll.stock);
     chip.innerHTML = '';
-    chip.append(el('span', 'side', roll.side === 'left' ? 'L' : 'R'));
-    /* The SIZE, not the name. "Chemical-Resistant Cryo Labels" is 240px of
-     * bar on a phone and it is not the fact being checked — standing at the
-     * printer you are asking "is the big one in the left bay", which the
-     * measurements answer and the name does not. The name is in the tooltip
-     * and on the Printer tab, so nothing is hidden, it is a shorter complete
-     * label rather than a truncated long one. */
-    chip.append(el('span', null, stock ? stock.label : 'empty'));
+    /* The roll's NAME, in words, with the side in words in front of it
+     * (#1279). The bare size and an `L`/`R` were read as a code; the name
+     * is what a person calls the roll, and `.rname` is capped so a long
+     * catalog name loses its tail rather than taking the bar. */
+    chip.append(...bayWords(roll, twin));
     chip.classList.toggle('empty', !roll.loaded);
     chip.setAttribute('data-tip', stock
       ? `${roll.side} roll: ${stock.name} ${stock.label}. `
@@ -271,32 +269,40 @@ function renderBar() {
   renderOneChip();
 }
 
+/* One bay in words: which side, what is in it, and whether text prints
+ * there. `Left`/`Right` rather than `L`/`R`, and "prints text" rather than an
+ * arrow, because a letter and a glyph were read as a code (#1279). A
+ * single-roll printer has no side to name. */
+function bayWords(roll, twin) {
+  const stock = stockById(roll.stock);
+  const parts = [];
+  if (twin) parts.push(el('span', 'side', roll.side === 'left' ? 'Left' : 'Right'));
+  parts.push(el('span', 'rname', stock ? stock.name : 'empty'));
+  if (twin && S.rolls.length > 1 && roll.side === activeSide())
+    parts.push(el('span', 'rtag', 'prints text'));
+  return parts;
+}
+
 /* The phone's status chip: one control, because all three were one control
  * drawn as three — every one of them presses through to the Printer tab.
  * What it carries is what you check standing at the printer: is it there,
- * and what is in the bays. The names are in the tooltip and on the Printer
- * tab, so this is a shorter COMPLETE label rather than a truncated long
- * one — the same trade the three chips already made by showing sizes. */
+ * and what is in each bay, one line per bay, named the way the bay chips
+ * name it. The sizes are in the tooltip and on the Printer tab. */
 function renderOneChip() {
   const dot = $('statusDot'), text = $('statusText'), chip = $('statusChip');
   if (!chip) return;
   const twin = !S.printer || S.printer.twin;
   const active = activeSide();
-  const bays = S.rolls
-    .filter((roll) => !(roll.side === 'right' && !twin))
-    .map((roll) => {
-      const stock = stockById(roll.stock);
-      return { side: roll.side, on: roll.side === active && S.rolls.length > 1 && twin,
-               text: `${roll.side === 'left' ? 'L' : 'R'} ${stock ? stock.label : 'empty'}` };
-    });
+  const rolls = S.rolls.filter((roll) => !(roll.side === 'right' && !twin));
+  text.textContent = '';
   if (S.printer) {
     dot.className = 'dot good';
-    text.textContent = '';
-    bays.forEach((bay, i) => {
-      if (i) text.append(' \u00b7 ');
-      text.append(bay.on ? el('b', 'bay-on', `\u25b8 ${bay.text}`) : bay.text);
-    });
-    if (!bays.length) text.textContent = S.printer.name;
+    for (const roll of rolls) {
+      const line = el('span', 'bayline');
+      line.append(...bayWords(roll, twin));
+      text.append(line);
+    }
+    if (!rolls.length) text.textContent = S.printer.name;
   } else if (S.ambiguous) {
     dot.className = 'dot warn';
     text.textContent = `${S.printers.length} printers \u2014 pick one`;
@@ -311,7 +317,7 @@ function renderOneChip() {
   chip.setAttribute('data-tip',
     (S.printer ? S.printer.name : 'No printer found')
     + (loaded.length ? ` \u2014 ${loaded.join(', ')}` : '')
-    + (twin && S.printer ? `. Quick prints on the ${active} roll` : '')
+    + (twin && S.printer ? `. Text prints on the ${active} roll` : '')
     + '. Press for the Printer tab.');
 }
 
@@ -324,15 +330,44 @@ function activeSide() {
   return roll ? roll.side : 'left';
 }
 
+/* "Prints on" is the one place on Quick that says which roll, so it is
+ * also where that is changed (#1282): with two rolls loaded a press moves
+ * text to the other one, and otherwise it opens the label picker. The
+ * press says which of the two it will do. One label to choose from is a
+ * line of text, not a control. */
 function updatePrintsOn() {
   const line = $('quickPrintsOn');
   if (!line) return;
-  const stock = stockById($('quickStock').value);
+  const select = $('quickStock');
+  const stock = stockById(select.value);
   const twin = !S.printer || S.printer.twin;
-  line.textContent = stock
-    ? `Prints on: ${stock.name}${twin ? ` (${activeSide()})` : ''}` : '';
-  renderOneChip();
+  const choices = [...select.options].map((o) => o.value);
+  const other = choices.length === 2 && twin
+    ? stockById(choices.find((id) => id !== select.value)) : null;
+  const otherSide = other && (S.rolls.find((r) => r.stock === other.id) || {}).side;
+  line.textContent = '';
+  line.hidden = !stock;
+  line.disabled = choices.length < 2;
+  if (stock) {
+    line.append(el('span', null,
+      `Prints on: ${stock.name}${twin ? ` (${activeSide()})` : ''}`));
+    if (choices.length > 1)
+      line.append(el('span', 'act', other && otherSide
+        ? `Use the ${otherSide} roll` : 'Change'));
+  }
+  line.dataset.switchTo = other && otherSide ? other.id : '';
+  renderBar();
 }
+$('quickPrintsOn').addEventListener('click', () => {
+  const line = $('quickPrintsOn'), select = $('quickStock');
+  if (line.dataset.switchTo) {
+    select.value = line.dataset.switchTo;
+    select.dispatchEvent(new Event('input'));
+    return;
+  }
+  $('quickMore').open = true;
+  select.focus();
+});
 
 /* What you can print on: the stock that is actually in the printer.
  *
@@ -654,7 +689,13 @@ function quickEmpty(message) {
 
 /* Print is for a label with words on it; an empty box has nothing to send. */
 function syncQuickPrint() {
-  $('quickPrint').disabled = !$('quickText').value.trim() || !$('quickStock').value;
+  const button = $('quickPrint');
+  const typed = !!$('quickText').value.trim(), stock = !!$('quickStock').value;
+  button.disabled = !typed || !stock;
+  /* A pale Print said nothing about why (#1282): the button says what it
+   * is waiting for. */
+  button.textContent = !typed ? 'Type something to print'
+    : (!stock ? 'Pick a label to print on' : 'Print');
 }
 
 async function quickPreview() {
@@ -1719,6 +1760,9 @@ document.querySelectorAll('.psec').forEach((d) => {
     prefSet('bruhprint.sec.' + d.dataset.sec, d.open ? '1' : '0'));
 });
 
+/* What each printer last said when asked about paper and lid, for the
+ * status line — kept for the page's life, never stored. */
+const statusAsked = new Map();
 function renderPrinter() {
   const cards = $('printerCards');
   cards.innerHTML = '';
@@ -1751,28 +1795,44 @@ function renderPrinter() {
         + 'that does not carry one. Nothing here can work around that.'));
     const foot = el('div', 'foot');
     const mine = S.printer?.key === printer.key;
-    /* The printer that is printing is a state, not a control: a disabled
-     * button said "In use" and could not be pressed. Another printer gets
-     * the button that moves printing to it. */
-    const use = mine
-      ? el('span', 'inuse' + (printsOpen ? ' busy' : ''),
-           printsOpen ? 'Printing now' : 'Idle')
-      : el('button', 'btn tiny', 'Use this one');
-    use.setAttribute('data-tip', mine
-      ? 'Everything prints to this printer. Says Printing now only while a label is being sent.'
-      : 'Send every print to this printer instead. Remembered by serial, so '
+    /* The printer that is printing has a STATUS LINE, not a word in a row
+     * of buttons (#1280): "Idle" beside two buttons read as a third one.
+     * What the printer last said about paper and lid joins that line once
+     * somebody asks, so the button is plainly the thing that asks and the
+     * line is plainly the answer. Another printer gets the button that
+     * moves printing to it, and nothing else: both questions below go to
+     * the printer in use, whichever card they sit on. */
+    if (mine) {
+      const said = statusAsked.get(printer.key);
+      const line = el('p', 'pstatus' + (printsOpen ? ' busy' : ''));
+      line.append(el('b', 'pstate', printsOpen ? 'Printing now' : 'Idle'));
+      if (said) line.append(` \u00b7 paper and lid: ${said.status} (asked ${said.at})`);
+      card.append(line);
+    } else {
+      const use = el('button', 'btn tiny', 'Use this one');
+      use.setAttribute('data-tip',
+        'Send every print to this printer instead. Remembered by serial, so '
         + 'it survives a reboot that renumbers the USB bus.');
-    if (!mine) use.onclick = async () => {
-      try { await post('/api/printer/select', { printer: printer.key }); await loadState(); renderPrinter(); }
-      catch (error) { fail(error); }
-    };
-    const status = el('button', 'btn tiny', 'Check paper and lid');
+      use.onclick = async () => {
+        try { await post('/api/printer/select', { printer: printer.key }); await loadState(); renderPrinter(); }
+        catch (error) { fail(error); }
+      };
+      foot.append(use);
+      card.append(foot);
+      cards.append(card);
+      continue;
+    }
+    const status = el('button', 'btn tiny', 'Ask about paper and lid');
     status.setAttribute('data-tip',
-      'Asks the printer how it is, right now — paper out, lid open, busy, '
-      + 'or ready. It prints nothing.');
+      'Asks the printer whether it is out of labels, has its lid open, or is '
+      + 'busy. It prints nothing; the answer goes on the line above.');
     status.onclick = async () => {
-      try { const data = await api('/api/printer/status'); toast(`${printer.name}: ${data.status}.`, data.status_ok ? 'good' : 'bad'); }
-      catch (error) { fail(error); }
+      try {
+        const data = await api('/api/printer/status');
+        statusAsked.set(printer.key, { status: data.status,
+          at: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) });
+        renderPrinter();
+      } catch (error) { fail(error); }
     };
     /* The descriptors, on a button. This add-on has been debugged twice by
      * somebody standing at the printer reading a panel that could not say
@@ -1804,14 +1864,10 @@ function renderPrinter() {
         $('modal').showModal();
       } catch (error) { fail(error); }
     };
-    /* Three buttons, all of them about the PRINTER. Lining a roll up is
-     * about a roll, and a roll lives in a bay — so it is a control on the
-     * bay below rather than a fourth button here that has to ask which one
-     * you meant. The two that used to be here went with the four knobs they
-     * served: the ruler measured a stock and this measures the paper, and
-     * "Where the printing starts" was a dialog of boxes to type guesses
-     * into. */
-    foot.append(use, status, usb);
+    /* Two buttons, both about the PRINTER. Lining a roll up is about a
+     * roll, and a roll lives in a bay — so it is a control on the bay below
+     * rather than a third button here that has to ask which one you meant. */
+    foot.append(status, usb);
     card.append(foot);
     cards.append(card);
   }
@@ -2272,7 +2328,9 @@ function lineUpBlock(roll, stock) {
    * it has been done, then a quiet one. It was a full-width button over two
    * half-rows of small ones and a red one on a line of its own (#1173). */
   const actions = el('div', 'bayactions');
-  const go = el('button', done ? 'btn' : 'btn primary',
+  /* Once lined up, doing it again is the rare case: a smaller, quieter
+   * button after the everyday ones, not one of two equal halves (#1280). */
+  const go = el('button', done ? 'btn tiny secondary' : 'btn primary',
     done ? 'Line up again' : 'Line up this roll');
   go.id = `lineUp-${roll.side}`;
   go.disabled = !rollable;
@@ -2288,7 +2346,7 @@ function lineUpBlock(roll, stock) {
           + 'property of the roll, so there is nothing to measure until '
           + 'there is one.'));
   go.onclick = () => lineUpDialog(stock, roll.side);
-  actions.append(go);
+  if (!done) actions.append(go);
 
   /* The last label of a job left inside the printer rather than pushed out
    * to the tear bar. Only a roll whose calibration asked for it ends that
@@ -2331,6 +2389,7 @@ function lineUpBlock(roll, stock) {
     };
     actions.append(feed);
   }
+  if (done) actions.append(go);
 
   wrap.append(actions);
   return wrap;
@@ -3322,10 +3381,21 @@ function renderHistory() {
   }
   for (const group of historyGroups(S.history)) {
     const entry = group[0];
+    /* A repeat row prints the newest print once; a batch row every one. */
+    const spends = group.repeat ? entry.copies : group.reduce((n, e) => n + e.copies, 0);
     const count = group.reduce((n, e) => n + e.copies, 0);
     const row = el('div', 'hrow');
     const text = el('div', 'htext');
-    text.append(el('span', 'what', historyTitle(group)));
+    const title = historyTitle(group);
+    text.append(el('span', 'what', group.repeat ? `${title} \u00d7${group.length}` : title));
+    /* What the label was made from, when the title does not already say
+     * it (#1281): the template's name, or the words on it. */
+    const words = labelWords(entry.label);
+    const from = entry.template && entry.template !== title
+      ? `${entry.template} template`
+      : (words && words !== entry.title && words !== title
+        ? (words.length > 80 ? `${words.slice(0, 79)}\u2026` : words) : '');
+    if (from) text.append(el('span', 'from', from));
     const stock = stockById(entry.stock);
     const stockName = stock ? stock.name : entry.stock;
     const when = (e) => new Date(e.at * 1000).toLocaleString([],
@@ -3333,29 +3403,30 @@ function renderHistory() {
     /* When, how many and which roll. The stock's name is on the picture's
      * own shape and in Print again's tip; it took the line to three rows on
      * a phone. */
-    const meta = el('span', 'meta', `${when(entry)} \u00b7 `
+    const meta = el('span', 'meta', `${group.repeat ? 'last ' : ''}${when(entry)} \u00b7 `
       + `${count === 1 ? '1 label' : `${count} labels`} \u00b7 ${entry.side} roll`);
     meta.title = stockName;
     text.append(meta);
     const buttons = el('div', 'hbtns');
     /* Says how many it will spend, because a batch row spends every label
      * in the batch. */
-    const again = el('button', 'btn tiny', group.length > 1
+    const batch = group.length > 1 && !group.repeat;
+    const again = el('button', 'btn tiny', batch
       ? `Print all ${count} again`
-      : (count === 1 ? 'Print this again' : `Print these ${count} again`));
+      : (spends === 1 ? 'Print this again' : `Print these ${spends} again`));
     /* The Printed tab's lede used to say this and nothing else. A sentence
      * that describes a button belongs on the button. */
-    again.setAttribute('data-tip', (group.length > 1
+    again.setAttribute('data-tip', (batch
       ? 'Prints every label of this batch again'
       : 'Prints exactly this label again')
       + ` \u2014 same words, on the ${entry.side} roll (${stockName}).`);
     again.onclick = async () => {
-      if (group.length > 1 && !confirm(`Print these ${count} labels again?`)) return;
+      if (batch && !confirm(`Print these ${count} labels again?`)) return;
       try {
         let data = null, done = 0;
         /* Oldest first, so the batch comes out in the order it went in. */
         try {
-          for (const e of [...group].reverse()) {
+          for (const e of batch ? [...group].reverse() : [entry]) {
             data = await post(`/api/history/${e.id}/reprint`, {});
             done += e.copies;
           }
@@ -3363,13 +3434,13 @@ function renderHistory() {
           if (done) error.message = `${error.message} (${done} of ${count} labels printed before it stopped.)`;
           throw error;
         }
-        toast(group.length > 1 ? `Printed ${count} labels.`
+        toast(batch ? `Printed ${count} labels.`
           : `Printed ${data.printed} on the ${data.side} roll.`, 'good');
         await loadState(); renderHistory();
       } catch (error) { fail(error); }
     };
     const open = el('button', 'btn tiny', 'Open');
-    open.setAttribute('data-tip', group.length > 1
+    open.setAttribute('data-tip', batch
       ? 'Opens the first label of this batch in the designer.'
       : 'Opens this label in the designer with every field already filled in.');
     const first = group[group.length - 1];
@@ -3401,13 +3472,23 @@ function batchKey(e) {
   const m = numbered(e);
   return m ? `n|${m[1]}|${where}` : null;
 }
+/* The same label printed again and again in a row is one row too (#1281):
+ * "Pantry ×3". Identical is decided from the label document itself, the
+ * stock and the roll, never from the title, and such a row's Print again
+ * prints the newest one once, so grouping it spends nothing extra. */
+const sameLabel = (a, b) => a.stock === b.stock && a.side === b.side
+  && JSON.stringify(a.label) === JSON.stringify(b.label);
 function historyGroups(entries) {
   const groups = [];
   for (const entry of entries) {
     const last = groups[groups.length - 1];
     const prev = last && last[last.length - 1];
     const key = batchKey(entry);
-    if (prev && key && key === batchKey(prev) && prev.at - entry.at <= BATCH_GAP_S)
+    if (prev && (last.repeat || last.length === 1) && sameLabel(prev, entry)) {
+      last.push(entry);
+      last.repeat = true;
+    } else if (prev && !last.repeat && key && key === batchKey(prev)
+               && prev.at - entry.at <= BATCH_GAP_S)
       last.push(entry);
     else groups.push([entry]);
   }
@@ -3418,7 +3499,7 @@ function historyGroups(entries) {
  * template's name otherwise. */
 function historyTitle(group) {
   const entry = group[0];
-  if (group.length < 2) return entry.title;
+  if (group.length < 2 || group.repeat) return entry.title;
   const parts = group.map(numbered);
   if (parts.every((m) => m && m[1] === parts[0][1])) {
     const nums = parts.map((m) => Number(m[2]));
@@ -3432,7 +3513,9 @@ function historyTitle(group) {
 }
 
 $('clearHistory').addEventListener('click', async () => {
-  if (!confirm('Clear every row? Reprint goes away with them.')) return;
+  const rows = S.history.length;
+  if (!confirm(`Clear all ${rows === 1 ? '1 print' : `${rows} prints`} from the history? `
+    + 'Print again goes away with them, and this cannot be undone.')) return;
   try { await del('/api/history'); await loadState(); renderHistory(); }
   catch (error) { fail(error); }
 });
