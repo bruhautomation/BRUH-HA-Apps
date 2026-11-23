@@ -50,6 +50,7 @@ Three rules:
 from __future__ import annotations
 
 import collections
+import datetime
 import hashlib
 import json
 import logging
@@ -72,19 +73,33 @@ MAX_LESSONS = 25
 WINDOW_S = 30 * 86400
 SNOOZE_S = 7 * 86400
 PASS_TIMEOUT_S = 600
+# A card is proposed for removal only when what it shows is gone: Home
+# Assistant no longer has any of its entities, or every one of them has been
+# unavailable for this long (#1262: a card whose device is off for a while is
+# a card the household keeps on purpose). The proposal says how long.
+DEAD_AFTER_S = 30 * 86400
+# What a suggestion rests on, said by the pass as a typed field (#1316): a
+# move or removal whose ground is how often things were pressed is never
+# made, because a card is glanced at and a control is kept for standby.
+GROUNDS = ("gone", "unavailable", "asked", "layout", "use")
 
 SCHEMA = {
     "type": "object",
     "required": ["suggestions", "lessons"],
     "properties": {
         "suggestions": {"type": "array", "maxItems": MAX_SUGGESTIONS, "items": {
-            "type": "object", "required": ["title", "why", "change", "action"], "additionalProperties": False,
+            "type": "object", "required": ["title", "why", "change", "action", "ground"], "additionalProperties": False,
             "properties": {
                 "title": {"type": "string", "description": "Under 60 characters, said as the change."},
                 "action": {"type": "string", "enum": list(ACTIONS),
                            "description": "What it does to what is on the page: add something, change "
                                           "a card in place, move (reorder) cards or sections, or remove "
                                           "(or hide) a card, group or section."},
+                "ground": {"type": "string", "enum": list(GROUNDS),
+                           "description": "What it rests on: what a card shows is gone from Home "
+                                          "Assistant, or unavailable for a long time; the household "
+                                          "asked for it; a design rule (layout); or how often things "
+                                          "were used (use)."},
                 "moves": {"type": "array", "items": {"type": "string"},
                           "description": "For a move: the id of every section whose place it changes."},
                 "why": {"type": "string", "description": "One sentence of evidence from the digest."},
@@ -143,9 +158,10 @@ def _similar(a: frozenset, b: frozenset) -> bool:
 # THAT card or section (`keeps` in the suggestions file), not only against the
 # proposal's words: the declined list stops the same sentence, and a model
 # asked again words the same removal differently. A card's keep holds while
-# the card's config is as it was when the person answered (a card they have
-# since edited is theirs to reconsider); a section's keep (its place, its
-# presence) is for good. A keep also stops a card being shown to the model as
+# the card shows what it showed when the person answered (#1262, #1316: a
+# No is for good, so renaming the card or changing an option does not undo
+# it; pointing it at another entity makes it another card); a section's keep
+# (its place, its presence) is for good. A keep also stops a card being shown to the model as
 # dead or unused, so it is not even asked about.
 _CHANGE = re.compile(r"\b(remov\w*|delet\w*|drop\w*|hid(?:e|ing)|hidden|mov(?:e|ing)|reorder\w*|"
                      r"re-?position\w*|re-?arrang\w*|swap\w*|demot\w*|collaps\w*|merg\w*|ungroup\w*)\b", re.I)
@@ -215,6 +231,19 @@ def _card_sig(card: dict) -> str:
     return _key(json.dumps({k: v for k, v in card.items() if k != "id"}, sort_keys=True, default=str))
 
 
+def card_entities(card: dict) -> list[str]:
+    """Every entity a card shows: its own and its list's."""
+    ents = [card.get("entity")] + list(card.get("entities") or [])
+    return [e for e in dict.fromkeys(ents) if isinstance(e, str) and "." in e]
+
+
+def _subject(card: dict) -> str:
+    """What a keep holds a card by: the entities it shows, or (for a card
+    that shows none, a note or a hosted card) its type and name."""
+    ents = card_entities(card)
+    return _key("|".join(sorted(ents)) if ents else f"{card.get('type')}|{card.get('name') or ''}")
+
+
 def _find(dash: dict, card_id: str = "", sec_id: str = ""):
     for fl in dash.get("floors") or []:
         for sec in fl.get("sections") or []:
@@ -249,7 +278,7 @@ def _keep(data: dict, item: dict, dash: dict, why: str, now: float) -> None:
     if card is not None:
         # And the section it sits in: a reorder of that section is a move of
         # this card, so it is not proposed while the keep holds.
-        keeps[f"card:{cid}"] = {"entity": card.get("entity") or "", "sig": _card_sig(card),
+        keeps[f"card:{cid}"] = {"entity": card.get("entity") or "", "subject": _subject(card),
                                 "section": _section_of(dash, cid),
                                 "title": item.get("title"), "why": why, "at": now}
     elif sid and not cid:
@@ -274,7 +303,9 @@ def kept_ids(data: dict, dash: dict) -> tuple[set, set]:
             secs.add(ident)
         elif kind == "card":
             card = _find(dash, card_id=ident)
-            if card is not None and v.get("sig") == _card_sig(card):
+            # A keep written before `subject` holds by the card's whole config.
+            if card is not None and (v.get("subject") == _subject(card) if v.get("subject")
+                                     else v.get("sig") == _card_sig(card)):
                 cards.add(ident)
                 where = _section_of(dash, ident)
                 if where:
@@ -358,17 +389,63 @@ def record_reverted(data: dict, dash: dict, now: float | None = None) -> bool:
 
 def proposals(rows: list, d: dict, dash: dict) -> list[dict]:
     """The pass's suggestions that may be made: not a move or removal whose
-    only ground is that nobody pressed it, and not the removal of a control.
+    only ground is how little something was pressed, not the removal of a
+    control, and not a removal of anything that still works. A removal
+    that may be made says, in Morph's words, what was measured.
     `add_suggestions` then drops what the household already refused or kept."""
-    return [{**r, "kind": "dashboard"} for r in rows or [] if isinstance(r, dict)
-            and not rests_on_disuse(r, d) and not removes_control(r, dash, d)]
+    out = []
+    for r in rows or []:
+        if not isinstance(r, dict) or rests_on_disuse(r, d) or removes_control(r, dash, d):
+            continue
+        if _action(r) == "remove":
+            why = removal_why(r, d)
+            if not why:
+                continue
+            r = {**r, "why": why}
+        out.append({**r, "kind": "dashboard"})
+    return out
+
+
+def removal_why(row: dict, d: dict) -> str:
+    """Why a card, or every card of a section, may be removed, from the
+    digest's live read of Home Assistant (states and the entity registry),
+    or "" when it may not: a removal is offered only for a card whose
+    entities are all gone or all unavailable for ``DEAD_AFTER_S`` (#1262,
+    #1316). A removal that names no card and no section names nothing that
+    was checked, so it is not made."""
+    dead = set(d.get("dead") or [])
+    cards = {c["id"]: c for c in d.get("cards") or []}
+    cid, sid = str(row.get("card") or ""), str(row.get("section") or "")
+    if cid:
+        about = [cards[cid]] if cid in cards else []
+    elif sid:
+        about = [c for c in cards.values() if c.get("section") == sid]
+    else:
+        about = []
+    if not about or any(c["id"] not in dead for c in about):
+        return ""
+    said = []
+    for c in about[:3]:
+        if c.get("missing"):
+            said.append(f"Home Assistant no longer has {c.get('label') or 'what this card shows'}.")
+        else:
+            lt = time.localtime(float(c.get("down_since") or 0))
+            said.append(f"{c.get('label') or 'What this card shows'} has been unavailable for "
+                        f"{c.get('down_days')} days, since {time.strftime('%b', lt)} {lt.tm_mday}, "
+                        "though Home Assistant still has it.")
+    if len(about) > 3:
+        said.append(f"And {len(about) - 3} more cards like it.")
+    return " ".join(said) + " Nothing is removed unless you say yes, and Undo puts it back."
 
 
 def rests_on_disuse(row: dict, d: dict) -> bool:
-    """A proposal to remove, hide or move something whose only ground is
-    that nobody pressed it. A card that is unavailable is another matter."""
+    """A proposal to remove, hide or move something whose ground is how
+    little it was pressed: said so by the pass (`ground`), or with nothing
+    else to rest on. A card that is unavailable is another matter."""
     if not _is_change(row):
         return False
+    if row.get("ground") == "use":
+        return True
     card = str(row.get("card") or "")
     if card:
         return card in set(d.get("never_used") or []) and card not in set(d.get("dead") or [])
@@ -684,7 +761,10 @@ def house_card_loaded(name: str, now: float | None = None) -> bool:
 
 CARD_RULES_HEADING = "## Custom card code"
 CARD_RULES_TITLE = "Check this house's own cards against Morph's card rules"
-_RULE_HEAD = re.compile(r"^- \*\*(.+?)\*\*", re.MULTILINE)
+# A bold sentence may wrap onto the bullet's next line: read on one line
+# only, the group-summary rule (and any other that wraps) was no rule at
+# all, so changing it never asked the house to recheck its cards (#1306).
+_RULE_HEAD = re.compile(r"^- \*\*(.+?)\*\*", re.MULTILINE | re.DOTALL)
 
 
 def card_rules(agents_text: str) -> list[str]:
@@ -1197,8 +1277,49 @@ def _bucket(hour: int) -> str:
             "afternoon" if hour < 18 else "evening" if hour < 23 else "night")
 
 
-def digest(dash: dict, now: float | None = None, states: dict | None = None) -> dict:
+def _when(iso) -> float:
+    """A Home Assistant timestamp in epoch seconds, or 0."""
+    try:
+        return datetime.datetime.fromisoformat(str(iso).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _is_down(st: dict | None) -> bool:
+    """Unavailable now: no state at all (a disabled entity the registry
+    still has) or `unavailable`. `unknown` is not: a button never pressed
+    and a sensor between readings are `unknown` and still work."""
+    return st is None or st.get("state") == "unavailable"
+
+
+def track_down(data: dict, dash: dict, states: dict | None, now: float | None = None) -> None:
+    """When each entity a card shows went away, kept across passes in the
+    suggestions file (`down_since`). Home Assistant's `last_changed` starts
+    again at every restart, so it only seeds the first sighting; an entity
+    seen working again starts over. With no live read nothing is changed."""
+    if not states:
+        return
     now = now or time.time()
+    down = data.get("down_since") if isinstance(data.get("down_since"), dict) else {}
+    shown = {e for fl in dash.get("floors") or [] for sec in fl.get("sections") or []
+             for g in sec.get("groups") or [] for c in g.get("cards") or [] for e in card_entities(c)}
+    out = {}
+    for e in shown:
+        st = states.get(e)
+        if _is_down(st):
+            seen = _when((st or {}).get("last_changed")) or now
+            out[e] = min(float(down.get(e) or now), seen, now)
+    data["down_since"] = out
+
+
+def digest(dash: dict, now: float | None = None, states: dict | None = None,
+           registry: dict | None = None, down_since: dict | None = None) -> dict:
+    """What the learning pass reads. ``states`` is the live read of Home
+    Assistant and ``registry`` its entity registry (entity id → name), the
+    two things a removal is checked against; ``down_since`` is
+    `track_down`'s record of when each entity went away."""
+    now = now or time.time()
+    down_since = down_since or {}
     rows = usage(now - WINDOW_S)
     by_card = collections.Counter()
     by_entity = collections.Counter()
@@ -1232,13 +1353,24 @@ def digest(dash: dict, now: float | None = None, states: dict | None = None) -> 
             for g in sec.get("groups") or []:
                 for c in g.get("cards") or []:
                     ent = c.get("entity") or ""
+                    ents = card_entities(c)
                     st = (states or {}).get(ent) if ent else None
-                    cards.append({"id": c["id"], "section": sec["id"], "type": c["type"],
-                                  "entity": ent,
-                                  "uses": by_card.get(c["id"], 0) + (by_entity.get(ent, 0) if ent else 0),
-                                  "unavailable": bool(st and st.get("state") in ("unavailable", "unknown"))
-                                                  or bool(ent and states and st is None),
-                                  "missing": bool(ent and states and st is None)})
+                    # Gone: Home Assistant has none of the card's entities,
+                    # in its states or its registry. Without a registry read
+                    # nothing is called gone: a disabled entity has no state.
+                    missing = bool(ents and states and registry
+                                   and all(e not in states and e not in registry for e in ents))
+                    down = bool(ents and states and all(_is_down(states.get(e)) for e in ents))
+                    row = {"id": c["id"], "section": sec["id"], "type": c["type"], "entity": ent,
+                           "uses": by_card.get(c["id"], 0) + (by_entity.get(ent, 0) if ent else 0),
+                           "unavailable": down, "missing": missing,
+                           "label": str(c.get("name") or ((st or {}).get("attributes") or {}).get("friendly_name")
+                                        or (registry or {}).get(ent) or "")[:80]}
+                    if down and not missing:
+                        # The card is dead since the last of its entities went.
+                        since = max(float(down_since.get(e) or now) for e in ents)
+                        row.update(down_since=since, down_days=int((now - since) // 86400))
+                    cards.append(row)
     out = outcomes(now - WINDOW_S)
     tells = [o for o in out if o.get("kind") == "tell"]
     undone = {o.get("id") for o in out if o.get("kind") == "undo"}
@@ -1261,7 +1393,9 @@ def digest(dash: dict, now: float | None = None, states: dict | None = None) -> 
         "days_with_use": len(days), "events": len(rows), "by_kind": dict(kinds), "log": log,
         "sections": order, "cards": cards,
         "never_used": [c["id"] for c in cards if not c["uses"]] if len(days) >= 7 and log["state"] == "ok" else [],
-        "dead": [c["id"] for c in cards if c["unavailable"]],
+        # What a removal may be proposed for (`removal_why`).
+        "dead": [c["id"] for c in cards if c["missing"]
+                 or (c["unavailable"] and now - c.get("down_since", now) >= DEAD_AFTER_S)],
         "missing": [c["id"] for c in cards if c["missing"]],
         "tells": shown,
         "suggestions": [{"title": o.get("title"), "verb": o.get("verb"), "note": o.get("note", "")}
@@ -1374,25 +1508,28 @@ def build_prompt(d: dict, dash_text: str, lessons, declined: dict,
         "Usage over the last 30 days (counts only):",
         json.dumps({k: d[k] for k in ("days_with_use", "events", "by_kind")}),
         *([(d.get("log") or {}).get("sentence")] if (d.get("log") or {}).get("sentence") else []),
-        "Never suggest moving, hiding or removing a card or section only because nobody pressed it:",
-        "a card is glanced at as people scroll by, and a control is wanted for standby however rarely",
-        "it is used. Never suggest removing or hiding a card that holds a control (lights, a lights",
-        "group, switches, locks, covers, fans, a thermostat, media, scenes), nor a group or section",
-        "with one in it, even while it is unavailable. What can go is a card with no control on it",
-        "that nobody looks at, or a card whose entity Home Assistant no longer has.",
-        "Say what each suggestion does in `action`, and for a move list every section it reorders",
-        "in `moves`.",
+        "Never suggest moving, hiding or removing a card or section, or moving it lower, because it",
+        "was pressed rarely or never: a card is glanced at as people scroll by, and a control is",
+        "wanted for standby however rarely it is used. Never suggest removing or hiding a card that",
+        "holds a control (lights, a lights group, switches, locks, covers, fans, a thermostat, media,",
+        "scenes), nor a group or section with one in it, even while it is unavailable. The only",
+        "cards that may be removed are those listed below as gone or long unavailable; the",
+        "household is asked first, and Morph says how long it has been unavailable.",
+        "Say what each suggestion does in `action`, what it rests on in `ground`, and for a move",
+        "list every section it reorders in `moves`.",
         "",
         "Sections in dashboard order, with how often each was used and when:",
         fit(d["sections"], 6000, "sections"),
         "",
-        "Cards that were used or are unavailable (id, section, type, entity, uses, unavailable);",
+        "Cards that were used or are unavailable (id, section, type, entity, uses, unavailable,",
+        "down_days: whole days every entity it shows has been unavailable);",
         "every other card is in the dashboard below:",
         fit(used, 8000, "cards"),
         "",
         f"Cards nobody has touched in a month: {d['never_used'][:40]}"
         + (f" (and {len(d['never_used']) - 40} more)" if len(d["never_used"]) > 40 else ""),
-        f"Cards whose entity is unavailable: {d['dead'][:40]}"
+        f"Cards that may be removed (Home Assistant no longer has what they show, or it has been "
+        f"unavailable for {DEAD_AFTER_S // 86400} days or more): {d['dead'][:40]}"
         + (f" (and {len(d['dead']) - 40} more)" if len(d["dead"]) > 40 else ""),
         "",
         "Changes people asked brAIn for, whether they were then UNDONE, and for an undone one what",
@@ -1423,9 +1560,9 @@ def build_prompt(d: dict, dash_text: str, lessons, declined: dict,
         "```yaml", store.clip_lines(dash_text, 16000, "this run cannot read the rest."), "```",
         "",
         f"Answer with at most {MAX_SUGGESTIONS} dashboard suggestions, each backed by the evidence",
-        "above (a section used every evening placed below ones nobody opens; a card that has been",
-        "unavailable for weeks; something the household keeps asking for by hand that could be one",
-        "tap on the dashboard). Fewer is better than weak; none is a fine answer. `change` is the",
+        "above (a card whose entity Home Assistant no longer has; something the household keeps",
+        "asking for by hand that could be one tap on the dashboard; a part that breaks a design",
+        "rule). Fewer is better than weak; none is a fine answer. `change` is the",
         "exact instruction you would want to be handed.",
         "",
         "Then revise the COMPLETE list of lessons: keep what still holds and drop what the evidence",
@@ -1461,7 +1598,8 @@ def due(now: float | None = None) -> bool:
     return now - float(state().get("last_pass") or 0) >= s["learning_hours"] * 3600
 
 
-async def run_pass(states: dict | None = None, *, pressed: bool = False) -> dict:
+async def run_pass(states: dict | None = None, *, pressed: bool = False,
+                   registry: dict | None = None) -> dict:
     """One learning pass. Never raises; answers what happened."""
     import asyncio
 
@@ -1470,10 +1608,12 @@ async def run_pass(states: dict | None = None, *, pressed: bool = False) -> dict
         _set_state(last_note=brain.status()["sentence"])
         return {"skipped": "brain"}
     dash, _, text = store.read()
-    d = digest(dash, states=states)
     data = _load()
-    if record_reverted(data, dash) | record_declined_moves(data, dash):
-        _save(data)
+    track_down(data, dash, states)
+    record_reverted(data, dash)
+    record_declined_moves(data, dash)
+    _save(data)
+    d = digest(dash, states=states, registry=registry, down_since=data.get("down_since"))
     kept_cards, kept_secs = kept_ids(data, dash)
     # What the household chose to keep is not shown as dead or unused.
     for k in ("dead", "never_used"):
