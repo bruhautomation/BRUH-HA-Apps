@@ -18,6 +18,8 @@ import logging
 import os
 import re
 
+import house_words
+
 from ._util import (DAY, House, age_days, domain_of, evidence_for,
                     join_names, listify,
                     target_offline_error,
@@ -416,7 +418,9 @@ _SERVICE_VERBS = {"turn_on": "turn on", "turn_off": "turn off",
                   "set_temperature": "set the temperature of",
                   "set_hvac_mode": "set the mode of", "play_media": "play on",
                   "select_option": "set", "set_value": "set",
-                  "press": "press", "reload": "reload"}
+                  "press": "press", "reload": "reload",
+                  "media_pause": "pause", "media_play": "play",
+                  "media_stop": "stop"}
 
 
 def _config_for(house: House, item: dict) -> dict | None:
@@ -458,13 +462,71 @@ def _walk_step(cfg, path: str):
     return node
 
 
-def _targets_of(house: House, step: dict) -> list[str]:
+_TEMPLATE_RE = re.compile(r"\{\{|\{%")
+_LABEL_CALL_RE = re.compile(
+    r"\b(label|area)_entities\(\s*['\"]([^'\"]+)['\"]\s*\)")
+
+
+def _templated(value) -> bool:
+    return isinstance(value, str) and bool(_TEMPLATE_RE.search(value))
+
+
+def _target_ids(step: dict) -> tuple[list[str], list[str]]:
+    """(the entity ids a step names, the templates it works them out
+    with). A template is never an id: pasted as one it read "turn off the
+    {{ states “light | rejectattr(…" on the card (#1330)."""
     ids: list[str] = []
+    templates: list[str] = []
     for holder in (step.get("target"), step.get("data"), step):
         if isinstance(holder, dict):
-            ids += [e for e in listify(holder.get("entity_id"))
-                    if isinstance(e, str) and "." in e]
-    return [house.label(e) for e in dict.fromkeys(ids)]
+            for e in listify(holder.get("entity_id")):
+                if _templated(e):
+                    templates.append(e)
+                elif isinstance(e, str) and "." in e:
+                    ids.append(e)
+    return list(dict.fromkeys(ids)), templates
+
+
+def _template_words(domain: str, templates: list[str]) -> str:
+    """What a templated target picks, said plainly: "every light not
+    labelled always on", "every light in the kitchen", or "every light it
+    picks when it runs" when the template filters by something else."""
+    noun = domain.replace("_", " ")
+    for tpl in templates:
+        m = _LABEL_CALL_RE.search(tpl)
+        if not m:
+            continue
+        what = m.group(2).replace("_", " ")
+        negated = bool(re.search(r"\breject(?:attr)?\b|\bnot in\b",
+                                 tpl[:m.start()]))
+        if m.group(1) == "label":
+            return (f"every {noun} {'not ' if negated else ''}labelled "
+                    f"{what}")
+        return f"every {noun} {'outside' if negated else 'in'} the {what}"
+    return f"every {noun} it picks when it runs"
+
+
+def _doing(house: House, node) -> str:
+    """What a service step does ("turn on Kitchen"), or "" when the step
+    is not a call this can say."""
+    if not isinstance(node, dict):
+        return ""
+    service = str(node.get("action") or node.get("service") or "")
+    if "." not in service:
+        return ""
+    domain, _, verb = service.partition(".")
+    ids, templates = _target_ids(node)
+    names = [house.label(e) for e in ids]
+    if domain == "notify":
+        return "send a notification"
+    if domain in ("script", "scene") and not names and not templates:
+        return f"run the {domain} “{verb.replace('_', ' ')}”"
+    words = _SERVICE_VERBS.get(verb, verb.replace("_", " "))
+    if templates:
+        names.append(_template_words(domain, templates))
+    if names:
+        return f"{words} {join_names(names, limit=3)}"
+    return f"{words} ({domain.replace('_', ' ')})"
 
 
 def step_words(house: House, item: dict, path: str) -> str:
@@ -473,18 +535,9 @@ def step_words(house: House, item: dict, path: str) -> str:
     node = _walk_step(_config_for(house, item), path)
     if not isinstance(node, dict):
         return ""
-    service = str(node.get("action") or node.get("service") or "")
-    if "." in service:
-        domain, _, verb = service.partition(".")
-        names = _targets_of(house, node)
-        if domain == "notify":
-            return "when it tried to send a notification"
-        if domain in ("script", "scene") and not names:
-            return f"when it tried to run the {domain} “{verb.replace('_', ' ')}”"
-        words = _SERVICE_VERBS.get(verb, verb.replace("_", " "))
-        if names:
-            return f"when it tried to {words} {join_names(names, limit=3)}"
-        return f"when it tried to {words} ({domain.replace('_', ' ')})"
+    doing = _doing(house, node)
+    if doing:
+        return f"when it tried to {doing}"
     if "delay" in node or "wait_template" in node or "wait_for_trigger" in node:
         return "while it was waiting"
     if "choose" in node or "if" in node:
@@ -498,10 +551,118 @@ def step_words(house: House, item: dict, path: str) -> str:
     return ""
 
 
+def _step_candidates(house: House, node: dict) -> list[str]:
+    """The entities a call step could have acted on: the ids it names, and
+    for a templated target every entity of the call's domain."""
+    ids, templates = _target_ids(node)
+    service = str(node.get("action") or node.get("service") or "")
+    domain = service.partition(".")[0] if "." in service else ""
+    if templates and domain:
+        ids += [e for e in sorted(house.states) if e.startswith(domain + ".")
+                and e not in ids]
+    return ids
+
+
+def _who_failed(house: House, node, error: str) -> str:
+    """The one entity of a failed step its error is about, or "".
+
+    Read off the error's own words, against the step's own targets only:
+    an entity id it writes out, an address that entity answers on, or its
+    name or its device's name. Two or none is "" (never a guess)."""
+    if not isinstance(node, dict):
+        return ""
+    text = str(error or "")
+    low = " " + text.lower() + " "
+    hits = []
+    for eid in _step_candidates(house, node):
+        attrs = (house.states.get(eid) or {}).get("attributes") or {}
+        names = {house.name(eid)}
+        dev = house.device_of(eid)
+        if dev:
+            names.add(house.device_name(dev))
+        addresses = {str(attrs.get(k) or "") for k in
+                     ("ip", "ip_address", "host")} - {""}
+        if (re.search(r"(?<![\w.])" + re.escape(eid) + r"(?![\w])", text)
+                or any(re.search(r"(?<![\d.])" + re.escape(a) + r"(?![\d])",
+                                 text) for a in addresses)
+                or any(len(n) >= 4 and re.search(
+                    r"(?<![\w])" + re.escape(n.lower()) + r"(?![\w])", low)
+                    for n in names if n)):
+            hits.append(eid)
+    return hits[0] if len(hits) == 1 else ""
+
+
+def _steps_after(cfg, path: str) -> list:
+    """The steps a run stopped at ``path`` never reached in the same list
+    (none when the step carries `continue_on_error`)."""
+    parts = [p for p in str(path or "").split("/") if p]
+    if not parts or not parts[-1].isdigit():
+        return []
+    parent = _walk_step(cfg, "/".join(parts[:-1]))
+    i = int(parts[-1])
+    if not isinstance(parent, list) or i >= len(parent):
+        return []
+    node = parent[i]
+    if isinstance(node, dict) and node.get("continue_on_error"):
+        return []
+    return parent[i + 1:]
+
+
+def stopped_words(house: House, item: dict, path: str, error: str) -> dict:
+    """What the failed step's error says about who stopped the run and what
+    the run left undone (#1330): ``{who, entity, said}``, empty when the
+    error names none of the step's targets."""
+    cfg = _config_for(house, item)
+    node = _walk_step(cfg, path)
+    eid = _who_failed(house, node, error)
+    if not eid:
+        return {}
+    name = house.label(eid)
+    ids, templates = _target_ids(node)
+    said = f"The error came from {name}."
+    if templates or len(ids) > 1:
+        # Core sends a call to every target of a step together and raises
+        # the first error once they have all answered; which ones a
+        # template picked is not in the trace, so they are not counted.
+        said += (" The step's other targets were still sent it, but the "
+                 "run stopped there")
+    else:
+        said += " The run stopped there"
+    later = _steps_after(cfg, path)
+    after = [d for d in (_doing(house, n) for n in later) if d]
+    if later and len(after) == len(later) and len(after) <= 3:
+        said += (", so these did not happen: " + "; ".join(after) + ".")
+    elif later:
+        said += (f", so the {len(later)} step{'s' if len(later) > 1 else ''}"
+                 " after it did not run.")
+    else:
+        said += "."
+    return {"who": name, "entity": eid, "said": said}
+
+
 def _error_key(error) -> str:
     """Two errors are one root cause when they say the same thing: case,
     spacing and the numbers in them folded."""
     return re.sub(r"\d+", "#", " ".join(str(error or "").lower().split()))
+
+
+def _trace_fix(item: dict, stopped: dict, failed: int, runs: int) -> str:
+    """The step a failed run's card proposes, or why there is none yet."""
+    if failed == 1 and runs > 1:
+        other = ("its other run" if runs == 2
+                 else f"its other {runs - 1} runs")
+        return (f"Nothing to change yet, because {other} went through: "
+                + (f"{stopped['who']} not answering once"
+                   if stopped else "one thing not answering once")
+                + " is the likelier cause, and brAIn says so again if it "
+                "keeps failing.")
+    if stopped:
+        return (f"Bring {stopped['who']} back so it answers, or let Fix "
+                "mark that step to carry on past an error, so the rest of "
+                f"{item['alias']} still runs when {stopped['who']} does "
+                "not answer.")
+    return ("Fix proposes the change that stops this error, for you to "
+            "approve, or edit the automation in Home Assistant.")
 
 
 def trace_error(snap: dict, now: float) -> list[dict]:
@@ -579,18 +740,25 @@ def trace_error(snap: dict, now: float) -> list[dict]:
                                         f["failed"])
             error, ids = _plain_error(house, last.get("error"))
             step = step_words(house, item, last.get("last_step"))
+            stopped = stopped_words(house, item, last.get("last_step"),
+                                    str(last.get("error") or ""))
+            # The cause in plain words first, then Core's own (#1318).
+            meaning = house_words.known_log_meaning(error)
             tally = (f" {failed} of its last {len(rows)} runs ended in an "
-                     "error." if len(rows) > 1 else "")
+                     "error." if len(rows) > 1 else
+                     " It is the only run Home Assistant still keeps.")
             row = {
                 "text": f"{_label_of(item)} failed the last time it ran",
                 "detail": (f"On {when(_trace_start(last))}"
                            + (f", {step}" if step else "")
-                           + (f": {error[:300].rstrip('.')}." if error else
+                           + (f": {meaning} (Home Assistant said: "
+                              f"{error[:300].rstrip('.')})." if meaning and
+                              error else
+                              f": {error[:300].rstrip('.')}." if error else
                               ": the run ended in an error.")
+                           + (f" {stopped['said']}" if stopped else "")
                            + tally),
-                "fix": "Fix proposes the change that stops this error, for "
-                       "you to approve, or edit the automation in Home "
-                       "Assistant.",
+                "fix": _trace_fix(item, stopped, failed, len(rows)),
                 # A single failure among clean runs is most often something
                 # transient (a device that did not answer once).
                 "severity": ("warning" if failed == 1 and len(rows) > 1

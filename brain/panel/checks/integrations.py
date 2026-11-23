@@ -229,10 +229,14 @@ def _integration_name(snap: dict, domain: str, logger: str) -> str:
     return f"The {logger.split('.')[0]} library"
 
 
-def _flood_fix(house, device: str, entity: str) -> str:
-    """The state of the thing a flood's line names, as brAIn read it."""
+def _flood_fix(house, device: str, entity: str, who: str = "") -> str:
+    """The state of the thing a flood's line names, as brAIn read it, or
+    why there is nothing to do yet when it names nothing (#1318)."""
     if not device or not entity:
-        return ""
+        return ("Nothing to do in the house yet, because the lines name no "
+                "device or address brAIn knows: the trouble is inside "
+                f"{who or 'the integration'} or the service it talks to, "
+                "and brAIn says so again if it is still logging it.")
     state = str((house.states.get(entity) or {}).get("state") or "")
     if state in ("unavailable", "unknown", ""):
         return (f"Every one of these lines names {device}, and it reads "
@@ -310,10 +314,10 @@ def log_flood(snap: dict, now: float) -> list[dict]:
             "text": (f"{spell_integration(domain) if domain else who} is "
                      "logging the same error over and over"),
             "detail": detail,
-            # What brAIn read about what the line names, or nothing: a
-            # stock "read the log, reload it" sent people to the log brAIn
-            # had already read.
-            "fix": _flood_fix(house, device, entity),
+            # What brAIn read about what the line names, or why there is
+            # nothing to do yet: a stock "read the log, reload it" sent
+            # people to the log brAIn had already read.
+            "fix": _flood_fix(house, device, entity, who),
             "severity": "warning",
             "fixable": False,
             "entity_id": entity,

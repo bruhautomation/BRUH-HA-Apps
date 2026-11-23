@@ -2,6 +2,15 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.3
+
+### Fixed
+
+- A service reminder that reads impossibly far overdue ("overdue by 12,000 miles", "due 12,000 miles ago", a negative distance left) is no longer filed as an overdue warning however it is worded. Once you mark the reminder's setting wrong, no other check or card reports that reminder overdue again (1325).
+- A script that failed while turning off a group of lights now says which lights it meant in plain words instead of showing the raw template, names the one device whose error stopped it, and says which later steps never ran (1330).
+- Failure findings lead with what went wrong in plain words, say how often it happened, and either propose a specific change or say why there is nothing to change yet. A log-flood finding no longer has an empty "what to do" line (1318).
+- A dehumidifier in a space you said is unconditioned (an attic, a crawlspace) is no longer reported as stopped or left off while the air there is damp (1261).
+
 ## 5.5.2
 
 ### Fixed
