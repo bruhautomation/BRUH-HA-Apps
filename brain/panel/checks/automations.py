@@ -2319,11 +2319,14 @@ def second_responder(snap: dict, now: float) -> list[dict]:
             if not house.should_report(item["entity_id"], "auto.second_responder"):
                 continue
             out.append({
-                # brAIn's own words say "brAIn", and every surface says the
-                # house's name for it there (`personality.speak`, #1267):
-                # a name written in here was a second name beside the
-                # detail's, and a stale one after a rename.
-                "text": f"Two things answer as brAIn in the game: {_label(kind, item)}",
+                # The key, as it has always been filed: a Wrong, a done or
+                # a mute on it is matched on these words.
+                "text": f"Two things answer as {name} in the game: {_label(kind, item)}",
+                # What is shown over it (#1267): brAIn's own words say
+                # "brAIn", and every surface says the house's name there
+                # (`personality.speak`), so the headline and the detail
+                # never name the assistant twice, nor a stale name.
+                "headline": f"Two things answer as brAIn in the game: {_label(kind, item)}",
                 "detail": (f"{_sentence(how)}, while brAIn already answers every family "
                            "line in the game itself. Players get two answers that can "
                            f"disagree — one says it can't do something and the other does "
