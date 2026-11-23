@@ -2,6 +2,15 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.7
+
+### Fixed
+
+- "You keep undoing what an automation does" names the automation's light once per device, and instead of asking you to work it out it names the one condition brAIn put on the Proposals tab ("Stand Evening lights down between 22:00 and 23:00 on weekdays"), which Approve adds and Dismiss leaves alone. When no change can be offered, it says the condition in words and why (1266).
+- A space you said nothing heats (a crawlspace, an attic) is no longer judged as a heated room: no "drifting down" finding for its thermometer, no "never reaches its setting", and the heat model marks it as unconditioned. A freezer in an unheated garage is still watched (1317).
+- The frost warning says how far the low is from freezing, and a space the heat model shows staying safe through the night moves to one "nothing needed" line instead of being listed as at risk. The freeze warning itself is unchanged (1312).
+- A frost warning ends on its own once the cold night has passed, even when the forecast could not be read the next morning. The freeze warning still clears only when its check runs (1265).
+
 ## 5.5.6
 
 ### Fixed
