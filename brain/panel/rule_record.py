@@ -196,8 +196,10 @@ def measured_only(row, now: float) -> dict | None:
     return None
 
 
-def resident_stand_down_reason(row: dict) -> str:
-    """Why a Resident case was set aside, in the household's words."""
+def resident_stand_down_reason(row: dict, about: str = "") -> str:
+    """Why a Resident case was set aside, in the household's words.
+    ``about`` is the entity or topic the household marked Wrong that this
+    case shares (#1320): the hold is said as being about that."""
     wrong = int((row or {}).get("wrong") or 0)
     total = int((row or {}).get("total") or 0)
     streak = int((row or {}).get("streak") or 0)
@@ -205,9 +207,14 @@ def resident_stand_down_reason(row: dict) -> str:
               if streak >= HOLD_STREAK else
               f"You marked {wrong} of the {total} brAIn reports you answered "
               "wrong")
-    return (f"{record}, so brAIn now raises one only when a measurement "
-            "backs it (what is normal here, a room's physics or an "
-            "automation's trace). This one had none, so brAIn set it "
+    if about:
+        record += f", among them one about {about}"
+        what = f"about {about} "
+    else:
+        what = ""
+    return (f"{record}, so brAIn now raises one {what}only when a "
+            "measurement backs it (what is normal here, a room's physics or "
+            "an automation's trace). This one had none, so brAIn set it "
             "aside. That lifts once you agree with one of brAIn's reports.")
 
 

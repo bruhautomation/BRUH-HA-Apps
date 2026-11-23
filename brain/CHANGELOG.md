@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.6
+
+### Fixed
+
+- Marking brAIn's own reports wrong now sets aside only later reports about the same thing (the same device, or the same kind of reading), never every report. A report about food, water, heat, a door or a lock is never set aside this way, and a report that is shown never says it was set aside (1320).
+- The check for automations whose trigger is unavailable skips a trigger on a device you said is not in use, and an automation Home Assistant no longer runs. The finding names each trigger and how long it has been unavailable (1331).
+- An automation error you already explained, such as one reaching a lamp switched off at the lamp, is not raised again when the same failure comes back in different words while that device is unavailable (1260).
+
 ## 5.5.5
 
 ### Fixed
