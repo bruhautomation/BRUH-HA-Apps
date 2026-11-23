@@ -506,10 +506,6 @@ def _template_words(domain: str, templates: list[str]) -> str:
     return f"every {noun} it picks when it runs"
 
 
-def _targets_of(house: House, step: dict) -> list[str]:
-    return [house.label(e) for e in _target_ids(step)[0]]
-
-
 def _doing(house: House, node) -> str:
     """What a service step does ("turn on Kitchen"), or "" when the step
     is not a call this can say."""
