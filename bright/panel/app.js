@@ -691,32 +691,7 @@
       floor.appendChild(dot);
     }
     const labelsFit = placeLabels(floor);
-    const list = $("mapList");
-    list.innerHTML = "";
-    for (const fixture of mapData.fixtures) {
-      const row = document.createElement("div");
-      row.className = "row" + (fixture.id === selectedFixture ? " selected" : "");
-      row.dataset.id = fixture.id;
-      row.innerHTML = '<div class="row-main"><strong></strong>' +
-        '<span class="muted small"></span></div>' +
-        '<div class="row-actions"><select class="role-pick"></select>' +
-        '<button class="btn small btn-remove" data-act="remove">Remove</button></div>';
-      row.querySelector("strong").textContent = fixture.label;
-      row.querySelector(".muted").textContent = fixturePlace(fixture);
-      row.querySelector(".role-pick").setAttribute("aria-label",
-        "Role of " + fixture.label);
-      row.querySelector("[data-act=remove]").setAttribute("aria-label",
-        "Remove " + fixture.label);
-      const pick = row.querySelector(".role-pick");
-      for (const role of mapData.roles) {
-        const option = document.createElement("option");
-        option.value = role;
-        option.textContent = role;
-        option.selected = role === fixture.role;
-        pick.appendChild(option);
-      }
-      list.appendChild(row);
-    }
+    renderMapList();
     renderSelection();
     return labelsFit;
   }
@@ -727,17 +702,106 @@
     }
   });
 
-  // Where a light is, in words: its zone, and whether it answers. The id
-  // is the store's key, not something a person reads.
+  // Where a light is, in words: its zone, whether it has been put where it
+  // is in the room, and whether it answers. The id is the store's key, not
+  // something a person reads.
   function fixturePlace(fixture) {
     const bits = [fixture.zone ? "Zone: " + fixture.zone : "No zone"];
+    if (!isPlaced(fixture)) bits.push("not placed yet");
     if (fixture.reachable === false) bits.push("not answering");
     return bits.join(" · ");
   }
 
-  // Remove sits beside the role picker on every row, one slip from it, so
-  // the first press only asks: the button says what a second press does,
-  // and goes back to itself if nobody presses again.
+  // "Add every discovered bulb" puts each new light on the exact middle of
+  // the floor (`light_map.merge_lifx`), and a drag never lands a light on
+  // exactly 0.5, 0.5 — so a light still there is one nobody has placed.
+  function isPlaced(fixture) {
+    return !(fixture.x === 0.5 && fixture.y === 0.5);
+  }
+
+  // Every light, grouped by zone, with the lights nobody has placed yet
+  // first in each group and a search once the list is long. A row is the
+  // light's name, what is unusual about it, and its role; Remove lives on
+  // the selection above the map (tap a row to get there), so sixty rows do
+  // not carry sixty red buttons one slip from the role picker.
+  const MAP_SEARCH_FROM = 9;
+  function renderMapList() {
+    const list = $("mapList");
+    const search = $("mapSearch");
+    const fixtures = mapData.fixtures;
+    const unplaced = fixtures.filter((f) => !isPlaced(f)).length;
+    const zoned = fixtures.filter((f) => f.zone).length;
+    const verdict = [];
+    if (fixtures.length) {
+      verdict.push(fixtures.length + (fixtures.length === 1 ? " light" : " lights"));
+      verdict.push(unplaced ? unplaced + " not placed yet (in the pile in the " +
+        "middle of the map)" : "all placed");
+      if (zoned < fixtures.length) {
+        verdict.push((fixtures.length - zoned) + " with no zone");
+      }
+    }
+    $("mapListSummary").textContent = verdict.join(" · ");
+    search.hidden = fixtures.length < MAP_SEARCH_FROM;
+    const wanted = search.hidden ? "" : search.value.trim().toLowerCase();
+    const shown = fixtures.filter((f) => !wanted ||
+      String(f.label).toLowerCase().includes(wanted) ||
+      String(f.zone || "").toLowerCase().includes(wanted));
+    const groups = new Map();
+    for (const fixture of shown) {
+      const key = fixture.zone || "";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(fixture);
+    }
+    const order = Array.from(groups.keys()).sort((x, y) =>
+      (x === "") - (y === "") || x.localeCompare(y));
+    list.innerHTML = "";
+    if (!shown.length && fixtures.length) {
+      const none = document.createElement("p");
+      none.className = "muted";
+      none.textContent = "No light or zone matches \u201c" + search.value.trim() + "\u201d.";
+      list.appendChild(none);
+    }
+    for (const key of order) {
+      const members = groups.get(key).slice().sort((x, y) =>
+        isPlaced(x) - isPlaced(y));
+      const head = document.createElement("h4");
+      head.className = "map-zone-head";
+      head.textContent = (key || "No zone") + " · " + members.length;
+      list.appendChild(head);
+      for (const fixture of members) {
+        const row = document.createElement("div");
+        row.className = "row slim" + (fixture.id === selectedFixture ? " selected" : "");
+        row.dataset.id = fixture.id;
+        row.innerHTML = '<div class="row-main"><strong></strong>' +
+          '<span class="muted small"></span></div>' +
+          '<div class="row-actions"><select class="role-pick"></select></div>';
+        row.querySelector("strong").textContent = fixture.label;
+        // The zone is the heading above; the row says only what is unusual.
+        const odd = [];
+        if (!isPlaced(fixture)) odd.push("Not placed yet");
+        if (fixture.reachable === false) odd.push("not answering");
+        const note = row.querySelector(".muted");
+        if (odd.length) note.textContent = odd.join(" · "); else note.remove();
+        row.querySelector(".role-pick").setAttribute("aria-label",
+          "Role of " + fixture.label);
+        const pick = row.querySelector(".role-pick");
+        for (const role of mapData.roles) {
+          const option = document.createElement("option");
+          option.value = role;
+          option.textContent = role;
+          option.selected = role === fixture.role;
+          pick.appendChild(option);
+        }
+        list.appendChild(row);
+      }
+    }
+  }
+
+  $("mapSearch").addEventListener("input", renderMapList);
+
+  // Remove is one slip from the zone field on the selection bar, so the
+  // first press only asks: the button says what a second press does, and
+  // goes back to itself if nobody presses again.
   function armRemove(button) {
     if (button.dataset.armed) return true;
     const was = button.textContent;
@@ -853,6 +917,9 @@
       openCluster = null;
       selectedFixture = row.dataset.id;
       renderMap();
+      // The light's controls (zone, Remove) are on the bar above the map,
+      // which on a long list is far off screen from the row just tapped.
+      $("mapSelection").scrollIntoView({ block: "start" });
     }
   });
 
@@ -865,12 +932,6 @@
       fixture.role = pick.value;
       saveFixture(fixture);
     }
-  });
-
-  $("mapList").addEventListener("click", (event) => {
-    const button = event.target.closest('button[data-act="remove"]');
-    if (!button) return;
-    if (armRemove(button)) removeFixture(button.closest(".row").dataset.id);
   });
 
   $("btnImportLifx").addEventListener("click", async () => {
@@ -970,7 +1031,7 @@
         row.querySelector(".rtt").textContent = (show
           ? describeShow(show)
           : "No show yet") + (copies.has(track.hash)
-          ? " · same song as " + copies.get(track.hash) : "");
+          ? " · " + copyNote(track, copies.get(track.hash), lib.folders) : "");
         if (show) {
           const facts = document.createElement("p");
           facts.className = "muted menu-info";
@@ -1245,6 +1306,26 @@
     syncCount();
   }
 
+  // The bulbs the last beat test ran on, kept in this browser only: it is
+  // a convenience for the next test, never the record of anything, and a
+  // browser that cannot store it starts with none ticked.
+  const SYNC_LAST_KEY = "bright.syncBulbs";
+  function syncLastUsed() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SYNC_LAST_KEY) || "[]");
+      return new Set(Array.isArray(saved) ? saved : []);
+    } catch (error) {
+      return new Set();
+    }
+  }
+  function syncRemember(serials) {
+    try {
+      localStorage.setItem(SYNC_LAST_KEY, JSON.stringify(serials));
+    } catch (error) {
+      // Nothing to do: the next visit starts with none ticked.
+    }
+  }
+
   $("btnSyncAll").addEventListener("click", () => syncSetAll(true));
   $("btnSyncNone").addEventListener("click", () => syncSetAll(false));
   $("syncBulbs").addEventListener("change", syncCount);
@@ -1264,6 +1345,10 @@
       const was = new Map(
         Array.from(bulbs.querySelectorAll("input[data-serial]"))
           .map((input) => [input.dataset.serial, input.checked]));
+      // The first time the list is drawn, it starts from the bulbs this
+      // browser last tested with, or from none: every bulb ticked is the
+      // whole house pulsing, bedrooms included, from one press of Start.
+      const last = was.size ? null : syncLastUsed();
       bulbs.innerHTML = "";
       for (const device of devices.devices || []) {
         const label = document.createElement("label");
@@ -1271,7 +1356,7 @@
         const check = document.createElement("input");
         check.type = "checkbox";
         check.checked = was.has(device.serial)
-          ? was.get(device.serial) : true;
+          ? was.get(device.serial) : !!(last && last.has(device.serial));
         check.dataset.serial = device.serial;
         const text = document.createElement("span");
         text.textContent = (device.label || device.serial);
@@ -1324,6 +1409,7 @@
       status.textContent = "Tick at least one bulb — or press All.";
       return;
     }
+    syncRemember(serials);
     try {
       const result = await post("api/show/metronome", {
         track_hash: hash, media_player: player,
@@ -1363,7 +1449,8 @@
     // it has beats and a duration — but it was heard by an older
     // analyzer, and a person looking at a show that ignores the melody
     // deserves to see the reason on the track rather than guess at it.
-    return (s.bpm ? s.bpm + " BPM" : "?") +
+    return (s.duration ? clock(s.duration) + " · " : "") +
+      (s.bpm ? s.bpm + " BPM" : "?") +
       " · " + (s.sections || 0) + " sections · " + (s.drops || 0) + " drops" +
       (s.chords ? " · " + s.chords + " chord changes" : "") +
       (s.lyrics ? " · lyrics ✓" : "") +
@@ -1407,23 +1494,39 @@
     return String(track.name).replace(/_+/g, " ").trim() || track.name;
   }
 
+  // A length as a person reads it on a player: 3:41, or 1:02:05.
+  function clock(seconds) {
+    const total = Math.round(seconds);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor(total / 60) % 60;
+    const s = String(total % 60).padStart(2, "0");
+    return h ? h + ":" + String(m).padStart(2, "0") + ":" + s : m + ":" + s;
+  }
+
   // Tracks that are clearly the same song under two files, decided from
-  // what the files say about themselves and what the analysis measured —
-  // never from the file names. Two tracks are marked when their artist and
-  // title tags both match (letters and digits only, any case), or, when
-  // either has no such tags, when they are the same length to a quarter of
-  // a second (two encodes of one recording differ by hundredths), the same
-  // tempo to half a percent, and heard with the same number of sections
-  // and drops. Tempo and length alone are not enough: real libraries bunch
-  // at 120 and 128 bpm and at three to four minutes. The library already
-  // merges byte-identical files. Returns hash -> the name of the one it
-  // matches.
+  // what the files say about themselves and what the analysis measured.
+  // Two tracks are marked when
+  //   * their artist and title tags both match (letters and digits only,
+  //     any case), or
+  //   * either has no such tags, and they are the same length to a quarter
+  //     of a second (two encodes of one recording differ by hundredths),
+  //     the same tempo to half a percent, and heard with the same number of
+  //     sections and drops — tempo and length alone are not enough: real
+  //     libraries bunch at 120 and 128 bpm and at three to four minutes; or
+  //   * neither has such tags, their file names are the same once tidied,
+  //     and the analyzer heard the same tempo (within 1.5%). This is the
+  //     short clip of a song kept beside the full song in another folder:
+  //     a clip is cut from the recording, so it keeps the tempo and loses
+  //     the length. A shared name alone is not enough ("01 Intro" is in
+  //     every album); a shared name at a different tempo is another song.
+  // The library already merges byte-identical files. Returns hash -> the
+  // track it matches.
   function findCopies(tracks) {
     const result = new Map();
     const mark = (a, b) => {
       if (a.hash === b.hash) return;
-      if (!result.has(a.hash)) result.set(a.hash, displayName(b));
-      if (!result.has(b.hash)) result.set(b.hash, displayName(a));
+      if (!result.has(a.hash)) result.set(a.hash, b);
+      if (!result.has(b.hash)) result.set(b.hash, a);
     };
     const norm = (text) => String(text).normalize("NFKC").toLowerCase()
       .replace(/[^\p{L}\p{M}\p{N}]+/gu, "");
@@ -1453,16 +1556,57 @@
         }
       }
     }
+    const named = new Map();
+    for (const t of timed) {
+      if (tagKey(t)) continue;
+      const key = norm(t.name);
+      if (!key) continue;
+      if (!named.has(key)) named.set(key, []);
+      named.get(key).push(t);
+    }
+    for (const group of named.values()) {
+      for (let i = 0; i < group.length; i++) {
+        for (let j = i + 1; j < group.length; j++) {
+          if (Math.abs(group[i].summary.bpm / group[j].summary.bpm - 1) < 0.015) {
+            mark(group[i], group[j]);
+          }
+        }
+      }
+    }
     return result;
   }
 
+  // What a row says about its twin, so the two rows of a pair read
+  // differently: which one is the short clip and which the full song,
+  // with the other one's length and folder, never only its name (the two
+  // usually share it). `folders` is the library's list when the caller
+  // has it; without it the twin's own folder name is used.
+  function copyNote(track, twin, folders) {
+    const where = trackPlace(twin, folders || []);
+    const mine = (track.summary || {}).duration;
+    const theirs = (twin.summary || {}).duration;
+    if (mine && theirs && mine < theirs * 0.8) {
+      return "Likely a clip of the full song in " + where +
+        " (" + clock(theirs) + ")";
+    }
+    if (mine && theirs && theirs < mine * 0.8) {
+      return "Full song · a " + clock(theirs) + " clip of it is in " + where;
+    }
+    const same = displayName(twin) === displayName(track);
+    return "Likely the same song as " +
+      (same ? "the one in " + where : displayName(twin) + " in " + where);
+  }
+
   // The folders as one line that says whether anything needs doing, with
-  // the rows a tap away. A folder that holds music and a folder that is
-  // gone each get a row with one status; a folder with nothing in it is not
-  // a problem, so all of those share one plain line with no buttons. The
-  // warning names what to do about the missing folder where that folder
-  // actually is: Remove for one ticked here, the add-on's Configuration for
-  // one set there (the panel cannot take that one off the list).
+  // the rows a tap away. A folder that holds music gets a row with its
+  // count. A folder that is gone is a warning only while nothing else holds
+  // music: once another folder does, BRight plays from that one and the
+  // missing folder needs nothing, so it sits on the quiet line with the
+  // empty ones (a missing folder ticked here keeps its row, for Remove).
+  // The warning names what to do about the missing folder where that
+  // folder actually is: Remove for one ticked here, the add-on's
+  // Configuration for one set there (the panel cannot take that one off
+  // the list).
   const LEGACY_FOLDER = "brigt";
   const isLegacyFolder = (folder) =>
     (folder.path.split("/").filter(Boolean).pop() || "").toLowerCase() ===
@@ -1480,33 +1624,51 @@
     const plural = (n, one, many) => n + " " + (n === 1 ? one : many);
     const details = document.createElement("details");
     details.className = "info-toggle folder-summary";
-    details.open = missing.length > 0;
     const line = document.createElement("summary");
-    let missingWords = "";
-    if (missing.length === 1) {
-      missingWords = missing[0].path + " is missing — " + (fromOptions(missing[0])
-        ? "change it in the add-on's Configuration" : "remove it below");
-    } else if (missing.length) {
-      missingWords = missing.length + " folders are missing — see below";
-    }
+    const words = document.createElement("span");
     if (!tracks.length) {
-      line.textContent = "No music found" +
+      let missingWords = "";
+      if (missing.length === 1) {
+        missingWords = missing[0].path + " is missing — " +
+          (fromOptions(missing[0]) ? "change it in the add-on's Configuration"
+                                   : "remove it below");
+      } else if (missing.length) {
+        missingWords = missing.length + " folders are missing — see below";
+      }
+      details.open = missing.length > 0;
+      words.textContent = "No music found" +
         (missingWords ? " · ⚠ " + missingWords : "");
     } else {
-      let verdict = "nothing to do";
-      if (missingWords) verdict = "⚠ " + missingWords;
-      line.textContent = plural(tracks.length, "track", "tracks") + " in " +
-        plural(holding.length, "folder", "folders") + " — " + verdict;
+      words.textContent = plural(tracks.length, "track", "tracks") + " in " +
+        plural(holding.length, "folder", "folders") + " — nothing to do";
     }
+    // The fold says what it holds in words; an arrow alone is a control
+    // nobody can name.
+    const more = document.createElement("span");
+    more.className = "fold-label";
+    line.appendChild(words);
+    line.appendChild(more);
     details.appendChild(line);
-    for (const folder of holding.concat(missing)) {
+    const quietMissing = tracks.length ? missing.filter(fromOptions) : [];
+    const rows = holding.concat(missing.filter((f) => !quietMissing.includes(f)));
+    for (const folder of rows) {
       details.appendChild(folderRow(folder, counts.get(folder)));
+    }
+    for (const folder of quietMissing) {
+      const quiet = document.createElement("p");
+      quiet.className = "muted folder-unused";
+      quiet.textContent = folder.path + " does not exist. Nothing needs it " +
+        "while the folders above hold music; to stop looking there, change " +
+        "it in the add-on's Configuration.";
+      details.appendChild(quiet);
     }
     if (unused.length) {
       const quiet = document.createElement("p");
       quiet.className = "muted folder-unused";
       const names = unused.map((f) => f.path +
-        (isLegacyFolder(f) ? " (BRight's earlier name)" : "")).join(", ");
+        (isLegacyFolder(f) ? " (made by BRight under its earlier name, " +
+          "BRigt, for its calibration sound, which is not listed as a song)"
+          : "")).join(", ");
       const them = unused.length === 1 ? "it" : "them";
       const ways = [];
       if (unused.some((f) => !fromOptions(f))) {
@@ -1539,8 +1701,8 @@
     status.className = "row-note";
     if (folder.exists) {
       status.textContent = "Found, " + count + (count === 1 ? " track" : " tracks") +
-        (isLegacyFolder(folder) ? " · the add-on's earlier name (BRigt); " +
-          "moving the music to /media/music is tidier" : "") +
+        (isLegacyFolder(folder) ? " · made by BRight under its earlier " +
+          "name (BRigt); the music in it plays as it is" : "") +
         (fromOptions(folder) ? " · set in the add-on's Configuration" : "");
     } else {
       status.textContent = fromOptions(folder)
@@ -1605,7 +1767,7 @@
           "Folder: " + trackPlace(track, folders);
         const twin = copies.get(track.hash);
         const mark = row.querySelector(".track-copy");
-        if (twin) mark.textContent = "Same song as " + twin;
+        if (twin) mark.textContent = copyNote(track, twin, folders);
         else mark.remove();
         list.appendChild(row);
       }
@@ -4802,7 +4964,7 @@
         if (!track.show) bits.push("no show yet · written while the party runs");
         if (track.stale) bits.push("analysed by an older BRight");
         if (copies.has(track.hash)) {
-          bits.push("same song as " + copies.get(track.hash));
+          bits.push(copyNote(track, copies.get(track.hash), lib.folders));
         }
         note.textContent = bits.join(" · ");
         if (bits.length) main.appendChild(note);

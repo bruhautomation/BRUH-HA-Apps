@@ -307,6 +307,7 @@ select { max-width: 100%; min-width: 0; }
 /* The selected light, named, with the two things you would want to do to it
    — so the map and the list below are one thing rather than two. */
 .map-selection {
+  scroll-margin-top: var(--sp-4);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1234,7 +1235,10 @@ body.mn-open .foot { display: none; }
 .party-save { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-3); margin: 0; }
 .party-save input { width: 100%; }
 .menu-info { margin: 2px var(--sp-1) var(--sp-1); font-size: var(--fs-body); overflow-wrap: anywhere; }
-.folder-summary > summary::after { content: "▾"; margin-left: var(--sp-2); }
+.folder-summary > summary { flex-wrap: wrap; gap: 0 var(--sp-2); }
+.folder-summary .fold-label::after { content: "Show folders"; color: var(--azure); }
+.folder-summary[open] .fold-label::after { content: "Hide folders"; }
+.folder-unused { margin: var(--sp-2) 0 0; }
 
 /* A class rule beats the touch floor above, so the two textareas that set
    their own size say it again here, after them: iPhone Safari zooms the
@@ -1253,7 +1257,9 @@ body.mn-open .foot { display: none; }
    as the one thing on the row that takes something away. */
 #mapList .row-actions { align-items: center; }
 .btn-remove { color: var(--bad); border-color: var(--bad); background: transparent; }
-#mapList .btn-remove { margin-left: var(--sp-4); }
+.map-search { width: 100%; margin-bottom: var(--sp-2); }
+.map-zone-head { font-size: var(--fs-body); line-height: var(--lh-body); color: var(--muted); margin: var(--sp-3) 0 var(--sp-1); }
+#mapListSummary { margin: 0 0 var(--sp-2); }
 .btn-remove[data-armed] { background: var(--bad); color: #fff; }
 .map-add { display: flex; flex-direction: column; gap: var(--sp-3); }
 .map-add h4 { margin: 0; }

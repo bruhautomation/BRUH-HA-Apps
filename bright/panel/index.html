@@ -97,8 +97,8 @@
         <button id="btnSyncStop" class="btn" hidden>Stop &amp; restore</button>
       </div>
       <div class="demo-controls">
-        <span class="muted small">Which bulbs pulse — untick the bedroom
-          before testing in the lounge.</span>
+        <span class="muted small">Which bulbs pulse — tick the ones in the
+          room you are testing in.</span>
         <button id="btnSyncAll" class="btn small">All</button>
         <button id="btnSyncNone" class="btn small">None</button>
         <span id="syncCount" class="muted small"></span>
@@ -167,6 +167,12 @@
       <div class="card-head">
         <h3>Every light</h3>
       </div>
+      <p class="muted small">A zone groups lights, usually a room, so an
+        effect can light just the kitchen or a chase can go room to room;
+        a light with no zone still plays in every show.</p>
+      <p id="mapListSummary" class="small"></p>
+      <input type="search" id="mapSearch" class="map-search" hidden
+             placeholder="Find a light or zone" aria-label="Find a light or zone">
       <div id="mapList" class="list"></div>
     </div>
   </section>

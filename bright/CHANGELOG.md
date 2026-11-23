@@ -5,6 +5,15 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.24.1
+
+### Fixed
+
+- Library, Shows and Party show each song's length, and a short clip and the full song it was cut from are marked as a pair ("Likely a clip of the full song in music"), even without tags. Nothing is moved or deleted (1285).
+- The music folder line warns about a missing folder only while no folder has music, explains the folder BRight made under its earlier name, keeps its calibration sound out of the song lists, and says "Show folders" instead of a bare ▾ (1286).
+- The Light Map list says what a zone does, counts the lights not yet placed, groups lights by zone with the unplaced first, and has a search box. Remove is on the selection bar, where it asks twice, instead of on every row (1287).
+- Test mode starts with the bulbs this browser last tested with, or none, instead of every light in the house (1288).
+
 ## 0.24.0
 
 ### Changed
