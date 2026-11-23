@@ -1802,16 +1802,29 @@ def zha_unseen(snap: dict, now: float) -> list[dict]:
     # To Do's words for it, from the devices and the job, never cut out of
     # the fix below (`network.todo_words`, #879).
     todo_text, todo_line = network.todo_words(list(by_kind), by_kind)
+    # The step for what each one is (#1326): a plugged-in router silent
+    # for a week has lost its power, never its battery.
+    steps = []
+    if "zigbee_mains" in by_kind:
+        steps.append("A plugged-in device this quiet has usually lost its "
+                     "power: check the socket or wall switch it is on.")
+    if "zigbee" in by_kind:
+        steps.append("A battery device this quiet has usually run its "
+                     "battery down or dropped off the mesh — press its "
+                     "button to wake it. If it does not come back, re-pair "
+                     "it near the coordinator, then move it back.")
     return [{
         "text": "Zigbee devices have stopped checking in",
+        # One device is named in its own headline, with how long (#1326);
+        # the text stays the key whatever the list holds.
+        **({"headline": f"{first} has not checked in for "
+                        f"{numfmt.count(int(longest), 'day')}"}
+           if len(rows) == 1 else {}),
         "detail": counted_names([r[1] for r in rows])
                   + f". The quietest is {first}, last seen "
                     f"{when(max(0.0, now - longest * 86400))} "
                     f"({numfmt.count(int(longest), 'day')} ago).",
-        "fix": "A battery device this quiet has usually run its battery "
-               "down or dropped off the mesh — press its button to wake "
-               "it. If it does not come back, re-pair it near the "
-               "coordinator, then move it back.",
+        "fix": " ".join(steps),
         "todo_text": todo_text,
         "todo_line": todo_line,
         "severity": "warning",

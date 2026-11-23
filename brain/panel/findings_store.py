@@ -690,6 +690,18 @@ def _outside_view(row: dict, assistant: str) -> dict:
     return out
 
 
+def _spoken(row: dict, assistant: str) -> dict:
+    """A mirrored row's words with brAIn called what the house calls it
+    (#1267): the Repairs dialog and the To-do item say the chosen name in
+    their own lines, and a detail saying "brAIn" beside them was a second
+    name. `ts` is every reader's key; the stored row is untouched."""
+    out = dict(row)
+    for key in ("text", "claim", "detail", "fix"):
+        if isinstance(out.get(key), str):
+            out[key] = personality.speak(out[key], assistant)
+    return out
+
+
 def _publish_state(items: list[dict]) -> None:
     """Mirror a summary of the live list onto the shared volume.
 
@@ -706,11 +718,12 @@ def _publish_state(items: list[dict]) -> None:
     if not STATE_FILE.parent.parent.is_dir():
         return
     now = time.time()
+    assistant = personality.assistant_name()
     # What leaves the panel reads as the card does (#774, #791): no id,
     # path or code name, never "an internal name". `ts` is the key every
     # reader there holds; the stored row is untouched.
-    shaped = [{**s, **shown_words(s)} for s in (_shape(e) for e in items)
-              if s["text"]]
+    shaped = [_spoken({**s, **shown_words(s)}, assistant)
+              for s in (_shape(e) for e in items) if s["text"]]
     shaped.sort(key=lambda f: f["ts"], reverse=True)
     live = [s for s in shaped
             if s["status"] in LIVE_STATUSES and not is_snoozed(s, now)]
@@ -731,7 +744,6 @@ def _publish_state(items: list[dict]) -> None:
     waiting = [s for s in shaped if triage.waiting_too_long(s, now)]
     open_rows = [s for s in live if s["status"] in UNSETTLED_STATUSES] + waiting
     queue = _queue_now(now)
-    assistant = personality.assistant_name()
     try:
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         atomic_write.write_json(STATE_FILE, {
@@ -1011,6 +1023,21 @@ def _plainly(text, entry: dict, files: bool = True,
         figures=figures)
 
 
+def plain_said(text, step: bool = False) -> str:
+    """One sentence-bearing field a model wrote outside a finding (an
+    insight card's title, summary or next step) in the display pass's plain
+    words (#1313): no path, id, voice id, hex code or build string, what it
+    took out left behind. A measurement keeps its figure. Text the pass
+    would empty comes back as it was."""
+    if not isinstance(text, str) or not text:
+        return text
+    said = _plainly(house_words.one_name(text), {}, figures=False)
+    if said == text:
+        return text
+    said = textclip.finished(said, step=step)
+    return said or text
+
+
 def shown_words(entry: dict) -> dict:
     """The fields of a model-written row a surface shows, in plain words
     (#774, #791): no path, line number, id, hex code, build string or
@@ -1028,6 +1055,13 @@ def shown_words(entry: dict) -> dict:
     # the row's Technical line, never lost and never in the sentence.
     technical = clean_technical(entry.get("technical"))
     before = list(technical)
+    # A check's headline says what it found now (#1326); its `text` is the
+    # key it was filed under and is never changed.
+    headline = entry.get("headline")
+    if checked and isinstance(headline, str) and headline.strip() \
+            and headline != entry.get("text"):
+        entry = {**entry, "text": headline}
+        out["text"] = headline
     for key in ("text", "claim", "detail", "fix"):
         said = entry.get(key)
         if isinstance(said, str) and said:
@@ -1814,6 +1848,12 @@ def _case_fields(entry: dict) -> dict:
     todo = clean_todo_text(entry.get("todo_text"))
     if todo:
         out["todo_text"] = todo
+    # A check's headline from what it found (#1326), shown over its `text`,
+    # which stays the row's key: a row about several devices keeps one key
+    # while what they were found to be (silent, dropping) changes.
+    headline = " ".join(str(entry.get("headline") or "").split())
+    if headline and str(entry.get("source") or "").startswith("check:"):
+        out["headline"] = textclip.clip(headline, MAX_TEXT)
     line = clean_todo_line(entry.get("todo_line"))
     if line:
         out["todo_line"] = line
@@ -5283,7 +5323,7 @@ def refresh_details(objs: list[dict]) -> int:
         # (`checks.network.todo_words`): a chore filed from this row names
         # what is still quiet, not what was quiet when it was first filed.
         if not cur.get("fix_by") and str(cur.get("source") or "").startswith("check:"):
-            for key in ("todo_text", "todo_line"):
+            for key in ("todo_text", "todo_line", "headline"):
                 if entry.get(key) and cur.get(key) != entry[key]:
                     cur[key] = entry[key]
                     changed += 1

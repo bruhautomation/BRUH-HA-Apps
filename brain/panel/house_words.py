@@ -894,7 +894,8 @@ _VOICE_SAID_RE = re.compile(r"(?:\b(?:the\s+)?voice:?\s+)?" + _VOICE_ID)
 # that read as a date, said as the month it was built.
 _DATE_BUILD_RE = re.compile(
     r"(?<![\w.\-/])((?:19|20)\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])"
-    r"(?![\w.\-/])")
+    # A full stop that ends the sentence is not part of a version (#1313).
+    r"(?![\w\-/]|\.[\w\-/])")
 _MONTHS = ("January", "February", "March", "April", "May", "June", "July",
            "August", "September", "October", "November", "December")
 # A signal strength in dBm ("-84 dBm"): a number a radio engineer reads and
@@ -1124,8 +1125,9 @@ def technical(text: str, files: bool = True,
     out = re.sub(r"\(\s*\)", "", out).strip()
     # "the x.py file" is "a configuration file", not "the a configuration
     # file file".
-    out = re.sub(r"\b(?:the|a|an|its|that)\s+(a (?:configuration|database|log) "
-                 r"file)(?:\s+file)?\b", r"\1", out, flags=re.I)
+    # And "The file /config/x.md says" is "A configuration file says".
+    out = re.sub(r"\b(?:the|a|an|its|that)(?:\s+file)?\s+(a (?:configuration|"
+                 r"database|log) file)(?:\s+file)?\b", r"\1", out, flags=re.I)
     out = re.sub(r"\b(a (?:configuration|database|log) file) file\b", r"\1",
                  out)
     # "the recorder database x.db" is "the recorder database file".

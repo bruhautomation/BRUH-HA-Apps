@@ -20,8 +20,8 @@ import re
 
 import house_words
 
-from ._util import (DAY, House, age_days, domain_of, evidence_for,
-                    join_names, listify,
+from ._util import (DAY, House, age_days, domain_of, entity_list,
+                    evidence_for, join_names, listify, merged_names,
                     target_offline_error,
                     parse_ts, walk, when)
 
@@ -189,8 +189,7 @@ def dead_ref(snap: dict, now: float) -> list[dict]:
             out.append({
                 "text": f"{_label(kind, item)} refers to entities that do "
                         "not exist",
-                "detail": "Missing: "
-                          + join_names([house.label(r) for r in dead]) + ". "
+                "detail": "Missing: " + entity_list(house, dead) + ". "
                           + ("It cannot work as written." if kind != "Scene"
                              else "Those parts of the scene do nothing."),
                 "fix": "Point it at the entity that replaced "
@@ -1667,6 +1666,13 @@ def _pattern_sentence(shape: dict | None) -> str:
             + f" ({shape['events']} times over {shape['days']} days).")
 
 
+def _names_said(names: list[str]) -> str:
+    """Every name, numbered ones merged ("Porch light 1 and 2"), while
+    they fit a sentence: never "and N more" for a list that fits (#1334)."""
+    merged = merged_names(names)
+    return join_names(merged, limit=max(1, len(merged)))
+
+
 def _overridden_names(house: House, entities: list[str]) -> list[str]:
     """What was put back, one name a device (#1266).
 
@@ -1878,7 +1884,7 @@ def overridden(snap: dict, now: float) -> list[dict]:
             # live in `detail` and the store can refresh them in place.
             "text": f"You keep undoing what '{name}' does",
             "detail": (lead + ", on "
-                       + join_names(_overridden_names(house, entities))
+                       + _names_said(_overridden_names(house, entities))
                        + f". The last was {when(last)}."
                        + _pattern_sentence(shape)
                        + " The automation is working; it is doing the wrong "
@@ -2313,7 +2319,14 @@ def second_responder(snap: dict, now: float) -> list[dict]:
             if not house.should_report(item["entity_id"], "auto.second_responder"):
                 continue
             out.append({
+                # The key, as it has always been filed: a Wrong, a done or
+                # a mute on it is matched on these words.
                 "text": f"Two things answer as {name} in the game: {_label(kind, item)}",
+                # What is shown over it (#1267): brAIn's own words say
+                # "brAIn", and every surface says the house's name there
+                # (`personality.speak`), so the headline and the detail
+                # never name the assistant twice, nor a stale name.
+                "headline": f"Two things answer as brAIn in the game: {_label(kind, item)}",
                 "detail": (f"{_sentence(how)}, while brAIn already answers every family "
                            "line in the game itself. Players get two answers that can "
                            f"disagree — one says it can't do something and the other does "

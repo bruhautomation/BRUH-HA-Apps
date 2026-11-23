@@ -10513,6 +10513,14 @@ def _insights_listing() -> list[dict]:
             headline=_card_entities({"title": ins.get("title")}))
         if twin is not None and twin.get("ts"):
             ins["told_in"] = f"f:{twin['ts']}"
+        # A card's words read the finding's display pass (#1313): no path,
+        # id, voice id or build string, and one name for brAIn — on every
+        # card, a stored one too. The file is not touched; the entities
+        # and the twin above were read off the words as written.
+        for key in ("title", "summary", "next"):
+            if isinstance(ins.get(key), str):
+                ins[key] = findings_store.plain_said(ins[key],
+                                                     step=key == "next")
         # The heading an asked card carries in place of "Custom". A
         # category card is headed by its category, which the panel
         # reads live off the definition so a rename shows at once.

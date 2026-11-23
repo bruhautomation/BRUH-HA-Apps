@@ -10,7 +10,7 @@ entities is still one row and not forty.
 """
 from __future__ import annotations
 
-from ._util import House, evidence_for, join_names, walk
+from ._util import House, entity_list, evidence_for, join_names, walk
 
 
 def _dashboard_refs(house: House, config) -> set[str]:
@@ -68,8 +68,9 @@ def dead_ref(snap: dict, now: float) -> list[dict]:
         quoted = [f"'{t}'" for t in titles]
         out.append({
             "text": text[:1].upper() + text[1:],
-            "detail": ("Missing: " + join_names([house.label(r) for r in dead], 8,
-                                                budget=240)
+            # One label a device, numbered copies merged, every one said
+            # while they fit (#1334).
+            "detail": ("Missing: " + entity_list(house, dead, budget=240)
                        + ". Shown on "
                        + ("the dashboard " if len(titles) == 1 else "the dashboards ")
                        + join_names(quoted, 8, budget=150) + ", where "
