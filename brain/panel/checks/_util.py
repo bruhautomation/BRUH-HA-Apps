@@ -1560,7 +1560,7 @@ def merged_names(labels: Iterable[str]) -> list[str]:
 def grouped_labels(house: "House", entity_ids: Iterable[str]) -> list[str]:
     """What a finding calls a set of entities, one label a thing (#1334).
 
-    Entities of one device are that device ("7 sensors on Pixel Watch"),
+    Entities of one device are that device ("7 sensors on Kitchen tablet"),
     an id Home Assistant numbered for a collision (`light.porch_2` beside
     `light.porch`) is the entity it copies, and names that differ only by
     a number are one name with its numbers ("Porch light 1, 2 and 3",

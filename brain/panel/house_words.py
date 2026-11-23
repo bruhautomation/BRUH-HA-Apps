@@ -890,7 +890,7 @@ _VOICE_ID_RE = re.compile(_VOICE_ID)
 _VOICE_ASIDE_RE = re.compile(
     r"\s*(?:,\s*|\(\s*)(?:the\s+|its\s+)?voice:?\s+" + _VOICE_ID + r"\s*\)?")
 _VOICE_SAID_RE = re.compile(r"(?:\b(?:the\s+)?voice:?\s+)?" + _VOICE_ID)
-# A build stamped with its date ("Z-Stack 20210708", #1133): eight digits
+# A build stamped with its date ("Z-Stack 20190101", #1133): eight digits
 # that read as a date, said as the month it was built.
 _DATE_BUILD_RE = re.compile(
     r"(?<![\w.\-/])((?:19|20)\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])"
