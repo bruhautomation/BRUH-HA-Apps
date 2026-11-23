@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.2
+
+### Fixed
+
+- A print's name whose characters this screen cannot draw no longer ends in empty brackets ("Clicker ()"), on the card and on the Printers tab. The stored file name is unchanged (1275).
+- The Files list shows a small "Slices on print" tag beside Print instead of a bold line on every unsliced row, and the same model kept as STL, 3MF and STEP shows its format on each row even when the names differ in case or punctuation (1276).
+- The card's Failure detection row agrees with itself: a check-mark shield when all is well ("On · waiting for a print"), and a warning shield with the reason when the last look saw nothing. It fits on one line on a phone (1277).
+- A warning that the last print could not be watched folds to one quiet note once no print is running. Its only button turns the chamber light on for the next print, and only when the light is off (1278).
+- The look marks on the layer line no longer overlap when a print has more looks than fit (1255).
+
 ## 0.5.1
 
 ### Fixed
