@@ -134,7 +134,7 @@ FINDING_VOICE = (
     "WHAT A FINDING OWES THE READER: (1) The title and the first sentence "
     "of \"detail\" are ONE plain sentence on what is affected or at risk "
     "NOW, as you would tell a neighbour (\"The hall sensor has not reported "
-    "for 9 days\", never \"Z-Stack 20190101 shows 34 remembered children "
+    "for 9 days\", never \"Z-Stack 20210708 shows 34 remembered children "
     "and 8 failed routes\"). No log line, build or firmware number, "
     "integration domain name (\"Zigbee\", \"the Hue app\"), table count, "
     "hex code, path, entity id or dBm figure; one sentence on what it means "
