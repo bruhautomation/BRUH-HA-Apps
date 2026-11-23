@@ -526,6 +526,8 @@ fieldset.trays { border: 1px solid var(--line); border-radius: var(--control-rad
 .pill.done .dot { background: var(--done); }
 .pill.done { background: color-mix(in srgb, var(--live) 18%, var(--surface)); color: var(--ink); }
 .pill.ghost { font-weight: 500; }
+/* The file's format, on rows that share a name with another format. */
+.pill.kind { font-weight: 700; letter-spacing: .04em; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
 @keyframes pulse { 50% { box-shadow: 0 0 0 6px transparent; } }
 @media (prefers-reduced-motion: reduce) { .pill.live .dot { animation: none; } }
 .phead { display: flex; align-items: center; gap: var(--sp-2); }
@@ -671,6 +673,7 @@ fieldset.trays { border: 1px solid var(--line); border-radius: var(--control-rad
 .fchip i { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--line); }
 .factions { display: flex; gap: var(--sp-2); align-items: center; flex: none; }
 .frow .hint { margin: 2px 0; }
+.fwill { white-space: nowrap; }
 .jobline { margin: var(--sp-1) 0; font-size: var(--fs-body); }
 .jobline.failed { color: var(--bad); }
 

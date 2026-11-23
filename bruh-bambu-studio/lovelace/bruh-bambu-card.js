@@ -88,7 +88,8 @@ function drawable(ch) {
 
 // The name a print file is shown by: without its folder, its extension, a
 // slice's time stamp or a download's " (1)", with underscores as spaces so it
-// wraps between words, and only what this device can draw. The panel's
+// wraps between words, and only what this device can draw (brackets left
+// holding nothing go with what they held). The panel's
 // app.js has the same function (this file loads on its own and imports
 // nothing); `fallback` is said when nothing of the name can be drawn.
 function printName(name, fallback) {
@@ -97,6 +98,7 @@ function printName(name, fallback) {
     .replace(/-\d{8}-\d{6}$/, '').replace(/\s*\(\d+\)$/, '')
     .replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
   const shown = /^[\u0000-\u052f]*$/.test(text) ? text : [...text].filter(drawable).join('')
+    .replace(/[(（[［{【「『〔《〈]\s*[)）\]］}】」』〕》〉]/g, ' ')
     .replace(/[\s_\-.·]{2,}/g, ' ').replace(/^[\s_\-.·]+|[\s_\-.·]+$/g, '');
   return shown || fallback;
 }
@@ -185,14 +187,21 @@ const css = (morph) => `
   .watch .line { display: flex; align-items: center; gap: 6px; }
   .watch svg { width: 16px; height: 16px; fill: currentColor; flex: none; }
   .watch.bad svg { color: var(--b-bad); }
+  .watch.quiet.warn { background: none; }
+  .watch.quiet.warn svg { color: var(--b-warn); }
+  .watch.quiet .line { min-width: 0; }
+  .watch.quiet .line span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .watch b { font-weight: 700; }
   .watch .say { font-size: 14px; font-weight: 600; }
   .watch .answer { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
   .watch .answer .muted { flex: 1 1 120px; }
 `;
 
-const SHIELD = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12,1L3,5V11C3,16.55 6.84,21.74 12,23C17.16,21.74 21,16.55 21,11V5L12,1M11,7H13V13H11V7M11,15H13V17H11V15Z"/></svg>';
-const WATCH_WORDS = { idle: 'Ready for the next print', watching: 'Watching', looking: 'brAIn is looking',
+// The shield with a mark while all is well, with "!" when something is wrong
+// or the camera could not see: the icon says what the words say.
+const SHIELD_ALERT = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12,1L3,5V11C3,16.55 6.84,21.74 12,23C17.16,21.74 21,16.55 21,11V5L12,1M11,7H13V13H11V7M11,15H13V17H11V15Z"/></svg>';
+const SHIELD_OK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12,1L3,5V11C3,16.55 6.84,21.74 12,23C17.16,21.74 21,16.55 21,11V5L12,1M10,17L6,13L7.41,11.59L10,14.17L16.59,7.58L18,9L10,17Z"/></svg>';
+const WATCH_WORDS = { idle: 'On · waiting for a print', watching: 'Watching', looking: 'brAIn is looking',
   basic: 'Watching (without brAIn)', warning: 'Warning', failure: 'Print failed', covered: 'Camera covered — not checking',
   dark: 'Too dark to see — not checking', frozen: 'Camera frozen — not checking', no_camera: 'No camera — not checking' };
 
@@ -255,11 +264,17 @@ class BruhBambuCard extends HTMLElement {
         : `<button data-alert="pause" data-id="${id}" data-a="${esc(a.alert_id)}">Pause print</button>
            <button data-alert="ignore" data-id="${id}" data-a="${esc(a.alert_id)}">Ignore</button>`;
       // What brAIn saw first, then the answers beside the detection's state.
-      return `<div class="watch ${tone}"><div class="line">${SHIELD}<div class="say">${esc(a.alert)}</div></div><div class="answer"><span class="muted">Failure detection · ${esc(WATCH_WORDS[d.state] || d.state)}</span>${buttons}</div></div>`;
+      return `<div class="watch ${tone}"><div class="line">${SHIELD_ALERT}<div class="say">${esc(a.alert)}</div></div><div class="answer"><span class="muted">Failure detection · ${esc(WATCH_WORDS[d.state] || d.state)}</span>${buttons}</div></div>`;
     }
     // Nothing to answer: one quiet line, and the next look where it is known.
-    const next = d.state === 'watching' && a.next_look_layer ? ` · next look at layer ${esc(a.next_look_layer)}` : '';
-    return `<div class="watch quiet ${tone}"><div class="line">${SHIELD}<b>Failure detection</b><span>${esc(WATCH_WORDS[d.state] || d.state)}${next}</span></div></div>`;
+    // A last look that saw nothing is said with its reason (the light, when
+    // it is off), under the warning shield.
+    const blind = a.last_look_decision === 'blind';
+    const words = blind && !tone
+      ? `Last look saw nothing${p.attrs.chamber_light === false ? ' · light off' : ''}`
+      : `${WATCH_WORDS[d.state] || d.state}${d.state === 'watching' && a.next_look_layer ? ` · next look at layer ${a.next_look_layer}` : ''}`;
+    const warned = tone || blind;
+    return `<div class="watch quiet ${tone || (blind ? 'warn' : '')}"><div class="line" title="${esc(a.sentence || words)}">${warned ? SHIELD_ALERT : SHIELD_OK}<b>Failure detection</b><span>${esc(words)}</span></div></div>`;
   }
 
   _cameraOf(p) {
