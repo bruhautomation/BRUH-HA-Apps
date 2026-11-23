@@ -72,6 +72,8 @@ import os
 import re
 import time
 
+import numfmt
+
 log = logging.getLogger("brain.thermal")
 
 STORE = os.environ.get("BRAIN_THERMAL_FILE", "/data/thermal.json")
@@ -868,7 +870,7 @@ def equipment_jumps(rows: list, tz: dt.tzinfo, unit: str) -> str:
     rises = sorted(rise for rise, _hour in jumps)
     typical = rises[len(rises) // 2]
     hour = int(round(centre / 60.0)) % 24
-    return (f"it jumps by about {typical:.0f}{unit} within an hour or two "
+    return (f"it jumps by about {numfmt.temperature(typical, unit, delta=True, whole=True)} within an hour or two "
             f"at about {hour:02d}:00 on most days — faster than any room "
             "warms, so it measures equipment, not the room")
 
@@ -1040,10 +1042,10 @@ def rank_outdoor(states: dict, areas: dict | None = None,
             gap_c = _celsius_delta(gap, unit)
             if gap_c <= TRACKS_WEATHER_C:
                 score += 3
-                reasons.append(f"reads within {gap:.1f}{unit} of {w_eid}")
+                reasons.append(f"reads within {numfmt.temperature(gap, unit, delta=True)} of {w_eid}")
             elif gap_c >= FAR_FROM_WEATHER_C:
                 score -= 3
-                reasons.append(f"reads {gap:.1f}{unit} away from {w_eid}")
+                reasons.append(f"reads {numfmt.temperature(gap, unit, delta=True)} away from {w_eid}")
         if ruled_out and not named:
             # An indoor thermometer that never claimed to be outdoors is
             # not a candidate anybody needs to see refused.
@@ -1207,7 +1209,7 @@ def _settled_outdoor(choice: dict, rows: dict, tz: dt.tzinfo) -> dict:
             continue
         if swing >= swing_c:
             c["score"] += 2
-            c["reasons"].append(f"swings about {swing:.1f}{unit} a day, "
+            c["reasons"].append(f"swings about {numfmt.temperature(swing, unit, delta=True)} a day, "
                                 "as outside air does")
         elif swing < flat_c:
             c["score"] -= 2
@@ -1306,7 +1308,7 @@ def room_candidates_why(states: dict, outdoor: str, unit: str,
             continue
         if not in_room_band(value, unit):
             if room:
-                why[eid] = (f"it read {value:g}{unit}, outside the range a "
+                why[eid] = (f"it read {numfmt.temperature(value, unit)}, outside the range a "
                             "room people live in sits in")
             continue
         if not areas.get(eid):

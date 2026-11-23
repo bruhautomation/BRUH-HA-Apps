@@ -118,6 +118,18 @@ def sources(prefs: dict | None) -> tuple[list[str], list[str]]:
     return energy, cost
 
 
+def device_sources(prefs: dict | None) -> list[str]:
+    """The statistic ids of the devices the Energy dashboard measures one
+    by one (`device_consumption`), for where the week's energy went
+    (`weekly.energy_share`, #1324). Read off the same preferences."""
+    out: list[str] = []
+    for dev in (prefs or {}).get("device_consumption") or []:
+        stat = dev.get("stat_consumption") if isinstance(dev, dict) else None
+        if isinstance(stat, str) and stat and stat not in out:
+            out.append(stat)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # The arithmetic
 # ---------------------------------------------------------------------------
@@ -299,6 +311,8 @@ async def week(session, now: float | None = None,
 
     prefs = await preferences(session)
     energy_ids, cost_ids = sources(prefs)
+    device_ids = [d for d in device_sources(prefs)
+                  if d not in energy_ids and d not in cost_ids]
     if not energy_ids:
         return {"available": False,
                 "reason": "no energy configuration in Home Assistant"}
@@ -308,7 +322,7 @@ async def week(session, now: float | None = None,
     # and disagree about the same day, and the split is arithmetic. It
     # starts a day early so the `sum` fallback has a predecessor for the
     # earlier window's first day — see `consumption`.
-    rows = await _fetch(session, energy_ids + cost_ids,
+    rows = await _fetch(session, energy_ids + cost_ids + device_ids,
                         prior_start - dt.timedelta(days=1), end)
     if not rows:
         return {"available": False,
@@ -327,7 +341,7 @@ async def week(session, now: float | None = None,
                 "change_pct": None if pct is None else round(pct, 1),
                 "comparable": this_days >= MIN_DAYS and last_days >= MIN_DAYS}
 
-    units = await _units(session, energy_ids + cost_ids)
+    units = await _units(session, energy_ids + cost_ids + device_ids)
     out: dict = {"available": True, "reason": "",
                  "from": int(mid.timestamp()), "to": int(end.timestamp())}
     used = _half(energy_ids)
@@ -341,6 +355,19 @@ async def week(session, now: float | None = None,
     if "energy" not in out:
         return {"available": False,
                 "reason": "the recorder has no statistics for those meters"}
+    # Each device measured on its own, this week only, in the same fetch:
+    # where the week's energy went, by room (`weekly.energy_share`). A
+    # device short of days is left out rather than read as using less.
+    each = {}
+    for sid in device_ids:
+        if sid not in rows:
+            continue
+        used_each, days_each = total({sid: rows[sid]}, mid, end)
+        if days_each >= MIN_DAYS and used_each > 0:
+            each[sid] = round(used_each, 3)
+    if each:
+        out["devices"] = each
+        out["devices_unit"] = _first_unit(units, device_ids) or "kWh"
     return out
 
 

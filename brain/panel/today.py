@@ -38,6 +38,7 @@ import time
 from pathlib import Path
 
 import atomic_write
+import numfmt
 import plain_words
 
 HIDDEN_FILE = Path(os.environ.get("BRAIN_TODAY_HIDDEN_FILE",
@@ -219,11 +220,8 @@ def _norm(text: str) -> str:
 
 
 def _day(ts: int) -> str:
-    """'4 Oct' — a date with no year, for a line about something recent."""
-    if not ts:
-        return ""
-    t = time.localtime(int(ts))
-    return f"{t.tm_mday} {time.strftime('%b', t)}"
+    """'4 Oct', with the year when it is not this one (`numfmt.day`)."""
+    return numfmt.day(ts)
 
 
 def _weekday(ts: int, now: float) -> str:
