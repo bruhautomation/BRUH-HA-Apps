@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.15.2
+
+### Fixed
+
+- The roll chip at the top says which roll is which in words ("Left: Address Labels · prints text") instead of bare L and R with sizes, and marks the roll text prints on (1279).
+- The printer card shows its status on its own line. "Ask about paper and lid" says what it does and puts its answer in that line. A printer that is not in use shows only "Use this one", and "Line up again" is a smaller button (1280).
+- History folds identical prints in a row into one ("I am THANKFUL for ×3, last Nov 13"), and shows the template or the label's words. Print again on a folded row prints one label. Clearing the history says how many prints it removes (1281).
+- On Quick, the disabled Print button says what it needs ("Type something to print"), and the "Prints on" line switches rolls when two are loaded (1282).
+
 ## 0.15.1
 
 ### Fixed
