@@ -61,7 +61,7 @@ POST /api/finding/{ts}/reopen — put a pre-ledger dismissal back on the list
 POST /api/finding/{ts}/snooze — remind me later; NOT a decision, so the
                                 status is untouched and it comes back
 POST /api/finding/{ts}/discuss — open it as a conversation in the chat
-POST /api/findings/unsettle  — {key}: let brAIn raise an answered one again
+POST /api/findings/unsettle  — {key, keys?}: let brAIn raise an answered one again
 DELETE /api/finding/{ts}     — Dismiss: off the list, nothing recorded (it can return)
 
 GET  /api/todo               — the work you have accepted, open and done
@@ -12004,34 +12004,43 @@ async def h_upgrades_install(request: web.Request) -> web.Response:
 # -- the overnight health check (SRE) -----------------------------------------
 
 # The checks whose answer about a device the overnight pass honours: the
-# offline checks. A device somebody set aside there is not reported again
-# in the log's words.
+# offline checks and the mesh-link checks. A device somebody set aside
+# there is not reported again in the log's words or the mesh's (#1263).
 SRE_SET_ASIDE_CHECKS = ("dev.unavailable", "dev.zwave_dead", "dev.zha_unseen",
                         "net.connectivity", "net.wifi_hung",
-                        "net.zwave_silent", "net.zigbee_silent")
+                        "net.zwave_silent", "net.zigbee_silent",
+                        "net.zigbee_weak", "net.zwave_link")
 
 
 def _sre_set_aside(now: float, states: dict | None = None) -> set[str]:
-    """The entities the owner set aside on an offline check: a rule they
-    wrote by answering Wrong (an exception for that check or for the whole
-    entity), a row of it they snoozed, or one they ignored."""
+    """The entities the owner set aside on an offline or link check: a rule
+    they wrote by answering Wrong (an exception for that check or for the
+    whole entity), a row of it they snoozed or held, or one they ignored —
+    and every device they said, on any card, is finished with
+    (`corrections.known_faulty`: not in use, got rid of, broken; #1264)."""
     out: set[str] = set()
     checks_ = set(SRE_SET_ASIDE_CHECKS) | {"*"}
     try:
         protected = automation_writer.protected_patterns()
+
+        def floored(eid: str) -> bool:
+            # Whole-device answers: never a safety device or its battery.
+            _family, classes, _dev = _device_family(eid)
+            st = (states or {}).get(eid) or {}
+            klass = str((st.get("attributes") or {}).get("device_class")
+                        or "")
+            return corrections.never_covered(
+                eid, "", device_class=klass, device_classes=classes,
+                protected=protected)
+
         for eid, rules in facts_store.exception_map(now).items():
             if set(rules) & (checks_ - {"*"}):
                 out.add(eid)
-            elif "*" in rules:
-                # Whole-entity: never for a safety device or its battery.
-                family, classes, _dev = _device_family(eid)
-                st = (states or {}).get(eid) or {}
-                klass = str((st.get("attributes") or {}).get("device_class")
-                            or "")
-                if not corrections.never_covered(
-                        eid, "", device_class=klass, device_classes=classes,
-                        protected=protected):
-                    out.add(eid)
+            elif "*" in rules and not floored(eid):
+                out.add(eid)
+        for eid in corrections.known_faulty(now):
+            if eid not in out and not floored(eid):
+                out.add(eid)
     except Exception as exc:  # noqa: BLE001 — could not tell holds nothing
         log.debug("sre: exceptions unread: %s", exc)
     sources = {f"check:{c}" for c in SRE_SET_ASIDE_CHECKS}
@@ -22275,7 +22284,23 @@ def _history_payload(now: float | None = None) -> dict:
         tidy_batches=safe(lambda: tidy.undoable(
             tidy_data.get("batches") or [], now), []),
         hidden_rows=safe(lambda: today_mod.hidden(now), {}),
-        now=now)
+        now=now, stand_down=safe(_count_stands_down, None))
+
+
+def _count_stands_down():
+    """Whether Wrongs alone may stand a check down for one thing — what
+    History reads before it says one was (`today._stood_down`): never a
+    safety or security check, a safety device or a protected thing
+    (`House.answered_off`'s floor)."""
+    protected = automation_writer.protected_patterns()
+
+    def may(source: str, eid: str) -> bool:
+        if not rule_record.quietable(source):
+            return False
+        return not corrections.never_covered(
+            eid, source.removeprefix("check:"), protected=protected,
+            device_classes=_device_family(eid)[1])
+    return may
 
 
 async def h_history(request: web.Request) -> web.Response:
@@ -22648,7 +22673,14 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
         # "Is this fixed?": the answer goes back on the report; nothing
         # about it is a fact about the house.
         return await _end_devloop_verify(finding, spec, note)
-    if _for_now(finding, spec, note):
+    # "Don't remind me" said again about the same check and thing: the
+    # hold it asks for has already been given and lifted once, so this
+    # answer stands the pair down for good (#1263, #1323).
+    again = await asyncio.to_thread(_answered_again, finding, spec, note)
+    if again and not await asyncio.to_thread(
+            _stand_down_again, finding, note, again):
+        again = 0
+    if not again and _for_now(finding, spec, note):
         # "I need to fix this light", "unplugged for now": out of use for
         # the time a repair takes, which is a snooze, not a rule.
         return await _snooze_for_now(finding, note)
@@ -22659,7 +22691,8 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
         return await _end_morph_case(finding, spec, note)
 
     def settle() -> dict:
-        findings_store.settle_and_clear(finding["ts"], spec["kind"], note=note)
+        findings_store.settle_and_clear(finding["ts"], spec["kind"], note=note,
+                                        answers=again)
         return _findings_payload()
 
     payload = await asyncio.to_thread(settle)
@@ -22679,6 +22712,9 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
     # offer. "Got it" plus a comment is still "Got it": falling back to
     # `memory` is what stops a note silently costing the memory line.
     template = spec["noted"] if note and spec.get("noted") else spec["memory"]
+    if again:
+        # An answer about being reminded, not about the house: no line.
+        template = ""
     if note and facts_store.bare_acknowledgement(note):
         # "That's fine", "ok": an acknowledgement, not a reason. Wrong still
         # writes its rule below (that is what stops the check), but nothing
@@ -22709,6 +22745,18 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
                 entity_id=str(finding.get("entity_id") or ""))
             if got["ids"]:
                 payload["_exception_ids"] = got["ids"]
+                # A clean-up question that listed automations: Yes is also
+                # the card that takes the device out of them, a finding
+                # whose Fix it plans the edit for the person to approve
+                # (#1264, #1315). Nothing here edits an automation.
+                edit = corrections.cleanup_edit_row(got.get("offer") or {})
+                if edit:
+                    try:
+                        await asyncio.to_thread(findings_store.add_case, edit)
+                        payload = await asyncio.to_thread(_findings_payload)
+                        payload["_exception_ids"] = got["ids"]
+                    except Exception as exc:  # noqa: BLE001 — never the ending
+                        log.debug("could not file the clean-up card: %s", exc)
             else:
                 payload["correction"] = got["why"]
         else:
@@ -22817,6 +22865,60 @@ def _for_now(finding: dict, spec: dict, note: str) -> bool:
         # automation (#768).
         return False
     return corrections.puts_off(note)
+
+
+def _answered_again(finding: dict, spec: dict, note: str) -> int:
+    """How many times this check has now been answered about this thing,
+    when this answer is a "don't remind me" hold (`corrections.
+    held_until_changed`) that repeats an earlier one; else 0.
+
+    A hold lifts when the report changes, and a router whose link wobbles
+    or a fact that went away for three days came back and was asked again,
+    as many times as it changed (#1263). The earlier answers are the holds
+    this row already woke from (`held_before`) and the Wrongs the ledger
+    holds for this check on its entity (`answered_checks`): one of either,
+    and this answer is the second. Never where a hold is never given (a
+    safety or security check, a critical row): those are asked every time.
+    """
+    if spec.get("kind") != "ignored" or not _for_now(finding, spec, note):
+        return 0
+    source = str(finding.get("source") or "")
+    if (not source.startswith("check:") or not rule_record.quietable(source)
+            or str(finding.get("severity") or "") == "critical"
+            or not corrections.held_until_changed(note)):
+        return 0
+    earlier = int(finding.get("held_before") or 0)
+    eid = str(finding.get("entity_id") or "")
+    if eid:
+        try:
+            row = (findings_store.answered_checks().get(eid) or {}).get(
+                source[len("check:"):]) or {}
+            earlier += int(row.get("wrong") or 0)
+        except Exception as exc:  # noqa: BLE001 — unread is no earlier answer
+            log.debug("could not read the answers for %s: %s",
+                      log_safe(eid), exc)
+    return earlier + 1 if earlier else 0
+
+
+def _stand_down_again(finding: dict, note: str, answers: int) -> bool:
+    """The pair's rule for an answer `_answered_again` counted: this check
+    stops raising this thing (`_stop_raising`'s rule, which refuses a
+    safety, security or protected thing — then False, and the answer is
+    the hold it always was). A row about no one thing has no rule to
+    write: the Wrong it settles as stands its words down."""
+    eid = str(finding.get("entity_id") or "")
+    if eid or findings_store.clean_items(finding.get("items")):
+        got = _stop_raising(finding, note)
+        if got.get("error"):
+            log.info("not standing %s down after %d answers: %s",
+                     log_safe(eid), answers, got["error"])
+            return False
+    decision_trail.note(
+        "exception", eid, f"stood down after {answers} answers asking not to "
+        "be reminded", check=str(finding.get("source") or "").removeprefix(
+            "check:"), source=str(finding.get("source") or ""),
+        text=str(finding.get("text") or ""))
+    return True
 
 
 # The checks whose "I'll handle it" answer ends early when the reading falls
@@ -22957,7 +23059,15 @@ def _ending_undo(finding: dict, spec: dict, fact: str, payload: dict) -> str:
 # (the reason it is retrievable by subject at all). An analyst card's row
 # writes none: it names an entity it noticed on the way past rather than
 # one it was asked about, and a rule on the wrong entity is worse than none.
-def _exception_rule(finding: dict) -> tuple[str, list[str]]:
+# The overnight check's row is filed under the entity its records are about
+# (`sre.subject_of`, chosen by code, never by the run), so a reason that says
+# the device is finished with — "it is not in use", "we got rid of it" — is
+# a rule on that device like a check's (#1264, #1315): `corrections.
+# known_faulty` reads it, and with it every check that asks whether a device
+# is finished with (`House.settled_device`, `answered_off`) and the overnight
+# check's own mesh records (`_sre_set_aside`). Any other reason on its card
+# writes no rule, as before: the ledger folds its next report on the entity.
+def _exception_rule(finding: dict, note: str = "") -> tuple[str, list[str]]:
     source = str(finding.get("source") or "")
     if source.startswith("check:"):
         check_id = source[len("check:"):]
@@ -22983,6 +23093,10 @@ def _exception_rule(finding: dict) -> tuple[str, list[str]]:
         return (check_id, subjects)
     if source == findings_store.RESIDENT_SOURCE:
         return "resident", _finding_subjects(finding)
+    entity_id = str(finding.get("entity_id") or "")
+    if (source == sre.SOURCE and entity_id
+            and corrections.gone_for_good(note)):
+        return sre.SOURCE, [entity_id]
     return "", []
 
 
@@ -23081,7 +23195,7 @@ def _record_exception(finding: dict, note: str) -> list[str]:
     """
     if _unwatchable_condition(finding, note):
         return _ask_about_condition(finding, note)
-    rule, subjects = _exception_rule(finding)
+    rule, subjects = _exception_rule(finding, note)
     if not rule or not subjects:
         return []
     report = str(finding.get("claim") or finding.get("text") or "")
@@ -24747,18 +24861,29 @@ async def h_finding_unsettle(request: web.Request) -> web.Response:
     key = str((body or {}).get("key") or "").strip()
     if not key:
         raise web.HTTPBadRequest(text="which one?")
+    # A check stood down for one thing by several Wrongs is one History row
+    # (`today._stood_down`), and its Restore releases every one of them:
+    # releasing one left the rest standing the check down.
+    more = (body or {}).get("keys")
+    keys = [key] + [str(k).strip() for k in (
+        more if isinstance(more, list) else [])[:50]
+        if isinstance(k, str) and str(k).strip() and str(k).strip() != key]
 
     def undo() -> tuple[bool, dict]:
-        ok = findings_store.unsettle(key)
-        # The rule goes with the wording. "Let brAIn raise it again" on a
-        # report somebody once marked Wrong released the key and left the
-        # `exception:` fact standing the check down for that entity, so
-        # the one press whose whole meaning is "tell me about this again"
-        # could never bring the report back for the four checks that read
-        # exceptions. Counted as an answer either way: a rule with no
-        # ledger entry (the key aged out) is still a rule to release.
-        forgot = facts_store.forget_exceptions(key)
-        return ok or forgot > 0, _findings_payload()
+        done = False
+        for one in keys:
+            ok = findings_store.unsettle(one)
+            # The rule goes with the wording. "Let brAIn raise it again" on
+            # a report somebody once marked Wrong released the key and left
+            # the `exception:` fact standing the check down for that
+            # entity, so the one press whose whole meaning is "tell me
+            # about this again" could never bring the report back for the
+            # four checks that read exceptions. Counted as an answer either
+            # way: a rule with no ledger entry (the key aged out) is still
+            # a rule to release.
+            forgot = facts_store.forget_exceptions(one)
+            done = done or ok or forgot > 0
+        return done, _findings_payload()
 
     ok, payload = await asyncio.to_thread(undo)
     if not ok:
@@ -25734,11 +25859,22 @@ async def _scope_correction(finding: dict, note: str,
     writes nothing, because the press's rule it would scope is gone.
     """
     now = time.time()
-    if (base_ids and str(finding.get("source") or "").startswith("check:")
-            and finding.get("entity_id") and corrections.asks_cleanup(note)
+    source = str(finding.get("source") or "")
+    # The overnight check's row: its rule is written only for a reason
+    # that finishes the device (`_exception_rule`), and the clean-up
+    # question is all there is to scope — never the `correct` job, whose
+    # scopes are a check's.
+    overnight = source == sre.SOURCE
+    asked = corrections.asks_cleanup(note)
+    if (base_ids and (source.startswith("check:") or overnight)
+            and finding.get("entity_id")
+            and (asked or corrections.out_of_use(note))
             and not corrections.conditional(note)):
-        # "Remove it from automations", "stop caring about it": a question
-        # that lists what mentions the device, never an edit or a rule.
+        # "Remove it from automations", "stop caring about it", or "it is
+        # not in use" about a device automations still mention (#1264,
+        # #1315): a question that lists what mentions the device, never an
+        # edit or a rule. "Not in use" alone asks only where there is
+        # something to take it out of; otherwise it is scoped as before.
         eid = str(finding.get("entity_id") or "")
         family, classes, device = _device_family(eid)
         offer = None
@@ -25746,17 +25882,19 @@ async def _scope_correction(finding: dict, note: str,
             from checks import snapshot as _snapshot  # noqa: PLC0415
             configs = (await asyncio.to_thread(
                 _snapshot.load_configs)).get("automations") or []
+            mentions = corrections.automations_referencing(
+                configs, [*_finding_subjects(finding), *family], [device])
             row = await asyncio.to_thread(
                 corrections.cleanup_offer_row, finding, note,
                 entity_name=str((_NAMES.get(eid) or {}).get("name") or ""),
-                automations=corrections.automations_referencing(
-                    configs, [*_finding_subjects(finding), *family],
-                    [device]),
+                automations=mentions,
                 finding_key=findings_store.normalize(
                     finding.get("text") or ""),
                 about=str(finding.get("claim") or finding.get("text") or ""),
                 device_classes=classes,
-                protected=automation_writer.protected_patterns())
+                protected=automation_writer.protected_patterns(),
+                rule=sre.SOURCE if overnight else "",
+            ) if (asked or mentions) else None
             offer = (await asyncio.to_thread(findings_store.add_case, row)
                      if row else None)
         except Exception as exc:  # noqa: BLE001 — an ending must not fail
@@ -25769,6 +25907,8 @@ async def _scope_correction(finding: dict, note: str,
                                 "with the automations that mention it, and "
                                 "will only treat it as unused if you say "
                                 "yes."}
+    if overnight:
+        return None
     if base_ids and (_is_resident_condition(finding, note)
                      or (str(finding.get("source") or "").startswith("check:")
                          and corrections.conditional(note))):

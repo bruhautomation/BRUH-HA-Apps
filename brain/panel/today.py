@@ -243,11 +243,52 @@ def _press(label: str, route: str, body: dict | None = None,
     return out
 
 
+# How many Wrongs about one check and one thing stand that pair down (the
+# checks' own `checks._util.WRONG_LIMIT`, read by `House.answered_off`).
+STAND_DOWN_WRONGS = 2
+
+
+def _stood_down(settled: list[dict], may) -> tuple[dict[str, dict], set[str]]:
+    """The Wrongs that stood a check down for one thing, as History says
+    them (#1323): ``({newest key: {"n", "keys"}}, {older keys})``. A pair
+    is a house check and the entity its answers were about; it stands down
+    at `STAND_DOWN_WRONGS` Wrongs (each entry's `wrong_count`), or where a
+    Wrong itself said it did (`stood_down_after`). ``may(source, entity)``
+    is the caller's floor — a safety check or a protected thing is never
+    stood down by a count, so it is never said to be."""
+    if may is None:
+        return {}, set()
+    pairs: dict[tuple[str, str], list[dict]] = {}
+    for e in settled or []:
+        source = str(e.get("source") or "")
+        eid = str(e.get("entity_id") or "")
+        if (e.get("kind") == "ignored" and source.startswith("check:")
+                and eid and e.get("key")):
+            pairs.setdefault((source, eid), []).append(e)
+    newest: dict[str, dict] = {}
+    older: set[str] = set()
+    for (source, eid), rows in pairs.items():
+        n = max(sum(max(1, int(r.get("wrong_count") or 1)) for r in rows),
+                max(int(r.get("stood_down_after") or 0) for r in rows))
+        if n < STAND_DOWN_WRONGS:
+            continue
+        try:
+            if not may(source, eid):
+                continue
+        except Exception:  # noqa: BLE001 — unreadable floor says nothing
+            continue
+        rows = sorted(rows, key=lambda r: int(r.get("ts") or 0))
+        keys = [str(r["key"]) for r in rows]
+        newest[keys[-1]] = {"n": n, "keys": keys}
+        older.update(keys[:-1])
+    return newest, older
+
+
 def history(*, findings: list[dict], settled: list[dict], muted: list[dict],
             snoozed_cases: list[dict], todo_done: list[dict],
             tidy_batches: list[dict], hidden_rows: dict | None = None,
             cleared: dict | None = None,
-            now: float | None = None) -> dict:
+            now: float | None = None, stand_down=None) -> dict:
     """The drawer's four filters, each a list of grouped one-line rows.
 
     Every argument is a list the panel already serves somewhere: the
@@ -280,22 +321,33 @@ def history(*, findings: list[dict], settled: list[dict], muted: list[dict],
             "press": _press("Restore", "/api/today/restore", {"key": key}),
         })
 
+    # A check stood down for one thing by its Wrongs is one row, saying so,
+    # whose Restore takes back every answer that stood it down: restoring
+    # one of two left the other standing it down, with nothing to say why.
+    stood, folded = _stood_down(settled, stand_down)
     for entry in settled or []:
         kind = entry.get("kind")
         if kind not in ("ignored", "fixed"):
             # `accepted` is on To Do already; History would be the same
             # card in two places.
             continue
+        key = str(entry.get("key") or "")
+        if kind == "ignored" and key in folded:
+            continue
         when = int(entry.get("ts") or 0)
         note = str(entry.get("note") or "").strip()
         meta = ("Ignored " if kind == "ignored" else "Done ") + _day(when)
+        body = {"key": key}
+        if kind == "ignored" and key in stood:
+            meta = (f"Stood down after {stood[key]['n']} Wrong answers · "
+                    f"last {_day(when)}")
+            body = {"key": key, "keys": stood[key]["keys"]}
         if note:
             meta += f" · You said: {note}"
         raw["ignored" if kind == "ignored" else "done"].append({
             "title": entry.get("text") or "",
             "meta": meta.strip(), "at": when,
-            "press": _press("Restore", "/api/findings/unsettle",
-                            {"key": entry.get("key") or ""}),
+            "press": _press("Restore", "/api/findings/unsettle", body),
         })
     for row in muted or []:
         raw["ignored"].append({
