@@ -790,6 +790,9 @@ PHONE_DOMAINS = frozenset({"device_tracker", "person"})
 # How many devices the detail names before "and N more"; every one is in
 # `items`, which the card's Show all lists.
 DETAIL_NAMES = 4
+# How long the list may be before it is cut to `DETAIL_NAMES`: what leaves
+# room in the detail (`findings_store.MAX_DETAIL`) for the sentences after.
+DETAIL_LIST_BUDGET = 360
 # Each network's snapshot key and the platforms that say a house has it:
 # a house with the integration whose source could not be read is "could
 # not look", and a house without it simply has nothing there.
@@ -1126,6 +1129,27 @@ def _house_has(house: House, platforms) -> bool:
     return any(str(r.get("platform") or "") in platforms for r in house.entities)
 
 
+def connectivity_headline(listed: list[dict]) -> str:
+    """The connectivity row's headline from what its devices were found to
+    be (#1326): off the network (hung, silent, quiet) or dropping again and
+    again (`flapping`), read off each entry's kind."""
+    dropping = [e for e in listed if e.get("fix") == "flapping"]
+    off = [e for e in listed if e.get("fix") != "flapping"]
+    if len(listed) == 1:
+        name = str(listed[0].get("name") or "A device")
+        name = name[:1].upper() + name[1:]
+        return (f"{name} keeps dropping off the network" if dropping
+                else f"{name} is off the network")
+    if not off:
+        return CONNECTIVITY_TEXT
+    if not dropping:
+        return f"{len(off)} devices are off the network"
+    return (f"{count(len(off), 'device')} "
+            f"{'is' if len(off) == 1 else 'are'} off the network and "
+            f"{len(dropping)} {'keeps' if len(dropping) == 1 else 'keep'} "
+            "dropping off")
+
+
 def connectivity(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     available = snap.get("available") or {}
@@ -1165,7 +1189,11 @@ def connectivity(snap: dict, now: float) -> list[dict]:
     order = {"Wi-Fi": 0, "Z-Wave": 1, "Zigbee": 2}
     listed.sort(key=lambda e: (order[e["network"]], e["name"]))
     phrases = [f"{e['name']} ({e['network']}), {e['said']}" for e in listed]
-    shown = phrases[:DETAIL_NAMES]
+    # Every device while the list fits the card's detail, and a count only
+    # past that (#1334): "and 2 more" under a list that had room is a list
+    # cut for nothing.
+    shown = (phrases if len("; ".join(phrases)) <= DETAIL_LIST_BUDGET
+             else phrases[:DETAIL_NAMES])
     rest = len(phrases) - len(shown)
     detail = ""
     if listed:
@@ -1194,6 +1222,9 @@ def connectivity(snap: dict, now: float) -> list[dict]:
                "and reachable from Home Assistant.").strip()
     return [{
         "text": CONNECTIVITY_TEXT,
+        # What the card says over that key: what the devices were found to
+        # be, silent or dropping, never one stock verb for both (#1326).
+        **({"headline": connectivity_headline(listed)} if listed else {}),
         "detail": " ".join(detail.split()),
         "fix": fix,
         # What To Do says when this becomes one: composed once from the

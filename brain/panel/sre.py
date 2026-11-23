@@ -1353,8 +1353,8 @@ SYSTEM = prompt_kit.assemble(
     "of underlying problems that explain the records.",
     inputs=(
         "You are given RECORDS, each with an id: system-log entries, Zigbee "
-        "mesh devices (routers and struggling devices, with link quality "
-        "and neighbours), Z-Wave nodes with dropped commands or dead "
+        "mesh devices (routers, and devices that are offline, unheard or "
+        "on a weak link, with link quality and neighbours), Z-Wave nodes with dropped commands or dead "
         "status, and automations that switch off a device that is a Zigbee "
         "router."),
     tools="",
@@ -1969,7 +1969,12 @@ def _measured_title(title: str, recs: list[dict], dig: dict) -> str:
         return title
     mesh = [r for r in recs if r.get("kind") in ("zigbee", "zwave")]
     if len(mesh) != 1 or len(recs) != len(mesh):
-        return title
+        # A cause cites its records most fundamental first (`SYSTEM`): a
+        # router gone silent cited before the devices that routed through
+        # it is the title's subject, and its record says what it is (#1326).
+        if not (recs and recs[0].get("kind") in ("zigbee", "zwave")):
+            return title
+        mesh = recs[:1]
     return textclip.clip(_plain_title(mesh[0], dig), MAX_TITLE)
 
 

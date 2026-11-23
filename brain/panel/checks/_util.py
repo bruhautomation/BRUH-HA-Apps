@@ -1489,6 +1489,152 @@ def join_names(names: Iterable[str], limit: int = 6,
     return ", ".join(kept) + f" and {len(names) - len(kept)} more"
 
 
+# A name Home Assistant or a person numbered to tell copies apart: "Porch
+# light 2", "Porch light (2)". The number is the only difference.
+_NUMBERED_RE = re.compile(r"^(.*?\S)\s*(?:\((\d{1,3})\)|(?<=\s)(\d{1,3}))$")
+
+
+def _plural(noun: str) -> str:
+    if re.search(r"(?:s|sh|ch|x|z)$", noun):
+        return noun + "es"
+    if re.search(r"[^aeiou]y$", noun):
+        return noun[:-1] + "ies"
+    return noun + "s"
+
+
+def _kind_of(entity_ids: list[str], count_: int) -> str:
+    """"7 sensors", "2 lights" — "2 entities" when their kinds differ."""
+    domains = {domain_of(e) for e in entity_ids}
+    noun = (_DOMAIN_NOUN.get(next(iter(domains)), next(iter(domains))
+                             .replace("_", " "))
+            if len(domains) == 1 else "entity")
+    return f"{count_} {noun if count_ == 1 else _plural(noun)}"
+
+
+def _and_words(words: list[str]) -> str:
+    return (", ".join(words[:-1]) + " and " + words[-1]
+            if len(words) > 1 else (words[0] if words else ""))
+
+
+def _unnumbered(label: str) -> str:
+    m = _NUMBERED_RE.match(label)
+    return (m.group(1) if m else label).casefold()
+
+
+def merged_names(labels: Iterable[str]) -> list[str]:
+    """Names that differ only by a number said once (#1334): "Porch
+    light 1, 2 and 3" for a series; "Porch light" for "Porch light" and
+    "Porch light (1)", since "(1)" marks a copy and an unnumbered name is
+    the original. Order kept, by first appearance."""
+    order: list[str] = []
+    by: dict[str, list[str]] = {}
+    for label in labels:
+        label = str(label or "")
+        if not label:
+            continue
+        key = _unnumbered(label)
+        if key not in by:
+            by[key] = []
+            order.append(key)
+        if label not in by[key]:
+            by[key].append(label)
+    out = []
+    for key in order:
+        group = by[key]
+        if len(group) == 1:
+            out.append(group[0])
+            continue
+        base, numbers = group[0], []
+        for label in group:
+            m = _NUMBERED_RE.match(label)
+            if m:
+                base = m.group(1)
+                if m.group(3):
+                    numbers.append(m.group(3))
+        numbers = sorted(dict.fromkeys(numbers), key=int)
+        out.append(f"{base} {_and_words(numbers)}" if len(numbers) > 1
+                   else base)
+    return out
+
+
+def grouped_labels(house: "House", entity_ids: Iterable[str]) -> list[str]:
+    """What a finding calls a set of entities, one label a thing (#1334).
+
+    Entities of one device are that device ("7 sensors on Pixel Watch"),
+    an id Home Assistant numbered for a collision (`light.porch_2` beside
+    `light.porch`) is the entity it copies, and names that differ only by
+    a number are one name with its numbers ("Porch light 1, 2 and 3",
+    "Porch light" for "Porch light" and "Porch light (1)"). Entities the
+    house no longer has (no name, no device) that share the first words of
+    their id are one label too: their id is the device's name followed by
+    the reading's. Read off the registry and the names, never the words."""
+    ids = list(dict.fromkeys(str(e) for e in entity_ids if e))
+    present = set(ids)
+    order: list[tuple] = []
+    groups: dict[tuple, list[str]] = {}
+
+    def put(key: tuple, eid: str) -> None:
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(eid)
+
+    # A copy is the entity it copies, listed under that one's name.
+    ids = [e for e in ids
+           if re.sub(r"_\d+$", "", e) == e or re.sub(r"_\d+$", "", e)
+           not in present]
+    on_device: dict[str, list[str]] = {}
+    for eid in ids:
+        dev = house.device_of(eid)
+        if dev and dev.get("id"):
+            on_device.setdefault(str(dev["id"]), []).append(eid)
+    for eid in ids:
+        dev = house.device_of(eid)
+        if dev and dev.get("id") and len(on_device[str(dev["id"])]) > 1:
+            put(("device", str(dev["id"])), eid)
+            continue
+        if not house.exists(eid):
+            domain, _, obj = eid.partition(".")
+            words = [w for w in obj.split("_") if w]
+            if len(words) >= 3:
+                put(("gone", domain, tuple(words[:2])), eid)
+                continue
+        put(("name", _unnumbered(house.label(eid))), eid)
+    out: list[str] = []
+    for key in order:
+        members = groups[key]
+        if key[0] == "device":
+            dev = house.devices.get(key[1]) or {}
+            out.append(f"{_kind_of(members, len(members))} on "
+                       f"{house.device_name(dev)}")
+            continue
+        if key[0] == "gone":
+            if len(members) == 1:
+                out.append(house.label(members[0]))
+                continue
+            # The longest run of id words every member starts with.
+            split = [[w for w in m.partition(".")[2].split("_") if w]
+                     for m in members]
+            common = []
+            for words in zip(*split):
+                if len(set(words)) != 1:
+                    break
+                common.append(words[0])
+            out.append(f"{_kind_of(members, len(members))} whose names "
+                       f"start \u201c{' '.join(common)}\u201d")
+            continue
+        out.append(merged_names([house.label(e) for e in members])[0])
+    return out
+
+
+def entity_list(house: "House", entity_ids: Iterable[str],
+                budget: int = LIST_BUDGET) -> str:
+    """`grouped_labels` as a sentence's list: whole when it fits ``budget``
+    (no count cap, #1334), otherwise as much as fits and how many more."""
+    labels = grouped_labels(house, entity_ids)
+    return join_names(labels, limit=max(1, len(labels)), budget=budget)
+
+
 def load_yaml_file(path: str) -> Any:
     """Parse one of HA's YAML files, or None if it is absent or broken.
 
