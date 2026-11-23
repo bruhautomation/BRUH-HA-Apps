@@ -132,21 +132,9 @@
       // scroll under this layout.
       const m = document.querySelector('main');
       if (m) m.scrollTop = 0;
-      tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     });
   });
 
-  // The tab row scrolls sideways on a phone: a fade on the side that has
-  // more tabs says so, and nothing fades when every tab fits.
-  const tabRow = $('.tabs-in');
-  const tabCue = () => {
-    const more = tabRow.scrollWidth - tabRow.clientWidth;
-    tabRow.classList.toggle('more-left', more > 1 && tabRow.scrollLeft > 1);
-    tabRow.classList.toggle('more-right', more > 1 && tabRow.scrollLeft < more - 1);
-  };
-  tabRow.addEventListener('scroll', tabCue, { passive: true });
-  window.addEventListener('resize', tabCue);
-  tabCue();
 
   // ------------------------------------------------------------------
   // Dashboard refresh loop
@@ -533,14 +521,24 @@
     loadBackups();
   });
 
-  // Update is only offered when the check found something newer.
+  // Update is only offered when the check found something newer, and its
+  // label says what it updates (#1293). A new build of this world's
+  // Minecraft is downloaded here; a newer Minecraft is a one-way change to
+  // the world, so the button opens Add-ons, where that upgrade takes a
+  // backup first.
+  let headerUpdate = null;
   function showHeaderUpdate(sw) {
     const b = $('#btn-update');
-    const newer = !!(sw && !sw.upgrade_pending && (sw.build_update_available || sw.upgrade_available));
-    b.hidden = !newer;
-    if (newer) b.title = sw.upgrade_available
-      ? `Minecraft ${sw.newest_version} is out`
-      : `${typeName(sw.server_type)} build ${sw.newest_build} is available`;
+    const ok = !!(sw && !sw.upgrade_pending);
+    headerUpdate = !ok ? null
+      : sw.build_update_available ? { kind: 'build', name: typeName(sw.server_type), build: sw.newest_build }
+        : sw.upgrade_available ? { kind: 'upgrade', version: sw.newest_version } : null;
+    b.hidden = !headerUpdate;
+    if (!headerUpdate) return;
+    b.textContent = headerUpdate.kind === 'build' ? `Update ${headerUpdate.name}` : `Minecraft ${headerUpdate.version}`;
+    b.title = headerUpdate.kind === 'build'
+      ? `Download ${headerUpdate.name} build ${headerUpdate.build}`
+      : `Minecraft ${headerUpdate.version} is out: open Add-ons to upgrade this world`;
   }
   api('api/server/software').then((sw) => { if (!sw.error) showHeaderUpdate(sw); }).catch(() => {});
   setInterval(() => {
@@ -548,9 +546,16 @@
   }, 600000);
 
   $('#btn-update').addEventListener('click', async () => {
-    if (!confirmAction('Download the latest server jar for the configured type/version? Requires a restart to take effect.')) return;
+    if (!headerUpdate) return;
+    if (headerUpdate.kind === 'upgrade') {
+      $('.tab[data-tab="addons"]').click();
+      $('#software-sec')?.scrollIntoView({ block: 'start' });
+      return;
+    }
+    const { name, build } = headerUpdate;
+    if (!confirmAction(`Download ${name} build ${build}? The server keeps running the old build until it restarts.`)) return;
     const data = await api('api/server/update', { method: 'POST' });
-    alert(data.ok ? 'Server jar updated. Restart to load.' : `Update failed:\n${data.output || data.error}`);
+    alert(data.ok ? `${name} build ${build} is downloaded. Restart the server to load it.` : `Update failed:\n${data.output || data.error}`);
   });
 
   $('#btn-restart').addEventListener('click', async () => {
@@ -1201,41 +1206,47 @@
     const gitLabel = (c) => KINDS[c.kind] || 'Backup';
     // A snapshot is only kept when the world changed since the one before it.
     const gitExtra = (c) => ['world changed', c.players == null ? '' : (c.players === 0 ? 'nobody online' : `${c.players} online`)].filter(Boolean).join(' · ');
-    // Snapshots of one kind within half an hour of each other fold into one line.
+    // Within a day, a run of snapshots that read the same (same kind, same
+    // players) folds into one line with its time span and count (#1292);
+    // opening it lists every one with its own Restore. Nothing is dropped.
+    const sameRun = (a, b) => a.kind === b.kind && gitExtra(a) === gitExtra(b);
     const clump = (items) => {
       const out = [];
       items.forEach((c) => {
         const last = out[out.length - 1];
-        if (last && last[0].kind === c.kind && last[last.length - 1].ts - c.ts <= 1800) last.push(c);
+        if (last && sameRun(last[0], c)) last.push(c);
         else out.push([c]);
       });
       return out;
     };
-    const rows = (items, short) => clump(items).map((g) => {
-      if (g.length === 1) return row(g[0].ts, gitLabel(g[0]), g[0].sha, short, gitExtra(g[0]));
+    const rows = (items) => clump(items).map((g) => {
+      if (g.length === 1) return row(g[0].ts, gitLabel(g[0]), g[0].sha, true, gitExtra(g[0]));
       const span = `${clock(g[g.length - 1].ts)} – ${clock(g[0].ts)}`;
-      return `<li class="snap-clump"><details><summary><strong>${esc(span)}</strong> <span class="muted">${esc(gitLabel(g[0]))} · ${g.length} snapshots</span></summary>
+      return `<li class="snap-clump"><details><summary><strong>${esc(span)}</strong> <span class="muted">${esc([gitLabel(g[0]), gitExtra(g[0]), `${g.length} snapshots`].filter(Boolean).join(' · '))}</span></summary>
         <ul class="snap-list snap-inner">${g.map((c) => row(c.ts, gitLabel(c), c.sha, true, gitExtra(c))).join('')}</ul></details></li>`;
     }).join('');
+    const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+    const shortDay = (ts) => new Date(ts * 1000).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+    // How many there are and how far back they go, above the list.
+    const countLine = (items, word, capped) => (items.length
+      ? `<p class="muted snap-count">${esc(`${capped ? `The newest ${plural(items.length, word)}` : plural(items.length, word)} · oldest ${shortDay(items[items.length - 1].ts)}`)}</p>`
+      : '');
     const renderGit = () => {
       if (!git.length) return '<p class="muted">No git snapshots yet.</p>';
-      // The last day stays a plain list; older snapshots fold under their day.
-      const cut = Date.now() / 1000 - 86400;
-      const recent = git.filter((c) => c.ts >= cut);
+      // Grouped by day, newest first: the newest day is open, older days are folded.
       const days = new Map();
-      git.filter((c) => c.ts < cut).forEach((c) => {
+      git.forEach((c) => {
         const d = dayOf(c.ts);
         if (!days.has(d)) days.set(d, []);
         days.get(d).push(c);
       });
-      const list = (items, short) => `<ul class="snap-list">${rows(items, short)}</ul>`;
-      return (recent.length ? list(recent, false) : '')
-        + [...days].map(([d, items]) => `<details class="snap-day"><summary>${esc(d)} <span class="muted">· ${items.length} snapshot${items.length === 1 ? '' : 's'}</span></summary>${list(items, true)}</details>`).join('');
+      return countLine(git, 'snapshot', git.length >= 100)
+        + [...days].map(([d, items], i) => `<details class="snap-day"${i === 0 ? ' open' : ''}><summary>${esc(d)} <span class="muted">· ${plural(items.length, 'snapshot')}</span></summary><ul class="snap-list">${rows(items)}</ul></details>`).join('');
     };
 
     const renderArchives = () => {
       if (!arc.length) return '<p class="muted">No archive backups yet.</p>';
-      return `<ul class="snap-list">${arc.map((a) => row(a.ts, `Archive · ${fmtSize(a.size)}`, a.name)).join('')}</ul>`;
+      return `${countLine(arc, 'archive', false)}<ul class="snap-list">${arc.map((a) => row(a.ts, `Archive · ${fmtSize(a.size)}`, a.name)).join('')}</ul>`;
     };
 
     host.innerHTML = `
@@ -1653,9 +1664,20 @@
         <span class="muted">${meta.filter(Boolean).map(esc).join(' · ')}</span>
       </div>
       <span class="addon-status addon-status-${esc(item.status)}">${esc(item.status_text)}</span>
+      ${conflictHtml(item.conflict)}
       <div class="addon-row-actions">${actions.join('')}</div>
       <div class="addon-note" aria-live="polite"></div>`;
     return row;
+  }
+
+  // A known-conflicting pair (addons.CONFLICTS) is said on both rows, naming
+  // the one to remove; nothing is removed for the owner.
+  function conflictHtml(c) {
+    if (!c) return '';
+    const text = c.remove_this
+      ? `Conflicts with ${c.with}. Remove this one: ${c.keep} already does what it does.`
+      : `Conflicts with ${c.with}. Remove ${c.remove} and keep this one, which already does what it does.`;
+    return `<p class="addon-conflict" role="note">${esc(text)}</p>`;
   }
 
   function describeChanges(world) {
@@ -2047,7 +2069,8 @@
       status = `<span class="addon-status addon-status-restart">Minecraft ${esc(sw.newest_version)} is out</span>`;
       action = `<button class="btn btn-primary" id="software-upgrade" data-version="${esc(sw.newest_version)}">Upgrade this world to ${esc(sw.newest_version)}</button>`;
     } else if (sw.build_update_available) {
-      status = `<span class="addon-status addon-status-restart">Update to ${esc(typeName(sw.server_type))} ${esc(sw.version)} build ${esc(sw.newest_build)}</span>`;
+      // Says what to do, not only what exists (#1294).
+      status = `<span class="addon-status addon-status-restart">${esc(typeName(sw.server_type))} build ${esc(sw.newest_build)} is ready — press Update everything now; the add-on restarts</span>`;
     } else if (!sw.checked) {
       status = `<span class="addon-status addon-status-next_start">${esc(sw.check_error || 'Not checked for this server type')}</span>`;
     }
@@ -2065,6 +2088,7 @@
       </div>`);
     });
     $('#software-rows').innerHTML = rows.join('');
+    $('#software-update').classList.toggle('btn-primary', !!sw.build_update_available && !sw.upgrade_pending);
     $('#software-foot').textContent = sw.bedrock_support
       ? 'Geyser, Floodgate and ViaVersion download their newest build every time the add-on starts. "Update everything now" restarts the add-on to do that now — players are disconnected for about a minute.'
       : 'Bedrock support is off in Configuration. "Update everything now" restarts the add-on to fetch the newest server build.';
