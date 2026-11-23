@@ -15622,14 +15622,71 @@ def _resident_stand_down(signal: dict, case: dict, run_ids, now: float) -> str:
             findings_store.scorecard(), now)
         if record is None:
             return ""
+        subjects = _case_subjects(signal, case)
+        # Food, water, heat or security is raised whatever the record says
+        # (#1320): a fridge warming was set aside on Wrongs about humidity.
+        if any(corrections.record_floor(
+                eid, device_class=_device_class(eid),
+                name=str((_NAMES.get(eid) or {}).get("name") or ""))
+               for eid in subjects):
+            return ""
+        # The record holds back only what shares an entity, a device or a
+        # kind of reading with a report the household marked Wrong.
+        about = _wrong_about_same(subjects)
+        if not about:
+            return ""
         for rid in sorted(r for r in run_ids or () if r):
             reads = conversations.tool_reads(engine.CLAUDE_HOME, rid)
             if reads and resident.read_a_measurement(reads.get("tools")):
                 return ""
-        return rule_record.resident_stand_down_reason(record)
+        return rule_record.resident_stand_down_reason(record, about)
     except Exception as exc:  # noqa: BLE001 — never the filing's failure
         log.debug("could not read brAIn's own record for a case: %s", exc)
         return ""
+
+
+def _case_subjects(signal: dict, case: dict) -> list[str]:
+    """Every entity a case is about: its own, the signal's subject, and
+    each its evidence names."""
+    out = [str(case.get("entity_id") or ""), str(signal.get("subject") or "")]
+    out += [str(e.get("entity") or "") for e in case.get("evidence") or ()
+            if isinstance(e, dict)]
+    seen: list[str] = []
+    for eid in out:
+        if "." in eid and " " not in eid and eid not in seen:
+            seen.append(eid)
+    return seen
+
+
+def _wrong_about_same(subjects: list[str]) -> str:
+    """What the household marked Wrong in brAIn's own reports that these
+    entities share, said as a person reads it, or "" when nothing is
+    shared (#1320). The same entity, else another on its device, else a
+    reading of the same kind (its device class)."""
+    wrongs = [str(e.get("entity_id") or "")
+              for e in findings_store.wrongs_about(
+                  findings_store.RESIDENT_SOURCE)]
+    if not wrongs or not subjects:
+        return ""
+
+    def named(eid: str) -> str:
+        return str((_NAMES.get(eid) or {}).get("name") or "") or "it"
+
+    for eid in subjects:
+        if eid in wrongs:
+            return named(eid)
+    for eid in subjects:
+        device = str((_NAMES.get(eid) or {}).get("device") or "")
+        if not device:
+            continue
+        for other in wrongs:
+            if str((_NAMES.get(other) or {}).get("device") or "") == device:
+                return named(other)
+    for eid in subjects:
+        klass = _device_class(eid)
+        if klass and any(_device_class(o) == klass for o in wrongs):
+            return f"{klass.replace('_', ' ')} readings"
+    return ""
 
 
 def _entities_read(result: dict) -> set[str] | None:

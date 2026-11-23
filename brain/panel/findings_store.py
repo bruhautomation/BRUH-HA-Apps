@@ -1118,6 +1118,11 @@ def shown_look(record: dict, entry: dict) -> dict:
     if (record.get("verdict") == "held" and entry.get("status") != "held"
             and not record.get("elevated_by_person")):
         return {**record, "reason": ""}
+    # A hold by the household's record is a sentence about brAIn's own
+    # record, not about the house: on a card that is on the list, even one
+    # a person put back, it would say the card was set aside (#1320).
+    if record.get("by_record") and entry.get("status") != "held":
+        return {**record, "reason": ""}
     if _names_another_entity(record["reason"], entry):
         return {**record, "reason": ""}
     # A reason that names the very row it is on ("<this row's title>, which
@@ -1228,6 +1233,10 @@ def _clean_triage(value) -> dict:
         # Which look-rules judged it (`triage.LOOK_VERSION`). 0 is a
         # verdict given before the claim rule existed.
         "v": int(value.get("v") or 0),
+        # Held by the household's record of Wrong answers rather than by a
+        # look about the house (`rule_record`): a sentence about brAIn's
+        # record, never shown on a card that is on the list (#1320).
+        **({"by_record": True} if value.get("by_record") else {}),
     }
 
 
@@ -2526,6 +2535,17 @@ def answered_wrong_about(entity_id: str, source: str) -> dict | None:
     return max(hits, key=lambda e: int(e.get("ts") or 0)) if hits else None
 
 
+def wrongs_about(source: str) -> list[dict]:
+    """Every Wrong a person gave a ``source`` report about an entity,
+    newest first: what a producer's record is scoped to
+    (`server._resident_stand_down`, #1320)."""
+    want = str(source or "").strip()
+    hits = [e for e in _load_settled() if e.get("kind") == "ignored"
+            and str(e.get("source") or "") == want
+            and str(e.get("entity_id") or "").strip()]
+    return sorted(hits, key=_wrong_at, reverse=True)
+
+
 def _absorb(host: dict | None, entry: dict) -> bool:
     """Fold a re-report into the live row it duplicates. True if it changed.
 
@@ -3405,7 +3425,8 @@ def add_case(row: dict, *, run_id: str = "", when: float | None = None,
         # A producer files `open` or `triaging` only (`PRE_STATUSES`), so
         # the hold is the look's own transition, made inside this lock.
         return hold_after_look(int(created[0]["ts"]), str(held),
-                               str(row.get("run_id") or run_id or ""), stamp)
+                               str(row.get("run_id") or run_id or ""), stamp,
+                               by_record=True)
     return created[0] if created else None
 
 
@@ -3483,6 +3504,10 @@ def refine(ts: int, case: dict, run_id: str = "",
         # already gave (the first look's sentence), unless that too only
         # repeats the row; otherwise there is none.
         prior = str((entry.get("triage") or {}).get("reason") or "")
+        # A hold's reason argues the row should not be on the list, and
+        # this row is going on it (#1320): never carried onto a shown card.
+        if (entry.get("triage") or {}).get("verdict") == "held":
+            prior = ""
         if echoes(prior, entry.get("text"), entry.get("claim"),
                   case.get("claim")) or prior in (
                       triage.UNJUDGED, triage.RUN_FAILED,
@@ -3540,7 +3565,8 @@ def _look_found_cause(case: dict) -> bool:
 
 @_mutates
 def hold_after_look(ts: int, reason: str, run_id: str = "",
-                    when: float | None = None) -> dict | None:
+                    when: float | None = None, *,
+                    by_record: bool = False) -> dict | None:
     """An investigation looked and found nothing: hold the row, saying why.
 
     The same `held` the first look writes, reached one tier later and only
@@ -3568,7 +3594,8 @@ def hold_after_look(ts: int, reason: str, run_id: str = "",
             "reason": textclip.shorten(said, triage.MAX_REASON),
             "run_id": run_id,
             "at": int(when if when is not None else time.time()),
-            "wrote_fix": False, "v": triage.LOOK_VERSION})
+            "wrote_fix": False, "v": triage.LOOK_VERSION,
+            "by_record": by_record})
         _write(items)
         return _shape(entry)
     return None
@@ -3720,6 +3747,7 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
             continue
         late = entry.get("status") != "triaging"
         verdict, reason = verdicts[ts][:2]
+        from_record = False
         if verdict == "untriaged" and not late and entry.get("record_hold"):
             # Nothing looked at a row from a rule the household marked
             # wrong three times in a row: it is held with that record,
@@ -3729,6 +3757,7 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
                 and reason == str(entry["record_hold"])):
             # Held by the record and not by a look: said on the decision
             # trail, so "why did brAIn not tell me" finds it (#826).
+            from_record = True
             record_rows.append({
                 "kind": "record", "subject": str(entry.get("entity_id") or ""),
                 "check": str(entry.get("source") or "").removeprefix(
@@ -3799,7 +3828,7 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
         entry["triage"] = _clean_triage({
             "verdict": verdict, "reason": reason,
             "run_id": run_id, "at": stamp, "wrote_fix": False,
-            "v": triage.LOOK_VERSION})
+            "v": triage.LOOK_VERSION, "by_record": from_record})
         wrote = True
         if not late:
             changed.append(_shape(entry))
