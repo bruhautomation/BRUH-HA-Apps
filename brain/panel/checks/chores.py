@@ -988,11 +988,29 @@ def humidity_summaries(snap: dict) -> list[str]:
     return out
 
 
+def _outside_air(house: House, sensor: str, owner_named: bool) -> bool:
+    """Whether a dehumidifier's humidity reading is from a space the
+    household said nothing conditions (`thermal.said_unconditioned`): its
+    air follows outside, not the rooms a machine plugged in there may
+    serve, so damp air there is not a stopped machine's fault (#1261). A
+    sensor the household named as the machine's own reading is theirs."""
+    if owner_named or not sensor:
+        return False
+    from .thermal import said_unconditioned  # noqa: PLC0415 — thermal is heavier
+    return house.area_id_of(sensor) in said_unconditioned(house)
+
+
 def _damp_while_off(house: House, eid: str, shape: dict, plugs: list[str],
                     humidity_now) -> dict | None:
     """The row for a plug left off while the room stays damp, or None."""
     week = humidity_week(house, eid, shape)
     if not week or week["spell_h"] < DAMP_OFF_H:
+        return None
+    if _outside_air(house, week["sensor"], bool(week["said"])):
+        house.gave_up("chore.dehumidifier", [{"entity_id": eid}],
+                      f"{house.label(week['sensor'])} is in a space you said "
+                      "nothing conditions, so its air is not what this "
+                      "machine is judged on", kind="explained")
         return None
     now_rh = humidity_now(week["sensor"])
     if now_rh is None or now_rh <= week["target"]:
@@ -1058,6 +1076,12 @@ def dehumidifier(snap: dict, now: float) -> list[dict]:
         except (TypeError, ValueError):
             continue
         if humidity < float(level) + DRY_MARGIN:
+            continue
+        if _outside_air(house, rh_eid, False):
+            house.gave_up("chore.dehumidifier", [{"entity_id": eid}],
+                          f"{house.label(rh_eid)} is in a space you said "
+                          "nothing conditions, so its air is not what this "
+                          "machine is judged on", kind="explained")
             continue
         plug = next((o for o in switches
                      if (house.states.get(o) or {}).get("state") == "on"), "")

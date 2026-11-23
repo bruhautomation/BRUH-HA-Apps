@@ -2955,14 +2955,20 @@ _UNIT = (r"(miles?|mi|km|kilomet(?:er|re)s?|days?|weeks?|months?|hours?|"
          r"hrs?)")
 _NUMBER = r"(\d[\d,]*(?:\.\d+)?)"
 _LATE_WORD = r"(?:overdue|past due|late|past (?:its|the|their) (?:due )?(?:date|time))"
-_ODOMETER_RE = re.compile(_NUMBER + r"\s*" + _UNIT
-                          + r"\s+(?:overdue|past due|late)\b", re.I)
 _OVERDUE_RES = (
     # "19,766 miles overdue", "19,766 miles past its date"
     re.compile(_NUMBER + r"\s*" + _UNIT + r"\s+" + _LATE_WORD + r"\b", re.I),
     # "overdue by 19,766 miles"
     re.compile(r"\b(?:overdue|past due)\s+by\s+" + _NUMBER + r"\s*" + _UNIT
                + r"\b", re.I),
+    # "due 12,000 miles ago"
+    re.compile(r"\bdue\s+" + _NUMBER + r"\s*" + _UNIT + r"\s+ago\b", re.I),
+    # A counter of what is left that has run past zero: "-12,000 miles",
+    # "reads -12,000 mi remaining" (#1325), with an ASCII or a typographic
+    # minus. The sign is the reading's own, so it is read as the figure past
+    # due whatever words surround it; "5 -20 miles" is a range, not this.
+    re.compile(r"(?<![\w.])(?<!\d )[-\u2212]" + _NUMBER + r"\s*" + _UNIT
+               + r"\b(?:\s+(?:remaining|left))?", re.I),
 )
 # "every 1,000 miles", "interval is 1,000 miles", and the other way round:
 # "a 5,000-mile interval".
@@ -2977,6 +2983,9 @@ _UNIT_KEY = {"mile": "mi", "miles": "mi", "mi": "mi", "km": "km",
              "kilometres": "km", "day": "d", "days": "d", "week": "w",
              "weeks": "w", "month": "mo", "months": "mo", "hour": "h",
              "hours": "h", "hr": "h", "hrs": "h"}
+# The question `misread_reminder` asks, which is also how the ledger knows
+# an answer was about a reminder's setting (`_reminders_answered_wrong`).
+REMINDER_ASK = "Is the reminder's setting right?"
 REMINDER_FIX = ("If the reminder's interval or its last-done date is wrong, "
                 "correct it where the reminder is set up, and brAIn will "
                 "read the new figure.")
@@ -3029,7 +3038,7 @@ def misread_reminder(row: dict) -> dict | None:
             # never share one text, and a Wrong is theirs alone).
             head = head or "A reminder is far overdue"
             said = (head if head.endswith("setting right")
-                    else f"{head}. Is the reminder's setting right?")
+                    else f"{head}. {REMINDER_ASK}")
             return {"text": said, "claim": said,
                     "detail": (f"It reads {late.group(1)} {late.group(2)} "
                                f"past its date on a {m.group(1)}-"
@@ -3045,6 +3054,18 @@ def misread_reminder(row: dict) -> dict | None:
 _DISTANCE_UNITS = frozenset({"mi", "km"})
 
 
+def _reminders_answered_wrong() -> set[str]:
+    """The entities whose reminder somebody said was set up wrong (#1325).
+
+    A Wrong on "Is the reminder's setting right?" is an answer about that
+    sensor's reminder, whoever asks next: the per-producer fold kept only
+    the producer that asked from asking again, so the overnight check or
+    another card reading the same counter filed it once more."""
+    return {str(e.get("entity_id") or "") for e in _load_settled()
+            if e.get("kind") == "ignored" and e.get("entity_id")
+            and str(e.get("text") or "").rstrip().endswith(REMINDER_ASK)}
+
+
 def odometer_counter(row: dict) -> bool:
     """Whether a model-written row states a distance "overdue" ("19,766 miles
     overdue"): a service-due or odometer-style counter, which a car's
@@ -3054,9 +3075,11 @@ def odometer_counter(row: dict) -> bool:
     producer down for that entity as for any other row."""
     words = " ".join(str(row.get(k) or "") for k in
                      ("text", "claim", "detail", "fix"))
-    # Only the shape #827 read ("N miles overdue"); the wider shapes
-    # `misread_reminder` reads are not this rule's.
-    late = _ODOMETER_RE.search(words)
+    # Every shape `misread_reminder` reads (#1325): this rule read only
+    # "N miles overdue", so "overdue by N miles" or a reading of "-N mi"
+    # with no interval beside it was neither asked nor dropped, and was
+    # filed as a service overdue by a figure no reminder could reach.
+    late = _overdue(words)
     return bool(late and _UNIT_KEY.get(late.group(2).lower(), "")
                 in _DISTANCE_UNITS)
 
@@ -3108,6 +3131,7 @@ def add_many(objs: list[dict]) -> list[dict]:
             live_subject.setdefault(k, f)
     used = {int(f.get("ts") or 0) for f in items}
     todo_entities = _open_todo_entities() if objs else {}
+    reminder_wrong = _reminders_answered_wrong() if objs else set()
     lane_tripped = {str(f.get("entity_id") or "") for f in items
                     if f.get("source") == SAFETY_LANE_SOURCE
                     and f.get("entity_id")}
@@ -3138,6 +3162,12 @@ def add_many(objs: list[dict]) -> list[dict]:
             # A figure no real reminder reads is a question about its
             # setting (#722); a code-chosen key keeps its text.
             asked = misread_reminder(entry)
+            if (str(entry.get("entity_id") or "") in reminder_wrong
+                    and (asked or _overdue(" ".join(str(entry.get(k) or "")
+                         for k in ("text", "claim", "detail", "fix"))))):
+                # Somebody said this sensor's reminder is set up wrong: no
+                # producer reports it overdue again.
+                continue
             if not asked and odometer_counter(entry):
                 # A distance counting past its date with no interval to
                 # measure it against is information, not a fault (#827).
