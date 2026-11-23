@@ -1,4 +1,4 @@
-import { fetchWeather, getCurrentSprayRating, nextSprayOpening } from '@/lib/weather';
+import { fetchWeather, getCurrentSprayRating, nextSprayOpening, rainAhead } from '@/lib/weather';
 import { SPRAY_RATING, LOCATION } from '@/config/thresholds';
 import { getSprayRecordsForCrop, computeCoverage } from '@/lib/protection';
 import { buildPhiByProductGroup, computeCropPhi } from '@/lib/phi';
@@ -402,6 +402,7 @@ export default async function TodayPage() {
                   avgHighF={avgHigh7}
                   humidityPct={weather?.current?.humidity ?? null}
                   dormant={mostlyResting(cropData.map((c) => c.stages))}
+                  ahead={weather ? rainAhead(weather.hourly, weather.daily, now) : null}
                 />
               </section>
             )}
