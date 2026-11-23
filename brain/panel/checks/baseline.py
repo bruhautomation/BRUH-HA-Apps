@@ -547,7 +547,7 @@ def outdoor_reading(house: House, klass: str) -> str:
         if ref and value is not None:
             unit = str((st.get("attributes") or {}).get(
                 "unit_of_measurement") or "")
-            return f"{house.name(ref)} reads {_fmt(value)}{unit}"
+            return f"{house.name(ref)} reads {numfmt.quantity(value, unit)}"
     key = {"temperature": "temperature", "humidity": "humidity"}.get(klass)
     if not key:
         return ""
@@ -561,7 +561,7 @@ def outdoor_reading(house: House, klass: str) -> str:
         unit = ("%" if key == "humidity"
                 else str(wattrs.get("temperature_unit") or ""))
         return (f"the weather for {house.name(weid)} has it at "
-                f"{_fmt(value)}{unit} outside")
+                f"{numfmt.quantity(value, unit)} outside")
     return ""
 
 

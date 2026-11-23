@@ -678,8 +678,7 @@ function fmtTokens(n) {
 function fmtDayClock(epoch) {
   const d = new Date(epoch * 1000);
   if (isNaN(d.getTime())) return "";
-  return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })
-    + " " + fmtClock(epoch);
+  return weekdayDate(epoch) + " " + fmtClock(epoch);
 }
 
 // A time in a results list: the clock for today, the day and the clock for
@@ -695,13 +694,8 @@ function fmtWhen(epoch) {
   if (isNaN(d.getTime())) return "";
   const now = new Date();
   if (d.toDateString() === now.toDateString()) return fmtClock(epoch);
-  const opts = { weekday: "short", month: "short", day: "numeric" };
-  if (resultIsOld(epoch)) {
-    delete opts.weekday;
-    if (d.getFullYear() !== now.getFullYear()) opts.year = "numeric";
-    return d.toLocaleDateString([], opts);
-  }
-  return d.toLocaleDateString([], opts) + ", " + fmtClock(epoch);
+  if (resultIsOld(epoch)) return shortDate(epoch);
+  return weekdayDate(epoch) + ", " + fmtClock(epoch);
 }
 
 // Topbar chip: both usage windows — the 5-hour session that gates automatic
@@ -1386,7 +1380,7 @@ function stampOf(iso) {
 function fmtRun(ts) {
   const d = new Date(ts.slice(0, 10) + "T" + ts.slice(11).replace(/-/g, ":"));
   if (isNaN(d.getTime())) return ts;
-  return d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return `${shortDate(d.getTime() / 1000)}, ${fmtClock(d.getTime() / 1000)}`;
 }
 
 async function loadHistory(id) {
@@ -5717,9 +5711,7 @@ function fmtSaved(epoch) {
   if (!epoch) return "";
   const d = new Date(epoch * 1000);
   // No seconds: "3:52:44 PM" is precision nobody reads a sign-in date for.
-  return isNaN(d.getTime()) ? "" : d.toLocaleString([], {
-    year: "numeric", month: "short", day: "numeric",
-    hour: "numeric", minute: "2-digit" });
+  return isNaN(d.getTime()) ? "" : `${shortDate(epoch)}, ${fmtClock(epoch)}`;
 }
 
 // Where the credential in use came from. `source` is the field that makes a
@@ -6061,8 +6053,7 @@ const REFINE_IDEAS = [
 
 function fmtWhen(ts) {
   const d = new Date(ts * 1000);
-  return isNaN(d.getTime()) ? "" :
-    d.toLocaleString([], { month: "short", day: "numeric" });
+  return isNaN(d.getTime()) ? "" : shortDate(ts);
 }
 
 async function renderRefineKept() {
@@ -6665,8 +6656,7 @@ function timeUntil(epoch) {
   if (secs < 5400) return "in an hour";
   if (secs < 172800) return "tomorrow";
   if (secs < 1209600) return `in ${Math.round(secs / 86400)} days`;
-  return `on ${new Date(epoch * 1000).toLocaleDateString(
-    [], { month: "short", day: "numeric" })}`;
+  return `on ${shortDate(epoch)}`;
 }
 
 const SNOOZE_OPTIONS = [
@@ -6842,10 +6832,23 @@ function stripSignalRefs(text) {
   return out || s;
 }
 
-// "3 Oct" — a date with no year, for a line about something recent.
+// "3 Oct", with the year only when it is not this year ("3 Oct 2025"): the
+// one short date every card, finding and history line says (#1332). Fixed
+// English words, never the browser's locale order ("Oct 3").
+const MONTH_WORDS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug",
+  "Sep", "Oct", "Nov", "Dec"];
+const WEEKDAY_WORDS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 function shortDate(epoch) {
-  return new Date(epoch * 1000).toLocaleDateString(
-    [], { month: "short", day: "numeric" });
+  const d = new Date(Number(epoch) * 1000);
+  if (isNaN(d.getTime())) return "";
+  const said = `${d.getDate()} ${MONTH_WORDS[d.getMonth()]}`;
+  return d.getFullYear() === new Date().getFullYear() ? said : `${said} ${d.getFullYear()}`;
+}
+// "Tue 3 Oct": the weekday before the one short date.
+function weekdayDate(epoch) {
+  const d = new Date(Number(epoch) * 1000);
+  if (isNaN(d.getTime())) return "";
+  return `${WEEKDAY_WORDS[d.getDay()]} ${shortDate(epoch)}`;
 }
 
 // Where a finding came from, on one line. A long title ends in an
@@ -6949,8 +6952,8 @@ function agoWords(epoch) {
 function untilWords(epoch) {
   const secs = (Number(epoch) || 0) - Date.now() / 1000;
   const d = new Date(epoch * 1000);
-  if (secs < 6 * 86400) return d.toLocaleDateString([], { weekday: "short" });
-  return d.toLocaleDateString([], { day: "numeric", month: "short" });
+  if (secs < 6 * 86400) return WEEKDAY_WORDS[d.getDay()];
+  return shortDate(epoch);
 }
 
 // ---- the card --------------------------------------------------------------
@@ -9563,7 +9566,7 @@ function makeQueuedRow(f) {
   txt.appendChild(el("div", "when",
     kSourceLabel(f.source) +
     (isNaN(when.getTime()) ? "" :
-      " · " + when.toLocaleDateString([], { month: "short", day: "numeric" }))));
+      " · " + shortDate(f.ts))));
   row.appendChild(txt);
   const del = el("button", "btn icon", "✕");
   tip(del, "Drop it from the queue — it never reaches memory");
@@ -10341,14 +10344,13 @@ function whenAt(epoch) {
   if (diff === 0) return clock;
   if (diff === -1) return `yesterday ${clock}`;
   if (diff === 1) return `tomorrow ${clock}`;
-  return `${d.toLocaleDateString([], { month: "short", day: "numeric" })}, ${clock}`;
+  return `${shortDate(n)}, ${clock}`;
 }
 
 function dateAt(epoch) {
   const n = Number(epoch) || 0;
   if (!n) return "";
-  return new Date(n * 1000).toLocaleDateString([],
-    { month: "short", day: "numeric" });
+  return shortDate(n);
 }
 
 // What each state says, in the store's own units. `collecting` is the one
@@ -12613,8 +12615,7 @@ function actTime(ts) {
 function actDayLabel(end, hours) {
   if (!end) return "Now";
   const start = end - (hours || 24) * 3600;
-  const at = (ts) => new Date(ts * 1000).toLocaleDateString([],
-    { weekday: "short", day: "numeric", month: "short" }) + " " + actTime(ts);
+  const at = (ts) => weekdayDate(ts) + " " + actTime(ts);
   return `${at(start)} \u2013 ${at(end)}`;
 }
 
@@ -13670,7 +13671,7 @@ function shellClockParts(now, clock) {
   if (clock === 12) opts.hour12 = true;
   if (clock === 24) opts.hourCycle = "h23";
   const time = new Intl.DateTimeFormat([], opts).format(now).trim();
-  const date = new Intl.DateTimeFormat([], { weekday: "short", month: "short", day: "numeric" }).format(now).trim();
+  const date = weekdayDate(now.getTime() / 1000);
   return { date, time };
 }
 
@@ -17108,8 +17109,7 @@ async function composeCardImage(insight, chart) {
   add(foot, "span", "font-weight:700", "brAIn");
   const when = insight.generated_at ? new Date(insight.generated_at) : null;
   add(foot, "span", "", when && !isNaN(when.getTime())
-    ? `Analysed ${when.toLocaleString([], {
-      month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
+    ? `Analysed ${shortDate(when.getTime() / 1000)}, ${fmtClock(when.getTime() / 1000)}`
     : "");
 
   const holder = add(document.body, "div", "position:fixed;left:-20000px;top:0");
@@ -18841,7 +18841,7 @@ function reviewCostText(est) {
 function reviewDate(epoch) {
   const n = Number(epoch) || 0;
   if (!n) return "";
-  return new Date(n * 1000).toLocaleDateString([], { day: "numeric", month: "short" });
+  return shortDate(n);
 }
 
 const REVIEW_KIND_WORD = {
@@ -19401,7 +19401,7 @@ function learnedWhen(ts) {
   const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0)) / 86400000);
   if (days <= 0) return "today";
   if (days === 1) return "yesterday";
-  return d.toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
+  return shortDate(ts);
 }
 
 function setLearnedEditing(on) {
@@ -20227,7 +20227,7 @@ function renderDashboard() {
   parts.push(`<h4 class="sethead">Changes to the dashboard's own code</h4>${codeRows}`
     + (code.some((r) => r.status === "paused") ? `<p class="hint tight">A paused change is updated from the note on the dashboard.</p>` : ""));
   const hist = dashHist == null ? `<p class="hint tight">Reading…</p>`
-    : dashHist.length ? dashHist.map((h) => `<div class="drow"><span><b>${esc(DASH_WHO[h.who] || h.who || "")}</b> · ${esc(h.message || "")} · <span class="hint">${esc(new Date(h.at * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }))}</span></span>`
+    : dashHist.length ? dashHist.map((h) => `<div class="drow"><span><b>${esc(DASH_WHO[h.who] || h.who || "")}</b> · ${esc(h.message || "")} · <span class="hint">${esc(`${shortDate(h.at)}, ${fmtClock(h.at)}`)}</span></span>`
       + `<span class="row"><button type="button" class="btn small" data-dash-act="undo_commit" data-v="${esc(h.sha)}">Undo</button>`
       + `<button type="button" class="btn small" data-dash-act="restore" data-v="${esc(h.sha)}">Restore</button></span></div>`).join("")
       : `<p class="hint tight">No history yet.</p>`;

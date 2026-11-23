@@ -307,12 +307,12 @@ def underheated(snap: dict, now: float) -> list[dict]:
         out.append({
             "text": f"{hit['room']} never reaches the temperature it is set to",
             "detail": (
-                f"{hit['name']} is asked for {hit['target']:g}{unit} and the "
+                f"{hit['name']} is asked for {numfmt.temperature(hit['target'], unit)} and the "
                 f"warmest it has been in the last month is "
-                f"{hit['warmest']:g}{unit}. At the coldest it got outside "
-                f"({hit['coldest']:g}{unit}) the heat going in balances the "
-                f"heat going out at about {hit['ceiling']:.1f}{unit}, so it "
-                f"is short by roughly {short:g}{unit} whatever the "
+                f"{numfmt.temperature(hit['warmest'], unit)}. At the coldest it got outside "
+                f"({numfmt.temperature(hit['coldest'], unit)}) the heat going in balances the "
+                f"heat going out at about {numfmt.temperature(hit['ceiling'], unit)}, so it "
+                f"is short by roughly {numfmt.temperature(short, unit, delta=True)} whatever the "
                 "thermostat is set to."),
             "fix": (
                 "Something is limiting the heat that reaches this room, "
@@ -696,9 +696,9 @@ def preheat(snap: dict, now: float) -> list[dict]:
             "text": f"{room} is still warming up when this house gets up",
             "detail": (
                 f"On weekday mornings {house.name(eid)} reads about "
-                f"{at_wake:.1f}{unit} at {int(wake) // 60:02d}:"
+                f"{numfmt.temperature(at_wake, unit)} at {int(wake) // 60:02d}:"
                 f"{int(wake) % 60:02d}, which is when somebody here is "
-                f"first up, and it is asked for {target:g}{unit}. It gets "
+                f"first up, and it is asked for {numfmt.temperature(target, unit)}. It gets "
                 f"there later in the morning, so nothing is broken — the "
                 f"heating starts too late rather than falling short. From "
                 f"that temperature this room takes about "
@@ -836,7 +836,7 @@ def freeze(snap: dict, now: float) -> list[dict]:
         room = f"the {area}" if area else "this room"
         others = _other_thermometers(house, rooms, eid)
         house.gave_up("climate.freeze", [{"entity_id": eid}], (
-            f"it reads {hit['indoor']:.1f}{unit} and is falling, but you "
+            f"it reads {numfmt.temperature(hit['indoor'], unit)} and is falling, but you "
             "said this sensor is broken, so brAIn did not warn about "
             "freezing from it — "
             + (f"the other thermometers in {room} are still read"
@@ -855,10 +855,10 @@ def freeze(snap: dict, now: float) -> list[dict]:
         out.append({
             "text": f"{room} is on course to get cold enough to matter",
             "detail": (
-                f"{house.name(eid)} reads {hit['indoor']:.1f}{unit} and is "
-                f"falling, and it is {hit['outside']:.1f}{unit} outside. At "
+                f"{house.name(eid)} reads {numfmt.temperature(hit['indoor'], unit)} and is "
+                f"falling, and it is {numfmt.temperature(hit['outside'], unit)} outside. At "
                 f"the rate this room loses heat it reaches "
-                f"{hit['floor']:g}{unit} in {when} if nothing heats it — "
+                f"{numfmt.temperature(hit['floor'], unit)} in {when} if nothing heats it — "
                 "which is where water in an outside wall starts to be at "
                 "risk, well before the room's own thermometer reads "
                 "freezing."),
@@ -933,12 +933,12 @@ def window(snap: dict, now: float) -> list[dict]:
         out.append({
             "text": f"{room} is losing heat faster than it can",
             "detail": (
-                f"{house.name(eid)} fell from {fall['from']:g}{unit} to "
-                f"{fall['to']:g}{unit} over the last "
+                f"{house.name(eid)} fell from {numfmt.temperature(fall['from'], unit)} to "
+                f"{numfmt.temperature(fall['to'], unit)} over the last "
                 f"{numfmt.span(fall['span_min'] * 60)} — about "
-                f"{fall['rate']:.1f}{unit} an hour, where this room's own "
-                f"measured insulation allows about {expected:.1f}{unit} an "
-                f"hour at {outside:.1f}{unit} outside. Heat is leaving by "
+                f"{numfmt.temperature(fall['rate'], unit, delta=True)} an hour, where this room's own "
+                f"measured insulation allows about {numfmt.temperature(expected, unit, delta=True)} an "
+                f"hour at {numfmt.temperature(outside, unit)} outside. Heat is leaving by "
                 "some route the walls do not have."),
             "fix": (
                 "Shut whatever is open: a window, a door to outside, a roof "
@@ -1132,7 +1132,7 @@ def _space_holds(house: House, eid: str, night: dict, now: float) -> str:
     ahead = thermal.coast(entry, _to_celsius(reading, unit), low, hours)
     if ahead is None or ahead < FROST_SAFE_MARGIN_C:
         return ""
-    return f"{reading:.0f}{unit} now"
+    return f"{numfmt.temperature(reading, unit, whole=True)} now"
 
 
 def frost_ahead(snap: dict, now: float) -> list[dict]:
@@ -1215,14 +1215,15 @@ def frost_ahead(snap: dict, now: float) -> list[dict]:
     named = names[:MAX_FROST_NAMES]
     items = list(dict.fromkeys(k for n in named for k in keys[n.lower()]))
     temp, unit = night["temp"], night["unit"]
-    low = f"{temp:.0f}{unit}".replace("-", "−")
+    low = numfmt.temperature(temp, unit, whole=True)
     # How far from freezing the low is, in the forecast's own degrees.
     freezing = 32.0 if unit == "°F" else 0.0
     margin = round(temp - freezing)
     below = margin <= 0
     margin_words = (
         "right at freezing" if margin == 0 else
-        f"{abs(margin)}{unit} {'below' if margin < 0 else 'above'} freezing")
+        f"{numfmt.temperature(abs(margin), unit, delta=True, whole=True)} "
+        f"{'below' if margin < 0 else 'above'} freezing")
     margin_words += (
         ", so water left in these will freeze" if below else
         ", so only water in the most exposed spots is at risk")
