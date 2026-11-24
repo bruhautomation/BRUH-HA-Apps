@@ -260,7 +260,9 @@ function renderBar() {
       ? `${roll.side} roll: ${stock.name} ${stock.label}. `
         + (S.settings.track_remaining === false
           ? 'Not counting what is left. '
-          : `About ${roll.remaining} left. `) + 'Press to change.'
+          : (roll.remaining > 0 ? `About ${roll.remaining} left`
+            + (roll.low ? ', running low. ' : '. ') : 'Not counted yet. '))
+        + 'Press to change.'
       : `BRUH Print does not know what is in the ${roll.side} roll. Press to say.`);
     /* A single-roll printer has one bay, and a chip offering a choice that
      * does not exist is a control that lies. */
@@ -280,6 +282,7 @@ function bayWords(roll, twin) {
   parts.push(el('span', 'rname', stock ? stock.name : 'empty'));
   if (twin && S.rolls.length > 1 && roll.side === activeSide())
     parts.push(el('span', 'rtag', 'prints text'));
+  if (roll.low) parts.push(el('span', 'rlow', `${roll.remaining} left`));
   return parts;
 }
 
@@ -1666,8 +1669,22 @@ function pickTemplate(template) {
   form.append(el('p', 'muted tname',
     `Automations and the Lovelace card print this as \u201c${template.name}\u201d.`));
 
+  const copiesField = el('label', 'field inline');
+  const copies = el('input');
+  copies.type = 'number'; copies.min = '1'; copies.value = String(template.copies || 1);
   const inputs = {};
+  let run = null;
   for (const field of template.fields) {
+    /* A numbered template prints a run, From one number To another, and
+     * the line under them says what that comes to before anything prints.
+     * Each number is its own print of the template, exactly as printing it
+     * once with that number would be; History shows the run as one row. */
+    if (field.key === 'number') {
+      run = numberRun(field, () => templatePreview(template, inputs), copies);
+      inputs[field.key] = run.from;
+      form.append(run.block);
+      continue;
+    }
     const wrap = el('label', 'field');
     wrap.append(el('span', null, field.label));
     const input = field.multiline ? el('textarea') : el('input');
@@ -1681,23 +1698,38 @@ function pickTemplate(template) {
   }
 
   const row = el('div', 'actions');
-  const copiesField = el('label', 'field inline');
   copiesField.append(el('span', null, 'Copies'));
-  const copies = el('input');
-  copies.type = 'number'; copies.min = '1'; copies.value = String(template.copies || 1);
   copiesField.append(copies);
+  if (run) copies.addEventListener('input', run.say);
 
   const print = el('button', 'btn primary big', 'Print');
   print.onclick = async () => {
+    const each = Number(copies.value) || 1;
+    /* An empty From prints the template's own number, as before. */
+    const numbers = (run && run.numbers()) || [null];
+    const total = numbers.length * each;
+    if (numbers.length > 1 && total > Number(S.settings.confirm_over_copies || 10)
+        && !confirm(`Print ${total} labels?`)) return;
     print.disabled = true;
+    let done = 0, data = null;
     try {
-      const data = await post(`/api/template/${template.id}/print`, {
-        fields: values(inputs), copies: Number(copies.value) || 1,
-      });
-      toast(`Printed ${data.printed} on the ${data.side} roll.`, 'good');
+      for (const number of numbers) {
+        const fields = values(inputs);
+        if (number !== null) fields.number = number;
+        data = await post(`/api/template/${template.id}/print`,
+                          { fields, copies: each });
+        done += data.printed;
+      }
+      toast(numbers.length > 1
+        ? `Printed ${numbers[0]}\u2013${numbers[numbers.length - 1]}, ${done} labels, on the ${data.side} roll.`
+        : `Printed ${data.printed} on the ${data.side} roll.`, 'good');
       notes($('templateNotes'), data.notes);
       await loadState();
-    } catch (error) { fail(error); } finally { print.disabled = false; }
+    } catch (error) {
+      if (done) error.message = `${error.message} (${done} of ${total} labels printed before it stopped.)`;
+      fail(error);
+      await loadState();
+    } finally { print.disabled = false; }
   };
 
   const edit = el('button', 'btn', 'Edit design');
@@ -1717,6 +1749,63 @@ function pickTemplate(template) {
   row.append(copiesField, print, edit, remove);
   form.append(row);
   templatePreview(template, inputs);
+}
+
+/* From and To for a numbered template, and the sentence that says what
+ * they print. To left empty prints From alone, as the one Number box did.
+ * A From written with leading zeros ("007") keeps its width. */
+const MAX_RUN = 500;
+function numberRun(field, changed, copies) {
+  const block = el('div', 'field runfield');
+  const pair = el('div', 'runpair');
+  const box = (name, value, hint) => {
+    const wrap = el('label', 'field');
+    wrap.append(el('span', null, name));
+    const input = el('input');
+    input.inputMode = 'numeric';
+    input.value = value;
+    if (hint) input.placeholder = hint;
+    wrap.append(input);
+    pair.append(wrap);
+    return input;
+  };
+  const from = box(field.label === 'Number' ? 'From' : `${field.label}: from`,
+                   field.default || '', '');
+  const to = box('To', '', 'just one');
+  const line = el('p', 'runline');
+  block.append(pair, line);
+  const numbers = () => {
+    const a = from.value.trim(), b = to.value.trim();
+    if (!/^\d+$/.test(a)) return a ? [a] : null;
+    if (!b || !/^\d+$/.test(b) || Number(b) <= Number(a)) return [a];
+    const width = a.startsWith('0') ? a.length : 0;
+    const out = [];
+    for (let n = Number(a); n <= Number(b) && out.length < MAX_RUN; n++)
+      out.push(String(n).padStart(width, '0'));
+    return out;
+  };
+  const say = () => {
+    const list = numbers();
+    const each = Number(copies.value) || 1;
+    const b = to.value.trim();
+    if (!list) line.textContent = field.hint || 'Fill in From, and To for a run.';
+    else if (list.length === 1 && b && b !== list[0])
+      line.textContent = /^\d+$/.test(b)
+        ? `To has to be after ${list[0]} for a run. Prints ${list[0]} only.`
+        : `To has to be a number. Prints ${list[0]} only.`;
+    else if (list.length === 1)
+      line.textContent = `Prints ${list[0]}`
+        + (each > 1 ? `, ${each} labels` : '') + '. Fill in To for a run.';
+    else
+      line.textContent = `Prints ${list[0]}\u2013${list[list.length - 1]}, `
+        + `${list.length * each} labels`
+        + (each > 1 ? ` (${each} of each)` : '')
+        + (list.length === MAX_RUN ? `, the most one run prints` : '') + '.';
+  };
+  from.oninput = () => { say(); changed(); };
+  to.oninput = say;
+  say();
+  return { block, from, numbers, say };
 }
 
 const values = (inputs) => Object.fromEntries(
@@ -1751,6 +1840,68 @@ document.querySelectorAll('.psec').forEach((d) => {
   d.addEventListener('toggle', () =>
     prefSet('bruhprint.sec.' + d.dataset.sec, d.open ? '1' : '0'));
 });
+
+/* How many labels are left on a roll, on the roll's own card (#1173 put a
+ * "Count what is left" box under both rolls, and pressing it changed a
+ * setting and nothing a person could see on a roll that had no count).
+ * Every loaded roll says one of two things: about how many are left, or
+ * that it is not counted yet, and either one is the button that sets it.
+ * Setting a count is what turns counting on. */
+function countBlock(roll, stock) {
+  const counting = S.settings.track_remaining !== false && roll.remaining > 0;
+  const gauge = el('button', 'remaining' + (roll.low ? ' low' : ''));
+  if (counting) {
+    /* The bar is a control, not a readout. The count is an estimate that
+     * drifts the moment somebody prints from another machine or throws
+     * half a roll away, so the fix has to be where the wrong number is —
+     * press the bar, type the truth. */
+    const full = stock.per_roll || roll.remaining || 1;
+    const bar = el('div', 'bar');
+    const fillEl = el('i');
+    fillEl.style.width = clamp(roll.remaining / full * 100, 0, 100) + '%';
+    bar.append(fillEl);
+    gauge.append(bar, el('span', 'est', `About ${roll.remaining} left`
+      + (roll.low ? ' \u2014 running low' : '') + ' \u2014 press to correct'));
+    gauge.setAttribute('data-tip',
+      'An estimate, counted down from what you set when you loaded the '
+      + 'roll — nothing on a LabelWriter reports the real level. Press to '
+      + 'correct it.');
+  } else {
+    gauge.append(el('span', 'est',
+      'Not counting yet \u2014 tell me how many are on it'));
+    gauge.setAttribute('data-tip',
+      'BRUH Print counts down from the number you give, so you can see when '
+      + 'a roll is running low. The printer itself cannot tell.');
+  }
+  gauge.onclick = async () => {
+    const typed = prompt(
+      `How many ${stock.name} labels are on the ${roll.side} roll?`,
+      String(counting ? roll.remaining : (stock.per_roll || '')));
+    if (typed === null || typed.trim() === '') return;
+    const count = Number(typed);
+    if (!Number.isFinite(count) || count < 0)
+      return toast('That is not a number of labels.', 'bad');
+    try {
+      if (S.settings.track_remaining === false)
+        await post('/api/settings', { track_remaining: true });
+      await post(`/api/roll/${roll.side}`,
+                 { stock: stock.id, remaining: Math.round(count) });
+      await loadState(); renderPrinter(); renderBar();
+      toast(`The ${roll.side} roll: about ${Math.round(count)} left.`, 'good');
+    } catch (error) { fail(error); }
+  };
+  if (!counting || !stock.per_roll) return [gauge];
+  const reset = el('button', 'btn tiny', 'Full roll');
+  reset.setAttribute('data-tip',
+    `Put the count back to a full roll of ${stock.per_roll} — `
+    + 'what you press when you drop a new one in.');
+  reset.onclick = async () => {
+    try { await post(`/api/roll/${roll.side}`, { stock: stock.id, remaining: stock.per_roll }); await loadState(); renderPrinter(); renderBar(); toast('Counted as a full roll.', 'good'); }
+    catch (error) { fail(error); }
+  };
+  const foot = el('div', 'foot'); foot.append(reset);
+  return [gauge, foot];
+}
 
 /* What each printer last said when asked about paper and lid, for the
  * status line — kept for the page's life, never stored. */
@@ -1877,7 +2028,10 @@ function renderPrinter() {
     const none = el('option', null, '— empty —'); none.value = '';
     select.append(none);
     for (const stock of S.stocks) {
-      const option = el('option', null, stockOptionText(stock));
+      /* A size that needs explaining is said on the line under the picker,
+       * once, rather than cut off inside it. */
+      const option = el('option', null, stock.size && stock.label !== stock.size
+        ? stock.name : stockOptionText(stock));
       option.value = stock.id;
       select.append(option);
     }
@@ -1893,79 +2047,13 @@ function renderPrinter() {
     bay.append(select);
 
     const stock = stockById(roll.stock);
-    if (stock && S.settings.track_remaining !== false) {
-      /* The bar is a control, not a readout. The count is an estimate that
-       * drifts the moment somebody prints from another machine or throws
-       * half a roll away, so the fix has to be where the wrong number is —
-       * press the bar, type the truth. A number you can see and cannot
-       * correct is a number you stop reading. */
-      const full = stock.per_roll || roll.remaining || 1;
-      const gauge = el('button', 'remaining');
-      gauge.setAttribute('data-tip',
-        'An estimate, counted down from what you set when you loaded the '
-        + 'roll — nothing on a LabelWriter reports the real level. Press to '
-        + 'correct it.');
-      const bar = el('div', 'bar');
-      const fillEl = el('i');
-      fillEl.style.width = clamp(roll.remaining / full * 100, 0, 100) + '%';
-      bar.append(fillEl);
-      gauge.append(bar, el('span', 'est',
-        `About ${roll.remaining} left — press to correct`));
-      const setCount = async () => {
-        const typed = prompt(
-          `How many ${stock.name} labels are left on the ${roll.side} roll?`,
-          String(roll.remaining));
-        if (typed === null) return;
-        const count = Number(typed);
-        if (!Number.isFinite(count) || count < 0)
-          return toast('That is not a number of labels.', 'bad');
-        try {
-          await post(`/api/roll/${roll.side}`,
-                     { stock: stock.id, remaining: Math.round(count) });
-          await loadState(); renderPrinter();
-          toast('Count updated.', 'good');
-        } catch (error) { fail(error); }
-      };
-      gauge.onclick = setCount;
-      bay.append(gauge);
-
-      const reset = el('button', 'btn tiny', 'Full roll');
-      reset.setAttribute('data-tip',
-        `Put the count back to a full roll of ${stock.per_roll || '?'} — `
-        + 'what you press when you drop a new one in.');
-      reset.onclick = async () => {
-        try { await post(`/api/roll/${roll.side}`, { stock: stock.id, remaining: stock.per_roll }); await loadState(); renderPrinter(); toast('Counted as a full roll.', 'good'); }
-        catch (error) { fail(error); }
-      };
-      const foot = el('div', 'foot'); foot.append(reset);
-      bay.append(foot);
-    }
+    /* A name that gives another size than the roll is set to: the line
+     * says what the two figures are. */
+    if (stock && stock.size && stock.label !== stock.size)
+      bay.append(el('p', 'est sizenote', stock.label));
+    if (stock) bay.append(...countBlock(roll, stock));
     bay.append(lineUpBlock(roll, stock));
     bays.append(bay);
-  }
-
-  /* Said once for both rolls, not once per roll — as a box that sits with
-   * them, rather than a loose line under them that did not say what
-   * counting is for (#1173). The switch is right here: a note that points
-   * at a setting two closed sections down is a sentence about something
-   * you cannot see. */
-  document.querySelectorAll('.baynote').forEach((n) => n.remove());
-  if (S.settings.track_remaining === false && S.rolls.some((r) => stockById(r.stock))) {
-    const note = el('div', 'baynote');
-    note.append(el('p', null,
-      'Counting keeps an estimate of how many labels are left on each roll, '
-      + 'so you can see when one is running low. It counts down from what '
-      + 'you say is loaded; the printer itself cannot tell.'));
-    const on = el('button', 'btn', 'Count what is left');
-    on.onclick = async () => {
-      try {
-        await post('/api/settings', { track_remaining: true });
-        await loadState(); renderPrinter(); renderBar();
-        toast('Counting what is left.', 'good');
-      } catch (error) { fail(error); }
-    };
-    note.append(on);
-    bays.after(note);
   }
 
   const table = $('stockTable');
@@ -1988,6 +2076,10 @@ function renderPrinter() {
       `${stock.across_in}\u2033 across \u00b7 ${stock.feed_in || '\u2014'}`
       + `${stock.feed_in ? '\u2033 along the roll' : ' (continuous)'}`
       + ` \u00b7 ${stock.margin_mm}mm border`));
+    /* A name that gives another size is answered here too (the bay's
+     * picker already says it): what the two figures are. */
+    if (stock.size && stock.label !== stock.size)
+      head.append(el('span', 'dim', stock.label));
     if (stock.sku) head.append(el('span', 'sku', stock.sku));
     /* One pill where three used to be, and it says a state rather than a
      * number: what a lined-up roll does is a sentence, and the sentence is
@@ -3379,7 +3471,7 @@ function renderHistory() {
     const row = el('div', 'hrow');
     const text = el('div', 'htext');
     const title = historyTitle(group);
-    text.append(el('span', 'what', group.repeat ? `${title} \u00d7${group.length}` : title));
+    text.append(el('span', 'what', title));
     /* What the label was made from, when the title does not already say
      * it (#1281): the template's name, or the words on it. */
     const words = labelWords(entry.label);
@@ -3395,8 +3487,11 @@ function renderHistory() {
     /* When, how many and which roll. The stock's name is on the picture's
      * own shape and in Print again's tip; it took the line to three rows on
      * a phone. */
-    const meta = el('span', 'meta', `${group.repeat ? 'last ' : ''}${when(entry)} \u00b7 `
-      + `${count === 1 ? '1 label' : `${count} labels`} \u00b7 ${entry.side} roll`);
+    const meta = el('span', 'meta', (group.repeat
+      ? `${group.length} prints, last ${when(entry)}`
+        + (count > group.length ? ` \u00b7 ${count} labels` : '')
+      : `${when(entry)} \u00b7 ${count === 1 ? '1 label' : `${count} labels`}`)
+      + ` \u00b7 ${entry.side} roll`);
     meta.title = stockName;
     text.append(meta);
     const buttons = el('div', 'hbtns');
@@ -3431,13 +3526,16 @@ function renderHistory() {
         await loadState(); renderHistory();
       } catch (error) { fail(error); }
     };
-    const open = el('button', 'btn tiny', 'Open');
-    open.setAttribute('data-tip', batch
-      ? 'Opens the first label of this batch in the designer.'
-      : 'Opens this label in the designer with every field already filled in.');
+    /* "Open" did not say what it opened, or for what (#1281's household
+     * asked). It edits a copy in the designer; the print stays here. */
+    const edit = el('button', 'btn tiny', 'Edit');
+    edit.setAttribute('data-tip', (batch
+      ? 'Opens the first label of this batch in the designer to change it.'
+      : 'Opens this label in the designer to change it, words already filled in.')
+      + ' What was printed stays in History.');
     const first = group[group.length - 1];
-    open.onclick = () => { loadLabel(structuredClone(first.label)); show('design'); };
-    buttons.append(again, open);
+    edit.onclick = () => { loadLabel(structuredClone(first.label)); show('design'); };
+    buttons.append(again, edit);
     row.append(historyThumb(group[group.length - 1]), text, buttons);
     list.append(row);
   }
@@ -3464,13 +3562,27 @@ function batchKey(e) {
   const m = numbered(e);
   return m ? `n|${m[1]}|${where}` : null;
 }
-/* The same label printed again and again in a row is one row too (#1281):
- * "Pantry ×3". Identical is decided from the label document itself, the
- * stock and the roll, never from the title, and such a row's Print again
- * prints the newest one once, so grouping it spends nothing extra. */
-const sameLabel = (a, b) => a.stock === b.stock && a.side === b.side
-  && JSON.stringify(a.label) === JSON.stringify(b.label);
+/* The same label printed again is one row (#1281): "Pantry · 3 prints,
+ * last Nov 13", whether the prints were in a row or days apart with other
+ * labels between them — three days of one label was three identical rows.
+ * Identical is decided from the label document itself, the stock and the
+ * roll, never from the title, and such a row's Print again prints the
+ * newest one once, so folding it spends nothing extra. A batch keeps its
+ * own row, because its Print again prints every member. */
+const labelKey = (e) => `${e.stock}|${e.side}|${JSON.stringify(e.label)}`;
+const sameLabel = (a, b) => labelKey(a) === labelKey(b);
 function historyGroups(entries) {
+  const folded = [], home = new Map();
+  for (const group of runs(entries)) {
+    if (group.length > 1 && !group.repeat) { folded.push(group); continue; }
+    const key = labelKey(group[0]);
+    const into = home.get(key);
+    if (into) { into.push(...group); into.repeat = true; }
+    else { home.set(key, group); folded.push(group); }
+  }
+  return folded;
+}
+function runs(entries) {
   const groups = [];
   for (const entry of entries) {
     const last = groups[groups.length - 1];

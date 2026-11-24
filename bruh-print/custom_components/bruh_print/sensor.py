@@ -77,6 +77,8 @@ class _Base(CoordinatorEntity[BruhPrintCoordinator], SensorEntity):
 class PrinterSensor(_Base):
     _attr_name = "Printer"
     _attr_icon = "mdi:printer-pos"
+    # The template list is for the Lovelace card to draw, not history to keep.
+    _unrecorded_attributes = frozenset({"templates"})
 
     def __init__(self, coordinator, entry) -> None:
         super().__init__(coordinator, entry, "printer")
@@ -108,6 +110,14 @@ class PrinterSensor(_Base):
             # The stock a text print lands on. The Lovelace card starts from
             # it and the Quick tab sets it, so both name the same roll.
             "text_prints_on": self._data.get("quick_stock", ""),
+            # The saved templates and what each asks for, for a card set to
+            # list them (`show_templates`).
+            "templates": [
+                {"name": t.get("name", ""),
+                 "fields": [{"key": f.get("key", ""), "label": f.get("label", ""),
+                             "default": f.get("default", "")}
+                            for f in t.get("fields") or [] if isinstance(f, dict)]}
+                for t in self._data.get("templates") or [] if isinstance(t, dict)],
         }
 
 
@@ -162,6 +172,8 @@ class RollSensor(_Base):
                         if changed else None),
             "note": self._roll.get("note", ""),
             "estimate": "Counted from prints, not reported by the printer.",
+            # The add-on's own answer, so the card and the panel agree.
+            "low": bool(self._roll.get("low")),
             "reason": self._offline_reason,
         }
 

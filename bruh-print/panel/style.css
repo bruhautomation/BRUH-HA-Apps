@@ -198,12 +198,15 @@ p { margin: 0; }
 .chip .side { color: var(--ink-3); font-weight: 700; flex: none; }
 .chip .rname { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .chip .rtag { color: var(--accent); font-weight: 600; flex: none; }
+/* A roll running low says so where the rolls are always on screen. */
+.chip .rlow { color: var(--warn); font-weight: 600; flex: none; }
+.chip .rlow::before { content: "\00b7\00a0"; color: var(--ink-3); font-weight: 400; }
 /* A wide bar's roll chip is two short lines — "Left · prints text" over
  * the name — so two names and the printer still share the tab row at
  * 1200px instead of wrapping it. */
-.roll-chip { display: inline-grid; grid-template-columns: auto 1fr; column-gap: var(--sp-1);
+.roll-chip { display: inline-grid; grid-template-columns: auto auto 1fr; column-gap: var(--sp-1);
   align-content: center; text-align: left; padding-top: 2px; padding-bottom: 2px; }
-.roll-chip .side, .roll-chip .rtag { font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.roll-chip .side, .roll-chip .rtag, .roll-chip .rlow { font-size: var(--fs-meta); line-height: var(--lh-meta); }
 .roll-chip .rname { grid-column: 1 / -1; grid-row: 2; max-width: 170px;
   line-height: var(--lh-body); }
 .roll-chip .rname:first-child { grid-row: 1; }
@@ -573,6 +576,10 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 .card:hover { border-color: var(--accent); }
 .card .tap { margin-left: auto; font-size: var(--fs-meta); color: var(--accent); font-weight: 600; }
 .tname { margin: 0; font-size: var(--fs-body); }
+/* A numbered template's From and To, side by side, and what they print. */
+.runpair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+.runpair .field { margin-bottom: 0; min-width: 0; }
+.runline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2); }
 .card.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .card h3 { margin: 0 0 var(--sp-1); font-size: var(--fs-card); line-height: var(--lh-card); }
 .card .sub { font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--ink-2); }
@@ -590,6 +597,7 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
  * bar, so the target is a real 40px (44 on touch) while the track it draws
  * stays 6px — a control the audit can see and a thumb can hit. */
 .bay .est { font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--ink-2); }
+.bay .sizenote { margin: var(--sp-1) 0 0; }
 .bar { display: block; width: 100%; height: 6px; border-radius: 999px;
   background: var(--line-2); overflow: hidden; margin: var(--sp-2) 0; }
 .bar > i { display: block; height: 100%; background: var(--accent); }
@@ -598,6 +606,8 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
   color: inherit; border-radius: var(--control-radius); }
 .remaining:hover .est { color: var(--ink); }
 .remaining:hover .bar > i { filter: brightness(1.12); }
+.remaining.low .est { color: var(--warn); font-weight: 600; }
+.remaining.low .bar > i { background: var(--warn); }
 .remaining:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* The stock list is one card, its rows divided by hairlines. */
@@ -939,11 +949,6 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 /* Forget throws a measurement away: it lives inside "What it measured",
    apart from the everyday actions, and is a real target. */
 .caldetail .forgetcal { min-height: var(--btn-h); margin: var(--sp-1) 0 var(--sp-2); }
-/* Counting, said once for both rolls, in a box directly under them. */
-.baynote { margin-top: 0; display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4);
-  align-items: center; background: var(--panel); border: 1px dashed var(--line);
-  border-radius: var(--card-radius); padding: var(--card-pad); }
-.baynote p { margin: 0; flex: 1 1 260px; font-size: var(--fs-body); color: var(--ink-2); }
 
 /* The wizard. `.calsplit` is one column on a phone and two above 640px:
    the drawing has to be ON the screen you are typing into, and at 390px

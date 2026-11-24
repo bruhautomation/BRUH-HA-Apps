@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.15.4
+
+### Added
+
+- A template with a number prints a run: From and To, with a line such as "Prints 28–52, 25 labels". The run is one row in History (1366).
+- The Lovelace card can list your saved templates to print from (`show_templates`, off by default) (1367).
+
+### Changed
+
+- History folds every print of the same label into one row ("3 prints, last Nov 21") with one Print again, and "Open" is now "Edit" (1364).
+- Each loaded roll says "About N left" or "Not counting yet — tell me how many are on it", and that line is the button that sets the count; a low roll is marked in the header, on the Printer tab and on the card (1365).
+- The card's roll tiles are the same height at every width, and "prints text" is a small badge beside the roll's name (1367).
+- A roll whose name gives a label size different from its stock size says why ('0.75" × 2" label on a 1.0" backing') instead of showing two figures that disagree (1368).
+
 ## 0.15.3
 
 ### Fixed
