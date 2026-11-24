@@ -1,26 +1,41 @@
 import type { PhenologicalStage } from '@/lib/database.types';
+import { deriveStage } from '@/lib/phenology';
 
 /**
  * The stage of each of a crop's varieties, as the Crops screen shows them: the
  * calendar-applied stage, or dormant for a variety with no stage row (the
- * column's default). Every screen that sorts crops by season reads this, so a
- * crop shown Dormant on Crops is resting everywhere else too.
+ * column's default). A crop with no varieties (a hedge, a rose bed) takes its
+ * group's calendar stage, `groupStage` (`deriveStage`), so it has a season
+ * too. Every screen that sorts crops by season reads this, so a crop shown
+ * Dormant on Crops is resting everywhere else too.
  */
 export function cropStages(
   cropId: number,
   varieties: Array<{ id: number; crop_id: number }>,
-  effectiveStages: Array<{ variety_id: number; stage: PhenologicalStage }>
+  effectiveStages: Array<{ variety_id: number; stage: PhenologicalStage }>,
+  groupStage: PhenologicalStage | null = null
 ): PhenologicalStage[] {
-  return varieties
+  const own = varieties
     .filter((v) => v.crop_id === cropId)
     .map((v) => effectiveStages.find((s) => s.variety_id === v.id)?.stage ?? 'dormant');
+  return own.length === 0 && groupStage ? [groupStage] : own;
+}
+
+/** The calendar stage of each crop group by id, for `cropStages`' groupStage. */
+export function groupStages(
+  cropGroups: Array<{ id: number; name: string }>,
+  now: Date
+): (groupId: number | null) => PhenologicalStage | null {
+  const byId = new Map(cropGroups.map((g) => [g.id, deriveStage(g.name, now)]));
+  return (groupId) => (groupId == null ? null : (byId.get(groupId) ?? null));
 }
 
 /**
  * Whether a crop should count toward "coverage is due" right now. A crop whose
  * every variety is dormant or already past harvest is resting: a lapsed spray
  * interval on it is not something to act on, so it stays out of the due and
- * attention counts. A crop with no varieties has no stage to go by and counts.
+ * attention counts. A crop with no stage to go by (no varieties, no group
+ * calendar) counts.
  */
 export function needsCoverageNow(stages: Array<{ stage: PhenologicalStage }>): boolean {
   if (stages.length === 0) return true;

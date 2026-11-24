@@ -5,7 +5,24 @@ export interface CatalogEntry {
   name: string;
   cropGroup: string | null;
   emoji: string;
+  /** Grown from seed or transplant each year, when that differs from its group's habit. */
+  annual?: boolean;
 }
+
+/**
+ * Groups whose crops are planted fresh each year: at the end of their season
+ * they are finished, not dormant. Every other group is perennial (trees, vines,
+ * berries, turf, ornamentals); an entry's own `annual` overrides its group.
+ */
+const ANNUAL_GROUPS = new Set([
+  'Cucurbits',
+  'Nightshades',
+  'Legumes',
+  'Brassicas',
+  'Leafy Greens',
+  'Root Vegetables',
+  'Alliums',
+]);
 
 export const CROP_CATALOG: CatalogEntry[] = [
   // ── Tree Fruit ──
@@ -78,9 +95,10 @@ export const CROP_CATALOG: CatalogEntry[] = [
 
   // ── Alliums ──
   { name: 'Onions', cropGroup: 'Alliums', emoji: '🧅' },
-  { name: 'Garlic', cropGroup: 'Alliums', emoji: '🧄' },
+  // Planted in the fall: over winter the bed holds next year's bulbs, resting.
+  { name: 'Garlic', cropGroup: 'Alliums', emoji: '🧄', annual: false },
   { name: 'Leeks', cropGroup: 'Alliums', emoji: '🧅' },
-  { name: 'Shallots', cropGroup: 'Alliums', emoji: '🧅' },
+  { name: 'Shallots', cropGroup: 'Alliums', emoji: '🧅', annual: false },
   { name: 'Scallions', cropGroup: 'Alliums', emoji: '🧅' },
 
   // ── Leafy Greens ──
@@ -99,13 +117,13 @@ export const CROP_CATALOG: CatalogEntry[] = [
   { name: 'Celery', cropGroup: 'Leafy Greens', emoji: '🥬' },
 
   // ── Corn ──
-  { name: 'Sweet Corn', cropGroup: null, emoji: '🌽' },
+  { name: 'Sweet Corn', cropGroup: null, emoji: '🌽', annual: true },
 
   // ── Herbs ──
-  { name: 'Basil', cropGroup: 'Herbs', emoji: '🌿' },
-  { name: 'Cilantro', cropGroup: 'Herbs', emoji: '🌿' },
-  { name: 'Dill', cropGroup: 'Herbs', emoji: '🌿' },
-  { name: 'Parsley', cropGroup: 'Herbs', emoji: '🌿' },
+  { name: 'Basil', cropGroup: 'Herbs', emoji: '🌿', annual: true },
+  { name: 'Cilantro', cropGroup: 'Herbs', emoji: '🌿', annual: true },
+  { name: 'Dill', cropGroup: 'Herbs', emoji: '🌿', annual: true },
+  { name: 'Parsley', cropGroup: 'Herbs', emoji: '🌿', annual: true },
   { name: 'Rosemary', cropGroup: 'Herbs', emoji: '🌿' },
   { name: 'Thyme', cropGroup: 'Herbs', emoji: '🌿' },
   { name: 'Sage', cropGroup: 'Herbs', emoji: '🌿' },
@@ -130,9 +148,9 @@ export const CROP_CATALOG: CatalogEntry[] = [
   // ── Other Edibles ──
   { name: 'Asparagus', cropGroup: null, emoji: '🌿' },
   { name: 'Rhubarb', cropGroup: null, emoji: '🟢' },
-  { name: 'Okra', cropGroup: null, emoji: '🟢' },
+  { name: 'Okra', cropGroup: null, emoji: '🟢', annual: true },
   { name: 'Artichokes', cropGroup: null, emoji: '🟢' },
-  { name: 'Sunflowers', cropGroup: null, emoji: '🌻' },
+  { name: 'Sunflowers', cropGroup: null, emoji: '🌻', annual: true },
   { name: 'Hops', cropGroup: null, emoji: '🌿' },
 
   // ── Ornamentals: Roses ──
@@ -193,3 +211,18 @@ export const CROP_CATALOG: CatalogEntry[] = [
   { name: 'Trash Area', cropGroup: 'Structures & Premise', emoji: '🗑️' },
   { name: 'Compost Pile', cropGroup: 'Structures & Premise', emoji: '♻️' },
 ];
+
+const normName = (s: string) => s.trim().toLowerCase();
+
+/**
+ * Whether a crop is an annual, by what the catalog says about it: its own entry
+ * when its name is in the catalog, else its group's habit. A crop the catalog
+ * does not know, in no annual group, is taken as perennial (it rests, it is not
+ * finished).
+ */
+export function isAnnualCrop(name: string, groupName: string | null): boolean {
+  const entry = CROP_CATALOG.find((e) => normName(e.name) === normName(name));
+  if (entry?.annual != null) return entry.annual;
+  const group = entry ? entry.cropGroup : groupName;
+  return group != null && ANNUAL_GROUPS.has(group);
+}

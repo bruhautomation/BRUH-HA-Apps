@@ -11,7 +11,7 @@ import {
 } from '@/lib/queries';
 import { applyPhenology } from '@/lib/phenology';
 import { getSprayRecordsForCrop, computeCoverage } from '@/lib/protection';
-import { cropStages, needsCoverageNow, sprayMissing } from '@/lib/coverage-season';
+import { cropStages, groupStages, needsCoverageNow, sprayMissing } from '@/lib/coverage-season';
 
 /**
  * Whether any active crop needs a spray now, by the rule Today uses (see
@@ -35,8 +35,9 @@ export async function anySprayDue(
     ]);
   const ingredientMap = buildIngredientMap(pis, ais);
   const effective = applyPhenology(varietyStages, varieties, crops, cropGroups, now);
+  const groupStage = groupStages(cropGroups, now);
   return crops.some((crop) => {
-    const stages = cropStages(crop.id, varieties, effective);
+    const stages = cropStages(crop.id, varieties, effective, groupStage(crop.crop_group_id));
     if (!crop.track_fungicide && !crop.track_insecticide) return false;
     const records = getSprayRecordsForCrop(
       crop.id,
