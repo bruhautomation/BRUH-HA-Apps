@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.17
+
+### Changed
+
+- Morph says a past time one way everywhere: a clock time today, then "yesterday", then a date ("Nov 18, 8:12 PM"), never a bare weekday that reads as the coming one (1388).
+- The rules brAIn builds your own dashboard cards by are stricter, and Morph asks once whether brAIn should recheck your cards against them: an empty tile is hidden or says what is missing (1388); a machine that is off says so instead of an empty chart and dashes, and a button's word is readable on its colour (1389); a tab's subtitle fits whole, and a card's sentence about a flag says only what the flag says (1390); header icons and chips are 40px to tap (1391); a diagram's labels are readable and a "low" or "high" names the usual value (1392); every camera tile is named, and a long camera grid folds on a phone (1393).
+
 ## 5.5.16
 
 ### Changed
