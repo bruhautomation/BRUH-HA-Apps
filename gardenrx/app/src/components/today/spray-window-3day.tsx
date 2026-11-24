@@ -1,5 +1,5 @@
 import type { HourlyForecast, DailyForecast, SprayRating } from '@/lib/weather';
-import { sprayHours, type SprayHour } from '@/lib/weather';
+import { rateSprayWindow } from '@/lib/weather';
 
 const COLOR: Record<SprayRating, string> = {
   EXCELLENT: 'var(--leaf)',
@@ -14,29 +14,44 @@ const OPACITY: Record<SprayRating, number> = {
   POOR: 0.7,
 };
 
-/** Wind-aware 3-day spray window: hourly bands from 6a to 8p, rated by the same
- *  rule as the next opening (`sprayHours`). Hours already over and dark hours
- *  are greyed, and the highlighted block is the longest good stretch still
- *  ahead, so the first green cell is the opening the banner names. */
+type RatedHour = { hour: number; rating: SprayRating; temp: number; wind: number };
+
+/** Wind-aware 3-day spray window — daytime (6a–8p) hourly bands, best contiguous
+ *  good/excellent block highlighted. Uses the repo's rateSprayWindow. */
 export function SprayWindow3Day({
   hourly,
   daily,
-  now = new Date(),
 }: {
   hourly: HourlyForecast[];
   daily: DailyForecast[];
-  now?: Date;
 }) {
-  // Group the 6a–8p hours by date, keep the first 3 days.
-  const byDate = new Map<string, SprayHour[]>();
-  for (const r of sprayHours(hourly, now)) {
+  // Rate every hour (hours-until-rain measured forward across the full series).
+  const rated = hourly.map((h, i) => {
+    let hoursUntilRain: number | null = null;
+    for (let j = i + 1; j < hourly.length; j++) {
+      if (hourly[j].precipitation > 0.01) {
+        hoursUntilRain = j - i;
+        break;
+      }
+    }
+    return {
+      date: h.time.slice(0, 10),
+      hour: new Date(h.time).getHours(),
+      rating: rateSprayWindow(h.temp, h.windSpeed, hoursUntilRain),
+      temp: h.temp,
+      wind: h.windSpeed,
+    };
+  });
+
+  // Group daytime hours by date, keep first 3 days.
+  const byDate = new Map<string, RatedHour[]>();
+  for (const r of rated) {
     if (r.hour < 6 || r.hour > 20) continue;
     if (!byDate.has(r.date)) byDate.set(r.date, []);
-    byDate.get(r.date)!.push(r);
+    byDate.get(r.date)!.push({ hour: r.hour, rating: r.rating, temp: r.temp, wind: r.wind });
   }
   const dates = [...byDate.keys()].sort().slice(0, 3);
   const dailyByDate = new Map(daily.map((d) => [d.date, d]));
-  const anyOff = dates.some((d) => byDate.get(d)!.some((h) => h.over || h.dark));
 
   const axis = ['6a', '9a', '12p', '3p', '6p', '8p'];
 
@@ -55,12 +70,6 @@ export function SprayWindow3Day({
           <i style={{ background: 'var(--danger)' }} />
           Hold
         </span>
-        {anyOff && (
-          <span>
-            <i className="sw3-off" />
-            Past or dark
-          </span>
-        )}
       </div>
       {dates.map((date, i) => {
         const hours = byDate.get(date)!;
@@ -82,17 +91,13 @@ export function SprayWindow3Day({
             </div>
             <div className="sw3-band">
               {hours.map((h) => {
-                const off = h.over || h.dark;
                 const inBest = best != null && h.hour >= best.start && h.hour <= best.end;
-                const note = h.over ? 'past' : h.dark ? 'dark' : h.rating.toLowerCase();
                 return (
                   <div
                     key={h.hour}
-                    className={`sw3-cell${off ? ' sw3-off' : ''}${inBest ? ' best' : ''}`}
-                    style={
-                      off ? undefined : { background: COLOR[h.rating], opacity: OPACITY[h.rating] }
-                    }
-                    title={`${fmtHour(h.hour)} · ${Math.round(h.temp)}° · ${Math.round(h.wind)} mph · ${note}`}
+                    className={`sw3-cell${inBest ? ' best' : ''}`}
+                    style={{ background: COLOR[h.rating], opacity: OPACITY[h.rating] }}
+                    title={`${fmtHour(h.hour)} · ${Math.round(h.temp)}° · ${Math.round(h.wind)} mph · ${h.rating.toLowerCase()}`}
                   />
                 );
               })}
@@ -112,12 +117,12 @@ export function SprayWindow3Day({
   );
 }
 
-/** Longest contiguous run of good hours still ahead (not over, not dark). */
-function bestWindow(hours: SprayHour[]): { start: number; end: number } | null {
+/** Longest contiguous run of GOOD/EXCELLENT daytime hours. */
+function bestWindow(hours: RatedHour[]): { start: number; end: number } | null {
   let best: { start: number; end: number } | null = null;
   let cur: { start: number; end: number } | null = null;
   for (const h of hours) {
-    const good = h.ok && !h.over;
+    const good = h.rating === 'GOOD' || h.rating === 'EXCELLENT';
     if (good) {
       cur = cur === null ? { start: h.hour, end: h.hour } : { start: cur.start, end: h.hour };
       if (best === null || cur.end - cur.start > best.end - best.start) best = { ...cur };
