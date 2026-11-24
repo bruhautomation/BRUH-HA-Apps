@@ -342,7 +342,7 @@
     {
       "id": "2026-11-24-touch-follows-width",
       "rule": "Touch-target rules follow width as well as pointer:coarse: the house's walkthrough at 390px can run with a fine pointer; check a padded hit area with a hit test, since a ::before inside a horizontal scroller is clipped.",
-      "evidence": "#1307/#1253: 26 Morph targets under 40px at 390 with a fine pointer; brAIn 5.5.4 (#743).",
+      "evidence": "#1307/#1253: Morph targets under 40px at 390 with a fine pointer; brAIn 5.5.4 (#743).",
       "enforced_by": "prose",
       "first_seen": "2026-11-24",
       "last_relevant": "2026-11-24"
