@@ -404,9 +404,14 @@ def group(actions: list[dict], classes: dict[str, str] | None = None,
     out = _fold_dropouts(out, restarts, live or {})
     for ep in out:
         ep.pop("_last", None)
+    out = _fold_repeats(out)
     _mark_restarts(out, restarts)
     out.extend(restarts)
-    out.sort(key=lambda e: (_ORDER[e["subject"]], -e["ended"], -e["started"]))
+    # In each section, what happened once reads before what a device kept
+    # doing (`_fold_repeats`): a lock opening is read before a sensor that
+    # flipped all afternoon.
+    out.sort(key=lambda e: (_ORDER[e["subject"]], e.get("kind") == "repeat",
+                            -e["ended"], -e["started"]))
     kinds: dict[str, int] = {}
     for ep in out:
         kinds[ep["subject"]] = kinds.get(ep["subject"], 0) + 1
@@ -802,6 +807,83 @@ def _mark_restarts(episodes: list[dict], restarts: list[dict]) -> int:
                 marked += 1
                 break
     return marked
+
+
+# A row folds into its device's other rows only when there are this many,
+# each starting within REPEAT_JOIN_S of the one before ended: a fold is a
+# burst, never a day (a 3 am and a 3 pm unlock are two rows).
+REPEAT_MIN = 2
+REPEAT_JOIN_S = 1800.0
+# Never folded: what the house's safety is read from (locks, alarms and the
+# safety classes are `security`; doors and windows are `openings`), people
+# (each arrival is its own moment) and Home Assistant's own rows.
+REPEAT_NEVER = frozenset({"security", "openings", "people", "system"})
+
+
+def _fold_repeats(episodes: list[dict]) -> list[dict]:
+    """One row for a device that did the same short thing again and again
+    (#1303): a sensor going on and back off every few minutes was a row a
+    flip, by the minute, and the first group read like a log.
+
+    Read off each row's own fields: the same entity, the same first and
+    last state, every one finished and shorter than its section's own gap
+    (a pause that would have ended the episode anyway), each starting
+    within `REPEAT_JOIN_S` of the one before. A row still going, one in a
+    `REPEAT_NEVER` section (locks and safety, doors and windows, people,
+    Home Assistant), a count section's (a motion row already says how
+    many), a burst or a restart, and a row read off the house now are
+    never folded. The folded row is `kind`
+    "repeat" with `times`, spanning the first to the last, its changes and
+    causes summed, so the cause and an undo still land on it."""
+    groups: dict[tuple, list[dict]] = {}
+    for ep in episodes:
+        spec = _BY_ID.get(ep.get("subject"), {})
+        if (ep.get("kind") or ep.get("from_live") or ep.get("open")
+                or not ep.get("entity_id")
+                or ep.get("subject") in REPEAT_NEVER
+                or spec.get("reads") == "count"
+                or float(ep.get("duration_s") or 0) >= spec.get("gap_s", 0)):
+            continue
+        key = (ep["entity_id"], ep.get("first"), ep.get("last"))
+        groups.setdefault(key, []).append(ep)
+    folded: dict[int, dict] = {}
+    gone: set[int] = set()
+    bursts: list[list[dict]] = []
+    for rows in groups.values():
+        rows.sort(key=lambda e: e["started"])
+        run = [rows[0]]
+        for ep in rows[1:]:
+            if ep["started"] - run[-1]["ended"] <= REPEAT_JOIN_S:
+                run.append(ep)
+            else:
+                bursts.append(run)
+                run = [ep]
+        bursts.append(run)
+    for rows in bursts:
+        if len(rows) < REPEAT_MIN:
+            continue
+        head = dict(rows[-1])
+        causes: dict[str, int] = {}
+        for r in rows:
+            for c, n in (r.get("causes") or {}).items():
+                causes[c] = causes.get(c, 0) + n
+        named = {c: n for c, n in causes.items() if c != "unattributed"}
+        cause = (max(named.items(), key=lambda kv: kv[1])[0]
+                 if named else "unattributed")
+        by_name = next((r.get("by_name") for r in reversed(rows)
+                        if r.get("cause") == cause and r.get("by_name")), "")
+        states = sorted((st for r in rows for st in r.get("states") or []),
+                        key=lambda st: -float(st.get("ts") or 0))
+        head.update(kind="repeat", times=len(rows),
+                    started=rows[0]["started"], ended=rows[-1]["ended"],
+                    count=sum(int(r.get("count") or 0) for r in rows),
+                    duration_s=sum(float(r.get("duration_s") or 0)
+                                   for r in rows),
+                    causes=causes, cause=cause, by_name=by_name or "",
+                    states=states[:MAX_STATES])
+        folded[id(rows[-1])] = head
+        gone.update(id(r) for r in rows[:-1])
+    return [folded.get(id(ep), ep) for ep in episodes if id(ep) not in gone]
 
 
 def _extend(ep: dict, a: dict, ts: float, state: str) -> None:

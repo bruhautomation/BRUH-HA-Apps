@@ -60,6 +60,9 @@ TITLE_MAX = 160
 CLEARED_RE = re.compile(r"^(snoozed|ignored|done|aside)\|[^\n]{1,200}$")
 
 FILTERS = ("snoozed", "ignored", "done", "aside")
+# What a row of several says was done to it ("Ignored 5 times since 5 Sep").
+VERBS = {"snoozed": "Snoozed", "ignored": "Ignored", "done": "Done",
+         "aside": "Set aside"}
 FILTER_LABELS = {
     "snoozed": "Snoozed",
     "ignored": "Ignored",
@@ -282,6 +285,41 @@ def _stood_down(settled: list[dict], may) -> tuple[dict[str, dict], set[str]]:
     return newest, older
 
 
+# Rows of one kind that come in numbers, folded under one row of their own
+# once there are two (#1300: sixty "Update …" rows were the whole Ignored
+# list). By the hidden card's key kind (`update_key`), never by its words.
+FOLDS = {"update": "Updates you ignored"}
+
+
+def _folded(name: str, rows: list[dict]) -> list[dict]:
+    """`rows` with each `FOLDS` kind of two or more rows as one row holding
+    them (`members`, newest first), placed where its newest member was."""
+    by_kind: dict[str, list[dict]] = {}
+    for g in rows:
+        if g.get("fold"):
+            by_kind.setdefault(g["fold"], []).append(g)
+    folded = {id(m) for ms in by_kind.values() if len(ms) >= 2 for m in ms}
+    out = []
+    for g in rows:
+        kind = g.pop("fold", "")
+        if id(g) not in folded:
+            out.append(g)
+            continue
+        members = by_kind[kind]
+        if g is not members[0]:
+            continue
+        n = sum(int(m.get("count") or 1) for m in members)
+        out.append({
+            "id": f"{name}|{kind}s"[:210], "title": f"{FOLDS[kind]} ({len(members)})",
+            "meta": f"Last ignored {_day(members[0]['at'])}".strip()
+                    if members[0].get("at") else "",
+            "at": members[0].get("at") or 0, "since": 0, "count": n,
+            "deletable": any(m.get("deletable") for m in members),
+            "members": members[:MAX_ROWS], "press": None,
+        })
+    return out
+
+
 def history(*, findings: list[dict], settled: list[dict], muted: list[dict],
             snoozed_cases: list[dict], todo_done: list[dict],
             tidy_batches: list[dict], hidden_rows: dict | None = None,
@@ -311,12 +349,18 @@ def history(*, findings: list[dict], settled: list[dict], muted: list[dict],
         if row["how"] == "listed":
             continue
         target = "snoozed" if row["how"] == "snoozed" else "ignored"
+        at = int(row.get("at") or 0)
+        # When it was ignored, as every other Ignored row says (#1300: a
+        # bare "Ignored" under sixty update rows said neither when nor why).
         meta = (f"Snoozed until {_weekday(row['until'], now)}"
-                if target == "snoozed" else "Ignored")
+                if target == "snoozed"
+                else f"Ignored {_day(at)}".strip() if at else "Ignored")
+        kind = key.split(":", 1)[0]
         raw[target].append({
-            "title": row.get("title") or key.split(":", 1)[0].title(),
-            "meta": meta, "at": int(row.get("at") or 0),
+            "title": row.get("title") or kind.title(),
+            "meta": meta, "at": at,
             "press": _press("Restore", "/api/today/restore", {"key": key}),
+            "fold": kind if target == "ignored" and kind in FOLDS else "",
         })
 
     # A check stood down for one thing by its Wrongs is one row, saying so,
@@ -344,7 +388,7 @@ def history(*, findings: list[dict], settled: list[dict], muted: list[dict],
             meta += f" · You said: {note}"
         raw["ignored" if kind == "ignored" else "done"].append({
             "title": entry.get("text") or "",
-            "meta": meta.strip(), "at": when,
+            "meta": meta.strip(), "at": when, "said": note,
             "press": _press("Restore", "/api/findings/unsettle", body),
         })
     for row in muted or []:
@@ -407,7 +451,9 @@ def history(*, findings: list[dict], settled: list[dict], muted: list[dict],
             if g is None:
                 groups[key] = {"title": row["title"], "meta": row["meta"],
                                "at": row["at"], "since": row["at"],
-                               "count": 1, "presses": [row["press"]]}
+                               "count": 1, "presses": [row["press"]],
+                               "fold": row.get("fold") or "",
+                               "said": row.get("said") or ""}
                 continue
             g["count"] += 1
             g["presses"].append(row["press"])
@@ -415,6 +461,7 @@ def history(*, findings: list[dict], settled: list[dict], muted: list[dict],
                 g["since"] = row["at"]
             if row["at"] > g["at"]:
                 g["at"], g["meta"] = row["at"], row["meta"]
+                g["said"] = row.get("said") or g["said"]
         rows = []
         for key, g in groups.items():
             g["id"] = f"{name}|{key}"[:210]
@@ -424,15 +471,23 @@ def history(*, findings: list[dict], settled: list[dict], muted: list[dict],
             rows.append(g)
         rows.sort(key=lambda g: g["at"], reverse=True)
         for g in rows:
+            said = g.pop("said", "")
             if g["count"] > 1:
-                g["meta"] = (f"{g['count']} times since {_day(g['since'])}"
-                             if g["since"] else f"{g['count']} times")
+                # What was done and when, as a single row says it, and the
+                # newest thing the person said about it (#1300).
+                times = (f"{VERBS[name]} {g['count']} times since "
+                         f"{_day(g['since'])}" if g["since"]
+                         else f"{VERBS[name]} {g['count']} times")
+                g["meta"] = times + (f" · You said: {said}" if said else "")
             label = g["presses"][0]["label"]
             g["press"] = {"label": label, "steps": g.pop("presses")}
-        out[name] = rows[:MAX_ROWS]
+        out[name] = _folded(name, rows)[:MAX_ROWS]
     return {
+        # A folded row counts what it holds: the pill says how many things,
+        # not how many lines.
         "filters": [{"id": f, "label": FILTER_LABELS[f],
-                     "count": len(out[f])} for f in FILTERS],
+                     "count": sum(len(g.get("members") or ()) or 1
+                                  for g in out[f])} for f in FILTERS],
         "rows": out,
     }
 

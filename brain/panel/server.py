@@ -10519,6 +10519,13 @@ def _insights_listing() -> list[dict]:
 
     def device_of(eid):
         return (_NAMES.get(eid) or {}).get("device")
+    # What a stored card's verdict is read against (`card_verdict.legacy`),
+    # in the shape `_open_rows_for_verdict` gives a new card: a worth-a-look
+    # card about an open finding keeps its chip and takes its step.
+    verdict_rows = [{"text": f.get("text") or "",
+                     "entity_id": str(f["entity_id"]),
+                     "name": (_NAMES.get(str(f["entity_id"])) or {})
+                     .get("name") or ""} for f in live_rows]
     for ins in insights:
         # A card saved under an older card stylesheet is drawn with
         # this one, so the dashboard's look reaches every card.
@@ -10529,8 +10536,8 @@ def _insights_listing() -> list[dict]:
         # One verdict: the chip, and a card stored before the field
         # existed read the same way (its verdict sentence taken off
         # the prose it was written into). The file is not touched.
-        ins["quiet"] = card_verdict.folds_quiet(ins)
-        ins.update(card_verdict.legacy(ins))
+        ins["quiet"] = card_verdict.folds_quiet(ins, verdict_rows)
+        ins.update(card_verdict.legacy(ins, verdict_rows))
         if not ins.get("verdict"):
             ins.pop("verdict", None)
         if ins.get("id") in superseded:
@@ -11442,7 +11449,7 @@ h1{margin:2px 0 0;font-size:17px;line-height:1.25}
 -webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .s b{color:var(--ink)}
 .h{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
-.t{background:var(--tile);border-radius:10px;padding:8px 11px}
+.t{background:var(--tile);border-radius:10px;padding:8px 11px;min-width:0;overflow-wrap:anywhere}
 .t .l{font-size:11.5px;color:var(--ink3)}
 .t .v{font-size:16px;font-weight:700;margin-top:2px}
 .t .d{font-size:11.5px;color:var(--ink2);margin-top:1px}
