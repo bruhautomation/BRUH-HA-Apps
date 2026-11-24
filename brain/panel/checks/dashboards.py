@@ -12,8 +12,14 @@ from __future__ import annotations
 
 import re
 
+from ._registry_facts import FEATURE_PLATFORMS
 from ._util import (House, _kind_of, entity_list, evidence_for, join_names,
                     walk)
+
+# What a person carries: a phone or tablet through the companion app. The
+# same platforms whose entities are features of the device
+# (`_registry_facts.FEATURE_PLATFORMS`).
+PERSONAL_PLATFORMS = FEATURE_PLATFORMS
 
 
 def _dashboard_refs(house: House, config) -> set[str]:
@@ -59,7 +65,7 @@ def by_device(house: House, dead: list[str]) -> list[dict]:
     ids that share their first two words are one device that is gone,
     called by the words they all start with. ``present`` is whether the
     device is still in the house (a card pointing at readings it no longer
-    has) or gone with them."""
+    has) or gone with them; ``device`` is its registry row when present."""
     slugs = {}
     for dev in house.devices.values():
         slug = _slug(house.device_name(dev))
@@ -68,16 +74,19 @@ def by_device(house: House, dead: list[str]) -> list[dict]:
     order: list[tuple] = []
     groups: dict[tuple, dict] = {}
 
-    def put(key: tuple, name: str, present: bool, eid: str) -> None:
+    def put(key: tuple, name: str, present: bool, eid: str,
+            device: dict | None = None) -> None:
         if key not in groups:
-            groups[key] = {"name": name, "members": [], "present": present}
+            groups[key] = {"name": name, "members": [], "present": present,
+                           "device": device}
             order.append(key)
         groups[key]["members"].append(eid)
 
     for eid in dead:
         dev = house.device_of(eid)
         if dev and dev.get("id"):
-            put(("dev", str(dev["id"])), house.device_name(dev), True, eid)
+            put(("dev", str(dev["id"])), house.device_name(dev), True, eid,
+                dev)
             continue
         obj = eid.partition(".")[2]
         owner = max((s for s in slugs if obj == s or obj.startswith(s + "_")),
@@ -85,7 +94,7 @@ def by_device(house: House, dead: list[str]) -> list[dict]:
         if owner:
             dev = slugs[owner]
             put(("dev", str(dev.get("id") or owner)), house.device_name(dev),
-                True, eid)
+                True, eid, dev)
             continue
         words = _id_words(eid)
         put(("gone", tuple(words[:2]) if len(words) >= 3 else tuple(words)),
@@ -103,6 +112,53 @@ def by_device(house: House, dead: list[str]) -> list[dict]:
             group["name"] = " ".join(common or split[0])
         out.append(group)
     return out
+
+
+def personal(house: House, device: dict | None) -> bool:
+    """Whether a device is something a person carries (a phone through the
+    companion app), read off the registry: one of its entities comes from,
+    or the device is identified by, a personal platform. Its own readings
+    gone from a dashboard touch nothing in the house."""
+    if not isinstance(device, dict) or not device.get("id"):
+        return False
+    for ident in device.get("identifiers") or ():
+        if isinstance(ident, (list, tuple)) and ident \
+                and str(ident[0]) in PERSONAL_PLATFORMS:
+            return True
+    return any(row.get("device_id") == device["id"]
+               and str(row.get("platform") or "") in PERSONAL_PLATFORMS
+               for row in house.entities)
+
+
+def _personal_owner(house: House, dead: list[str]) -> str:
+    """The personal device every missing entity belonged to, by name, or
+    "" when any of them was the house's or an automation, script or scene
+    still names one (then it touches the house: `auto.dead_ref`'s)."""
+    groups = by_device(house, dead)
+    if len(groups) != 1 or not personal(house, groups[0]["device"]):
+        return ""
+    configs = [*(house.snap.get("automations") or ()),
+               *((house.snap.get("scripts") or {}).values()
+                 if isinstance(house.snap.get("scripts"), dict) else ()),
+               *(house.snap.get("scenes") or ())]
+    if set(dead) & house.entity_refs(configs):
+        return ""
+    return groups[0]["name"]
+
+
+def _removal_fix(dead: list[str], titles, personal_name: str) -> str:
+    """The change the row proposes, naming the dashboard and every entity
+    whose card goes (as many as fit; the rest are on the card's list)."""
+    where = ("the " + join_names([f"'{t}'" for t in titles], 8, budget=150)
+             + (" dashboard" if len(list(titles)) == 1 else " dashboards"))
+    ids = join_names(dead, limit=len(dead), budget=360)
+    if personal_name:
+        return (f"Remove the cards showing {ids} from {where}: they are "
+                f"{personal_name}'s own readings and nothing in the house "
+                "uses them. Leave every other card as it is.")
+    return (f"Edit {where}: point the cards showing {ids} at the entities "
+            "that replaced them, or remove those cards. Leave every other "
+            "card as it is.")
 
 
 def _device_words(group: dict) -> str:
@@ -199,6 +255,10 @@ def dead_ref(snap: dict, now: float) -> list[dict]:
                 if len(dead) == 1 else
                 f"{first} and other entities on a dashboard no longer exist")
         quoted = [f"'{t}'" for t in titles]
+        # Only a personal device's own readings (a phone's health sensors):
+        # nothing in the house is touched, so it is a tidy-up, not a
+        # warning, and the proposal is the removal of exactly those cards.
+        owner = _personal_owner(house, dead)
         out.append({
             "text": text[:1].upper() + text[1:],
             # One label a device, numbered copies merged, every one said
@@ -209,10 +269,7 @@ def dead_ref(snap: dict, now: float) -> list[dict]:
                        + join_names(quoted, 8, budget=150) + ", where "
                        + ("it renders" if len(dead) == 1 else "each one renders")
                        + " as a red 'entity not available' tile."),
-            "fix": ("Edit " + ("that dashboard" if len(titles) == 1
-                               else "those dashboards")
-                    + " and point those cards at the entities that replaced "
-                    "them, or remove the cards."),
+            "fix": _removal_fix(dead, titles, owner),
             # What the card shows (#1326): the dashboard and the device in
             # household words, over `text` and `detail`, which stay what
             # the row is keyed and compared by.
@@ -223,8 +280,10 @@ def dead_ref(snap: dict, now: float) -> list[dict]:
                              "'entity not available' tile"
                              + ("." if len(titles) == 1 else
                                 ", on " + join_names(quoted, 8, budget=150)
-                                + ".")),
-            "severity": "warning",
+                                + ".")
+                             + (f" They are {owner}'s own readings; nothing "
+                                "in the house uses them." if owner else "")),
+            "severity": "info" if owner else "warning",
             "fixable": True,
             "entity_id": dead[0],
             "evidence": evidence_for(dead, "no longer exists"),
