@@ -256,17 +256,18 @@ def _same_cook(a: CookSettings, b: CookSettings) -> bool:
 
 def _presets_like(
     hass: HomeAssistant, appliance: Appliance, presets: Iterable[Preset]
-) -> tuple[Preset | None, Preset | None]:
-    """The preset the next cook's settings are exactly, and one at its temperature.
+) -> tuple[Preset | None, list[Preset]]:
+    """The preset the next cook's settings are exactly, and every timed one at its temperature.
 
-    The second is for a cook with no timer: a preset that cooks at that
-    temperature says how long such a cook usually takes.
+    The second is for a cook with no timer: the presets that cook at that
+    temperature say how long such a cook usually takes.
     """
     from .presets import PresetError, applied_settings, preset_fits
 
     fahrenheit = hass.config.units.temperature_unit == UnitOfTemperature.FAHRENHEIT
     current = appliance.settings
-    exact = near = None
+    exact: Preset | None = None
+    timed: list[Preset] = []
     for preset in presets:
         if not preset_fits(preset, appliance.model):
             continue
@@ -276,30 +277,37 @@ def _presets_like(
             continue
         if _same_cook(made, current):
             exact = exact or preset
-        elif near is None and _same_cook(made, replace(current, duration_s=made.duration_s)):
-            near = preset
-    return exact, near
+        elif made.duration_s and _same_cook(made, replace(current, duration_s=made.duration_s)):
+            timed.append(preset)
+    return exact, timed
 
 
 def next_cook_summary(
     hass: HomeAssistant, appliance: Appliance, presets: Iterable[Preset] = ()
-) -> tuple[str, str | None]:
-    """What a start with the next cook's settings would do, in words, and the preset it matches.
+) -> tuple[str, str | None, str | None]:
+    """What a start with the next cook's settings would do, the preset it matches, and a tip.
 
     The settings as Cook, the start service and the panel send them
     (`build_manual_steps`), so a timer left empty is said as no timer rather
-    than left for the person to guess.
+    than left for the person to guess. The summary says only what this cook
+    does. A sous vide cook with no timer gets every preset at its temperature,
+    with its time, as a separate tip (None otherwise): one preset's time
+    folded into the summary read as this cook's.
     """
     settings = appliance.settings
-    exact, near = _presets_like(hass, appliance, presets)
+    exact, timed = _presets_like(hass, appliance, presets)
+    tip = None
     if appliance.model != MODEL_BOV950:
         degrees = _degrees(hass, settings.temperature_c)
         if not settings.duration_s:
-            text = f"Heat the water to {degrees} and hold it there until the cook is stopped: there is no timer."
-            if exact is None and near is not None and near.settings.get("duration_s"):
-                text += (
-                    f" The {near.spoken_name} preset cooks at this temperature for "
-                    f"{_span(near.settings['duration_s'])}; set a cook time for a timer."
+            text = f"No timer: heats the water to {degrees} and holds it there until you stop it."
+            if timed:
+                listed = ", ".join(
+                    f"{preset.spoken_name} ({_span(preset.settings['duration_s'])})" for preset in timed
+                )
+                tip = (
+                    f"Tip: presets at {degrees}: {listed}. "
+                    "Start one of them, or set a cook time, for a cook that ends by itself."
                 )
         elif settings.auto_start_timer:
             text = (
@@ -317,7 +325,7 @@ def next_cook_summary(
             # to the mode's limits.
             phase = bov950_phase(settings)
         except ValueError:
-            return "This oven mode cannot be started from Home Assistant: choose another mode first.", None
+            return "This oven mode cannot be started from Home Assistant: choose another mode first.", None, None
         mode = OVEN_MODES[settings.mode]
         what = mode.option.replace("_", " ").capitalize()
         if "temperatureCelsius" in phase:
@@ -343,8 +351,8 @@ def next_cook_summary(
         else:
             text += " When the time is up it turns off."
     if exact is None:
-        return text, None
-    return f"{text} These are the {exact.spoken_name} preset's settings.", exact.spoken_name
+        return text, None, tip
+    return f"{text} These are the {exact.spoken_name} preset's settings.", exact.spoken_name, tip
 
 
 def describe(
@@ -355,7 +363,7 @@ def describe(
 ) -> dict[str, Any]:
     """One appliance as brAIn reads it: what it is doing, and what the next cook would be."""
     status = appliance.status
-    summary, matching = next_cook_summary(hass, appliance, presets)
+    summary, matching, tip = next_cook_summary(hass, appliance, presets)
     info = MODELS[appliance.model]
     settings = appliance.settings
     device = _device(hass, appliance)
@@ -389,6 +397,8 @@ def describe(
             # What pressing Cook would do, in words, and the preset these settings are.
             "summary": summary,
             "matching_preset": matching,
+            # Every preset at this temperature, for a cook with no timer; None otherwise.
+            "tip": tip,
         },
     }
     out["last_contact"] = (
@@ -399,6 +409,7 @@ def describe(
         out["offline_cause"] = report["cause"]
         out["offline_since"] = report["since"]
         out["offline_reason"] = report["text"]
+        out["offline_to_try"] = report["to_try"]
     if info.kind.value == "oven":
         out["mode"] = status.cook_mode or status.mode
         out["convection"] = status.convection

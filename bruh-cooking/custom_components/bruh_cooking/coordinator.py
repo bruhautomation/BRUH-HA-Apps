@@ -150,9 +150,9 @@ class Appliance:
     messages: deque[dict[str, Any]] = field(
         default_factory=lambda: deque(maxlen=MESSAGE_LOG_SIZE)
     )
-    # When the appliance last reported itself online, and since when it has not.
+    # When the appliance last reported itself online (in contact): how long it
+    # has been out of contact is counted from here (out_of_contact_since).
     last_contact: datetime | None = None
-    offline_since: datetime | None = None
     # The temperature it last reported while in contact (None when it reported
     # none, as an idle oven does): what the Temperature sensor keeps, marked as
     # old, while the appliance is offline.
@@ -416,60 +416,52 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         )
 
     def offline_report(self, appliance: Appliance, *, live: bool = True) -> dict[str, Any] | None:
-        """Why an appliance is offline and one thing to try; None while it is online.
+        """Why an appliance is offline, since when, and one thing to try; None while in contact.
 
         Decided from what is observed: Breville turning the sign-in down (an
         authentication error), the cloud connection being down (the websocket
         will not connect), or the connection being fine while the appliance
-        reports itself offline. The text names the time it was last heard
-        from, which a restart of Home Assistant keeps, or with none the time
-        this run began watching. `live` text (an answer read now) also says
-        how long that is; a state attribute is written once and read later,
-        so it says only the time, which does not go out of date.
+        reports itself offline. `since` and the time the text names are one
+        value, `out_of_contact_since`: the last contact, which a restart of
+        Home Assistant keeps, or for an appliance not heard from in this run,
+        when this run began watching, said as that. `live` text (an answer
+        read now) also says how long; a state attribute is written once and
+        read later, so it says only the time, which does not go out of date.
+        `to_try` is its own field, so an entity shows it on its own line.
         """
-        if self.in_contact(appliance):
+        since = self.out_of_contact_since(appliance)
+        if since is None:
             return None
         if self.auth_failed:
             cause = "sign_in"
             why = "Breville is not accepting the saved sign-in"
-            fix = "Sign in again: open Settings > Devices & services > BRUH Cooking and choose Reconfigure or the sign-in notice"
+            fix = "Sign in again: open Settings > Devices & services > BRUH Cooking and choose Reconfigure or the sign-in notice."
         elif not self.connected:
             cause = "cloud"
             why = "Home Assistant cannot reach Breville's cloud"
-            fix = "Check that Home Assistant has internet access; it reconnects by itself"
+            fix = "Check that Home Assistant has internet access; it reconnects by itself."
         else:
             cause = "device"
             why = "Breville's cloud is reachable and the sign-in works, but the appliance is not answering"
-            fix = f"Check that the appliance is plugged in and on Wi-Fi, and that the {self.brand} app shows it online"
-        since = appliance.offline_since or appliance.last_contact
-        now = dt_util.utcnow()
-        if (contact := appliance.last_contact) is not None:
+            fix = f"Check that the appliance is plugged in and on Wi-Fi, and that the {self.brand} app shows it online."
+        age = _ago(max(0.0, (dt_util.utcnow() - since).total_seconds()))
+        if appliance.last_contact is None:
+            heard = f"Never heard from since BRUH Cooking started at {_clock(since)}"
             if live:
-                age = max(0.0, (now - contact).total_seconds())
-                heard = (
-                    f"Offline for {_ago(age)}, counted from when it was last heard from "
-                    f"({_clock(contact)})"
-                )
-            else:
-                heard = f"Offline since {_clock(contact)}, when it was last heard from"
+                heard += f", {age} ago"
+        elif live:
+            heard = f"Offline for {age}, counted from when it was last heard from ({_clock(since)})"
         else:
-            started = self.watching_since
-            if live:
-                age = max(0.0, (now - started).total_seconds())
-                heard = (
-                    f"Offline for at least {_ago(age)}: not heard from since BRUH Cooking "
-                    f"started ({_clock(started)})"
-                )
-            else:
-                heard = f"Offline: not heard from since BRUH Cooking started ({_clock(started)})"
-        text = f"{heard}. {why}. To try: {fix}."
+            heard = f"Offline since {_clock(since)}, when it was last heard from"
+        text = f"{heard}. {why}."
         cook = appliance.last_cook
         if cook is not None and not cook.get("ended_at"):
             text += " It was cooking when contact was lost, so whether it still is will be known when it answers."
         return {
             "cause": cause,
-            "since": since.isoformat(timespec="seconds") if since else None,
+            "since": since.isoformat(timespec="seconds"),
             "text": text,
+            "to_try": fix,
         }
 
     async def _async_update_data(self) -> dict[str, Appliance]:
@@ -594,7 +586,7 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
                 for appliance in self.appliances.values():
                     if appliance.status.online:
                         # In contact until now: that is when it was last heard from.
-                        appliance.last_contact = appliance.offline_since = now
+                        appliance.last_contact = now
                         self._remember(appliance)
                     self._hold_finish(appliance, appliance.status)
             self._account_changed()
@@ -615,10 +607,7 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         product = MODELS[appliance.model].product
         if status.online:
             appliance.last_contact = now
-            appliance.offline_since = None
             appliance.last_temp_c = status.current_temp_c
-        elif before.online and appliance.offline_since is None:
-            appliance.offline_since = now
         if status.online != before.online:
             _LOGGER.info("%s is %s", product, "online" if status.online else "offline")
             if not status.online:

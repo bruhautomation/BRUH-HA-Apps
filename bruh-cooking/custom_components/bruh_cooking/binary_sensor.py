@@ -74,8 +74,8 @@ class BrevilleBinarySensor(BrevilleEntity, BinarySensorEntity):
     @property
     def available(self) -> bool:
         # The problem and cooking sensors read on or off while the appliance is
-        # offline (why it is offline is the status sensor's to say): the last
-        # error seen stands, and cooking keeps what it was when contact went.
+        # offline: the last error seen stands, and cooking keeps what it was
+        # when contact went.
         if self.entity_description.key in ("problem", "cooking"):
             return self.appliance.on_account
         return super().available
@@ -87,7 +87,15 @@ class BrevilleBinarySensor(BrevilleEntity, BinarySensorEntity):
             return self.coordinator.last_known(self.appliance)
         if key == "problem" and self.appliance.status.error == "none" and self.is_on:
             # On with no error reported: the appliance has been out of contact.
-            return {"cause": "offline"}
+            # Why, and what to try, on the entity that is on: the controls are
+            # unavailable, and an unavailable state carries no attributes. The
+            # status sensor's report, written as a state attribute is (the time,
+            # not how long ago).
+            attrs: dict[str, Any] = {"cause": "offline"}
+            if (report := self.coordinator.offline_report(self.appliance, live=False)) is not None:
+                attrs["offline_reason"] = report["text"]
+                attrs["offline_to_try"] = report["to_try"]
+            return attrs
         return None
 
     @property
@@ -100,7 +108,7 @@ class BrevilleBinarySensor(BrevilleEntity, BinarySensorEntity):
             cook = appliance.last_cook
             return cook is not None and not cook.get("ended_at")
         if self.entity_description.key == "problem" and self.coordinator.offline_problem(appliance):
-            # Out of contact past OFFLINE_PROBLEM_AFTER is a problem too; the
-            # status sensor's offline_reason says since when and why.
+            # Out of contact past OFFLINE_PROBLEM_AFTER is a problem too; its
+            # offline_reason and offline_to_try say since when, why and what to try.
             return True
         return self.entity_description.value_fn(appliance)
