@@ -561,6 +561,60 @@ async def install_many(client: Modrinth, ctx: Context, items: list) -> list[dict
     return results
 
 
+def update_state(row: dict, versions: list, loaders: list[str], game_version: str) -> dict:
+    """Whether a newer build than the installed one exists, from Modrinth's list.
+
+    The newer build is the one an Update would install (`pick_version`, the
+    same choice `install` makes), so what this says is what the button does.
+    The installed build counts as current when it is that build, or when it
+    is in the list and was published no earlier (somebody on a beta newer
+    than the newest release is not offered a step back).
+    """
+    chosen = pick_version(versions, loaders, game_version)
+    if chosen is None:
+        return {"state": "none"}
+    have_id = str(row.get("version_id") or "")
+    have_num = str(row.get("version") or "")
+    if (have_id and chosen.get("id") == have_id) or (
+            not have_id and have_num and chosen.get("version_number") == have_num):
+        return {"state": "current", "version": have_num}
+    mine = next((v for v in versions or [] if isinstance(v, dict) and (
+        (have_id and v.get("id") == have_id)
+        or (not have_id and have_num and v.get("version_number") == have_num))), None)
+    if mine and str(mine.get("date_published") or "") >= str(chosen.get("date_published") or ""):
+        return {"state": "current", "version": have_num}
+    return {"state": "available", "version": chosen.get("version_number") or ""}
+
+
+async def check_updates(client: Modrinth, ctx: Context) -> dict[str, dict]:
+    """Each browser-added project in this world: up to date, or the newer build.
+
+    One `versions` call per project (the call `install` makes), a few at a
+    time. A project Modrinth did not answer for says so rather than failing
+    the rest. Nothing is downloaded.
+    """
+    import asyncio
+
+    manifest = read_manifest(ctx.server_dir)
+    kinds = kinds_for(ctx.server_type)
+    gate = asyncio.Semaphore(4)
+
+    async def one(pid: str, row: dict) -> tuple[str, dict]:
+        kind = row.get("kind", "")
+        if kind not in kinds or not PROJECT_ID.match(pid):
+            return pid, {"state": "none"}
+        loaders = loaders_for(kind, ctx.server_type)
+        async with gate:
+            try:
+                versions = await client.versions(pid, loaders, ctx.version)
+            except Exception:  # noqa: BLE001 — offline, rate-limited, a timeout
+                return pid, {"state": "unknown"}
+        return pid, update_state(row, versions, loaders, ctx.version)
+
+    pairs = await asyncio.gather(*(one(pid, row) for pid, row in manifest.items()))
+    return dict(pairs)
+
+
 def _owned_by_row(items: dict[str, dict], kind: str, name: str) -> str:
     """The project id whose manifest row owns this file, or ''."""
     for pid, row in items.items():

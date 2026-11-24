@@ -704,15 +704,21 @@
     const known = data.known || (data.players || []).map((name) => ({ name, online: true }));
     $('#players-empty').hidden = known.length > 0;
     list.hidden = known.length === 0;
+    $('#players-bedrock').hidden = !known.some((p) => p.name.startsWith('.'));
     list.innerHTML = known.map((p) => {
+      // A name on no list still gets a word: with the whitelist on it cannot
+      // join, otherwise it is an ordinary player.
+      const role = p.op || p.whitelisted || p.banned ? ''
+        : (data.whitelist_on ? '<span class="ptag ptag-bad">Not whitelisted</span>' : '<span class="ptag">Player</span>');
       const tags = [
-        p.online ? '<span class="ptag ptag-on">Online</span>' : '',
         p.op ? '<span class="ptag">Operator</span>' : '',
         p.whitelisted ? '<span class="ptag">Whitelisted</span>' : '',
         p.banned ? '<span class="ptag ptag-bad">Banned</span>' : '',
+        role,
       ].join('');
+      const state = p.online ? 'Online' : 'Offline';
       const opts = PLAYER_CHOICES(p).map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
-      return `<li class="player-row"><div class="player-who"><strong>${esc(p.name)}</strong>${tags}</div>
+      return `<li class="player-row"><div class="player-who"><span class="pdot${p.online ? ' on' : ''}" role="img" aria-label="${state}" title="${state}"></span><strong>${esc(p.name)}</strong><span class="pstate${p.online ? ' on' : ''}">${state}</span>${tags}</div>
         <select class="player-pick" data-name="${esc(p.name)}" aria-label="Change ${esc(p.name)}">
           <option value="" selected disabled>Choose…</option>${opts}</select></li>`;
     }).join('');
@@ -882,28 +888,29 @@
       // at a glance that switching loads THAT world's mode — not whatever
       // they last edited on a different world. This is the "settings don't
       // appear to move with me" UX hint.
+      // Each value says what it is: the game mode, the difficulty and the
+      // world type are all "normal"-ish words, and bare they read as a stutter.
       const s = w.settings || {};
-      const settingsCell = s.gamemode || s.difficulty || s['level-type']
-        ? `<span class="world-settings">` +
-          (s.gamemode ? `<code>${esc(s.gamemode)}</code>` : '') +
-          (s.difficulty ? ` · ${esc(s.difficulty)}` : '') +
-          (s['level-type'] ? ` · ${esc(String(s['level-type']).replace(/^minecraft:/, ''))}` : '') +
-          (s['white-list'] === 'true' ? ' · <span class="muted">whitelist</span>' : '') +
-          (s['online-mode'] === 'false' ? ' · <span class="muted">offline</span>' : '') +
-          `</span>`
+      const cap = (v) => { const t = String(v).replace(/^minecraft:/, '').replace(/_/g, ' '); return t.charAt(0).toUpperCase() + t.slice(1); };
+      const meta = [
+        s.gamemode ? cap(s.gamemode) : '',
+        s.difficulty ? `${cap(s.difficulty)} difficulty` : '',
+        s['level-type'] ? `${cap(s['level-type'])} world` : '',
+        s['white-list'] === 'true' ? 'Whitelist on' : '',
+        s['online-mode'] === 'false' ? 'Offline mode' : '',
+      ].filter(Boolean);
+      const settingsCell = meta.length
+        ? `<span class="world-settings">${esc(meta.join(' · '))}</span>`
         : '<span class="muted">(no settings yet)</span>';
       // Export (download .zip) is available for every world — including the
       // active one. Switching/deleting is only meaningful for non-active.
+      // The everyday buttons sit in one even grid; Delete is apart, under a rule.
       const exportBtn = `<a class="btn btn-ghost" href="api/worlds/${encodeURIComponent(w.name)}/export" download title="Download this world's save as a .zip for sharing or off-host backup">Download</a>`;
       const renameBtn = `<button class="btn btn-ghost" data-rename="${esc(w.name)}" data-active="${w.active ? '1' : ''}" title="Give this world a new name">Rename</button>`;
       const actions = w.active
-        ? `${renameBtn} ${exportBtn}`
-        : `
-          <button class="btn btn-primary" data-switch="${esc(w.name)}">Switch</button>
-          ${renameBtn}
-          ${exportBtn}
-          <button class="btn btn-danger" data-delete="${esc(w.name)}">Delete</button>
-        `;
+        ? `<div class="world-actions">${renameBtn}${exportBtn}</div>`
+        : `<div class="world-actions"><button class="btn btn-primary" data-switch="${esc(w.name)}">Switch</button>${renameBtn}${exportBtn}</div>
+          <div class="world-danger"><button class="btn btn-danger" data-delete="${esc(w.name)}">Delete</button></div>`;
       const curatedBadge = w.curated
         ? ` <span class="curated-badge" title="Installed from the Featured Worlds catalog">${esc(w.curated.name || w.curated.id)}${w.curated.version ? ' v' + esc(w.curated.version) : ''}</span>`
         : '';
@@ -912,7 +919,7 @@
         <td>${fmtSize(w.size_bytes)}</td>
         <td>${settingsCell}</td>
         <td>${activeBadge}</td>
-        <td><div class="row-actions">${actions}</div></td>
+        <td>${actions}</td>
       `;
       tbody.appendChild(tr);
     });
@@ -1197,9 +1204,13 @@
     });
     const clock = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     const dayOf = (ts) => new Date(ts * 1000).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+    // Every row is the same two parts: the time over what it is, and on the
+    // right the one thing to do with it (Restore, or open a folded run).
+    const snapText = (head, sub) => `<div class="snap-text"><strong>${esc(head)}</strong><span class="muted">${esc(sub)}</span></div>`;
+    const chevron = '<svg class="chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
     const row = (ts, label, ref, short, extra) => `
       <li class="snap">
-        <div class="snap-text"><strong>${esc(short ? clock(ts) : when(ts))}</strong><span class="muted">${esc(label)}</span>${extra ? `<span class="muted">${esc(extra)}</span>` : ''}</div>
+        ${snapText(short ? clock(ts) : when(ts), [label, extra].filter(Boolean).join(' · '))}
         <button class="btn btn-ghost snap-restore" data-restore="${esc(ref)}" data-when="${esc(when(ts))}">Restore</button>
       </li>`;
     const KINDS = { scheduled: 'Scheduled backup', manual: 'Manual backup', 'before a world change': 'Before a world change' };
@@ -1222,7 +1233,8 @@
     const rows = (items) => clump(items).map((g) => {
       if (g.length === 1) return row(g[0].ts, gitLabel(g[0]), g[0].sha, true, gitExtra(g[0]));
       const span = `${clock(g[g.length - 1].ts)} – ${clock(g[0].ts)}`;
-      return `<li class="snap-clump"><details><summary><strong>${esc(span)}</strong> <span class="muted">${esc([gitLabel(g[0]), gitExtra(g[0]), `${g.length} snapshots`].filter(Boolean).join(' · '))}</span></summary>
+      return `<li class="snap-clump"><details><summary class="snap">${snapText(span, [gitLabel(g[0]), gitExtra(g[0])].filter(Boolean).join(' · '))}
+        <span class="btn btn-ghost snap-open">${chevron}<span class="snap-show">Show ${g.length}</span><span class="snap-hide">Hide ${g.length}</span></span></summary>
         <ul class="snap-list snap-inner">${g.map((c) => row(c.ts, gitLabel(c), c.sha, true, gitExtra(c))).join('')}</ul></details></li>`;
     }).join('');
     const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
@@ -1241,7 +1253,7 @@
         days.get(d).push(c);
       });
       return countLine(git, 'snapshot', git.length >= 100)
-        + [...days].map(([d, items], i) => `<details class="snap-day"${i === 0 ? ' open' : ''}><summary>${esc(d)} <span class="muted">· ${plural(items.length, 'snapshot')}</span></summary><ul class="snap-list">${rows(items)}</ul></details>`).join('');
+        + [...days].map(([d, items], i) => `<details class="snap-day"${i === 0 ? ' open' : ''}><summary>${chevron}${esc(d)} <span class="muted">· ${plural(items.length, 'snapshot')}</span></summary><ul class="snap-list">${rows(items)}</ul></details>`).join('');
     };
 
     const renderArchives = () => {
@@ -1613,7 +1625,9 @@
   // it is working or waiting on a restart, and the banner above it says
   // what a restart would finish. The browser below adds more.
   // ------------------------------------------------------------------
-  const addonState = { kind: 'all', q: '', offset: 0, info: null, world: null, restarting: false };
+  // updates: per project id, whether Modrinth has a newer build (null until
+  // asked; asked when the pane opens, never on the 5-second refresh).
+  const addonState = { kind: 'all', q: '', offset: 0, info: null, world: null, restarting: false, updates: null, updatesError: '' };
   // What has been picked for "Add all to world", across searches and kinds:
   // key `${kind}:${id}` -> { id, kind, title }.
   const addonPicked = new Map();
@@ -1651,8 +1665,25 @@
     if (item.status === 'unused') {
       actions.push(`<button class="btn btn-primary" data-world-use="${esc(item.file)}">Use in this world</button>`);
     }
+    // Update is offered only when Modrinth has a newer build than this one;
+    // the row says which, or that it is up to date.
+    let updateLine = '';
     if (item.updatable) {
-      actions.push(`<button class="btn" data-world-update="${esc(item.id)}" data-kind="${esc(item.kind)}">Update</button>`);
+      const u = addonState.updates && addonState.updates[item.id];
+      if (u && u.state === 'available') {
+        updateLine = `<span class="addon-update is-new">Update to ${esc(u.version || 'a newer version')} available</span>`;
+        actions.push(`<button class="btn btn-primary" data-world-update="${esc(item.id)}" data-kind="${esc(item.kind)}">Update</button>`);
+      } else if (u && u.state === 'current') {
+        updateLine = '<span class="addon-update">Up to date</span>';
+      } else if (u && u.state === 'none') {
+        updateLine = '<span class="addon-update">No build for this server version on Modrinth</span>';
+      } else if (u || addonState.updatesError) {
+        updateLine = '<span class="addon-update">Could not check for updates</span>';
+      } else if (addonState.updates) {
+        updateLine = ''; // added after the check: it is the newest build
+      } else {
+        updateLine = '<span class="addon-update">Checking for updates…</span>';
+      }
     }
     if (item.removable) {
       actions.push(`<button class="btn btn-ghost addon-remove" data-world-remove="${esc(item.file)}" data-kind="${esc(item.kind)}" data-title="${esc(item.title)}">Remove</button>`);
@@ -1662,6 +1693,7 @@
       <div class="addon-row-main">
         <strong>${esc(item.title)}</strong>
         <span class="muted">${meta.filter(Boolean).map(esc).join(' · ')}</span>
+        ${updateLine}
       </div>
       <span class="addon-status addon-status-${esc(item.status)}">${esc(item.status_text)}</span>
       ${conflictHtml(item.conflict)}
@@ -1794,8 +1826,13 @@
         const resp = await api('api/addons/install', {
           method: 'POST', body: JSON.stringify({ id: b.dataset.worldUpdate, kind: b.dataset.kind }),
         });
-        if (resp.ok) renderWorld(resp.world);
-        else { rowNote(b, resp.error || 'That did not update.', true); b.disabled = false; b.textContent = 'Update'; }
+        if (resp.ok) {
+          // What was just installed is the newest build, so it is up to date.
+          (resp.installed || []).forEach((r) => {
+            if (addonState.updates && r.id) addonState.updates[r.id] = { state: 'current', version: r.version };
+          });
+          renderWorld(resp.world);
+        } else { rowNote(b, resp.error || 'That did not update.', true); b.disabled = false; b.textContent = 'Update'; }
       });
     });
   }
@@ -2012,8 +2049,20 @@
     }
   }
 
+  // One Modrinth question per browser-added add-on, asked when the pane opens.
+  async function loadAddonUpdates() {
+    addonState.updatesError = '';
+    let data;
+    try { data = await api('api/addons/updates'); } catch { data = { error: 'offline' }; }
+    if (data && data.updates) addonState.updates = data.updates;
+    else addonState.updatesError = (data && data.error) || 'unknown';
+    if (addonState.world) renderWorld(addonState.world);
+  }
+
   async function loadAddons() {
+    addonState.updates = null;
     await loadAddonsInstalled();
+    loadAddonUpdates();
     if (!addonState.info) return;
     const kinds = addonState.info.kinds || [];
     if (addonState.kind !== 'all' && !kinds.find((k) => k.kind === addonState.kind)) addonState.kind = 'all';

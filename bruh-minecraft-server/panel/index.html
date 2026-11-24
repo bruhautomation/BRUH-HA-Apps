@@ -687,12 +687,13 @@
         <p class="muted">Everyone who has joined or is on the whitelist. Pick what to do from the menu beside a name.</p>
         <p id="players-empty" class="muted" hidden>No one has joined yet. Add a name below to let someone in.</p>
         <ul class="player-list" id="players-list" hidden></ul>
+        <p class="muted" id="players-bedrock" hidden>A name starting with “.” is a Bedrock player (iPad, phone, console) joining through Geyser.</p>
       </div>
       <div class="sec">
       <h2>Add or manage by name</h2>
       <div class="card">
       <form id="f-player-action" class="inline-form">
-        <input id="player-name" type="text" placeholder="PlayerName" maxlength="16" aria-label="Player name" autocapitalize="off" autocomplete="off" />
+        <input id="player-name" type="text" placeholder="Name, or .Name for Bedrock" maxlength="16" aria-label="Player name" aria-describedby="player-name-hint" autocapitalize="off" autocomplete="off" />
         <select id="player-action" aria-label="What to do">
           <option value="" selected disabled>Choose…</option>
           <option value="whitelist_add">Whitelist add</option>
@@ -705,7 +706,7 @@
         </select>
         <button class="btn btn-primary">Apply</button>
       </form>
-      <p class="muted">Bedrock players (iPad, phone, console) join with a dot in front of their name, for example <code>.Steve</code>. Type the dot too.</p>
+      <p class="muted" id="player-name-hint">For a Bedrock player (iPad, phone, console), include the dot in front of the name, for example <code>.Steve</code>.</p>
       <pre id="player-reply" class="reply"></pre>
       </div>
       </div>
