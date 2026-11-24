@@ -19,7 +19,7 @@
 // control is markup, not a new handler.
 
 import { STATUS } from './styles.js';
-import { esc, mix, clamp, lightColor, lightTone, fmt, since, clock, ago, icon, friendly, shortName, UNAVAILABLE, domainOf, outdoorStale, minecraftStatus, lastSeen, isMoisture, probeOffline } from './util.js';
+import { esc, mix, clamp, lightColor, lightTone, fmt, since, clock, ago, icon, friendly, shortName, UNAVAILABLE, domainOf, outdoorStale, minecraftStatus, lastSeen, isMoisture, probeOffline, pastWhen } from './util.js';
 import * as history from './history.js';
 
 const STRIP = { span: 1, grow: 2, dir: 'side', want: 3, hk: 's' };
@@ -610,18 +610,9 @@ const MEDIA_ACTIVE = ['playing', 'paused', 'buffering', 'on'];
 const mediaOn = (hass) => Object.keys(hass.states).filter((e) => domainOf(e) === 'media_player' && MEDIA_ACTIVE.includes(hass.states[e].state)
   && !(((hass.entities || {})[e] || {}).labels || []).some((l) => /^always[ _]on$/.test(l)));
 
-// When something happened, as a person says it: "9:14 PM", "last night
-// 12:44 AM", "yesterday 9:10 PM", "Mon 8:03 PM", "Oct 2".
-export const whenWord = (t) => {
-  const d = new Date(Date.parse(t || '')); if (isNaN(d)) return '';
-  const now = new Date(); const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const dd = Math.round((day(now) - day(d)) / 86400000);
-  const hm = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  if (dd === 0) return now.getHours() >= 12 && d.getHours() < 5 ? 'last night ' + hm : hm;
-  if (dd === 1) return (d.getHours() >= 20 ? 'last night ' : 'yesterday ') + hm;
-  if (dd < 7) return d.toLocaleDateString([], { weekday: 'short' }) + ' ' + hm;
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-};
+// When something happened, as a person says it: util.js's pastWhen, the one
+// style every card uses ("9:14 PM", "yesterday 9:10 PM", "Nov 18, 8:03 PM").
+export const whenWord = (t) => pastWhen(t || '');
 const button = {
   item: { ...STRIP, want: 2 },
   accent: () => 'var(--violet)',

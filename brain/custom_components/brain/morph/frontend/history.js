@@ -17,7 +17,7 @@
 // (who or what changed it). Every fetch is cached for a minute and asked at
 // most once at a time; the panel re-renders when an answer lands.
 
-import { esc, mix, clock, dur, fmt, icon, outdoorStale, domainOf, probeOffline } from './util.js';
+import { esc, mix, clock, dur, fmt, icon, outdoorStale, domainOf, probeOffline, pastWhen } from './util.js';
 
 const CACHE = new Map();
 const MAX_CACHE = 400;
@@ -287,11 +287,10 @@ function hxRange(H, now) {
   if (H.day != null && !H.range) { const a = dayStart(H.day); return { week: false, start: a, end: Math.min(now, a + HX_DAY), day: a }; }
   const week = H.range === 'week'; return { week, start: week ? dayStart(now - 6 * HX_DAY) : now - HX_DAY, end: now };
 }
+// util.js's pastWhen, standing on its own so it starts with a capital.
 function hxWhen(t) {
-  const d0 = dayStart(Date.now());
-  if (t >= d0) return clock(t);
-  if (t >= d0 - HX_DAY) return 'Yesterday ' + clock(t);
-  return new Date(t).toLocaleDateString([], { weekday: 'short' }) + ' ' + clock(t);
+  const w = pastWhen(t);
+  return w.charAt(0).toUpperCase() + w.slice(1);
 }
 // History belongs to its device (rule 11): it starts with the device's icon
 // and name in its colour, then the range words.
