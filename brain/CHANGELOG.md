@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.11
+
+### Fixed
+
+- The BRUH Browser status sensor says what the last errand was: a short title ("Shopping cart", "Order history"), the store, and one plain sentence about how it ended ("A cart of 3 items is ready for your approval; nothing was bought"). It is built from the errand's own fields only, so no address, order number or account name can reach the sensor (1270).
+
 ## 5.5.10
 
 ### Fixed
