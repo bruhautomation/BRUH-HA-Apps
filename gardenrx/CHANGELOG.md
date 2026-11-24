@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.3
+
+### Removed
+
+- The 0.2.2 changes (forecast-aware watering advice, the spray grid's past and dark hours, card headings, crop season states) are taken back out while they are redone: the development loop's own monitor found that a reviewer of that change wrote scratch test files while checking it, and its rule is to revert and redo such a change from a clean start. They return in the next release (1271, 1272, 1273, 1274).
+
+## 0.2.2
+
+### Fixed
+
+- The watering advice reads the forecast: with a quarter inch or more of rain due in the next three days it says to wait for the rain, and the Today chip and the Weather card give the same advice. In real heat a "water now" stays when the rain coming is less than the soil is short (1271).
+- The dashboard cards each have a heading (Last spray, Harvest, Stock), which a card's `title:` can change or remove. The calm stock card says "Nothing at 20% or less" and names the lowest, and Log harvest says what it still needs before it can log (1272).
+- The 3-day spray window greys hours that are over and hours in the dark, and the banner's next opening is the grid's first green hour. Nothing says it is good to spray in the dark (1273).
+- Annual crops at the end of the season read "Finished for the year" instead of "Dormant". A crop with no varieties (roses, shrubs) follows its group's season, and the resting note names the crops still growing (1274).
+
 ## 0.2.1
 
 ### Security
