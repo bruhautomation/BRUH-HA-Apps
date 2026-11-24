@@ -589,14 +589,50 @@ def _members(house: House, eid: str) -> list[str]:
 
 
 
+# Attributes an integration writes on a device's entity while the device is
+# out of contact, whatever words its state is in (#1337).
+OFFLINE_ATTRIBUTES = ("offline_since", "offline_reason")
+
+
+def _device_says_offline(house: House, dev_id: str) -> bool:
+    """Whether the device's own entities say it is out of contact.
+
+    Read from structure, never from a state's words: a primary
+    `binary_sensor` of class `connectivity` reading off, or any entity of
+    the device carrying `OFFLINE_ATTRIBUTES` (a cloud appliance's status
+    sensor stays available to say "offline" with the reason beside it).
+    A settings entity's view (a diagnostic "cloud" link) is not the
+    device's, the same split `_device_answers` makes.
+    """
+    for row in house.entities:
+        if row.get("device_id") != dev_id or row.get("disabled_by"):
+            continue
+        st = house.states.get(row.get("entity_id") or "") or {}
+        attrs = st.get("attributes") or {}
+        if any(attrs.get(key) for key in OFFLINE_ATTRIBUTES):
+            return True
+        if str(row.get("entity_category") or "") in SETTINGS_CATEGORIES:
+            continue
+        cls = str(attrs.get("device_class") or row.get("device_class")
+                  or row.get("original_device_class") or "")
+        if (domain_of(str(row.get("entity_id") or "")) == "binary_sensor"
+                and cls == "connectivity" and st.get("state") == "off"):
+            return True
+    return False
+
+
 def _device_answers(house: House, dev_id: str) -> bool:
     """Whether a primary entity on this device still reports a state.
 
     A device that has gone away takes every entity with it. One whose
     light still answers while its "cloud" sensor does not has not gone
     anywhere, and "check its power and its connection" is the wrong fix
-    for it.
+    for it. One whose own entities say it is out of contact
+    (`_device_says_offline`) is not answering, however many of them keep
+    a last-known state, and its controls being unavailable is that.
     """
+    if _device_says_offline(house, dev_id):
+        return False
     for row in house.entities:
         if row.get("device_id") != dev_id or row.get("disabled_by"):
             continue
