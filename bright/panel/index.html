@@ -81,15 +81,9 @@
       <div class="card-head">
         <h3>🧪 Test mode — beats &amp; drops</h3>
       </div>
-      <p class="muted small">Plays an analyzed track on a calibrated speaker
-        while every ticked bulb pulses on the beat, and the whole selection
-        goes dark-then-full-blast on every drop the analyzer heard — no
-        choreography, just the sync chain and the drop detection end to
-        end. If the pulses ride the beat and the flashes land on the drops,
-        shows will too. Pulses late or early everywhere? Nudge the
-        calibration. Flashes landing where the music does nothing? The
-        analysis misheard — re-analyze the track. Stop restores the
-        lights.</p>
+      <p class="muted small">Plays a song while the ticked bulbs pulse on
+        the beat and flash on every drop. Off the beat? Nudge the
+        calibration. Flashing on nothing? Analyze the song again.</p>
       <div class="demo-controls">
         <select id="syncTrack"><option value="">— analyzed track —</option></select>
         <select id="syncPlayer"><option value="">Choose a speaker</option></select>
@@ -97,13 +91,15 @@
         <button id="btnSyncStop" class="btn" hidden>Stop &amp; restore</button>
       </div>
       <div class="demo-controls">
-        <span class="muted small">Which bulbs pulse — tick the ones in the
-          room you are testing in.</span>
+        <span class="muted small">Which bulbs pulse:</span>
         <button id="btnSyncAll" class="btn small">All</button>
         <button id="btnSyncNone" class="btn small">None</button>
         <span id="syncCount" class="muted small"></span>
       </div>
-      <div id="syncBulbs" class="fx-fixtures"></div>
+      <!-- One fold per zone from the Light Map, closed, each with a tick
+           for the whole zone: forty tick-boxes in one column buried the
+           Start button and everything under it. -->
+      <div id="syncBulbs" class="sync-groups"></div>
       <div id="syncStatus" class="cal-status"></div>
     </div>
 
@@ -171,6 +167,9 @@
         effect can light just the kitchen or a chase can go room to room;
         a light with no zone still plays in every show.</p>
       <p id="mapListSummary" class="small"></p>
+      <!-- Zones read off the lights' names, offered and never applied until
+           somebody accepts them (`suggestZones` in app.js). -->
+      <div id="mapSuggest" class="map-suggest" hidden></div>
       <input type="search" id="mapSearch" class="map-search" hidden
              placeholder="Find a light or zone" aria-label="Find a light or zone">
       <div id="mapList" class="list"></div>
@@ -373,15 +372,19 @@
       </div>
     </div>
 
-    <div class="card" id="showEditor">
+    <!-- With no song open the card is one line: `ed-empty` hides every
+         control below it until openScript() fills them, because an empty
+         grid, a blank strip and a Save button with nothing to save read as
+         a broken editor rather than one waiting for a song. -->
+    <div class="card ed-empty" id="showEditor">
       <div class="card-head">
         <h3>The show</h3>
         <span>
           <button id="btnScriptReload" class="btn small">Reload from file</button>
-          <button id="btnScriptSave" class="btn primary">Save &amp; compile</button>
+          <button id="btnScriptSave" class="btn primary" disabled>Save &amp; compile</button>
         </span>
       </div>
-      <div id="scriptWhich" class="muted small">Tap a song above to open its show.</div>
+      <div id="scriptWhich" class="muted small">Pick a song above to open its show</div>
       <div id="scriptWho" class="muted small"></div>
 
       <!-- Every show this track has had. A compile used to overwrite the
@@ -754,8 +757,9 @@
       <div class="card-head">
         <h3>Saved sets</h3>
       </div>
-      <p class="muted small">Start one from here, an automation, or a
-        voice command (<code>bright.start_party</code>).</p>
+      <p class="muted small">Start one from here, or from a Home Assistant
+        automation or voice command with BRight's <em>Start a saved
+        set</em> action and the set's name.</p>
       <div id="partyList" class="list"></div>
     </div>
   </section>
