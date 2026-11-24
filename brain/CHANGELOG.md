@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.15
+
+### Fixed
+
+- When Home Assistant itself does not answer for a moment (a restart, for example), brAIn reports it once, as "Home Assistant did not answer", listing everything it could not read. The history, appliance and network reads that failed because of it, and the screen pictures it could not take, no longer each file a report of their own; a read that fails while Home Assistant is answering is still reported on its own (1345, 1346, 1347, 1348, 1349, 1350, 1351).
+
 ## 5.5.14
 
 ### Fixed
