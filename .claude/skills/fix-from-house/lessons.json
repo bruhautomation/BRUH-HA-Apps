@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "last_retro": "2026-11-12",
-  "last_ux_audit": "2026-11-08",
+  "last_retro": "2026-11-24",
+  "last_ux_audit": "2026-11-24",
   "lessons": [
     {
       "id": "2026-10-07-notes-are-the-record",
@@ -17,7 +17,7 @@
       "evidence": "First UX audit: an empty hidden container (.kclean) drew as a bar in Memory › Knowledge.",
       "enforced_by": "prose",
       "first_seen": "2026-10-07",
-      "last_relevant": "2026-10-07"
+      "last_relevant": "2026-11-24"
     },
     {
       "id": "2026-10-09-producer-ignored-reads-all-time",
@@ -241,7 +241,7 @@
       "evidence": "Four subagents killed xdist workers (node down), one Sonnet batch took 80 minutes, and a leftover /config/.brain made test_morph_personality fail locally on main too (2026-11-04).",
       "enforced_by": "prose",
       "first_seen": "2026-11-04",
-      "last_relevant": "2026-11-04"
+      "last_relevant": "2026-11-24"
     },
     {
       "id": "2026-11-12-unattributed-canary-revert",
@@ -330,6 +330,102 @@
       "enforced_by": "prose",
       "first_seen": "2026-11-03",
       "last_relevant": "2026-11-12"
+    },
+    {
+      "id": "2026-11-24-one-reader-ask-and-drop",
+      "rule": "When two rules judge the same claim in model prose (ask it, or drop it), give them one shared reader, and key the owner's Wrong on the entity, not on the words or the producer.",
+      "evidence": "#1325 came back on 5.5.2 because misread_reminder and odometer_counter read different shapes; fixed in brAIn 5.5.3 (BRUH-HA-Apps #742).",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-24",
+      "last_relevant": "2026-11-24"
+    },
+    {
+      "id": "2026-11-24-touch-follows-width",
+      "rule": "Touch-target rules follow width as well as pointer:coarse: the house's walkthrough at 390px can run with a fine pointer; check a padded hit area with a hit test, since a ::before inside a horizontal scroller is clipped.",
+      "evidence": "#1307/#1253: Morph targets under 40px at 390 with a fine pointer; brAIn 5.5.4 (#743).",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-24",
+      "last_relevant": "2026-11-24"
+    },
+    {
+      "id": "2026-11-24-answers-reach-shared-readers",
+      "rule": "An owner's answer about a device must reach the shared readers (known_faulty, the overnight check's set-aside, mesh records), not only the producer it was given to; a 'until it changes' hold needs a count or it loops.",
+      "evidence": "#1263, #1264, #1315, #1323; brAIn 5.5.5 (#745).",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-24",
+      "last_relevant": "2026-11-24"
+    },
+    {
+      "id": "2026-11-24-hold-reason-not-carried",
+      "rule": "A held row's triage reason survives a trip back to the look: any path that later shows the row must not carry the hold's reason forward.",
+      "evidence": "#1320: refine carried 'set aside' onto a shown card; brAIn 5.5.6 (#747).",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-24",
+      "last_relevant": "2026-11-24"
+    },
+    {
+      "id": "2026-11-24-time-bound-rows-expire",
+      "rule": "A check skipped for missing data never clears its own rows: a warning tied to a time carries its own valid-until, and a safety check (freeze) never does.",
+      "evidence": "#1265; brAIn 5.5.7 (#749), where two reviewers also caught a frost coast that stopped at the first cold hour.",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-24",
+      "last_relevant": "2026-11-24"
+    },
+    {
+      "id": "2026-11-24-plain-words-every-surface",
+      "rule": "A plain-words or one-name rule written for findings must be checked on every surface the household reads: insight cards (_insights_listing) and the HA mirror are separate paths.",
+      "evidence": "#1313, #1267; brAIn 5.5.8 (#752).",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-24",
+      "last_relevant": "2026-11-24"
+    },
+    {
+      "id": "2026-11-24-dedupe-key-is-text",
+      "rule": "A check finding's stored text is its dedupe key: change what the household sees through headline/display fields, never the stored text, or every answered finding comes back.",
+      "evidence": "#752 round 1: auto.second_responder's text change would have re-filed answered findings in renamed houses.",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-24",
+      "last_relevant": "2026-11-24"
+    },
+    {
+      "id": "2026-11-24-wrapped-bold-rules",
+      "rule": "A regex reading markdown bold on one line silently drops a bold sentence that wraps; card_rules missed three contract rules this way.",
+      "evidence": "#1306 (and #1068, #1128) kept coming back; brAIn 5.5.10 (#757).",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-24",
+      "last_relevant": "2026-11-24"
+    },
+    {
+      "id": "2026-11-24-attributes-from-typed-fields",
+      "rule": "A state attribute describing household activity is built from typed fields, carries a clock time rather than 'for N minutes', and takes at most one short shape-checked string from model output.",
+      "evidence": "#1270 (brAIn 5.5.11, #758), #1296 (BRUH Cooking 0.2.1, #756).",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-24",
+      "last_relevant": "2026-11-24"
+    },
+    {
+      "id": "2026-11-24-merge-gate-current-verdict",
+      "rule": "merge_gate.py keeps the first verdict per reviewer: after a second round pass each reviewer's current verdict only, and post both rounds on the PR.",
+      "evidence": "#747 round 2: the gate ignored the round-2 approve as 'the same reviewer twice'.",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-24",
+      "last_relevant": "2026-11-24"
+    },
+    {
+      "id": "2026-11-24-scrub-example-names",
+      "rule": "Before pushing, grep the diff for device names and figures from the reports (fixers reuse them in comments, notes and the CHANGELOG) and replace them with generic ones; leave older text that already holds them alone.",
+      "evidence": "#752: report device names in comments and notes were replaced before push; an over-broad sed briefly changed an older note.",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-24",
+      "last_relevant": "2026-11-24"
+    },
+    {
+      "id": "2026-11-24-redo-from-main",
+      "rule": "Build a redo branch from origin/main and cherry-pick the redo commit; never merge main into a branch that carries its own revert commits, because the merge takes main's squashed revert and silently drops the redo.",
+      "evidence": "#764: merging main into the cooking redo left only one file changed and committed conflict markers; rebuilding from main with a cherry-pick restored all 8 files.",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-24",
+      "last_relevant": "2026-11-24"
     }
   ],
   "retired": [
