@@ -40,10 +40,7 @@ class BrevilleSensorDescription(SensorEntityDescription):
     models: frozenset[str] | None = None
     always_available: bool = False
     # A reading kept while the appliance is out of contact: the last value it
-    # reported, marked as old (stale, as_of), rather than unavailable. A reading
-    # that exists only during a cook (preheat, time remaining) has no value to
-    # keep, so it reads unknown, marked the same way: the appliance is out of
-    # contact, which the status sensor says, and the entity is not broken.
+    # reported, marked as old (stale, as_of), rather than unavailable.
     last_known_fn: Callable[[Appliance], StateType | datetime] | None = None
 
 
@@ -76,7 +73,6 @@ SENSORS: tuple[BrevilleSensorDescription, ...] = (
         key="preheat",
         native_unit_of_measurement=PERCENTAGE,
         value_fn=lambda a: a.status.preheat_pct,
-        last_known_fn=lambda a: None,
     ),
     BrevilleSensorDescription(
         key="time_remaining",
@@ -85,7 +81,6 @@ SENSORS: tuple[BrevilleSensorDescription, ...] = (
         suggested_unit_of_measurement=UnitOfTime.MINUTES,
         suggested_display_precision=0,
         value_fn=lambda a: a.status.time_remaining_s,
-        last_known_fn=lambda a: None,
     ),
     BrevilleSensorDescription(
         key="cook_end",
@@ -99,7 +94,6 @@ SENSORS: tuple[BrevilleSensorDescription, ...] = (
         options=REPORTED_MODE_OPTIONS,
         models=frozenset({MODEL_BOV950}),
         value_fn=lambda a: a.status.mode if a.status.active else None,
-        last_known_fn=lambda a: None,
     ),
     BrevilleSensorDescription(
         key="error",
@@ -107,8 +101,6 @@ SENSORS: tuple[BrevilleSensorDescription, ...] = (
         options=ERROR_OPTIONS,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda a: a.status.error,
-        # The last error seen, as the Problem sensor keeps it.
-        last_known_fn=lambda a: a.status.error,
     ),
 )
 
@@ -203,8 +195,7 @@ class BrevilleSensor(BrevilleEntity, SensorEntity):
             else None,
             "last_cook": self.coordinator.cook_summary(appliance),
         }
-        # Written once and read later: the time, not how long ago it was.
-        if (report := self.coordinator.offline_report(appliance, live=False)) is not None:
+        if (report := self.coordinator.offline_report(appliance)) is not None:
             attrs["offline_cause"] = report["cause"]
             attrs["offline_since"] = report["since"]
             attrs["offline_reason"] = report["text"]

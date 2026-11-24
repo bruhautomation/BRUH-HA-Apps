@@ -6,8 +6,8 @@ import {
   cookOpen,
   entityFor,
   integrationLink,
+  isOn,
   numberOf,
-  phaseOf,
   read,
   reading,
   section,
@@ -121,9 +121,7 @@ export function detailsSection(ctx: ApplianceContext): Section | null {
   const t = ctx.t;
   const appliance = ctx.appliance;
   const device = ctx.hass.devices?.[appliance.device_id];
-  // An error to read: the Problem sensor is also on for an appliance out of contact
-  // for a while, which the offline pill already says, with no error behind it.
-  const problem = phaseOf(ctx) === "error";
+  const problem = isOn(ctx, "problem", "binary_sensor") === true;
   return section(
     "details",
     t("section.details"),
