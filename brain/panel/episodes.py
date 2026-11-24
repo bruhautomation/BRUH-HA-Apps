@@ -202,6 +202,54 @@ ACTIVE_STATES = frozenset({
 })
 
 
+# What a classed `binary_sensor`'s `on` and `off` say, as Home Assistant's
+# own frontend words them for that class: a row read "Dryer Problem on",
+# the sensor's name and a raw state, where the house means "the dryer
+# reported a problem". Keyed on the device class, never on the name.
+EVENT_WORDS = {
+    "problem": ("reported a problem", "back to normal"),
+    "door": ("opened", "closed"), "garage_door": ("opened", "closed"),
+    "window": ("opened", "closed"), "opening": ("opened", "closed"),
+    "motion": ("saw movement", "clear"), "occupancy": ("occupied", "clear"),
+    "presence": ("someone there", "nobody there"),
+    "moving": ("moving", "still"), "vibration": ("shaking", "still"),
+    "sound": ("heard sound", "quiet"),
+    "moisture": ("found water", "dry"), "smoke": ("found smoke", "clear"),
+    "gas": ("found gas", "clear"),
+    "carbon_monoxide": ("found carbon monoxide", "clear"),
+    "safety": ("unsafe", "safe"), "tamper": ("tampered with", "clear"),
+    "heat": ("hot", "normal"), "cold": ("cold", "normal"),
+    "connectivity": ("connected", "disconnected"),
+    "plug": ("plugged in", "unplugged"), "power": ("powered", "no power"),
+    "running": ("running", "stopped"), "battery": ("battery low", "battery fine"),
+    "battery_charging": ("charging", "not charging"),
+    "lock": ("unlocked", "locked"), "light": ("light seen", "dark"),
+    "update": ("update available", "up to date"),
+}
+
+
+def said_words(entity_id: str, device_class: str, name: str,
+               first: str, last: str) -> dict:
+    """``{"called", "said_first", "said_last"}`` for a classed
+    `binary_sensor`'s row, or ``{}``: its on/off in the class's words, and
+    its name without the class's own label when Home Assistant appended it
+    ("Dryer Problem" is the dryer's problem sensor, so the row is "Dryer ·
+    reported a problem"). Added beside `name`, `first` and `last`, which
+    stay what the filters and the grouping read."""
+    klass = str(device_class or "").strip().lower()
+    words = EVENT_WORDS.get(klass)
+    if domain_of(entity_id) != "binary_sensor" or not words:
+        return {}
+    said = {"on": words[0], "off": words[1]}
+    out = {"said_first": said.get(_norm(first), str(first or "")),
+           "said_last": said.get(_norm(last), str(last or ""))}
+    label = klass.replace("_", " ")
+    stem = str(name or "")
+    if stem.casefold().endswith(" " + label) and stem[:-len(label)].strip():
+        out["called"] = stem[:-len(label)].strip()
+    return out
+
+
 def domain_of(entity_id: str) -> str:
     return str(entity_id or "").split(".", 1)[0]
 
@@ -415,6 +463,11 @@ def group(actions: list[dict], classes: dict[str, str] | None = None,
     kinds: dict[str, int] = {}
     for ep in out:
         kinds[ep["subject"]] = kinds.get(ep["subject"], 0) + 1
+        if ep.get("entity_id") and not ep.get("kind"):
+            ep.update(said_words(ep["entity_id"],
+                                 classes.get(ep["entity_id"], ""),
+                                 ep.get("name", ""), ep.get("first", ""),
+                                 ep.get("last", "")))
     return {"episodes": out, "dropped": dropped, "kinds": kinds}
 
 
@@ -1096,6 +1149,9 @@ SUMMARY_SYSTEM = prompt_kit.assemble(
   bullet list.
 - Write about the house, never about the person: "the house was empty
   from 09:10" is about the house; "they were at work" is not.
+- Say what happened in household words, the way the rows put it ("the
+  dryer reported a problem", "the dryer is running"), never a sensor's
+  name with a raw state ("Dryer Problem on").
 - Do not invent a cause. If an episode says nothing moved it, it says
   nothing moved it.""",
     output="Answer with the paragraph and nothing else.",
@@ -1136,9 +1192,11 @@ def summary_prompt(payload: dict, tz_name: str = "") -> str:
         parts.append(f"\n{section['label'].upper()} "
                      f"({section.get('total', len(rows))} in this window):")
         for ep in take:
-            bits = [f"- {ep['name']}: {ep['first']}"]
-            if ep["last"] != ep["first"]:
-                bits.append(f" to {ep['last']}")
+            first = ep.get("said_first") or ep["first"]
+            last = ep.get("said_last") or ep["last"]
+            bits = [f"- {ep.get('called') or ep['name']}: {first}"]
+            if last != first:
+                bits.append(f" to {last}")
             bits.append(f", {clock(ep['started'])}")
             if ep["duration_s"] >= 60:
                 bits.append(f" for {round(ep['duration_s'] / 60)} min")
@@ -1162,7 +1220,8 @@ def summary_prompt(payload: dict, tz_name: str = "") -> str:
 
 
 __all__ = [
-    "ACTIVE_STATES", "COVER_CLASSES", "DOOR_CLASSES", "INTEGRATION_NAMES",
+    "ACTIVE_STATES", "COVER_CLASSES", "DOOR_CLASSES", "EVENT_WORDS",
+    "INTEGRATION_NAMES", "said_words",
     "DROPOUT_JOIN_S", "DROPOUT_STATES", "MASS_JOIN_S", "MASS_MIN", "MAX_ROWS", "MAX_STATES", "MOTION_CLASSES",
     "READINGS", "RESTART_AFTER_S", "RESTART_BEFORE_S", "RESTART_PAIR_S",
     "SAFETY_CLASSES", "integration_name", "restart_episodes",
