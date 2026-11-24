@@ -581,6 +581,7 @@ ANALYSIS RULES:
 - A day or hour with NO samples is missing data, never zero: leave it out of BOTH sides of any comparison, draw it as a gap; too little left means no comparison.
 - Before saying "nothing for N h", check related sensors and history_incomplete; if they disagree, report that, not silence.
 - OPEN QUESTIONS are unconfirmed; name one as the possible cause when it could explain the card.
+- A place is called by the name the data gives it (a room, a zone, a place named in a game or on a map), never by its coordinates; coordinates only where no name exists, and never as a tile.
 - Never cite brAIn's own numbering ("signal 7", "finding #3"); name the device and time.
 - The title names the device, door or room measured ("Back door: evening openings 14 → 5", never "14 openings to 5"); a title number the summary uses keeps the same meaning, and is in a tile or the summary with the same value and unit.
 - Never raise again what the household turned down (listed with the findings) — as a finding, an opportunity or in the summary — unless something new happened."""

@@ -2,6 +2,17 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.16
+
+### Changed
+
+- A dashboard card that points at something gone now says which dashboard and which device, in plain words ("The energy monitor cards on the Kitchen dashboard point at a device that is gone"), and lists what is missing by device without cutting a word in half. Questions you already answered about it stay answered (1382).
+- An "All fine" insight card shows its headline and one sentence; its figures are behind Details, and cards name places rather than giving coordinates (1383).
+- The "A problem needs you" banner over the cards shows only while something is urgent, and wraps instead of being cut off; otherwise the Needs you count is the one signal (1384).
+- Timeline says what happened in household words ("the dryer reported a problem", "the dryer is running") instead of a sensor's name and a raw state, and the empty-house note is a quiet "Today the house was empty from …" line in the list (1385).
+- The "All quiet" list names each card by its title with a one-line reason, and never by a sentence typed in chat (1386).
+- Settings › Developer says "Last rehearsed N days ago" quietly, with a Run button and what a run costs, and no longer uses developer words such as "planted" and "corpus" (1387).
+
 ## 5.5.15
 
 ### Fixed
