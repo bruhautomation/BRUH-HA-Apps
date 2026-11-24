@@ -49,7 +49,7 @@ from __future__ import annotations
 from . import (audit, automations, baseline, chores,  # noqa: F401
                coverage, dashboards, devices, evening, forecasts, integrations, network, registry,
                safety, security, snapshot, system, thermal)
-from ._util import CouldNotLook, history_cut
+from ._util import CouldNotLook, House, history_cut
 
 # The catalog. Order is the order results are filed in, which is also the
 # order the Findings tab shows a fresh batch: what breaks an automation
@@ -170,6 +170,34 @@ def get_check(check_id: str) -> dict | None:
     return None
 
 
+def _watched_only(house: House, cid: str, found: list) -> list:
+    """The rows of one check less those about a thing the owner pressed
+    Stop watching on (`House.unwatched`: that entity or its device).
+
+    The one reader every check answers to: most ask `should_report` for
+    their own entity already, and a row from one that did not — or that
+    names its subject only in ``items`` — is held here, with the owner's
+    reason on the decision trail, so "no check looks at it again" is true
+    of every check rather than of each one that remembered to ask. A row
+    is dropped only when every entity it names is unwatched.
+    """
+    kept = []
+    for row in found:
+        named = [str(e) for e in [(row or {}).get("entity_id"),
+                                  *((row or {}).get("items") or ())]
+                 if isinstance(e, str) and "." in e and " " not in e]
+        rules = [house.unwatched(e, cid) for e in dict.fromkeys(named)]
+        if not named or not all(rules):
+            kept.append(row)
+            continue
+        if not any(t.get("subject") == named[0] and t.get("check") == cid
+                   for t in house.snap.get("_trail") or ()):
+            house._note({"kind": "exception", "subject": named[0],  # noqa: SLF001
+                         "check": cid, "reason": rules[0]["text"],
+                         "text": f"scope: {rules[0]['scope']} (Stop watching)"})
+    return kept
+
+
 def run_all(snap: dict, now: float | None = None,
             only: list[str] | None = None) -> dict:
     """Run every check the snapshot can feed.
@@ -207,6 +235,7 @@ def run_all(snap: dict, now: float | None = None,
     errors: dict[str, str] = {}
     per_check: dict[str, int] = {}
     absent: dict[str, str] = {}
+    house = House(snap)
     for check in CHECKS:
         cid = check["id"]
         if only and cid not in only:
@@ -248,6 +277,7 @@ def run_all(snap: dict, now: float | None = None,
         except Exception as exc:  # noqa: BLE001 — one rule must not sink the batch
             errors[cid] = f"{type(exc).__name__}: {exc}"[:200]
             continue
+        found = _watched_only(house, cid, found)
         ran.append(cid)
         per_check[cid] = len(found)
         into = hidden if is_shadow(cid) else out

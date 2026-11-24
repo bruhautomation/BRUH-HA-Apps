@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.18
+
+### Changed
+
+- An automation triggered by a device you no longer use (one you marked not in use, or offline for 30 days or more) is no longer reported as broken: brAIn offers to take that trigger out, or to turn the automation off when it has no other, and changes nothing until you apply it (1402).
+- Dashboard cards that only show a phone's own readings, used by nothing else in the house, are a quiet note rather than a warning, and the fix names the dashboard and the cards to remove; cards you said to keep are left out (1403).
+- "Stop watching" now holds across every check: once you press it on a sensor or device, no check reports it again, the decision trail says why, and Watch again undoes it (1406).
+
 ## 5.5.17
 
 ### Changed

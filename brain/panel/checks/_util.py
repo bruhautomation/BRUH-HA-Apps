@@ -841,6 +841,47 @@ class House:
             return {**hit, "scope": "check"}
         return None
 
+    def unwatched(self, entity_id: str, check_id: str = "*") -> dict | None:
+        """The owner's Stop watching on this entity or its device, or None.
+
+        Only the explicit rule about everything on a thing (`*`, what the
+        Stop watching press writes, `server._stop_watching`), on this
+        entity or another of its device, holding now (`_applies_now`),
+        never for a pair the whole-entity rule may not cover
+        (`_never_whole`). Never read off words: a reason typed in a box is
+        a rule only for the check it was typed under. The one reader the
+        checks pass asks for every row it hands back (`checks.run_all`), and
+        the checks that name an entity in a row about something else (a
+        trigger of an automation) ask it for that entity.
+        """
+        if not entity_id or "." not in entity_id:
+            return None
+        if self._never_whole(entity_id, check_id):
+            return None
+        table = self.snap.get("corrections")
+        if isinstance(table, dict):
+            def rules_of(eid):
+                return (table.get("entity") or {}).get(eid) or {}
+        else:
+            facts = self.snap.get("facts")
+
+            def rules_of(eid):
+                held = (facts or {}).get(eid) if isinstance(facts, dict) \
+                    else None
+                return {c: {"text": ""} for c in held or ()}
+        for eid in [entity_id, *self.siblings(entity_id)]:
+            rule = rules_of(eid).get("*")
+            if rule is None:
+                continue
+            rule = rule if isinstance(rule, dict) else {}
+            if not self._applies_now(entity_id, {**rule, "via": eid}):
+                continue
+            return {**rule, "text": str(rule.get("text") or "")
+                    or "you asked brAIn to stop watching it",
+                    "scope": "entity" if eid == entity_id else "device",
+                    "via": eid}
+        return None
+
     def answered_off(self, entity_id: str, check_id: str) -> dict | None:
         """The household's own earlier answers that close this check for
         this entity, read off the settled ledger (`snap["answers"]`), or None.

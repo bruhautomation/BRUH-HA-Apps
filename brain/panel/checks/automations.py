@@ -38,6 +38,10 @@ ALREADY_RUNNING_MIN = 3
 # How long a trigger entity has to have been unavailable before the
 # automation it belongs to counts as broken rather than restarting.
 TRIGGER_DEAD_DAYS = 2
+# Past this long offline a trigger's device is read as out of use rather
+# than broken (`trigger_unavailable`): a remote nobody has missed for a
+# month is a tidy-up to offer, not a fault to fix.
+TRIGGER_RETIRED_DAYS = 30
 # Trigger kinds that legitimately go months without firing.
 RARE_TRIGGERS = frozenset({"event", "webhook", "tag", "homeassistant", "mqtt",
                            "persistent_notification", "conversation"})
@@ -1474,6 +1478,7 @@ def trigger_unavailable(snap: dict, now: float) -> list[dict]:
         if state == "off":
             continue  # a switched-off automation is auto.forgotten_off's
         broken: dict[str, float] = {}
+        retired: dict[str, str] = {}
         for trig in _triggers(item["config"]):
             if _waits_on_unavailable(trig):
                 continue
@@ -1488,17 +1493,31 @@ def trigger_unavailable(snap: dict, now: float) -> list[dict]:
                 age = age_days(st.get("last_changed"), now)
                 if age is None or age < TRIGGER_DEAD_DAYS:
                     continue
-                # A device the household disabled, labelled or said is not
-                # in use, on any card about any of its entities (#1331):
-                # its trigger going quiet is their decision, not a fault.
-                if network.not_in_use(house, house.device_of(eid), eid):
+                # Stop watching on its device (`House.unwatched`): no check
+                # speaks about it again, a tidy-up included.
+                said = house.unwatched(eid, "auto.trigger_unavailable")
+                if said:
                     house.gave_up("auto.trigger_unavailable",
                                   [{"entity_id": eid, "text": item["alias"]}],
-                                  "you said the device behind this trigger "
-                                  "is not in use", kind="explained")
+                                  said["text"], kind="exception")
                     continue
-                broken[eid] = age
-        if not broken:
+                # A device the household disabled, labelled or said is not
+                # in use, on any card about any of its entities (#1331), or
+                # one offline past `TRIGGER_RETIRED_DAYS`: its trigger going
+                # quiet is not a fault, and the row offers to take the
+                # trigger out instead.
+                since = house.stretch_began(eid)
+                offline = max(age, (now - since) / DAY if since else 0.0)
+                if network.not_in_use(house, house.device_of(eid), eid):
+                    retired[eid] = "you said its device is not in use"
+                elif offline >= TRIGGER_RETIRED_DAYS and not house._never_covered(
+                        eid, "auto.trigger_unavailable"):
+                    # Never a safety sensor (leak, smoke, CO, a protected
+                    # entity): time offline alone does not retire it.
+                    retired[eid] = f"offline for {_days(offline)}"
+                else:
+                    broken[eid] = age
+        if not broken and not retired:
             continue
         leftover = _leftover(house, item)
         if leftover:
@@ -1506,14 +1525,18 @@ def trigger_unavailable(snap: dict, now: float) -> list[dict]:
             # without its trigger (#1331): a leftover config is not a rule
             # whose trigger stopped it.
             house.gave_up("auto.trigger_unavailable",
-                          [{"entity_id": item["entity_id"] or next(iter(broken)),
+                          [{"entity_id": item["entity_id"]
+                            or next(iter(broken or retired)),
                             "text": item["alias"]}],
                           leftover, kind="explained")
             continue
-        names = sorted(broken)
-        subject = item["entity_id"] or names[0]
+        subject = item["entity_id"] or sorted(broken or retired)[0]
         if not house.should_report(subject, "auto.trigger_unavailable"):
             continue
+        if not broken:
+            out.append(_retired_trigger_row(house, item, subject, retired))
+            continue
+        names = sorted(broken)
         said = [f"{house.label(e)} has been unavailable for "
                 f"{_days(broken[e])}" for e in names]
         out.append({
@@ -1523,13 +1546,51 @@ def trigger_unavailable(snap: dict, now: float) -> list[dict]:
                                 "cannot fire. It is switched on, so nothing "
                                 "else will tell you."),
             "fix": "Fix or replace the device behind that entity, or point "
-                   "the trigger at one that works.",
+                   "the trigger at one that works."
+                   + (" " + _retired_fix(house, retired) if retired else ""),
             "severity": "serious",
             "fixable": True,
             "entity_id": subject,
             "evidence": evidence_for(names, "unavailable for days"),
         })
     return out
+
+
+def _retired_fix(house: House, retired: dict[str, str]) -> str:
+    """The change a tidy-up row proposes: take these triggers out."""
+    which = join_names([f"{house.label(e)} ({e})" for e in sorted(retired)])
+    many = len(retired) > 1
+    return (f"Remove the trigger{'s' if many else ''} on {which} from this "
+            "automation and keep the rest of it as it is. If it has no "
+            "other trigger, turn the automation off rather than deleting "
+            "it.")
+
+
+def _retired_trigger_row(house: House, item: dict, subject: str,
+                         retired: dict[str, str]) -> dict:
+    """An automation whose only dead triggers are on devices out of use.
+
+    Not a fault: the household put the device away (or nobody has missed
+    it for `TRIGGER_RETIRED_DAYS`). The row is a proposal — Fix it plans
+    the edit read-only and only Apply on that plan changes the automation,
+    through the action gate — and its own text, so a Wrong on it is the
+    owner declining the tidy-up for good (`should_report` on the subject).
+    """
+    names = sorted(retired)
+    said = [f"{house.label(e)} ({retired[e]})" for e in names]
+    return {
+        "text": f"{_label('Automation', item)} is triggered by a device "
+                "that is no longer in use",
+        "detail": _sentence(join_names(said) + ", so this trigger cannot "
+                            "fire. Nothing changes unless you apply the "
+                            "plan."),
+        "fix": _retired_fix(house, retired),
+        "severity": "info",
+        "stakes": "low",
+        "fixable": True,
+        "entity_id": subject,
+        "evidence": evidence_for(names, "out of use"),
+    }
 
 
 def _days(age: float) -> str:
