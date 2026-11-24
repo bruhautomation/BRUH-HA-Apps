@@ -3,8 +3,8 @@
 <!-- Rendered from lessons.json by scripts/lessons.py. Do not edit:
      change lessons.json, then run `python3 scripts/lessons.py render --write`. -->
 
-Last retro: 2026-11-12
-Last UX audit: 2026-11-08
+Last retro: 2026-11-24
+Last UX audit: 2026-11-24
 
 The fixer reads this index at the start of every run. Each line is one
 lesson: its id, how it is held (a guard rule, a test, a hook, or only
@@ -55,5 +55,16 @@ repository (`scripts/runs_record.py render`), not this file.
 - `2026-11-04-three-subagents-max` (prose): Run at most three subagents at a time on a 4-CPU container; read a local failure that also fails on main against main and let CI be the gate.
 - `2026-11-12-revert-after-suite-cut` (prose): Reverting a PR whose tests were later deleted: keep them deleted, and check that git diff <sha>^ HEAD over the code files is empty.
 - `2026-11-12-unattributed-canary-revert` (prose): An unattributed canary signal reverts the whole release, even a fix the owner confirmed: fix a recurring fault on its own before shipping on top of it, and say in the decline how to re-apply the reverted change.
+- `2026-11-24-answers-reach-shared-readers` (prose): An owner's answer about a device must reach the shared readers (known_faulty, the overnight check's set-aside, mesh records), not only the producer it was given to; a 'until it changes' hold needs a count or it loops.
+- `2026-11-24-attributes-from-typed-fields` (prose): A state attribute describing household activity is built from typed fields, carries a clock time rather than 'for N minutes', and takes at most one short shape-checked string from model output.
+- `2026-11-24-dedupe-key-is-text` (prose): A check finding's stored text is its dedupe key: change what the household sees through headline/display fields, never the stored text, or every answered finding comes back.
+- `2026-11-24-hold-reason-not-carried` (prose): A held row's triage reason survives a trip back to the look: any path that later shows the row must not carry the hold's reason forward.
+- `2026-11-24-merge-gate-current-verdict` (prose): merge_gate.py keeps the first verdict per reviewer: after a second round pass each reviewer's current verdict only, and post both rounds on the PR.
+- `2026-11-24-one-reader-ask-and-drop` (prose): When two rules judge the same claim in model prose (ask it, or drop it), give them one shared reader, and key the owner's Wrong on the entity, not on the words or the producer.
+- `2026-11-24-plain-words-every-surface` (prose): A plain-words or one-name rule written for findings must be checked on every surface the household reads: insight cards (_insights_listing) and the HA mirror are separate paths.
+- `2026-11-24-scrub-example-names` (prose): Before pushing, grep the diff for device names and figures from the reports (fixers reuse them in comments, notes and the CHANGELOG) and replace them with generic ones; leave older text that already holds them alone.
+- `2026-11-24-time-bound-rows-expire` (prose): A check skipped for missing data never clears its own rows: a warning tied to a time carries its own valid-until, and a safety check (freeze) never does.
+- `2026-11-24-touch-follows-width` (prose): Touch-target rules follow width as well as pointer:coarse: the house's walkthrough at 390px can run with a fine pointer; check a padded hit area with a hit test, since a ::before inside a horizontal scroller is clipped.
+- `2026-11-24-wrapped-bold-rules` (prose): A regex reading markdown bold on one line silently drops a bold sentence that wraps; card_rules missed three contract rules this way.
 
 12 retired lesson(s) are kept in `lessons.json`.
