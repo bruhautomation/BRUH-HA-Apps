@@ -279,6 +279,16 @@ function stateWord(p) {
   return STATE_WORDS[p.state] || p.state || "Connecting";
 }
 
+// The header's one line about the job: the file, then its progress, or
+// when it finished. Nothing while idle with no file.
+function jobLine(p) {
+  if (!p.online || !p.file || !(p.printing || p.state === "finish" || p.state === "failed")) return "";
+  const name = printName(p.file, plateName(p));
+  if (p.printing) return p.progress != null ? `${name} · ${p.progress}%` : name;
+  const word = p.state === "finish" ? "finished" : "failed";
+  return `${name} · ${p.ended_at ? `${word} ${ago(p.ended_at)}` : word}`;
+}
+
 function stateTone(p) {
   if (!p.online) return "bad";
   if (plateClear(p)) return "";
@@ -393,11 +403,9 @@ function cameraBlock(p) {
   } else if (!cam.loading && !cam.timer) {
     scheduleFrame(p.id, 50);
   }
-  const tone = stateTone(p);
-  const word = stateWord(p);
-  // The stage is the job's to say (it is in the job block), not the picture's.
+  // The state is the header's and the stage the job's to say, not the
+  // picture's: only detection's badge and the controls are drawn over it.
   const overlay = el("div", { class: "camover" },
-    el("span", { class: `pill ${tone}` }, el("i", { class: "dot" }), word),
     watchBadge(p),
     el("span", { class: "grow" }),
     el("button", { type: "button", class: "iconbtn", title: p.chamber_light ? "Light off" : "Light on",
@@ -466,17 +474,14 @@ function fullScreen(node, onChange) {
 function ring(pct, done = false) {
   const value = Math.max(0, Math.min(100, pct || 0));
   if (done) return el("div", { class: "ring done", style: "--p:100", role: "img", "aria-label": "Finished" }, el("span", {}, "✓"));
-  return el("div", { class: "ring", style: `--p:${value}`, role: "img", "aria-label": `${value}% done` },
-    el("span", {}, `${value}`, el("small", {}, "%")));
+  // The figure itself is the header's (jobLine): the ring only draws it.
+  return el("div", { class: "ring", style: `--p:${value}`, role: "img", "aria-label": `${value}% done` }, el("span", {}));
 }
 
 function plateWatching(p) {
   const w = p.failure_detection;
   return Boolean(w && w.plate_watch);
 }
-
-// The printers whose job name is shown whole (tapped).
-const fullNames = new Set();
 
 // The job: what is printing (or what just finished, until the plate is
 // cleared), its progress and its two buttons. Nothing once the plate is
@@ -518,15 +523,8 @@ function jobBlock(p) {
   }
   return el("div", { class: "job" },
     ring(p.progress, finished && !p.printing),
+    // The print's name and progress are the header's line (jobLine).
     el("div", { class: "jobtext" },
-      el("b", { class: `jobname${fullNames.has(p.id) ? " full" : ""}`, title: p.file, role: "button", tabindex: "0",
-        "aria-expanded": String(fullNames.has(p.id)), onclick: (e) => {
-          // Two lines, and the whole name on a tap (kept across the poll's redraws).
-          if (fullNames.has(p.id)) fullNames.delete(p.id); else fullNames.add(p.id);
-          e.currentTarget.classList.toggle("full", fullNames.has(p.id));
-          e.currentTarget.setAttribute("aria-expanded", String(fullNames.has(p.id)));
-        }, onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.currentTarget.click(); } } },
-      printName(p.file, plateName(p))),
       el("p", { class: "hint" }, stage),
       facts.length ? el("div", { class: "facts" }, facts) : null),
     p.job_picture ? el("img", { class: "jobpic", src: p.job_picture, alt: "", loading: "lazy" }) : null,
@@ -1041,20 +1039,23 @@ function blindCounts(w) {
 
 // When the camera could not see: said once, up front, in one compact box —
 // what happened, why (brAIn's own words, and the light when it is off), and
-// the light and Check now side by side. When most of the print's looks were
-// blind, that is what it says first: the print was not watched. That is a
-// warning only while the print runs and can still be helped; once no print
+// the light and Check now side by side. With the light off the watcher holds
+// its looks until it is on (it turns it on itself when the detection setting
+// lets it), so the box says detection cannot see and offers the light as the
+// one press that fixes it. Before the first look, a print starting in the
+// dark with that setting off is warned about the same way. Once no print
 // runs it is one quiet line about the last print, with nothing to answer
 // but the light, when the light is why, for the next print.
 function watchBlind(p, w, last, lastDecision, check) {
   const counts = blindCounts(w);
   const mostly = counts.done > 0 && counts.blind * 2 > counts.done;
-  if (!(lastDecision === "blind" || mostly)) return null;
   const off = p.chamber_light === false;
   // The light is the usual reason, so it is offered here, through the same
   // printer command as the camera's light button.
-  const light = (words) => (p.online && off
-    ? el("button", { type: "button", onclick: () => command(p, "light", { value: true }) }, icon("light"), words) : null);
+  const light = (words, cls = "") => (p.online && off
+    ? el("button", { type: "button", class: cls, onclick: () => command(p, "light", { value: true }) }, icon("light"), words) : null);
+  const starting = p.printing && !last && off && !w.light;
+  if (!(lastDecision === "blind" || mostly || starting)) return null;
   if (!p.printing) {
     const what = mostly ? (counts.blind === counts.done ? "The last print was not watched: the camera saw nothing"
       : `The last print was not watched: the camera saw nothing at ${counts.blind} of ${counts.done} looks`)
@@ -1064,18 +1065,33 @@ function watchBlind(p, w, last, lastDecision, check) {
       el("p", {}, `${what}${why}`, last && last.at ? el("span", { class: "hint" }, ` Last look ${ago(last.at)}.`) : null),
       off && p.online ? el("div", { class: "wblindacts" }, light("Turn on light for the next print")) : null);
   }
-  const lightOff = off ? " (light off)" : "";
+  if (starting) {
+    return el("div", { class: "wblind", role: "status" },
+      el("b", {}, "Failure detection can't see in the dark: the chamber light is off."),
+      el("p", {}, "Turn it on before the first look, or this print is not watched."),
+      el("div", { class: "wblindacts" }, light("Turn the light on", "primary")));
+  }
   let headline;
-  if (mostly) {
-    headline = counts.blind === counts.done ? `The camera has seen nothing of this print so far${lightOff}.`
-      : `The camera saw nothing at ${counts.blind} of ${counts.done} looks so far${lightOff}.`;
-  } else headline = "The camera couldn't see this print at the last look.";
-  const why = [lastDecision === "blind" && last.summary ? last.summary : null,
-    off ? "The chamber light is off." : "Check that the lens is clean and the camera points at the plate.",
+  let why;
+  if (off) {
+    // Detection's own line above says it cannot see; this says why.
+    headline = mostly && counts.blind > 1 ? `Nothing seen at ${counts.blind} of ${counts.done} looks: the chamber light is off.`
+      : "The chamber light is off, so the camera can't see the print.";
+    why = "No more looks until the light is on; then brAIn looks again straight away.";
+  } else if (lastDecision !== "blind") {
+    headline = `The camera saw nothing at ${counts.blind} of ${counts.done} looks so far.`;
+    why = "Check that the lens is clean and the camera points at the plate.";
+  } else {
+    headline = "The camera couldn't see this print at the last look.";
+    // The watcher's own note says when it turned the light on for this.
+    why = last.note ? `${last.note} brAIn looks again shortly.`
+      : "Check that the lens is clean and the camera points at the plate.";
+  }
+  const said = [lastDecision === "blind" && last.summary ? last.summary : null, why,
     lastDecision === "blind" && last.at ? `Last look ${ago(last.at)}.` : null].filter(Boolean).join(" ");
   return el("div", { class: "wblind", role: "status" },
-    el("b", {}, headline), el("p", {}, why),
-    el("div", { class: "wblindacts" }, light("Turn on light"), check));
+    el("b", {}, headline), el("p", {}, said),
+    el("div", { class: "wblindacts" }, light("Turn the light on", "primary"), check));
 }
 
 // The printer reports its Wi-Fi as a signal level ("-48dBm"); a person reads
@@ -1104,8 +1120,15 @@ function printerCard(p) {
         await api(`api/printers/${encodeURIComponent(p.id)}`, { method: "DELETE" }).catch((e) => toast(e.message, true));
         refresh();
       } }, icon("close"), "Remove printer")));
+  // The state, and what it is printing (or last printed) and how far, under
+  // the name: the same state the Status sensor and the card show, said
+  // without the camera, which may be off or still starting.
+  const now_ = jobLine(p);
   const head = el("header", { class: "phead" },
-    el("div", { class: "grow" }, el("h2", {}, p.name), el("p", { class: "hint", title: p.wifi ? `Wi-Fi signal ${p.wifi}` : "" }, meta)),
+    el("div", { class: "grow" }, el("h2", {}, p.name),
+      now_ ? el("p", { class: "pjob", title: p.file || "" }, now_) : null,
+      el("p", { class: "hint", title: p.wifi ? `Wi-Fi signal ${p.wifi}` : "" }, meta)),
+    el("span", { class: `pill ${stateTone(p)}` }, el("i", { class: "dot" }), stateWord(p)),
     menu);
   // What the printer is doing now on the left (the picture, the job and its
   // controls, the temperatures and the filament); what watches it and what
@@ -1482,13 +1505,14 @@ function visibleFiles() {
     : list.sort((a, b) => b.modified - a.modified);
 }
 
-// What Print will do with the file, said on the row: its slice's time,
-// weight and colours. A file with no slice says so in a small tag beside
-// Print (unsliced is most of a library, so it is not a line on every row).
+// What Print will do with the file, on the same line of every row: its
+// slice's time and weight, or that it is not sliced yet (Print slices it
+// first). One line in one place, so no row is shaped differently and Print
+// never moves.
 function sliceFacts(f) {
-  if (!(f.sliced || f.sliced_path)) return null;
+  if (!(f.sliced || f.sliced_path)) return ["Not sliced yet", "none"];
   const own = [f.seconds ? duration(Math.round(f.seconds / 60)) : null, f.grams ? `${f.grams} g` : null].filter(Boolean);
-  return own.length ? own.join(" · ") : null;
+  return own.length ? [own.join(" · "), ""] : ["Time and weight not known", "none"];
 }
 
 // A row's title is the file's name as a person reads it (printName); its
@@ -1505,8 +1529,15 @@ function renderFiles() {
   // beside its 3MF and STEP, a download's " (1)") each say what kind of file
   // they are.
   const kinds = {};
-  for (const f of shown) (kinds[sameKey(fileTitle(f))] = kinds[sameKey(fileTitle(f))] || new Set()).add(fileKind(f));
-  const rows = shown.map((f) => {
+  const groups = new Map();
+  for (const f of shown) {
+    const key = sameKey(fileTitle(f));
+    (kinds[key] = kinds[key] || new Set()).add(fileKind(f));
+    // ...and sit together, at the place of the first of them in the order chosen.
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(f);
+  }
+  const rows = [...groups.values()].flat().map((f, i, all) => {
     const designed = Boolean(f.design);
     const title = fileTitle(f);
     const badges = [el("span", { class: `pill ${f.sliced ? "done" : ""}` }, f.sliced ? "Sliced" : f.project ? "Project" : "Model")];
@@ -1516,7 +1547,8 @@ function renderFiles() {
     const folder = !designed && f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : null;
     const facts = [folder, megabytes(f.size), new Date(f.modified * 1000).toLocaleDateString()].filter(Boolean).join(" · ");
     // Not named `slice`: that is the function the menu's Slice calls.
-    const sliceLine = sliceFacts(f);
+    const [sliceLine, sliceTone] = sliceFacts(f);
+    const sibling = i > 0 && !designed && sameKey(fileTitle(all[i - 1])) === sameKey(title);
     const menu = el("details", { class: "pmenu" }, el("summary", { "aria-label": `More for ${f.name}` }, "⋯"),
       el("div", { class: "pmenupop" },
         !f.sliced && f.path.toLowerCase().endsWith(".3mf") ? el("button", { type: "button", onclick: () => slice(f) }, "Slice") : null,
@@ -1527,13 +1559,12 @@ function renderFiles() {
           await api(`api/files?path=${encodeURIComponent(f.path)}`, { method: "DELETE" }).catch((e) => toast(e.message, true));
           loadFiles();
         } }, icon("close"), "Delete")));
-    return el("div", { class: "frow" }, filePicture(f),
+    return el("div", { class: `frow${sibling ? " fsame" : ""}` }, filePicture(f),
       el("div", { class: "grow" }, el("b", { class: "fname", title: f.path }, title),
         el("div", { class: "badges" }, badges),
-        sliceLine ? el("p", { class: "fslice" }, sliceLine) : null,
+        el("p", { class: `fslice ${sliceTone}`, title: f.sliced || f.sliced_path ? "" : "Print slices it first" }, sliceLine),
         el("p", { class: "hint" }, facts), filamentChips(f)),
       el("div", { class: "factions" },
-        f.sliced || f.sliced_path ? null : el("span", { class: "fwill hint", title: "Print slices it first" }, "Slices on print"),
         el("button", { class: "primary", onclick: () => openPrint(f) }, "Print"), menu));
   });
   $("#fileList").replaceChildren(...(rows.length ? rows : [el("p", { class: "hint" },

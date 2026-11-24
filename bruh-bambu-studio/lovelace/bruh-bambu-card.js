@@ -50,6 +50,13 @@ const STATE_WORDS = { idle: 'Idle', prepare: 'Preparing', running: 'Printing', p
   finish: 'Finished', failed: 'Failed', slicing: 'Slicing', offline: 'Offline', unknown: 'Unknown',
   removed: 'Removed', connecting: 'Connecting' };
 const cap = (w) => String(w || '').replace(/^./, (c) => c.toUpperCase());
+// The state in a word, as the panel's Printers tab says it (stateWord in
+// app.js): a finished or failed print whose plate is seen clear is Ready.
+function stateWord(p, detection) {
+  const plate = detection && detection.attributes && detection.attributes.plate;
+  if (plate === 'clear' && (p.state === 'finish' || p.state === 'failed')) return 'Ready';
+  return STATE_WORDS[p.state] || cap(p.state);
+}
 
 function esc(text) {
   return String(text ?? '').replace(/[&<>"']/g, (c) => ({
@@ -189,8 +196,10 @@ const css = (morph) => `
   .watch.bad svg { color: var(--b-bad); }
   .watch.quiet.warn { background: none; }
   .watch.quiet.warn svg { color: var(--b-warn); }
-  .watch.quiet .line { min-width: 0; }
-  .watch.quiet .line span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .watch.quiet .line { min-width: 0; align-items: flex-start; }
+  .watch.quiet .line svg { margin-top: 2px; }
+  .watch.quiet .text { min-width: 0; overflow-wrap: break-word; }
+  .watch.quiet .text b { white-space: nowrap; margin-right: 4px; }
   .watch b { font-weight: 700; }
   .watch .say { font-size: 14px; font-weight: 600; }
   .watch .answer { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
@@ -267,14 +276,16 @@ class BruhBambuCard extends HTMLElement {
       return `<div class="watch ${tone}"><div class="line">${SHIELD_ALERT}<div class="say">${esc(a.alert)}</div></div><div class="answer"><span class="muted">Failure detection · ${esc(WATCH_WORDS[d.state] || d.state)}</span>${buttons}</div></div>`;
     }
     // Nothing to answer: one quiet line, and the next look where it is known.
-    // A last look that saw nothing is said with its reason (the light, when
-    // it is off), under the warning shield.
+    // A look that saw nothing is said as a short sentence with its reason
+    // (the light, when it is off), under the warning shield. The line wraps
+    // between words rather than cutting the reason off.
     const blind = a.last_look_decision === 'blind';
-    const words = blind && !tone
-      ? `Last look saw nothing${p.attrs.chamber_light === false ? ' · light off' : ''}`
-      : `${WATCH_WORDS[d.state] || d.state}${d.state === 'watching' && a.next_look_layer ? ` · next look at layer ${a.next_look_layer}` : ''}`;
+    const dark = blind || d.state === 'dark';
+    const words = dark && p.attrs.chamber_light === false ? "Couldn't see the print — light is off"
+      : blind && !tone ? "Couldn't see the print at the last look"
+        : `${WATCH_WORDS[d.state] || d.state}${d.state === 'watching' && a.next_look_layer ? ` · next look at layer ${a.next_look_layer}` : ''}`;
     const warned = tone || blind;
-    return `<div class="watch quiet ${tone || (blind ? 'warn' : '')}"><div class="line" title="${esc(a.sentence || words)}">${warned ? SHIELD_ALERT : SHIELD_OK}<b>Failure detection</b><span>${esc(words)}</span></div></div>`;
+    return `<div class="watch quiet ${tone || (blind ? 'warn' : '')}"><div class="line" title="${esc(a.sentence || words)}">${warned ? SHIELD_ALERT : SHIELD_OK}<span class="text"><b>Failure detection</b> <span>${esc(words)}</span></span></div></div>`;
   }
 
   _cameraOf(p) {
@@ -403,7 +414,7 @@ class BruhBambuCard extends HTMLElement {
       const drawer = ams || drawerControls;
       return `<div class="printer">
         <div class="head"><span class="name">${esc(a.printer_name || a.friendly_name)}</span>
-          <span class="state ${tone}"><i></i>${esc(STATE_WORDS[p.state] || cap(p.state))}</span>
+          <span class="state ${tone}"><i></i>${esc(stateWord(p, detection))}</span>
           ${drawer ? `<button class="more" data-more="${id}" aria-expanded="${open}" aria-label="More for ${esc(a.printer_name || a.friendly_name)}">⋯</button>` : ''}</div>
         ${cam}
         ${job}
