@@ -855,6 +855,16 @@ _PATH = (r"(?<![\w/.])/(?:config|data|opt|usr|etc|var|share|ssl|addons?|"
          r"media|tmp|homeassistant)(?:/[\w.\-]+)+/?")
 _FILE = (r"(?<![\w/.])(?:[\w.\-]+/)*[\w-]+(?:\.[\w-]+)*\.(?:md|json|ya?ml|py|sh|txt|log|"
          r"toml|db|conf|jsonl)\b")
+# Any other absolute path, by its shape (#1205's sweep, by shape rather
+# than by its first folder): a slash at the start of a word, then two or
+# more segments ("/dev/ttyUSB0", "/run/udev/data"). A slash inside a word
+# ("on/off", "I/O", "24/7", "km/h") or after a scheme ("https://") is not
+# one. There are no household words for where such a path leads, so
+# `technical` leaves it, and `lint` and `developer_sentence` find it: the
+# sentence holding it is not shown (a step falls back to the row's To Do
+# line, `findings_store.shown_fix`) and the path goes to Technical.
+_ANY_PATH_RE = re.compile(
+    r"(?<![\w/.:~\-])/[A-Za-z_][\w.\-]*(?:/[\w.\-]*[\w\-])+/?")
 _LINE = r"(?:\s+(?:at\s+|on\s+)?line\s+\d+|:\d+\b)?"
 _FILE_RE = re.compile(
     r"(?:\b(?:at\s+|on\s+)?line\s+\d+\s+(?:of|in)\s+)?(?:" + _PATH + "|" + _FILE
@@ -961,8 +971,8 @@ def developer_sentence(sentence: str) -> bool:
     text = str(sentence or "")
     if not text:
         return False
-    if _FILE_RE.search(text) or _LINE_NO_RE.search(text) \
-            or _MCP_RE.search(text):
+    if _FILE_RE.search(text) or _ANY_PATH_RE.search(text) \
+            or _LINE_NO_RE.search(text) or _MCP_RE.search(text):
         return True
     tools = _tool_re()
     return bool(tools is not None and tools.search(text))
@@ -1199,8 +1209,41 @@ _DETERMINER_RE = re.compile(
 _SENTENCE_START_RE = re.compile(r"(?:^|[.!?]\s+)\s*$")
 
 
+# The house's own services (`domain.service`), as the last checks pass read
+# them (`note_services`): a dotted token whose domain is one of theirs is a
+# service id whatever the domain is called (`recorder.purge`), which no
+# table of domains can know ahead of a house.
+_SERVICE_DOMAINS: frozenset = frozenset()
+
+
+def note_services(services) -> None:
+    """Remember the domains of the house's services for `ids` and `lint`."""
+    global _SERVICE_DOMAINS
+    domains = {str(s).split(".", 1)[0] for s in services or ()
+               if isinstance(s, str) and "." in s}
+    _SERVICE_DOMAINS = frozenset(d for d in domains if d)
+
+
 def _an_id(m: re.Match) -> bool:
-    return m.group(1) in _ID_NOUNS and m.group(2) not in _NOT_AN_ID
+    """Whether a dotted token is an entity or service id, from its shape:
+    a domain the table names, a domain the house has services under, a
+    snake_case part (`zwave_js.refresh_value`, `hassio.addon_restart`) or
+    backticks — never a file name (`notes.md`), and never ordinary prose
+    such as "e.g." or a web address, which have none of those."""
+    domain, obj = m.group(1), m.group(2)
+    if obj in _NOT_AN_ID:
+        return False
+    return (domain in _ID_NOUNS or domain in _SERVICE_DOMAINS
+            or "_" in domain or "_" in obj or m.group(0).startswith("`"))
+
+
+def _id_noun(domain: str, obj: str) -> str:
+    """What an id is, said as a thing. Every entity's domain is one of the
+    table's (an integration adds entities only under them), so an id under
+    any other domain is an action a service runs, said by its own words."""
+    if domain in _ID_NOUNS:
+        return _ID_NOUNS[domain]
+    return f"“{obj.replace('_', ' ')}” action"
 
 
 def ids(text: str, names: Mapping | None = None) -> tuple[str, list[str]]:
@@ -1239,7 +1282,7 @@ def ids(text: str, names: Mapping | None = None) -> tuple[str, list[str]]:
                 after_at += re.match(r"\s*\)", text[after_at:]).end()
                 said = ""
             else:
-                noun = _ID_NOUNS[m.group(1)]
+                noun = _id_noun(m.group(1), m.group(2))
                 tail = noun.split()[-1]
                 again = re.match(r"\s+" + re.escape(tail) + r"\b",
                                  text[after_at:], re.I)
@@ -1286,7 +1329,8 @@ def lint(text: str, files: bool = True, figures: bool = True) -> list[str]:
     if not text:
         return []
     out: list[str] = []
-    for pattern in ((_FILE_RE if files else _PATH_RE), _LINE_NO_RE, _HEX_RE,
+    for pattern in ((_FILE_RE if files else _PATH_RE), _ANY_PATH_RE,
+                    _LINE_NO_RE, _HEX_RE,
                     _BUILD_RE, _BARE_BUILD_RE, _TRAIL_BUILD_RE, _DATE_BUILD_RE,
                     _VOICE_ID_RE,
                     *((_DBM_RE,) if figures else ()),

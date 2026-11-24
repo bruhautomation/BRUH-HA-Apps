@@ -23,7 +23,7 @@ import house_words
 from ._util import (DAY, House, age_days, domain_of, entity_list,
                     evidence_for, join_names, listify, merged_names,
                     target_offline_error,
-                    parse_ts, walk, when)
+                    parse_ts, state_words, walk, when)
 
 log = logging.getLogger("brain.checks.automations")
 
@@ -1808,15 +1808,171 @@ def _band_words(shape: dict) -> str:
             f"{shape['to_hour']:02d}:00{days}")
 
 
+# How long before a person's undo the run they undid can have started: the
+# action miner's own window (`actions.OVERRIDE_WINDOW_S`).
+UNDO_WINDOW_S = 900.0
+# Z-Wave Central Scene's value for a press, said as the press it is.
+_KEY_PRESSED_RE = re.compile(r"^KeyPressed(\d)x$")
+_PRESS_COUNT = {2: "a double press", 3: "a triple press",
+                4: "four presses", 5: "five presses"}
+
+
+def _press_words(trig: dict) -> str:
+    """Which press an event or device trigger waits for ("a double press",
+    "the “toggle” press"), or "" when it does not say."""
+    data = trig.get("event_data") if isinstance(trig.get("event_data"),
+                                                dict) else {}
+    value = str(data.get("value") or "")
+    m = _KEY_PRESSED_RE.match(value)
+    if m:
+        return _PRESS_COUNT.get(int(m.group(1)), f"{m.group(1)} presses")
+    if value == "KeyPressed":
+        return "a single press"
+    if value.startswith("KeyHeld"):
+        return "a long press"
+    command = str(data.get("command") or "")
+    if command:
+        return f"the “{state_words(command)}” press"
+    said = " ".join(w for w in (str(trig.get("subtype") or ""),
+                                str(trig.get("type") or "")) if w)
+    return f"the “{state_words(said)}” press" if said else ""
+
+
+def _trigger_said(house: House, trig: dict, place: int) -> str:
+    """One trigger in a household's words: what it waits for and on what
+    ("a double press on Hall switch", "Hall motion turning on", "the clock
+    at 07:00"). ``place`` is its position in the editor, the words when
+    nothing else says what it is."""
+    kind = _trigger_kind(trig)
+    data = trig.get("event_data") if isinstance(trig.get("event_data"),
+                                                dict) else {}
+    device = (house.devices.get(str(trig.get("device_id") or ""))
+              or house.devices.get(str(data.get("device_id") or "")))
+    where = house.device_name(device) if device else ""
+    if _is_press(house, trig):
+        press = _press_words(trig) or "a press"
+        return f"{press} on {where}" if where else press
+    watched = [house.label(e) for e in _watched(house, trig)]
+    if watched:
+        what = join_names(watched, limit=3)
+        for key, words in (("above", "going above"), ("below", "going below")):
+            if isinstance(trig.get(key), (int, float)):
+                return f"{what} {words} {trig[key]:g}"
+        to = trig.get("to")
+        if isinstance(to, (str, int, float)) and str(to) != "":
+            return f"{what} turning {state_words(to)}"
+        return f"{what} changing"
+    if kind == "time" and isinstance(trig.get("at"), str) \
+            and re.match(r"^\d{1,2}:\d{2}", trig["at"]):
+        return f"the clock at {trig['at'][:5]}"
+    if kind == "sun" and trig.get("event"):
+        return state_words(trig["event"])
+    if kind == "homeassistant":
+        return "Home Assistant starting"
+    if where:
+        return f"something on {where}"
+    return f"trigger number {place} in its editor"
+
+
+def _trace_fired(house: House, trace: dict, triggers: list[dict]) -> int:
+    """Which of ``triggers`` started this run (its index), or -1. Core's
+    description of a run's trigger names the entity or the event type it
+    fired on, and exactly one trigger has to watch that one."""
+    said = str(trace.get("trigger") or "")
+    if not said:
+        return -1
+    hits = []
+    for i, trig in enumerate(triggers):
+        refs = set(_watched(house, trig))
+        refs |= {str(t) for t in listify(trig.get("event_type")) if t}
+        if any(re.search(r"(?<![\w.])" + re.escape(r) + r"(?![\w])", said)
+               for r in refs):
+            hits.append(i)
+    return hits[0] if len(hits) == 1 else -1
+
+
+def _override_cause(snap: dict, house: House, subject: str,
+                    undos: list[dict]) -> str:
+    """What to change on an automation people keep undoing when the undos
+    keep to no hours, read off its own settings and its recent runs: the
+    trigger that started the undone runs where its run history says (or its
+    only trigger), and what it did to the thing put back — and, when its
+    settings cannot be read, that brAIn could not read them.
+
+    ``undos`` are the person's undos: `actions.find_overrides` rows (``ts``,
+    ``after_s``, the entity and both states) and the ledger's (no
+    ``after_s``: the run is then the last one inside `UNDO_WINDOW_S`).
+    """
+    # The day's undos are in the ledger too once a pass has recorded them:
+    # one undo, counted once (the day's copy kept, it carries ``after_s``).
+    once: dict[tuple, dict] = {}
+    for u in undos or ():
+        if isinstance(u, dict):
+            once.setdefault((int(float(u.get("ts") or 0)),
+                             u.get("entity_id")), u)
+    undos = list(once.values())
+    latest = max((u for u in undos if u.get("entity_id")),
+                 key=lambda u: float(u.get("ts") or 0), default=None)
+    thing = (house.label(str(latest["entity_id"])) if latest
+             else "what it controls")
+    set_to = state_words((latest or {}).get("from_state") or "")
+    put_to = state_words((latest or {}).get("to_state") or "")
+    same = len({(u.get("entity_id"), u.get("from_state"), u.get("to_state"))
+                for u in undos or () if u.get("entity_id")}) == 1
+    did = (f"{'each time' if same else 'the last time'} it turned {thing} "
+           f"{set_to} and it was put back {put_to}"
+           if set_to and put_to else "")
+    cid = str(((house.states.get(subject) or {}).get("attributes") or {})
+              .get("id") or "")
+    cfg = _config_for(house, {"key": f"automation.{cid}"}) if cid else None
+    if not isinstance(cfg, dict):
+        return ("brAIn could not read this automation's settings, so it "
+                "cannot say which trigger or step is wrong. In its editor, "
+                f"look at the step that turns {thing} {set_to or 'on or off'}.")
+    triggers = _triggers(cfg)
+    fired: dict[int, int] = {}
+    matched = 0
+    if len(triggers) > 1 and isinstance(snap.get("traces"), dict):
+        runs = [_short(r) for r in _traces_for(snap, f"automation.{cid}")]
+        for undo in undos or ():
+            at = float(undo.get("ts") or 0) - float(undo.get("after_s") or 0)
+            ran = [r for r in runs
+                   if at - UNDO_WINDOW_S <= _trace_start_ts(r) <= at + 5]
+            if not at or not ran:
+                continue
+            matched += 1
+            i = _trace_fired(house, max(ran, key=_trace_start_ts), triggers)
+            if i >= 0:
+                fired[i] = fired.get(i, 0) + 1
+    tail = f", and {did}" if did else ""
+    if len(triggers) == 1:
+        said = _trigger_said(house, triggers[0], 1)
+        return (f"It runs on one trigger, {said}{tail}. Change what it does "
+                f"to {thing} in its editor.")
+    if fired:
+        which, count = max(fired.items(), key=lambda kv: kv[1])
+        said = _trigger_said(house, triggers[which], which + 1)
+        runs_said = ("the undone run" if matched == 1 else
+                     f"{count} of the {matched} undone runs")
+        return (f"{_sentence(said)} started {runs_said}{tail}. Change that "
+                "trigger in its editor.")
+    why = (f"its run history does not say which of its {len(triggers)} "
+           "triggers started the undone runs" if triggers else
+           "brAIn could read no trigger in it")
+    lead = f"{_sentence(did)}; {why}" if did else _sentence(why)
+    return f"{lead}. Change what it does to {thing} in its editor."
+
+
 def _override_fix(shape: dict | None, offer: dict | None,
-                  times: list[float]) -> str:
+                  cause: str = "") -> str:
     """One concrete condition, and what to press for it (#1266).
 
     The condition is the one `conditions.build` offers as a change on the
     Proposals tab, where Approve writes it through the automation writer
     and Dismiss leaves the automation as it is; nothing is changed from
     here. Where no condition can be offered the sentence says which one
-    fits and why it is not offered, or why no time condition fits.
+    fits and why it is not offered; with no time pattern it is ``cause``
+    (`_override_cause`).
     """
     if offer and offer.get("config") and not offer.get("refused"):
         title = str(offer.get("title") or "")
@@ -1839,25 +1995,11 @@ def _override_fix(shape: dict | None, offer: dict | None,
         return (f"{said} Add it in the automation's editor: brAIn offers it "
                 "as a change only when the undos keep to weekdays or to "
                 "weekends.")
-    if shape:
-        return ("The undos do not keep to any hours, so no time condition "
-                "would fit: what the automation is triggered by, or what it "
-                "does, is what to change.")
-    if times:
-        import datetime as _dt  # noqa: PLC0415
-
-        try:
-            import baselines  # noqa: PLC0415
-            tz = baselines.house_timezone()[0]
-        except Exception:  # noqa: BLE001
-            tz = _dt.timezone.utc
-        at = [_dt.datetime.fromtimestamp(t, tz).strftime("%H:%M")
-              for t in sorted(times)]
-        return (f"The undos in the last day were at {join_names(at)}. brAIn suggests a "
-                "condition once the undos keep to the same hours on three "
-                "separate days.")
-    return ("brAIn suggests a condition once the undos keep to the same "
-            "hours on three separate days.")
+    # No time condition fits or is offered: what fires the automation, or
+    # what it does, read off its settings and its runs (`_override_cause`),
+    # never the category "the trigger or what it does", nor a list of the
+    # times the undos happened with a promise of a condition later.
+    return cause
 
 
 def overridden(snap: dict, now: float) -> list[dict]:
@@ -1878,10 +2020,9 @@ def overridden(snap: dict, now: float) -> list[dict]:
             continue
         g = groups.setdefault(key, {"name": o.get("by_name") or key,
                                     "count": 0, "entities": [], "last": 0.0,
-                                    "times": []})
+                                    "undos": []})
         g["count"] += 1
-        if o.get("ts"):
-            g["times"].append(float(o["ts"]))
+        g["undos"].append(o)
         if o["entity_id"] not in g["entities"]:
             g["entities"].append(o["entity_id"])
         g["last"] = max(g["last"], o.get("ts") or 0.0)
@@ -1940,6 +2081,7 @@ def overridden(snap: dict, now: float) -> list[dict]:
         if offers is None:
             offers = _offered_conditions(snap, history, now)
 
+        offer = offers.get(subject or key)
         out.append({
             # Stable across runs: every number in here moves, so they all
             # live in `detail` and the store can refresh them in place.
@@ -1950,8 +2092,14 @@ def overridden(snap: dict, now: float) -> list[dict]:
                        + _pattern_sentence(shape)
                        + " The automation is working; it is doing the wrong "
                          "thing for this house."),
-            "fix": _override_fix(shape, offers.get(subject or key),
-                                 (g or {}).get("times") or []),
+            "fix": _override_fix(
+                shape, offer,
+                cause=("" if (shape and "from_hour" in shape)
+                       or (offer and offer.get("config")
+                           and not offer.get("refused"))
+                       else _override_cause(
+                           snap, house, subject,
+                           ((g or {}).get("undos") or []) + list(past)))),
             "severity": "info",
             "fixable": False,
             "entity_id": subject,

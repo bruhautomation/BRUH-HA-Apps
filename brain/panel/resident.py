@@ -429,8 +429,10 @@ Rules:
   signal-strength note".
 - An automation doing what it was written to do is not a reason the thing
   it looks after is fine. Judge the reading it keeps, not the switch: a
-  freezer warmer than about -15 °C (5 °F) or a fridge warmer than about
-  5 °C (41 °F) is a problem whatever switched what, and "as designed" or
+  freezer or a fridge reading well outside its own usual range (or, where
+  nothing has measured that range yet, a freezer warmer than about -15 °C
+  (5 °F) or a fridge warmer than about 5 °C (41 °F)) is a problem whatever
+  switched what, and "as designed" or
   "switched off by its automation" answers whether the automation ran,
   never whether the food is safe.
 - A subject listed under PASSED OVER BEFORE has been set aside by you and
@@ -937,7 +939,8 @@ Answer with ONE JSON object and nothing else. What it means:
 - "confidence" — 0 to 1, how sure you are of the claim.
 - "stakes" — how much it matters if you are right: "low", "medium", "high".
 - "fix" — ONE action, in one sentence, specific to this house: the
-  entity, the integration, the automation, the setting. Never a category,
+  entity, the hub or app it works through, the automation, the setting.
+  Never a category,
   never generic advice restated and never a list of things to try.
   """ + prompt_kit.ONE_STEP + """ When
   nothing is needed (it is normal here, it has cleared, nothing was
@@ -975,7 +978,10 @@ Answer with ONE JSON object and nothing else. What it means:
   YAML keys, trigger ids, MAC addresses and service names (`brain.*`):
   say what to change where the person changes it ("in the automation
   editor, delete the four button-press triggers"), never in the file's
-  own words. Say what an automation does in plain words ("it turns the
+  own words. Never the words "integration" or "registry" in what a
+  person reads: name the hub, app or service ("the Hue bridge", "Z-Wave")
+  and say Home Assistant's device list (Settings > Devices & services).
+  Say what an automation does in plain words ("it turns the
   fan back on while the room is still warm"), never its mechanics
   ("re-entered the control branch", "for: duration").
 - No internals in what a person reads: no trace step paths
@@ -1026,6 +1032,12 @@ Answer with ONE JSON object and nothing else. What it means:
 Rules that matter more than anything about style:
 
 - NEVER invent a number, a reading or an event. Cite only what you read.
+- A claim that a reading is too high or too low is a claim about where
+  THAT entity usually reads, never about a generic target: call
+  what_is_normal for it and put the reading's figure in "evidence" under
+  its own entity. A reading inside its own usual range is normal for it (a
+  probe by a freezer's door always reads warmer than one at the back) and
+  is not filed whatever a generic figure says; outside it, say how far.
 - """ + CLAIM_RULE + """
 - """ + prompt_kit.PRIVACY + """ If the only account you can give is
   about a person rather than about the house, make no claim.
@@ -1078,8 +1090,8 @@ rewrite it or dismiss it, and you never file beside it.
 - """ + DISMISS_RULE + """
 - Otherwise rewrite it: "claim", "detail" and "fix" REPLACE the row's own
   wording, so write them for this house, not for the rule that filed it —
-  the device by its friendly name, the hub or integration it reports
-  through, the time in local time, and the one thing to do.
+  the device by its friendly name, the hub or service it reports
+  through by its name, the time in local time, and the one thing to do.
   """ + prompt_kit.ONE_STEP + """
 
 A GOOD DISMISSAL — the row said "Hall motion sensor has been unavailable":
@@ -1498,6 +1510,170 @@ def read_a_measurement(tools) -> bool:
     transcript could not be read) is no measurement shown."""
     return any(str(name).rsplit("__", 1)[-1] in MEASURED_TOOLS
                for name in tools or ())
+
+
+# ---------------------------------------------------------------------------
+# A reading is judged against what THIS entity usually reads
+# ---------------------------------------------------------------------------
+#
+# A case warned that a freezer probe was too warm from its raw readings and
+# a generic freezer target, and the probe reads that every day: it sits by
+# the door. A claim that a number is wrong is a claim about where the number
+# usually is, so a problem filed about a measured entity is read against its
+# own band (`baselines.deviation`, the figure `what_is_normal` gives a run)
+# in code, after the case is parsed. What is judged is what the house
+# recorded (the entity's hourly means over the last day, the same measure
+# its band is built from, and its reading now), never the figures in the
+# case's own words: those can be a generic target as easily as a reading.
+
+# How many of its own spreads a reading may sit from its usual before it is
+# outside its usual range. The bar a sub-threshold reading is first offered
+# to the look at (`server.MEASURED_SPREADS` reads this), so "inside its
+# usual range" here and "not worth a line in a batch" there are one bar.
+USUAL_SPREADS = 3.0
+# The recorded hours a case is read over: an excursion overnight is still
+# filed in the morning, after the reading has come back.
+USUAL_HOURS = 24
+# A reading that has not changed for this long is not judged by its band:
+# a stuck or silent sensor reads its last, ordinary value, and "it stopped
+# changing" is the claim then, which the band cannot answer.
+USUAL_FRESH_S = 3 * 3600.0
+# A drift this far along widens the band it drifts through
+# (`checks.baseline.DRIFT_SPREADS`, `baselines.trend`): the band no longer
+# says what is usual, so it refuses nothing.
+USUAL_DRIFT_SPREADS = 4.0
+# How many entities one case is read against.
+USUAL_MAX_ENTITIES = 3
+_FIGURE_RE = re.compile(r"\d")
+
+
+def usual_entities(case: dict, subject: str) -> list[str]:
+    """The entities a case is read against, before anything is fetched:
+    ``subject`` (the one it is about) and each entity its evidence cites a
+    figure for, in that order."""
+    out = [subject] if subject else []
+    for row in (case or {}).get("evidence") or ():
+        if isinstance(row, dict) and row.get("entity") \
+                and _FIGURE_RE.search(str(row.get("value") or "")):
+            out.append(str(row["entity"]))
+    return list(dict.fromkeys(out))[:USUAL_MAX_ENTITIES]
+
+
+def _judged(reading: float, baseline: dict, bucket: int) -> dict | None:
+    """One reading against the entity's whole history AND its hour of the
+    week: outside only when it is outside both (a reading inside either is
+    one this entity gives). None when the band cannot say."""
+    import baselines  # noqa: PLC0415 — the one deviation, read lazily
+
+    overall = baselines.deviation(reading, {"overall": baseline.get("overall")},
+                                  bucket)
+    hourly = baselines.deviation(reading, baseline, bucket)
+    if overall is None or hourly is None:
+        return None
+    return {**overall, "outside": (abs(overall["sigmas"]) >= USUAL_SPREADS
+                                   and abs(hourly["sigmas"]) >= USUAL_SPREADS)}
+
+
+def against_usual(case: dict, judged: list[dict], tz, now: float
+                  ) -> tuple[str, dict]:
+    """``(why, case)``: why a problem about a measured entity is not filed
+    because what the house recorded is inside the entity's own usual range,
+    or "" with the case as it is filed — carrying, per entity, that range
+    and how far outside it the worst reading was.
+
+    ``judged`` is one dict per entity of `usual_entities` that has a band:
+    ``entity``, ``name``, ``unit``, ``baseline`` (its baseline store entry),
+    ``hours`` (its hourly means over `USUAL_HOURS`, `baselines.fetch_hourly`
+    rows, or None when the recorder did not answer), ``live`` (its reading
+    now, or None) and ``fresh`` (whether it changed within
+    `USUAL_FRESH_S`). The range is cited whatever the answer. A case is
+    refused only when its evidence cites a figure for one of them and every
+    one was read and is inside: hours recorded and a fresh reading now. So a
+    stuck or silent sensor, one the recorder or Core did not answer for, or
+    an entity whose band a drift has widened is never refused by it.
+    """
+    if (not isinstance(case, dict) or case.get("kind", "problem") != "problem"
+            or not judged):
+        return "", case
+    import baselines  # noqa: PLC0415
+    import numfmt  # noqa: PLC0415
+
+    cited = set(usual_entities(case, ""))
+    rows: list[dict] = []
+    refusable = bool(cited & {str(j.get("entity") or "") for j in judged})
+    inside_said: list[str] = []
+    for j in judged:
+        entity = str(j.get("entity") or "")
+        baseline = j.get("baseline")
+        if not entity or not isinstance(baseline, dict):
+            refusable = False
+            continue
+        moved = baseline.get("trend") or {}
+        if (moved.get("consistent")
+                and abs(moved.get("spreads") or 0.0) >= USUAL_DRIFT_SPREADS):
+            refusable = False
+            continue
+        unit = str(j.get("unit") or baseline.get("unit") or "")
+        name = str(j.get("name") or entity)
+        hours = j.get("hours")
+        live = j.get("live")
+        readings: list[tuple[float, int, str]] = []
+        for h in hours if isinstance(hours, list) else ():
+            mean, start = (h or {}).get("mean"), (h or {}).get("start")
+            if isinstance(mean, (int, float)) and isinstance(start, (int, float)) \
+                    and now - start <= USUAL_HOURS * 3600 + 3600:
+                at = dt.datetime.fromtimestamp(start, tz).strftime("%H:00")
+                readings.append((float(mean), baselines.hour_of_week(start, tz),
+                                 f"the hour from {at}"))
+        if isinstance(live, (int, float)):
+            readings.append((float(live), baselines.hour_of_week(now, tz),
+                             "now"))
+        verdicts = [(v, when) for v, bucket, when in readings
+                    for v in [_judged(v, baseline, bucket)] if v is not None]
+        overall = baselines.deviation(0.0, {"overall": baseline.get("overall")},
+                                      0)
+        if overall is None or not verdicts:
+            refusable = False
+            continue
+        centre, spread = overall["median"], overall["spread"]
+        low = numfmt.quantity(centre - USUAL_SPREADS * spread, unit)
+        high = numfmt.quantity(centre + USUAL_SPREADS * spread, unit)
+        outside = [(v, when) for v, when in verdicts if v["outside"]]
+        if outside:
+            refusable = False
+            worst, when = max(outside, key=lambda vw: abs(vw[0]["sigmas"]))
+            side = "above" if worst["sigmas"] > 0 else "below"
+            far = numfmt.quantity(abs(worst["value"] - centre), unit)
+            rows.append({"entity": entity,
+                         "value": (f"{numfmt.quantity(worst['value'], unit)}, "
+                                   f"{far} {side} its usual "
+                                   f"{numfmt.quantity(centre, unit)} "
+                                   f"(usually {low} to {high})"),
+                         "when": when})
+            continue
+        recorded = isinstance(hours, list) and bool(hours)
+        if not (recorded and j.get("fresh") and isinstance(live, (int, float))):
+            # Not judged by its band (stuck, silent, or not read), but the
+            # band is still what the reader weighs the figures by.
+            refusable = False
+        said = ("what it recorded over the last day is inside that"
+                if recorded else
+                f"it reads {numfmt.quantity(live, unit)} now, inside that"
+                if isinstance(live, (int, float)) else "")
+        rows.append({"entity": entity,
+                     "value": f"usually {low} to {high}"
+                              + (f"; {said}" if said else ""),
+                     "when": "against what it has read over the last weeks"})
+        if isinstance(live, (int, float)):
+            inside_said.append(f"{name} reads {numfmt.quantity(live, unit)}, "
+                               f"inside its own usual range of {low} to "
+                               f"{high}")
+    if refusable and inside_said:
+        return textclip.clip("; ".join(inside_said) + ", so the reading is "
+                             "normal for it", MAX_WHY), case
+    if not rows:
+        return "", case
+    return "", {**case, "evidence": [*(case.get("evidence") or []), *rows]}
 
 
 # How a case's prose is cut into sentences for `leave_out_settled`: after a

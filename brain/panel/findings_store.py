@@ -723,7 +723,7 @@ def _publish_state(items: list[dict]) -> None:
     # What leaves the panel reads as the card does (#774, #791): no id,
     # path or code name, never "an internal name". `ts` is the key every
     # reader there holds; the stored row is untouched.
-    shaped = [_spoken({**s, **shown_words(s)}, assistant)
+    shaped = [_spoken(shown(s), assistant)
               for s in (_shape(e) for e in items) if s["text"]]
     shaped.sort(key=lambda f: f["ts"], reverse=True)
     live = [s for s in shaped
@@ -1127,6 +1127,18 @@ def shown_words(entry: dict) -> dict:
     return out
 
 
+def shown(entry: dict) -> dict:
+    """``entry`` as every surface the household reads shows it: its words
+    through `shown_words` and its step through `shown_fix`. The one door
+    the list, the cases, the Home Assistant mirror and a notification read
+    a row through, so a step one of them would not show (a path, a tool, a
+    "nothing is needed") is shown by none of them."""
+    entry = entry if isinstance(entry, dict) else {}
+    out = {**entry, **shown_words(entry)}
+    out["fix"] = shown_fix(out)
+    return out
+
+
 def outbound(rows) -> list[dict]:
     """``rows`` as a message leaving the panel says them (#774, #791):
     each in `shown_words`' plain words. A notification's slim copy (``ts``,
@@ -1140,9 +1152,9 @@ def outbound(rows) -> list[dict]:
         try:
             stored = row if row.get("source") is not None else (
                 get(int(row.get("ts") or 0)) or {})
-            said = shown_words({**stored, **row,
-                                "source": stored.get("source"),
-                                "technical": stored.get("technical")})
+            said = shown({**stored, **row,
+                          "source": stored.get("source"),
+                          "technical": stored.get("technical")})
         except Exception:  # noqa: BLE001 — a row we can't reword is sent as it was, never dropped
             out.append(row)
             continue
@@ -1209,6 +1221,13 @@ _HOUSE_BOOK_FIX = ("Your answer goes into the house book: the plain-language "
                    "guide brAIn writes for anyone looking after this house.")
 
 
+# A step that was only a developer's (a path, a tool, an id) and has no To
+# Do line to stand in for it, said as what the household can do about it.
+TECHNICAL_STEP = ("Ask brAIn in the chat to take this step for you: it is a "
+                  "technical one.")
+_STEP_SENTENCES = re.compile(r"(?<=[.!?])\s+")
+
+
 def shown_fix(entry: dict) -> str:
     """The "what to do" a surface shows for ``entry``.
 
@@ -1232,8 +1251,21 @@ def shown_fix(entry: dict) -> str:
     # sentences are held to plain words by their rule's tests. Nothing left
     # is no step, and a surface shows no heading over nothing.
     check = str(entry.get("source") or "").startswith("check:")
-    fix = house_words.household_step(
-        fix, own_checks=bool(entry.get("fix_by")) or not check)
+    own_checks = bool(entry.get("fix_by")) or not check
+    said = house_words.household_step(fix, own_checks=own_checks)
+    if fix.strip() and not said:
+        # The step was a developer's (a path, a tool, an id) and is not
+        # shown; the row's To Do line is the same errand in a household's
+        # words, so a card that had a step keeps one.
+        said = house_words.household_step(
+            _plainly(str(entry.get("todo_text") or ""), entry),
+            own_checks=own_checks)
+        if not said and any(house_words.developer_sentence(s)
+                            for s in _STEP_SENTENCES.split(fix.strip())):
+            # No To Do line either: the step is still the household's to
+            # get done, through brAIn, rather than no step at all.
+            said = TECHNICAL_STEP
+    fix = said
     if not fix or entry.get("fix_by"):
         return fix
     # A house-book question filed before its sentence changed said "Answer
@@ -2166,8 +2198,7 @@ def listing() -> dict:
     shaped = [as_now(s) for s in (_shape(e) for e in _load())
               if s["text"] and holds_now(s)]
     for row in shaped:
-        row.update(shown_words(row))
-        row["fix"] = shown_fix(row)
+        row.update(shown(row))
         if row.get("triage"):
             row["triage"] = shown_look(row["triage"], row)
     shaped.sort(key=lambda f: f["ts"], reverse=True)

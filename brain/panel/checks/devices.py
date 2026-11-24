@@ -548,8 +548,9 @@ def _restart_note(snap: dict, st: dict) -> str:
     if after_restart(snap, st.get("last_changed")) is None:
         return ""
     return (" It went unavailable right after Home Assistant restarted, so "
-            "its integration may not have come back from the restart — "
-            "reloading the integration is the first thing to try.")
+            "what it reports through may not have come back from the "
+            "restart: reloading that in Settings > Devices & services is the "
+            "first thing to try.")
 
 
 # An entity whose state is computed from other entities rather than read off
@@ -816,7 +817,8 @@ def unavailable(snap: dict, now: float) -> list[dict]:
                       + house.placed(first, name)
                       + _restart_note(snap, {"last_changed": _since(house, history, first)}),
             "fix": "Check its power and its connection (batteries, Wi-Fi, "
-                   "the hub it pairs through), then reload its integration.",
+                   "the hub it pairs through), then reload what it reports "
+                   "through in Settings > Devices & services.",
             "severity": "serious",
             "fixable": False,
             "entity_id": first,
@@ -830,7 +832,8 @@ def unavailable(snap: dict, now: float) -> list[dict]:
             "detail": f"Since {when(_since(house, history, eid))}."
                       + house.placed(eid)
                       + _restart_note(snap, {"last_changed": _since(house, history, eid)}),
-            "fix": "Check whatever provides it, then reload its integration.",
+            "fix": ("Check whatever provides it, then reload that in "
+                    "Settings > Devices & services."),
             "severity": "serious",
             "fixable": False,
             "entity_id": eid,
@@ -1529,9 +1532,8 @@ def _own_battery_low(attrs: dict) -> float | None:
     return None
 
 
-FROZEN_FIX = ("Power-cycle the sensor, or reload its integration — it has "
-              "probably stopped updating while its integration keeps "
-              "repeating the last value.")
+FROZEN_FIX = ("Power-cycle the sensor: it has probably stopped sending, "
+              "and Home Assistant keeps showing its last value.")
 
 
 def _frozen_fix(attrs: dict) -> str:
@@ -1543,8 +1545,7 @@ def _frozen_fix(attrs: dict) -> str:
         return FROZEN_FIX
     return (f"Its own battery reads {numfmt.number(level)}% — replace it "
             "first; a sensor running flat stops sending new readings. If it "
-            "still reads one value after that, power-cycle it or reload its "
-            "integration.")
+            "still reads one value after that, power-cycle it.")
 
 
 def frozen(snap: dict, now: float) -> list[dict]:
@@ -1707,13 +1708,16 @@ def restored(snap: dict, now: float) -> list[dict]:
         else:
             what = ("it" if one else "them") if not covered else (
                 "the " + ("other one" if len(lost) == 1 else "rest"))
-            fix = ("If you still use " + what + ", reinstall the "
-                   "integration that provided "
-                   + ("it" if len(lost) == 1 else "them") + ". Otherwise "
-                   + remove)
+            fix = ("If you still use " + what + ", set "
+                   + spell_integration(platform) + " up again in Settings > "
+                   "Devices & services. Otherwise " + remove)
         out.append({
             "text": f"Entities from the {spell_integration(platform)} "
                     "integration are left over with nothing providing them",
+            # `text` is the key it was filed under; what a card shows names
+            # the thing that provided them, not the word for it.
+            "headline": f"Entities from {spell_integration(platform)} are "
+                        "left over with nothing providing them",
             "detail": detail,
             "fix": fix,
             "evidence": evidence_for(eids, "restored, nothing provides it"),

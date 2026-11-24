@@ -160,7 +160,9 @@ FINDING_VOICE = (
     "Housekeeping on brAIn's own instruction or personality files is "
     "brAIn's: never a finding. (7) Each name once across title, detail and "
     "step (after that, \"it\" or \"them\"); a list whole, or its count, "
-    "never cut with \"…\"; no voice id, service id or file line; an "
+    "never cut with \"…\"; no voice id, service id, file path or file "
+    "line, and never the words \"integration\" or \"registry\" (name the "
+    "hub, app or service, and say Home Assistant's device list); an "
     "installer's term (restored entities, neighbour table, routes, "
     "children) is said as what it means for the house.")
 

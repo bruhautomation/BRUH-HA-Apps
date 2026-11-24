@@ -1660,7 +1660,7 @@ def _with_source(logs: list[dict], dig: dict, detail: str) -> str:
         return detail
     bits = []
     if where:
-        bits.append(f"the {where} integration")
+        bits.append(where)
     if thing:
         bits.append(f"about {thing}")
     return f"{detail} The lines come from {' '.join(bits)}.".strip()
@@ -1786,7 +1786,7 @@ def _not_yours(logs: list[dict], dig: dict) -> str:
     thing, where = _thing_of(rec, dig), _source_of(rec, dig)
     said = (f"Nothing you wrote reads {thing}" if thing
             else "Nothing you wrote is behind these lines")
-    said += (f": they come from the {where} integration." if where else ".")
+    said += (f": they come from {where}." if where else ".")
     read = _evidence_fix(logs, dig)
     return f"{said} {read}".strip()
 
@@ -1900,10 +1900,10 @@ def _plain_title(rec: dict, dig: dict) -> str:
     thing = _thing_of(rec, dig)
     where = _source_of(rec, dig)
     if thing and where:
-        return f"Errors in the log from the {where} integration about {thing}"
+        return f"Errors in the log from {where} about {thing}"
     if thing:
         return f"Errors in the log about {thing}"
-    return (f"Errors in the log from the {where} integration" if where
+    return (f"Errors in the log from {where}" if where
             else f"Errors in the log from {rec.get('logger') or 'Home Assistant'}")
 
 
@@ -2041,7 +2041,7 @@ def _log_said(logs: list[dict], dig: dict, detail: str = "") -> str | None:
         tail = (f" {times}" if times else "") + (
             f", most recently {when}" if when else "")
         where = _source_of(rec, dig)
-        who = f"The {where} integration" if where else "Home Assistant"
+        who = where if where else "Home Assistant"
         thing = _thing_of(rec, dig)
         about = f" about {thing}" if thing else ""
         meaning = house_words.known_log_meaning(message)
@@ -2083,10 +2083,10 @@ def _brain_reloads(where: str) -> str:
     A fix that told the owner to reload an integration handed them the one
     step brAIn can take itself — from the chat, through the same gate as
     any other change — so the step is offered as brAIn's, never assigned."""
-    return (f"If it still fails, brAIn can reload the {where} integration "
-            "for you: ask it in the chat." if where else
-            "If it still fails, brAIn can reload its integration for you: "
-            "ask it in the chat.")
+    return (f"If it still fails, brAIn can reload {where} for you: ask it "
+            "in the chat." if where else
+            "If it still fails, brAIn can reload what it reports through for "
+            "you: ask it in the chat.")
 
 
 _RELOAD_WORD = re.compile(r"\breload", re.I)
@@ -2410,7 +2410,7 @@ def _judge_log(rec: dict, dig: dict) -> tuple[str, str] | None:
         # the browser: somebody's own configuration, which no reconnect
         # puts right.
         return None
-    name = _source_of(rec, dig) or logger or "the integration"
+    name = _source_of(rec, dig) or logger or "what logs them"
     if domain and any(st in ENTRY_FAILED_STATES for st in
                       (dig.get("entry_states") or {}).get(domain) or ()):
         return ("claimed", f"{name} did not finish setting up: brAIn's "

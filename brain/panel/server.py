@@ -10292,8 +10292,8 @@ async def _card_states() -> dict:
 # card files it: a reboot is not a fault.
 CARD_FAULT_MIN_S = 3600
 CARD_FAULT_FIX = ("Check that it has power and is within reach of the hub "
-                  "or Wi-Fi it uses, then reload its integration in Settings "
-                  "> Devices & services.")
+                  "or Wi-Fi it uses, then reload what it reports through in "
+                  "Settings > Devices & services.")
 
 
 async def _card_device_faults(obj: dict, filed: list[dict]) -> list[dict]:
@@ -13269,7 +13269,7 @@ def _offer_findings(rows: list[dict], now: float) -> int:
 # look exists to judge — "three spreads on the freezer" is a sentence a
 # model can weigh against what the house has said about that freezer, and
 # a threshold cannot.
-MEASURED_SPREADS = 3.0
+MEASURED_SPREADS = resident.USUAL_SPREADS
 # …and how many of them one pass may offer. Past a handful the measurement
 # has stopped describing the house (a heating season starting, a meter
 # replaced), which is `base.unusual`'s own `MAX_ROWS` argument one floor
@@ -13756,6 +13756,10 @@ def _note_registry(snapshot: dict) -> None:
     core = ((snapshot.get("supervisor") or {}).get("core") or {})
     if isinstance(core, dict):
         automation_writer.note_core_version(core.get("version"))
+    # The house's services, so a service id in a sentence a person reads
+    # is known by its domain whatever that is called (`house_words.ids`).
+    if snapshot.get("services"):
+        house_words.note_services(snapshot.get("services"))
     try:
         states = snapshot.get("states") or {}
         areas = {a["area_id"]: a.get("name") or a["area_id"]
@@ -14043,6 +14047,65 @@ async def _resident_history_gates(case: dict, now: float) -> tuple[str, dict]:
                      "history: %s", why)
             return "", fixed
     return "", case
+
+
+async def _usual_gate(case: dict, signal_subject: str,
+                      now: float) -> tuple[str, dict]:
+    """``(why, case)`` from `resident.against_usual`: the entities the case
+    is about read against their own bands, over the baseline store, their
+    hourly means for the last day and their states now. Never raises: a
+    store, a recorder or a state that cannot be read refuses nothing."""
+    try:
+        wanted = resident.usual_entities(
+            case, findings_store.case_subject(case, signal_subject))
+        if not wanted:
+            return "", case
+        store = await asyncio.to_thread(baselines.load)
+        if baselines.is_stale(store, now):
+            return "", case
+        entries = {e: (store.get("entities") or {}).get(e) for e in wanted}
+        entries = {e: v for e, v in entries.items()
+                   if isinstance(v, dict) and not v.get("flat")}
+        if not entries:
+            return "", case
+        tz, _name = baselines.house_timezone()
+        import aiohttp  # noqa: PLC0415 — one call per case
+
+        import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+        hours = None
+        try:
+            async with aiohttp.ClientSession() as session:
+                hours = await baselines.fetch_hourly(
+                    session, list(entries), now,
+                    days=resident.USUAL_HOURS / 24)
+        except Exception as exc:  # noqa: BLE001 — the recorder did not answer
+            log.debug("hourly means for a case's usual range: %s", exc)
+        try:
+            states = await ha_data.entity_states(list(entries))
+        except Exception as exc:  # noqa: BLE001 — Core did not answer
+            log.debug("states for a case's usual range: %s", exc)
+            states = {}
+        judged = []
+        for entity, entry in entries.items():
+            state = states.get(entity)
+            live, fresh = None, False
+            if isinstance(state, dict):
+                live = _as_number(state)
+                changed = checks._util.parse_ts(state.get("last_changed"))
+                fresh = (changed is not None
+                         and now - changed <= resident.USUAL_FRESH_S)
+            name = str((_NAMES.get(entity) or {}).get("name") or "")
+            judged.append({
+                "entity": entity, "baseline": entry,
+                "name": name or House({"states": {}}).label(entity),
+                "unit": str(entry.get("unit") or ""),
+                "hours": (hours.get(entity) if isinstance(hours, dict)
+                          else None),
+                "live": live, "fresh": fresh})
+        return resident.against_usual(case, judged, tz, now)
+    except Exception as exc:  # noqa: BLE001 — a gate, never the case
+        log.debug("could not read a case against its usual range: %s", exc)
+        return "", case
 
 
 def _settled_devices() -> tuple[dict[str, str], dict[str, list[str]]]:
@@ -15535,6 +15598,15 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     # (#561). Nothing is filed, and the trail says what answered it.
     waits = (resident.not_due(case, _DRIVEN_BY, _live_reading, _DRIVEN_ALIASES)
              or _registry_answers(case, str(signal.get("subject") or "")))
+    # A reading said to be wrong is read against what that entity usually
+    # reads (`resident.against_usual`): inside its own band a new problem is
+    # not filed; either way the case carries the band. A signal the
+    # never-ignore floors hold is never refused by it, only given the band.
+    if not waits and refining is None:
+        normal, case = await _usual_gate(
+            case, str(signal.get("subject") or ""), now)
+        if normal and not resident.never_ignore(signal)[0]:
+            waits = normal
     # "Open for 70 minutes" is read against the door's own last open and
     # close (#580).
     if not waits:

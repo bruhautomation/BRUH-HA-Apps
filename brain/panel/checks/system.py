@@ -53,6 +53,8 @@ ADDON_STOPPED_TEXT = "An add-on set to start on boot is not running"
 # restore or a downgrade), and a reload cannot touch it.
 ENTRY_FAILED_STATES = ("setup_error", "setup_retry")
 ENTRY_FAILED_TEXT = "An integration did not finish setting up"
+# What a card shows over that key: the thing, not the word for it.
+ENTRY_FAILED_SHOWN = "Something Home Assistant connects to did not finish setting up"
 # How long an entry has to have been failing before it is a finding. Core
 # retries a `setup_retry` on a backoff and most come back on their own —
 # a hub rebooting, a cloud service down for an hour, the network slower
@@ -227,8 +229,8 @@ def disk_space(snap: dict, now: float) -> list[dict]:
                   "A full disk stops the recorder, stops backups, and can "
                   "corrupt the database it stops in the middle of.",
         "fix": "Delete old backups first — they are the biggest thing on "
-               "most systems. Then shorten recorder purge_keep_days, or "
-               "exclude the entities that write most often.",
+               "most systems. Then have the recorder keep fewer days of "
+               "history, or exclude the entities that write most often.",
         "severity": "serious",
         "fixable": False,
         "entity_id": "",
@@ -263,11 +265,11 @@ def recorder_size(snap: dict, now: float) -> list[dict]:
     return [{
         "text": "The recorder database has grown large",
         "detail": detail,
-        "fix": "Lower recorder purge_keep_days, or exclude the entities "
-               "that write most often (a power meter at one row a second "
-               "is most of a database like this). The file only shrinks "
-               "after a repack: Developer tools > Actions > "
-               "recorder.purge with repack on.",
+        "fix": "Have the recorder keep fewer days of history, or exclude "
+               "the entities that write most often (a power meter at one "
+               "row a second is most of a database like this). The file "
+               "only shrinks after a repack: in Developer tools > Actions, "
+               "run Recorder: Purge with repack on.",
         "severity": "warning" if tight else "info",
         "fixable": False,
         "entity_id": "",
@@ -493,6 +495,7 @@ def entry_failed(snap: dict, now: float) -> list[dict]:
         detail += " Home Assistant says — " + "; ".join(said[:5]) + "."
     return [{
         "text": ENTRY_FAILED_TEXT,
+        "headline": ENTRY_FAILED_SHOWN,
         "detail": detail,
         "fix": " ".join(actions),
         "severity": "serious",
