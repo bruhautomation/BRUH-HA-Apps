@@ -208,6 +208,7 @@ class BrevilleSensor(BrevilleEntity, SensorEntity):
             attrs["offline_cause"] = report["cause"]
             attrs["offline_since"] = report["since"]
             attrs["offline_reason"] = report["text"]
+            attrs["offline_to_try"] = report["to_try"]
         return attrs
 
     @property
