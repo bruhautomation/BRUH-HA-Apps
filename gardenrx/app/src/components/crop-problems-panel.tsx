@@ -71,14 +71,14 @@ export function CropProblemsPanel({ cropGroupName }: { cropGroupName: string | n
                   className={`text-xs font-medium px-3 py-1 rounded-full transition-colors ${
                     filter === f
                       ? 'bg-emerald-600 text-white'
-                      : 'text-muted-foreground/50 hover:text-muted-foreground'
+                      : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
                   {f === 'disease' ? 'Disease' : 'Insects'}
                 </button>
               ))}
             </div>
-            <ChevronDown className="w-4 h-4 text-muted-foreground/40 transition-transform group-open/section:rotate-180" />
+            <ChevronDown className="w-4 h-4 text-muted-foreground transition-transform group-open/section:rotate-180" />
           </div>
         </summary>
 
@@ -112,7 +112,7 @@ export function CropProblemsPanel({ cropGroupName }: { cropGroupName: string | n
                     {sc.label}
                   </span>
                   <ChevronDown
-                    className={`w-3 h-3 text-muted-foreground/60 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                    className={`w-3 h-3 text-muted-foreground transition-transform ${isExpanded ? 'rotate-180' : ''}`}
                   />
                 </button>
 
@@ -156,7 +156,7 @@ export function CropProblemsPanel({ cropGroupName }: { cropGroupName: string | n
                       <p className="text-muted-foreground">{problem.remediation}</p>
                       {problem.products.length > 0 && (
                         <div className="flex items-center gap-1 mt-2 flex-wrap">
-                          <FlaskConical className="w-3 h-3 text-muted-foreground/50" />
+                          <FlaskConical className="w-3 h-3 text-muted-foreground" />
                           {problem.products.map((p) => (
                             <Link
                               key={p}

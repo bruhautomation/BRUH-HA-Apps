@@ -416,11 +416,11 @@ export function SprayPlanner(props: SprayPlannerProps) {
             return (
               <div key={category}>
                 <div className="flex items-center gap-2 mb-2 px-0.5">
-                  <Icon className="w-3 h-3 text-muted-foreground/55" />
-                  <p className="text-xs font-semibold tracking-[0.16em] uppercase text-muted-foreground/55">
+                  <Icon className="w-3 h-3 text-muted-foreground" />
+                  <p className="text-xs font-semibold tracking-[0.16em] uppercase text-muted-foreground">
                     {category}
                   </p>
-                  <span className="text-xs text-muted-foreground/40">{crops.length}</span>
+                  <span className="text-xs text-muted-foreground">{crops.length}</span>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   {crops.map((crop) => {
@@ -565,7 +565,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
               <div className="flex items-baseline justify-between mb-3">
                 <h2 className="text-xs font-semibold tracking-[0.18em] uppercase text-foreground/70">
                   Recommended Mixes
-                  <span className="ml-2 text-muted-foreground/60 font-normal tracking-normal normal-case">
+                  <span className="ml-2 text-muted-foreground font-normal tracking-normal normal-case">
                     {mixPlans.filter((p) => !dismissedMixes.includes(p.id)).length}
                   </span>
                 </h2>
@@ -647,13 +647,13 @@ export function SprayPlanner(props: SprayPlannerProps) {
                               </p>
                             </div>
                             <ChevronDown
-                              className={`w-4 h-4 text-muted-foreground/50 shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                              className={`w-4 h-4 text-muted-foreground shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
                             />
                           </button>
                           {!isLogged && (
                             <button
                               onClick={() => setDismissedMixes([...dismissedMixes, plan.id])}
-                              className="px-3 py-4 text-muted-foreground/50 hover:text-terra-500 transition-colors shrink-0"
+                              className="px-3 py-4 text-muted-foreground hover:text-terra-500 transition-colors shrink-0"
                               title="Skip this mix"
                             >
                               <X className="w-3.5 h-3.5" />
@@ -752,7 +752,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                                               `${plan.id}-${mp.product.id}`,
                                             ])
                                           }
-                                          className="p-1 -m-1 text-muted-foreground/40 hover:text-terra-500 transition-colors shrink-0"
+                                          className="p-1 -m-1 text-muted-foreground hover:text-terra-500 transition-colors shrink-0"
                                           title="Remove from mix"
                                         >
                                           <X className="w-3.5 h-3.5" />
@@ -810,7 +810,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                                       <span className="text-muted-foreground">
                                         to {dose.totalGallons} gal tank
                                       </span>
-                                      <span className="text-muted-foreground/50 ml-auto tabular-nums flex items-baseline gap-2">
+                                      <span className="text-muted-foreground ml-auto tabular-nums flex items-baseline gap-2">
                                         <span>{dose.mL}&nbsp;mL</span>
                                         {costStr ? (
                                           <button
@@ -909,7 +909,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                                 <dl className="px-4 pt-3 text-xs space-y-1">
                                   {hasCost && (
                                     <div className="flex items-baseline gap-2">
-                                      <dt className="text-muted-foreground/60 tracking-wide uppercase text-xs shrink-0 w-10">
+                                      <dt className="text-muted-foreground tracking-wide uppercase text-xs shrink-0 w-10">
                                         Cost
                                       </dt>
                                       <dd className="font-mono tabular-nums text-foreground">
@@ -919,7 +919,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
                                   )}
                                   {ppe && (
                                     <div className="flex items-baseline gap-2">
-                                      <dt className="text-muted-foreground/60 tracking-wide uppercase text-xs shrink-0 w-10">
+                                      <dt className="text-muted-foreground tracking-wide uppercase text-xs shrink-0 w-10">
                                         PPE
                                       </dt>
                                       <dd className="text-muted-foreground">{ppe}</dd>
@@ -1005,14 +1005,14 @@ export function SprayPlanner(props: SprayPlannerProps) {
             <div className="px-4 py-3 space-y-3 text-sm">
               {groupInfo.modeOfAction && (
                 <div>
-                  <p className="text-xs font-semibold tracking-[0.18em] uppercase text-muted-foreground/60 mb-1">
+                  <p className="text-xs font-semibold tracking-[0.18em] uppercase text-muted-foreground mb-1">
                     Mode of action
                   </p>
                   <p className="text-foreground/80 leading-snug">{groupInfo.modeOfAction}</p>
                 </div>
               )}
               <div>
-                <p className="text-xs font-semibold tracking-[0.18em] uppercase text-muted-foreground/60 mb-1">
+                <p className="text-xs font-semibold tracking-[0.18em] uppercase text-muted-foreground mb-1">
                   What this is
                 </p>
                 <p className="text-foreground/80 leading-snug">
@@ -1066,7 +1066,7 @@ export function SprayPlanner(props: SprayPlannerProps) {
           <div className="relative w-full max-w-md max-h-[70vh] bg-popover rounded-t-2xl sm:rounded-2xl shadow-xl ring-1 ring-foreground/10 overflow-hidden flex flex-col">
             <div className="px-4 pt-4 pb-2 border-b border-border/40 flex items-center justify-between shrink-0">
               <div>
-                <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground/60">
+                <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground">
                   Swap {swapping.mixProduct.role.replace('-', ' ')}
                 </p>
                 <p className="font-heading font-semibold text-sm">
@@ -1251,7 +1251,7 @@ function InventoryQuickEdit({
         <div className="px-4 py-3 space-y-3">
           <div className="flex gap-2">
             <div className="flex-1">
-              <label className="text-xs font-medium tracking-[0.14em] uppercase text-muted-foreground/60 block mb-1">
+              <label className="text-xs font-medium tracking-[0.14em] uppercase text-muted-foreground block mb-1">
                 On hand
               </label>
               <input
@@ -1265,7 +1265,7 @@ function InventoryQuickEdit({
               />
             </div>
             <div className="w-24">
-              <label className="text-xs font-medium tracking-[0.14em] uppercase text-muted-foreground/60 block mb-1">
+              <label className="text-xs font-medium tracking-[0.14em] uppercase text-muted-foreground block mb-1">
                 Unit
               </label>
               <select
@@ -1285,7 +1285,7 @@ function InventoryQuickEdit({
           </div>
           <div className="flex gap-2">
             <div className="flex-1">
-              <label className="text-xs font-medium tracking-[0.14em] uppercase text-muted-foreground/60 block mb-1">
+              <label className="text-xs font-medium tracking-[0.14em] uppercase text-muted-foreground block mb-1">
                 Bottle size
               </label>
               <input
@@ -1299,7 +1299,7 @@ function InventoryQuickEdit({
               />
             </div>
             <div className="flex-1">
-              <label className="text-xs font-medium tracking-[0.14em] uppercase text-muted-foreground/60 block mb-1">
+              <label className="text-xs font-medium tracking-[0.14em] uppercase text-muted-foreground block mb-1">
                 Cost ($)
               </label>
               <input
@@ -1313,7 +1313,7 @@ function InventoryQuickEdit({
               />
             </div>
           </div>
-          <p className="text-xs text-muted-foreground/60 leading-snug">
+          <p className="text-xs text-muted-foreground leading-snug">
             Bottle size is what you paid for; on-hand is what&apos;s left. If bottle size is blank,
             cost estimates fall back to on-hand as the basis.
           </p>

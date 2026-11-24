@@ -394,7 +394,7 @@ function AddCropButton({ cropGroups, existing }: { cropGroups: CropGroup[]; exis
             </DialogTitle>
           </DialogHeader>
           <div className="relative mt-1">
-            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground/50" />
+            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Search crops…"
               value={search}
@@ -405,7 +405,7 @@ function AddCropButton({ cropGroups, existing }: { cropGroups: CropGroup[]; exis
             {search && (
               <button
                 onClick={() => setSearch('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-muted-foreground"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
                 <X className="size-3.5" />
               </button>
@@ -424,7 +424,7 @@ function AddCropButton({ cropGroups, existing }: { cropGroups: CropGroup[]; exis
             ) : (
               [...groups.entries()].map(([groupName, entries]) => (
                 <div key={groupName}>
-                  <p className="sticky top-0 bg-popover/95 px-2 pb-1 pt-2 text-xs font-medium uppercase tracking-widest text-muted-foreground/70 backdrop-blur-sm">
+                  <p className="sticky top-0 bg-popover/95 px-2 pb-1 pt-2 text-xs font-medium uppercase tracking-widest text-muted-foreground backdrop-blur-sm">
                     {groupName}
                   </p>
                   {entries.map((e) => (
@@ -437,9 +437,7 @@ function AddCropButton({ cropGroups, existing }: { cropGroups: CropGroup[]; exis
                       <span className="w-6 shrink-0 text-center text-base">{e.emoji}</span>
                       <span className="text-sm font-medium text-foreground">{e.name}</span>
                       {e.cropGroup && (
-                        <span className="ml-auto text-xs text-muted-foreground/50">
-                          {e.cropGroup}
-                        </span>
+                        <span className="ml-auto text-xs text-muted-foreground">{e.cropGroup}</span>
                       )}
                     </button>
                   ))}

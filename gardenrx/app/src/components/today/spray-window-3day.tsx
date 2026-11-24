@@ -65,6 +65,7 @@ export function SprayWindow3Day({
       {dates.map((date, i) => {
         const hours = byDate.get(date)!;
         const best = bestWindow(hours);
+        const holds = holdRuns(hours);
         const d = dailyByDate.get(date);
         const hi = d ? Math.round(d.tempHigh) : Math.round(Math.max(...hours.map((h) => h.temp)));
         const lo = d ? Math.round(d.tempLow) : Math.round(Math.min(...hours.map((h) => h.temp)));
@@ -80,22 +81,38 @@ export function SprayWindow3Day({
                 {hi}°<span>/{lo}°</span>
               </div>
             </div>
-            <div className="sw3-band">
-              {hours.map((h) => {
-                const off = h.over || h.dark;
-                const inBest = best != null && h.hour >= best.start && h.hour <= best.end;
-                const note = h.over ? 'past' : h.dark ? 'dark' : h.rating.toLowerCase();
-                return (
-                  <div
-                    key={h.hour}
-                    className={`sw3-cell${off ? ' sw3-off' : ''}${inBest ? ' best' : ''}`}
-                    style={
-                      off ? undefined : { background: COLOR[h.rating], opacity: OPACITY[h.rating] }
-                    }
-                    title={`${fmtHour(h.hour)} · ${Math.round(h.temp)}° · ${Math.round(h.wind)} mph · ${note}`}
-                  />
-                );
-              })}
+            <div className="sw3-col">
+              <div className="sw3-band">
+                {hours.map((h) => {
+                  const off = h.over || h.dark;
+                  const inBest = best != null && h.hour >= best.start && h.hour <= best.end;
+                  const note = h.over
+                    ? 'past'
+                    : h.dark
+                      ? 'dark'
+                      : `${h.rating === 'POOR' ? 'hold' : h.rating.toLowerCase()}${h.causes.length ? `: ${h.causes.join(', ')}` : ''}`;
+                  return (
+                    <div
+                      key={h.hour}
+                      className={`sw3-cell${off ? ' sw3-off' : ''}${inBest ? ' best' : ''}`}
+                      style={
+                        off
+                          ? undefined
+                          : { background: COLOR[h.rating], opacity: OPACITY[h.rating] }
+                      }
+                      title={`${fmtHour(h.hour)} · ${Math.round(h.temp)}° · ${Math.round(h.wind)} mph · ${note}`}
+                    />
+                  );
+                })}
+              </div>
+              {holds.length > 0 && (
+                <div className="sw3-why">
+                  Hold{' '}
+                  {holds
+                    .map((g) => `${fmtHour(g.start)}–${fmtHour(g.end + 1)} ${g.why}`)
+                    .join(' · ')}
+                </div>
+              )}
             </div>
           </div>
         );
@@ -110,6 +127,20 @@ export function SprayWindow3Day({
       </div>
     </div>
   );
+}
+
+/** The day's Hold hours still ahead in daylight, as runs that share a cause:
+ *  [{ start: 6, end: 9, why: 'below 40°' }, { start: 11, end: 15, why: 'wind' }]. */
+function holdRuns(hours: SprayHour[]): Array<{ start: number; end: number; why: string }> {
+  const out: Array<{ start: number; end: number; why: string }> = [];
+  for (const h of hours) {
+    if (h.over || h.dark || h.rating !== 'POOR') continue;
+    const why = h.causes.join(', ') || 'poor';
+    const last = out[out.length - 1];
+    if (last && last.why === why && last.end === h.hour - 1) last.end = h.hour;
+    else out.push({ start: h.hour, end: h.hour, why });
+  }
+  return out;
 }
 
 /** Longest contiguous run of good hours still ahead (not over, not dark). */

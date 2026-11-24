@@ -350,12 +350,12 @@ export function HarvestTracker({
           { label: 'Yield', value: yieldStr, cls: 'text-foreground' },
         ];
         if (anyValue)
-          stats.push({ label: 'Value', value: fmtMoney(grandValue), cls: 'text-emerald-700' });
+          stats.push({ label: 'Value', value: fmtMoney(grandValue), cls: 'text-positive' });
         if (sprayCost > 0)
           stats.push({
             label: 'Spray cost',
             value: fmtMoney(sprayCost),
-            cls: 'text-terra-600',
+            cls: 'text-danger',
             title:
               'Cost of the products you sprayed this season (applied amounts, valued from inventory pricing).',
           });
@@ -363,7 +363,7 @@ export function HarvestTracker({
           stats.push({
             label: 'Net',
             value: net >= 0 ? fmtMoney(net) : `−${fmtMoney(-net)}`,
-            cls: net >= 0 ? 'text-emerald-700' : 'text-terra-600',
+            cls: net >= 0 ? 'text-positive' : 'text-danger',
             title: 'Harvest value minus spray cost.',
           });
         const colsClass =
@@ -376,7 +376,7 @@ export function HarvestTracker({
           <div className="rounded-2xl bg-card ring-1 ring-black/[0.05] shadow-sm overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
               <SectionHeader title="Season total" />
-              <span className="text-xs text-muted-foreground/60 tabular-nums">
+              <span className="text-xs text-muted-foreground tabular-nums">
                 {byCrop.length} {byCrop.length === 1 ? 'crop' : 'crops'} · {rows.length}{' '}
                 {rows.length === 1 ? 'pick' : 'picks'}
               </span>
@@ -384,7 +384,7 @@ export function HarvestTracker({
             <div className={`grid grid-cols-2 ${colsClass} gap-px bg-border/30`}>
               {stats.map((s) => (
                 <div key={s.label} className="bg-card px-4 py-3" title={s.title}>
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground/55 mb-1">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1">
                     {s.label}
                   </p>
                   <p
@@ -402,7 +402,7 @@ export function HarvestTracker({
       {/* where to set prices */}
       <Link
         href="/crops"
-        className="flex items-center gap-2 text-xs text-muted-foreground/70 px-1 hover:text-emerald-700 transition-colors"
+        className="flex items-center gap-2 text-xs text-muted-foreground px-1 hover:text-positive transition-colors"
       >
         <Info className="w-3 h-3 shrink-0" />
         <span>
@@ -534,7 +534,7 @@ export function HarvestTracker({
             <div className="hidden overflow-x-auto min-[900px]:block">
               <table className="block w-full text-sm min-[900px]:table">
                 <thead className="hidden min-[900px]:table-header-group">
-                  <tr className="text-left text-xs font-medium tracking-widest uppercase text-muted-foreground/60 border-b border-border/50">
+                  <tr className="text-left text-xs font-medium tracking-widest uppercase text-muted-foreground border-b border-border/50">
                     <th className="px-3 py-2 font-medium">Crop</th>
                     <th className="px-2 py-2 font-medium">Date</th>
                     <th className="px-2 py-2 font-medium text-right">Amount</th>
@@ -562,7 +562,7 @@ export function HarvestTracker({
                               className="shrink-0"
                             />
                             <span className="font-medium">{c?.name ?? 'Unknown'}</span>
-                            {v && <span className="text-muted-foreground/60">({v.name})</span>}
+                            {v && <span className="text-muted-foreground">({v.name})</span>}
                             {phi && (
                               <span
                                 title={`PHI not met — ${phi.brand} sprayed too recently; safe to harvest ${phi.safe} (${phi.daysShort}d short)`}
@@ -611,14 +611,14 @@ export function HarvestTracker({
                           className={`col-span-2 row-start-3 text-left tabular-nums min-[900px]:table-cell min-[900px]:px-2 min-[900px]:py-2 min-[900px]:text-right min-[900px]:whitespace-nowrap ${val > 0 ? '' : 'max-sm:hidden'}`}
                         >
                           {val > 0 ? (
-                            <span className="font-medium text-emerald-700">
+                            <span className="font-medium text-positive">
                               <span className="mr-1 text-xs font-normal text-muted-foreground min-[900px]:hidden">
                                 Value
                               </span>
                               {fmtMoney(val)}
                             </span>
                           ) : (
-                            <span className="text-muted-foreground/40">—</span>
+                            <span className="text-muted-foreground">—</span>
                           )}
                         </td>
                         <td className="col-start-2 row-start-1 text-right min-[900px]:table-cell min-[900px]:px-2 min-[900px]:py-2">
@@ -629,7 +629,7 @@ export function HarvestTracker({
                                 label: `${c?.name ?? 'harvest'} (${fmtAmount(Number(h.weight), h.unit)})`,
                               })
                             }
-                            className="grid size-10 place-items-center text-muted-foreground/60 hover:text-terra-500 transition-colors min-[900px]:size-auto min-[900px]:p-1"
+                            className="grid size-10 place-items-center text-muted-foreground hover:text-terra-500 transition-colors min-[900px]:size-auto min-[900px]:p-1"
                             title="Delete"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -641,7 +641,7 @@ export function HarvestTracker({
                 </tbody>
               </table>
             </div>
-            <p className="text-xs text-muted-foreground/50 px-3 py-2 border-t border-border/40">
+            <p className="text-xs text-muted-foreground px-3 py-2 border-t border-border/40">
               <span className="min-[900px]:hidden">
                 Tap a pick to edit its date, amount or unit.
               </span>
@@ -685,7 +685,7 @@ export function HarvestTracker({
 
           <div className="space-y-2">
             <Label htmlFor="h-variety" className="text-xs font-medium text-muted-foreground">
-              Variety <span className="text-muted-foreground/40">(optional)</span>
+              Variety <span className="text-muted-foreground">(optional)</span>
             </Label>
             <select
               id="h-variety"
@@ -773,7 +773,7 @@ export function HarvestTracker({
 
           <div className="space-y-2">
             <Label htmlFor="h-notes" className="text-xs font-medium text-muted-foreground">
-              Notes <span className="text-muted-foreground/40">(optional)</span>
+              Notes <span className="text-muted-foreground">(optional)</span>
             </Label>
             <Input
               id="h-notes"

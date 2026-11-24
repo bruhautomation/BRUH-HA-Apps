@@ -62,7 +62,7 @@ export function QueuedSprayCard({ spray }: { spray: QueuedSpray }) {
           <button
             onClick={removeQueued}
             disabled={removing}
-            className="text-muted-foreground/50 hover:text-terra-500 transition-colors p-1"
+            className="text-muted-foreground hover:text-terra-500 transition-colors p-1"
             title="Remove from queue"
           >
             <Trash2 className="w-3.5 h-3.5" />

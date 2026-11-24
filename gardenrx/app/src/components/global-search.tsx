@@ -154,18 +154,18 @@ export function GlobalSearch({
         <div className="rounded-2xl bg-card shadow-2xl ring-1 ring-black/[0.08] overflow-hidden">
           {/* Input */}
           <div className="flex items-center gap-3 px-4 py-3 border-b border-border/40">
-            <Search className="w-5 h-5 text-muted-foreground/50 shrink-0" />
+            <Search className="w-5 h-5 text-muted-foreground shrink-0" />
             <input
               ref={inputRef}
               type="text"
               placeholder="Search treatments, crops, diseases, ingredients..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="flex-1 text-sm bg-transparent outline-none placeholder:text-muted-foreground/40"
+              className="flex-1 text-sm bg-transparent outline-none placeholder:text-muted-foreground"
             />
             {query && (
               <button onClick={() => setQuery('')}>
-                <X className="w-4 h-4 text-muted-foreground/50" />
+                <X className="w-4 h-4 text-muted-foreground" />
               </button>
             )}
             <kbd className="rounded-md bg-muted px-2 py-0.5 text-xs font-mono text-muted-foreground">
@@ -176,13 +176,13 @@ export function GlobalSearch({
           {/* Results */}
           <div className="max-h-[60vh] overflow-y-auto">
             {query.length < 2 && (
-              <div className="px-4 py-8 text-center text-sm text-muted-foreground/50">
+              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
                 Type to search across treatments, crops, and problems
               </div>
             )}
 
             {query.length >= 2 && results.length === 0 && (
-              <div className="px-4 py-8 text-center text-sm text-muted-foreground/50">
+              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
                 No results for &ldquo;{query}&rdquo;
               </div>
             )}
@@ -214,7 +214,7 @@ export function GlobalSearch({
                         <p className="text-sm font-medium truncate">{r.title}</p>
                         <p className="text-xs text-muted-foreground truncate">{r.subtitle}</p>
                       </div>
-                      <span className="text-xs text-muted-foreground/50 shrink-0 capitalize">
+                      <span className="text-xs text-muted-foreground shrink-0 capitalize">
                         {r.type}
                       </span>
                     </button>

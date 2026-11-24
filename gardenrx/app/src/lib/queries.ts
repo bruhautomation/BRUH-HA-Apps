@@ -23,6 +23,7 @@ import type {
   QueuedSprayProduct,
   QueuedSprayCrop,
   TreatmentInventory,
+  Harvest,
   AppSettings,
 } from '@/lib/database.types';
 import { DEFAULT_SETTINGS } from '@/lib/settings';
@@ -136,6 +137,19 @@ export async function fetchQueuedSprays() {
 export async function fetchPhenologyCalendar() {
   const supabase = await createClient();
   return (await supabase.from('phenology_calendar').select('*')).data ?? [];
+}
+
+// ── Harvests ──
+
+/** The most recent pick, or null when nothing has been picked. */
+export async function fetchLastHarvest(): Promise<Harvest | null> {
+  const supabase = await createClient();
+  const res = await supabase
+    .from('harvests')
+    .select('*')
+    .order('harvested_at', { ascending: false })
+    .limit(1);
+  return rows<Harvest>(res)[0] ?? null;
 }
 
 // ── Inventory ──

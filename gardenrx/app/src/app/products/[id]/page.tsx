@@ -153,7 +153,7 @@ export default async function ProductDetailPage(props: PageProps<'/products/[id]
       {/* Back link */}
       <Link href="/products" className="btn btn-ghost">
         <ArrowLeft className="size-4" />
-        Treatments
+        Products
       </Link>
 
       {/* Hero header */}
@@ -189,7 +189,7 @@ export default async function ProductDetailPage(props: PageProps<'/products/[id]
                   .join(' + ')}
               </p>
             )}
-            <div className="flex items-center gap-2 text-sm text-muted-foreground/70 mt-0.5">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground mt-0.5">
               {product.manufacturer && <span>{product.manufacturer}</span>}
               {product.manufacturer && product.epa_reg_number && (
                 <span className="text-muted-foreground/30">&middot;</span>
@@ -203,16 +203,16 @@ export default async function ProductDetailPage(props: PageProps<'/products/[id]
 
         {/* Price + buy link */}
         {product.price_dollars != null && (
-          <div className="flex items-center gap-3 rounded-xl bg-emerald-50/70 ring-1 ring-emerald-200/50 px-4 py-3">
+          <div className="flex items-center gap-3 rounded-xl bg-leaf-tint ring-1 ring-leaf-lt px-4 py-3">
             <div className="flex items-baseline gap-2">
-              <span className="text-xl font-heading font-semibold text-emerald-800 tabular-nums">
+              <span className="text-xl font-heading font-semibold text-positive tabular-nums">
                 ${Number(product.price_dollars).toFixed(2)}
               </span>
               {product.price_size && (
-                <span className="text-xs text-emerald-700/70">/ {product.price_size}</span>
+                <span className="text-xs text-muted-foreground">/ {product.price_size}</span>
               )}
             </div>
-            <span className="text-xs text-muted-foreground/60 ml-auto">≈ Amazon</span>
+            <span className="text-xs text-muted-foreground ml-auto">≈ Amazon</span>
             <a
               href={
                 product.retail_url ??
@@ -236,9 +236,9 @@ export default async function ProductDetailPage(props: PageProps<'/products/[id]
             <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground">
               Active Ingredients
             </p>
-            <span className="text-xs text-muted-foreground/50">({ingredients.length})</span>
+            <span className="text-xs text-muted-foreground">({ingredients.length})</span>
           </div>
-          <ChevronDown className="w-4 h-4 text-muted-foreground/40 transition-transform group-open/section:rotate-180" />
+          <ChevronDown className="w-4 h-4 text-muted-foreground transition-transform group-open/section:rotate-180" />
         </summary>
         <div className="flex flex-wrap gap-2">
           {ingredients.map((pi) => {
@@ -285,9 +285,9 @@ export default async function ProductDetailPage(props: PageProps<'/products/[id]
             <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground">
               Specifications
             </p>
-            <span className="text-xs text-muted-foreground/50">({specItems.length})</span>
+            <span className="text-xs text-muted-foreground">({specItems.length})</span>
           </div>
-          <ChevronDown className="w-4 h-4 text-muted-foreground/40 transition-transform group-open/section:rotate-180" />
+          <ChevronDown className="w-4 h-4 text-muted-foreground transition-transform group-open/section:rotate-180" />
         </summary>
         {specItems.length <= 1 ? (
           <div className="grid grid-cols-2 gap-2">
@@ -302,7 +302,7 @@ export default async function ProductDetailPage(props: PageProps<'/products/[id]
                     <Icon className="w-3.5 h-3.5 text-emerald-700" />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground/60 leading-none mb-1">
+                    <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground leading-none mb-1">
                       {spec.label}
                     </p>
                     <p className="text-sm font-medium text-foreground truncate">{spec.value}</p>
@@ -311,7 +311,7 @@ export default async function ProductDetailPage(props: PageProps<'/products/[id]
               );
             })}
             <div className="col-span-2 rounded-xl bg-parchment-50/60 p-3 ring-1 ring-border/30">
-              <p className="text-xs text-muted-foreground/70 leading-relaxed">
+              <p className="text-xs text-muted-foreground leading-relaxed">
                 Detailed specifications not yet available for this product. See label for complete
                 information.
               </p>
@@ -330,7 +330,7 @@ export default async function ProductDetailPage(props: PageProps<'/products/[id]
                     <Icon className="w-3.5 h-3.5 text-emerald-700" />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground/60 leading-none mb-1">
+                    <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground leading-none mb-1">
                       {spec.label}
                     </p>
                     <p className="text-sm font-medium text-foreground truncate">{spec.value}</p>
@@ -351,7 +351,7 @@ export default async function ProductDetailPage(props: PageProps<'/products/[id]
                 Safety & Handling
               </p>
             </div>
-            <ChevronDown className="w-4 h-4 text-muted-foreground/40 transition-transform group-open/section:rotate-180" />
+            <ChevronDown className="w-4 h-4 text-muted-foreground transition-transform group-open/section:rotate-180" />
           </summary>
           <div className="rounded-xl bg-terra-50/60 p-4 ring-1 ring-terra-200/40 space-y-3">
             {ppeItems.length > 0 && (
@@ -402,9 +402,9 @@ export default async function ProductDetailPage(props: PageProps<'/products/[id]
               <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground">
                 Labeled Crops
               </p>
-              <span className="text-xs text-muted-foreground/50">({cropUses.length})</span>
+              <span className="text-xs text-muted-foreground">({cropUses.length})</span>
             </div>
-            <ChevronDown className="w-4 h-4 text-muted-foreground/40 transition-transform group-open/section:rotate-180" />
+            <ChevronDown className="w-4 h-4 text-muted-foreground transition-transform group-open/section:rotate-180" />
           </summary>
           <div className="space-y-3">
             {cropUses.map((cu) => {
@@ -423,18 +423,18 @@ export default async function ProductDetailPage(props: PageProps<'/products/[id]
                         <p className="font-heading font-semibold text-sm">
                           {group?.name ?? 'Unknown'}
                         </p>
-                        <p className="text-xs text-muted-foreground/60">
+                        <p className="text-xs text-muted-foreground">
                           {cu.rate_min}&ndash;{cu.rate_max} {cu.rate_unit}
                           {cu.phi_days != null && <> &middot; {cu.phi_days}d PHI</>}
                         </p>
                       </div>
                     </div>
-                    <ChevronDown className="w-4 h-4 text-muted-foreground/60 transition-transform group-open/card:rotate-180" />
+                    <ChevronDown className="w-4 h-4 text-muted-foreground transition-transform group-open/card:rotate-180" />
                   </summary>
                   <div className="px-4 pb-4 pt-0 space-y-3">
                     <div className="grid grid-cols-2 gap-2">
                       <div className="rounded-lg bg-parchment-50 p-3">
-                        <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground/60 mb-0.5">
+                        <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground mb-0.5">
                           Rate
                         </p>
                         <p className="text-sm font-medium">
@@ -443,7 +443,7 @@ export default async function ProductDetailPage(props: PageProps<'/products/[id]
                       </div>
                       {cu.phi_days != null && (
                         <div className="rounded-lg bg-parchment-50 p-3">
-                          <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground/60 mb-0.5">
+                          <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground mb-0.5">
                             PHI
                           </p>
                           <p className="text-sm font-medium">{cu.phi_days} days</p>
@@ -451,19 +451,19 @@ export default async function ProductDetailPage(props: PageProps<'/products/[id]
                       )}
                       {cu.max_apps_per_season != null && (
                         <div className="rounded-lg bg-parchment-50 p-3">
-                          <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground/60 mb-0.5">
+                          <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground mb-0.5">
                             Max Apps
                           </p>
                           <p className="text-sm font-medium">
                             <span className="text-emerald-700">{seasonUses}</span>
-                            <span className="text-muted-foreground/60"> / </span>
+                            <span className="text-muted-foreground"> / </span>
                             {cu.max_apps_per_season}
                           </p>
                         </div>
                       )}
                       {cu.min_interval_days != null && (
                         <div className="rounded-lg bg-parchment-50 p-3">
-                          <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground/60 mb-0.5">
+                          <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground mb-0.5">
                             Min Interval
                           </p>
                           <p className="text-sm font-medium">{cu.min_interval_days} days</p>
@@ -471,12 +471,12 @@ export default async function ProductDetailPage(props: PageProps<'/products/[id]
                       )}
                     </div>
                     {cu.growth_stage_restrictions && (
-                      <p className="text-xs text-muted-foreground/70 italic leading-relaxed">
+                      <p className="text-xs text-muted-foreground italic leading-relaxed">
                         {cu.growth_stage_restrictions}
                       </p>
                     )}
                     {cu.restrictions_text && (
-                      <details className="text-xs text-muted-foreground/70">
+                      <details className="text-xs text-muted-foreground">
                         <summary className="cursor-pointer font-medium text-emerald-700 hover:text-emerald-800 transition-colors">
                           View full restrictions
                         </summary>
@@ -502,7 +502,7 @@ export default async function ProductDetailPage(props: PageProps<'/products/[id]
       <details open className="group/section">
         <summary className="flex items-center justify-between mb-3 cursor-pointer list-none [&::-webkit-details-marker]:hidden select-none">
           <SectionHeader title="Product label" />
-          <ChevronDown className="w-4 h-4 text-muted-foreground/40 transition-transform group-open/section:rotate-180" />
+          <ChevronDown className="w-4 h-4 text-muted-foreground transition-transform group-open/section:rotate-180" />
         </summary>
         <LabelViewer productId={productId} />
       </details>

@@ -102,12 +102,12 @@ export function HarvestCalendar({ crops, varieties, cropGroups }: Props) {
           <p className="font-heading text-base font-semibold tracking-tight text-foreground">
             Expected Harvest Windows
           </p>
-          <p className="text-xs text-muted-foreground/70">
+          <p className="text-xs text-muted-foreground">
             {totalVarieties} {totalVarieties === 1 ? 'variety' : 'varieties'} across {totalCrops}{' '}
             {totalCrops === 1 ? 'crop' : 'crops'}
           </p>
         </div>
-        <ChevronDown className="w-4 h-4 text-muted-foreground/50 transition-transform group-open/cal:rotate-180" />
+        <ChevronDown className="w-4 h-4 text-muted-foreground transition-transform group-open/cal:rotate-180" />
       </summary>
 
       {/* Calendar body */}
@@ -119,7 +119,7 @@ export function HarvestCalendar({ crops, varieties, cropGroups }: Props) {
               <div
                 key={m}
                 className={`text-center text-xs font-medium tracking-wider uppercase transition-colors ${
-                  i === currentMonth ? 'text-emerald-700 font-semibold' : 'text-muted-foreground/50'
+                  i === currentMonth ? 'text-emerald-700 font-semibold' : 'text-muted-foreground'
                 }`}
               >
                 {m[0]}
@@ -168,7 +168,7 @@ function CropSection({
     <div className="relative space-y-2">
       <div className="flex items-baseline gap-2 pb-0.5 mb-0.5">
         <p className="font-heading text-sm font-semibold text-foreground">{group.crop.name}</p>
-        <p className="text-xs text-muted-foreground/50">
+        <p className="text-xs text-muted-foreground">
           {group.rows.length} {group.rows.length === 1 ? 'variety' : 'varieties'}
         </p>
       </div>
@@ -185,7 +185,7 @@ function VarietyBar({ row, currentMonth }: { row: VarietyRow; currentMonth: numb
       {/* Name + phrase on one line */}
       <div className="flex items-baseline gap-2 mb-0.5 px-0.5">
         <p className="text-xs text-foreground/80 truncate flex-1 min-w-0">{row.variety.name}</p>
-        <p className="text-xs text-muted-foreground/60 font-mono truncate" title={row.phrase}>
+        <p className="text-xs text-muted-foreground font-mono truncate" title={row.phrase}>
           {row.phrase}
         </p>
       </div>

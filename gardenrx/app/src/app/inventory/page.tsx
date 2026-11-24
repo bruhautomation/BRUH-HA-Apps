@@ -29,7 +29,7 @@ export default async function InventoryPage() {
   const areas = areasByProduct(cropUses, cropGroups);
 
   return (
-    <PageShell width="narrow" title="Treatments" meta="Your stock · on hand">
+    <PageShell width="narrow" title="Products" meta="Your stock · on hand">
       <SectionTabs tabs={TREATMENT_TABS} />
       <InventoryList
         products={products}
