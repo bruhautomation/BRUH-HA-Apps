@@ -608,6 +608,9 @@ a.btn {
 .carddetails > summary::-webkit-details-marker { display: none; }
 .carddetails > summary::before { content: "▸"; margin-right: var(--sp-1); }
 .carddetails[open] > summary::before { content: "▾"; }
+/* An all-fine card's tiles sit inside its Details fold, which is already
+   inset by the card's padding. */
+.carddetails > .highlights { padding: var(--sp-2) 0 var(--sp-3); }
 .carddetails > p { margin: 0 0 var(--sp-1); }
 @media (pointer: coarse) { .carddetails > summary { min-height: 44px; } }
 /* Every card that is all fine about nothing changing, folded into one line
@@ -637,6 +640,9 @@ a.btn {
   cursor: pointer;
 }
 .quietname:hover, .quietname:focus-visible { text-decoration: underline; }
+/* Why it is quiet: the card's own first sentence, under its name. */
+.quietlist li { display: grid; padding: var(--sp-1) 0; }
+.quietwhy { color: var(--ink-3); line-height: var(--lh-body); }
 /* Where a cross-link landed, for a moment. */
 .xflash { outline: 2px solid var(--accent); outline-offset: 2px; transition: outline-color 1.2s; }
 .card .viz iframe {
@@ -1775,6 +1781,7 @@ body.modal-open {
 .testssum { margin: var(--sp-2) 0 0; font-size: var(--fs-body); font-weight: 600; color: var(--good-ink); }
 .testssum.bad { color: var(--critical-ink); }
 .testssum.old { color: var(--ink-2); }
+.testssum.quiet { color: var(--ink-2); font-weight: 400; }
 .stalenote { color: var(--ink); font-weight: 600; }
 .testlist { margin-top: var(--sp-2); }
 .testrow {
@@ -4760,23 +4767,20 @@ body.term-classic #termMode .ico-out { display: block; }
 .actnav #actHours { flex: none; width: auto; max-width: none; }
 .actrange { color: var(--ink-2); font-size: var(--fs-body); white-space: nowrap; }
 
-/* When the house was empty. Above the list rather than in it, because it
-   is the context every row below is read in — the same reason the
-   overrides block it replaced sat there, for a fact that is a good deal
-   more useful than a count of them. */
+/* When the house was empty: a quiet time marker at the head of the list,
+   one line a day, never a box beside the line about now. */
 .actaway {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: var(--sp-2);
-  border: 1px solid color-mix(in srgb, var(--ink-3) 45%, var(--hairline));
-  border-radius: var(--control-radius);
-  padding: var(--sp-3) var(--sp-4);
-  margin-bottom: var(--sp-3);
+  gap: var(--sp-1) var(--sp-2);
+  padding: 0 var(--sp-1);
+  margin-bottom: var(--sp-4);
   font-size: var(--fs-body);
   color: var(--ink-2);
   font-variant-numeric: tabular-nums;
 }
+.actaway .actawayday { color: var(--ink); font-weight: 600; }
 
 /* The press that spends, and the paragraph it buys. */
 .actask { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-4); }
@@ -6689,7 +6693,7 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 .needstrip .needstext b { font-size: var(--fs-card); line-height: var(--lh-card); font-weight: 600; }
 .needstrip .needstext span {
   font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  overflow-wrap: break-word;
 }
 .needstrip .needsgo {
   flex: none; font-weight: 600; color: var(--accent-2); font-size: var(--fs-body);

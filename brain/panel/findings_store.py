@@ -1064,6 +1064,14 @@ def shown_words(entry: dict) -> dict:
             and headline != entry.get("text"):
         entry = {**entry, "text": headline}
         out["text"] = headline
+    # And its `shown_detail` over `detail` the same way: `detail` stays
+    # the words `refresh_details` compares (`names_moved`), so rewording
+    # what a card shows wakes no answered row.
+    shown_detail = entry.get("shown_detail")
+    if checked and isinstance(shown_detail, str) and shown_detail.strip() \
+            and shown_detail != entry.get("detail"):
+        entry = {**entry, "detail": shown_detail}
+        out["detail"] = shown_detail
     for key in ("text", "claim", "detail", "fix"):
         said = entry.get(key)
         if isinstance(said, str) and said:
@@ -1864,6 +1872,9 @@ def _case_fields(entry: dict) -> dict:
     headline = " ".join(str(entry.get("headline") or "").split())
     if headline and str(entry.get("source") or "").startswith("check:"):
         out["headline"] = textclip.clip(headline, MAX_TEXT)
+    shown_detail = " ".join(str(entry.get("shown_detail") or "").split())
+    if shown_detail and str(entry.get("source") or "").startswith("check:"):
+        out["shown_detail"] = textclip.clip(shown_detail, MAX_DETAIL)
     line = clean_todo_line(entry.get("todo_line"))
     if line:
         out["todo_line"] = line
@@ -5333,7 +5344,7 @@ def refresh_details(objs: list[dict]) -> int:
         # (`checks.network.todo_words`): a chore filed from this row names
         # what is still quiet, not what was quiet when it was first filed.
         if not cur.get("fix_by") and str(cur.get("source") or "").startswith("check:"):
-            for key in ("todo_text", "todo_line", "headline"):
+            for key in ("todo_text", "todo_line", "headline", "shown_detail"):
                 if entry.get(key) and cur.get(key) != entry[key]:
                     cur[key] = entry[key]
                     changed += 1

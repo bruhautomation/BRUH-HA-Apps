@@ -195,6 +195,19 @@ def _area(eid: str, areas: dict, world: dict | None) -> str:
     return _clean(space, MAX_TITLE) if space and space != "outdoor" else ""
 
 
+def _machine_name(name: str, device_class) -> str:
+    """The machine a power meter measures, by its name: Home Assistant
+    names a meter "<device> <class>" ("Dryer Power"), so the class's own
+    label is taken off the end, and "the dryer is running" is what the
+    house reads, never "Dryer Power running". Off the device class, never
+    a word list."""
+    label = str(device_class or "").strip().lower().replace("_", " ")
+    if label and name.casefold().endswith(" " + label) \
+            and name[:-len(label)].strip():
+        return name[:-len(label)].strip()
+    return name
+
+
 def presence(states: dict, names: dict) -> dict:
     """Who is home, from `person.*` — and only from a phone when the house
     has no person entities at all, because a router's tracker for a smart
@@ -309,8 +322,10 @@ def build_frame(states, *, now: float, tz, tz_name: str = "",
         if watts is None or threshold is None or watts < threshold:
             continue
         running.append({"entity_id": eid,
-                        "name": _clean(shape.get("name")
-                                       or _name(eid, st, names), MAX_TITLE),
+                        "name": _machine_name(
+                            _clean(shape.get("name")
+                                   or _name(eid, st, names), MAX_TITLE),
+                            (st.get("attributes") or {}).get("device_class")),
                         "watts": round(watts)})
     frame["appliances"] = running[:MAX_APPLIANCES]
 
@@ -454,7 +469,9 @@ SYSTEM = prompt_kit.assemble(
   may say the house is empty; it never says who is where or anything
   about sleep.
 - The sentence uses only numbers and entity ids that appear in the
-  summary, and calls a device by its name.
+  summary, and calls a device by its name in household words, in the
+  present tense: "the dryer is running", never a sensor's name or a raw
+  state ("Dryer Power running", "Problem on").
 - The sentence agrees with house_mode and says what stands out; no
   reading (a temperature, a wattage, the weather) unless it is what
   stands out.""",

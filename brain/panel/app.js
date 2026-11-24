@@ -1824,12 +1824,20 @@ function makeCard(catInfo, insight, fallbackId) {
       step.appendChild(document.createTextNode(shown.next));
       card.appendChild(step);
     }
-    if (lead && rest) {
-      const more = el("details", "carddetails");
+    // An all-fine card is its headline and one sentence: everything else
+    // it carries (the rest of the summary, the tiles, the chart) is behind
+    // the one Details fold, so the first full card on the page is never a
+    // wall of figures about something that needs nobody.
+    const allFine = shown.verdict === "all fine";
+    let more = null;
+    if ((lead && rest) || (allFine && ((shown.highlights || []).length
+        || String(shown.html || "").trim()))) {
+      more = el("details", "carddetails");
       more.appendChild(el("summary", null, "Details"));
-      more.appendChild(el("p", null, rest));
+      if (lead && rest) more.appendChild(el("p", null, rest));
       card.appendChild(more);
     }
+    const tilesHost = allFine && more ? more : card;
     if (shown.highlights && shown.highlights.length) {
       const prevData = view ? view.prev : state.prevLatest[id];
       const prevHls = (prevData && prevData.highlights) || [];
@@ -1852,7 +1860,7 @@ function makeCard(catInfo, insight, fallbackId) {
         }
         hls.appendChild(box);
       });
-      card.appendChild(hls);
+      tilesHost.appendChild(hls);
     }
     // A card used to end in a yes/no row for every guess the run raised.
     // Those are decisions, and decisions live on the Findings tab — the
@@ -1872,7 +1880,9 @@ function makeCard(catInfo, insight, fallbackId) {
       card.appendChild(crossLink(`Earlier report on this (${timeAgo(older.generated_at)}): `,
         older.title || "Report", () => openModal(older, false)));
     });
-    card.appendChild(makeFrame(shown, !view));
+    // Behind Details on an all-fine card, and only one with a chart.
+    if (!allFine) card.appendChild(makeFrame(shown, !view));
+    else if (more && String(shown.html || "").trim()) more.appendChild(makeFrame(shown, !view));
     // Tags belong to the card, not to the run being viewed — editing them
     // while pinned to March's run must still change the card's tags.
     // Tags head the card (an asked card's eyebrow IS its topic tags) and
@@ -2290,13 +2300,27 @@ function render() {
 // is named by what it is about (its label, the question asked, the report's
 // name), never by its headline: a headline here is "Nothing unusual",
 // which as a link says nothing about what it opens.
+//
+// A row is named by where its name came from, never by what somebody typed:
+// a recurring card by its label (a person named it), an asked card by the
+// title its own run wrote. An asked card's `question` is the words that
+// asked it — from Ask's "Save as report" that is one turn of a chat ("ok
+// and the plug", half a sentence about an earlier one), which as a name
+// says nothing. Under the name, one line saying why it is quiet: the
+// card's own first sentence, its answer.
 function quietName(c) {
   const label = String(c.category_title || "").trim();
-  if (label && label !== "Custom") return label;
-  return String(c.question || "").trim() || c.title || "Report";
+  if (label && label !== "Custom" && c.category !== "custom") return label;
+  return String(c.title || "").trim() || String(c.eyebrow || "").trim() || "Report";
 }
 
-function insightLinkList(head, cards, name, open) {
+function quietWhy(c) {
+  const text = withoutVerdictLead(String(c.summary || "").trim());
+  const [lead, rest] = splitLead(text);
+  return lead || rest;
+}
+
+function insightLinkList(head, cards, name, open, why) {
   const box = el("div", "quietline");
   box.appendChild(el("strong", null, head));
   const list = el("ul", "quietlist");
@@ -2307,6 +2331,8 @@ function insightLinkList(head, cards, name, open) {
     a.dataset.id = c.id;
     a.addEventListener("click", () => open(c));
     li.appendChild(a);
+    const line = why ? why(c) : "";
+    if (line) li.appendChild(el("span", "quietwhy", prettyText(line)));
     list.appendChild(li);
   });
   box.appendChild(list);
@@ -2315,7 +2341,7 @@ function insightLinkList(head, cards, name, open) {
 
 function quietLine(cards, nothingOpen) {
   return insightLinkList(nothingOpen ? "All quiet" : "Also checked, nothing new",
-    cards, quietName, (c) => openModal(c, true));
+    cards, quietName, (c) => openModal(c, true), quietWhy);
 }
 
 // Every card that is one open finding's story, as one list: each name
@@ -5557,13 +5583,13 @@ function renderRehearsal(d) {
     const missed = planted - (c.found || 0);
     const leftBehind = last.cleared && last.cleared.at ? !last.cleared.ok : !clean.ok;
     tech.push(diagRow("Checks",
-      `${c.found || 0} of ${planted} planted defects found`
-      + (c.extra ? `, ${c.extra} reported that were not planted` : ""),
+      `${c.found || 0} of ${planted} test problems found`
+      + (c.extra ? `, ${c.extra} reported that were not there` : ""),
       missed > 0 || !!c.extra));
     // Each planted thing by what it is, and the verdict in words: the
     // planted ids and the check ids are the record's, not the reader's.
     (c.rows || []).forEach((r) => rows.push(diagRow(
-      r.name || "A planted test",
+      r.name || "A test problem",
       esc(REHEARSAL_WORDS[r.verdict] || r.verdict || ""),
       !old && (r.verdict === "missed" || r.verdict === "false positive"))));
     tech.push(diagRow("Analyst", a.ran
@@ -5602,7 +5628,7 @@ function renderRehearsal(d) {
         ? ` <span class="hint">took out ${esc((cleared.removed || []).join(", "))}</span>`
         : "";
       (cleared.ok ? tech : rows).push(diagRow("Cleared up since",
-        (cleared.ok ? "nothing the rehearsal planted is left"
+        (cleared.ok ? "nothing the rehearsal added is left"
           : "could not finish — " + esc((cleared.left || []).join(", ") || "?"))
         + took,
         !cleared.ok));
@@ -5612,20 +5638,25 @@ function renderRehearsal(d) {
     // their job.
     const bad = missed > 0 || !!c.extra || leftBehind || !!last.error;
     const said = last.error ? "the rehearsal could not finish"
-      : missed > 0 ? `the checks missed ${missed} of ${planted} problems that were planted`
+      : missed > 0 ? `the checks missed ${missed} of ${planted} test problems`
       : c.extra ? "the checks reported something that was not there"
-      : leftBehind ? "the checks caught every planted problem, but something it planted is still in the house"
-      : "the checks caught every problem that was planted";
-    sum.textContent = lastRunLine(last.finished_at, said);
+      : leftBehind ? "the checks caught every test problem, but one of them is still in the house"
+      : "the checks caught every test problem";
+    // A developer's tool every household sees: a quiet "Last rehearsed N
+    // days ago", with what it found then said only while it is recent — an
+    // old verdict is history, behind the fold (#1299), never a bold warning.
+    sum.textContent = old ? `Last rehearsed ${resultAge(last.finished_at)}.`
+      : `Last rehearsed ${resultAge(last.finished_at)}: ${said}.`;
     sum.classList.toggle("bad", bad && !old);
-    sum.classList.toggle("old", old);
+    sum.classList.remove("old");
+    sum.classList.toggle("quiet", old);
   }
   sum.hidden = !last.finished_at;
   // "Each result" only over results: housekeeping alone is its own
   // "Details", never a fold whose whole content is another fold (#1120).
   body.innerHTML = rows.length
     ? detailsFold(rows.join("") + detailsFold(tech.join(""), "Details"),
-      (c.rows || []).length ? `Each planted test (${c.rows.length})` : "What went wrong")
+      (c.rows || []).length ? `Each test problem (${c.rows.length})` : "What went wrong")
     : detailsFold(tech.join(""), "Details");
   body.hidden = !rows.length && !tech.length;
   const step = (d.progress || {}).step;
@@ -5635,8 +5666,8 @@ function renderRehearsal(d) {
     : (d.running
       ? `Rehearsing — ${step || "starting"}…`
       : (last.finished_at ? "" : "Not rehearsed on this install yet."));
-  paintRunButton($("#rehearseRun"), $("#rehearseLast"),
-    busy ? 0 : last.finished_at, "Run a rehearsal", "Test the checks");
+  // One verb, whatever the age: the line above says how old the result is.
+  $("#rehearseRun").textContent = "Run";
   $("#rehearseRun").disabled = busy;
   // The button exists only while there is something for it to take out —
   // `leftovers` is the server's derivation, so this and the fault row in
@@ -6291,7 +6322,9 @@ function fillRefineMore(id, catInfo, insight) {
     link("Rename it", () => openNameEdit(insight));
     if (insight.category === "custom" && insight.question) {
       link("Make it recurring", () => openNewInsight({
-        title: (insight.title || insight.question).slice(0, 60),
+        // Its title, never the question: an asked card's question may be
+        // one turn of a chat.
+        title: String(insight.title || insight.eyebrow || "Asked report").slice(0, 60),
         icon: insight.icon || "✨",
         focus: "Answer this question about the home, keeping the analysis "
           + `fresh each run: "${insight.question}"`,
@@ -6417,18 +6450,22 @@ function syncNeedsCount() {
   renderNeedsStrip();
 }
 
+// One signal per place: the count is the tab's badge and the Needs you
+// segment's, so the banner over the cards is drawn only for something
+// urgent, and it says that thing whole (it wraps; it is never cut). An
+// ordinary problem is counted by the badge and one press away, and a
+// banner repeating the same "1" beside it was the same news said three
+// times.
 function renderNeedsStrip() {
   const strip = $("#needsStrip");
   if (!strip) return;
-  const n = state.needsCount || 0;
-  strip.hidden = !n;
-  if (!n) return;
-  const cases = state.cases || [];
-  const urgent = cases.filter((c) => c.urgent);
-  strip.classList.toggle("urgent", urgent.length > 0);
+  const urgent = (state.needsCount || 0) > 0
+    ? (state.cases || []).filter((c) => c.urgent) : [];
+  strip.hidden = !urgent.length;
+  if (!urgent.length) return;
+  strip.classList.add("urgent");
   $("#needsStripCount").textContent = needsSummary().words;
-  const lead = (urgent[0] || cases[0] || {}).claim;
-  $("#needsStripSub").textContent = lead ? prettyText(lead) : "Problems, questions and suggestions to decide on";
+  $("#needsStripSub").textContent = prettyText(urgent[0].claim || "");
 }
 $("#needsStrip")?.addEventListener("click", () => switchView("findings"));
 
@@ -12916,8 +12953,12 @@ function epStates(ep) {
   if (ep.kind === "repeat") return `${ep.first} ${ep.times} times`;
   const off = ep.kind === "mass" && ep.first && ep.offline
     ? ` · ${ep.offline} still offline` : "";
-  if (!ep.last || ep.last === ep.first) return (ep.first || "") + off;
-  return `${ep.first} → ${ep.last}${off}`;
+  // A classed sensor's on/off in its class's words (`episodes.said_words`):
+  // "reported a problem", never "on".
+  const first = ep.said_first || ep.first;
+  const last = ep.said_last || ep.last;
+  if (!last || last === first) return (first || "") + off;
+  return `${first} → ${last}${off}`;
 }
 
 // Empty for a row nothing claims. That was "No cause recorded" on every
@@ -12945,16 +12986,37 @@ function epKey(ep) {
 }
 
 // When the house was empty — the one thing on this tab that Home Assistant
-// holds every fact for and has never said, and the reason it is above the
-// list rather than in it: it is the context the rows below are read in.
-// One sentence, about the house (#1121): "Nobody home 09:00–11:30 · 14:00–now"
-// read as a status line about the people rather than when the house sat
-// empty, and "–now" is not a time.
+// holds every fact for and has never said. A quiet time marker at the head
+// of the list, one per day it names ("Today: the house was empty from 10:05
+// to 12:18."), not a box beside the line about now: under "Sam and Alex
+// are home" a boxed "the house was empty" read as a contradiction, when it
+// is a when. One sentence, about the house (#1121).
 function renderAwayBand(host, away) {
   if (!away || !away.length) return;
-  const box = el("div", "actaway");
-  box.appendChild(el("span", null, awaySentence(away.slice(0, 6))));
-  host.appendChild(box);
+  const days = [];
+  away.slice(0, 6).forEach((s) => {
+    const day = actDayWord(s.start);
+    const last = days[days.length - 1];
+    if (last && last.day === day) last.spans.push(s);
+    else days.push({ day, spans: [s] });
+  });
+  days.forEach((d) => {
+    const line = el("div", "actaway");
+    line.appendChild(el("b", "actawayday", d.day));
+    line.appendChild(el("span", null, awaySentence(d.spans)));
+    host.appendChild(line);
+  });
+}
+
+// "Today", "Yesterday", or the day's date: what a marker in a list says.
+function actDayWord(ts) {
+  const day = new Date(ts * 1000);
+  const today = new Date();
+  const start = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diff = Math.round((start(today) - start(day)) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  return weekdayDate(ts);
 }
 
 function awaySentence(spans) {
@@ -12963,8 +13025,8 @@ function awaySentence(spans) {
   const now = spans.find((s) => s.ongoing);
   const list = (xs) => xs.length < 2 ? xs.join("")
     : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
-  if (!done.length) return now ? `The house has been empty since ${actTime(now.start)}.` : "";
-  return `The house was empty ${list(done)}`
+  if (!done.length) return now ? `the house has been empty since ${actTime(now.start)}.` : "";
+  return `the house was empty ${list(done)}`
     + (now ? `, and has been again since ${actTime(now.start)}.` : ".");
 }
 
@@ -13078,7 +13140,10 @@ function actStandsOut(d) {
   if (rooms.length) parts.push(`${actList(rooms)} in use`);
   const running = ((d.frame && d.frame.appliances) || [])
     .map((a) => String((a && a.name) || "").trim()).filter(Boolean).slice(0, 3);
-  if (running.length) parts.push(`${actList(running)} running`);
+  // "The dryer is running": a machine said as the house says it.
+  if (running.length) {
+    parts.push(`${actList(running)} ${running.length === 1 ? "is" : "are"} running`);
+  }
   return parts.join(" · ");
 }
 
@@ -13114,10 +13179,7 @@ function renderActivity() {
   renderActFilters(data);
   renderActNarrow(data);
   const sections = data.sections || [];
-  if (head) {
-    renderAwayBand(head, data.away);
-    if (sections.length) renderSummary(head);
-  }
+  if (head && sections.length) renderSummary(head);
 
   if (!sections.length && (actState.area || actState.kind || actState.q || actState.cause)) {
     list.innerHTML = `<div class="actempty">Nothing matches in this window. `
@@ -13138,6 +13200,7 @@ function renderActivity() {
   }
 
   const frag = document.createDocumentFragment();
+  renderAwayBand(frag, data.away);
   sections.forEach((sec) => frag.appendChild(actSection(sec)));
   // What this list is NOT showing, said out loud. A view that silently
   // drops nine tenths of its input is the one it replaced.
@@ -13180,7 +13243,7 @@ function actSection(sec) {
     if (ep.kind) row.dataset.kind = ep.kind;
     const cause = epCause(ep);
     const note = epNote(ep);
-    row.innerHTML = `<span class="what"><b>${esc(ep.name)}</b>`
+    row.innerHTML = `<span class="what"><b>${esc(ep.called || ep.name)}</b>`
       + `<span class="st">${esc(epStates(ep))}</span></span>`
       + `<span class="when">${esc(epWhen(ep, sec.reads))}</span>`
       + (cause ? `<span class="cause">${esc(cause)}</span>` : "")

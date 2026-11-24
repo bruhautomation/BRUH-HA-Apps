@@ -1701,11 +1701,12 @@
         </header>
         <div class="setsecbody">
           <h4 class="sethead first">Rehearse the house checks</h4>
-          <p class="hint tight">Scores the checks that watch your house, not brAIn itself
-            (that is Run all tests, in Diagnostics): it plants a few broken test
+          <p class="hint tight">Tests the checks that watch your house, not brAIn itself
+            (that is Run all tests, in Diagnostics): brAIn adds a few broken test
             automations, sees which the checks catch, and removes them. It asks first.</p>
+          <p id="rehearseSum" class="testssum" hidden></p>
           <div class="row">
-            <button id="rehearseRun" class="btn" aria-label="Run a rehearsal">Test the checks</button>
+            <button id="rehearseRun" class="btn" aria-label="Run a rehearsal of the house checks">Run</button>
             <!-- Rendered only when the record says something is still in
                  the house: a button that clears nothing is a control
                  asking to be understood. -->
@@ -1713,7 +1714,7 @@
               aria-label="Delete what the last rehearsal left behind">Delete</button>
             <span id="rehearseLast" class="hint tight"></span>
           </div>
-          <p id="rehearseSum" class="testssum" hidden></p>
+          <p class="hint tight">Costs one Claude run, about one insight card's worth.</p>
           <div id="rehearseBody" class="diag" hidden></div>
 
           <h4 class="sethead">Why somebody did something</h4>
@@ -1724,7 +1725,7 @@
               aria-label="Run the next why question now">Ask now</button>
           </div>
 
-          <h4 class="sethead">Capture runs for the corpus</h4>
+          <h4 class="sethead">Keep copies of card runs</h4>
           <div class="setgroup">
             <div class="setrow top">
               <label class="check bigcheck"><input id="setCapture" class="tog" type="checkbox">
