@@ -1,15 +1,9 @@
-import { fetchWeather, getCurrentSprayRating, nextSprayOpening, rainAhead } from '@/lib/weather';
+import { fetchWeather, getCurrentSprayRating, nextSprayOpening } from '@/lib/weather';
 import { SPRAY_RATING, LOCATION } from '@/config/thresholds';
 import { getSprayRecordsForCrop, computeCoverage } from '@/lib/protection';
 import { buildPhiByProductGroup, computeCropPhi } from '@/lib/phi';
 import { harvestSeason } from '@/lib/harvest-windows';
-import {
-  needsCoverageNow,
-  dueTypes,
-  mostlyResting,
-  sprayMissing,
-  groupStages,
-} from '@/lib/coverage-season';
+import { needsCoverageNow, dueTypes, mostlyResting, sprayMissing } from '@/lib/coverage-season';
 import { applyPhenology } from '@/lib/phenology';
 import {
   fetchCrops,
@@ -76,18 +70,18 @@ export default async function TodayPage() {
   const now = new Date();
   // Stages advance with the Holly Springs phenology calendar (manual overrides kept).
   const effectiveStages = applyPhenology(varietyStages, varieties, crops, cropGroups, now);
-  const groupStage = groupStages(cropGroups, now);
 
   // Per-crop protection + PHI (existing logic — not reimplemented)
   const cropData = crops.map((crop) => {
     const cropVarieties = varieties.filter((v) => v.crop_id === crop.id);
-    const ownStages = cropVarieties.map((v) => {
+    const stages = cropVarieties.map((v) => {
       const vs = effectiveStages.find((s) => s.variety_id === v.id);
-      return { stage: vs?.stage ?? 'dormant' };
+      return {
+        variety: v,
+        stage: vs?.stage ?? 'dormant',
+        isOverride: vs?.is_manual_override ?? false,
+      };
     });
-    // A crop with no varieties goes by its group's calendar (see cropStages).
-    const fallback = groupStage(crop.crop_group_id);
-    const stages = ownStages.length === 0 && fallback ? [{ stage: fallback }] : ownStages;
     const inBloom = stages.some((s) => s.stage === 'bloom');
 
     const sprayRecords = getSprayRecordsForCrop(
@@ -408,7 +402,6 @@ export default async function TodayPage() {
                   avgHighF={avgHigh7}
                   humidityPct={weather?.current?.humidity ?? null}
                   dormant={mostlyResting(cropData.map((c) => c.stages))}
-                  ahead={weather ? rainAhead(weather.hourly, weather.daily, now) : null}
                 />
               </section>
             )}

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3
+
+### Removed
+
+- The 0.2.2 changes (forecast-aware watering advice, the spray grid's past and dark hours, card headings, crop season states) are taken back out while they are redone: the development loop's own monitor found that a reviewer of that change wrote scratch test files while checking it, and its rule is to revert and redo such a change from a clean start. They return in the next release (1271, 1272, 1273, 1274).
+
 ## 0.2.2
 
 ### Fixed
