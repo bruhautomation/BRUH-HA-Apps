@@ -1379,10 +1379,10 @@ def app_subject(subject: str) -> str:
 
 def subject_word(subject: str, names: dict | None = None) -> str:
     """What a person calls a subject nobody named in `names`: a person by
-    their name ("person:kaz" → "Kaz", or the person entity's name), a check
+    their name ("person:alex" → "Alex", or the person entity's name), a check
     by its plain name, an app's subject by its app ("Minecraft"). "" for the
     house and for an id with nothing better to say (#1301: chips read
-    `minecraft:companion` and `kaz`)."""
+    `minecraft:companion` and `alex`)."""
     subject = str(subject or "")
     names = names or {}
     if subject.startswith("person:"):
