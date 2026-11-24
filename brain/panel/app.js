@@ -1812,13 +1812,23 @@ function makeCard(catInfo, insight, fallbackId) {
     // taken off the same way the server does for a stored card).
     const chip = verdictChip(shown);
     if (chip) card.appendChild(chip);
-    if (shown.summary) card.appendChild(summaryNode(view ? withoutVerdictLead(shown.summary) : shown.summary));
+    // The first sentence is what the card means for the household; the
+    // figures behind it are one press away under Details (#1298).
+    const [lead, rest] = shown.summary
+      ? splitLead(view ? withoutVerdictLead(shown.summary) : shown.summary) : ["", ""];
+    if (shown.summary) card.appendChild(summaryNode(lead || rest, !!lead));
     // A card that is not all fine says the one thing to do (#793).
     if (shown.next && shown.verdict && shown.verdict !== "all fine") {
       const step = el("p", "nextstep");
       step.appendChild(el("strong", null, "Next: "));
       step.appendChild(document.createTextNode(shown.next));
       card.appendChild(step);
+    }
+    if (lead && rest) {
+      const more = el("details", "carddetails");
+      more.appendChild(el("summary", null, "Details"));
+      more.appendChild(el("p", null, rest));
+      card.appendChild(more);
     }
     if (shown.highlights && shown.highlights.length) {
       const prevData = view ? view.prev : state.prevLatest[id];
@@ -1952,23 +1962,19 @@ function foldedUnder(insight) {
 
 // The summary opens with the answer ("Yes — dehumidify first.") and the
 // contract asks for exactly that, so the first sentence is set in the
-// card's ink and the reason after it in the quieter colour. A summary
-// that is one sentence is left as it is: bolding the whole of it says
-// nothing. The server splits it the same way for the dashboard page.
+// card's ink and the measurements after it go under the card's Details
+// fold (#1298). A summary that is one sentence is left as it is: bolding
+// the whole of it says nothing. The server splits it the same way for the
+// dashboard page.
 function splitLead(text) {
   const m = String(text || "").match(/^(.{3,160}?[.!?])\s+(\S[\s\S]*)$/);
   return m ? [m[1], m[2]] : ["", String(text || "")];
 }
 
-function summaryNode(text) {
+function summaryNode(text, lead) {
   const node = el("div", "summary");
-  const [lead, rest] = splitLead(text);
-  if (lead) {
-    node.appendChild(el("strong", "lead", lead));
-    node.appendChild(document.createTextNode(` ${rest}`));
-  } else {
-    node.textContent = rest;
-  }
+  if (lead) node.appendChild(el("strong", "lead", String(text || "")));
+  else node.textContent = String(text || "");
   return node;
 }
 
