@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.3
+
+### Changed
+
+- An appliance out of contact for 10 minutes turns its Problem sensor on (with `cause: offline`), and the status says since when ("Offline since 16:04, when it was last heard from"). An appliance kept unplugged between cooks will show Problem on while it is unplugged (1296).
+
+### Fixed
+
+- Preheat, time remaining, active mode and error no longer read "unavailable" while the appliance is offline: they are kept and marked as old, so they are not mistaken for broken entities. Controls that cannot work offline still go unavailable (1295).
+- "Last cook" says the history is unknown for an appliance that has never been heard from, instead of "no cook yet" (1296).
+- The next cook is described in words ("Heat the water to 60 °C and hold it there until the cook is stopped: there is no timer"), with a matching preset named when one fits. For the oven the words come from the same settings Cook sends, so a temperature or time it fills in or keeps to the mode's limits is said as it will be sent (1297).
+
+This is 0.2.1 made again from a clean start after its revert in 0.2.2.
+
 ## 0.2.2
 
 ### Removed

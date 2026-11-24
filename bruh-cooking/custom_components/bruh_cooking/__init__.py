@@ -136,6 +136,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BrevilleConfigEntry) -> 
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     coordinator.async_start_websocket()
+    coordinator.async_start_offline_watch()
     async_check_entity_ids(hass, entry.entry_id)
     entry.async_on_unload(
         coordinator.async_add_listener(lambda: async_check_entity_ids(hass, entry.entry_id))
