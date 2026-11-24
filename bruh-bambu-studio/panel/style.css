@@ -533,19 +533,17 @@ fieldset.trays { border: 1px solid var(--line); border-radius: var(--control-rad
 .phead { display: flex; align-items: center; gap: var(--sp-2); }
 .phead h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .phead .hint { margin: 2px 0 0; }
+/* What it is printing and how far, under the name, wrapping between words. */
+.phead .pjob { margin: 2px 0 0; font-size: var(--fs-body); font-weight: 600; overflow-wrap: break-word; }
+.phead > .pill { flex: none; }
 .job { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3); border-radius: var(--card-radius); background: var(--sunk); }
 .ring { --p: 0; flex: none; width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center;
   background: conic-gradient(var(--live) calc(var(--p) * 1%), color-mix(in srgb, var(--muted) 22%, transparent) 0); }
 .ring span { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%;
   background: var(--sunk); font-size: var(--fs-body); font-weight: 700; line-height: 1; }
-.ring small { font-size: var(--fs-meta); font-weight: 600; color: var(--muted); }
 .ring.done { background: var(--done); }
 .ring.done span { color: var(--done); font-size: var(--fs-title); }
 .jobtext { flex: 1; min-width: 0; display: grid; gap: 1px; }
-/* A print's name wraps between words (a word wider than the line is the only
-   one broken), two lines of it, and the whole name on a tap. */
-.jobname { overflow: hidden; overflow-wrap: break-word; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; cursor: pointer; }
-.jobname.full { display: block; -webkit-line-clamp: unset; line-clamp: none; }
 .jobtext .hint { margin: 0; }
 .facts { font-size: var(--fs-body); color: var(--muted); font-variant-numeric: tabular-nums; }
 .facts b { color: var(--ink); font-weight: 600; }
@@ -648,6 +646,9 @@ fieldset.trays { border: 1px solid var(--line); border-radius: var(--control-rad
 .fthumb.kind { font-size: var(--fs-meta); font-weight: 700; letter-spacing: .04em; color: var(--muted); align-content: center; gap: 2px; }
 .fthumb.kind .ic { width: 22px; height: 22px; }
 .fslice { margin: 2px 0; font-size: var(--fs-body); font-weight: 600; }
+.fslice.none { font-weight: 500; color: var(--muted); }
+/* Another format of the file above (an STL beside its 3MF): one group. */
+.frow.fsame { border-top-style: dashed; }
 .filebar { display: flex; gap: var(--sp-2); }
 .filebar input { flex: 1 1 auto; min-width: 0; }
 .filebar select { flex: none; max-width: 45%; }
@@ -673,7 +674,6 @@ fieldset.trays { border: 1px solid var(--line); border-radius: var(--control-rad
 .fchip i { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--line); }
 .factions { display: flex; gap: var(--sp-2); align-items: center; flex: none; }
 .frow .hint { margin: 2px 0; }
-.fwill { white-space: nowrap; }
 .jobline { margin: var(--sp-1) 0; font-size: var(--fs-body); }
 .jobline.failed { color: var(--bad); }
 
