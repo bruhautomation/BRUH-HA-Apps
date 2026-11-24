@@ -9137,10 +9137,22 @@ function histRowsShown() {
   const q = (todayState.histQuery || "").trim().toLowerCase();
   if (!q) return rows;
   const words = q.split(/\s+/).filter(Boolean);
-  return rows.filter((r) => {
+  const hit = (r) => {
     const hay = `${r.title || ""} ${r.meta || ""} ${r.where || ""}`.toLowerCase();
     return words.every((w) => hay.includes(w));
-  });
+  };
+  // A folded row ("Updates you ignored") is searched by what it holds, and
+  // shows only the ones that match.
+  return rows.map((r) => {
+    if (!r.members) return hit(r) ? r : null;
+    const members = r.members.filter(hit);
+    return members.length ? { ...r, members } : null;
+  }).filter(Boolean);
+}
+
+// Every row a Delete would clear: a folded row is the rows it holds.
+function histLeaves(rows) {
+  return rows.flatMap((r) => r.members || [r]);
 }
 
 function renderHistory() {
@@ -9174,9 +9186,11 @@ function renderHistory() {
     logBox.hidden = !log;
     if (log) {
       const on = todayState.histFilter === "changes";
+      // What the page behind it shows, not how long the log has grown: a
+      // running house's count is in the thousands and says nothing (#1300).
       const open = el("button", "btn-tertiary histlogbtn", on
         ? "\u2039 Back to what you decided"
-        : `${log.label}: ${log.count.toLocaleString()} \u203a`);
+        : `${log.label} \u203a`);
       open.type = "button";
       open.setAttribute("aria-pressed", on ? "true" : "false");
       open.addEventListener("click", () => {
@@ -9208,7 +9222,7 @@ function renderHistory() {
   });
   if (hint) hint.textContent = HIST_HINTS[todayState.histFilter] || "";
   const rows = histRowsShown();
-  const deletable = rows.filter((r) => r.deletable);
+  const deletable = histLeaves(rows).filter((r) => r.deletable);
   if (clearBtn) {
     clearBtn.hidden = !deletable.length;
     clearBtn.textContent = todayState.histQuery
@@ -9222,7 +9236,7 @@ function renderHistory() {
     list.appendChild(empty);
     return;
   }
-  rows.forEach((r) => list.appendChild(makeHistoryRow(r)));
+  rows.forEach((r) => list.appendChild(r.members ? makeHistoryFold(r) : makeHistoryRow(r)));
   const ch = todayState.changes;
   if (todayState.histFilter === "changes" && ch && ch.more && !todayState.histQuery) {
     const older = qButton("Show older", false);
@@ -9322,6 +9336,27 @@ function makeHistoryRow(r) {
   return row;
 }
 
+// Rows of one kind that come in numbers ("Updates you ignored (42)",
+// `today.FOLDS`), as one closed row that opens on its own rows, each with
+// its Restore and Delete (#1300).
+function makeHistoryFold(r) {
+  const fold = el("details", "histfold");
+  if (todayState.histQuery) fold.open = true;
+  const head = el("summary", "histrow histfoldhead");
+  head.dataset.filter = todayState.histFilter;
+  head.appendChild(el("span", "histico", HIST_ICONS[todayState.histFilter] || "•"));
+  const text = el("div", "histtext");
+  text.appendChild(el("span", "histtitle", r.title));
+  if (r.meta) text.appendChild(el("span", "item-state", r.meta));
+  head.appendChild(text);
+  head.appendChild(el("span", "histfoldchev"));
+  fold.appendChild(head);
+  const body = el("div", "histfoldbody");
+  r.members.forEach((m) => body.appendChild(makeHistoryRow(m)));
+  fold.appendChild(body);
+  return fold;
+}
+
 (function wireHistory() {
   const search = $("#histSearch");
   if (search) {
@@ -9333,7 +9368,7 @@ function makeHistoryRow(r) {
   const clearBtn = $("#histClear");
   if (clearBtn) {
     clearBtn.addEventListener("click", () => {
-      const rows = histRowsShown().filter((r) => r.deletable);
+      const rows = histLeaves(histRowsShown()).filter((r) => r.deletable);
       if (!rows.length) return;
       if (!window.confirm(`Delete ${rows.length} item${rows.length === 1 ? "" : "s"} `
         + "from history?\n\nYour answers stand — brAIn won't raise them again. "

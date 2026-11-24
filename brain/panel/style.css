@@ -6754,6 +6754,21 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 .histdel:hover { color: var(--critical-ink); }
 #viewArchive .histtitle { white-space: normal; overflow: visible;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* A fold of one kind of row ("Updates you ignored (42)"): a row that opens
+   on its own rows, indented under it. */
+.histfold { border-bottom: 1px solid var(--hairline); }
+#viewArchive .histfold:last-child { border-bottom: 0; }
+#viewArchive .histfold > .histfoldhead { border-bottom: 0; cursor: pointer; list-style: none;
+  min-height: 44px; flex-wrap: nowrap; }
+#viewArchive .histfoldhead .histtext { flex: 1 1 auto; }
+.histfoldhead::-webkit-details-marker { display: none; }
+.histfoldchev { flex: none; width: 8px; height: 8px; margin: 0 var(--sp-2);
+  border-right: 2px solid var(--ink-3); border-bottom: 2px solid var(--ink-3);
+  transform: rotate(45deg); transition: transform .15s; }
+.histfold[open] .histfoldchev { transform: rotate(225deg); }
+#viewArchive .histfoldbody { border-top: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--surface-2) 35%, transparent); }
+#viewArchive .histfoldbody .histrow { padding-left: var(--sp-8); }
 .archfoot { display: flex; justify-content: flex-end; margin-top: var(--sp-3); }
 .archfoot [hidden] { display: none; }
 .btn-tertiary.danger { color: var(--critical-ink); }
