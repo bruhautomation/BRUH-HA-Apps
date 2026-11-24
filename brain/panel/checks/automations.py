@@ -1510,7 +1510,10 @@ def trigger_unavailable(snap: dict, now: float) -> list[dict]:
                 offline = max(age, (now - since) / DAY if since else 0.0)
                 if network.not_in_use(house, house.device_of(eid), eid):
                     retired[eid] = "you said its device is not in use"
-                elif offline >= TRIGGER_RETIRED_DAYS:
+                elif offline >= TRIGGER_RETIRED_DAYS and not house._never_covered(
+                        eid, "auto.trigger_unavailable"):
+                    # Never a safety sensor (leak, smoke, CO, a protected
+                    # entity): time offline alone does not retire it.
                     retired[eid] = f"offline for {_days(offline)}"
                 else:
                     broken[eid] = age
