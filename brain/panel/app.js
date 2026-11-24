@@ -4031,15 +4031,24 @@ function resultAge(stamp) {
 // The one sentence a test page opens with: when it was last run and how it
 // came out, in the page's own words. A result a week old or more is said
 // as old, and the Run button beside it is the way to a fresh one.
+// A result a week old or more is history: it says so first, and what it
+// found is "then", never the house's state now (#1299: "Last checked 64
+// days ago, all good" read as an all-clear).
 function lastRunLine(stamp, said) {
+  if (resultIsOld(stamp)) {
+    return `Out of date: last checked ${resultAge(stamp)}, when ${said}. `
+      + "Run it again to see how things stand now.";
+  }
   return `Last checked ${resultAge(stamp)}, ${said}.`;
 }
 
-// The Run button of a test page: says plainly when what is shown above it is
-// old, and offers the run as "Run again". Never hides the old result.
-function paintRunButton(btn, note, stamp, label) {
+// The Run button of a test page, named for what it tests (#1299: two
+// buttons that both said "Run", one testing brAIn and one the house's
+// checks): `name`, and "`name` again" when what is shown above it is old.
+// Never hides the old result.
+function paintRunButton(btn, note, stamp, label, name) {
   const old = resultIsOld(stamp);
-  btn.textContent = old ? "Run again" : "Run";
+  btn.textContent = old ? `${name} again` : name;
   btn.classList.toggle("stalerun", old);
   btn.setAttribute("aria-label", old
     ? `${label}: the last result is out of date` : label);
@@ -5449,9 +5458,9 @@ function renderDeep(d) {
       // One plain sentence: when it was last run and how it came out. The
       // count and every test are folded under it, for whoever wants them.
       let said;
-      if (failedNames.length) said = `something does not work (${failedNames.join(", ")})`;
-      else if (skipped) said = `everything that could be tried works; ${skipped} part${skipped > 1 ? "s were" : " was"} left out`;
-      else said = "all good";
+      if (failedNames.length) said = `something did not work (${failedNames.join(", ")})`;
+      else if (skipped) said = `everything that could be tried worked; ${skipped} part${skipped > 1 ? "s were" : " was"} left out`;
+      else said = "everything worked";
       sum.textContent = d.running ? "Running the tests…" : lastRunLine(last.finished_at, said);
       const stale = !d.running && resultIsOld(last.finished_at);
       sum.classList.toggle("bad", c.failed > 0 && !stale);
@@ -5474,7 +5483,8 @@ function renderDeep(d) {
     ? "This takes a few minutes."
     : (last.finished_at ? "" : "Not run on this install yet.");
   $("#deepLast").hidden = !$("#deepLast").textContent;
-  paintRunButton($("#deepRun"), $("#deepLast"), d.running ? 0 : last.finished_at, "Run all tests");
+  paintRunButton($("#deepRun"), $("#deepLast"), d.running ? 0 : last.finished_at, "Run all tests",
+    "Test brAIn");
   $("#deepRun").disabled = !!d.running;
 }
 
@@ -5599,7 +5609,7 @@ function renderRehearsal(d) {
       : missed > 0 ? `the checks missed ${missed} of ${planted} problems that were planted`
       : c.extra ? "the checks reported something that was not there"
       : leftBehind ? "the checks caught every planted problem, but something it planted is still in the house"
-      : "all good: the checks caught every problem that was planted";
+      : "the checks caught every problem that was planted";
     sum.textContent = lastRunLine(last.finished_at, said);
     sum.classList.toggle("bad", bad && !old);
     sum.classList.toggle("old", old);
@@ -5608,7 +5618,8 @@ function renderRehearsal(d) {
   // "Each result" only over results: housekeeping alone is its own
   // "Details", never a fold whose whole content is another fold (#1120).
   body.innerHTML = rows.length
-    ? detailsFold(rows.join("") + detailsFold(tech.join(""), "Details"), "Each result")
+    ? detailsFold(rows.join("") + detailsFold(tech.join(""), "Details"),
+      (c.rows || []).length ? `Each planted test (${c.rows.length})` : "What went wrong")
     : detailsFold(tech.join(""), "Details");
   body.hidden = !rows.length && !tech.length;
   const step = (d.progress || {}).step;
@@ -5619,7 +5630,7 @@ function renderRehearsal(d) {
       ? `Rehearsing — ${step || "starting"}…`
       : (last.finished_at ? "" : "Not rehearsed on this install yet."));
   paintRunButton($("#rehearseRun"), $("#rehearseLast"),
-    busy ? 0 : last.finished_at, "Run a rehearsal");
+    busy ? 0 : last.finished_at, "Run a rehearsal", "Test the checks");
   $("#rehearseRun").disabled = busy;
   // The button exists only while there is something for it to take out —
   // `leftovers` is the server's derivation, so this and the fault row in

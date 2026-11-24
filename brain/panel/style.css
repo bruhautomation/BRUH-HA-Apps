@@ -7661,6 +7661,21 @@ html.in-shell .hl .d { color: var(--ink-3); }
 .detailsfold { margin: var(--sp-2) 0 0; }
 .detailsfold > summary { display: inline-flex; align-items: center; cursor: pointer; font-size: var(--fs-meta); color: var(--ink-3); }
 .detailsfold .detailsbody { margin-top: var(--sp-1); }
+/* An inline-flex summary loses the browser's own triangle, and a fold with
+   no mark reads as a label over nothing: "Each result" with an empty space
+   under it (#1299). The mark is drawn back, turning as the fold opens. */
+.detailsfold > summary::-webkit-details-marker,
+.diag .techdetails > summary::-webkit-details-marker { display: none; }
+.detailsfold > summary::before,
+.diag .techdetails > summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 14px;
+  flex: none;
+  transition: transform 0.15s;
+}
+.detailsfold[open] > summary::before,
+.diag .techdetails[open] > summary::before { transform: rotate(90deg); }
 
 /* Knowledge's upkeep: one Tools fold holding the three folds it used to
    show as rows of their own, so the facts are the first thing on the page. */
