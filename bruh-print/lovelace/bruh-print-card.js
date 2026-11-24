@@ -52,6 +52,7 @@ const DEFAULTS = {
   copies: 1,
   show_status: true,
   show_rolls: true,
+  show_templates: false, // list the saved templates, each one press away
   quick: [],             // one-press buttons: [{label, text} | {label, template, fields}]
 };
 
@@ -92,11 +93,22 @@ const css = `
      contradiction; a red one is a fault that is not happening. */
   .pill.unknown .dot { background: var(--bp-muted); }
 
+  /* Every tile is the same height, side by side or stacked, and lays out
+     the same lines from the top: a button centres its content and a div
+     does not, which is how two tiles of one card came out two heights. */
   .rolls { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    margin-bottom: 12px; }
-  .roll { padding: 8px 12px; border-radius: 8px;
+    grid-auto-rows: 1fr; margin-bottom: 12px; }
+  .roll { padding: 8px 12px; border-radius: 8px; box-sizing: border-box;
+    display: flex; flex-direction: column; justify-content: flex-start;
     background: var(--secondary-background-color); }
-  .roll .who { font-size: 12px; color: var(--bp-muted); }
+  .roll .who { font-size: 12px; line-height: 16px; color: var(--bp-muted);
+    display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  /* Which roll text prints on: a badge beside the bay's name, never a
+     second line under it. */
+  .roll .tag { font-size: 12px; line-height: 16px; font-weight: 600; padding: 0 6px;
+    border-radius: 999px; color: var(--bp-accent);
+    background: color-mix(in srgb, var(--primary-color) 14%, transparent); }
+  .roll .low { color: var(--warning-color, #b26a00); font-weight: 600; }
   /* A roll's name wraps: the one that tells two rolls apart is the end of it. */
   .roll .what { font-size: 14px; font-weight: 600; margin: 4px 0;
     overflow-wrap: anywhere; }
@@ -105,6 +117,15 @@ const css = `
   .roll .bar > i { display: block; height: 100%;
     background: var(--primary-color); }
   .roll .est { font-size: 12px; color: var(--bp-muted); margin-top: 4px; }
+  .roll .bar.low > i { background: var(--warning-color, #b26a00); }
+
+  .tpl { margin-top: 16px; }
+  .tpl > span { display: block; font-size: 12px; font-weight: 600;
+    color: var(--bp-muted); margin-bottom: 4px; }
+  .tpl .list { display: flex; gap: 8px; flex-wrap: wrap; }
+  .tpl .list button.on { border-color: var(--primary-color);
+    box-shadow: 0 0 0 1px var(--primary-color) inset; }
+  .tpl .form { margin-top: 12px; }
   /* A roll box is a button when there is a choice to make, and a readout
      when there is not — one loaded roll is not a selection. Both draw the
      same, so the card does not change shape when a second roll is set. */
@@ -114,6 +135,7 @@ const css = `
   button.roll.on { border-color: var(--primary-color);
     box-shadow: 0 0 0 1px var(--primary-color) inset; }
   button.roll.on .who { color: var(--bp-accent); font-weight: 700; }
+  button.roll { justify-content: flex-start; }
   button.roll:focus-visible { outline: 2px solid var(--primary-color);
     outline-offset: 2px; }
 
@@ -175,7 +197,8 @@ class BruhPrintCard extends HTMLElement {
      * install — and a re-render that read the inputs back would fight
      * whoever is typing. So the DOM is rebuilt only when something the card
      * actually shows has changed, and the fields are restored from here. */
-    this._form = { text: '', fields: {}, copies: null, stock: '' };
+    this._form = { text: '', fields: {}, copies: null, stock: '',
+      template: '', templateFields: {} };
     this._signature = '';
   }
 
@@ -201,7 +224,8 @@ class BruhPrintCard extends HTMLElement {
   }
 
   getCardSize() {
-    return 3 + (this._config.show_rolls ? 1 : 0) + (this._config.quick.length ? 1 : 0);
+    return 3 + (this._config.show_rolls ? 1 : 0) + (this._config.quick.length ? 1 : 0)
+      + (this._config.show_templates ? 1 : 0);
   }
 
   set hass(hass) {
@@ -221,6 +245,7 @@ class BruhPrintCard extends HTMLElement {
     const next = JSON.stringify([this._state('printer'), this._state('problem'),
       this._rollState('left'), this._rollState('right'), this._busy, this._message,
       shared,
+      this._config.show_templates ? JSON.stringify(this._templates()) : '',
       /* An integration that finishes loading after this card was built
        * changes what the card says and touches no entity it reads, so the
        * signature has to carry it or the block stays up until something
@@ -260,7 +285,8 @@ class BruhPrintCard extends HTMLElement {
   _rollState(side) {
     const entity = this._find(`${side}_roll`);
     if (!entity) return null;
-    return `${entity.state}|${entity.attributes.stock_name || ''}|${entity.attributes.loaded}`;
+    return `${entity.state}|${entity.attributes.stock_name || ''}|${entity.attributes.loaded}`
+      + `|${entity.attributes.size || ''}|${entity.attributes.low ? 1 : 0}`;
   }
 
   /* ── Render ─────────────────────────────────────────────────────────── */
@@ -329,6 +355,7 @@ class BruhPrintCard extends HTMLElement {
     if (config.show_rolls) card.append(this._rolls());
     if (config.quick.length) card.append(this._quickRow());
     card.append(config.mode === 'template' ? this._templateForm() : this._textForm());
+    if (config.show_templates) card.append(this._templateList());
 
     if (this._message) {
       const message = document.createElement('div');
@@ -521,8 +548,13 @@ class BruhPrintCard extends HTMLElement {
       /* A tile is named by its bay, the way the panel's bar names it; the
        * chosen one is also told by its outline, and says so in the panel's
        * words. */
-      who.textContent = (side === 'left' ? 'Left roll' : 'Right roll')
-        + (loaded && choosable && entity.attributes.stock === chosen ? ' · prints text' : '');
+      who.append(side === 'left' ? 'Left roll' : 'Right roll');
+      if (loaded && choosable && entity.attributes.stock === chosen) {
+        const tag = document.createElement('span');
+        tag.className = 'tag';
+        tag.textContent = 'prints text';
+        who.append(tag);
+      }
       const what = document.createElement('div');
       what.className = 'what';
       what.textContent = loaded
@@ -534,10 +566,12 @@ class BruhPrintCard extends HTMLElement {
          * not an empty roll, so there is no bar, no zero and no word about
          * counting: the tile says only what is loaded. */
         const counted = entity.state !== '' && Number.isFinite(Number(entity.state))
+          && Number(entity.state) > 0
           && !['unknown', 'unavailable'].includes(entity.state);
+        const low = counted && !!entity.attributes.low;
         const remaining = counted ? Number(entity.state) : 0;
         const bar = document.createElement('div');
-        bar.className = 'bar';
+        bar.className = 'bar' + (low ? ' low' : '');
         const fill = document.createElement('i');
         /* No per-roll capacity reaches the card, so the bar is scaled
          * against the highest count this roll has been set to since the
@@ -549,8 +583,22 @@ class BruhPrintCard extends HTMLElement {
         bar.append(fill);
         const est = document.createElement('div');
         est.className = 'est';
-        est.textContent = [counted ? `about ${remaining} left` : '',
-          entity.attributes.size || ''].filter(Boolean).join(' · ');
+        /* Running low is said in the tile's own words, in the warning
+         * colour — the add-on decides it, so this card and the panel name
+         * the same roll. */
+        if (low) {
+          const warn = document.createElement('span');
+          warn.className = 'low';
+          warn.textContent = `about ${remaining} left · running low`;
+          est.append(warn);
+        } else if (counted) est.append(`about ${remaining} left`);
+        /* The size on a line of its own: on a narrow tile, run on after the
+         * count it broke mid-measurement. */
+        if (entity.attributes.size) {
+          const size = document.createElement('div');
+          size.textContent = entity.attributes.size;
+          est.append(size);
+        }
         if (counted) box.append(bar);
         if (est.textContent) box.append(est);
       }
@@ -559,6 +607,80 @@ class BruhPrintCard extends HTMLElement {
     /* Nothing to draw is not explained here: `_trouble` above has
      * already said what is missing, and it says it whether or not the
      * rolls are switched on. */
+    return wrap;
+  }
+
+  /* The saved templates, when the card is set to list them
+   * (`show_templates`). They come off the printer sensor, which the add-on
+   * keeps in step with the panel. Press one to fill it in and print it; it
+   * prints on the label its template was made for, so no stock is sent. */
+  _templates() {
+    const list = this._find('printer')?.attributes?.templates;
+    return Array.isArray(list) ? list.filter((t) => t && t.name) : [];
+  }
+
+  _templateList() {
+    const wrap = document.createElement('div');
+    wrap.className = 'tpl';
+    const heading = document.createElement('span');
+    heading.textContent = 'Templates';
+    wrap.append(heading);
+    const templates = this._templates();
+    if (!templates.length) {
+      const none = document.createElement('p');
+      none.className = 'empty';
+      none.textContent = 'No saved templates yet. Save one from the BRUH Print panel.';
+      wrap.append(none);
+      return wrap;
+    }
+    const list = document.createElement('div');
+    list.className = 'list';
+    const picked = templates.find((t) => t.name === this._form.template);
+    for (const template of templates) {
+      const button = document.createElement('button');
+      button.textContent = template.name;
+      button.setAttribute('aria-pressed', template === picked ? 'true' : 'false');
+      if (template === picked) button.classList.add('on');
+      button.addEventListener('click', () => {
+        this._form.template = template === picked ? '' : template.name;
+        this._form.templateFields = {};
+        this._signature = '';
+        this._render();
+      });
+      list.append(button);
+    }
+    wrap.append(list);
+    if (!picked) return wrap;
+    const form = document.createElement('div');
+    form.className = 'form';
+    for (const field of picked.fields || []) {
+      if (!field.key) continue;
+      const holder = document.createElement('label');
+      holder.className = 'field';
+      const label = document.createElement('span');
+      label.textContent = field.label || field.key.replace(/_/g, ' ');
+      const input = document.createElement('input');
+      input.value = this._form.templateFields[field.key] ?? (field.default || '');
+      input.addEventListener('input', () => { this._form.templateFields[field.key] = input.value; });
+      holder.append(label, input);
+      form.append(holder);
+    }
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    const print = document.createElement('button');
+    print.className = 'primary';
+    print.textContent = this._busy ? 'Printing…' : `Print ${picked.name}`;
+    print.disabled = this._busy || this._blocked;
+    print.addEventListener('click', () => {
+      if (this._busy || this._blocked) return;
+      const fields = {};
+      for (const field of picked.fields || [])
+        if (field.key) fields[field.key] = this._form.templateFields[field.key] ?? (field.default || '');
+      this._call('print_template', { template: picked.name, fields });
+    });
+    actions.append(print);
+    form.append(actions);
+    wrap.append(form);
     return wrap;
   }
 
@@ -892,6 +1014,7 @@ class BruhPrintCardEditor extends HTMLElement {
     add('Copies', 'copies', 'number');
     add('Show the status pill', 'show_status', 'boolean');
     add('Show the rolls', 'show_rolls', 'boolean');
+    add('List the saved templates', 'show_templates', 'boolean');
 
     this.shadowRoot.replaceChildren(style, wrap);
   }

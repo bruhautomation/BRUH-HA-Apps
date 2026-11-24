@@ -89,6 +89,11 @@ DEFAULT_PORT = 8097
 # upload rode the same route; nothing uploads a file any more.
 MAX_BODY_BYTES = 2 * 1024 * 1024
 
+# When a roll's count says it is running low: a tenth of a full roll, and
+# never fewer than twenty labels (a stock with no roll size has only this).
+LOW_SHARE = 0.1
+LOW_FLOOR = 20
+
 log = logging.getLogger("bruh_print.panel")
 
 # A typed key rather than the string "panel": aiohttp warns about bare
@@ -329,6 +334,22 @@ class Panel:
             return
         self.rolls.consume(side, count)
 
+    def roll_row(self, roll) -> dict:
+        """A bay, plus whether its count says it is running low.
+
+        One answer for the panel's bar, the Printer tab and the Lovelace
+        card (through the mirror), so the three cannot disagree about which
+        roll to replace. Low is a tenth of a full roll, and never fewer than
+        `LOW_FLOOR`; a roll nobody has counted is not low, it is uncounted.
+        """
+        row = roll.as_dict()
+        stock = self.stocks.get(roll.stock) if roll.stock else None
+        full = stock.per_roll if stock else 0
+        row["low"] = bool(
+            stock and self.settings.get("track_remaining", True)
+            and 0 < roll.remaining <= max(LOW_FLOOR, round(full * LOW_SHARE)))
+        return row
+
     def _stock_row(self, entry) -> dict:
         """A stock, plus which bay holds it and how much of it can be drawn on.
 
@@ -371,7 +392,7 @@ class Panel:
             "printer": printer.as_dict() if printer else None,
             "printer_error": self._printers_error,
             "ambiguous": bool(len(found) > 1 and not self.settings.get("printer")),
-            "rolls": [r.as_dict() for r in self.rolls.all()],
+            "rolls": [self.roll_row(r) for r in self.rolls.all()],
             # `loaded` rides on the stock rather than being worked out in the
             # panel from the roll list, because every picker outside the
             # Printer tab offers exactly the loaded ones and three copies of
@@ -413,7 +434,7 @@ class Panel:
             "printer_error": self._printers_error,
             # A count nobody keeps is not published: a sensor reading 0 or a
             # full roll beside "not counting" reads as an empty roll.
-            "rolls": {r.side: {k: v for k, v in r.as_dict().items()
+            "rolls": {r.side: {k: v for k, v in self.roll_row(r).items()
                                if k != "remaining"
                                or self.settings.get("track_remaining", True)}
                       for r in self.rolls.all()},

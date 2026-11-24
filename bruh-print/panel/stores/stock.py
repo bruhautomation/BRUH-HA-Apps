@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -537,6 +538,30 @@ class Stock:
         return (max(1, round(self.across_in * dpi)),
                 max(1, round(self.feed_in * dpi)))
 
+    def size_words(self) -> str:
+        """The size as shown beside the name, and why, when the name gives
+        another.
+
+        A roll somebody named `Removable 3/4" x 2"` and set to 1.0" × 2.0"
+        showed both on one line with nothing to say which was right. They
+        are often both right: what is set is what the head prints across,
+        and a narrow label sits on a wider backing — so when the name's
+        label is narrower across and the same length, the line says that.
+        Any other disagreement is named as one. Words only: what prints is
+        decided by `across_in` and `feed_in`, exactly as before.
+        """
+        size = f'{self.across_in}" × {self.feed_in}"'
+        named = name_size(self.name)
+        if named is None or self.continuous:
+            return size
+        if _same(sorted(named), sorted((self.across_in, self.feed_in))):
+            return size
+        small, big = sorted(named)
+        if _same(big, self.feed_in) and small < self.across_in - TOLERANCE_IN:
+            return (f'{_inches(small)} × {_inches(big)} label '
+                    f'on a {self.across_in}" backing')
+        return f'{size}, not the {_inches(named[0])} × {_inches(named[1])} in its name'
+
     def swapped(self) -> "Stock":
         """The same stock with its two dimensions exchanged.
 
@@ -589,7 +614,8 @@ class Stock:
         data["feed_mm"] = round(self.feed_mm, 2)
         width, height = self.drawable_mm
         data["drawable_mm"] = [round(width, 2), round(height, 2)]
-        data["label"] = f'{self.across_in}" × {self.feed_in}"'
+        data["label"] = self.size_words()
+        data["size"] = f'{self.across_in}" × {self.feed_in}"'
         data["turn"] = self.natural_turn
         data["turn_set"] = self.turn is not None
         # What the wizard and the designer read: the dead band the printer
@@ -613,6 +639,52 @@ class Stock:
         data["printable_across_mm"] = round(self.printable_across_mm(), 2)
         data["first_label_dead_mm"] = round(self.dead_leading_mm(True), 2)
         return data
+
+
+# A size written into a roll's name: `3/4" x 2"`, `2.25" × 1.25"`,
+# `1-1/8 x 3-1/2 in`. Inch marks or "in" are required, so a part number or
+# a millimetre size is never read as inches.
+_AMOUNT = r"(\d+(?:\.\d+)?(?:[ -]\d+/\d+)?|\d+/\d+)"
+_MARK = r'(?:"|″|\'\'|\s?in(?:ch(?:es)?)?\b)'
+NAME_SIZE = re.compile(_AMOUNT + r"\s*(" + _MARK + r")?\s*[x×X]\s*"
+                       + _AMOUNT + r"\s*(" + _MARK + r")?")
+# Two sizes this close are one size: a catalog's 2.125 is a box's 2 1/8.
+TOLERANCE_IN = 0.02
+
+
+def _amount(text: str) -> float:
+    whole, _, fraction = text.replace("-", " ").partition(" ")
+    if "/" in whole:
+        whole, fraction = "0", whole
+    value = float(whole)
+    if fraction:
+        top, bottom = fraction.split("/")
+        value += int(top) / max(1, int(bottom))
+    return value
+
+
+def name_size(name: str) -> tuple[float, float] | None:
+    """The size a roll's name gives, in inches, in the name's order."""
+    for match in NAME_SIZE.finditer(name or ""):
+        if not (match.group(2) or match.group(4)):
+            continue
+        try:
+            first, second = _amount(match.group(1)), _amount(match.group(3))
+        except (ValueError, ZeroDivisionError):
+            continue
+        if first > 0 and second > 0:
+            return first, second
+    return None
+
+
+def _same(a, b) -> bool:
+    if isinstance(a, (list, tuple)):
+        return all(_same(x, y) for x, y in zip(a, b))
+    return abs(a - b) <= TOLERANCE_IN
+
+
+def _inches(value: float) -> str:
+    return f'{value:.4f}'.rstrip("0").rstrip(".") + '"'
 
 
 def replace(entry: Stock, **changes) -> Stock:
