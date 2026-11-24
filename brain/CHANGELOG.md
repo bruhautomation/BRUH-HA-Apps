@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.12
+
+### Fixed
+
+- An insight card marked "worth a look" with nothing to do is a plain note, and a card never ends on a note about what brAIn could not check, now also for cards kept from an earlier day or held while their data is thin, not only new ones (1311, 1328).
+- An insight card opens with one plain sentence on what it means for the household; its measurements sit under a Details fold, and its tiles wrap instead of running out of their box on a phone (1298).
+- Memory › Timeline's heading says who is home and matches the line under it, and a device that kept flipping on and off is one line ("on 5 times · 6:45–8:26 PM") instead of a row per minute (1303).
+
 ## 5.5.11
 
 ### Fixed
