@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.19
+
+### Changed
+
+- brAIn's watching run judges a reading against what that sensor usually reads: a freezer probe at its normal temperature is not reported because it is warmer than a generic target, a real rise is reported with how far it is from usual, and a stuck or silent sensor is never waved through (1401).
+- "You keep undoing…" says which trigger started the runs you undid and what they did ("A triple press on the hall switch started 3 of the 4 undone runs"), or says plainly that the automation's settings could not be read (1405).
+- Findings say things in household words everywhere they are shown (the list, Today, Home Assistant and messages): action and entity ids are named in plain words, file paths are left out, "integration" and "registry" are reworded where they are written, and a step that is too technical becomes your To Do line or an offer to do it from the chat (1407).
+
 ## 5.5.18
 
 ### Changed
