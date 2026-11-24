@@ -158,7 +158,8 @@ async def collect(session, snap: dict, mark) -> None:
         # it has not answered, which is not a house with no users.
         snap["users"] = []
         mark("users", False, str(users.get("error") or
-                                 "Home Assistant did not list its users"))
+                                 "Home Assistant did not list its users"),
+             core=True)
 
     listed = exposure.get("result") if exposure.get("ok") else None
     table = listed.get("exposed_entities") if isinstance(listed, dict) else None
@@ -170,7 +171,8 @@ async def collect(session, snap: dict, mark) -> None:
     else:
         snap["exposure"] = {}
         mark("exposure", False, str(exposure.get("error") or
-                                    "Home Assistant did not list what it exposes"))
+                                    "Home Assistant did not list what it exposes"),
+             core=True)
 
     options = read_options()
     posture = ({k: options.get(k) for k in POSTURE_FLAGS}

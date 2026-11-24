@@ -171,6 +171,10 @@ BLIND_REASONS = {
     "screens": {
         "browser": "Chromium is not installed on this box",
         "states": "the house's calendars and addresses could not be read to blank them",
+        # The same refusal because Home Assistant itself did not answer:
+        # the outage the checks pass already reports once (`blind_rows`).
+        "ha": "Home Assistant did not answer, so the house's calendars and "
+              "addresses could not be read to blank them",
         "capture": "the capture failed before any picture was kept",
         "redaction": "no screen could be captured and redacted",
         "own-panel": "brAIn's own panel gave no picture, though other screens did",
@@ -805,17 +809,45 @@ def _blind(data: dict | None = None) -> dict:
             if isinstance(v, dict) and v.get("reason") in BLIND_REASONS.get(k, {})}
 
 
-def blind_rows(data: dict | None = None) -> list[dict]:
+# The fault row a pass where Home Assistant did not answer files
+# (`reports.faults`), and the reason class that is the same outage.
+HA_DOWN_ROW = ("Home Assistant", "did not answer")
+HA_DOWN_REASON = "ha"
+
+
+def blind_rows(data: dict | None = None,
+               faults: list[dict] | None = None) -> list[dict]:
     """The streams that could not look, as fault rows. `where|what` is the
     stream and the reason class, so it is one issue for as long as it
     lasts, and Faults (which clears) tells it "not seen since" once the
     stream sees again. Only while the stream is on: a switched-off stream
-    is not failing to look."""
+    is not failing to look.
+
+    A stream that could not look because Home Assistant did not answer is
+    that outage, not a fault of the stream: with ``faults`` (the rows the
+    Faults stream is about to file) it is said on their "Home Assistant
+    did not answer" row and files nothing of its own. Without that row it
+    files only once it has happened on a second try — one refusal is a
+    restart the checks pass did not happen to see, and ⚙ › Developer
+    still says it under the stream (`blind_notes`)."""
     out = []
+    ha_row = next((r for r in faults or ()
+                   if (r.get("where"), r.get("what")) == HA_DOWN_ROW), None)
     for stream, row in _blind(data).items():
         if not stream_on(stream):
             continue
         count = int(row.get("count") or 1)
+        if row["reason"] == HA_DOWN_REASON:
+            if ha_row is not None:
+                # Ahead of the lists of reads and checks, which the row
+                # already cuts at its length: Core's own words, then this.
+                said, sep, lists = str(ha_row.get("detail") or "").partition(" — ")
+                ha_row["detail"] = (
+                    f"{said} — the {BLIND_WHERE[stream]} stream could not "
+                    "photograph anything" + (f"; {lists}" if sep else ""))
+                continue
+            if count < 2:
+                continue
         detail = (f"{count} {'try' if count == 1 else 'tries'} since "
                   f"{_date(row.get('since'))}, the last on {_date(row.get('at'))}"
                   + (f" on brAIn {row['version']}" if row.get("version") else "")
