@@ -480,11 +480,9 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   keeps a helper for a state ("load waiting" as an `input_boolean`), the
   card's toggle and its sentence both read that helper: never a sentence
   worked out from the cycle's end ("the load can come out") beside the helper
-  saying Off. If the helper is Off when a cycle has finished and nobody has
-  emptied it, the helper is what is wrong: set it from the cycle's end (an
-  automation turning it on when the machine finishes, listed in
-  home_assistant) and let the person's toggle clear it, and say nothing the
-  helper does not say until then.
+  saying Off. The helper is the household's record: the sentence says only
+  what the helper says, so with the helper Off the card makes no claim that
+  something is waiting.
 - **A diagram's labels are 11px or larger as drawn, and the ones that act are
   40px targets.** An SVG scaled down by its `viewBox` shrinks its text: work
   the font size out at the width it is drawn at 390px (an 8-unit label in a
