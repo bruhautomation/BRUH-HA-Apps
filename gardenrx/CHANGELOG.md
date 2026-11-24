@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.5
+
+### Changed
+
+- Grey text (subtitles, counts, tab labels, hints) and the green money and "% left" figures are readable in every theme, at least 4.5:1 against what they sit on (1354, 1357).
+- The bottom bar's seven labels fit whole on a phone, and each is the screen's own title: Today, Crops, Garden, Harvest, Spray, Products, Weather (1355).
+- Out of season, Today shows what matters while the garden rests (a frost warning, when each crop usually wakes and what to do then, the last spray and the last pick) and drops the watering tip while nothing is growing (1356).
+- Product badges say what they are ("REI 24h", "Re-spray 10d", or "n/a") (1358).
+- The spray window says why an hour or a day is on hold ("below 40°", "wind", "rain"), and at night the rating reads "Dark" rather than a good spraying score (1359).
+
 ## 0.2.4
 
 ### Fixed
