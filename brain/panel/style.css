@@ -7010,7 +7010,6 @@ button.kfactsubj:hover { color: var(--accent-2);
 .actnow[hidden] { display: none; }
 .actnow .actnowmode { font-weight: 600; color: var(--ink); }
 .actnow .actnowsaid { color: var(--ink-2); }
-.actnow .actnowsaid.stale { color: var(--ink-3); }
 
 /* The house book: Add info leads the head, ⋯ holds sharing, one muted
    line says when and what was left out, and every chapter is a card whose
