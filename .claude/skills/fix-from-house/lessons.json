@@ -418,6 +418,14 @@
       "enforced_by": "prose",
       "first_seen": "2026-11-24",
       "last_relevant": "2026-11-24"
+    },
+    {
+      "id": "2026-11-24-redo-from-main",
+      "rule": "Build a redo branch from origin/main and cherry-pick the redo commit; never merge main into a branch that carries its own revert commits, because the merge takes main's squashed revert and silently drops the redo.",
+      "evidence": "#764: merging main into the cooking redo left only one file changed and committed conflict markers; rebuilding from main with a cherry-pick restored all 8 files.",
+      "enforced_by": "prose",
+      "first_seen": "2026-11-24",
+      "last_relevant": "2026-11-24"
     }
   ],
   "retired": [
