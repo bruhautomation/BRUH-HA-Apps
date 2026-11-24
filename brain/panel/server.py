@@ -17413,6 +17413,10 @@ async def run_checks(reason: str = "schedule") -> dict:
             # the only thing that says a trialled check is running at all.
             "shadow": shadow_counts,
             "snapshot_errors": snapshot.get("errors") or {},
+            # Which of those asked Home Assistant Core: when Core itself
+            # did not answer, every one of them is that outage
+            # (`reports.faults` says it once).
+            "snapshot_core_failed": snapshot.get("core_failed") or [],
         }
         journal.record(
             "checks", "ok" if not result["errors"] else "error",
@@ -20825,7 +20829,7 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
                 # A stream that could not look (Screens with no browser, a
                 # capture that failed) is a fault of the loop itself, and
                 # this is the stream that files faults and clears them.
-                rows += await asyncio.to_thread(up.blind_rows)
+                rows += await asyncio.to_thread(up.blind_rows, None, rows)
             return await asyncio.to_thread(up.ingest, "faults", rows, payload, names)
         if stream in ("scorecard", "wrongs"):
             score = await asyncio.to_thread(findings_store.scorecard)
@@ -21262,6 +21266,7 @@ async def _devloop_screens(payload: dict, names: dict, version: str) -> dict:
         await asyncio.to_thread(devloop.upstream.mark_run, "screens")
         return {"skipped": "Chromium is not installed on this box",
                 "blind": "browser"}
+    blind = "states"
     try:
         import aiohttp
 
@@ -21271,11 +21276,15 @@ async def _devloop_screens(payload: dict, names: dict, version: str) -> dict:
     except Exception as exc:  # noqa: BLE001
         states = None
         log.info("devloop screens: could not read the states: %s", exc)
+        # Home Assistant not answering is the outage the checks pass
+        # reports once; the reason class lets Faults say it there.
+        if reports.ha_did_not_answer(exc):
+            blind = devloop.upstream.HA_DOWN_REASON
     if not isinstance(states, list):
         await asyncio.to_thread(devloop.upstream.mark_run, "screens")
         return {"error": ("could not read the house's calendars and addresses "
                           "to blank them, so nothing was photographed"),
-                "blind": "states"}
+                "blind": blind}
     confidential = screens.confidential_strings(
         states, await asyncio.to_thread(occasions.load))
     aliases = devloop.upstream.Aliases.load()
