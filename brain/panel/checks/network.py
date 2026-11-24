@@ -814,6 +814,16 @@ def _carried(house: House, devices, entity: str) -> bool:
         in PHONE_PLATFORMS
 
 
+_UNIFI_KEY_WORDS = "that is the UniFi integration losing its controller"
+
+
+def unifi_shown(line: str) -> str:
+    """The controller sentence as a card shows it (`shown_detail`): the
+    stored one keeps its words, which the row's `detail` is compared by."""
+    return line.replace(_UNIFI_KEY_WORDS,
+                        "that is Home Assistant losing the UniFi controller")
+
+
 def _wifi_entries(house: House, snap: dict, now: float) -> tuple[list, list, str]:
     """`(devices, access point sentences, UniFi sentence)` for Wi-Fi."""
     out, aps = [], []
@@ -863,9 +873,8 @@ def _wifi_entries(house: House, snap: dict, now: float) -> tuple[list, list, str
     if len(counted) >= UNIFI_DROPS_MIN and now - counted[-1] <= RECENT_S:
         said = (f"Every UniFi tracker also went unavailable together "
                 f"{len(counted)} times in {days} days, last "
-                f"{when(counted[-1])}: that is the UniFi integration losing "
-                "its controller, and those minutes are not counted against "
-                "any device.")
+                f"{when(counted[-1])}: {_UNIFI_KEY_WORDS}, and those minutes "
+                "are not counted against any device.")
     return out, aps, said
 
 
@@ -1205,8 +1214,12 @@ def connectivity(snap: dict, now: float) -> list[dict]:
                   + " ".join(ap_lines)
                   + " Devices that came back are taken off this list, and a "
                     "restart, or many devices at once, is not counted.")
+    # `detail` is what `refresh_details` compares; what a card shows says
+    # the controller line in the household's words beside it.
+    shown_detail = detail
     if unifi_line:
         detail = f"{detail} {unifi_line}".strip()
+        shown_detail = f"{shown_detail} {unifi_shown(unifi_line)}".strip()
     kinds = []
     for e in listed:
         if e["fix"] not in kinds:
@@ -1226,6 +1239,8 @@ def connectivity(snap: dict, now: float) -> list[dict]:
         # be, silent or dropping, never one stock verb for both (#1326).
         **({"headline": connectivity_headline(listed)} if listed else {}),
         "detail": " ".join(detail.split()),
+        **({"shown_detail": " ".join(shown_detail.split())}
+           if shown_detail != detail else {}),
         "fix": fix,
         # What To Do says when this becomes one: composed once from the
         # devices and their kinds (`todo_words`), never cut out of `fix`.
@@ -1306,8 +1321,12 @@ def matter_empty(snap: dict, now: float) -> list[dict]:
             "detail": ("The Matter integration is running with no device "
                        "paired to it, so it and the Matter server it talks "
                        "to do nothing in this house."),
+            # The stored `detail` keeps its words; a card shows these.
+            "shown_detail": ("Matter is set up in Home Assistant with no "
+                             "device paired to it, so it and the Matter "
+                             "server it talks to do nothing in this house."),
             "fix": ("Pair a Matter device under Settings > Devices & "
-                    "services > Matter, or delete the integration (and the "
+                    "services > Matter, or delete Matter there (and the "
                     "Matter Server add-on) if nothing here uses Matter."),
             "severity": "info",
             "fixable": False,

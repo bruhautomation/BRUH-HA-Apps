@@ -374,6 +374,19 @@ def custom_unused(snap: dict, now: float) -> list[dict]:
                      "set up for it and no mention in configuration.yaml. "
                      "Home Assistant still reads every custom integration it "
                      "finds there at start."),
+        # `text` and `detail` keep their words (the key, and what a refresh
+        # compares); a card shows these.
+        "headline": "Custom extensions are installed that nothing uses",
+        "shown_detail": (join_names(unused, MAX_NAMED)
+                         + (" is installed as a custom extension"
+                            if len(unused) == 1 else
+                            " are installed as custom extensions")
+                         + ", but nothing in "
+                           "Settings > Devices & services or in your "
+                           "configuration uses "
+                         + ("it" if len(unused) == 1 else "them")
+                         + ". Home Assistant still loads each one at every "
+                           "start."),
         "fix": ("If you meant to use one, add it under Settings > Devices & "
                 "services. If not, remove it — through HACS if HACS "
                 "installed it — and restart Home Assistant."),
@@ -474,9 +487,9 @@ def hacs_pending(snap: dict, now: float) -> list[dict]:
                                                 MAX_NAMED)
                    + " waiting for more than two weeks."),
         "fix": ("Read each one's release notes in HACS, then update it there "
-                "and restart Home Assistant. A custom integration left "
-                "behind is often the one that breaks on the next Home "
-                "Assistant update."),
+                "and restart Home Assistant. A custom extension left behind is "
+                "often the one that breaks on the next Home Assistant "
+                "update."),
         "severity": "info",
         "fixable": False,
         "entity_id": waiting[0][0] if len(waiting) == 1 else "",

@@ -235,7 +235,7 @@ def _flood_fix(house, device: str, entity: str, who: str = "") -> str:
     if not device or not entity:
         return ("Nothing to do in the house yet, because the lines name no "
                 "device or address brAIn knows: the trouble is inside "
-                f"{who or 'the integration'} or the service it talks to, "
+                f"{who or 'what logs them'} or the service it talks to, "
                 "and brAIn says so again if it is still logging it.")
     state = str((house.states.get(entity) or {}).get("state") or "")
     if state in ("unavailable", "unknown", ""):

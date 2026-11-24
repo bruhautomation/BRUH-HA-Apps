@@ -371,10 +371,14 @@ def orphan_device(snap: dict, now: float) -> list[dict]:
                   else "One, named only by a hardware address")
     detail = (listed + ". They are usually what is left after an "
               "integration was reconfigured or a device was replaced.")
+    # `detail` is what `refresh_details` compares, and `text` the key: what a
+    # card shows says it in the household's words beside them.
+    shown = (listed + ". They are usually what is left after a hub or "
+             "service was set up again or a device was replaced.")
     fix = ("Remove them in Settings > Devices & services > Devices: "
            "open each one and choose Delete from its menu. A device "
-           "with no Delete there is still claimed by its integration — "
-           "reconfigure or remove that integration instead.")
+           "with no Delete there still belongs to the hub or service that "
+           "added it: remove it from that one's page there instead.")
     if twins:
         said = []
         for empty, other in sorted(set(twins)):
@@ -385,15 +389,20 @@ def orphan_device(snap: dict, now: float) -> list[dict]:
             else:
                 said.append(f" {empty} is a leftover second entry for "
                             f"{other}, which has the readings.")
-        detail += "".join(said[:4])
-        if len(said) > 4:
-            detail += f" {len(said) - 4} more are second entries the same way."
+        more = "".join(said[:4]) + (
+            f" {len(said) - 4} more are second entries the same way."
+            if len(said) > 4 else "")
+        detail += more
+        shown += more
         fix += (" For a device listed twice, delete the entry with no "
                 "entities; deleting it leaves the readings on the other "
                 "entry alone.")
     return [{
         "text": "Some devices are left in the registry with no entities",
+        "headline": ("Some devices are left in Home Assistant's device list "
+                     "with no entities"),
         "detail": detail,
+        "shown_detail": shown,
         "fix": fix,
         "severity": "info",
         "fixable": True,

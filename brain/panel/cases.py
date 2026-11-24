@@ -505,7 +505,7 @@ def _from_finding(row: dict, snoozes: dict[str, int]) -> dict:
     # its `fix` under an opportunity nobody could say yes to.
     row = answers_mod.as_morph_question(row)
     # A model's words with no id, path or code name in them (#774, #791).
-    row = {**row, **findings_store.shown_words(row)}
+    row = findings_store.shown(row)
     status = row.get("status") or "open"
     kind = "change" if status == "fixed" else (
         row["kind"] if row.get("kind") in KINDS else "problem")
@@ -525,7 +525,7 @@ def _from_finding(row: dict, snoozes: dict[str, int]) -> dict:
         "entity_id": row.get("entity_id") or "",
         # A check's own errand is not shown under a look's conclusion
         # (`findings_store.shown_fix`).
-        "fix": findings_store.shown_fix(row),
+        "fix": row.get("fix") or "",
         # Whose sentence the fix is, so the card can say so.
         "fix_by": row.get("fix_by") or "",
         # The store's own status word, beside the case's four. `planned`,

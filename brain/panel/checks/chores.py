@@ -821,6 +821,11 @@ def job_done(snap: dict, now: float) -> list[dict]:
                        f"“{state}” {when}, and has not started "
                        "another job since. Read from the status its own "
                        "integration publishes."),
+            # The stored `detail` keeps its words; a card shows these.
+            "shown_detail": (f"{house.name(eid)} went from running to "
+                             f"“{state}” {when}, and has not started "
+                             "another job since, as the printer itself "
+                             "reports."),
             "fix": ("Take the print off. This clears itself once BRUH "
                     "Bambu Studio sees the plate clear."
                     if seen == "occupied" else
