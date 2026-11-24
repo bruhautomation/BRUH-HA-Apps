@@ -760,7 +760,7 @@ select { max-width: 100%; min-width: 0; }
 .party-pick input { flex: none; }
 .party-pick .row-main { min-width: 0; overflow-wrap: anywhere; }
 .party-version { width: 100%; min-width: 0; }
-.party-version-text { padding-left: var(--sp-2); }
+.party-version-text { padding-left: calc(var(--sp-3) + 1px); }  /* lines up with a select's text */
 .party-order { text-align: right; }
 /* -- The Manual tab: the room is the instrument, the grid is the clock -- */
 /* One screen. The pane's height is measured at runtime (`mnFit`) rather
@@ -1241,8 +1241,8 @@ body.mn-open .foot { display: none; }
 .party-save input { width: 100%; }
 .menu-info { margin: 2px var(--sp-1) var(--sp-1); font-size: var(--fs-body); overflow-wrap: anywhere; }
 .folder-summary > summary { flex-wrap: wrap; gap: 0 var(--sp-2); }
-.folder-summary .fold-label::after { content: "Show folders"; color: var(--azure); }
-.folder-summary[open] .fold-label::after { content: "Hide folders"; }
+.folder-summary .fold-label::after { content: "Show scanned folders"; color: var(--azure); }
+.folder-summary[open] .fold-label::after { content: "Hide scanned folders"; }
 .folder-unused { margin: var(--sp-2) 0 0; }
 
 /* A class rule beats the touch floor above, so the two textareas that set
@@ -1278,10 +1278,24 @@ body.mn-open .foot { display: none; }
 
 /* On a phone the tab strip is one row that scrolls sideways inside itself,
    not two rows of wrapped tabs: a header of 149px is a fifth of the screen
-   spent on navigation. A tab cut at the edge is the cue that there are more. */
+   spent on navigation. A cut tab alone was not cue enough (people took the
+   strip's edge for its end), so each edge with more tabs past it fades
+   out; `tabEdges` in app.js sets the classes from the scroll position. */
 @media (max-width: 639.98px) {
-  .tabs { flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; margin: 0 calc(-1 * var(--gutter)); padding: 0 var(--gutter); }
+  .tabs { position: relative; flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; margin: 0 calc(-1 * var(--gutter)); padding: 0 var(--gutter); }
   .tabs::-webkit-scrollbar { display: none; }
+  .tabs.more-end {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent);
+  }
+  .tabs.more-start {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 48px);
+    mask-image: linear-gradient(to right, transparent, #000 48px);
+  }
+  .tabs.more-start.more-end {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent);
+  }
 }
 
 .card > .btn { align-self: flex-start; }
@@ -1322,3 +1336,29 @@ textarea { padding: var(--sp-2) var(--sp-3); }
 .claude-box { margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--line); }
 .claude-box p { margin: 0 0 var(--sp-2); }
 .claude-box #showVibe { flex: 1 1 14em; min-width: 0; }
+
+/* The show editor with no song open: the heading and one line. */
+#showEditor.ed-empty > :not(:first-child):not(#scriptWhich),
+#showEditor.ed-empty > .card-head:first-child > span { display: none; }
+/* A fold names what it does in words, after what it holds: the text comes
+   from the label's data-show / data-hide. */
+.fold-label[data-show]::after { content: attr(data-show); color: var(--azure); }
+details[open] > summary .fold-label[data-hide]::after { content: attr(data-hide); }
+.lifx-unchecked > summary { gap: var(--sp-2); flex-wrap: wrap; }
+/* Test mode's bulbs, one closed fold per zone with a tick for the zone. */
+.sync-groups { display: flex; flex-direction: column; }
+.sync-group + .sync-group { border-top: 1px solid var(--line); }
+.sync-group > summary {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2) var(--sp-3);
+  min-height: var(--btn-h); padding: 0 var(--sp-2) 0 0; cursor: pointer; list-style: none;
+}
+.sync-group > summary::-webkit-details-marker { display: none; }
+.sync-group-hit { display: flex; align-items: center; justify-content: center; min-width: var(--btn-h); min-height: var(--btn-h); margin-left: calc(-1 * var(--sp-3)); cursor: pointer; }
+.sync-group-tick { width: 20px; height: 20px; min-height: 0; flex: none; margin: 0; }
+.sync-group-name { font-weight: 600; }
+.sync-group > .fx-fixtures { padding-bottom: var(--sp-2); }
+/* Light Map: zones suggested from the lights' names, shown before any is saved. */
+.map-suggest { display: flex; flex-direction: column; gap: var(--sp-2); align-items: flex-start; }
+.map-suggest[hidden] { display: none; }
+.map-suggest p { margin: 0; }
+.map-suggest-list { margin: 0; padding-left: var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-1); }
