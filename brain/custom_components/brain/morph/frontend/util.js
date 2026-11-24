@@ -59,12 +59,27 @@ export function ago(iso) {
   return Math.round(s / 86400) + ' d ago';
 }
 
+// When something happened, in one style for every card: "9:14 PM", "last
+// night 12:44 AM", "yesterday 9:10 PM", then a date: "Nov 18, 8:12 PM"
+// within the week, "Oct 2" before it ("Oct 2, 2025" in another year). Never
+// a bare weekday: "last on Tue 8:12 PM" read as next Tuesday. Takes a
+// Date, milliseconds or an ISO string; '' for anything that is not a time.
+export function pastWhen(t) {
+  const d = t instanceof Date ? t : new Date(typeof t === 'string' ? Date.parse(t) : t);
+  if (t == null || t === '' || isNaN(d)) return '';
+  const now = new Date();
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const dd = Math.round((day(now) - day(d)) / 86400000);
+  const hm = clock(d);
+  if (dd <= 0) return now.getHours() >= 12 && d.getHours() < 5 ? 'last night ' + hm : hm;
+  if (dd === 1) return (d.getHours() >= 20 ? 'last night ' : 'yesterday ') + hm;
+  const date = d.toLocaleDateString([], { month: 'short', day: 'numeric', ...(d.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}) });
+  return dd < 7 ? date + ', ' + hm : date;
+}
+
 export function since(iso) {
-  const t = new Date(iso);
-  if (isNaN(t)) return '';
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  if (t >= today) return 'since ' + clock(t);
-  return 'since ' + t.toLocaleDateString([], { weekday: 'short' }) + ' ' + clock(t);
+  const w = pastWhen(iso);
+  return w ? 'since ' + w : '';
 }
 
 export function dur(ms) {
@@ -202,16 +217,13 @@ export const UNAVAILABLE = ['unavailable', 'unknown'];
 // temperature, its target and a running timer under an "unavailable" badge,
 // as if they were live. Home Assistant sets `last_changed` when an entity goes
 // unavailable, so that is when it was last heard from, and it is all a tile
-// can honestly say about it now: "last seen 4:02 PM", "last seen Mon 4:02
-// PM", "last seen Oct 30". Empty for anything that is answering.
+// can honestly say about it now: "last seen 4:02 PM", "last seen Nov 18,
+// 4:02 PM", "last seen Oct 30" (pastWhen). Empty for anything that is answering.
 export function lastSeen(st) {
   if (!st || !UNAVAILABLE.includes(st.state)) return '';
   const t = Date.parse(st.last_changed || st.last_updated || '');
   if (!t) return 'not answering';
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  if (t >= today.getTime()) return 'last seen ' + clock(t);
-  if (t >= today.getTime() - 6 * 86400000) return 'last seen ' + new Date(t).toLocaleDateString([], { weekday: 'short' }) + ' ' + clock(t);
-  return 'last seen ' + new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return 'last seen ' + pastWhen(t);
 }
 
 // A module whose FETCH failed (a request dropped on the way through the

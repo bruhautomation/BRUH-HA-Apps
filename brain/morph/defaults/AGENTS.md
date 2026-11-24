@@ -417,16 +417,21 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   saying "Ran last night 12:35 AM" reads as two different things. Leave it to
   the tile; a card that must carry it says what it does and when it last ran
   in the tile's words ("Run Bedtime · ran last night 12:35 AM").
-- **Every camera is named, and says why when there is no picture.** A grid of
-  cameras is the `camera` card, or a card that puts each camera's name and
-  state on its tile ("Porch · Offline", "Garage · No picture yet"), never a
-  wall of bare pictures that look alike while they load or fail. Cameras that
-  all have nothing to show fold to one line that names them. A card never
-  fetches pictures more often than the `camera` card does.
-- **A tile with nothing in it is hidden, or says what it is for.** An empty
-  list ("Sequence · Empty") is not drawn as a dimmed tile with a name and
-  "Empty" under it: it is hidden, or in one line says what it is for and what
-  to add ("Nothing queued · add zones to fill it").
+- **Every camera is named on its tile, says why when there is no picture,
+  and a long grid folds on a phone.** A grid of cameras is the `camera` card,
+  or a card that puts each camera's name and state as visible text on its
+  tile ("Porch · Offline", "Garage · No picture yet"), never a wall of bare
+  pictures that look alike while they load or fail (an `alt` is not a name
+  anybody sees). Cameras that all have nothing to show fold to one line that
+  names them. On a narrow card (under about 500px) more than four cameras
+  start folded behind one header that counts them ("Cameras (6)"), opened in
+  place with a tap, so what comes after them is reached without a long scroll.
+  A card never fetches pictures more often than the `camera` card does, and a
+  folded grid fetches none.
+- **A tile with nothing in it is hidden, or says in words what it is for.**
+  An empty list or queue ("Sequence · Empty") is not drawn as a dimmed tile
+  with a name and "Empty" under it: it is hidden, or in one line says what it
+  is for and what is missing ("No zones queued").
 - **A setting reads as a setting, and a tile always has its value.** A run
   length or other `input_number` shows its value with its unit and says it is
   a length ("Runs for 60 min · last ran Oct 30"), so it is never read as
@@ -455,21 +460,64 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   a total beside a part that is far smaller) get a one-line note naming the
   likely reason ("the tracker recorded only part of the night"), or a dash
   for the doubtful one. When asleep is under about half of in-bed time, say so.
-- **Everything you can press is a 40px target.** A scene chip, a mode button,
-  a small text button, a refresh icon, a row that opens a person, a reading
-  chip that does something when tapped (a `div` with a click handler is a
-  target too) is at least 40px tall and 40px wide (`min-height` and
+- **A past time says it is past, in one style: a clock time today, then
+  "yesterday", then a date.** "8:12 PM", "yesterday 8:12 PM", "Nov 18,
+  8:12 PM" within the week and "Oct 2" before it. Never a bare weekday
+  ("last on Tue 8:12 PM" reads as the coming Tuesday). Every last-ran, last-on,
+  last-seen and since on one card uses the same style. Morph's own cards use
+  `pastWhen` (`util.js`); a built card writes the same shapes.
+- **A machine that is off shows that it is off, not its empty readings.** An
+  oven, a dryer or a heater in off or standby does not draw its live chart
+  (a heat line over nothing) or a dash for each reading it has
+  while running (inside, target, time left): one line says so ("Oven is
+  off", with when it was last used when that is known), and the chart and
+  readings come back when it runs.
+- **A tab, a chip and a row's subtitle is a short phrase that fits whole.**
+  "Done 9:05 PM", "Running · 31 min left", never a sentence cut off ("last
+  load ended 6:15 …"). Check it at 390px; what does not fit belongs in the
+  opened part, not after an ellipsis.
+- **A flag and the words about it come from one source.** When the house
+  keeps a helper for a state ("load waiting" as an `input_boolean`), the
+  card's toggle and its sentence both read that helper: never a sentence
+  worked out from the cycle's end ("the load can come out") beside the helper
+  saying Off. The helper is the household's record: the sentence says only
+  what the helper says, so with the helper Off the card makes no claim that
+  something is waiting.
+- **A diagram's labels are 11px or larger as drawn, and the ones that act are
+  40px targets.** An SVG scaled down by its `viewBox` shrinks its text: work
+  the font size out at the width it is drawn at 390px (an 8-unit label in a
+  600-unit viewBox drawn 340px wide is 4.5px), or draw the labels as HTML
+  beside the diagram. A label that opens or sets something carries a 40px
+  hit area.
+- **A judgement names what it was judged against.** "Low", "high",
+  "unusual" or "check the filter" says the usual value beside it ("a 9°
+  drop, low: usually about 15°"), taken from a baseline the house has (a
+  statistic, its history, a sensor brAIn keeps), never a constant written
+  into the card. With no baseline to name, say the figure without the
+  judgement.
+- **Everything you can press is a 40px target, header icons and chips
+  included.** A scene chip, a mode button, a small text button, the icon
+  buttons in a card's header (refresh, a settings or tune icon), a calendar's
+  or a person's name chip, a temperature chip, a row that opens a person, a
+  reading chip that does something when tapped (a `div` with a click handler
+  is a target too) is at least 40px tall and 40px wide (`min-height` and
   `min-width`, never a fixed `height` under it), at 390px and at 1200px, with
   a gap between neighbours, so a finger on a phone hits the one it means. A
   row of chips wraps rather than shrinking them. Where a 40px box would move
   the layout (a word inside a sentence, a slim chip), keep the look and pad
-  the hit area: `padding-block` with an equal negative `margin-block`, or a
-  transparent `::before` that reaches 40px (not inside a box that clips it).
+  the box itself: `padding-block` with an equal negative `margin-block`, so
+  the element's own box (what a tap and a measure hit) is 40px. A transparent
+  `::before` does not count inside a row that scrolls sideways or any box
+  with `overflow` other than visible: it is clipped there, and the box a
+  finger can hit stays small.
   Morph does not resize a built card's buttons for it (a blanket rule pushed a
   twelve-column hour grid out of its card), so a grid of buttons that does not
   fit at 40px has fewer columns, wraps, or scrolls sideways inside its own box:
   never smaller buttons, never buttons pushed past the card's edge.
-- **Text is 4.5:1 against what it sits on, in light and dark themes.** Take
+- **Text is 4.5:1 against what it sits on, in light and dark themes, a
+  button's own word included.** A filled button ("Start" on an amber or
+  peach fill) uses a text colour picked against that fill, checked in each
+  theme, never the page's text colour by default. Take
   colours from the theme's variables (`--primary-text-color`,
   `--secondary-text-color`), never a fixed colour picked on one theme: an
   accent chosen on a dark page is unreadable on a light one. A small label
