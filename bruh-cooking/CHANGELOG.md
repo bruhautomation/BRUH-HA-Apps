@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+
+### Removed
+
+- The 0.2.1 changes (Problem on after 10 minutes offline, idle sensors keeping their last value, next cook in words) are taken back out while they are redone: the development loop's own monitor found scratch test files written inside the add-on's test suite while the change was made, and its rule is to revert and redo such a change from a clean start. They return in the next release (1295, 1296, 1297).
+
 ## 0.2.1
 
 ### Changed

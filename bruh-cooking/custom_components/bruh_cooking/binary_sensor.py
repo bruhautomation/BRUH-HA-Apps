@@ -82,12 +82,8 @@ class BrevilleBinarySensor(BrevilleEntity, BinarySensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
-        key = self.entity_description.key
-        if key == "cooking" and not self.coordinator.in_contact(self.appliance):
+        if self.entity_description.key == "cooking" and not self.coordinator.in_contact(self.appliance):
             return self.coordinator.last_known(self.appliance)
-        if key == "problem" and self.appliance.status.error == "none" and self.is_on:
-            # On with no error reported: the appliance has been out of contact.
-            return {"cause": "offline"}
         return None
 
     @property
@@ -99,8 +95,4 @@ class BrevilleBinarySensor(BrevilleEntity, BinarySensorEntity):
             # ended since), otherwise off.
             cook = appliance.last_cook
             return cook is not None and not cook.get("ended_at")
-        if self.entity_description.key == "problem" and self.coordinator.offline_problem(appliance):
-            # Out of contact past OFFLINE_PROBLEM_AFTER is a problem too; the
-            # status sensor's offline_reason says since when and why.
-            return True
         return self.entity_description.value_fn(appliance)
