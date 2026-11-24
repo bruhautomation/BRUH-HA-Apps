@@ -64,6 +64,7 @@ import atomic_write
 import categories
 import ha_data
 import memory_history
+import plain_words
 import textclip
 
 # Under /config, beside the document it is the other half of. `/data` is
@@ -1363,6 +1364,40 @@ BROWSE_KINDS = ("house", "area", "entity", "person", "rule", "unwatched")
 BROWSE_MAX = 200
 
 
+def app_subject(subject: str) -> str:
+    """The app a subject belongs to ("minecraft" for `minecraft:companion`),
+    or "" for a subject that is part of the house. An entity id never holds
+    a colon, and `area:`, `person:` and `check:` are the house's own; any
+    other `<app>:` prefix is a sibling add-on's world (a game, a garden),
+    which the browser names by its app and lists after the house (#1301)."""
+    subject = str(subject or "")
+    head, sep, rest = subject.partition(":")
+    if not sep or not rest or head in ("area", "person", "check") or "." in head:
+        return ""
+    return head
+
+
+def subject_word(subject: str, names: dict | None = None) -> str:
+    """What a person calls a subject nobody named in `names`: a person by
+    their name ("person:kaz" → "Kaz", or the person entity's name), a check
+    by its plain name, an app's subject by its app ("Minecraft"). "" for the
+    house and for an id with nothing better to say (#1301: chips read
+    `minecraft:companion` and `kaz`)."""
+    subject = str(subject or "")
+    names = names or {}
+    if subject.startswith("person:"):
+        slug = subject[7:].strip()
+        named = names.get(f"person.{slug.replace(' ', '_')}")
+        if named:
+            return str(named)
+        return " ".join(w[:1].upper() + w[1:]
+                        for w in slug.replace("_", " ").split())
+    if subject.startswith("check:"):
+        return plain_words.producer_name(subject)
+    app = app_subject(subject)
+    return plain_words.words_of(app) if app else ""
+
+
 def _kind_of(row: dict) -> str:
     """What a row is about, as the browser's filter chips name it.
 
@@ -1378,7 +1413,12 @@ def _kind_of(row: dict) -> str:
         return "unwatched"
     if predicate.startswith(EXCEPTION_PREFIX):
         return "rule"
-    kind = subject_kind(str(row.get("subject") or "house"))
+    subject = str(row.get("subject") or "house")
+    if app_subject(subject):
+        # A game's or a garden's fact is not a device of the house: it is
+        # listed under All and never counted under Devices.
+        return "other"
+    kind = subject_kind(subject)
     return "area" if kind == "check" else kind
 
 
@@ -1421,7 +1461,7 @@ def browse(*, query: str = "", kind: str = "", source: str = "",
     live = [r for r in _load() if not _expired(r, now)]
 
     def label(subj: str) -> str:
-        return str(names.get(subj) or "")
+        return str(names.get(subj) or subject_word(subj, names))
 
     def matches_query(row: dict) -> bool:
         if not words:
@@ -1463,7 +1503,7 @@ def browse(*, query: str = "", kind: str = "", source: str = "",
     areas_of = subject_areas or {}
     subjects = sorted(
         _fold_rooms([{"id": subj, "name": label(subj) or "",
-                      "kind": subject_kind(subj),
+                      "kind": "other" if app_subject(subj) else subject_kind(subj),
                       "area": str(areas_of.get(subj) or ""), "count": n}
                      for subj, n in subject_counts.items()]),
         key=lambda r: (-r["count"], (r["name"] or r["id"]).lower()))[:SUBJECT_FACET_MAX]
@@ -1485,7 +1525,10 @@ def browse(*, query: str = "", kind: str = "", source: str = "",
         rows.sort(key=lambda r: (-_score(r, now), -int(r.get("ts") or 0),
                                  str(r.get("id") or "")))
     else:
-        rows.sort(key=lambda r: (-int(r.get("ts") or 0), str(r.get("id") or "")))
+        # Newest first, the house before an app's world: a game's choice pad
+        # filed a moment ago is not what opening Knowledge is for (#1301).
+        rows.sort(key=lambda r: (bool(app_subject(str(r.get("subject") or ""))),
+                                 -int(r.get("ts") or 0), str(r.get("id") or "")))
 
     offset = max(0, int(offset or 0))
     limit = max(1, min(int(limit or 50), BROWSE_MAX))

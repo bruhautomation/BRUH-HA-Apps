@@ -6872,7 +6872,10 @@ button.kfactsubj:hover { color: var(--accent-2);
   .kbrowse { grid-template-columns: minmax(0, 1fr); }
   .ksubjects { display: none; }
   .ksubsel { display: block; flex: 1 1 100%; }
-  .kmain .kfbar select:not(.ksubsel) { flex: 1 1 calc(50% - var(--sp-2)); min-width: 0; }
+  /* Each as wide as what it says, then sharing what is left: at half the
+     row each, "Taught by: Anyone" was cut to "Taught by: Any…" (#1301). A
+     long pick takes the row and the sort wraps under it. */
+  .kmain .kfbar select:not(.ksubsel) { flex: 1 1 auto; min-width: 0; }
 }
 /* On a phone the section picker above already names the pane. */
 @media (max-width: 639.98px) {

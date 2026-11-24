@@ -9587,13 +9587,20 @@ document.querySelectorAll(".kfoldname").forEach((b) => b.addEventListener("click
 // writer stamped on it. An unknown source falls through as itself: a new
 // writer showing its own tag is odd, and showing nothing is a lie.
 function kSourceLabel(src) {
-  return {
+  const known = {
     insights: "discovered", homeowner: "your answer", confirmed: "you confirmed",
     correction: "your correction", feedback: "feedback", user: "added by you",
     panel: "added by you", assist: "voice", terminal: "terminal",
     "terminal-forget": "removal, from the terminal",
     study: "study session", automation: "automation",
-  }[src] || src;
+    bruh_minecraft: "Minecraft", minecraft_approval: "Minecraft",
+    gardenrx: "GardenRX", house_book: "house book",
+  }[src];
+  if (known) return known;
+  // A writer this list does not name is still said in words, never as its
+  // id (#1301: "bruh_minecraft" in the Taught by picker).
+  const words = String(src || "").replace(/^bruh_/, "").replace(/[_:.-]+/g, " ").trim();
+  return words || String(src || "");
 }
 
 // One fact still waiting for the document — a line of the inbox itself, not
@@ -9645,7 +9652,16 @@ function factSubjectLabel(subject) {
     const words = s.split("|")[0].slice(5).replace(/_/g, " ");
     return words.charAt(0).toUpperCase() + words.slice(1);
   }
-  if (s.startsWith("person:")) return s.slice(7);
+  // The server names every subject it can (`facts_store.subject_word`);
+  // this is the same reading for one it sent no name for.
+  if (s.startsWith("person:")) {
+    return s.slice(7).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+  const app = /^([a-z][a-z0-9_]*):./.exec(s);
+  if (app && !["area", "check"].includes(app[1])) {
+    const w = app[1].replace(/_/g, " ");
+    return w.charAt(0).toUpperCase() + w.slice(1);
+  }
   return s;
 }
 
@@ -9898,6 +9914,8 @@ function paintFactSubjects() {
   const rooms = subjects.filter((s) => s.kind === "area").sort(byName);
   const house = subjects.filter((s) => s.kind === "house" || s.kind === "person" || s.kind === "check");
   const devices = subjects.filter((s) => s.kind === "entity");
+  // A sibling app's world (a game, a garden): after the house, by its name.
+  const others = subjects.filter((s) => s.kind === "other").sort(byName);
   const byArea = new Map();
   devices.forEach((d) => {
     const k = d.area || "";
@@ -9925,6 +9943,7 @@ function paintFactSubjects() {
     addGroup("Rooms", rooms);
     areaNames.forEach((a) => addGroup(a ? `Devices · ${a}` : "Devices · no room",
       byArea.get(a).slice().sort(byName)));
+    addGroup("Other", others);
     if (factsView.subject && !subjects.some((s) => s.id === factsView.subject)) {
       const opt = el("option", null, factSubjectLabel(factsView.subject));
       opt.value = factsView.subject;
@@ -9966,6 +9985,7 @@ function paintFactSubjects() {
   section("Rooms", rooms, false);
   areaNames.forEach((a) => section(a ? a : "Devices with no room",
     byArea.get(a).slice().sort(byName), true));
+  section("Other", others, false);
   if (!any) {
     rail.appendChild(el("div", "kempty small", find ? "No room or device matches."
       : "Nothing is filed under a room or device yet."));
