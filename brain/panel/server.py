@@ -18879,6 +18879,8 @@ def _said_unconditioned_areas(entity_areas: dict) -> set[str]:
             if not facts_store._expired(r, now))  # noqa: SLF001
     except Exception:  # noqa: BLE001 — unread says nothing about a room
         return set()
+    # What was said of the heating, never of the insulation alone (#1336).
+    said = said.get("heating") or {}
     areas = {str(a) for a in said.get("areas") or () if a}
     areas |= {str(entity_areas.get(e) or "") for e in said.get("entities") or ()}
     # A room with a thermostat of its own is heated whatever was said about
