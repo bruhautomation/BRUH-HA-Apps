@@ -1010,9 +1010,10 @@ async def collect(now: float | None = None) -> dict:
     except Exception as exc:  # noqa: BLE001
         snap["facts"] = {}
         _mark("facts", False, f"the facts store could not be read: {exc}")
-    # The rooms the household said nothing heats ("the loft is mostly
-    # uninsulated", a Wrong reason on a garage sensor), for the checks
-    # that compare heated rooms (`thermal.conditioned_areas`). Unreadable
+    # The rooms the household said nothing heats ("the loft is not
+    # heated", a Wrong reason on a garage sensor), for the checks that
+    # compare heated rooms (`thermal.said_unconditioned`), and the ones
+    # said to be uninsulated, which only the frost row reads. Unreadable
     # is empty: every room with a thermostat is compared, as before.
     try:
         import facts_store  # noqa: PLC0415

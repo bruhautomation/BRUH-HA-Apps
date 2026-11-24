@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.14
+
+### Fixed
+
+- While Claude's usage limit has paused brAIn, nothing brAIn starts on its own runs until the pause ends (it used to keep starting looks that the account refused, about one a minute, on the default budget). Your own chat and presses can still try, and everything resumes by itself when the pause ends (1309).
+- A heated room you described as "uninsulated" is no longer treated as unheated, so it keeps its freeze and heat-loss checks. Only saying a room is not heated sets it aside, and never a room with its own thermostat (1336).
+- An appliance that says it is offline no longer counts as "answering", so its controls are not reported as broken entities one by one; the device is reported once as unavailable (1337).
+
 ## 5.5.13
 
 ### Fixed

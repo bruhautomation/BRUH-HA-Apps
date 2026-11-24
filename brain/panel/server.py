@@ -8393,10 +8393,7 @@ async def _offer_milestones(now: float) -> int:
     # evaluated, and nothing is settled by a pass that could not run: a
     # milestone is armed until a card exists, so a paused house simply
     # gets the card on the pass after it is unpaused.
-    settings = settings_store.load()
-    if not engine.get_auth() or not settings["auto_enabled"]:
-        return 0
-    if usage_store.budget_state(settings)["blocked"]:
+    if _resident_gate(settings_store.load()):
         return 0
     snapshot = await _house_snapshot(now)
     payloads = await asyncio.to_thread(_milestone_payloads)
@@ -14537,10 +14534,12 @@ def _resident_prune_settled(offered_before: set[int],
 def _resident_gate(settings: dict) -> str:
     """Why no run may be spawned right now, or "".
 
-    The three gates every scheduled Claude run answers to (`_ask_why`'s
-    rule). Failing one HOLDS the batch rather than surfacing it, which is
-    the opposite of what the retired triage drain did with the same three —
-    and deliberately: triage was about to hide a row, where this is about to
+    The gates every unattended Claude run answers to (`_ask_why`'s rule):
+    a credential, the automatic switch, the usage-limit pause and the
+    budget. One function, asked by every producer that starts a run on its
+    own, so a gate added here reaches all of them. Failing one HOLDS the
+    batch rather than surfacing it, which is the opposite of what the
+    retired triage drain did with the same gates — and deliberately: triage was about to hide a row, where this is about to
     look at one and the row is on `triaging` either way. `triage.STALE_S`
     is what makes the wait bounded, and the sweep at the top of every pass
     is what makes it visible.
@@ -14549,18 +14548,22 @@ def _resident_gate(settings: dict) -> str:
         return "there is no Claude credential"
     if not settings.get("auto_enabled"):
         return "automatic runs are paused"
+    # The usage-limit pause, in EVERY budget mode (#1309). It was asked only
+    # under "No limit", on the belief that a percentage budget always stops
+    # first; it does not (a weekly window, an estimate, another device on
+    # the account), and a house on a percentage budget had the card
+    # scheduler resting until the reset while the Resident went on starting
+    # runs the account refused, about one a minute. The account refusing is
+    # a fact about the account, not about the budget the owner chose. The
+    # first refused run sets it (`_journal_rate_listener`) and it lifts on
+    # its own; a press never comes through here.
+    until = _rate_limited_now()
+    if until:
+        return ("Claude's usage limit was reached; automatic runs resume at "
+                + _house_clock(until))
     try:
         if usage_store.budget_state(settings)["blocked"]:
             return "the session usage budget is spent"
-        # "No limit: run until Anthropic rate-limits" takes the budget away,
-        # so the rate-limit pause is what holds the looks in that mode. A
-        # percentage install is gated exactly as it always was.
-        if settings.get("budget_no_limit") is True:
-            until = _rate_limited_now()
-            if until:
-                return ("Anthropic's rate-limit was reached; automatic runs "
-                        "resume at " + time.strftime(
-                            "%H:%M", time.localtime(until)))
     except Exception as exc:  # noqa: BLE001 — a budget that cannot be read
         # must not stop the cheap tier: `budget_state` already falls back
         # to an estimate, and a look is the half the plan spends freely.
@@ -15307,9 +15310,14 @@ async def _resident_investigations(queued: list[tuple[dict, str, int]],
             await _outcome(signal, "duplicate", "", now, why, refines)
             continue
         if allowance is None:
-            allowance = LEDGER.allows(
+            # The pass was let in by `_resident_gate`, and an investigation
+            # it ran may since have been refused for the usage limit: the
+            # same gate is asked again before the next one, so one refusal
+            # parks the rest instead of starting them into the pause.
+            held_by = _resident_gate(settings) if ran else ""
+            allowance = ((False, held_by) if held_by else LEDGER.allows(
                 _resident_tier(resident.JOB_INVESTIGATE, thinking), thinking,
-                now=now)
+                now=now))
         allowed, reason = allowance
         if not allowed:
             RESIDENT_STATE["last_error"] = reason
@@ -16426,10 +16434,7 @@ async def _ask_why(now: float, reason: str = "schedule") -> int:
     # a day on a question nobody asked. The *pressed* route deliberately
     # skips the budget, because "asking a question by hand always runs" is
     # the other half of that promise.
-    settings = settings_store.load()
-    if not engine.get_auth() or not settings["auto_enabled"]:
-        return 0
-    if usage_store.budget_state(settings)["blocked"]:
+    if _resident_gate(settings_store.load()):
         return 0
     # A guess a full queue turned away earlier is re-proposed for nothing
     # the moment there is room — before anything new is paid for.
@@ -17041,9 +17046,7 @@ async def _offer_playbooks(snapshot: dict, now: float) -> int:
     # for here. The PROPOSAL is not gated — it is deterministic and costs
     # nothing — so a gated pass offers the card with the sentence it was
     # composed with, which is exactly what a failed run leaves.
-    settings = settings_store.load()
-    may_describe = (bool(engine.get_auth()) and settings["auto_enabled"]
-                    and not usage_store.budget_state(settings)["blocked"])
+    may_describe = not _resident_gate(settings_store.load())
     offered = 0
     for obj in found:
         if await asyncio.to_thread(proposals.knows, obj):
@@ -18883,6 +18886,8 @@ def _said_unconditioned_areas(entity_areas: dict) -> set[str]:
             if not facts_store._expired(r, now))  # noqa: SLF001
     except Exception:  # noqa: BLE001 — unread says nothing about a room
         return set()
+    # What was said of the heating, never of the insulation alone (#1336).
+    said = said.get("heating") or {}
     areas = {str(a) for a in said.get("areas") or () if a}
     areas |= {str(entity_areas.get(e) or "") for e in said.get("entities") or ()}
     # A room with a thermostat of its own is heated whatever was said about
