@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.2
+
+### Removed
+
+- The 0.2.1 changes (Problem on after 10 minutes offline, idle sensors keeping their last value, next cook in words) are taken back out while they are redone: the development loop's own monitor found scratch test files written inside the add-on's test suite while the change was made, and its rule is to revert and redo such a change from a clean start. They return in the next release (1295, 1296, 1297).
+
+## 0.2.1
+
+### Changed
+
+- An appliance out of contact for 10 minutes turns its Problem sensor on (with `cause: offline`), and the status says since when ("Offline since 16:04, when it was last heard from"). An appliance kept unplugged between cooks will show Problem on while it is unplugged (1296).
+
+### Fixed
+
+- Preheat, time remaining, active mode and error no longer read "unavailable" while the appliance is offline: they keep their last value, marked as old, so they are not mistaken for broken entities. Controls that cannot work offline still go unavailable (1295).
+- "Last cook" says the history is unknown for an appliance that has never been heard from, instead of "no cook yet" (1296).
+- The next cook is described in words ("Heat the water to 60 °C and hold it there until the cook is stopped: there is no timer"), with a matching preset named when one fits (1297).
+
 ## 0.2.0
 
 ### Changed
