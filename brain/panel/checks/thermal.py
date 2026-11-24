@@ -375,10 +375,15 @@ _HEATER_WORDS = re.compile(
 # What the household says about a space nothing conditions. "Not heated"
 # and "isn't heated" are the same sentence; "well insulated" is the
 # opposite one and must not match, so every alternative names the absence.
-_UNCONDITIONED = re.compile(
-    r"\b(unheated|uninsulated|unconditioned|non[- ]?heated|"
-    r"(?:not|isn'?t|is not|never|no)\s+(?:heated|insulated|conditioned)|"
-    r"no (?:heating|heat|insulation|thermostat))\b", re.I)
+# Insulation is matched apart from heating (#1336): "the bedroom wall is
+# uninsulated" is said of heated rooms, and insulation is not heating.
+_UNHEATED = re.compile(
+    r"\b(unheated|unconditioned|non[- ]?heated|"
+    r"(?:not|isn'?t|is not|never|no)\s+(?:heated|conditioned)|"
+    r"no (?:heating|heat|thermostat))\b", re.I)
+_UNINSULATED = re.compile(
+    r"\b(uninsulated|(?:not|isn'?t|is not|never|no)\s+insulated|"
+    r"no insulation)\b", re.I)
 
 
 def unconditioned_from(rows) -> dict:
@@ -391,18 +396,25 @@ def unconditioned_from(rows) -> dict:
     sorted, for the snapshot: ``stated`` is the part said as a fact about
     the house rather than as the reason for a Wrong (`source` is not
     `correction`), which is all `frost_ahead` names a space on (#1200).
+    ``heating`` is the part that says the HEATING is absent, not only the
+    insulation (#1336): it is what `said_unconditioned` reads, so a room
+    called uninsulated is never stood down by a check for that alone,
+    while `frost_ahead` still names it as a space that gets cold.
     """
-    found = {"all": (set(), set()), "stated": (set(), set())}
+    found = {"all": (set(), set()), "stated": (set(), set()),
+             "heating": (set(), set())}
     for row in rows or ():
         if not isinstance(row, dict):
             continue
-        if not _UNCONDITIONED.search(str(row.get("text") or "")):
+        text = str(row.get("text") or "")
+        heating = bool(_UNHEATED.search(text))
+        if not heating and not _UNINSULATED.search(text):
             continue
         subjects = row.get("subjects")
         if not isinstance(subjects, list) or not subjects:
             subjects = [row.get("subject") or ""]
         into = ["all"] + ([] if row.get("source") == "correction"
-                          else ["stated"])
+                          else ["stated"]) + (["heating"] if heating else [])
         for subject in subjects:
             subject = str(subject or "")
             for which in into:
@@ -412,26 +424,20 @@ def unconditioned_from(rows) -> dict:
                 elif "." in subject and ":" not in subject:
                     entities.add(subject)
     areas, entities = found["all"]
-    stated_areas, stated_entities = found["stated"]
-    return {"areas": sorted(areas), "entities": sorted(entities),
-            "stated": {"areas": sorted(stated_areas),
-                       "entities": sorted(stated_entities)}}
-
-
-def conditioned_areas(house: House) -> set[str]:
-    """The area ids something heats: a thermostat, or a heater switch.
-
-    A `climate` entity counts whatever it is doing now — off in August is
-    still the room's heating — and a room the household said is
-    unheated or uninsulated (`snap["unconditioned"]`, read off the facts
-    store by the collector) is not one, thermostat or not.
-    """
-    return heated_areas(house) - said_unconditioned(house)
+    out = {"areas": sorted(areas), "entities": sorted(entities)}
+    for key in ("stated", "heating"):
+        key_areas, key_entities = found[key]
+        out[key] = {"areas": sorted(key_areas),
+                    "entities": sorted(key_entities)}
+    return out
 
 
 def heated_areas(house: House) -> set[str]:
     """The area ids something heats by what is in them (a thermostat, a
-    heater switch), whatever the household said about the room."""
+    heater switch), whatever the household said about the room.
+
+    A `climate` entity counts whatever it is doing now — off in August is
+    still the room's heating."""
     heated: set[str] = set()
     for eid in set(house.states) | set(house.registry):
         domain = domain_of(eid)
@@ -445,23 +451,35 @@ def heated_areas(house: House) -> set[str]:
     return heated
 
 
-def said_unconditioned(house: House) -> set[str]:
-    """The area ids the household said nothing heats (`snap["unconditioned"]`):
-    a room named, or the room of a sensor named.
-
-    A fact about the ROOM, not a correction of one check, so every check
-    that judges a room by how it cools against the house's heating reads
-    it (`heat_loss` through `conditioned_areas`, `window`, `freeze`): a
-    porch the owner said is unheated tracks outside, and its falling is
-    not a fault. A room with no heating that nobody described is left as
-    it was.
-    """
+def _said_areas(house: House, part: str = "") -> set[str]:
+    """The area ids named in `snap["unconditioned"]` (or its ``part``): a
+    room named, or the room of a sensor named."""
     said = house.snap.get("unconditioned") or {}
+    if part:
+        said = said.get(part) if isinstance(said, dict) else None
     if not isinstance(said, dict):
         return set()
     areas = {str(a) for a in said.get("areas") or () if a}
     areas |= {house.area_id_of(str(e)) for e in said.get("entities") or ()}
     return {a for a in areas if a}
+
+
+def said_unconditioned(house: House) -> set[str]:
+    """The area ids the household said nothing heats, and nothing does.
+
+    A fact about the ROOM, not a correction of one check, so every check
+    that judges a room by how it cools against the house's heating reads
+    it (`heat_loss`, `window`, `freeze`): a porch the owner said is
+    unheated tracks outside, and its falling is not a fault. A room with
+    no heating that nobody described is left as it was.
+
+    Two things never make a room one (#1336): a statement about its
+    insulation alone (the ``heating`` part of the snapshot only), and
+    anything said about a room with a thermostat or a heater of its own
+    (`heated_areas`), which is heated whatever was said about its walls.
+    Read by `climate.freeze`, the safety lane, so it may only ever shrink.
+    """
+    return _said_areas(house, "heating") - heated_areas(house)
 
 
 def follows_outside(house: House, eid: str) -> str:
@@ -482,9 +500,7 @@ def follows_outside(house: House, eid: str) -> str:
     from . import devices  # noqa: PLC0415 — it imports this package's util
 
     area = house.area_id_of(eid)
-    # "Uninsulated" is said of heated rooms too: a room with a thermostat
-    # or a heater of its own is heated whatever was said about its walls.
-    if area not in said_unconditioned(house) or area in heated_areas(house):
+    if area not in said_unconditioned(house):
         return ""
     if eid not in _rooms(house.snap)[1]:
         return ""
@@ -522,7 +538,7 @@ def heat_loss(snap: dict, now: float) -> list[dict]:
     store, rooms = _rooms(snap)
     house = House(snap)
     rooms = _room_air(house, rooms, "climate.heat_loss")
-    heated = conditioned_areas(house)
+    heated = heated_areas(house)
     measured = {eid: e for eid, e in rooms.items()
                 if e.get("k") and house.area_id_of(eid) in heated}
     unheated = sorted(eid for eid, e in rooms.items()
@@ -1142,7 +1158,11 @@ def frost_ahead(snap: dict, now: float) -> list[dict]:
     if night is None:
         return []
     house = House(snap)
-    conditioned = conditioned_areas(house)
+    # Every room anything was said of, insulation included, may be named
+    # as a space that gets cold: naming one more is the safe direction for
+    # a frost warning, and `said_unconditioned`'s narrowing is for the
+    # checks that stand a room DOWN (#1336).
+    conditioned = heated_areas(house) - _said_areas(house)
     # A room is named as a cold space on what the household STATED about
     # it, never on the reason they gave for waving off a report about it:
     # "it's an unheated porch" said to the heat-loss card means leave the

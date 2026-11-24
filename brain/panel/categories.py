@@ -462,9 +462,9 @@ CARD_SCHEMA = {
         # drawn under the summary; filled from the card's own findings when
         # left out (`card_verdict.next_step`).
         "next": {"type": "string",
-                 "description": "One thing to do when the verdict is not all fine; empty when it is."},
+                 "description": "One thing the household can do; required with worth a look or needs action, empty when all fine."},
         "summary": {"type": "string",
-                    "description": "First sentence: 'Normal, because X compared with Y' or 'Worth a look, because X compared with Y' against this house's own norm; never the title's figures again."},
+                    "description": "First sentence: what this means for the household, in everyday words, judged against this house's own norm; the measurements after it; never the title's figures again."},
         "highlights": {
             "type": "array",
             "items": {
@@ -532,19 +532,19 @@ CARD_SCHEMA = {
 }
 
 
-_CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The highlights ARE the product: concrete numbers with names and times. The title holds the conclusion. The summary's FIRST sentence is the verdict and its reason against this house's own norm: "Normal, because X compared with Y" or "Worth a look, because X compared with Y" (the same judgement as `verdict`; never the title's figures again). A change the season explains (cooling stopping in November, heating starting) is normal. When all is normal, title and summary both say so in one short sentence, with at most two highlights, none with a status, and "html": "".
+_CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The highlights ARE the product: concrete numbers with names and times. The title holds the conclusion. The summary's FIRST sentence says what this means for the household, in everyday words: whether anything is wrong and whether it matters, judged against this house's own norm ("The backup heater ran for about 6 minutes last night, which is normal for a night this cold"). No term only a specialist knows and at most one figure in it; the measurements (the X compared with Y) come after it and in the highlights, never the title's figures again. `verdict` is picked from that sentence: expected (the season, the weather, this house's usual) or nothing changed is all fine, and a change the season explains (cooling stopping in November, heating starting) is normal. When all is normal, title and summary both say so in one short sentence, with at most two highlights, none with a status, and "html": "".
 
 A CARD EXISTS FOR A CHANGE OR A DECISION. If the honest conclusion is "nothing unusual", "nothing happened" or "no comparison possible", the card is not worth showing: brAIn drops it. A card worth keeping names ONE thing to do, or says everything is normal in a single sentence. Every number is given against a normal the reader can see ("62 °F, usually 68 °F"), and the Y of the verdict is this unit's OWN history on like days ("5 defrosts vs usually 2–3 on days below freezing"), never a textbook range. Any range says what it is a range of ("a defrost usually warms the coil to 89–101 °F"). A weather station is "the weather station" (or "the nearest airport" when it is one), never its code. A term only a specialist knows (aux heat, defrost, stage, setpoint, differential) is said in everyday words ("the backup heater", "the outdoor unit melting frost") or left out.
 
 OUTPUT CONTRACT (strict JSON; title, summary, highlights and html are required):
-{"title": "max 60 chars", "verdict": "all fine|worth a look|needs action", "next": "a step", "summary": "1-2 sentences, max ~220 chars, the first 'Normal|Worth a look, because X compared with Y'",
+{"title": "max 60 chars", "verdict": "all fine|worth a look|needs action", "next": "a step", "summary": "1-2 sentences, max ~220 chars, the first what it means for the household",
  "highlights": [{"label": "Metric", "value": "42 kWh", "delta": "+12% vs avg (optional)", "status": "good|warning|serious|critical (optional)"}],
  "hypotheses": ["optional, usually none"], "learned": ["optional, max 3"],
  "findings": [{"text": "ONE sentence, under 120 chars", "detail": "the evidence", "fix": "the specific change", "severity": "info|warning|serious|critical", "fixable": true, "entity_id": "sensor.example (optional)"}],
  "opportunities": [{"text": "optional, max 2", "entities": ["light.example"]}], "fixed": ["entity_ids of listed problems already fixed"],
  "tags": ["2-4 lowercase topic tags"], "live": ["optional entity_ids to keep current"], "html": "one complete self-contained HTML document"}
 
-verdict: one judgement, shown as a chip; the summary never repeats it. next: ONE step; none when all fine.
+verdict: one judgement, shown as a chip; the summary never repeats it. next: ONE step the household can take, always given with worth a look or needs action; with no step to give, the verdict is all fine.
 highlights: 3-6 checkable data points, each with its unit, the entity/room/person it belongs to, and a time when relevant. "delta" compares against the period; "status" only when something deserves attention.
 tags: what the card is ABOUT, not the category it was asked for.
 hypotheses: usually ZERO, and never the ending. A belief the data cannot settle that would change how you read this home, answerable yes or no; never one memory answers.
@@ -577,7 +577,7 @@ ANALYSIS RULES:
 - Calling a reading unusual names the cause you checked, or says none was found and gives one next step; "not a leak" needs its evidence. Before describing a missing or odd event, check its sensor's availability and battery; if it was offline, the sensor is the story.
 - Idle is not broken: a machine an automation starts waits until that automation's sensor passes its threshold; read both first.
 - """ + prompt_kit.ADDRESS + """
-- Thin data: visualize what IS there. Never mention the recorder, its retention, missing history or a comparison it could not make; make the comparison the data does allow. No guess ("may", "might", "could be") and no "could not check" sentence in the summary or findings: leave it out, or put the belief in `hypotheses`. A blind spot or nothing happening is never the headline.
+- Thin data: visualize what IS there. Never mention the recorder, its retention, missing history or a comparison it could not make; make the comparison the data does allow. No guess ("may", "might", "could be"), no "could not check" sentence and nothing about your own run (what the reply needed, what you read or could not) in the summary or findings: leave it out, or put the belief in `hypotheses`. A limit is said only when it changes what the household should do, with that consequence. A blind spot or nothing happening is never the headline, and never the last sentence.
 - A day or hour with NO samples is missing data, never zero: leave it out of BOTH sides of any comparison, draw it as a gap; too little left means no comparison.
 - Before saying "nothing for N h", check related sensors and history_incomplete; if they disagree, report that, not silence.
 - OPEN QUESTIONS are unconfirmed; name one as the possible cause when it could explain the card.

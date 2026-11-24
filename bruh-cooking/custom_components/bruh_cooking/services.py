@@ -33,6 +33,7 @@ from .appliance import (
     OVEN_MODES,
     WAITING_STATES,
     CookSettings,
+    bov950_phase,
     oven_mode_defaults,
 )
 from .const import (
@@ -311,28 +312,33 @@ def next_cook_summary(
                 f"{_span(settings.duration_s)} timer starts when Continue is pressed."
             )
     else:
-        mode = OVEN_MODES.get(settings.mode or "") or OVEN_MODES["bake"]
+        try:
+            # What Cook sends: a temperature, level and time filled in and kept
+            # to the mode's limits.
+            phase = bov950_phase(settings)
+        except ValueError:
+            return "This oven mode cannot be started from Home Assistant: choose another mode first.", None
+        mode = OVEN_MODES[settings.mode]
         what = mode.option.replace("_", " ").capitalize()
-        if mode.temp:
-            what += f" at {_degrees(hass, settings.temperature_c)}"
+        if "temperatureCelsius" in phase:
+            what += f" at {_degrees(hass, phase['temperatureCelsius'])}"
         else:
             from .panel_spec import LEVELS
 
             level = next(
-                (name for name, value in LEVELS.get(mode.type, {}).items() if value == settings.level),
+                (name for name, value in LEVELS.get(mode.type, {}).items() if value == phase.get("level")),
                 None,
             )
             if level:
                 what += f" on {level}"
-        seconds = settings.duration_s or mode.default_seconds(settings.level)
-        text = f"{what} for {_span(seconds)}. The oven waits for Start to be pressed on its panel"
+        text = f"{what} for {_span(phase['seconds'])}. The oven waits for Start to be pressed on its panel"
         if not mode.preheat:
             text += ", then the timer starts."
         elif settings.auto_start_timer:
             text += ", preheats, then starts the timer by itself."
         else:
             text += ", preheats, then waits for Continue before the timer starts."
-        if settings.keep_warm and mode.keep_warm_allowed:
+        if phase["keepWarm"]:
             text += " When the time is up it keeps the food warm."
         else:
             text += " When the time is up it turns off."

@@ -95,9 +95,10 @@ export const CROP_CATALOG: CatalogEntry[] = [
 
   // ── Alliums ──
   { name: 'Onions', cropGroup: 'Alliums', emoji: '🧅' },
-  { name: 'Garlic', cropGroup: 'Alliums', emoji: '🧄' },
+  // Planted in the fall: over winter the bed holds next year's bulbs, resting.
+  { name: 'Garlic', cropGroup: 'Alliums', emoji: '🧄', annual: false },
   { name: 'Leeks', cropGroup: 'Alliums', emoji: '🧅' },
-  { name: 'Shallots', cropGroup: 'Alliums', emoji: '🧅' },
+  { name: 'Shallots', cropGroup: 'Alliums', emoji: '🧅', annual: false },
   { name: 'Scallions', cropGroup: 'Alliums', emoji: '🧅' },
 
   // ── Leafy Greens ──

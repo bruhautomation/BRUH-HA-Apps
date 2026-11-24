@@ -13,9 +13,11 @@ its CLAIMS. Three rules, each pure over the parsed reply so `review` and
   (`BLIND_WHY`), and a first or pressed one is stored `blind` and folded
   into the quiet line. An ASKED card is the answer to a question and is
   never folded: "it stayed closed" is what somebody wanted to know.
-* **A data gap is at most one short line** (`trim_gaps`): the first gap
-  sentence of the summary under `GAP_LINE_MAX` stays, every other goes,
-  and a tile whose value is a gap ("no data", "n/a") is not a tile.
+* **A data gap is at most one short line, and only where it changes what
+  to do** (`trim_gaps`): beside real content, one gap sentence under
+  `GAP_LINE_MAX` stays on a worth-a-look or needs-action card when
+  something follows it, every other goes, and a tile whose value is a gap
+  ("no data", "n/a") is not a tile.
 * **A card and a finding about one thing are one item**
   (`finding_twin`): a card every entity of which — or every entity its
   title names — is an open finding's entity, or on that entity's device,
@@ -94,7 +96,10 @@ _GAP_VALUE = re.compile(
     r"not recorded|none recorded|can['’]?t see|unavailable|[—–-]+|\?)\s*",
     re.I)
 
-_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-Z0-9“\"'])")
+# A sentence starts with a capital, a figure or a quote — or with brAIn,
+# whose name opens lower case: "brAIn could not read the float." was
+# glued to the sentence before it and kept as content (#1328).
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-Z0-9“\"']|brAIn\b)")
 
 _ATTENTION = ("warning", "serious", "critical")
 
@@ -223,16 +228,31 @@ def _only_gaps(obj: dict) -> bool:
         str(h.get("value") or "")) for h in obj.get("highlights") or [])
 
 
-def trim_gaps(out: dict, changed: list[str]) -> None:
-    """At most one short gap line in the summary, and no gap tiles."""
+def trim_gaps(out: dict, changed: list[str], verdict: str = "") -> None:
+    """No gap line the household cannot act on, and no gap tiles.
+
+    Beside anything else the card says, a sentence about what brAIn could
+    not see stays only on a card that asks for something (``verdict`` worth
+    a look or needs action), where a limit can change what to do, and only
+    when something follows it: one short line, never the card's last word
+    (#1311, #1328). On an all-fine card, or one with no verdict, a limit
+    changes nothing anybody does, and it went. A card that is ONLY gaps is
+    left whole: `blind_lead` decides what it is."""
     summary = str(out.get("summary") or "")
     parts = [p for p in _SENTENCE_END.split(summary.strip()) if p]
     kept, gaps = [], 0
     content = [p for p in parts if not _RUN_NOTE.search(p)]
-    for part in parts:
+    news = [p for p in content if not is_gap(p)]
+    asks = verdict in ("worth a look", "needs action")
+    for i, part in enumerate(parts):
         if _RUN_NOTE.search(part) and content:
             continue                    # brAIn's own process, never kept
-        if is_gap(part):
+        if is_gap(part) and news:
+            last = not any(not is_gap(p) for p in parts[i + 1:])
+            if not asks or last or gaps or len(part) > GAP_LINE_MAX:
+                continue
+            gaps += 1
+        elif is_gap(part):
             if gaps or len(part) > GAP_LINE_MAX:
                 continue
             gaps += 1

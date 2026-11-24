@@ -454,7 +454,10 @@ SYSTEM = prompt_kit.assemble(
   may say the house is empty; it never says who is where or anything
   about sleep.
 - The sentence uses only numbers and entity ids that appear in the
-  summary, and calls a device by its name.""",
+  summary, and calls a device by its name.
+- The sentence agrees with house_mode and says what stands out; no
+  reading (a temperature, a wattage, the weather) unless it is what
+  stands out.""",
 )
 
 SCHEMA = {
