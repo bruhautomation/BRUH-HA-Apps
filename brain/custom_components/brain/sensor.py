@@ -1135,8 +1135,9 @@ async def async_browser_snapshot(hass: HomeAssistant) -> tuple[str, dict]:
 class BrowserStatusSensor(SensorEntity):
     """`sensor.bruh_browser_status`: idle / running / needs_you / done /
     failed (or unknown, with a reason). Attributes: when the last errand
-    finished, its step count, and whether it bought anything. Read-only,
-    and nothing of the errand's own content."""
+    finished, its step count, whether it bought anything, and its kind,
+    store and a one-sentence outcome. Read-only, and nothing of the
+    errand's own words or report (`browser_status`)."""
 
     _attr_has_entity_name = False
     _attr_should_poll = True
