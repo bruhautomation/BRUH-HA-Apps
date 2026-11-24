@@ -6,7 +6,7 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ### Fixed
 
-- The BRUH Browser status sensor says what the last errand was: a short title ("Shopping cart", "Order history"), the store, and one plain sentence about how it ended ("A cart of 3 items is ready for your approval; nothing was bought"). It is built from the errand's own fields only, so no address, order number or account name can reach the sensor (1270).
+- The BRUH Browser status sensor says what the last errand was: a short title ("Shopping cart", "Order history"), the store, and one plain sentence about how it ended ("A cart of 3 items is ready for your approval; nothing was bought"). The title and the sentence are built from the errand's own fields only, never from its words or report; the store is kept only when it looks like a short store name, so a link, an e-mail address, a phone, street, order or card number is left out (1270).
 
 ## 5.5.10
 

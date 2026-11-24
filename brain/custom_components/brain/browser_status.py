@@ -16,8 +16,11 @@ from the row's typed fields (`kind`, `purchase`, `history`, `state`,
 address, and its report, its `error` and the question it waits on are the
 model's prose after reading shop pages, which can hold an order number or an
 account name. The store is the one string taken from the errand (the
-cart's or the saved profile's), cut to one short line and dropped when it
-has the shape of a link or an address (`/`, `@`, `:`). The words, the cart's
+cart's or the saved profile's), cut to one short line of at most four words and
+dropped when it has the shape of a link, an e-mail address, a masked card or
+a long number (`/`, `@`, `:`, `*`, four digits in a row). That is a shape
+check, not a guarantee: a short name-like string the model wrote into the
+store field still passes. The words, the cart's
 items and total, the report, the order number and every address are never
 copied into an attribute: they are the household's shopping, and a state
 attribute is readable by every dashboard and log.
@@ -29,6 +32,7 @@ with a `reason` when the add-on cannot be asked, never the last answer.
 """
 from __future__ import annotations
 
+import re
 import unicodedata
 from datetime import datetime, timezone
 
@@ -39,10 +43,14 @@ BROWSER_PORT = 8105
 TOKEN_DIR = ".bruh_browser"
 TOKEN_FILENAME = "api_token"
 FINISHED = ("done", "failed", "stopped")
-STORE_CHARS = 60
-# Characters a store's name never needs and a link, an e-mail address or a
-# "key: value" line always has.
-NOT_IN_A_STORE = set("/@:\\<>{}[]|=?#")
+STORE_CHARS = 32
+STORE_WORDS = 4
+# Characters a store's name never needs and a link, an e-mail address, a
+# masked card or a "key: value" line always has.
+NOT_IN_A_STORE = set("/@:\\<>{}[]|=?#*$,")
+# Four digits in a row: a phone number, a street number, an order or card
+# number. A store's name ("7-Eleven", "Store 24") never needs them.
+_LONG_NUMBER = re.compile(r"\d{4}")
 
 
 def is_browser_addon(row: dict) -> bool:
@@ -81,7 +89,9 @@ def store_name(row: dict) -> str | None:
         text = unicodedata.normalize("NFKC", holder["store"])
         text = " ".join("".join(ch for ch in text
                                 if not unicodedata.category(ch).startswith("C")).split())
-        if not text or len(text) > STORE_CHARS or NOT_IN_A_STORE & set(text):
+        if (not text or len(text) > STORE_CHARS
+                or len(text.split()) > STORE_WORDS
+                or NOT_IN_A_STORE & set(text) or _LONG_NUMBER.search(text)):
             return None
         return text
     return None
