@@ -23,7 +23,7 @@
  * is blank the day it is down.
  */
 
-const CARD_VERSION = '0.2.2';
+const CARD_VERSION = '0.2.1';
 const DOMAIN = 'gardenrx';
 
 console.info(
@@ -124,7 +124,7 @@ const css = (morph) => `
   @media (pointer: coarse) { select, input { font-size: 16px; } }
   .form { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
   .form .wide { grid-column: 1 / -1; }
-  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .err { color: var(--g-bad-text); font-size: 12px; }
   .ok { color: var(--g-accent-text); font-size: 12px; }
   .warn { color: var(--g-warn); font-size: 12px; }
@@ -213,14 +213,6 @@ class GardenCard extends HTMLElement {
     return this._note ? `<div class="${this._note.kind}">${esc(this._note.text)}</div>` : '';
   }
 
-  /** The card's heading: the configured title, or in Lovelace a short name
-   *  for what the card is, so a stack of cards says which is which. Morph
-   *  labels its own tiles, so a Morph card writes one only when given. */
-  _heading(morph, fallback) {
-    const t = this._config.title != null ? this._config.title : morph ? '' : fallback;
-    return t ? `<div class="title">${esc(t)}</div>` : '';
-  }
-
   _missing(morph, what) {
     return morph ? '' : `<div class="wrap"><div class="empty">No GardenRX ${what} sensor yet. Start the GardenRX add-on and set up the GardenRX integration.</div></div>`;
   }
@@ -252,11 +244,9 @@ class GardenHarvestCard extends GardenCard {
     const chosen = crops.find((c) => String(c.id) === String(f.crop));
     const varieties = chosen ? chosen.varieties || [] : [];
     const recent = (a.recent || []).slice(0, cfg.recent);
-    // The default Lovelace heading already names the year.
-    const yearInHeading = !morph && cfg.title == null && !!a.year;
 
     const totals = `<div class="hero"><span class="big">${num(s.state)} lb</span>
-      <span class="muted">${money(a.total_value)} · ${a.picks || 0} pick${a.picks === 1 ? '' : 's'}${yearInHeading ? '' : ` in ${esc(a.year || '')}`}</span></div>`;
+      <span class="muted">${money(a.total_value)} · ${a.picks || 0} pick${a.picks === 1 ? '' : 's'} in ${esc(a.year || '')}</span></div>`;
 
     const bars = byCrop.length ? `<div class="list">${byCrop.map((c) => `<div>
         <div class="row"><span class="name">${esc(c.crop)}</span>
@@ -273,8 +263,7 @@ class GardenHarvestCard extends GardenCard {
         <input data-f="weight" type="number" inputmode="decimal" min="0" step="any" placeholder="Amount" aria-label="Amount" value="${esc(f.weight)}">
         <select data-f="unit" aria-label="Unit">${(a.units || ['lb']).map((u) => `<option ${u === f.unit ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select>
         <input data-f="date" type="date" aria-label="Date" value="${esc(f.date)}">
-        <div class="actions wide"><button class="primary" data-act="log" ${this._busy || !f.crop || !(Number(f.weight) > 0) ? 'disabled' : ''}>Log harvest</button>
-          <span class="muted hint" data-hint>${esc(this._logHint())}</span></div>
+        <div class="actions wide"><button class="primary" data-act="log" ${this._busy || !f.crop || !(Number(f.weight) > 0) ? 'disabled' : ''}>Log harvest</button></div>
       </div></div>` : '';
 
     const picks = recent.length ? `<div class="section"><div class="label">Recent picks</div><div class="list">
@@ -285,15 +274,8 @@ class GardenHarvestCard extends GardenCard {
           <button class="${armed ? 'armed' : ''}" data-del="${h.id}" aria-label="Delete this pick" ${this._busy ? 'disabled' : ''}>${armed ? 'Tap again' : 'Delete'}</button></div>`;
       }).join('')}</div></div>` : '';
 
-    return `<div class="wrap">${this._heading(morph, a.year ? `Harvest ${a.year}` : 'Harvest')}
+    return `<div class="wrap">${cfg.title ? `<div class="title">${esc(cfg.title)}</div>` : ''}
       ${totals}${bars}${form}${this._noteHtml()}${picks}</div>`;
-  }
-
-  /** What Log harvest still needs, said beside it while it cannot be pressed. */
-  _logHint() {
-    const f = this._form;
-    if (!f.crop) return Number(f.weight) > 0 ? 'Choose a crop to log.' : 'Choose a crop and enter an amount to log.';
-    return Number(f.weight) > 0 ? '' : 'Enter an amount to log.';
   }
 
   _bind() {
@@ -308,8 +290,6 @@ class GardenHarvestCard extends GardenCard {
         if (el.dataset.f === 'weight') {
           const btn = root.querySelector('[data-act="log"]');
           if (btn) btn.disabled = this._busy || !this._form.crop || !(Number(this._form.weight) > 0);
-          const hint = root.querySelector('[data-hint]');
-          if (hint) hint.textContent = this._logHint();
           return;
         }
         this._redraw();
@@ -354,10 +334,9 @@ class GardenSprayCard extends GardenCard {
     if (!s) return this._missing(morph, 'spray');
     const a = s.attributes || {};
     const cfg = this._config;
-    const heading = this._heading(morph, 'Last spray');
     const last = s.state && s.state !== 'unknown' && s.state !== 'unavailable'
       ? `<div class="hero"><span class="big">${esc(ago(a.days_ago))}</span>
-          <span class="muted">${heading ? '' : 'last spray · '}${esc(shortDate(s.state))}${a.this_year ? ` · ${a.this_year} this year` : ''}</span></div>
+          <span class="muted">last spray · ${esc(shortDate(s.state))}${a.this_year ? ` · ${a.this_year} this year` : ''}</span></div>
         <div class="muted">${esc((a.products || []).join(', '))}${(a.crops || []).length ? ` on ${esc(a.crops.join(', '))}` : ''}</div>`
       : morph ? '' : '<div class="empty">No sprays logged yet.</div>';
 
@@ -378,7 +357,7 @@ class GardenSprayCard extends GardenCard {
           </div></div>`;
       }).join('')}</div></div>` : '';
 
-    return `<div class="wrap">${heading}
+    return `<div class="wrap">${cfg.title ? `<div class="title">${esc(cfg.title)}</div>` : ''}
       ${last}${phi}${this._noteHtml()}${queued}</div>`;
   }
 
@@ -425,7 +404,7 @@ class GardenInventoryCard extends GardenCard {
     const shown = cfg.low_only ? all.filter((i) => i.low) : calm ? all.slice(0, 3) : all;
     const items = shown.slice(0, cfg.max_items);
     const head = calm
-      ? `<div class="muted">Nothing at ${lowPct}% or less.</div>`
+      ? `<div class="muted">Nothing running low · ${all.length} in stock</div>`
       : `<div class="hero"><span class="big">${low}</span>
       <span class="muted">running low (${lowPct}% or less)${all.length ? ` of ${all.length} in stock` : ''}</span></div>`;
     const rows = items.map((i) => {
@@ -435,9 +414,9 @@ class GardenInventoryCard extends GardenCard {
         ${i.pct != null ? `<div class="bar ${cls}"><i style="width:${Math.max(2, i.pct)}%"></i></div>` : ''}</div>`;
     }).join('');
     const list = items.length
-      ? `<div class="section">${calm ? `<div class="label">Lowest of ${all.length} in stock</div>` : ''}<div class="list">${rows}</div></div>`
+      ? `<div class="section">${calm ? '<div class="label">Lowest stock</div>' : ''}<div class="list">${rows}</div></div>`
       : morph || calm ? '' : '<div class="empty">Nothing in stock yet. Add products on the GardenRX panel\'s Inventory page.</div>';
-    return `<div class="wrap">${this._heading(morph, 'Stock')}${head}${list}</div>`;
+    return `<div class="wrap">${cfg.title ? `<div class="title">${esc(cfg.title)}</div>` : ''}${head}${list}</div>`;
   }
 }
 

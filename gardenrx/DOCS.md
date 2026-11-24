@@ -103,9 +103,6 @@ type: custom:gardenrx-inventory-card   # options: title, max_items, low_only
 Each card also takes `entity:` to point at a sensor by id; without it, it
 finds the GardenRX sensor itself.
 
-Each card is headed with what it shows (Last spray, Harvest and the year,
-Stock); `title:` replaces the heading, and `title: ""` leaves it off.
-
 Presses that change the record — **Delete** on a pick, **Mark sprayed** and
 **Remove** on a queued spray — take two taps, the second within four seconds.
 

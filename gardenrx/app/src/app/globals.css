@@ -1164,9 +1164,7 @@
     font-size: var(--fs-body);
     font-weight: 600;
     color: var(--ink-2);
-    /* A long state ("Finished for the year") wraps inside a narrow card
-       rather than running under its edge. */
-    max-width: 100%;
+    white-space: nowrap;
   }
   .crop-card .cc-stage .dot {
     width: 8px;
@@ -2039,9 +2037,8 @@
   }
   .sw3-legend {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
-    gap: var(--sp-1) var(--sp-4);
+    gap: var(--sp-4);
     font-size: var(--fs-meta);
     color: var(--ink-2);
     font-weight: 600;
@@ -2091,10 +2088,6 @@
     border-radius: var(--control-radius);
     min-width: 0;
     transition: opacity 0.2s;
-  }
-  /* An hour already over, or dark: no rating to act on. */
-  .sw3-off {
-    background: var(--line);
   }
   .sw3-cell.best {
     box-shadow:

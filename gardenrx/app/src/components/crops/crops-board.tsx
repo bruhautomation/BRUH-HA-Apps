@@ -51,8 +51,6 @@ export type CropCardModel = {
   protection: 'green' | 'yellow' | 'red' | 'untracked';
   /** Every variety dormant or past harvest: coverage is not asked of it. */
   resting: boolean;
-  /** The catalog says it is planted each year: at rest it is finished, not dormant. */
-  annual: boolean;
   /** Fungicide or insecticide lapsed (the same rule Today's attention list uses). */
   due: boolean;
 };
@@ -69,20 +67,6 @@ const SORTS: Record<string, string> = {
   name: 'Name (A–Z)',
   coverage: 'Coverage left',
 };
-
-/** Why some cards have no spray line: perennials resting, annuals finished. */
-function restingNote(resting: number, finished: number): string {
-  const perennials = resting - finished;
-  const parts = [
-    perennials > 0 ? `${perennials} dormant or past harvest` : '',
-    finished > 0 ? `${finished} finished for the year` : '',
-  ].filter(Boolean);
-  return `${resting} ${resting === 1 ? 'crop needs' : 'crops need'} no fungicide or insecticide cover now (${parts.join(', ')}), so ${resting === 1 ? 'its card shows' : 'their cards show'} no spray line.`;
-}
-
-function listNames(names: string[]): string {
-  return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
-}
 
 function urgency(c: CropCardModel): number {
   if (c.phiActive) return 0;
@@ -129,8 +113,6 @@ export function CropsBoard({
 
   const grouped = cat === 'all' && sort === 'priority';
   const restingCount = filtered.filter((c) => c.resting).length;
-  const finishedCount = filtered.filter((c) => c.resting && c.annual).length;
-  const growing = filtered.filter((c) => !c.resting).map((c) => c.name);
 
   return (
     <PageShell
@@ -184,8 +166,9 @@ export function CropsBoard({
 
       {restingCount > 0 && (
         <p className="text-sm text-ink-3">
-          {restingNote(restingCount, finishedCount)}
-          {growing.length > 0 && growing.length <= 3 && ` Still growing: ${listNames(growing)}.`}
+          {restingCount} {restingCount === 1 ? 'crop is' : 'crops are'} resting: dormant or past
+          harvest, they need no fungicide or insecticide cover until they leaf out again, so their
+          cards show no spray line.
         </p>
       )}
 
@@ -204,7 +187,7 @@ export function CropsBoard({
               <SectionHeader
                 icon={<Icon className="size-4" />}
                 title={category}
-                meta={`${list.length} ${list.length === 1 ? 'crop' : 'crops'}${meta ? ` · ${meta}` : ''}`}
+                meta={`${list.length} crops${meta ? ` · ${meta}` : ''}`}
               />
               <div className="crop-grid">
                 {list.map((c) => (
