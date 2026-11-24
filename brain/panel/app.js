@@ -1812,13 +1812,23 @@ function makeCard(catInfo, insight, fallbackId) {
     // taken off the same way the server does for a stored card).
     const chip = verdictChip(shown);
     if (chip) card.appendChild(chip);
-    if (shown.summary) card.appendChild(summaryNode(view ? withoutVerdictLead(shown.summary) : shown.summary));
+    // The first sentence is what the card means for the household; the
+    // figures behind it are one press away under Details (#1298).
+    const [lead, rest] = shown.summary
+      ? splitLead(view ? withoutVerdictLead(shown.summary) : shown.summary) : ["", ""];
+    if (shown.summary) card.appendChild(summaryNode(lead || rest, !!lead));
     // A card that is not all fine says the one thing to do (#793).
     if (shown.next && shown.verdict && shown.verdict !== "all fine") {
       const step = el("p", "nextstep");
       step.appendChild(el("strong", null, "Next: "));
       step.appendChild(document.createTextNode(shown.next));
       card.appendChild(step);
+    }
+    if (lead && rest) {
+      const more = el("details", "carddetails");
+      more.appendChild(el("summary", null, "Details"));
+      more.appendChild(el("p", null, rest));
+      card.appendChild(more);
     }
     if (shown.highlights && shown.highlights.length) {
       const prevData = view ? view.prev : state.prevLatest[id];
@@ -1952,23 +1962,19 @@ function foldedUnder(insight) {
 
 // The summary opens with the answer ("Yes — dehumidify first.") and the
 // contract asks for exactly that, so the first sentence is set in the
-// card's ink and the reason after it in the quieter colour. A summary
-// that is one sentence is left as it is: bolding the whole of it says
-// nothing. The server splits it the same way for the dashboard page.
+// card's ink and the measurements after it go under the card's Details
+// fold (#1298). A summary that is one sentence is left as it is: bolding
+// the whole of it says nothing. The server splits it the same way for the
+// dashboard page.
 function splitLead(text) {
   const m = String(text || "").match(/^(.{3,160}?[.!?])\s+(\S[\s\S]*)$/);
   return m ? [m[1], m[2]] : ["", String(text || "")];
 }
 
-function summaryNode(text) {
+function summaryNode(text, lead) {
   const node = el("div", "summary");
-  const [lead, rest] = splitLead(text);
-  if (lead) {
-    node.appendChild(el("strong", "lead", lead));
-    node.appendChild(document.createTextNode(` ${rest}`));
-  } else {
-    node.textContent = rest;
-  }
+  if (lead) node.appendChild(el("strong", "lead", String(text || "")));
+  else node.textContent = String(text || "");
   return node;
 }
 
@@ -12814,6 +12820,9 @@ function epWhen(ep, reads) {
   const at = actTime(ep.started);
   // A restart is said by when Home Assistant was back: "restarted at 9:04".
   if (ep.kind === "restart" && ep.last === "started") return `at ${actTime(ep.ended)}`;
+  // A device that did the same short thing again and again is one row
+  // over the stretch it kept doing it (`episodes._fold_repeats`).
+  if (ep.kind === "repeat") return `${at}–${actTime(ep.ended)}`;
   if (reads === "moment") {
     return ep.open ? `since ${at}` : `at ${at}`;
   }
@@ -12838,6 +12847,7 @@ function epStates(ep) {
     return n ? `${n} device${n === 1 ? "" : "s"} went unavailable`
       + (off ? ` · ${off} still offline` : " and came back") : "";
   }
+  if (ep.kind === "repeat") return `${ep.first} ${ep.times} times`;
   const off = ep.kind === "mass" && ep.first && ep.offline
     ? ` · ${ep.offline} still offline` : "";
   if (!ep.last || ep.last === ep.first) return (ep.first || "") + off;
@@ -12955,19 +12965,55 @@ async function refreshActNow() {
   const node = $("#actNow");
   if (!node) return;
   node.textContent = "";
-  // The mode alone is a bold heading over nothing: without a sentence
-  // there is no line to show.
-  if (!d || !d.sentence) { node.hidden = true; return; }
-  const mode = HOUSE_MODE_WORDS[d.house_mode] ? d.house_mode : "unknown";
-  node.appendChild(el("b", "actnowmode", HOUSE_MODE_WORDS[mode]));
-  {
+  // The headline and the line under it describe the same moment (#1303).
+  // An earlier sentence under a heading about now read as a contradiction
+  // ("Someone's home" over "The house is empty"), so a stale sentence is
+  // not shown: what stands out now is said from the frame instead.
+  let said = "";
+  if (d && d.sentence && !d.sentence_stale) {
     const names = d.names || {};
-    const said = prettyText(String(d.sentence).replace(/\b[a-z_]+\.[a-z0-9_]+\b/g,
+    said = prettyText(String(d.sentence).replace(/\b[a-z_]+\.[a-z0-9_]+\b/g,
       (id) => names[id] || id));
-    node.appendChild(el("span", "actnowsaid" + (d.sentence_stale ? " stale" : ""),
-      d.sentence_stale ? `Earlier: ${said}` : said));
+  } else if (d) {
+    said = actStandsOut(d);
   }
+  // The mode alone is a bold heading over nothing: without a line under
+  // it there is nothing to show.
+  if (!said) { node.hidden = true; return; }
+  node.appendChild(el("b", "actnowmode", actHeadline(d)));
+  node.appendChild(el("span", "actnowsaid", said));
   node.hidden = false;
+}
+
+function actList(xs) {
+  return xs.length < 2 ? xs.join("")
+    : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
+}
+
+// Who is home, from the person entities the reading was built on; a mode
+// that says more than who (asleep, waking, guests, empty) is said as itself.
+function actHeadline(d) {
+  const mode = HOUSE_MODE_WORDS[d.house_mode] ? d.house_mode : "unknown";
+  if (["away", "asleep", "waking", "guests"].includes(mode)) return HOUSE_MODE_WORDS[mode];
+  const pres = (d.frame && d.frame.presence) || {};
+  const home = (pres.available ? pres.people || [] : [])
+    .filter((p) => p && p.home === true).map((p) => String(p.name || "").trim())
+    .filter(Boolean);
+  if (home.length > 3) return `${home.length} people are home`;
+  if (home.length) return `${actList(home)} ${home.length === 1 ? "is" : "are"} home`;
+  return HOUSE_MODE_WORDS[mode];
+}
+
+// What stands out now when there is no current sentence: the rooms in use
+// and the machines running, by name, with no reading beside them.
+function actStandsOut(d) {
+  const parts = [];
+  const rooms = (d.rooms_in_use || []).map(String).filter(Boolean).slice(0, 4);
+  if (rooms.length) parts.push(`${actList(rooms)} in use`);
+  const running = ((d.frame && d.frame.appliances) || [])
+    .map((a) => String((a && a.name) || "").trim()).filter(Boolean).slice(0, 3);
+  if (running.length) parts.push(`${actList(running)} running`);
+  return parts.join(" · ");
 }
 
 function renderActivity() {

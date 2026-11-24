@@ -1223,8 +1223,14 @@ def design_context(insights: list, findings: list) -> str:
         if ins.get("superseded_by") or ins.get("told_in"):
             continue
         if ins.get("quiet"):
-            if title:
-                quiet.append(title)
+            # Named as Reports names it (`quietName` in app.js): by what
+            # it is about, never its headline, which for a folded card is
+            # the blind spot or non-event that folded it (#1328).
+            label = str(ins.get("category_title") or "").strip()
+            name = (label if label and label != "Custom"
+                    else str(ins.get("question") or "").strip() or title)
+            if name:
+                quiet.append(_said(name, 140))
             continue
         summary = _said(ins.get("summary"), 600)
         if title or summary:

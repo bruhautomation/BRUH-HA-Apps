@@ -551,7 +551,7 @@ a.btn {
   padding: var(--sp-2) var(--sp-3);
   min-width: 0;
 }
-.hl .l { font-size: var(--fs-meta); font-weight: 600; color: var(--ink-3); }
+.hl .l { font-size: var(--fs-meta); font-weight: 600; color: var(--ink-3); overflow-wrap: anywhere; }
 .hl .v { font-size: var(--fs-card); font-weight: 700; line-height: 1.25; margin-top: 2px; overflow-wrap: anywhere; }
 .hl .d { font-size: var(--fs-meta); color: var(--ink-2); margin-top: 2px; }
 .hl.status-good .v { color: var(--good-ink); }
@@ -599,6 +599,17 @@ a.btn {
 .vchip-act { background: color-mix(in srgb, var(--critical) 16%, transparent); color: var(--critical-ink); }
 /* The one thing to do on a card that is not all fine. */
 .nextstep { margin: var(--sp-2) var(--card-pad) 0; font-size: var(--fs-body); color: var(--ink); }
+/* The figures behind a card's first sentence, one press away (#1298). */
+.carddetails { margin: var(--sp-1) var(--card-pad) 0; color: var(--ink-2); font-size: var(--fs-body); line-height: 1.5; }
+.carddetails > summary {
+  display: inline-flex; align-items: center; min-height: 40px; cursor: pointer;
+  font-size: var(--fs-meta); font-weight: 600; color: var(--ink-3);
+}
+.carddetails > summary::-webkit-details-marker { display: none; }
+.carddetails > summary::before { content: "▸"; margin-right: var(--sp-1); }
+.carddetails[open] > summary::before { content: "▾"; }
+.carddetails > p { margin: 0 0 var(--sp-1); }
+@media (pointer: coarse) { .carddetails > summary { min-height: 44px; } }
 /* Every card that is all fine about nothing changing, folded into one line
    under the cards that have something to say. */
 .quietline {
@@ -6999,7 +7010,6 @@ button.kfactsubj:hover { color: var(--accent-2);
 .actnow[hidden] { display: none; }
 .actnow .actnowmode { font-weight: 600; color: var(--ink); }
 .actnow .actnowsaid { color: var(--ink-2); }
-.actnow .actnowsaid.stale { color: var(--ink-3); }
 
 /* The house book: Add info leads the head, ⋯ holds sharing, one muted
    line says when and what was left out, and every chapter is a card whose

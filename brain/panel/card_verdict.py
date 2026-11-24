@@ -223,11 +223,20 @@ def _title_verdict(title: str) -> tuple[str, str]:
     return title, ""
 
 
-def legacy(card: dict) -> dict:
+def legacy(card: dict, open_rows=()) -> dict:
     """A stored card read with one verdict: the chip it carries, or — for a
     card made before the field existed — the verdict its first sentence or
     its title's tail wrote, taken off the prose. Returns the fields to show
-    (`title`, `summary`, `verdict`); the stored file is not touched."""
+    (`title`, `summary`, `verdict`, and `next` when one is found); the
+    stored file is not touched.
+
+    The rules `review` applies to a new card apply to a stored one too
+    (#1311, #1328): a card kept by a hold, or stored before a rule existed,
+    is what Reports shows for days. So "worth a look" with no step and
+    nothing to look at is a plain note, a worth-a-look card with no `next`
+    of its own takes the step `next_step` finds (``open_rows`` are the
+    open findings it may be about), and the summary loses brAIn's notes
+    about its own run and any limit nobody can act on (`trim_gaps`)."""
     card = card or {}
     title = str(card.get("title") or "")
     summary = str(card.get("summary") or "")
@@ -247,6 +256,16 @@ def legacy(card: dict) -> dict:
         if after.strip() and is_reassurance(clause):
             out["summary"], _ = strip_reassurance(summary)
             out["verdict"] = FINE
+    if out["verdict"] in (LOOK, ACTION):
+        step = next_step(card, out["verdict"], open_rows)
+        if (out["verdict"] == LOOK and not step and nothing_to_act(card)
+                and open_row_named(card, open_rows) is None):
+            out["verdict"] = ""
+        elif step and not " ".join(str(card.get("next") or "").split()):
+            out["next"] = step
+    trimmed = {"summary": out["summary"]}
+    card_claims.trim_gaps(trimmed, [], out["verdict"])
+    out["summary"] = trimmed["summary"]
     return out
 
 
@@ -435,7 +454,10 @@ def strip_reassurance(text: str) -> tuple[str, bool]:
 _DURATION = re.compile(r"(\d+(?:\.\d+)?)\s*h(?:ours?)?\s+(\d+)\s*min", re.I)
 _CLOCK = re.compile(r"\b(\d{1,2}):(\d{2})\b")
 _FIGURE = re.compile(r"(?<![\w.])\d[\d,]*(?:\.\d+)?")
-_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-Z0-9“\"'])")
+# A sentence starts with a capital, a figure or a quote — or with brAIn,
+# whose name opens lower case: "brAIn could not read the float." was
+# glued to the sentence before it and kept as content (#1328).
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-Z0-9“\"']|brAIn\b)")
 
 
 def _figures(text: str) -> list[float]:
@@ -619,7 +641,7 @@ def review(obj: dict, previous: dict | None = None,
     # model wrote, before a summary sentence restating them is taken off.
     card_claims.title_figures_agree(out, got["changed"])
     _finish(out, got["changed"])
-    card_claims.trim_gaps(out, got["changed"])
+    card_claims.trim_gaps(out, got["changed"], verdict)
     _strip_verdict_sentence(out, got["changed"])
     _not_another_cards_lead(out, got["changed"], others, names_in)
     changed = got["changed"]
@@ -846,11 +868,11 @@ def quiet_now(obj: dict, previous: dict | None, verdict: str) -> bool:
             and (quiet(obj) or no_change(obj, previous)))
 
 
-def folds_quiet(card: dict) -> bool:
+def folds_quiet(card: dict, open_rows=()) -> bool:
     """A stored card the Reports pane folds into its "All quiet" line
     rather than giving a card of its own."""
     card = card or {}
-    shown = legacy(card)
+    shown = legacy(card, open_rows)
     if (card.get("blind") and nothing_to_act(card)
             and shown["verdict"] not in (LOOK, ACTION)):
         # A headline that was a blind spot or a non-event (`card_claims`).
