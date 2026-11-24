@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.3
+
+### Changed
+
+- The card's failure-detection line says a whole sentence ("Couldn't see the print — light is off") without cutting it off, and its label stays on one line (1360).
+- Failure detection stops taking looks it cannot use: after one look that comes back blind with the chamber light off it holds, says so on the Printers screen with a "Turn the light on" button, and looks again as soon as the light comes on. With "Turn the chamber light on to see" set, it turns the light on once and carries on; a print starting in the dark with that setting off is warned about before the first look (1361).
+- Files: every row has its Print button in the same place and a slice line ("1 h 30 min · 31 g", or "Not sliced yet"); a 3MF and an STL of the same model sit together (1362).
+- Printers: each printer's header has its state (Printing, Finished, Ready) and, under the name, the file with its progress or "finished 2 h ago", in the same words the card uses (1363).
+
 ## 0.5.2
 
 ### Fixed
