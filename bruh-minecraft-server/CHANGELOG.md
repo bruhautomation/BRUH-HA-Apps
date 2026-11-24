@@ -5,6 +5,15 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.20.3
+
+### Changed
+
+- Players: names sit on the left, each row says Online or Offline, a player on no list is tagged "Player" or "Not whitelisted", and a line explains that a name starting with "." is a Bedrock player (the add-by-name field says to include the dot) (1375).
+- Backups: every snapshot row has one layout, and a folded run has a "Show N" button that lists each snapshot with its own Restore (1376).
+- Worlds: the line under each world names what each value is ("Survival · Normal difficulty · Normal world"), and the buttons sit in an even grid with Delete set apart (1377).
+- Add-ons: each add-on says "Up to date" or "Update to X available", and Update appears only when there is one; the check runs when you open the Add-ons pane (1378).
+
 ## 1.20.2
 
 ### Fixed
