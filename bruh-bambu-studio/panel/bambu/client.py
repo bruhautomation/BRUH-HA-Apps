@@ -68,6 +68,10 @@ class PrinterClient:
         self.connected = False
         self.last_report = 0.0
         self.last_error = ""
+        # When this connection saw a print end (finish or failed); None when
+        # the printer was already done when it connected, which is not known.
+        self.ended_at: float | None = None
+        self._state: str | None = None
         self._lock = threading.Lock()
         self._seq = int(time.time()) % 100000
         self._echoes: dict[str, dict] = {}
@@ -142,6 +146,7 @@ class PrinterClient:
         with self._lock:
             protocol.deep_merge(self.status, report)
             self.last_report = time.time()
+            self._note_state()
             section = report.get("print")
             if isinstance(section, dict) and isinstance(section.get("hms"), list) and any(
                     isinstance(h, dict) and protocol.hms_code(h) == protocol.COMMAND_REFUSED_HMS
@@ -153,6 +158,19 @@ class PrinterClient:
             if len(self._echoes) > 64:
                 for key in list(self._echoes)[:-32]:
                     self._echoes.pop(key, None)
+
+    def _note_state(self) -> None:
+        """Stamp the moment a print ends, for "finished 2 h ago"."""
+        section = self.status.get("print") if isinstance(self.status.get("print"), dict) else {}
+        state = str(section.get("gcode_state") or "").strip().lower() or None
+        if state == self._state:
+            return
+        if state in ("finish", "failed"):
+            if self._state in protocol.ACTIVE_STATES:
+                self.ended_at = self.last_report
+        else:
+            self.ended_at = None
+        self._state = state
 
     # -- the panel's half --------------------------------------------------
     def _publish(self, payload: dict) -> str:
@@ -210,7 +228,9 @@ class PrinterClient:
         with self._lock:
             status = json.loads(json.dumps(self.status))
             last = self.last_report
+            ended = self.ended_at
         out = protocol.summarise(status, model=self.model, serial=self.serial)
+        out["ended_at"] = ended
         stale = bool(last) and time.time() - last > STALE_AFTER_S
         out["online"] = self.connected and not stale
         out["last_report"] = last or None

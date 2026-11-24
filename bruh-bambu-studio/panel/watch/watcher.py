@@ -156,6 +156,9 @@ class PrinterWatch:
         self.view = "unknown"
         self.view_since = 0.0
         self._blind_run = 0
+        # The chamber light was off at the last report: with a blind last
+        # look, nothing more is spent until it is on (`_dark`).
+        self.light_off = False
         self.frozen = False
         self.camera_error = ""
         self.last_state: str | None = None
@@ -318,6 +321,7 @@ class PrinterWatch:
             return
         state = summary.get("state")
         with self.lock:
+            self.light_off = summary.get("chamber_light") is False
             self._transitions(summary, state, now)
             self._printer_signals(summary, now)
             self.last_state = state
@@ -543,6 +547,8 @@ class PrinterWatch:
         layer = summary.get("layer") or 0
         trigger = None
         manual = [t for t in self.triggers if t["kind"] == "manual"]
+        if not manual and self._dark():
+            return
         if manual:
             trigger = manual[0]
         else:
@@ -566,6 +572,16 @@ class PrinterWatch:
         if trigger["kind"] in ("change", "printer_camera"):
             self.triggers = [t for t in self.triggers if t["kind"] not in ("change", "printer_camera")]
         self._launch(trigger, summary)
+
+    def _dark(self) -> bool:
+        """The last look could not see and the chamber light is still off.
+
+        The local frame check can pass a picture brAIn cannot read (a lit
+        room, a glare), so the look's own answer is the evidence: until the
+        light is on, a scheduled look would only be another blind one.
+        """
+        checks = (self.record or {}).get("checks") or []
+        return bool(self.light_off and checks and checks[-1].get("decision") == "blind")
 
     def _due_checkpoint(self, layer: int) -> dict | None:
         points = ((self.record.get("plan") or {}).get("checkpoints")) or []
@@ -775,6 +791,18 @@ class PrinterWatch:
                 and (summary.get("layer") or 0) > 3 and decision in ("warning", "failure"):
             check["note"] = "brAIn saw an empty plate mid-print."
         alert = rec.get("alert")
+        if decision == "blind" and summary.get("chamber_light") is False:
+            # Too dark, by brAIn's own answer: the light, when the setting
+            # lets detection turn it on (once per print, like `_sample`), and
+            # one look again once it is on. Scheduled looks wait (`_dark`).
+            if rec["follow_ups"] < MAX_FOLLOW_UPS:
+                rec["follow_ups"] += 1
+                self.triggers.append({"kind": "follow_up", "at": now,
+                                      "why": "A look again with the chamber light on."})
+            if settings["light"] and not rec.get("light_on") and summary.get("state") in ACTIVE:
+                rec["light_on"] = True
+                check["note"] = "The chamber light was off, so it was turned on."
+                self.owner.command(self.pid, protocol.light(True))
         if decision == "ok":
             if alert and alert.get("open") and alert["level"] == "warning" \
                     and answer["confidence"] >= 0.6:
@@ -901,6 +929,8 @@ class PrinterWatch:
             return "no_camera"
         if self.view in ("covered", "dark"):
             return self.view
+        if self._dark():
+            return "dark"
         if self.frozen:
             return "frozen"
         if self.looking:
