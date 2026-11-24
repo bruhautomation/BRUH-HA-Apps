@@ -5,6 +5,7 @@ import { CropAvatar } from '@/components/crop-glyph';
 import { CovDot, RatingPill } from '@/components/status';
 import { SprayWindow3Day } from '@/components/today/spray-window-3day';
 import { SectionHeader } from '@/components/ui/section-header';
+import type { SeasonLine } from '@/lib/off-season';
 
 export type AttentionItem = {
   cropId: number;
@@ -93,10 +94,12 @@ export function SprayConditions({
   wind,
   humidity,
   description,
+  dark = false,
   hourly,
   daily,
 }: {
   rating: SprayRating | null;
+  dark?: boolean;
   temp: number;
   wind: number;
   humidity: number;
@@ -132,7 +135,7 @@ export function SprayConditions({
             <div className="mb-1 text-xs font-semibold uppercase tracking-[0.1em] text-ink-3">
               Right now
             </div>
-            {rating && <RatingPill rating={rating} />}
+            {rating && <RatingPill rating={rating} dark={dark} />}
           </div>
         </div>
         <SprayWindow3Day hourly={hourly} daily={daily} />
@@ -161,6 +164,28 @@ export function WeatherUnavailable() {
             </div>
           </div>
         </div>
+      </div>
+    </section>
+  );
+}
+
+/** Today while nothing is growing: the season's typical task, a freeze ahead,
+ *  the last spray and the last pick, so the screen still says something useful. */
+export function OffSeason({ lines }: { lines: SeasonLine[] }) {
+  if (lines.length === 0) return null;
+  return (
+    <section className="sec">
+      <SectionHeader title="While the garden rests" />
+      <div className="row-list">
+        {lines.map((l) => (
+          <Link key={l.key} href={l.href} className="row-item">
+            <div className="ri-body">
+              <div className="ri-name">{l.title}</div>
+              <div className="ri-sub">{l.detail}</div>
+            </div>
+            <ChevronRight className="size-4 shrink-0 text-ink-3" />
+          </Link>
+        ))}
       </div>
     </section>
   );

@@ -317,11 +317,11 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
               <span className="text-xs font-medium text-foreground/70 capitalize truncate">
                 Cumulative {metricWord}
               </span>
-              <span className="shrink-0 text-sm font-heading font-semibold text-emerald-700 tabular-nums">
+              <span className="shrink-0 text-sm font-heading font-semibold text-positive tabular-nums">
                 {headPrimary}
               </span>
               {headSecondary && (
-                <span className="shrink-0 text-xs font-normal text-muted-foreground/60 tabular-nums">
+                <span className="shrink-0 text-xs font-normal text-muted-foreground tabular-nums">
                   · {headSecondary}
                 </span>
               )}
@@ -436,7 +436,7 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
                   className={`pointer-events-none absolute top-0.5 ${act > (dates.length - 1) / 2 ? 'left-0.5' : 'right-0.5'} flex items-baseline gap-1 whitespace-nowrap rounded-md bg-card/95 px-2 py-0.5 text-xs tabular-nums shadow-sm ring-1 ring-black/10`}
                 >
                   <span className="font-medium text-foreground/80">{fmtTick(dates[act])}</span>
-                  <span className="font-semibold text-emerald-700">{fmt(topSeries[act])}</span>
+                  <span className="font-semibold text-positive">{fmt(topSeries[act])}</span>
                 </div>
               </>
             )}
@@ -465,7 +465,7 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
               ),
             ];
             return (
-              <div className="mt-1 flex justify-between text-xs text-muted-foreground/60 tabular-nums">
+              <div className="mt-1 flex justify-between text-xs text-muted-foreground tabular-nums">
                 {idxs.map((idx) => (
                   <span key={idx}>{fmtTick(dates[idx])}</span>
                 ))}
@@ -473,7 +473,7 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
             );
           })()}
 
-          <p className="mt-2 text-xs text-muted-foreground/45">
+          <p className="mt-2 text-xs text-muted-foreground">
             {showByCrop
               ? 'Drag to inspect a date · tap a crop below to select/deselect it'
               : 'Drag across to read the total on any date'}
@@ -488,12 +488,12 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
           <span className="text-xs font-medium text-foreground/70 capitalize truncate">
             {metricWord} by crop
             {act != null && (
-              <span className="ml-2 font-normal text-muted-foreground/60 normal-case">
+              <span className="ml-2 font-normal text-muted-foreground normal-case">
                 as of {fmtTick(dates[act])}
               </span>
             )}
           </span>
-          <span className="shrink-0 text-xs text-muted-foreground/50">
+          <span className="shrink-0 text-xs text-muted-foreground">
             {crops.length} {crops.length === 1 ? 'crop' : 'crops'}
           </span>
         </div>
@@ -530,7 +530,7 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
                       <span className="text-sm font-medium truncate">
                         {c.crop.name}
                         {c.picks && act == null ? (
-                          <span className="font-normal text-muted-foreground/55">
+                          <span className="font-normal text-muted-foreground">
                             {' '}
                             · {c.picks} {c.picks === 1 ? 'pick' : 'picks'}
                           </span>
@@ -539,7 +539,7 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
                       <span className="shrink-0 text-sm font-semibold tabular-nums tracking-tight">
                         {primary}
                         {secondary && (
-                          <span className="ml-2 text-xs font-normal text-muted-foreground/60">
+                          <span className="ml-2 text-xs font-normal text-muted-foreground">
                             {secondary}
                           </span>
                         )}
@@ -567,14 +567,14 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
                         className="flex items-baseline justify-between gap-2 text-xs leading-snug"
                       >
                         <span
-                          className={`truncate ${v.id == null ? 'italic text-muted-foreground/45' : 'text-muted-foreground/75'}`}
+                          className={`truncate ${v.id == null ? 'italic text-muted-foreground' : 'text-muted-foreground'}`}
                         >
                           {v.name}
                         </span>
-                        <span className="shrink-0 tabular-nums text-muted-foreground/70">
+                        <span className="shrink-0 tabular-nums text-muted-foreground">
                           {v.primary}
                           {v.secondary && (
-                            <span className="ml-1 text-muted-foreground/45">{v.secondary}</span>
+                            <span className="ml-1 text-muted-foreground">{v.secondary}</span>
                           )}
                         </span>
                       </li>
@@ -588,7 +588,7 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
           {/* Uncategorized band — picks logged against no crop. Every crop has
               its own row above, so this is the only thing left in the tail. */}
           {showByCrop && hasOther && (
-            <div className="flex items-center gap-3 px-2 pt-0.5 text-xs text-muted-foreground/70">
+            <div className="flex items-center gap-3 px-2 pt-0.5 text-xs text-muted-foreground">
               <span
                 className="grid h-8 w-8 shrink-0 place-items-center rounded-md"
                 style={{ background: `color-mix(in srgb, ${OTHER_COLOR} 16%, transparent)` }}

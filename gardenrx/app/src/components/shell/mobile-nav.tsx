@@ -9,7 +9,7 @@ export function MobileNav() {
   return (
     <nav className="mobile-nav" aria-label="Primary">
       {NAV_LINKS.map((link) => {
-        const { href, short, icon: Icon } = link;
+        const { href, label, icon: Icon } = link;
         const active = isActiveLink(pathname, link);
         return (
           <Link
@@ -19,7 +19,7 @@ export function MobileNav() {
             aria-current={active ? 'page' : undefined}
           >
             <Icon className="size-5" />
-            <span className="mn-lbl">{short}</span>
+            <span className="mn-lbl">{label}</span>
           </Link>
         );
       })}

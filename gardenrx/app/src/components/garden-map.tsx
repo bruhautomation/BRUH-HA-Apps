@@ -1937,7 +1937,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
               </button>
               {/* Repeat controls */}
               <div className="flex items-center gap-1 text-xs">
-                <label className="text-muted-foreground/60 shrink-0">Repeat</label>
+                <label className="text-muted-foreground shrink-0">Repeat</label>
                 <input
                   type="number"
                   min={1}
@@ -1954,7 +1954,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                 />
                 {stampRepeat.count > 1 && (
                   <>
-                    <label className="text-muted-foreground/60 shrink-0">gap</label>
+                    <label className="text-muted-foreground shrink-0">gap</label>
                     <input
                       type="number"
                       min={0}
@@ -1970,7 +1970,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                       className="w-12 h-5 text-center text-xs rounded-md ring-1 ring-border/60 bg-card px-1"
                       title="Gap between copies (ft)"
                     />
-                    <span className="text-muted-foreground/60">ft</span>
+                    <span className="text-muted-foreground">ft</span>
                     <button
                       onClick={() =>
                         setStampRepeat({
@@ -2031,7 +2031,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                   onClick={() => setZoneDeleteConfirm(activeZone)}
                   title={`Delete "${activeZone.name}" and every element in it`}
                   aria-label="Delete zone"
-                  className="inline-flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground/50 hover:text-terra-500 hover:bg-terra-50 transition-colors"
+                  className="inline-flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-terra-500 hover:bg-terra-50 transition-colors"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
@@ -2150,7 +2150,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                         >
                           <Icon className="w-3 h-3" />
                           <span className="hidden sm:inline">{t.label}</span>
-                          <kbd className="hidden sm:inline text-xs text-muted-foreground/50 ml-0.5">
+                          <kbd className="hidden sm:inline text-xs text-muted-foreground ml-0.5">
                             {t.shortcut}
                           </kbd>
                         </button>
@@ -2223,7 +2223,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
           {/* Zone info — size + element count on the left, tool hint on the right.
               Hint truncates on narrow screens so the dimensions never get pushed off. */}
           <div
-            className={`flex items-center justify-between gap-3 ${fullscreen ? 'px-3 sm:px-4 py-0.5 text-xs' : 'mb-2 text-xs'} text-muted-foreground/60`}
+            className={`flex items-center justify-between gap-3 ${fullscreen ? 'px-3 sm:px-4 py-0.5 text-xs' : 'mb-2 text-xs'} text-muted-foreground`}
           >
             <span className="tabular-nums shrink-0">
               {(zoneCols * FT_PER_CELL).toFixed(0)} × {(zoneRows * FT_PER_CELL).toFixed(0)} ft
@@ -2281,11 +2281,11 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                 <summary className="flex items-center justify-between gap-2 px-3 py-2 cursor-pointer list-none [&::-webkit-details-marker]:hidden select-none hover:bg-muted/40">
                   <span className="text-xs font-semibold tracking-[0.18em] uppercase text-foreground/70">
                     Legend
-                    <span className="ml-2 text-muted-foreground/60 font-normal tracking-normal normal-case">
+                    <span className="ml-2 text-muted-foreground font-normal tracking-normal normal-case">
                       {legend.total}
                     </span>
                   </span>
-                  <ChevronDown className="w-3.5 h-3.5 text-muted-foreground/50 transition-transform group-open/fslegend:rotate-180" />
+                  <ChevronDown className="w-3.5 h-3.5 text-muted-foreground transition-transform group-open/fslegend:rotate-180" />
                 </summary>
                 <div className="px-3 pb-3 pt-1 overflow-y-auto space-y-2">
                   {[
@@ -2340,7 +2340,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                     ? `${(selectionSqFt * 144).toFixed(0)} sq in`
                     : `${selectionSqFt.toFixed(1)} sq ft`}
                   {selectedRegions.length === 1 && (
-                    <span className="hidden sm:inline text-muted-foreground/70 ml-1 font-normal">
+                    <span className="hidden sm:inline text-muted-foreground ml-1 font-normal">
                       ({(selectedRegions[0].width * FT_PER_CELL).toFixed(1)}&apos; ×{' '}
                       {(selectedRegions[0].height * FT_PER_CELL).toFixed(1)}&apos;)
                     </span>
@@ -2424,7 +2424,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                   <div className="w-px h-5 bg-border/40 mx-0.5" />
                   <button
                     onClick={() => setSelectedIds(new Set())}
-                    className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-muted-foreground/60 hover:text-foreground hover:bg-muted transition-colors"
+                    className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                     title="Clear selection"
                     aria-label="Clear selection"
                   >
@@ -2435,7 +2435,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
               {mapMode === 'view' && (
                 <button
                   onClick={() => setSelectedIds(new Set())}
-                  className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-muted-foreground/60 hover:text-foreground hover:bg-muted transition-colors self-end sm:self-auto"
+                  className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors self-end sm:self-auto"
                   title="Clear selection"
                   aria-label="Clear selection"
                 >
@@ -2451,11 +2451,11 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
               <summary className="flex items-center justify-between mb-2 cursor-pointer list-none [&::-webkit-details-marker]:hidden select-none">
                 <h2 className="text-xs font-semibold tracking-[0.18em] uppercase text-foreground/70">
                   Legend
-                  <span className="ml-2 text-muted-foreground/60 font-normal tracking-normal normal-case">
+                  <span className="ml-2 text-muted-foreground font-normal tracking-normal normal-case">
                     {legend.total}
                   </span>
                 </h2>
-                <ChevronDown className="w-4 h-4 text-muted-foreground/40 transition-transform group-open/section:rotate-180" />
+                <ChevronDown className="w-4 h-4 text-muted-foreground transition-transform group-open/section:rotate-180" />
               </summary>
               <div className="space-y-3">
                 {[
@@ -2466,7 +2466,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                   .filter((g) => g.items.length > 0)
                   .map((g) => (
                     <div key={g.title}>
-                      <p className="text-xs font-medium tracking-[0.18em] uppercase text-muted-foreground/50 mb-1">
+                      <p className="text-xs font-medium tracking-[0.18em] uppercase text-muted-foreground mb-1">
                         {g.title}
                       </p>
                       <div className="flex flex-wrap gap-2">
@@ -2507,14 +2507,14 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
       >
         <DialogContent className="rounded-xl sm:max-w-sm">
           <DialogHeader>
-            <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground/60">
+            <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground">
               {dialogRegion ? 'Edit Element' : 'New Element'}
             </p>
             <DialogTitle className="text-xl font-heading font-semibold tracking-tight">
               {dialogRegion?.name ?? 'Define Area'}
             </DialogTitle>
             {newRect && (
-              <p className="text-xs text-muted-foreground/50">
+              <p className="text-xs text-muted-foreground">
                 {(newRect.w * FT_PER_CELL).toFixed(1)}ft × {(newRect.h * FT_PER_CELL).toFixed(1)}ft
               </p>
             )}
@@ -2554,7 +2554,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
             />
             <div className="space-y-2">
               <Label htmlFor="r-notes" className="text-xs font-medium text-muted-foreground">
-                Notes <span className="text-muted-foreground/40">(optional)</span>
+                Notes <span className="text-muted-foreground">(optional)</span>
               </Label>
               <Textarea
                 key={dialogRegion?.id ?? 'new'}
@@ -2597,7 +2597,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                   />
                 </div>
                 <div className="flex items-end pb-0.5">
-                  <span className="text-xs text-muted-foreground/50">
+                  <span className="text-xs text-muted-foreground">
                     {(dialogRegion.width * dialogRegion.height * FT_PER_CELL * FT_PER_CELL).toFixed(
                       1
                     )}{' '}
@@ -2782,7 +2782,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
             <DialogTitle className="text-xl font-heading font-semibold tracking-tight">
               Templates
             </DialogTitle>
-            <p className="text-xs text-muted-foreground/60">
+            <p className="text-xs text-muted-foreground">
               Click a template to stamp it onto the map. Create templates by editing any element and
               choosing &quot;Save as Template.&quot;
             </p>
@@ -2810,7 +2810,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                   />
                   <div className="flex-1 min-w-0">
                     <span className="text-sm font-medium block truncate">{t.name}</span>
-                    <span className="text-xs text-muted-foreground/50">
+                    <span className="text-xs text-muted-foreground">
                       {(t.width * FT_PER_CELL).toFixed(1)}&apos; ×{' '}
                       {(t.height * FT_PER_CELL).toFixed(1)}&apos; ·{' '}
                       {(t.width * t.height * FT_PER_CELL * FT_PER_CELL).toFixed(1)} sq ft
@@ -2822,7 +2822,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                     setEditTemplate(t);
                     setTemplateDialogOpen(false);
                   }}
-                  className="p-2 text-muted-foreground/50 hover:text-emerald-600 hover:bg-emerald-50 rounded-md transition-colors shrink-0"
+                  className="p-2 text-muted-foreground hover:text-emerald-600 hover:bg-emerald-50 rounded-md transition-colors shrink-0"
                   title="Edit this template"
                   aria-label="Edit template"
                 >
@@ -2830,7 +2830,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                 </button>
                 <button
                   onClick={() => setTemplateDeleteConfirm(t)}
-                  className="p-2 text-muted-foreground/50 hover:text-terra-600 hover:bg-terra-50 rounded-md transition-colors shrink-0 mr-1"
+                  className="p-2 text-muted-foreground hover:text-terra-600 hover:bg-terra-50 rounded-md transition-colors shrink-0 mr-1"
                   title="Delete this template"
                   aria-label="Delete template"
                 >
@@ -2841,8 +2841,8 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
             {templates.length === 0 && (
               <div className="py-8 text-center space-y-2">
                 <LayoutTemplate className="w-8 h-8 text-muted-foreground/30 mx-auto" />
-                <p className="text-sm text-muted-foreground/60">No templates yet</p>
-                <p className="text-xs text-muted-foreground/40">
+                <p className="text-sm text-muted-foreground">No templates yet</p>
+                <p className="text-xs text-muted-foreground">
                   Draw an element, then click &quot;Save as Template&quot; in its edit dialog to
                   create one.
                 </p>
@@ -3116,7 +3116,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                 />
               </div>
             </div>
-            <p className="text-xs text-muted-foreground/60 leading-snug">
+            <p className="text-xs text-muted-foreground leading-snug">
               Shrinking below existing elements&apos; extents will not delete them, but they may sit
               outside the visible grid until you move or resize them.
             </p>

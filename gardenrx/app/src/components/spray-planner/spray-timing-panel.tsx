@@ -119,7 +119,7 @@ export function SprayTimingPanel({
             <dd className="text-muted-foreground flex-1 leading-snug">
               {coverageDurations.map((c, i) => (
                 <span key={c.brand}>
-                  {i > 0 && <span className="text-muted-foreground/40"> · </span>}
+                  {i > 0 && <span className="text-muted-foreground"> · </span>}
                   <span className="font-medium text-foreground">{c.days}d</span>{' '}
                   {c.brand.split(' ').slice(0, 2).join(' ')}
                 </span>

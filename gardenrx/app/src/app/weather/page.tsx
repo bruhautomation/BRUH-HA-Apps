@@ -3,13 +3,14 @@ import {
   getCurrentSprayRating,
   nextSprayOpening,
   daySprayWindows,
+  dayHoldCauses,
   rainAhead,
   SHORT_SPRAY_WINDOW_HOURS,
 } from '@/lib/weather';
 import { anySprayDue } from '@/lib/spray-due';
 import { fetchCrops, fetchVarieties, fetchVarietyStages, fetchCropGroups } from '@/lib/queries';
 import { applyPhenology } from '@/lib/phenology';
-import { mostlyResting, cropStages, groupStages } from '@/lib/coverage-season';
+import { mostlyResting, cropStages, groupStages, needsCoverageNow } from '@/lib/coverage-season';
 import { dailyRainfall, rainfallSummary } from '@/lib/rainfall';
 import { RatingPill } from '@/components/status';
 import { SprayWindow3Day } from '@/components/today/spray-window-3day';
@@ -66,6 +67,7 @@ export default async function WeatherPage() {
   // banner's next opening, and only when Today would ask for a spray at all.
   const sprayDue = await anySprayDue(precipHistory).catch(() => false);
   const dayWindows = sprayDue ? daySprayWindows(hourly) : new Map();
+  const dayHolds = sprayDue ? dayHoldCauses(hourly) : new Map<string, string>();
   const forecastDates = new Set(hourly.map((h) => h.time.slice(0, 10)));
 
   const rainDaily = dailyRainfall(precipHistory, 30);
@@ -77,13 +79,14 @@ export default async function WeatherPage() {
   // stage calendar Today and Crops use.
   const effectiveStages = applyPhenology(varietyStages, varieties, crops, cropGroups, new Date());
   const groupStage = groupStages(cropGroups, new Date());
-  const dormant = mostlyResting(
-    crops.map((c) =>
-      cropStages(c.id, varieties, effectiveStages, groupStage(c.crop_group_id)).map((stage) => ({
-        stage,
-      }))
-    )
+  const stagesByCrop = crops.map((c) =>
+    cropStages(c.id, varieties, effectiveStages, groupStage(c.crop_group_id)).map((stage) => ({
+      stage,
+    }))
   );
+  const dormant = mostlyResting(stagesByCrop);
+  // No crop growing: no watering advice, as on Today.
+  const growing = stagesByCrop.some((s) => needsCoverageNow(s));
   const rainSummary = rainDaily.length ? rainfallSummary(rainDaily, { dormant }) : null;
 
   // Good now by the grid's own rule: a good rating in daylight (the grid greys dark hours).
@@ -116,7 +119,7 @@ export default async function WeatherPage() {
           </div>
         </div>
         <div className="ml-auto">
-          <RatingPill rating={rating} />
+          <RatingPill rating={rating} dark={dark} />
         </div>
       </div>
 
@@ -132,7 +135,7 @@ export default async function WeatherPage() {
               <div className="text-sm text-ink-3">{current.description}</div>
             </div>
             <div className="ml-auto">
-              <RatingPill rating={rating} />
+              <RatingPill rating={rating} dark={dark} />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md bg-line">
@@ -186,7 +189,14 @@ export default async function WeatherPage() {
                   ? { cls: 'ok', txt: `Short ${win.label}` }
                   : { cls: 'good', txt: `Spray ${win.label}` }
                 : forecastDates.has(d.date)
-                  ? { cls: 'no', txt: 'Hold' }
+                  ? {
+                      cls: 'no',
+                      txt: dayHolds.has(d.date)
+                        ? `Hold: ${dayHolds.get(d.date)}`
+                        : i === 0
+                          ? 'Hold: day over'
+                          : 'Hold',
+                    }
                   : null;
             return (
               <div key={d.date} className={`fc-day${i === 0 ? ' today' : ''}`}>
@@ -222,6 +232,7 @@ export default async function WeatherPage() {
           avgHighF={avgHigh7}
           humidityPct={current.humidity}
           dormant={dormant}
+          growing={growing}
           ahead={rainAhead(hourly, daily)}
         />
       )}

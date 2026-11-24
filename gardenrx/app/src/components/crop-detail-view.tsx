@@ -681,7 +681,7 @@ export function CropDetailView({
                       <div className="min-w-0 flex-1">
                         <span className="block truncate text-xs font-medium">{v.name}</span>
                         {profile && (
-                          <span className="block truncate text-xs text-muted-foreground/60">
+                          <span className="block truncate text-xs text-muted-foreground">
                             {profile.harvestWindow}
                           </span>
                         )}
@@ -701,28 +701,28 @@ export function CropDetailView({
                           {formatStage(stage)}
                         </span>
                       </button>
-                      <ChevronDown className="size-3.5 shrink-0 text-muted-foreground/40 transition-transform group-open/variety:rotate-180" />
+                      <ChevronDown className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open/variety:rotate-180" />
                     </summary>
                     <div className="space-y-3 border-t border-border/40 px-3 pb-3">
                       {profile ? (
                         <div className="space-y-3 pt-3 text-xs leading-snug">
                           <p className="text-foreground/80">{profile.description}</p>
                           <div>
-                            <p className="mb-0.5 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground/60">
+                            <p className="mb-0.5 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
                               Flavor
                             </p>
                             <p className="text-foreground/80">{profile.taste}</p>
                           </div>
                           <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
                             <div>
-                              <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground/60">
+                              <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
                                 Harvest
                               </p>
                               <p className="text-foreground/80">{profile.harvestWindow}</p>
                             </div>
                             {profile.chillHours && (
                               <div>
-                                <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground/60">
+                                <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
                                   Chill hrs
                                 </p>
                                 <p className="text-foreground/80">{profile.chillHours}</p>
@@ -730,7 +730,7 @@ export function CropDetailView({
                             )}
                             {profile.diseaseNotes && (
                               <div className="col-span-2">
-                                <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground/60">
+                                <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
                                   Disease notes
                                 </p>
                                 <p className="leading-snug text-foreground/80">
@@ -741,7 +741,7 @@ export function CropDetailView({
                           </div>
                           {profile.features.length > 0 && (
                             <div>
-                              <p className="mb-1 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground/60">
+                              <p className="mb-1 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
                                 Key features
                               </p>
                               <ul className="space-y-0.5 text-xs leading-snug text-foreground/75">
@@ -756,7 +756,7 @@ export function CropDetailView({
                           )}
                         </div>
                       ) : (
-                        <p className="pt-3 text-xs italic text-muted-foreground/60">
+                        <p className="pt-3 text-xs italic text-muted-foreground">
                           No catalog profile for this variety yet.
                         </p>
                       )}
@@ -767,7 +767,7 @@ export function CropDetailView({
                             e.preventDefault();
                             setDeleteConfirm({ id: v.id, name: v.name });
                           }}
-                          className="inline-flex items-center gap-1 text-xs text-muted-foreground/50 transition-colors hover:text-destructive"
+                          className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-destructive"
                         >
                           <Trash2 className="size-3" /> Remove variety
                         </button>
@@ -824,7 +824,7 @@ export function CropDetailView({
                     </span>
                     <span className="grp-badge capitalize">{ingType}</span>
                     <ChevronDown
-                      className={`size-3 text-muted-foreground/60 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                      className={`size-3 text-muted-foreground transition-transform ${isExpanded ? 'rotate-180' : ''}`}
                     />
                   </button>
                   {isExpanded && (
@@ -1051,7 +1051,7 @@ function MoneyPerLbField({
   }
   return (
     <label className="block">
-      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground/60">
+      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
         Price per pound
       </span>
       <span className="mt-1 flex items-center gap-1 rounded-lg bg-card px-3 py-2 ring-1 ring-border/60 focus-within:ring-2 focus-within:ring-ring/50">
@@ -1068,7 +1068,7 @@ function MoneyPerLbField({
           }}
           className="min-w-0 flex-1 bg-transparent text-sm tabular-nums focus:outline-none"
         />
-        <span className="text-xs text-muted-foreground/60">/ lb</span>
+        <span className="text-xs text-muted-foreground">/ lb</span>
       </span>
     </label>
   );
@@ -1084,7 +1084,7 @@ function ContainerCalc({ onApply }: { onApply: (perLb: number) => void }) {
   const perLb = lb != null && !isNaN(p) && p >= 0 ? p / lb : null;
   return (
     <div className="space-y-2 rounded-lg bg-muted/40 p-3 ring-1 ring-border/50">
-      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground/60">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
         Set from a store price
       </p>
       <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -1106,7 +1106,7 @@ function ContainerCalc({ onApply }: { onApply: (perLb: number) => void }) {
             </option>
           ))}
         </select>
-        <span className="text-muted-foreground/70">for</span>
+        <span className="text-muted-foreground">for</span>
         <span className="flex h-8 items-center rounded-md bg-card px-2 ring-1 ring-border/60 focus-within:ring-2 focus-within:ring-ring/50">
           <span className="text-xs text-muted-foreground">$</span>
           <input
@@ -1164,7 +1164,7 @@ function WeightEachField({
   }
   return (
     <label className="block">
-      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground/60">
+      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
         Avg weight each
       </span>
       <span className="mt-1 flex items-center gap-2">
@@ -1194,7 +1194,7 @@ function WeightEachField({
           ))}
         </select>
       </span>
-      <span className="mt-1 block text-xs text-muted-foreground/50">
+      <span className="mt-1 block text-xs text-muted-foreground">
         Used to value picks logged by the count (e.g. &ldquo;3 ct&rdquo;).
       </span>
     </label>

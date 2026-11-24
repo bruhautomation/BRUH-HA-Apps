@@ -46,12 +46,12 @@ export function QueuedEditPanel({
 
   return (
     <div className="border-t border-emerald-200/30 px-4 py-4 space-y-3">
-      <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground/50">
+      <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground">
         Edit Products
       </p>
 
       <div className="relative">
-        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/60" />
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
         <input
           type="text"
           placeholder="Search products to add..."
@@ -64,7 +64,7 @@ export function QueuedEditPanel({
             onClick={() => setSearch('')}
             className="absolute right-2 top-1/2 -translate-y-1/2"
           >
-            <X className="w-3 h-3 text-muted-foreground/60" />
+            <X className="w-3 h-3 text-muted-foreground" />
           </button>
         )}
       </div>
@@ -108,7 +108,7 @@ export function QueuedEditPanel({
           );
         })}
         {search && filtered.length === 0 && (
-          <p className="text-xs text-muted-foreground/50 text-center py-3">
+          <p className="text-xs text-muted-foreground text-center py-3">
             No products match &quot;{search}&quot;
           </p>
         )}

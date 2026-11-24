@@ -50,7 +50,7 @@ export function ProductSearch({
   return (
     <div className="space-y-3 sticky top-0 z-10 bg-background/95 backdrop-blur-sm pb-3 -mx-4 px-4 pt-1">
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground/60" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
         <Input
           placeholder="Search by name or ingredient..."
           defaultValue={searchParams.get('q') ?? ''}
@@ -83,12 +83,12 @@ export function ProductSearch({
           that crop's group. */}
       {crops.length > 0 && (
         <div className="space-y-2">
-          <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground/60">
+          <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground">
             Labeled for my crops
           </p>
           {CATEGORY_ORDER.filter((cat) => crops.some((c) => c.category === cat)).map((cat) => (
             <div key={cat}>
-              <p className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground/45">
+              <p className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                 {cat}
               </p>
               <div className="flex gap-2 flex-wrap">

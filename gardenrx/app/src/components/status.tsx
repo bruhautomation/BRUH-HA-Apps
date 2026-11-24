@@ -44,14 +44,26 @@ const RATING_COLORS: Record<SprayRating, [string, string]> = {
   POOR: ['var(--danger)', 'var(--danger-bg)'],
 };
 
-export function RatingPill({ rating, size = 'md' }: { rating: SprayRating; size?: 'sm' | 'md' }) {
-  const [fg, bg] = RATING_COLORS[rating] ?? RATING_COLORS.FAIR;
+/** The spray rating right now. In the dark nobody can spray, so the pill says
+ *  Dark rather than a rating that reads as a go-ahead. */
+export function RatingPill({
+  rating,
+  size = 'md',
+  dark = false,
+}: {
+  rating: SprayRating;
+  size?: 'sm' | 'md';
+  dark?: boolean;
+}) {
+  const [fg, bg] = dark
+    ? ['var(--ink-2)', 'var(--paper-2)']
+    : (RATING_COLORS[rating] ?? RATING_COLORS.FAIR);
   return (
     <span
       className="rating-pill"
       style={{ color: fg, background: bg, fontSize: size === 'sm' ? 10.5 : 11.5 }}
     >
-      {rating}
+      {dark ? 'Dark' : rating}
     </span>
   );
 }

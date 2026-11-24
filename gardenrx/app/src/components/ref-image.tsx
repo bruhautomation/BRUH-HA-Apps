@@ -26,7 +26,7 @@ export function RefImage({
     if (fallback) return <>{fallback}</>;
     return (
       <div
-        className={`bg-parchment-100 flex items-center justify-center text-muted-foreground/40 text-xs rounded-lg ${className}`}
+        className={`bg-parchment-100 flex items-center justify-center text-muted-foreground text-xs rounded-lg ${className}`}
       >
         No image
       </div>
