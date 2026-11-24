@@ -809,8 +809,15 @@ def _mark_restarts(episodes: list[dict], restarts: list[dict]) -> int:
     return marked
 
 
-# A row folds into its device's other rows only when there are this many.
+# A row folds into its device's other rows only when there are this many,
+# each starting within REPEAT_JOIN_S of the one before ended: a fold is a
+# burst, never a day (a 3 am and a 3 pm unlock are two rows).
 REPEAT_MIN = 2
+REPEAT_JOIN_S = 1800.0
+# Never folded: what the house's safety is read from (locks, alarms and the
+# safety classes are `security`; doors and windows are `openings`), people
+# (each arrival is its own moment) and Home Assistant's own rows.
+REPEAT_NEVER = frozenset({"security", "openings", "people", "system"})
 
 
 def _fold_repeats(episodes: list[dict]) -> list[dict]:
@@ -820,10 +827,12 @@ def _fold_repeats(episodes: list[dict]) -> list[dict]:
 
     Read off each row's own fields: the same entity, the same first and
     last state, every one finished and shorter than its section's own gap
-    (a pause that would have ended the episode anyway). A row still going,
-    a person's (each arrival is its own moment), a count section's (a
-    motion row already says how many), a burst or a restart, and a row
-    read off the house now are never folded. The folded row is `kind`
+    (a pause that would have ended the episode anyway), each starting
+    within `REPEAT_JOIN_S` of the one before. A row still going, one in a
+    `REPEAT_NEVER` section (locks and safety, doors and windows, people,
+    Home Assistant), a count section's (a motion row already says how
+    many), a burst or a restart, and a row read off the house now are
+    never folded. The folded row is `kind`
     "repeat" with `times`, spanning the first to the last, its changes and
     causes summed, so the cause and an undo still land on it."""
     groups: dict[tuple, list[dict]] = {}
@@ -831,7 +840,7 @@ def _fold_repeats(episodes: list[dict]) -> list[dict]:
         spec = _BY_ID.get(ep.get("subject"), {})
         if (ep.get("kind") or ep.get("from_live") or ep.get("open")
                 or not ep.get("entity_id")
-                or ep.get("subject") in ("people", "system")
+                or ep.get("subject") in REPEAT_NEVER
                 or spec.get("reads") == "count"
                 or float(ep.get("duration_s") or 0) >= spec.get("gap_s", 0)):
             continue
@@ -839,10 +848,20 @@ def _fold_repeats(episodes: list[dict]) -> list[dict]:
         groups.setdefault(key, []).append(ep)
     folded: dict[int, dict] = {}
     gone: set[int] = set()
+    bursts: list[list[dict]] = []
     for rows in groups.values():
+        rows.sort(key=lambda e: e["started"])
+        run = [rows[0]]
+        for ep in rows[1:]:
+            if ep["started"] - run[-1]["ended"] <= REPEAT_JOIN_S:
+                run.append(ep)
+            else:
+                bursts.append(run)
+                run = [ep]
+        bursts.append(run)
+    for rows in bursts:
         if len(rows) < REPEAT_MIN:
             continue
-        rows.sort(key=lambda e: e["started"])
         head = dict(rows[-1])
         causes: dict[str, int] = {}
         for r in rows:
