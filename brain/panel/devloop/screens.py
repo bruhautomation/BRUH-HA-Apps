@@ -583,13 +583,33 @@ _AUDIT_JS = r"""
     }
     return false;
   };
+  // The part of a control that is drawn: its box cut by every ancestor that
+  // clips (a scrolling list, an overflow: hidden card). A row scrolled past
+  // the bottom of a list still answers its full box, which lies under the
+  // message box below the list (#1256), though not a pixel of it is shown
+  // there.
+  const drawn = (el) => {
+    const r = el.getBoundingClientRect();
+    let l = r.left, t = r.top, rt = r.right, b = r.bottom;
+    for (let p = up(el); p && p !== document.body && p !== document.documentElement; p = up(p)) {
+      const cs = getComputedStyle(p);
+      const clipX = cs.overflowX !== "visible", clipY = cs.overflowY !== "visible";
+      if (!clipX && !clipY) continue;
+      const pr = p.getBoundingClientRect();
+      if (clipX) { l = Math.max(l, pr.left); rt = Math.min(rt, pr.right); }
+      if (clipY) { t = Math.max(t, pr.top); b = Math.min(b, pr.bottom); }
+    }
+    return { left: l, top: t, right: rt, bottom: b,
+             width: Math.max(0, rt - l), height: Math.max(0, b - t) };
+  };
   for (let i = 0; i < controls.length; i++) {
     if (pinned(controls[i])) continue;
-    const a = controls[i].getBoundingClientRect();
+    const a = drawn(controls[i]);
+    if (!a.width || !a.height) continue;
     for (let j = i + 1; j < controls.length; j++) {
       if (controls[i].contains(controls[j]) || controls[j].contains(controls[i])
           || pinned(controls[j])) continue;
-      const b = controls[j].getBoundingClientRect();
+      const b = drawn(controls[j]);
       const ix = Math.min(a.right, b.right) - Math.max(a.left, b.left);
       const iy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
       const small = Math.min(a.width * a.height, b.width * b.height);

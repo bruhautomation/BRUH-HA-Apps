@@ -4037,15 +4037,24 @@ function resultAge(stamp) {
 // The one sentence a test page opens with: when it was last run and how it
 // came out, in the page's own words. A result a week old or more is said
 // as old, and the Run button beside it is the way to a fresh one.
+// A result a week old or more is history: it says so first, and what it
+// found is "then", never the house's state now (#1299: "Last checked 64
+// days ago, all good" read as an all-clear).
 function lastRunLine(stamp, said) {
+  if (resultIsOld(stamp)) {
+    return `Out of date: last checked ${resultAge(stamp)}, when ${said}. `
+      + "Run it again to see how things stand now.";
+  }
   return `Last checked ${resultAge(stamp)}, ${said}.`;
 }
 
-// The Run button of a test page: says plainly when what is shown above it is
-// old, and offers the run as "Run again". Never hides the old result.
-function paintRunButton(btn, note, stamp, label) {
+// The Run button of a test page, named for what it tests (#1299: two
+// buttons that both said "Run", one testing brAIn and one the house's
+// checks): `name`, and "`name` again" when what is shown above it is old.
+// Never hides the old result.
+function paintRunButton(btn, note, stamp, label, name) {
   const old = resultIsOld(stamp);
-  btn.textContent = old ? "Run again" : "Run";
+  btn.textContent = old ? `${name} again` : name;
   btn.classList.toggle("stalerun", old);
   btn.setAttribute("aria-label", old
     ? `${label}: the last result is out of date` : label);
@@ -4467,7 +4476,7 @@ async function measureState(poll) {
     const d = await api("api/baselines");
     const btn = $("#diagMeasure");
     btn.disabled = !!d.running;
-    btn.textContent = d.running ? "Running…" : "Run";
+    btn.textContent = d.running ? "Running…" : "Ask now";
     clearTimeout(measurePoll);
     measurePoll = d.running && poll
       ? setTimeout(() => measureState(true), 5000) : null;
@@ -4522,7 +4531,7 @@ async function curiousState(poll) {
   try {
     const d = await api("api/curiosity");
     btn.disabled = !!d.running;
-    btn.textContent = d.running ? "Running…" : "Run";
+    btn.textContent = d.running ? "Running…" : "Ask now";
     // Renders only while there is something to ask about — the `Forget`
     // rule: a button that cannot do anything is a control asking to be
     // understood. `curious_total` counts the eligible ones, held or not,
@@ -5455,9 +5464,9 @@ function renderDeep(d) {
       // One plain sentence: when it was last run and how it came out. The
       // count and every test are folded under it, for whoever wants them.
       let said;
-      if (failedNames.length) said = `something does not work (${failedNames.join(", ")})`;
-      else if (skipped) said = `everything that could be tried works; ${skipped} part${skipped > 1 ? "s were" : " was"} left out`;
-      else said = "all good";
+      if (failedNames.length) said = `something did not work (${failedNames.join(", ")})`;
+      else if (skipped) said = `everything that could be tried worked; ${skipped} part${skipped > 1 ? "s were" : " was"} left out`;
+      else said = "everything worked";
       sum.textContent = d.running ? "Running the tests…" : lastRunLine(last.finished_at, said);
       const stale = !d.running && resultIsOld(last.finished_at);
       sum.classList.toggle("bad", c.failed > 0 && !stale);
@@ -5480,7 +5489,8 @@ function renderDeep(d) {
     ? "This takes a few minutes."
     : (last.finished_at ? "" : "Not run on this install yet.");
   $("#deepLast").hidden = !$("#deepLast").textContent;
-  paintRunButton($("#deepRun"), $("#deepLast"), d.running ? 0 : last.finished_at, "Run all tests");
+  paintRunButton($("#deepRun"), $("#deepLast"), d.running ? 0 : last.finished_at, "Run all tests",
+    "Test brAIn");
   $("#deepRun").disabled = !!d.running;
 }
 
@@ -5605,7 +5615,7 @@ function renderRehearsal(d) {
       : missed > 0 ? `the checks missed ${missed} of ${planted} problems that were planted`
       : c.extra ? "the checks reported something that was not there"
       : leftBehind ? "the checks caught every planted problem, but something it planted is still in the house"
-      : "all good: the checks caught every problem that was planted";
+      : "the checks caught every problem that was planted";
     sum.textContent = lastRunLine(last.finished_at, said);
     sum.classList.toggle("bad", bad && !old);
     sum.classList.toggle("old", old);
@@ -5614,7 +5624,8 @@ function renderRehearsal(d) {
   // "Each result" only over results: housekeeping alone is its own
   // "Details", never a fold whose whole content is another fold (#1120).
   body.innerHTML = rows.length
-    ? detailsFold(rows.join("") + detailsFold(tech.join(""), "Details"), "Each result")
+    ? detailsFold(rows.join("") + detailsFold(tech.join(""), "Details"),
+      (c.rows || []).length ? `Each planted test (${c.rows.length})` : "What went wrong")
     : detailsFold(tech.join(""), "Details");
   body.hidden = !rows.length && !tech.length;
   const step = (d.progress || {}).step;
@@ -5625,7 +5636,7 @@ function renderRehearsal(d) {
       ? `Rehearsing — ${step || "starting"}…`
       : (last.finished_at ? "" : "Not rehearsed on this install yet."));
   paintRunButton($("#rehearseRun"), $("#rehearseLast"),
-    busy ? 0 : last.finished_at, "Run a rehearsal");
+    busy ? 0 : last.finished_at, "Run a rehearsal", "Test the checks");
   $("#rehearseRun").disabled = busy;
   // The button exists only while there is something for it to take out —
   // `leftovers` is the server's derivation, so this and the fault row in
@@ -9132,10 +9143,22 @@ function histRowsShown() {
   const q = (todayState.histQuery || "").trim().toLowerCase();
   if (!q) return rows;
   const words = q.split(/\s+/).filter(Boolean);
-  return rows.filter((r) => {
+  const hit = (r) => {
     const hay = `${r.title || ""} ${r.meta || ""} ${r.where || ""}`.toLowerCase();
     return words.every((w) => hay.includes(w));
-  });
+  };
+  // A folded row ("Updates you ignored") is searched by what it holds, and
+  // shows only the ones that match.
+  return rows.map((r) => {
+    if (!r.members) return hit(r) ? r : null;
+    const members = r.members.filter(hit);
+    return members.length ? { ...r, members } : null;
+  }).filter(Boolean);
+}
+
+// Every row a Delete would clear: a folded row is the rows it holds.
+function histLeaves(rows) {
+  return rows.flatMap((r) => r.members || [r]);
 }
 
 function renderHistory() {
@@ -9169,9 +9192,11 @@ function renderHistory() {
     logBox.hidden = !log;
     if (log) {
       const on = todayState.histFilter === "changes";
+      // What the page behind it shows, not how long the log has grown: a
+      // running house's count is in the thousands and says nothing (#1300).
       const open = el("button", "btn-tertiary histlogbtn", on
         ? "\u2039 Back to what you decided"
-        : `${log.label}: ${log.count.toLocaleString()} \u203a`);
+        : `${log.label} \u203a`);
       open.type = "button";
       open.setAttribute("aria-pressed", on ? "true" : "false");
       open.addEventListener("click", () => {
@@ -9203,7 +9228,7 @@ function renderHistory() {
   });
   if (hint) hint.textContent = HIST_HINTS[todayState.histFilter] || "";
   const rows = histRowsShown();
-  const deletable = rows.filter((r) => r.deletable);
+  const deletable = histLeaves(rows).filter((r) => r.deletable);
   if (clearBtn) {
     clearBtn.hidden = !deletable.length;
     clearBtn.textContent = todayState.histQuery
@@ -9217,7 +9242,7 @@ function renderHistory() {
     list.appendChild(empty);
     return;
   }
-  rows.forEach((r) => list.appendChild(makeHistoryRow(r)));
+  rows.forEach((r) => list.appendChild(r.members ? makeHistoryFold(r) : makeHistoryRow(r)));
   const ch = todayState.changes;
   if (todayState.histFilter === "changes" && ch && ch.more && !todayState.histQuery) {
     const older = qButton("Show older", false);
@@ -9317,6 +9342,27 @@ function makeHistoryRow(r) {
   return row;
 }
 
+// Rows of one kind that come in numbers ("Updates you ignored (42)",
+// `today.FOLDS`), as one closed row that opens on its own rows, each with
+// its Restore and Delete (#1300).
+function makeHistoryFold(r) {
+  const fold = el("details", "histfold");
+  if (todayState.histQuery) fold.open = true;
+  const head = el("summary", "histrow histfoldhead");
+  head.dataset.filter = todayState.histFilter;
+  head.appendChild(el("span", "histico", HIST_ICONS[todayState.histFilter] || "•"));
+  const text = el("div", "histtext");
+  text.appendChild(el("span", "histtitle", r.title));
+  if (r.meta) text.appendChild(el("span", "item-state", r.meta));
+  head.appendChild(text);
+  head.appendChild(el("span", "histfoldchev"));
+  fold.appendChild(head);
+  const body = el("div", "histfoldbody");
+  r.members.forEach((m) => body.appendChild(makeHistoryRow(m)));
+  fold.appendChild(body);
+  return fold;
+}
+
 (function wireHistory() {
   const search = $("#histSearch");
   if (search) {
@@ -9328,7 +9374,7 @@ function makeHistoryRow(r) {
   const clearBtn = $("#histClear");
   if (clearBtn) {
     clearBtn.addEventListener("click", () => {
-      const rows = histRowsShown().filter((r) => r.deletable);
+      const rows = histLeaves(histRowsShown()).filter((r) => r.deletable);
       if (!rows.length) return;
       if (!window.confirm(`Delete ${rows.length} item${rows.length === 1 ? "" : "s"} `
         + "from history?\n\nYour answers stand — brAIn won't raise them again. "
@@ -9547,13 +9593,20 @@ document.querySelectorAll(".kfoldname").forEach((b) => b.addEventListener("click
 // writer stamped on it. An unknown source falls through as itself: a new
 // writer showing its own tag is odd, and showing nothing is a lie.
 function kSourceLabel(src) {
-  return {
+  const known = {
     insights: "discovered", homeowner: "your answer", confirmed: "you confirmed",
     correction: "your correction", feedback: "feedback", user: "added by you",
     panel: "added by you", assist: "voice", terminal: "terminal",
     "terminal-forget": "removal, from the terminal",
     study: "study session", automation: "automation",
-  }[src] || src;
+    bruh_minecraft: "Minecraft", minecraft_approval: "Minecraft",
+    gardenrx: "GardenRX", house_book: "house book",
+  }[src];
+  if (known) return known;
+  // A writer this list does not name is still said in words, never as its
+  // id (#1301: "bruh_minecraft" in the Taught by picker).
+  const words = String(src || "").replace(/^bruh_/, "").replace(/[_:.-]+/g, " ").trim();
+  return words || String(src || "");
 }
 
 // One fact still waiting for the document — a line of the inbox itself, not
@@ -9605,7 +9658,16 @@ function factSubjectLabel(subject) {
     const words = s.split("|")[0].slice(5).replace(/_/g, " ");
     return words.charAt(0).toUpperCase() + words.slice(1);
   }
-  if (s.startsWith("person:")) return s.slice(7);
+  // The server names every subject it can (`facts_store.subject_word`);
+  // this is the same reading for one it sent no name for.
+  if (s.startsWith("person:")) {
+    return s.slice(7).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+  const app = /^([a-z][a-z0-9_]*):./.exec(s);
+  if (app && !["area", "check"].includes(app[1])) {
+    const w = app[1].replace(/_/g, " ");
+    return w.charAt(0).toUpperCase() + w.slice(1);
+  }
   return s;
 }
 
@@ -9858,6 +9920,8 @@ function paintFactSubjects() {
   const rooms = subjects.filter((s) => s.kind === "area").sort(byName);
   const house = subjects.filter((s) => s.kind === "house" || s.kind === "person" || s.kind === "check");
   const devices = subjects.filter((s) => s.kind === "entity");
+  // A sibling app's world (a game, a garden): after the house, by its name.
+  const others = subjects.filter((s) => s.kind === "other").sort(byName);
   const byArea = new Map();
   devices.forEach((d) => {
     const k = d.area || "";
@@ -9885,6 +9949,7 @@ function paintFactSubjects() {
     addGroup("Rooms", rooms);
     areaNames.forEach((a) => addGroup(a ? `Devices · ${a}` : "Devices · no room",
       byArea.get(a).slice().sort(byName)));
+    addGroup("Other", others);
     if (factsView.subject && !subjects.some((s) => s.id === factsView.subject)) {
       const opt = el("option", null, factSubjectLabel(factsView.subject));
       opt.value = factsView.subject;
@@ -9926,6 +9991,7 @@ function paintFactSubjects() {
   section("Rooms", rooms, false);
   areaNames.forEach((a) => section(a ? a : "Devices with no room",
     byArea.get(a).slice().sort(byName), true));
+  section("Other", others, false);
   if (!any) {
     rail.appendChild(el("div", "kempty small", find ? "No room or device matches."
       : "Nothing is filed under a room or device yet."));
@@ -15808,26 +15874,23 @@ async function chooseResolution(ev, option, finding, btns, paint) {
 // machines' are one press away rather than inside ⚙. The kind you picked
 // is remembered; the server only offers kinds that have actually run here.
 
-// What a conversation row says about itself: the pill for its
-// `row_state`, which the server derives once for the rail, the composer
-// line and the resume route alike. Seven states, six pills: a plain
-// "paused" conversation — no process, the ordinary case — draws nothing,
-// because most rows are that and it is not news. Everything that IS news is
-// a word on the row: a live process ("Live", quiet), one answering, one
-// waiting on a person (the loudest, because the approval card behind it
-// declines itself if nobody comes), one the cap paused ("Paused to make
-// room" — opening it is what picks it back up), one whose context Claude
-// Code no longer holds, and a record.
+// What a conversation row says about itself: a word only when the chat is
+// doing something or waiting on a person, from its `row_state`, which the
+// server derives once for the rail, the composer line and the resume route
+// alike. "Answering…" is a background fact and stays quiet; "Needs your OK"
+// is the loudest, because the approval card behind it declines itself if
+// nobody comes. Every other state draws nothing on the row (#1302): a live
+// but idle process, a pause, a pause to make room, lost context and a
+// record each said the same word on row after row — five "Live" pills over
+// five chats nobody was using told a person nothing — and the composer line
+// says the ones worth knowing once the chat is open. An older chat shows
+// only its age.
 //
 // The stream's listing wins over the fetched row: it is refreshed the
 // moment anything moves, where the row is as old as the last request.
 const CONV_PILLS = {
-  live: "crlive",
   answering: "crbusy",
   needs_ok: "crask",
-  paused_room: "crpaused",
-  context_lost: "crlost",
-  record: "crrecord",
 };
 
 function convRowState(row) {
@@ -16042,14 +16105,14 @@ function renderConvKinds() {
   }
 }
 
-// The list's groups, in order: "Live now" (a process holds it, it is
-// answering or waiting on an OK, or a terminal window has it), then
+// The list's groups, in order: "Live now" (it is answering, waiting on an
+// OK, or a terminal window has it; an idle process is not news), then
 // Today, Yesterday, This week, and each older month by its name. The server
 // sends newest first, so each group keeps that order.
 function convIsLive(c) {
   if (c.terminal) return true;
   const st = convRowState(c).state;
-  return st === "live" || st === "answering" || st === "needs_ok";
+  return st === "answering" || st === "needs_ok";
 }
 
 function convDay(ts) {

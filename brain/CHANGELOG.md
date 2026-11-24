@@ -2,6 +2,15 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.13
+
+### Fixed
+
+- Ask's chat list marks a chat only while it is answering or waiting on you ("Answering…", "Needs your OK"); every other chat shows only its age, instead of the same green "Live" pill on every row (1302). The house's screen check no longer reports chats scrolled out of the list as overlapping the message box (1256).
+- Settings › Developer says when its last test is out of date and asks to run it again, names its buttons for what they test ("Test brAIn", "Test the checks"), and every fold shows a ▸ so it reads as something to open (1299).
+- Insights › History › Ignored says when each thing was ignored and what you said, folds ignored updates into one "Updates you ignored" row, and the changes link no longer shows a raw count (1300).
+- Memory › Knowledge opens on facts about the house; facts an app keeps (a game's, for example) are named by the app and listed after them, chips use names instead of internal ids, and "Taught by" is shown in full on a phone (1301).
+
 ## 5.5.12
 
 ### Fixed
