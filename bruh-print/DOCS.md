@@ -591,6 +591,18 @@ A named entity always wins. Leave one out and the card goes on looking for
 that one by suffix, so naming the odd one out is enough — and a second BRUH
 Print, whose ids all carry a `_2`, is found without naming anything.
 
+### Listing the saved templates
+
+`show_templates: true` adds the saved templates under the form, one button
+each. Press one to fill in its fields and print it; it prints on the label
+its template was made for. It is off unless you turn it on, so a card you
+already have does not change.
+
+```yaml
+type: custom:bruh-print-card
+show_templates: true
+```
+
 ### What the card says after a print
 
 The confirmation is the add-on's own: how many labels came out, which roll
