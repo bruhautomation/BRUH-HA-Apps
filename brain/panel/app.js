@@ -15762,26 +15762,23 @@ async function chooseResolution(ev, option, finding, btns, paint) {
 // machines' are one press away rather than inside ⚙. The kind you picked
 // is remembered; the server only offers kinds that have actually run here.
 
-// What a conversation row says about itself: the pill for its
-// `row_state`, which the server derives once for the rail, the composer
-// line and the resume route alike. Seven states, six pills: a plain
-// "paused" conversation — no process, the ordinary case — draws nothing,
-// because most rows are that and it is not news. Everything that IS news is
-// a word on the row: a live process ("Live", quiet), one answering, one
-// waiting on a person (the loudest, because the approval card behind it
-// declines itself if nobody comes), one the cap paused ("Paused to make
-// room" — opening it is what picks it back up), one whose context Claude
-// Code no longer holds, and a record.
+// What a conversation row says about itself: a word only when the chat is
+// doing something or waiting on a person, from its `row_state`, which the
+// server derives once for the rail, the composer line and the resume route
+// alike. "Answering…" is a background fact and stays quiet; "Needs your OK"
+// is the loudest, because the approval card behind it declines itself if
+// nobody comes. Every other state draws nothing on the row (#1302): a live
+// but idle process, a pause, a pause to make room, lost context and a
+// record each said the same word on row after row — five "Live" pills over
+// five chats nobody was using told a person nothing — and the composer line
+// says the ones worth knowing once the chat is open. An older chat shows
+// only its age.
 //
 // The stream's listing wins over the fetched row: it is refreshed the
 // moment anything moves, where the row is as old as the last request.
 const CONV_PILLS = {
-  live: "crlive",
   answering: "crbusy",
   needs_ok: "crask",
-  paused_room: "crpaused",
-  context_lost: "crlost",
-  record: "crrecord",
 };
 
 function convRowState(row) {
@@ -15996,14 +15993,14 @@ function renderConvKinds() {
   }
 }
 
-// The list's groups, in order: "Live now" (a process holds it, it is
-// answering or waiting on an OK, or a terminal window has it), then
+// The list's groups, in order: "Live now" (it is answering, waiting on an
+// OK, or a terminal window has it; an idle process is not news), then
 // Today, Yesterday, This week, and each older month by its name. The server
 // sends newest first, so each group keeps that order.
 function convIsLive(c) {
   if (c.terminal) return true;
   const st = convRowState(c).state;
-  return st === "live" || st === "answering" || st === "needs_ok";
+  return st === "answering" || st === "needs_ok";
 }
 
 function convDay(ts) {

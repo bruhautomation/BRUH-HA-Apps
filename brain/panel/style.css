@@ -5436,34 +5436,21 @@ body.term-classic #termMode .ico-out { display: block; }
 
 /* chat states
    What a conversation row says about itself, and what the composer says
-   sending will do. One vocabulary (`ROW_STATES` in chat_session.py) drawn
-   in two places: a pill on the row, and a line above the message box.
-   Every pill shares one shape with `.crbusy`/`.crask` above; what differs
-   is the colour, because the states differ in what they ask of a person —
-   "Live" and "Record" are facts and stay quiet, "Paused to make room" and
-   "Context lost" are things worth knowing before you type and take the
-   warning colour, and "Needs your OK" keeps the loudest treatment because
-   the card behind it declines itself if nobody comes. */
-.crlive, .crpaused, .crlost, .crrecord {
+   sending will do. One vocabulary (`ROW_STATES` in chat_session.py): the
+   row draws a word only while the chat is answering or waiting on an OK
+   (`.crbusy`/`.crask` above, #1302), and the line above the message box
+   says the rest once the chat is open. `.crlive` is the one other mark a
+   row carries: "In the terminal", a window that has the chat now. */
+.crlive {
   flex: none;
   padding: 1px var(--sp-2);
   border-radius: 999px;
   font-size: var(--fs-meta);
   font-weight: 700;
   white-space: nowrap;
-  border: 1px solid var(--hairline);
-  background: var(--surface-2);
-  color: var(--ink-3);
-}
-.crlive {
-  border-color: color-mix(in srgb, var(--good) 55%, var(--hairline));
+  border: 1px solid color-mix(in srgb, var(--good) 55%, var(--hairline));
   color: var(--good-ink);
   background: color-mix(in srgb, var(--good) 10%, var(--surface));
-}
-.crpaused, .crlost {
-  border-color: var(--warning);
-  color: var(--warning-ink);
-  background: transparent;
 }
 /* The line above the composer. The same quiet register as the meta line
    under it: a sentence you read once before typing, not a banner. The
