@@ -463,7 +463,7 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
 - **A past time says it is past, in one style: a clock time today, then
   "yesterday", then a date.** "8:12 PM", "yesterday 8:12 PM", "Nov 18,
   8:12 PM" within the week and "Oct 2" before it. Never a bare weekday
-  ("last on Tue 8:12 PM" reads as next Wednesday). Every last-ran, last-on,
+  ("last on Tue 8:12 PM" reads as the coming Tuesday). Every last-ran, last-on,
   last-seen and since on one card uses the same style. Morph's own cards use
   `pastWhen` (`util.js`); a built card writes the same shapes.
 - **A machine that is off shows that it is off, not its empty readings.** An
