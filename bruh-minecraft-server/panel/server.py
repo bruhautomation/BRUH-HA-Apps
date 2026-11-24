@@ -860,6 +860,8 @@ async def api_players(_: web.Request) -> web.Response:
     })
     if isinstance(data, dict):
         data["known"] = await asyncio.to_thread(_known_players, data.get("players") or [])
+        # With the whitelist on, a name on no list cannot join; the row says so.
+        data["whitelist_on"] = _read_properties().get("white-list", "").lower() == "true"
     return web.json_response(data)
 
 
@@ -2741,6 +2743,37 @@ async def _install_batch(items, ctx: addons.Context) -> web.Response:
                               "world": _world_contents(_addon_context())})
 
 
+_ADDON_UPDATES: dict = {"key": None, "at": 0.0, "result": None}
+ADDON_UPDATES_TTL = 300
+
+
+async def api_addons_updates(_: web.Request) -> web.Response:
+    """Whether each browser-added add-on has a newer build on Modrinth.
+
+    Asked by the panel when the Add-ons pane opens, never on a timer: one
+    Modrinth `versions` call per add-on, remembered for a few minutes and
+    forgotten as soon as the world's record or the server's version changes
+    (an Update just ran, a world was switched).
+    """
+    ctx = _addon_context()
+    manifest = addons.read_manifest(ctx.server_dir)
+    key = (str(ctx.server_dir), ctx.server_type, ctx.version,
+           tuple(sorted((pid, str(r.get("version_id") or r.get("version") or ""))
+                        for pid, r in manifest.items())))
+    cached = _ADDON_UPDATES
+    if cached["key"] == key and time.time() - cached["at"] < ADDON_UPDATES_TTL:
+        return web.json_response({"updates": cached["result"]})
+    try:
+        async with _modrinth_session() as session:
+            result = await addons.check_updates(addons.Modrinth(session), ctx)
+    except Exception as exc:  # noqa: BLE001 — offline, DNS, a timeout
+        return web.json_response(
+            {"error": f"Modrinth could not be reached ({type(exc).__name__})."}, status=502)
+    if not any(v.get("state") == "unknown" for v in result.values()):
+        _ADDON_UPDATES.update(key=key, at=time.time(), result=result)
+    return web.json_response({"updates": result})
+
+
 async def api_addons_remove(request: web.Request) -> web.Response:
     ctx = _addon_context()
     project_id = request.match_info["id"]
@@ -4404,6 +4437,7 @@ def build_app() -> web.Application:
     # Add-on browser
     app.router.add_get("/api/addons", api_addons)
     app.router.add_get("/api/addons/search", api_addons_search)
+    app.router.add_get("/api/addons/updates", api_addons_updates)
     app.router.add_post("/api/addons/install", api_addons_install)
     app.router.add_get("/api/server/software", api_server_software)
     app.router.add_post("/api/server/software/update", api_server_software_update)
