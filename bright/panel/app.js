@@ -13,9 +13,7 @@
     for (const tab of tabs.querySelectorAll(".tab")) {
       tab.classList.toggle("active", tab === button);
     }
-    // On a phone the tab strip scrolls sideways inside itself: bring the one
-    // pressed fully into view.
-    try { button.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (e) { /* older engines */ }
+    revealTab(button);
     const name = button.dataset.tab;
     for (const pane of document.querySelectorAll(".pane")) {
       pane.classList.toggle("active", pane.id === "pane-" + name);
@@ -26,6 +24,35 @@
     // mid-song, by a thumb that missed a pad.
     document.body.classList.toggle("mn-open", name === "manual");
   });
+
+  // On a phone the tab strip is one row that scrolls sideways inside itself.
+  // An edge that has more tabs past it fades out (`more-start`/`more-end`),
+  // so a cut tab reads as "there is more" rather than as the end of the
+  // strip, and the open tab is brought clear of the fade: when a tab is
+  // pressed, when the page opens, and when the screen turns.
+  const TAB_FADE_PX = 40;
+  function tabEdges() {
+    const end = tabs.scrollWidth - tabs.clientWidth;
+    tabs.classList.toggle("more-start", tabs.scrollLeft > 1);
+    tabs.classList.toggle("more-end", end > 1 && tabs.scrollLeft < end - 1);
+  }
+  function revealTab(button) {
+    if (tabs.scrollWidth > tabs.clientWidth) {
+      const left = button.offsetLeft - TAB_FADE_PX;
+      const right = button.offsetLeft + button.offsetWidth + TAB_FADE_PX;
+      if (left < tabs.scrollLeft) tabs.scrollLeft = Math.max(0, left);
+      else if (right > tabs.scrollLeft + tabs.clientWidth) {
+        tabs.scrollLeft = right - tabs.clientWidth;
+      }
+    }
+    tabEdges();
+  }
+  tabs.addEventListener("scroll", tabEdges, { passive: true });
+  window.addEventListener("resize", () => {
+    const open = tabs.querySelector(".tab.active");
+    if (open) revealTab(open); else tabEdges();
+  });
+  revealTab(tabs.querySelector(".tab.active") || tabs.querySelector(".tab"));
 
   const $ = (id) => document.getElementById(id);
 
@@ -219,7 +246,9 @@
     for (const row of checked) list.insertBefore(row, fold);
     for (const row of unchecked) fold.appendChild(row);
     fold.hidden = !unchecked.length;
-    fold.querySelector("summary").textContent = unchecked.length + " not " +
+    // The line says it opens, in words: a bare line of text over a fold was
+    // read as the list's end, and the bulbs under it as gone.
+    fold.querySelector(".fold-text").textContent = unchecked.length + " not " +
       "checked yet";
     // Nothing checked: there is nothing above to read, so the names are
     // shown rather than hidden behind a line.
@@ -234,7 +263,10 @@
       return;
     }
     list.innerHTML = '<p class="lifx-summary"></p>' +
-      '<details class="info-toggle lifx-unchecked"><summary></summary></details>';
+      '<details class="info-toggle lifx-unchecked"><summary>' +
+      '<span class="fold-text"></span><span class="fold-label" ' +
+      'data-show="Show them" data-hide="Hide them"></span>' +
+      "</summary></details>";
     const fold = list.querySelector(".lifx-unchecked");
     for (const device of devices) {
       const row = document.createElement("div");
@@ -740,7 +772,14 @@
         verdict.push((fixtures.length - zoned) + " with no zone");
       }
     }
+    // Bulbs BRight has found that the map does not have yet: they play in
+    // no show, and nothing else on this tab says they exist.
+    if (mapMissing) {
+      verdict.push(mapMissing + (mapMissing === 1 ? " found bulb is" :
+        " found bulbs are") + " not on the map (Add lights, above)");
+    }
     $("mapListSummary").textContent = verdict.join(" · ");
+    renderZoneSuggestion();
     search.hidden = fixtures.length < MAP_SEARCH_FROM;
     const wanted = search.hidden ? "" : search.value.trim().toLowerCase();
     const shown = fixtures.filter((f) => !wanted ||
@@ -798,6 +837,126 @@
   }
 
   $("mapSearch").addEventListener("input", renderMapList);
+
+  // How many discovered bulbs are not on the map, from the same answer the
+  // Add lights picker reads. Null until it has been asked.
+  let mapMissing = 0;
+
+  // Zones read off the names. A house that names its lights "Kitchen 1",
+  // "Kitchen pendant", "Lounge 3" has already said which room each is in;
+  // asking for the same word again on forty lights is what left every
+  // light on "No zone". Decided from the structure of the names, never a
+  // list of room words: the names are split into words, any words that
+  // EVERY light's name starts with are skipped (a brand or a house name
+  // that tells no two lights apart), and the next word is the zone when at
+  // least two lights without a zone share it, or when a zone of that name
+  // already exists. A word that is only digits is a number, not a room.
+  // Only lights with no zone are offered a zone; nothing is saved until
+  // the suggestion is accepted.
+  const ZONE_NAME = /^[A-Za-z0-9 _-]{1,32}$/;
+  function suggestZones(fixtures, zones) {
+    const words = (label) => String(label || "").split(/[^\p{L}\p{N}]+/u)
+      .filter(Boolean);
+    const named = fixtures.map((f) => words(f.label));
+    let shared = 0;
+    if (named.length > 1) {
+      while (named.every((w) => w.length > shared + 1 &&
+        w[shared].toLowerCase() === named[0][shared].toLowerCase())) shared += 1;
+    }
+    const existing = new Map((zones || []).map((z) => [z.toLowerCase(), z]));
+    const groups = new Map();
+    fixtures.forEach((fixture, index) => {
+      if (fixture.zone) return;
+      const word = named[index][shared];
+      if (!word || /^\p{N}+$/u.test(word) || !ZONE_NAME.test(word)) return;
+      const key = word.toLowerCase();
+      if (!groups.has(key)) {
+        groups.set(key, { zone: existing.get(key) || word, lights: [] });
+      }
+      groups.get(key).lights.push(fixture);
+    });
+    return Array.from(groups.entries())
+      .filter(([key, g]) => g.lights.length > 1 || existing.has(key))
+      .map(([, g]) => g)
+      .sort((x, y) => x.zone.localeCompare(y.zone));
+  }
+
+  let zonePreview = false;
+  function renderZoneSuggestion() {
+    const box = $("mapSuggest");
+    const offer = suggestZones(mapData.fixtures, mapData.zones);
+    box.innerHTML = "";
+    box.hidden = !offer.length;
+    if (!offer.length) { zonePreview = false; return; }
+    if (!zonePreview) {
+      const ask = document.createElement("button");
+      ask.className = "btn";
+      ask.type = "button";
+      ask.textContent = "Suggest zones from names";
+      ask.addEventListener("click", () => {
+        zonePreview = true;
+        renderZoneSuggestion();
+      });
+      box.appendChild(ask);
+      return;
+    }
+    const lead = document.createElement("p");
+    lead.className = "small";
+    const count = offer.reduce((n, g) => n + g.lights.length, 0);
+    lead.textContent = "From their names, " + count +
+      (count === 1 ? " light" : " lights") + " could go in " + offer.length +
+      (offer.length === 1 ? " zone" : " zones") + ". Nothing changes " +
+      "until you press Use these zones.";
+    box.appendChild(lead);
+    const list = document.createElement("ul");
+    list.className = "map-suggest-list";
+    for (const group of offer) {
+      const item = document.createElement("li");
+      const zone = document.createElement("strong");
+      zone.textContent = group.zone;
+      const who = document.createElement("span");
+      who.className = "muted small";
+      who.textContent = " · " + group.lights.map((f) => f.label).join(", ");
+      item.append(zone, who);
+      list.appendChild(item);
+    }
+    box.appendChild(list);
+    const actions = document.createElement("div");
+    actions.className = "demo-controls";
+    const apply = document.createElement("button");
+    apply.className = "btn primary";
+    apply.type = "button";
+    apply.textContent = "Use these zones";
+    const cancel = document.createElement("button");
+    cancel.className = "btn";
+    cancel.type = "button";
+    cancel.textContent = "Not now";
+    cancel.addEventListener("click", () => {
+      zonePreview = false;
+      renderZoneSuggestion();
+    });
+    apply.addEventListener("click", async () => {
+      apply.disabled = true;
+      cancel.disabled = true;
+      let saved = 0;
+      try {
+        for (const group of offer) {
+          for (const fixture of group.lights) {
+            await post("api/map/fixture", { ...fixture, zone: group.zone });
+            saved += 1;
+          }
+        }
+        $("mapStatus").textContent = saved + (saved === 1 ? " light" : " lights") +
+          " given a zone from its name.";
+      } catch (error) {
+        $("mapStatus").textContent = "Stopped after " + saved + ": " + error.message;
+      }
+      zonePreview = false;
+      loadMap();
+    });
+    actions.append(apply, cancel);
+    box.appendChild(actions);
+  }
 
   // Remove is one slip from the zone field on the selection bar, so the
   // first press only asks: the button says what a second press does, and
@@ -863,16 +1022,23 @@
       };
     }
 
+    // A pile is tapped, not dragged: it is several lights, and the tap
+    // lists them. It opens on `click`, not on `pointerdown`: the list
+    // appears on the bar ABOVE the floor and pushes the floor down, so a
+    // list drawn on pointerdown put one of its own buttons under the finger
+    // before the tap ended, and the tap's click chose that light. On a
+    // phone tapping "2 lights" selected one of them, never showed both.
+    floor.addEventListener("click", (event) => {
+      const dot = event.target.closest(".map-dot");
+      if (!dot || !dot.dataset.cluster) return;
+      openCluster = dot.dataset.cluster.split("|");
+      selectedFixture = null;
+      renderMap();
+      $("mapSelection").scrollIntoView({ block: "nearest" });
+    });
     floor.addEventListener("pointerdown", (event) => {
       const dot = event.target.closest(".map-dot");
-      if (!dot) return;
-      if (dot.dataset.cluster) {
-        // A pile is tapped, not dragged: it is several lights.
-        openCluster = dot.dataset.cluster.split("|");
-        selectedFixture = null;
-        renderMap();
-        return;
-      }
+      if (!dot || dot.dataset.cluster) return;
       openCluster = null;
       dragging = dot;
       startedAt = { x: event.clientX, y: event.clientY };
@@ -1004,7 +1170,8 @@
         return;
       }
       list.innerHTML = "";
-      $("showSummary").textContent = summarizeShows(tracks);
+      $("showSummary").textContent = summarizeShows(
+        tracks, (lib.tracks || []).length);
       const copies = findCopies(tracks);
       for (const track of tracks) {
         const row = document.createElement("div");
@@ -1059,14 +1226,20 @@
   }
 
   // The list's verdict, once, above it: how many songs have a show and
-  // whether any has been played.
-  function summarizeShows(tracks) {
+  // whether any has been played. The total is the Library's, analyzed or
+  // not, so this tab and the Library never give two different song counts;
+  // a song not analyzed yet is listed only there and is said so here.
+  function summarizeShows(tracks, total) {
+    const all = Math.max(total || 0, tracks.length);
     const built = tracks.filter((t) => t.show).length;
     const played = tracks.filter((t) => t.show && t.show.last_played).length;
-    const bits = [built === tracks.length
+    const bits = [built === all
       ? (built === 1 ? "1 song, its show ready"
         : "All " + built + " songs have a show ready")
-      : built + " of " + tracks.length + " songs have a show ready"];
+      : built + " of " + all + " songs have a show ready"];
+    if (all > tracks.length) {
+      bits.push((all - tracks.length) + " not analyzed yet (Library)");
+    }
     if (built) bits.push(played ? played + " played so far" : "none played yet");
     return bits.join(" · ");
   }
@@ -1344,6 +1517,17 @@
     $("syncCount").textContent = all.length
       ? on + " of " + all.length + " selected"
       : "no bulbs discovered yet — press Discover bulbs above";
+    // Each zone's fold says its own count and its tick follows its bulbs:
+    // ticked when all are, half-ticked when some are.
+    for (const group of $("syncBulbs").querySelectorAll(".sync-group")) {
+      const boxes = Array.from(group.querySelectorAll("input[data-serial]"));
+      const ticked = boxes.filter((input) => input.checked).length;
+      const tick = group.querySelector(".sync-group-tick");
+      tick.checked = ticked === boxes.length;
+      tick.indeterminate = ticked > 0 && ticked < boxes.length;
+      group.querySelector(".sync-group-count").textContent =
+        ticked + " of " + boxes.length;
+    }
   }
 
   function syncSetAll(checked) {
@@ -1375,14 +1559,24 @@
 
   $("btnSyncAll").addEventListener("click", () => syncSetAll(true));
   $("btnSyncNone").addEventListener("click", () => syncSetAll(false));
-  $("syncBulbs").addEventListener("change", syncCount);
+  $("syncBulbs").addEventListener("change", (event) => {
+    const tick = event.target.closest(".sync-group-tick");
+    if (tick) {
+      for (const input of tick.closest(".sync-group")
+        .querySelectorAll("input[data-serial]")) {
+        input.checked = tick.checked;
+      }
+    }
+    syncCount();
+  });
 
   async function loadSyncChoices() {
     try {
-      const [lib, profiles, devices] = await Promise.all([
+      const [lib, profiles, devices, map] = await Promise.all([
         api("api/library"),
         api("api/calibrate/profiles"),
         api("api/lifx/devices").catch(() => ({ devices: [] })),
+        api("api/map").catch(() => ({ fixtures: [] })),
       ]);
       const bulbs = $("syncBulbs");
       // Ticks are remembered across a reload of this list, because the
@@ -1396,20 +1590,66 @@
       // browser last tested with, or from none: every bulb ticked is the
       // whole house pulsing, bedrooms included, from one press of Start.
       const last = was.size ? null : syncLastUsed();
-      bulbs.innerHTML = "";
+      // Grouped by the zone the Light Map gives each bulb. A fold that
+      // was open stays open across the reload, like the ticks.
+      const opened = new Set(Array.from(
+        bulbs.querySelectorAll(".sync-group[open]")).map((g) => g.dataset.zone));
+      const zoneOf = new Map((map.fixtures || [])
+        .filter((f) => f.kind === "lifx")
+        .map((f) => [f.serial, String(f.zone || "").trim()]));
+      const groups = new Map();
       for (const device of devices.devices || []) {
-        const label = document.createElement("label");
-        label.className = "fx-fixture";
-        const check = document.createElement("input");
-        check.type = "checkbox";
-        check.checked = was.has(device.serial)
-          ? was.get(device.serial) : !!(last && last.has(device.serial));
-        check.dataset.serial = device.serial;
-        const text = document.createElement("span");
-        text.textContent = (device.label || device.serial);
-        label.appendChild(check);
-        label.appendChild(text);
-        bulbs.appendChild(label);
+        const zone = zoneOf.get(device.serial) || "";
+        if (!groups.has(zone)) groups.set(zone, []);
+        groups.get(zone).push(device);
+      }
+      const zones = Array.from(groups.keys()).sort((x, y) =>
+        (x === "") - (y === "") || x.localeCompare(y));
+      bulbs.innerHTML = "";
+      for (const zone of zones) {
+        const group = document.createElement("details");
+        group.className = "sync-group";
+        group.dataset.zone = zone;
+        group.open = opened.has(zone);
+        const head = document.createElement("summary");
+        const tick = document.createElement("input");
+        tick.type = "checkbox";
+        tick.className = "sync-group-tick";
+        const name = zone || (zones.length === 1 ? "Bulbs" : "No zone");
+        tick.setAttribute("aria-label", "Every bulb in " + name);
+        const title = document.createElement("span");
+        title.className = "sync-group-name";
+        title.textContent = name;
+        const count = document.createElement("span");
+        count.className = "muted small sync-group-count";
+        const fold = document.createElement("span");
+        fold.className = "fold-label";
+        fold.dataset.show = "Show";
+        fold.dataset.hide = "Hide";
+        // The tick sits in its own 44px label so a thumb aimed at it
+        // ticks the zone rather than opening the fold beside it.
+        const hit = document.createElement("label");
+        hit.className = "sync-group-hit";
+        hit.appendChild(tick);
+        head.append(hit, title, count, fold);
+        const box = document.createElement("div");
+        box.className = "fx-fixtures";
+        group.append(head, box);
+        bulbs.appendChild(group);
+        for (const device of groups.get(zone)) {
+          const label = document.createElement("label");
+          label.className = "fx-fixture";
+          const check = document.createElement("input");
+          check.type = "checkbox";
+          check.checked = was.has(device.serial)
+            ? was.get(device.serial) : !!(last && last.has(device.serial));
+          check.dataset.serial = device.serial;
+          const text = document.createElement("span");
+          text.textContent = (device.label || device.serial);
+          label.appendChild(check);
+          label.appendChild(text);
+          box.appendChild(label);
+        }
       }
       syncCount();
       // Same memory as the tick-boxes above, for the same reason: this
@@ -1686,9 +1926,28 @@
       words.textContent = "No music found" +
         (missingWords ? " · ⚠ " + missingWords : "");
     } else {
+      // The folders counted are the ones the rows below name ("Folder:
+      // music / Artist / Album"), not the scanned roots above them: a
+      // header saying "1 folder" over rows naming four is a count nobody
+      // can check. The roots are what the fold opens.
+      const places = new Set(tracks.map((t) => trackPlace(t, folders)));
+      const waiting = tracks.filter((t) => !t.analyzed).length;
+      const older = tracks.filter((t) => t.analyzed && t.stale).length;
+      const ready = tracks.length - waiting - older;
+      const todo = [];
+      if (waiting) todo.push(waiting + " not analyzed");
+      if (older) todo.push(older + " to analyze again");
       words.textContent = plural(tracks.length, "track", "tracks") + " in " +
-        plural(holding.length, "folder", "folders") + " — nothing to do";
+        plural(places.size, "folder", "folders") +
+        (todo.length ? " · " + ready + " ready, " + todo.join(", ") +
+          " — press Analyze new tracks"
+          : " — nothing to do");
     }
+    // The button that does the outstanding work is the one that stands
+    // out, and only while there is some.
+    const behind = tracks.some((t) => !t.analyzed || t.stale);
+    $("btnAnalyzeAll").classList.toggle("primary", behind);
+    $("btnScanLibrary").classList.toggle("primary", !behind);
     // The fold says what it holds in words; an arrow alone is a control
     // nobody can name.
     const more = document.createElement("span");
@@ -2687,6 +2946,8 @@
     const roles = $("bulbRole");
     try {
       const body = await api("api/map/candidates");
+      mapMissing = (body.candidates || []).length;
+      if (mapData.fixtures.length) renderMapList();
       select.innerHTML = "";
       if (!(body.candidates || []).length) {
         const option = document.createElement("option");
@@ -4215,6 +4476,7 @@
   // has been edited since.
   function edTouch() {
     $("scriptText").value = JSON.stringify(ed.script, null, 2);
+    $("btnScriptSave").disabled = !scriptTrack;
     edRenderScript();
     edPaint();
     if (ed.outlineTimer) clearTimeout(ed.outlineTimer);
@@ -4726,8 +4988,16 @@
     versionAction(version.id, "rename", { name: name });
   }
 
+  // Save & compile has something to send only once a show is open and its
+  // text is not empty.
+  function edSaveState() {
+    $("btnScriptSave").disabled = !scriptTrack || !$("scriptText").value.trim();
+  }
+  $("scriptText").addEventListener("input", edSaveState);
+
   async function openScript(hash, name) {
     scriptTrack = hash;
+    $("showEditor").classList.remove("ed-empty");
     const status = $("scriptStatus");
     status.textContent = "loading…";
     try {
@@ -4740,6 +5010,7 @@
       $("scriptText").value = body.script
         ? JSON.stringify(body.script, null, 2)
         : "";
+      edSaveState();
       renderScriptEffects(body);
       renderVersions(body);
       edPlay(false);
@@ -4970,6 +5241,10 @@
   // which is why this is a sparse map rather than a value per song.
   let partyPins = {};
 
+  // What the show slot says for "whatever is live": short enough to fit the
+  // slot whole on a phone, and the same word on rows with no choice.
+  const PARTY_LATEST = "Latest";
+
   async function loadPartySet() {
     const box = $("partySet");
     try {
@@ -5028,7 +5303,7 @@
         pick.className = "party-version";
         pick.dataset.hash = track.hash;
         pick.title = "Which of this song's shows to play";
-        pick.innerHTML = '<option value="">latest show</option>';
+        pick.innerHTML = '<option value="">' + PARTY_LATEST + "</option>";
         if (partyPins[track.hash]) {
           const pinned = document.createElement("option");
           pinned.value = partyPins[track.hash];
@@ -5037,17 +5312,20 @@
           pick.appendChild(pinned);
         }
         // Every row has the same slot in the same place, and only a song
-        // with a choice to make gets a picker in it: with one show there
-        // is nothing to pick, so the slot says so in words. A picker on
-        // some rows and nothing on others read as rows that were broken
-        // (#1289).
+        // with a choice to make gets a picker in it. The slot says the same
+        // word on every row with a show ("Latest"), picker or not: a picker
+        // on some rows and nothing on others read as rows that were broken,
+        // and a picker reading "latest show" beside rows reading "one
+        // show" read as two different answers (and the longer one was cut
+        // off at phone width).
         const shows = track.show ? Number(track.show.versions || 1) : 0;
         if (shows > 1 || partyPins[track.hash]) {
           row.appendChild(pick);
         } else {
           const one = document.createElement("span");
           one.className = "muted party-version party-version-text";
-          one.textContent = shows ? "one show" : "no show yet";
+          one.textContent = shows ? PARTY_LATEST : "No show yet";
+          if (shows) one.title = "This song has one show";
           row.appendChild(one);
         }
 
@@ -5127,7 +5405,7 @@
         pick.innerHTML = "";
         const latest = document.createElement("option");
         latest.value = "";
-        latest.textContent = "latest show";
+        latest.textContent = PARTY_LATEST;
         latest.selected = !chosen;
         pick.appendChild(latest);
         for (const version of body.versions || []) {

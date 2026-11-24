@@ -5,6 +5,17 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.24.3
+
+### Changed
+
+- Party: each song's version picker says "Latest" in full, a song with one show says the same, and the saved-set line says what to use in plain words instead of a service name (1369).
+- Test mode groups bulbs by zone in closed folds with a tick for the whole zone and a count, its explanation is three short lines, and the "not checked yet" bulbs open from the latency card (1370).
+- On a phone the tab strip fades at an edge that has more tabs past it, and the open tab is scrolled into view (1371).
+- Light Map: "Suggest zones from names" proposes zones from a shared word in the lights' names and saves them only when you press Use these zones; tapping a stacked pin lists its lights instead of picking one; a line says how many found bulbs are not on the map (1372).
+- Shows: with no song open, the show card says "Pick a song above to open its show" and hides the editor; Save & compile waits until there is something to compile (1373).
+- Library says how many tracks are ready and how many are not analyzed, highlights Analyze new tracks while any wait, and counts folders from the tracks; Shows counts against the same total (1374).
+
 ## 0.24.2
 
 ### Fixed
