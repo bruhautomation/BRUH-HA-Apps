@@ -135,7 +135,7 @@ export function CropsBoard({
   return (
     <PageShell
       width="wide"
-      title="All crops"
+      title="Crops"
       meta={`${filtered.length} of ${cards.length}`}
       actionsClassName="max-sm:w-full"
       actions={
