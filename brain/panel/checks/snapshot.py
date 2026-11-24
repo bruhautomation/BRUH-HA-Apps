@@ -513,12 +513,21 @@ async def collect(now: float | None = None) -> dict:
 
     now = time.time() if now is None else now
     snap: dict[str, Any] = {"now": now, "available": {}, "errors": {},
+                            "core_failed": [],
                             "blueprints_dir": os.path.join(CONFIG_DIR, "blueprints")}
 
-    def _mark(key: str, ok: bool, err: str = "") -> None:
+    def _mark(key: str, ok: bool, err: str = "", *, core: bool = False) -> None:
+        # `core`: this read asked Home Assistant Core (or was derived from
+        # one that did), so when it failed in a pass where Core itself did
+        # not answer it is that one outage, said once on the report's
+        # "Home Assistant did not answer" row (`reports.faults`) rather
+        # than as a fault of its own. Files, brAIn's own stores and the
+        # Supervisor leave it off: they fail on their own.
         snap["available"][key] = ok
         if err:
             snap["errors"][key] = err[:200]
+        if core and not ok:
+            snap["core_failed"].append(key)
 
     # Files first: they cost nothing and cannot time out.
     cfg = load_configs()
@@ -553,10 +562,10 @@ async def collect(now: float | None = None) -> dict:
             snap["traces"] = traces or {}
             _mark("traces", traces is not None,
                   "" if traces is not None else
-                  "Home Assistant did not list its automation traces")
+                  "Home Assistant did not list its automation traces", core=True)
         except Exception as exc:  # noqa: BLE001 — every fetch is best effort
             snap["traces"] = {}
-            _mark("traces", False, str(exc))
+            _mark("traces", False, str(exc), core=True)
 
         try:
             raw = await ha_data._rest_get(session, "/states", timeout=60)
@@ -571,7 +580,7 @@ async def collect(now: float | None = None) -> dict:
             _mark("states", True)
         except Exception as exc:  # noqa: BLE001 — every fetch is best effort
             snap["states"] = {}
-            _mark("states", False, str(exc))
+            _mark("states", False, str(exc), core=True)
 
         try:
             areas, devices, entities, labels = await ha_data._ws_commands(
@@ -594,7 +603,7 @@ async def collect(now: float | None = None) -> dict:
         except Exception as exc:  # noqa: BLE001
             snap["areas"], snap["devices"], snap["entities"] = [], [], []
             snap["labels"] = []
-            _mark("registry", False, str(exc))
+            _mark("registry", False, str(exc), core=True)
 
         try:
             raw = await ha_data._rest_get(session, "/services", timeout=30)
@@ -605,10 +614,10 @@ async def collect(now: float | None = None) -> dict:
                     services.add(f"{domain}.{str(name).lower()}")
             snap["services"] = services
             _mark("services", bool(services),
-                  "" if services else "no services listed")
+                  "" if services else "no services listed", core=True)
         except Exception as exc:  # noqa: BLE001
             snap["services"] = set()
-            _mark("services", False, str(exc))
+            _mark("services", False, str(exc), core=True)
 
         # Statistics: daily min/max/mean for numeric sensors, and a longer
         # mean-only window for batteries. Two keys, two fetches, two try
@@ -628,10 +637,10 @@ async def collect(now: float | None = None) -> dict:
             snap["stats"] = stats or {}
             _mark("stats", stats is not None,
                   "" if stats is not None else
-                  "the recorder did not answer for daily statistics")
+                  "the recorder did not answer for daily statistics", core=True)
         except Exception as exc:  # noqa: BLE001
             snap["stats"] = {}
-            _mark("stats", False, str(exc))
+            _mark("stats", False, str(exc), core=True)
 
         try:
             battery = await _fetch_stats(session, batteries, now,
@@ -639,10 +648,10 @@ async def collect(now: float | None = None) -> dict:
             snap["battery_stats"] = battery or {}
             _mark("battery_stats", battery is not None,
                   "" if battery is not None else
-                  "the recorder did not answer for battery statistics")
+                  "the recorder did not answer for battery statistics", core=True)
         except Exception as exc:  # noqa: BLE001
             snap["battery_stats"] = {}
-            _mark("battery_stats", False, str(exc))
+            _mark("battery_stats", False, str(exc), core=True)
 
         # Whether the history Core hands back is whole. Everything the
         # checks and the measurements read off a window assumes it is, and
@@ -661,10 +670,10 @@ async def collect(now: float | None = None) -> dict:
             snap["history_health"] = probe or {}
             _mark("history_health", probe is not None,
                   "" if probe is not None else
-                  "Home Assistant did not answer the history probe")
+                  "Home Assistant did not answer the history probe", core=True)
         except Exception as exc:  # noqa: BLE001
             snap["history_health"] = {}
-            _mark("history_health", False, str(exc))
+            _mark("history_health", False, str(exc), core=True)
 
         # A house with no storage dashboards answers with an empty list
         # and that IS available; a Core that would not list them answers
@@ -675,10 +684,10 @@ async def collect(now: float | None = None) -> dict:
             snap["dashboards"] = boards or []
             _mark("dashboards", boards is not None,
                   "" if boards is not None else
-                  "Home Assistant did not list its dashboards")
+                  "Home Assistant did not list its dashboards", core=True)
         except Exception as exc:  # noqa: BLE001
             snap["dashboards"] = []
-            _mark("dashboards", False, str(exc))
+            _mark("dashboards", False, str(exc), core=True)
 
         try:
             zha = (await ha_data._ws_commands(session, [{"type": "zha/devices"}]))[0]
@@ -686,10 +695,10 @@ async def collect(now: float | None = None) -> dict:
             # ZHA not installed answers with an error, which _ws_commands
             # hands back as None — no ZHA is not an unhealthy ZHA.
             _mark("zha_devices", isinstance(zha, list),
-                  "" if isinstance(zha, list) else "ZHA is not installed")
+                  "" if isinstance(zha, list) else "ZHA is not installed", core=True)
         except Exception as exc:  # noqa: BLE001
             snap["zha_devices"] = []
-            _mark("zha_devices", False, str(exc))
+            _mark("zha_devices", False, str(exc), core=True)
 
         # Every integration entry and whether it loaded. A Core that
         # would not answer leaves the key UNAVAILABLE rather than empty:
@@ -703,10 +712,10 @@ async def collect(now: float | None = None) -> dict:
                 _stamp_entries(snap["config_entries"], now)
             _mark("config_entries", isinstance(entries, list),
                   "" if isinstance(entries, list)
-                  else "Home Assistant did not list its config entries")
+                  else "Home Assistant did not list its config entries", core=True)
         except Exception as exc:  # noqa: BLE001
             snap["config_entries"] = []
-            _mark("config_entries", False, str(exc))
+            _mark("config_entries", False, str(exc), core=True)
 
         # Repairs Home Assistant raised, and the Energy dashboard's own
         # preferences — one round trip. "No prefs" is Core saying the
@@ -721,18 +730,18 @@ async def collect(now: float | None = None) -> dict:
             snap["repairs"] = issues if isinstance(issues, list) else []
             _mark("repairs", isinstance(issues, list),
                   "" if isinstance(issues, list)
-                  else "Home Assistant did not list its repairs")
+                  else "Home Assistant did not list its repairs", core=True)
             snap["energy_prefs"] = energy_prefs(energy)
             _mark("energy_prefs", snap["energy_prefs"] is not None,
                   "" if snap["energy_prefs"] is not None
                   else "Home Assistant did not hand over the Energy "
-                       "dashboard's settings")
+                       "dashboard's settings", core=True)
             if snap["energy_prefs"] is None:
                 snap["energy_prefs"] = {}
         except Exception as exc:  # noqa: BLE001
             snap["repairs"], snap["energy_prefs"] = [], {}
-            _mark("repairs", False, str(exc))
-            _mark("energy_prefs", False, str(exc))
+            _mark("repairs", False, str(exc), core=True)
+            _mark("energy_prefs", False, str(exc), core=True)
 
         # What the Bluetooth adapters and proxies hear, only where
         # Bluetooth is set up: a house without it is answered by the
@@ -749,10 +758,10 @@ async def collect(now: float | None = None) -> dict:
             _mark("bluetooth", heard is not None,
                   "" if heard is not None else
                   "Home Assistant did not share what its Bluetooth "
-                  "receivers hear (a newer Home Assistant does)")
+                  "receivers hear (a newer Home Assistant does)", core=True)
         except Exception as exc:  # noqa: BLE001
             snap["bluetooth"] = {"rssi": {}}
-            _mark("bluetooth", False, str(exc))
+            _mark("bluetooth", False, str(exc), core=True)
 
         # Two days of the faint Bluetooth devices, for `net.bluetooth_faint`:
         # a faint number on a device whose readings all arrive is not a card.
@@ -763,10 +772,10 @@ async def collect(now: float | None = None) -> dict:
             snap["bluetooth_history"] = bh or {}
             _mark("bluetooth_history", bh is not None,
                   "" if bh is not None else
-                  "the recorder did not answer for the Bluetooth history")
+                  "the recorder did not answer for the Bluetooth history", core=True)
         except Exception as exc:  # noqa: BLE001
             snap["bluetooth_history"] = {}
-            _mark("bluetooth_history", False, str(exc))
+            _mark("bluetooth_history", False, str(exc), core=True)
 
         # The Z-Wave mesh as Z-Wave JS sees it: each node's status and
         # statistics, which carry a "last seen" a restart does not reset.
@@ -775,10 +784,10 @@ async def collect(now: float | None = None) -> dict:
             snap["zwave_nodes"] = nodes or {}
             _mark("zwave_nodes", nodes is not None,
                   "" if nodes is not None else
-                  "Z-Wave JS did not answer for its nodes")
+                  "Z-Wave JS did not answer for its nodes", core=True)
         except Exception as exc:  # noqa: BLE001
             snap["zwave_nodes"] = {}
-            _mark("zwave_nodes", False, str(exc))
+            _mark("zwave_nodes", False, str(exc), core=True)
 
         # A week of the Wi-Fi clients and their devices, for the drops a
         # single instant cannot show. Only once the registry is in hand:
@@ -790,10 +799,10 @@ async def collect(now: float | None = None) -> dict:
             snap["wifi_history"] = wifi or {}
             _mark("wifi_history", wifi is not None,
                   "" if wifi is not None else
-                  "the recorder did not answer for the Wi-Fi history")
+                  "the recorder did not answer for the Wi-Fi history", core=True)
         except Exception as exc:  # noqa: BLE001
             snap["wifi_history"] = {}
-            _mark("wifi_history", False, str(exc))
+            _mark("wifi_history", False, str(exc), core=True)
 
         # Two days of the plugged-in Zigbee devices, for `net.zigbee_weak`:
         # a weak number on a router that has not dropped out is not a card.
@@ -804,10 +813,10 @@ async def collect(now: float | None = None) -> dict:
             snap["zigbee_history"] = zb or {}
             _mark("zigbee_history", zb is not None,
                   "" if zb is not None else
-                  "the recorder did not answer for the Zigbee history")
+                  "the recorder did not answer for the Zigbee history", core=True)
         except Exception as exc:  # noqa: BLE001
             snap["zigbee_history"] = {}
-            _mark("zigbee_history", False, str(exc))
+            _mark("zigbee_history", False, str(exc), core=True)
 
         # Core's own log, folded into what repeats.
         try:
@@ -877,7 +886,7 @@ async def collect(now: float | None = None) -> dict:
                 "built_at": (shapes.get("built_at", 0)
                              if isinstance(shapes, dict) else 0),
                 "recent": {}}
-            _mark("appliances", False, str(exc))
+            _mark("appliances", False, str(exc), core=True)
 
         # A device offline across a restart: Core re-stamps every entity
         # when it starts, so how long one has really been unavailable is
@@ -889,10 +898,10 @@ async def collect(now: float | None = None) -> dict:
             snap["unavailable_since"] = gone or {}
             _mark("unavailable_since", gone is not None,
                   "" if gone is not None else
-                  "the recorder did not answer for unavailable entities")
+                  "the recorder did not answer for unavailable entities", core=True)
         except Exception as exc:  # noqa: BLE001
             snap["unavailable_since"] = {}
-            _mark("unavailable_since", False, str(exc))
+            _mark("unavailable_since", False, str(exc), core=True)
 
         # A device whose integration says in words that its job ended (a
         # 3D printer's print status, a washer's operation state) and has
@@ -904,10 +913,10 @@ async def collect(now: float | None = None) -> dict:
             snap["job_status"] = jobs or {}
             _mark("job_status", jobs is not None,
                   "" if jobs is not None else
-                  "the recorder did not answer for the job status history")
+                  "the recorder did not answer for the job status history", core=True)
         except Exception as exc:  # noqa: BLE001
             snap["job_status"] = {}
-            _mark("job_status", False, str(exc))
+            _mark("job_status", False, str(exc), core=True)
 
         # The nightly store says how each room behaves; whether one is
         # cooling faster than it can is a live question, so this is the
@@ -932,7 +941,7 @@ async def collect(now: float | None = None) -> dict:
                       "heat yet — the first pass runs overnight"))
         except Exception as exc:  # noqa: BLE001
             snap["thermal"] = {"rooms": {}, "recent": {}, "built_at": 0}
-            _mark("thermal", False, str(exc))
+            _mark("thermal", False, str(exc), core=True)
 
         # The access steward's keys — users, what is exposed to which voice
         # assistant, this add-on's own posture and the login bans — each
@@ -945,11 +954,11 @@ async def collect(now: float | None = None) -> dict:
                 session, now - LOGBOOK_HOURS * 3600, now,
                 await _users(session))
             snap["actions"] = mined
-            _mark("actions", mined["available"], mined.get("error") or "")
+            _mark("actions", mined["available"], mined.get("error") or "", core=True)
         except Exception as exc:  # noqa: BLE001
             snap["actions"] = {"available": False, "actions": [],
                                "overrides": [], "counts": {}}
-            _mark("actions", False, str(exc))
+            _mark("actions", False, str(exc), core=True)
 
     # Read, never built: the nightly pass in the panel measures the house
     # and this only picks up what it left. A checks pass that rebuilt them

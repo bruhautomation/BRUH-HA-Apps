@@ -402,8 +402,30 @@ _HA_DOWN_RE = re.compile(
     r"|broken pipe|remote end closed", re.I)
 
 
-def _ha_did_not_answer(why) -> bool:
+def ha_did_not_answer(why) -> bool:
     return bool(_HA_DOWN_RE.search(str(why or "")))
+
+
+# The reads that say Core itself is up: every other Core read is asked over
+# the same proxy, so when these two did not answer, nothing else that pass
+# asked Core could have.
+_CORE_ANCHORS = ("states", "registry")
+
+
+def _ha_down_keys(snapshot_errors: dict, core_failed) -> set[str]:
+    """The snapshot keys that failed because Home Assistant did not answer.
+
+    The ones whose error says so, and — when Core's own anchor reads were
+    among them — every other read of that pass that asked Core and failed
+    (`snapshot.collect`'s `core_failed`): a recorder query that came back
+    None, a history read skipped because "the registry was not read", the
+    logbook. Those carry their own words, not Core's 502, and each used to
+    file its own fault beside the one row for the outage that caused them.
+    A Core read that failed while Core answered is left to its own row."""
+    down = {k for k, v in snapshot_errors.items() if ha_did_not_answer(v)}
+    if down.intersection(_CORE_ANCHORS):
+        down |= {str(k) for k in core_failed or ()} & set(snapshot_errors)
+    return down
 
 
 # When a day's refused runs become a fault row: a share of the day's runs,
@@ -816,8 +838,7 @@ def _faults(diag) -> list[dict]:
     checks = diag.get("checks") or {}
     snapshot_errors = {str(k): v for k, v in
                        (checks.get("snapshot_errors") or {}).items()}
-    ha_down = {k for k, v in snapshot_errors.items()
-               if _ha_did_not_answer(v)}
+    ha_down = _ha_down_keys(snapshot_errors, checks.get("snapshot_core_failed"))
     taken_down: dict[str, list[str]] = {}
     own_skips: list[tuple[str, str]] = []
     for cid, why in sorted((checks.get("skipped") or {}).items()):
@@ -857,7 +878,10 @@ def _faults(diag) -> list[dict]:
                       "was checked. It runs again on its schedule.")
     if ha_down:
         skipped = taken_down.get("\0ha") or []
-        first = str(snapshot_errors[sorted(ha_down)[0]] or "")
+        # Core's own words: a read folded in for asking Core (`_ha_down_keys`)
+        # carries its own, which say nothing about the outage.
+        first = next((str(snapshot_errors[k]) for k in sorted(ha_down)
+                      if ha_did_not_answer(snapshot_errors[k])), "")
         detail = (f"{first} — {len(ha_down)} snapshot read"
                   f"{'s' if len(ha_down) != 1 else ''} ("
                   + ", ".join(sorted(ha_down)) + ") failed")
