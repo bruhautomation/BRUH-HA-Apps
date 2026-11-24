@@ -521,7 +521,11 @@ async def sync_dashboards() -> list[dict]:
 async def _learn(pressed: bool = False) -> None:
     house = await ha.house()
     states = {s["entity_id"]: s for s in (house or {}).get("states") or []}
-    await learning.run_pass(states, pressed=pressed)
+    # The registry a removal is checked against (an entity can be in it with
+    # no state at all, while it is disabled).
+    registry = {str(e.get("entity_id")): str(e.get("name") or e.get("original_name") or "")
+                for e in (house or {}).get("entities") or [] if isinstance(e, dict) and e.get("entity_id")}
+    await learning.run_pass(states, pressed=pressed, registry=registry)
     await asyncio.to_thread(publish_state)
 
 

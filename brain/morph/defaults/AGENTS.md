@@ -352,14 +352,19 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   Morph's own tiles do this with `statusHtml` (`cards.js`); a built card does
   it with a container query (`@container (min-width: …)`) that shows the
   later parts, and `white-space: nowrap` on the line.
-- **A group's summary leads with what is on, and is never a list of every
-  member.** A tile for several things (lights, equipment, switches, covers,
-  media players, people) says how many are on and, while it fits, which:
-  "2 on: Crawl fan, Dryer blower", "20 of 31 on", "All equipment off", "3 of 4
-  open", "Dana home, Eli away". Never "Crawl dehum off · Crawl fan off · Dryer
-  blower off · …": that hides the one fact that matters behind the ones that
-  are the default, and it ends in a bare ellipsis. Say the count first, then
-  at most two names, then "and 3 more"; put the full list in the opened card.
+- **A group's summary leads with the count of what is on, and its names
+  are a part that is shown whole or not at all.** A tile for several things
+  (lights, equipment, switches, covers, media players, people) says how many
+  are on, then how many are off ("3 on · 3 off", "20 of 31 on", "All
+  equipment off", "3 of 4 open", "Dana home, Eli away"), and names which are
+  on only as a later part, shown where the tile has room for every name in
+  it whole ("2 on: Crawl fan, Dryer blower") and left out where it has not.
+  Never "Crawl dehum off · Crawl fan off · Dryer blower off · …", and never a
+  name cut to "Dryer bl…": that hides the one fact that matters behind the
+  ones that are the default, and it ends in a bare ellipsis. Check it at
+  390px, where a tile of six usually says the counts alone. Say the count
+  first, then at most two names, then "and 3 more"; put the full list in the
+  opened card.
   Every tile of a kind uses one format ("N of M on" for all of them, a level
   labelled "avg 62%", never "mixed" on one tile and "1%" on another), and a
   count of members that cannot be reached is labelled ("2 unavailable") or
@@ -390,6 +395,19 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
 - **A chart's numbers have their own margin.** Axis values ("70°", "50°")
   sit in a gutter beside the plot or in a row under it, never over the
   lines, and two labels on one axis never print over each other.
+- **A sentence written earlier says when, and never contradicts the house
+  now.** A card that shows text it did not compose from the states in front
+  of it — brAIn's sentence on `sensor.brain_house` (written at its
+  `generated_at`), an insight's markdown, an `input_text`, a model's answer —
+  says when it was written ("written 10:05 PM"), and checks it against the
+  doors before drawing it: when a door, window, garage door, gate or lock the
+  text names (by its friendly name; when the card cannot tell which it names,
+  any of them) has a `last_changed` later than the text was written, the
+  text is out of date. Then leave out the sentence that names it, or dim the
+  text and say so in words ("written 10:05 PM · the garage has changed
+  since"), and ask for a fresh one if the card can; never draw "the garage is
+  open" beside a tile that says it is closed. Morph's own story line does
+  this with `checkDoorClaims` (`util.js`).
 - **An old reading is marked old.** A card that dates its readings ("64.2° ·
   50 min ago") marks one that has not been updated for 30 minutes or more
   as stale (dimmed, with its age in words) so it is never read as a live
