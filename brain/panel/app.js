@@ -4470,7 +4470,7 @@ async function measureState(poll) {
     const d = await api("api/baselines");
     const btn = $("#diagMeasure");
     btn.disabled = !!d.running;
-    btn.textContent = d.running ? "Running…" : "Run";
+    btn.textContent = d.running ? "Running…" : "Ask now";
     clearTimeout(measurePoll);
     measurePoll = d.running && poll
       ? setTimeout(() => measureState(true), 5000) : null;
@@ -4525,7 +4525,7 @@ async function curiousState(poll) {
   try {
     const d = await api("api/curiosity");
     btn.disabled = !!d.running;
-    btn.textContent = d.running ? "Running…" : "Run";
+    btn.textContent = d.running ? "Running…" : "Ask now";
     // Renders only while there is something to ask about — the `Forget`
     // rule: a button that cannot do anything is a control asking to be
     // understood. `curious_total` counts the eligible ones, held or not,
