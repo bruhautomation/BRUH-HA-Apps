@@ -14102,7 +14102,12 @@ async def _usual_gate(case: dict, signal_subject: str,
                 "hours": (hours.get(entity) if isinstance(hours, dict)
                           else None),
                 "live": live, "fresh": fresh})
-        return resident.against_usual(case, judged, tz, now)
+        why, judged_case = resident.against_usual(case, judged, tz, now)
+        if why and len(entries) < len(wanted):
+            # A cited entity with no usable band of its own cannot be
+            # judged, so the case is never refused on the others alone.
+            return "", case
+        return why, judged_case
     except Exception as exc:  # noqa: BLE001 — a gate, never the case
         log.debug("could not read a case against its usual range: %s", exc)
         return "", case
