@@ -91,7 +91,7 @@ function SearchableProductPicker({
                 <button
                   type="button"
                   onClick={() => onToggle(p.id)}
-                  className="text-muted-foreground/60 hover:text-terra-500 p-0.5"
+                  className="text-muted-foreground hover:text-terra-500 p-0.5"
                 >
                   <X className="w-3 h-3" />
                 </button>
@@ -125,7 +125,7 @@ function SearchableProductPicker({
 
       {/* Search to add */}
       <div className="relative">
-        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/60" />
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
         <input
           type="text"
           placeholder="Search products to add..."
@@ -139,7 +139,7 @@ function SearchableProductPicker({
             onClick={() => setSearch('')}
             className="absolute right-2.5 top-1/2 -translate-y-1/2"
           >
-            <X className="w-3 h-3 text-muted-foreground/60" />
+            <X className="w-3 h-3 text-muted-foreground" />
           </button>
         )}
       </div>
@@ -164,7 +164,7 @@ function SearchableProductPicker({
         </div>
       )}
       {search && searchResults.length === 0 && (
-        <p className="text-xs text-muted-foreground/50 text-center py-2">
+        <p className="text-xs text-muted-foreground text-center py-2">
           No products match &ldquo;{search}&rdquo;
         </p>
       )}
@@ -460,14 +460,14 @@ export function SprayEventActions({
       <div className="flex gap-1 mt-2 pt-2 border-t border-black/[0.04]">
         <button
           onClick={() => setEditing(true)}
-          className="flex items-center gap-1 text-xs text-muted-foreground/60 hover:text-emerald-700 transition-colors px-2 py-0.5 rounded-md"
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-emerald-700 transition-colors px-2 py-0.5 rounded-md"
         >
           <Pencil className="w-3 h-3" />
           Edit
         </button>
         <button
           onClick={() => setDeleting(true)}
-          className="flex items-center gap-1 text-xs text-muted-foreground/60 hover:text-terra-700 transition-colors px-2 py-0.5 rounded-md"
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-terra-700 transition-colors px-2 py-0.5 rounded-md"
         >
           <Trash2 className="w-3 h-3" />
           Delete

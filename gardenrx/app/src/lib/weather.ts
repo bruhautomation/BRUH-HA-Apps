@@ -156,6 +156,47 @@ export function rateSprayWindow(
 }
 
 /**
+ * Why an hour is rated below EXCELLENT, in a word or two ("wind", "rain",
+ * "below 40°"): every limit the hour breaks at its own rating's level, by the
+ * same thresholds as `rateSprayWindow`. Empty for an EXCELLENT hour.
+ */
+export function sprayCauses(
+  temp: number,
+  windSpeed: number,
+  hoursUntilRain: number | null
+): string[] {
+  const rating = rateSprayWindow(temp, windSpeed, hoursUntilRain);
+  if (rating === 'EXCELLENT') return [];
+  const level =
+    rating === 'POOR'
+      ? {
+          wind: SPRAY_RATING.windPoor,
+          rain: SPRAY_RATING.rainHoursPoor,
+          lo: SPRAY_RATING.tempMinPoor,
+          hi: SPRAY_RATING.tempMaxPoor,
+        }
+      : rating === 'FAIR'
+        ? {
+            wind: SPRAY_RATING.windFair,
+            rain: SPRAY_RATING.rainHoursFair,
+            lo: SPRAY_RATING.tempMinFair,
+            hi: SPRAY_RATING.tempMaxFair,
+          }
+        : {
+            wind: SPRAY_RATING.windGood,
+            rain: SPRAY_RATING.rainHoursGood,
+            lo: SPRAY_RATING.tempMinGood,
+            hi: SPRAY_RATING.tempMaxGood,
+          };
+  const out: string[] = [];
+  if (temp < level.lo) out.push(`below ${level.lo}°`);
+  if (temp > level.hi) out.push(`above ${level.hi}°`);
+  if (windSpeed > level.wind) out.push('wind');
+  if (hoursUntilRain !== null && hoursUntilRain <= level.rain) out.push('rain');
+  return out;
+}
+
+/**
  * Find the best spray windows in the next 72 hours.
  */
 export function findBestSprayWindows(
@@ -244,6 +285,8 @@ export interface SprayHour {
   ok: boolean;
   /** The hour has already started on the garden's clock. */
   over: boolean;
+  /** Why it is rated below EXCELLENT (`sprayCauses`). */
+  causes: string[];
 }
 
 /**
@@ -274,6 +317,7 @@ export function sprayHours(hourly: HourlyForecast[], now: Date = new Date()): Sp
       dark,
       ok: (r === 'GOOD' || r === 'EXCELLENT') && hour >= 6 && hour <= 20 && !dark,
       over: h.time.slice(0, 13) <= nowStamp.slice(0, 13),
+      causes: sprayCauses(h.temp, h.windSpeed, until),
     };
   });
 }
@@ -318,6 +362,30 @@ export function rainAhead(
     if (by == null && total >= atLeast) by = dayWord(d.date, now);
   }
   return { inches: Math.round(total * 100) / 100, by };
+}
+
+/**
+ * Why a day has no spray window: the causes of its Hold hours still ahead in
+ * daylight (6 am to 8 pm), most hours first, e.g. "wind" or "below 40°, wind".
+ * A day with no such hour is absent.
+ */
+export function dayHoldCauses(
+  hourly: HourlyForecast[],
+  now: Date = new Date()
+): Map<string, string> {
+  const count = new Map<string, Map<string, number>>();
+  for (const h of sprayHours(hourly, now)) {
+    if (h.over || h.dark || h.ok || h.hour < 6 || h.hour > 20) continue;
+    const m = count.get(h.date) ?? new Map<string, number>();
+    for (const c of h.causes) m.set(c, (m.get(c) ?? 0) + 1);
+    count.set(h.date, m);
+  }
+  const out = new Map<string, string>();
+  for (const [date, m] of count) {
+    const words = [...m].sort((a, b) => b[1] - a[1]).map(([c]) => c);
+    if (words.length) out.set(date, words.slice(0, 2).join(', '));
+  }
+  return out;
 }
 
 /** A window shorter than this many hours is offered as a short one. */

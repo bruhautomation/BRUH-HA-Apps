@@ -12,6 +12,7 @@ export function RainTracker({
   avgHighF,
   humidityPct,
   dormant,
+  growing = true,
   ahead,
 }: {
   daily: DailyRain[];
@@ -20,6 +21,8 @@ export function RainTracker({
   humidityPct?: number | null;
   /** Most of the garden is dormant or past harvest. */
   dormant?: boolean;
+  /** Some crop is growing; with none, there is no watering advice to give. */
+  growing?: boolean;
   /** Rain the forecast expects in the next few days. */
   ahead?: RainAhead | null;
 }) {
@@ -47,15 +50,17 @@ export function RainTracker({
       </div>
 
       {/* watering call-to-action — rain vs. evapotranspiration demand */}
-      <div
-        className={`mb-3 flex items-start gap-3 rounded-lg px-3 py-2 ring-1 ${adviceMeta.badge}`}
-      >
-        <Droplets className="w-4 h-4 mt-0.5 shrink-0" />
-        <div className="min-w-0">
-          <p className="text-sm font-semibold leading-tight">{advice.headline}</p>
-          <p className="text-xs leading-snug mt-0.5 opacity-90">{advice.detail}</p>
+      {growing && (
+        <div
+          className={`mb-3 flex items-start gap-3 rounded-lg px-3 py-2 ring-1 ${adviceMeta.badge}`}
+        >
+          <Droplets className="w-4 h-4 mt-0.5 shrink-0" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold leading-tight">{advice.headline}</p>
+            <p className="text-xs leading-snug mt-0.5">{advice.detail}</p>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* week / month totals */}
       <div className="flex items-baseline gap-6 mb-3">
@@ -71,7 +76,7 @@ export function RainTracker({
           </span>
           <span className="text-xs text-muted-foreground">in · 30 days</span>
         </div>
-        <div className="ml-auto text-right text-xs text-muted-foreground/70">
+        <div className="ml-auto text-right text-xs text-muted-foreground">
           {summary.daysSinceRain === null
             ? 'no rain logged'
             : summary.daysSinceRain === 0
@@ -98,14 +103,14 @@ export function RainTracker({
           );
         })}
       </div>
-      <div className="flex justify-between mt-1 text-xs text-muted-foreground/60">
+      <div className="flex justify-between mt-1 text-xs text-muted-foreground">
         <span>{fmtDay(daily[0].date)}</span>
         <span>{fmtDay(daily[midIdx].date)}</span>
         <span>Today</span>
       </div>
 
       {summary.wettest && summary.wettest.inches > 0 && (
-        <p className="text-xs text-muted-foreground/70 mt-2">
+        <p className="text-xs text-muted-foreground mt-2">
           Wettest day: {summary.wettest.inches.toFixed(2)}″ on {fmtDay(summary.wettest.date)}.
         </p>
       )}
@@ -138,7 +143,7 @@ export function RainSummaryLine({
       <Droplets className="w-4 h-4 shrink-0" />
       <span className="min-w-0 flex-1 text-sm leading-snug">
         <span className="font-semibold">{advice.headline}</span>
-        <span className="opacity-80">
+        <span>
           {advice.status === 'wait' && advice.ahead
             ? ` · ${advice.ahead.inches.toFixed(2)}″ due${advice.ahead.by ? ` by ${advice.ahead.by}` : ''}`
             : ` · ${advice.rain7.toFixed(2)}″ rain this week`}

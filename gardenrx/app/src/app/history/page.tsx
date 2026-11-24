@@ -152,7 +152,7 @@ export default async function HistoryPage({
         <details open className="group/section">
           <summary className="mb-3 flex cursor-pointer list-none items-center gap-3 select-none [&::-webkit-details-marker]:hidden">
             <SectionHeader className="flex-1" title="Timeline" meta={sprayEvents.length} />
-            <ChevronDown className="w-4 h-4 text-muted-foreground/40 transition-transform group-open/section:rotate-180" />
+            <ChevronDown className="w-4 h-4 text-muted-foreground transition-transform group-open/section:rotate-180" />
           </summary>
 
           {sprayEvents.length === 0 && (
@@ -264,7 +264,7 @@ export default async function HistoryPage({
                         <div className="rounded-xl bg-card shadow-sm ring-1 ring-black/[0.04] px-4 py-3">
                           {/* Date heading + volume + cost */}
                           <div className="flex items-center gap-2 mb-2">
-                            <CalendarDays className="w-3.5 h-3.5 text-muted-foreground/70" />
+                            <CalendarDays className="w-3.5 h-3.5 text-muted-foreground" />
                             <p className="font-heading font-semibold text-sm tracking-tight">
                               {eventDate.toLocaleDateString('en-US', {
                                 weekday: 'short',
@@ -394,7 +394,7 @@ export default async function HistoryPage({
 
                           {/* Notes */}
                           {event.notes && (
-                            <p className="text-xs text-muted-foreground/60 italic mt-2">
+                            <p className="text-xs text-muted-foreground italic mt-2">
                               {event.notes}
                             </p>
                           )}

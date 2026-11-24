@@ -22,6 +22,7 @@ import {
   fetchCropUses,
   fetchSprayHistory,
   fetchQueuedSprays,
+  fetchLastHarvest,
   buildIngredientMap,
 } from '@/lib/queries';
 import { VerdictHero } from '@/components/today/verdict-hero';
@@ -30,12 +31,14 @@ import {
   ComingUp,
   SprayConditions,
   WeatherUnavailable,
+  OffSeason,
   type AttentionItem,
   type ComingUpItem,
 } from '@/components/today/sections';
 import { QueuedSprayCard } from '@/components/queued-spray-card';
 import { RainSummaryLine } from '@/components/rain-tracker';
 import { dailyRainfall } from '@/lib/rainfall';
+import { offSeasonLines } from '@/lib/off-season';
 import { PageShell } from '@/components/ui/page-shell';
 import { SectionHeader } from '@/components/ui/section-header';
 
@@ -54,6 +57,7 @@ export default async function TodayPage() {
     cropUses,
     { sprayEvents, sprayEventProducts, sprayEventCrops },
     { queuedSprays, queuedSprayProducts, queuedSprayCrops },
+    lastHarvest,
   ] = await Promise.all([
     fetchWeather().catch(() => null),
     fetchCrops({ activeOnly: true }),
@@ -66,6 +70,7 @@ export default async function TodayPage() {
     fetchCropUses(),
     fetchSprayHistory(),
     fetchQueuedSprays(),
+    fetchLastHarvest().catch(() => null),
   ]);
 
   const cropGroupName = new Map(cropGroups.map((g) => [g.id, g.name]));
@@ -155,6 +160,8 @@ export default async function TodayPage() {
       weatherBlocker = `Too hot — ${Math.round(weather.current.temp)}°F.`;
     } else if (weather.current.precipitation > 0) {
       weatherBlocker = 'Currently raining.';
+    } else if (weather.current.isDay === false) {
+      weatherBlocker = 'It is dark now.';
     }
   }
 
@@ -346,13 +353,55 @@ export default async function TodayPage() {
     ? dailyHighs.slice(0, 7).reduce((s, t) => s + t, 0) / Math.min(7, dailyHighs.length)
     : null;
 
-  const hasLeft = attention.length > 0 || comingUp.length > 0;
-  const hasRight = somethingDue || queuedSprayData.length > 0 || rainDaily.length > 0;
+  // Off season: no crop is growing. The watering tip is left out (there is
+  // nothing drawing on the soil) and Today says what it can instead.
+  const anyGrowing = cropData.some((c) => c.active);
+  const offSeason = anyGrowing
+    ? []
+    : offSeasonLines({
+        now,
+        crops: cropData.map((c) => ({
+          name: c.crop.name,
+          groupName: c.crop.crop_group_id
+            ? (cropGroupName.get(c.crop.crop_group_id) ?? null)
+            : null,
+          stage: c.stages[0]?.stage ?? 'dormant',
+        })),
+        daily: weather?.daily ?? [],
+        lastSpray: (() => {
+          const ev = sprayEvents[0];
+          if (!ev) return null;
+          return {
+            date: ev.date,
+            products: sprayEventProducts
+              .filter((p) => p.spray_event_id === ev.id)
+              .map((p) => products.find((x) => x.id === p.product_id)?.brand)
+              .filter((b): b is string => !!b),
+            crops: sprayEventCrops
+              .filter((c) => c.spray_event_id === ev.id)
+              .map((c) => crops.find((x) => x.id === c.crop_id)?.name)
+              .filter((n): n is string => !!n),
+          };
+        })(),
+        lastPick: lastHarvest
+          ? {
+              at: lastHarvest.harvested_at,
+              crop: crops.find((c) => c.id === lastHarvest.crop_id)?.name ?? 'A pick',
+              weight: lastHarvest.weight,
+              unit: lastHarvest.unit,
+            }
+          : null,
+      });
+  const showWatering = rainDaily.length > 0 && anyGrowing;
+
+  const hasLeft = attention.length > 0 || comingUp.length > 0 || offSeason.length > 0;
+  const hasRight = somethingDue || queuedSprayData.length > 0 || showWatering;
 
   return (
-    <PageShell stagger title={greeting} meta={dateFull}>
+    <PageShell stagger title="Today" meta={`${greeting} · ${dateFull}`}>
       <VerdictHero
         rating={currentRating}
+        dark={weather?.current.isDay === false}
         temp={weather?.current.temp ?? null}
         wind={weather?.current.windSpeed ?? null}
         fungDue={fungDue}
@@ -373,6 +422,7 @@ export default async function TodayPage() {
           <div className="sections">
             <NeedsAttention items={attention} />
             <ComingUp items={comingUp} />
+            <OffSeason lines={offSeason} />
           </div>
         )}
         {hasRight && (
@@ -385,6 +435,7 @@ export default async function TodayPage() {
                   wind={weather.current.windSpeed}
                   humidity={weather.current.humidity}
                   description={weather.current.description}
+                  dark={weather.current.isDay === false}
                   hourly={weather.hourly}
                   daily={weather.daily}
                 />
@@ -401,7 +452,7 @@ export default async function TodayPage() {
                 </div>
               </section>
             )}
-            {rainDaily.length > 0 && (
+            {showWatering && (
               <section className="sec">
                 <RainSummaryLine
                   daily={rainDaily}

@@ -125,7 +125,7 @@ export default async function ProductsPage({
 
   return (
     <PageShell
-      title="Treatments"
+      title="Products"
       meta={`${total} ${total === 1 ? 'product' : 'products'}${
         activeCropName ? ` · ${activeCropName}` : params.q || params.type ? ' · matching' : ''
       }`}
@@ -197,48 +197,44 @@ function ProductCard({
         imageUrl={product.image_url}
       />
       <div className="min-w-0 flex-1">
-        <p className="font-heading font-semibold text-sm leading-tight group-hover:text-emerald-800 transition-colors">
+        <p className="font-heading font-semibold text-sm leading-tight group-hover:text-leaf-dk transition-colors">
           {product.brand}
         </p>
         {/* Active ingredient — always shown under the product name */}
         <p className="text-xs text-muted-foreground leading-snug mt-0.5">
           {ingredients.length > 0 ? ingredients.map((i) => i.name).join(' + ') : '—'}
           {groupLabel && (
-            <span className="ml-2 text-xs font-medium text-muted-foreground/60 bg-muted/60 px-2 py-0.5 rounded-md">
+            <span className="ml-2 text-xs font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-md">
               {groupLabel}
             </span>
           )}
         </p>
-        {(rei != null || interval != null) && (
-          <div className="flex items-center gap-2 mt-2 tabular-nums">
-            {rei != null && (
-              <span
-                className="inline-flex items-center gap-1 rounded-full bg-muted/60 text-foreground/60 px-2 py-0.5 text-xs font-medium"
-                title="Re-entry interval"
-              >
-                <Clock className="w-2.5 h-2.5" />
-                {rei}h
-              </span>
-            )}
-            {interval != null && (
-              <span
-                className="inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-800 px-2 py-0.5 text-xs font-medium"
-                title="Cover-spray interval"
-              >
-                <CalendarClock className="w-2.5 h-2.5" />
-                {interval}d
-              </span>
-            )}
-          </div>
-        )}
+        {/* Each figure says what it is: the icon alone did not. A product the
+            label gives no figure for says n/a rather than leaving a gap. */}
+        <div className="flex flex-wrap items-center gap-2 mt-2 tabular-nums">
+          <span
+            className="inline-flex items-center gap-1 rounded-full bg-paper-2 text-ink-2 px-2 py-0.5 text-xs font-medium"
+            title="Re-entry interval: how long to stay out of a sprayed area"
+          >
+            <Clock className="w-2.5 h-2.5" />
+            REI {rei != null ? `${rei}h` : 'n/a'}
+          </span>
+          <span
+            className="inline-flex items-center gap-1 rounded-full bg-leaf-tint text-leaf-dk px-2 py-0.5 text-xs font-medium"
+            title="Cover-spray interval: days until the next spray is due"
+          >
+            <CalendarClock className="w-2.5 h-2.5" />
+            Re-spray {interval != null ? `${interval}d` : 'n/a'}
+          </span>
+        </div>
       </div>
       {product.price_dollars != null && (
         <div className="text-right shrink-0">
-          <p className="text-sm font-semibold text-emerald-700 tabular-nums leading-none">
+          <p className="text-sm font-semibold text-positive tabular-nums leading-none">
             ${Number(product.price_dollars).toFixed(2)}
           </p>
           {product.price_size && (
-            <p className="text-xs text-muted-foreground/60 mt-0.5">{product.price_size}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{product.price_size}</p>
           )}
         </div>
       )}

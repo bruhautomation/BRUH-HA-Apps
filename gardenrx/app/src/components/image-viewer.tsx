@@ -90,7 +90,7 @@ export function ImageViewer({ src, alt, description, onClose }: Props) {
             >
               <ZoomOut className="w-4 h-4" />
             </button>
-            <span className="text-muted-foreground/50 text-xs font-mono tabular-nums min-w-[2.5rem] text-center">
+            <span className="text-muted-foreground text-xs font-mono tabular-nums min-w-[2.5rem] text-center">
               {Math.round(scale * 100)}%
             </span>
             <button

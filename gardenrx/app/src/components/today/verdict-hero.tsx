@@ -16,6 +16,8 @@ type State = 'spray-now' | 'hold-weather' | 'bloom-only' | 'upcoming' | 'clear';
 
 type Props = {
   rating: SprayRating | null;
+  /** Dark out now: no spraying whatever the rating says. */
+  dark?: boolean;
   temp: number | null;
   wind: number | null;
   fungDue: string[];
@@ -56,6 +58,7 @@ const PALETTE: Record<State, { color: string; eyebrow: string; pulse: boolean }>
 export function VerdictHero(props: Props) {
   const {
     rating,
+    dark = false,
     temp,
     wind,
     fungDue,
@@ -69,7 +72,7 @@ export function VerdictHero(props: Props) {
     phiCount,
   } = props;
   const planHref = dueCropIds.length ? `/tank?crops=${dueCropIds.join(',')}` : '/tank';
-  const sprayOk = rating === 'EXCELLENT' || rating === 'GOOD';
+  const sprayOk = (rating === 'EXCELLENT' || rating === 'GOOD') && !dark;
   const actionable = fungDue.length > 0 || insDue.length > 0;
 
   let state: State;
@@ -189,7 +192,8 @@ export function VerdictHero(props: Props) {
         {rating && actionable && (
           <span className="v-metaitem">
             <Gauge className="size-4 text-ink-3" />
-            <span className="k">Spray now:</span> <RatingPill rating={rating} size="sm" />
+            <span className="k">Spray now:</span>{' '}
+            <RatingPill rating={rating} size="sm" dark={dark} />
           </span>
         )}
         {temp != null && (

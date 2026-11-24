@@ -81,12 +81,12 @@ function StockSlider({
         ? 'bg-amber-500'
         : 'bg-terra-500';
   const pctColor = disabled
-    ? 'text-muted-foreground/40'
+    ? 'text-muted-foreground'
     : shown > 50
-      ? 'text-emerald-700'
+      ? 'text-positive'
       : shown > 20
         ? 'text-warn'
-        : 'text-terra-600';
+        : 'text-danger';
 
   function commit(v: number) {
     if (capacity == null) return;
@@ -128,7 +128,7 @@ function StockSlider({
       </div>
       <span className={`text-xs font-semibold tabular-nums shrink-0 ${pctColor}`}>
         {disabled ? '—' : `${Math.round(shown)}%`}
-        <span className="text-xs font-normal text-muted-foreground/50 ml-0.5">left</span>
+        <span className="text-xs font-normal text-muted-foreground ml-0.5">left</span>
       </span>
     </div>
   );
@@ -502,7 +502,7 @@ export function InventoryList({
                   }
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex h-10 items-center gap-2 rounded-full px-3 text-sm font-medium text-leaf ring-1 ring-border/60"
+                  className="inline-flex h-10 items-center gap-2 rounded-full px-3 text-sm font-medium text-positive ring-1 ring-border/60"
                 >
                   <ExternalLink className="w-4 h-4" /> Reorder · $
                   {Number(product.price_dollars).toFixed(2)}
@@ -525,7 +525,7 @@ export function InventoryList({
     <div className="space-y-4">
       {/* Add a product to your stock */}
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/50" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <input
           type="text"
           placeholder="Add a product to your stock..."
@@ -539,7 +539,7 @@ export function InventoryList({
             aria-label="Clear search"
             className="absolute right-0.5 top-1/2 -translate-y-1/2 grid size-10 place-items-center"
           >
-            <X className="w-3.5 h-3.5 text-muted-foreground/50" />
+            <X className="w-3.5 h-3.5 text-muted-foreground" />
           </button>
         )}
       </div>
@@ -571,7 +571,7 @@ export function InventoryList({
                 )}
               </div>
               {p.price_dollars != null && (
-                <span className="text-xs font-semibold text-emerald-700 tabular-nums shrink-0">
+                <span className="text-xs font-semibold text-positive tabular-nums shrink-0">
                   ${Number(p.price_dollars).toFixed(2)}
                 </span>
               )}
@@ -593,7 +593,7 @@ export function InventoryList({
                   : 'bg-card text-muted-foreground ring-border/60 hover:ring-border'
               }`}
             >
-              All <span className="opacity-60">{inStock.length}</span>
+              All <span>{inStock.length}</span>
             </button>
             {presentAreas.map((a) => {
               const Icon = AREA_STYLE[a].icon;
@@ -610,13 +610,13 @@ export function InventoryList({
                   }`}
                 >
                   <Icon className="w-3 h-3" />
-                  {a} <span className="opacity-60">{count}</span>
+                  {a} <span>{count}</span>
                 </button>
               );
             })}
           </div>
           <div className="flex items-center gap-1 ml-auto">
-            <ArrowDownUp className="w-3 h-3 text-muted-foreground/50" />
+            <ArrowDownUp className="w-3 h-3 text-muted-foreground" />
             {(['name', 'area', 'stock'] as SortKey[]).map((k) => (
               <button
                 key={k}
@@ -661,7 +661,7 @@ export function InventoryList({
             <>
               <div className="flex items-center gap-2 mt-5 mb-2">
                 <div className="h-px flex-1 bg-border/50" />
-                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground/50">
+                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   Not used in {areaFilter}
                 </span>
                 <div className="h-px flex-1 bg-border/50" />
@@ -672,7 +672,7 @@ export function InventoryList({
             </>
           )}
 
-          <p className="text-xs text-muted-foreground/50 px-1 py-2">
+          <p className="text-xs text-muted-foreground px-1 py-2">
             Drag the level bar to set how much is left; tap the pencil to edit size, count and cost.{' '}
             {inStock.length} {inStock.length === 1 ? 'product' : 'products'} in stock.
           </p>

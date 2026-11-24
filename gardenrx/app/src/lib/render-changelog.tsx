@@ -64,7 +64,7 @@ const SECTION_STYLES: Record<SectionKind, SectionStyle> = {
     badge: 'bg-muted text-foreground/70',
     ring: 'ring-border/60',
     icon: Tag,
-    accent: 'marker:text-muted-foreground/70',
+    accent: 'marker:text-muted-foreground',
   },
 };
 
@@ -359,7 +359,7 @@ function ReleaseCard({ release, isLatest }: { release: Release; isLatest: boolea
           )}
         </div>
         {release.date && (
-          <time className="text-xs font-mono tabular-nums text-muted-foreground/70 shrink-0">
+          <time className="text-xs font-mono tabular-nums text-muted-foreground shrink-0">
             {formatDate(release.date)}
           </time>
         )}
@@ -376,7 +376,7 @@ function ReleaseCard({ release, isLatest }: { release: Release; isLatest: boolea
         )}
 
         {empty && (
-          <p className="text-sm text-muted-foreground/60 italic">
+          <p className="text-sm text-muted-foreground italic">
             Nothing yet — track work in progress here.
           </p>
         )}

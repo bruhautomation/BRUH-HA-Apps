@@ -44,7 +44,8 @@ export function WeatherChip() {
           <span className="font-normal text-ink-3"> {Math.round(wx.current.windSpeed)}mph</span>
         </div>
         <div className="wx-loc">
-          {wx.current.description} · spray {rating.toLowerCase()}
+          {wx.current.description} · spray{' '}
+          {wx.current.isDay === false ? 'dark' : rating.toLowerCase()}
         </div>
       </div>
     </button>

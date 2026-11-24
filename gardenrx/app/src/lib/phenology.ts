@@ -296,3 +296,28 @@ export function applyPhenology(
     return derived ? { ...vs, stage: derived } : vs;
   });
 }
+
+/** Stages in which a group is resting: nothing to spray, nothing to pick. */
+const RESTING_STAGES: ReadonlySet<PhenologicalStage> = new Set(['dormant', 'post_harvest']);
+
+/**
+ * The next time the group's calendar leaves rest (bud break, or a vegetable's
+ * first growth), as that stage and how many days away it is. Null for a group
+ * with no calendar, or one already growing.
+ */
+export function nextWake(
+  groupName: string | null | undefined,
+  now: Date = new Date()
+): { stage: PhenologicalStage; daysAway: number } | null {
+  if (!groupName) return null;
+  const windows = PHENOLOGY_CALENDAR[groupName];
+  if (!windows || windows.length === 0) return null;
+  const current = deriveStage(groupName, now);
+  if (!current || !RESTING_STAGES.has(current)) return null;
+  const today = localMdNum(now);
+  const active = windows.filter((w) => !RESTING_STAGES.has(w.stage));
+  if (active.length === 0) return null;
+  const next = active.find((w) => mdNum(w.start) > today) ?? active[0];
+  const daysAway = (dayOfYear(mdNum(next.start)) - dayOfYear(today) + 365) % 365;
+  return { stage: next.stage, daysAway };
+}

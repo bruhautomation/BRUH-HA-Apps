@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import type { HourlyForecast, SprayRating } from '@/lib/weather';
-import { rateSprayWindow } from '@/lib/weather';
+import { sprayHours } from '@/lib/weather';
 import { ratingColors, ratingColorsLight } from '@/lib/theme';
 
 export function SprayWindowTimeline({
@@ -14,7 +14,8 @@ export function SprayWindowTimeline({
 }) {
   const [tooltip, setTooltip] = useState<{
     hour: number;
-    rating: SprayRating;
+    label: string;
+    rating: SprayRating | null;
     temp: number;
     wind: number;
     dayLabel: string;
@@ -30,11 +31,18 @@ export function SprayWindowTimeline({
     day: 'numeric',
   });
 
-  // Group hours by day
-  const days = new Map<
-    string,
-    Array<{ hour: number; rating: SprayRating; temp: number; wind: number; isCurrent: boolean }>
-  >();
+  // Group hours by day. An hour already over, or dark, has no rating to act
+  // on: it says Past or Dark rather than a rating that reads as a go-ahead.
+  type Cell = {
+    hour: number;
+    rating: SprayRating | null;
+    label: string;
+    temp: number;
+    wind: number;
+    isCurrent: boolean;
+  };
+  const days = new Map<string, Cell[]>();
+  const rated = sprayHours(hourly, now);
 
   for (let i = 0; i < Math.min(72, hourly.length); i++) {
     const h = hourly[i];
@@ -48,28 +56,38 @@ export function SprayWindowTimeline({
       day: 'numeric',
     });
 
-    let hoursUntilRain: number | null = null;
-    for (let j = i + 1; j < hourly.length; j++) {
-      if (hourly[j].precipitation > 0.01) {
-        hoursUntilRain = j - i;
-        break;
-      }
-    }
-
-    const rating = rateSprayWindow(h.temp, h.windSpeed, hoursUntilRain);
+    const r = rated[i];
+    const off = r.over ? 'Past' : r.dark ? 'Dark' : null;
     const isCurrent = dayKey === currentDayStr && hour === currentHour;
     const list = days.get(dayKey) ?? [];
-    list.push({ hour, rating, temp: h.temp, wind: h.windSpeed, isCurrent });
+    list.push({
+      hour,
+      rating: off ? null : r.rating,
+      label:
+        off ??
+        (r.rating === 'POOR' ? 'Hold' : r.rating) +
+          (r.causes.length ? `: ${r.causes.join(', ')}` : ''),
+      temp: h.temp,
+      wind: h.windSpeed,
+      isCurrent,
+    });
     days.set(dayKey, list);
   }
 
   return (
     <div className="space-y-2">
       {Array.from(days.entries()).map(([dayLabel, hours], dayIdx) => {
-        const bestRating = hours.reduce<SprayRating>((best, h) => {
-          const order: Record<SprayRating, number> = { EXCELLENT: 0, GOOD: 1, FAIR: 2, POOR: 3 };
-          return order[h.rating] < order[best] ? h.rating : best;
-        }, 'POOR');
+        // The day's best rating among hours still ahead in daylight; a day
+        // with none left says Past (or Dark, when only night hours remain).
+        const order: Record<SprayRating, number> = { EXCELLENT: 0, GOOD: 1, FAIR: 2, POOR: 3 };
+        const live = hours.filter((h) => h.rating !== null);
+        const bestRating = live.length
+          ? live.reduce<SprayRating>(
+              (best, h) => (order[h.rating!] < order[best] ? h.rating! : best),
+              'POOR'
+            )
+          : null;
+        const offWord = hours.some((h) => h.label === 'Past') ? 'Past' : 'Dark';
 
         return (
           <div key={dayLabel}>
@@ -79,9 +97,9 @@ export function SprayWindowTimeline({
                 {dayIdx === 0 && <span className="text-leaf ml-1 text-xs">Today</span>}
               </span>
               <span
-                className={`text-xs font-semibold px-2 py-0 rounded-full ${ratingColorsLight[bestRating]}`}
+                className={`text-xs font-semibold px-2 py-0 rounded-full ${bestRating ? ratingColorsLight[bestRating] : 'bg-paper-2 text-ink-2'}`}
               >
-                {bestRating}
+                {bestRating ?? offWord}
               </span>
             </div>
 
@@ -89,7 +107,7 @@ export function SprayWindowTimeline({
               {hours.map((h, i) => (
                 <div
                   key={i}
-                  className={`flex-1 ${ratingColors[h.rating]} transition-all relative cursor-pointer hover:opacity-80`}
+                  className={`flex-1 ${h.rating ? ratingColors[h.rating] : 'bg-line'} transition-all relative cursor-pointer hover:opacity-80`}
                   onClick={() =>
                     setTooltip(
                       tooltip?.hour === h.hour && tooltip?.dayLabel === dayLabel
@@ -116,9 +134,9 @@ export function SprayWindowTimeline({
                   :00 {tooltip.hour >= 12 ? 'PM' : 'AM'}
                 </span>
                 <span
-                  className={`ml-2 px-2 py-0 rounded-full text-xs font-semibold ${ratingColorsLight[tooltip.rating]}`}
+                  className={`ml-2 px-2 py-0 rounded-full text-xs font-semibold ${tooltip.rating ? ratingColorsLight[tooltip.rating] : 'bg-paper-2 text-ink-2'}`}
                 >
-                  {tooltip.rating}
+                  {tooltip.label}
                 </span>
                 <span className="text-muted-foreground ml-2">
                   {Math.round(tooltip.temp)}°F · Wind {Math.round(tooltip.wind)} mph
@@ -128,9 +146,9 @@ export function SprayWindowTimeline({
 
             {!compact && (
               <div className="flex justify-between mt-0.5">
-                <span className="text-xs text-muted-foreground/70">5am</span>
-                <span className="text-xs text-muted-foreground/70">noon</span>
-                <span className="text-xs text-muted-foreground/70">12am</span>
+                <span className="text-xs text-muted-foreground">5am</span>
+                <span className="text-xs text-muted-foreground">noon</span>
+                <span className="text-xs text-muted-foreground">12am</span>
               </div>
             )}
           </div>

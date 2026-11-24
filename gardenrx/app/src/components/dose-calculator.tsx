@@ -31,7 +31,7 @@ export function DoseCalculator({
 
   return (
     <div className="mt-3 rounded-lg bg-parchment-100/50 p-3 ring-1 ring-border/40 space-y-3">
-      <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground/60">
+      <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground">
         Dose Calculator
       </p>
 
@@ -103,9 +103,9 @@ export function DoseCalculator({
                   setCustomTank(true);
                 }
               }}
-              className="w-14 bg-transparent outline-none text-center placeholder:text-muted-foreground/50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              className="w-14 bg-transparent outline-none text-center placeholder:text-muted-foreground [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
             />
-            <span className={customTank ? 'text-white/70' : 'text-muted-foreground/50'}>gal</span>
+            <span className={customTank ? 'text-white/70' : 'text-muted-foreground'}>gal</span>
           </div>
         </div>
       </div>

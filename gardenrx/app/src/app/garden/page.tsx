@@ -19,7 +19,7 @@ export default async function GardenPage() {
     ]);
 
   return (
-    <PageShell width="wide" title="Garden Map" meta="Plan your space">
+    <PageShell width="wide" title="Garden" meta="Plan your space">
       <GardenMap
         zones={zones ?? []}
         regions={regions ?? []}

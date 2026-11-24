@@ -21,7 +21,7 @@ export function CropChips({
     <div className="space-y-2">
       {groups.map(({ category, crops }) => (
         <div key={category}>
-          <p className="text-xs font-semibold tracking-[0.16em] uppercase text-muted-foreground/55 mb-1">
+          <p className="text-xs font-semibold tracking-[0.16em] uppercase text-muted-foreground mb-1">
             {category}
           </p>
           <div className="flex flex-wrap gap-2">

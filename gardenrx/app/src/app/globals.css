@@ -68,6 +68,9 @@
   --color-leaf-dk: var(--leaf-dk);
   --color-leaf-lt: var(--leaf-lt);
   --color-leaf-tint: var(--leaf-tint);
+  /* Money and other good figures (value, net, price, stock left): the deep
+     leaf on light, the bright one on dark, so they read on every card. */
+  --color-positive: var(--leaf-dk);
   --color-danger: var(--danger);
   --color-danger-bg: var(--danger-bg);
   --color-danger-line: var(--danger-line);
@@ -204,7 +207,8 @@
   --card: oklch(1 0 0);
   --ink: oklch(0.205 0.021 168);
   --ink-2: oklch(0.4 0.018 195);
-  --ink-3: oklch(0.52 0.014 205);
+  /* Muted text: at least 4.5:1 on card, paper and paper-2. */
+  --ink-3: oklch(0.48 0.014 205);
   --line: oklch(0.915 0.005 210);
   --line-2: oklch(0.88 0.006 210);
 
@@ -279,17 +283,19 @@
   --paper-2: oklch(0.44 0.002 250);
   --card: oklch(0.45 0.002 250);
   --ink: oklch(0.97 0.001 250);
-  --ink-2: oklch(0.85 0.002 250);
-  --ink-3: oklch(0.71 0.003 250);
+  --ink-2: oklch(0.91 0.002 250);
+  /* Muted text: at least 4.5:1 on card, paper and paper-2 (0.71 was 2.9:1 on a card). */
+  --ink-3: oklch(0.86 0.003 250);
   --line: oklch(0.51 0.003 250);
   --line-2: oklch(0.56 0.003 250);
 
   --leaf: oklch(0.74 0.13 158);
-  --leaf-dk: oklch(0.82 0.1 158);
+  --leaf-dk: oklch(0.86 0.1 158);
   --leaf-lt: oklch(0.44 0.06 158);
   --leaf-tint: oklch(0.4 0.03 200);
 
-  --danger: oklch(0.72 0.16 27);
+  /* Bad figures (net loss, low stock, Hold) must read at 4.5:1 on a card. */
+  --danger: oklch(0.87 0.08 27);
   --danger-bg: oklch(0.44 0.08 28);
   --danger-line: oklch(0.55 0.1 28);
   --warn: oklch(0.8 0.13 80);
@@ -355,7 +361,8 @@
   --card: oklch(0.205 0.014 168);
   --ink: oklch(0.95 0.008 210);
   --ink-2: oklch(0.8 0.012 210);
-  --ink-3: oklch(0.66 0.015 210);
+  /* Muted text: at least 4.5:1 on card, paper, paper-2 and leaf-lt. */
+  --ink-3: oklch(0.7 0.015 210);
   --line: oklch(0.3 0.014 168);
   --line-2: oklch(0.35 0.014 168);
 
@@ -1919,6 +1926,12 @@
     font-weight: 600;
     font-size: var(--fs-body);
   }
+  .row-item .ri-sub {
+    font-size: var(--fs-body);
+    line-height: var(--lh-body);
+    color: var(--ink-2);
+    margin-top: 2px;
+  }
   .row-item .ri-tags {
     display: flex;
     flex-wrap: wrap;
@@ -2076,8 +2089,21 @@
     color: var(--ink-3);
     font-family: var(--font-mono);
   }
-  .sw3-temp span {
-    opacity: 0.7;
+  .sw3-col {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-1);
+  }
+  .sw3-col .sw3-band {
+    flex: none;
+  }
+  /* Why the day's Hold hours are held: "Hold 9a–4p wind". */
+  .sw3-why {
+    font-size: var(--fs-meta);
+    line-height: var(--lh-meta);
+    color: var(--ink-2);
   }
   .sw3-band {
     flex: 1;
@@ -2169,7 +2195,6 @@
     color: var(--ink-3);
     font-weight: 700;
     padding: 2px var(--sp-2) var(--sp-1);
-    opacity: 0.8;
   }
   .sk-row {
     display: flex;
@@ -3122,7 +3147,9 @@
     background: color-mix(in srgb, var(--paper) 92%, transparent);
     backdrop-filter: blur(12px);
     border-top: 1px solid var(--line);
-    padding: var(--sp-2) var(--sp-2) calc(var(--sp-2) + env(safe-area-inset-bottom));
+    /* Seven tabs on a 360px phone: thin side padding and none inside a tab,
+       so the longest label ("Products") is shown in full. */
+    padding: var(--sp-2) var(--sp-1) calc(var(--sp-2) + env(safe-area-inset-bottom));
     justify-content: space-around;
   }
   .mobile-nav .mn-item {
@@ -3132,7 +3159,7 @@
     flex-direction: column;
     align-items: center;
     gap: var(--sp-1);
-    padding: var(--sp-1);
+    padding: var(--sp-1) 0;
     border: none;
     background: none;
     color: var(--ink-3);

@@ -43,7 +43,7 @@ export default async function ChangelogPage() {
       <article>{renderChangelog(md)}</article>
 
       <footer className="border-t border-border/40 pt-6 text-center">
-        <p className="text-xs text-muted-foreground/60">
+        <p className="text-xs text-muted-foreground">
           Format follows{' '}
           <a
             href="https://keepachangelog.com/en/1.1.0/"
