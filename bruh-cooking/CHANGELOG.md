@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.4
+
+### Changed
+
+- While an appliance is offline, its "offline since" and "last contact" agree with the message, which takes its time from the same moment; an appliance never heard from says "Never heard from since BRUH Cooking started at 08:36" (1379).
+- The Problem sensor carries the offline reason and what to try (`reason`, `to_try`), so an entity card explains why the controls are unavailable; the status gains `offline_to_try`, and `offline_reason` no longer repeats it (1380).
+- A next cook with no timer says one thing ("No timer: heats the water to 140 °F and holds it there until you stop it"); presets at that temperature are a separate, labelled tip (`next_cook.tip`) that lists each of them (1381).
+
 ## 0.2.3
 
 ### Changed
