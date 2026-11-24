@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.10
+
+### Fixed
+
+- Morph only suggests removing a dashboard card when every entity it shows is gone from Home Assistant or has been unavailable for 30 days, says how long in its own words, and never suggests removing or moving a card down because it is rarely pressed. A card you said to keep stays kept after it is renamed. Nothing changes until you say yes, and the dashboard is saved first (1262, 1316).
+- The rules brAIn builds dashboard cards by now say that a card's summary leads with counts and never cuts a name off, and that a sentence written earlier (a headline, an insight) says when it was written and stands down when a door or lock it names has changed since. Rules that ran over two lines were not being noticed when they changed, so the house is now asked to check its cards against all of them (1306, 1308).
+
 ## 5.5.9
 
 ### Added
