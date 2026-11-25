@@ -2,6 +2,18 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.23
+
+### Changed
+
+- A finding that asks you to go and check something (rather than a yes-or-no question) offers **Done**, with an optional note of what you found, instead of Yes and No; the same on Today, Insights, Home Assistant's Repairs and phone notifications, and Morph's cases. A real yes-or-no question still asks Yes or No, and pressing Done again on something already settled says so instead of settling it twice (1421, 1427).
+- Before telling you how to fix a device, brAIn looks at the device the reading comes from, what else is on it and its battery, so a door reading that comes from a smart lock's own door sensor gets "recalibrate the lock's door sensor", not a battery swap in a sensor that is not there (1421).
+
+### Fixed
+
+- Findings no longer carry brAIn's own reasoning about itself: "you marked brAIn's last reports wrong, so…" and a first look's "this can wait" are kept on the decision trail and in "why did brAIn…", never on a card or in History. A finding the first look said can wait, and whose closer look found nothing, is set aside (still in History, where Restore puts it back) instead of listed arguing against itself; a lock, an alarm, a leak or smoke sensor or anything a person has touched is still shown (1420).
+- This is 5.5.21 made again (it was reverted in 5.5.22), with three small corrections to it (1427).
+
 ## 5.5.22
 
 ### Removed

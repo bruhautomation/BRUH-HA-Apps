@@ -528,6 +528,10 @@ def _from_finding(row: dict, snoozes: dict[str, int]) -> dict:
         "fix": row.get("fix") or "",
         # Whose sentence the fix is, so the card can say so.
         "fix_by": row.get("fix_by") or "",
+        # How a question is answered (`answers.asks_for_hands`): a step a
+        # person goes and does is Done, a yes/no question is Yes or No.
+        "answer_with": row.get("answer_with") or "",
+        "todo_text": row.get("todo_text") or "",
         # The store's own status word, beside the case's four. `planned`,
         # `planning` and `fixing` are three different screens — a plan
         # waiting for consent, a read-only run, a run changing the house

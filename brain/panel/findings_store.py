@@ -1182,9 +1182,13 @@ def shown_look(record: dict, entry: dict) -> dict:
             and not record.get("elevated_by_person")):
         return {**record, "reason": ""}
     # A hold by the household's record is a sentence about brAIn's own
-    # record, not about the house: on a card that is on the list, even one
-    # a person put back, it would say the card was set aside (#1320).
-    if record.get("by_record") and entry.get("status") != "held":
+    # record — a scorecard, what brAIn now raises and what lifts it — and
+    # not about the house: on a card that is on the list, even one a person
+    # put back, it would say the card was set aside (#1320), and on a row in
+    # History it reads as the household having to agree with brAIn to be
+    # heard (#1420). Shown on no row; the decision trail keeps it, which is
+    # where "why didn't brAIn tell me" reads it (`explain_decision`).
+    if record.get("by_record"):
         return {**record, "reason": ""}
     if _names_another_entity(record["reason"], entry):
         return {**record, "reason": ""}
@@ -1863,6 +1867,11 @@ def _case_fields(entry: dict) -> dict:
     # A question the assistant asks (`as_asked`): answered in words.
     if entry.get("asked") is True and kind == "question":
         out["asked"] = True
+    # How a Resident question is answered — Yes/No, or Done for a step a
+    # person goes and does (`answers.asks_for_hands`, #1421). The run's
+    # word, exactly, or nothing.
+    if kind == "question" and entry.get("answer_with") in answers.ANSWER_WITH:
+        out["answer_with"] = entry["answer_with"]
     # A note (`triage.is_note`): news to read, answered with Got it. Only a
     # literal True, so nothing on the wire can set it by being truthy.
     if entry.get("informational") is True:
@@ -3579,7 +3588,8 @@ def refine(ts: int, case: dict, run_id: str = "",
             return None
         merged = {**entry, **{k: case[k] for k in (
             "claim", "kind", "confidence", "stakes", "actions",
-            "memory_hint", "technical") if case.get(k) not in (None, "", [])}}
+            "memory_hint", "technical", "answer_with")
+            if case.get(k) not in (None, "", [])}}
         evidence = list(case.get("evidence") or []) + list(
             entry.get("evidence") or [])
         merged["evidence"] = evidence

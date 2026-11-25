@@ -212,7 +212,7 @@ def write_hypothesis_request(hass: HomeAssistant, ts: int, action: str, *,
 # `tests/test_morph_contracts_requests.py` drives this writer straight into
 # that reader rather than writing the shape down twice.
 MORPH_ACTIONS = ("reply", "dismiss", "todo", "snooze", "fix", "apply", "undo",
-                 "not_applicable")
+                 "not_applicable", "done")
 MORPH_TODO_ACTIONS = ("done", "drop", "add", "snooze")
 MORPH_CASE_ACTIONS = ("file", "withdraw")
 MORPH_CASE_KINDS = ("opportunity", "question", "problem")

@@ -61,6 +61,7 @@ import time
 from pathlib import Path
 
 import atomic_write
+from answers import ANSWER_WITH  # a leaf: how a question is answered
 import house_words
 import model_plan
 import prompt_kit
@@ -875,6 +876,10 @@ CASE_SCHEMA = {
         "claim": {"type": "string"},
         "detail": {"type": "string"},
         "kind": {"type": "string", "enum": list(CASE_KINDS)},
+        # How a "question" is answered (#1421): "yes_no", or "done" for a
+        # step a person goes and does. Typed, so the card's buttons are
+        # never read off the step's words (`answers.asks_for_hands`).
+        "answer_with": {"type": "string", "enum": ["", *ANSWER_WITH]},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
         "stakes": {"type": "string", "enum": ["low", "medium", "high"]},
         "fix": {"type": "string"},
@@ -949,6 +954,11 @@ Answer with ONE JSON object and nothing else. What it means:
   a state, the history, the logbook, a trace, the registry or brAIn's
   measurements can answer is NOT a question — go and read it, and claim
   what you found.
+- "answer_with" — for a "question" only, how the person answers it:
+  "yes_no" when they answer it yes or no ("is the shed heater meant to
+  run all winter?"); "done" when what you ask is that they go and look at
+  or do something with their hands (look at the door, re-seat the cable)
+  and say when it is done. Leave it empty for anything else.
 - "confidence" — 0 to 1, how sure you are of the claim.
 - "stakes" — how much it matters if you are right: "low", "medium", "high".
 - "fix" — ONE action, in one sentence, specific to this house: the
@@ -1139,6 +1149,22 @@ def investigate_system(refining=None) -> str:
     return INVESTIGATE_SYSTEM
 
 
+# What the run that writes a step for a person is told about the device a
+# reading comes from (#1421): a remedy belongs to the device that makes the
+# reading. A door reading on a lock's own device is the lock's sensor, and
+# "replace the battery in the door sensor" sent somebody hunting for a
+# sensor that was the lock, whose battery read healthy. Said about the
+# structure (what else is on the device), never a brand.
+DEVICE_RULE = (
+    "THE DEVICE EACH ONE IS ON — read this before you name a remedy. A "
+    "remedy belongs to the device that makes the reading: name that device "
+    "and fix it there. A door or window reading on the same device as a "
+    "lock is that lock's own sensor, not a separate one, and its remedy is "
+    "the lock's (recalibrate the lock's door sensor in its app or "
+    "settings). Read the device's own battery before you name a battery, "
+    "and never tell anybody to replace one that reads healthy:")
+
+
 def investigate_prompt(signal: dict, memory_excerpt: str = "",
                        house_block: str = "", open_cases_rows=None, *,
                        signal_row: str = "", why: str = "",
@@ -1146,7 +1172,8 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
                        prior_case: dict | None = None,
                        now_line: str = "", examples=None,
                        situation_line: str = "", used_by=None,
-                       camera_line: str = "", controlled_by=None) -> str:
+                       camera_line: str = "", controlled_by=None,
+                       on_device=None) -> str:
     """The prompt for one investigation.
 
     One signal, not a batch: the whole point of the tier is that this run
@@ -1167,6 +1194,8 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
     second opinion. ``examples`` are past calls like this one with what
     the household did about them, and the calibration sentence when
     there is one — `first_look_prompt`'s block, the same words.
+    ``on_device`` is `server._device_rows`: the device each entity is on and
+    what else it carries, read before a remedy is named (#1421).
     ``camera_line`` is `camera_policy.prompt_line` when the run may look at
     a camera. It goes ABOVE the sign-off: it was appended after "reply with
     the JSON contract and nothing else", so the last thing a run read
@@ -1223,6 +1252,11 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
     if memory_excerpt.strip():
         parts.append("WHAT BRAIN KNOWS ABOUT THIS HOME:\n"
                      + memory_excerpt.strip() + "\n")
+    device = _rows(on_device)
+    if device:
+        parts.append(DEVICE_RULE)
+        parts += [f"- {row}" for row in device]
+        parts.append("")
     used = _rows(used_by)
     if used:
         parts.append("WHAT USES THESE DEVICES — automations and scripts "
@@ -1318,6 +1352,10 @@ def parse_case(obj, *, read_entities=None) -> dict | None:
     if stakes not in SEVERITY_BY_STAKES:
         stakes = "medium"
     kind = obj.get("kind") if obj.get("kind") in CASE_KINDS else "problem"
+    # The word, exactly, and only on a question.
+    answer_with = ({"answer_with": obj["answer_with"]}
+                   if kind == "question" and obj.get("answer_with") in ANSWER_WITH
+                   else {})
     # The word, exactly, or nothing: an invented one is not a verdict, and
     # the key rides only when it was given so a filed row never stores it.
     already = ({"already": CASE_ANSWERED}
@@ -1360,6 +1398,7 @@ def parse_case(obj, *, read_entities=None) -> dict | None:
                      and confidence < ESCALATE_CONFIDENCE
                      and stakes == "high"),
         **already,
+        **answer_with,
     }
 
 
@@ -2517,7 +2556,7 @@ def look_tier(ledger: "Ledger", tier: str, thinking: str, *,
 
 
 __all__ = [
-    "ACT_JOBS", "CASE_KINDS", "CASE_SCHEMA", "ESCALATE_CONFIDENCE",
+    "ACT_JOBS", "CASE_KINDS", "CASE_SCHEMA", "DEVICE_RULE", "ESCALATE_CONFIDENCE",
     "ALREADY", "FIRST_LOOK_SCHEMA", "FIRST_LOOK_SYSTEM", "FORCED",
     "HOT_FLOOR",
     "INVESTIGATE_MAX_TURNS", "INVESTIGATE_SYSTEM", "INVESTIGATE_TIMEOUT_S",

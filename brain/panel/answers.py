@@ -91,7 +91,18 @@ SITUATIONS = (
     # A house change a trusted grown-up asked for in Minecraft, waiting for
     # a person (`minecraft_approvals.py`): Yes does exactly it, No does not.
     "approval",
+    # A question whose step is something a person goes and does or looks at
+    # (`asks_for_hands`): answered with Done, never Yes or No (#1421).
+    "person_check",
 )
+
+# How a question the Resident filed is answered (`resident.CASE_SCHEMA`'s
+# `answer_with`, kept on the row by `findings_store`): "yes_no" for a claim
+# a person answers yes or no, "done" for a step they go and do with their
+# hands — look at a door, re-seat a cable — and say when it is done. A
+# typed field the run that wrote the step fills, never a reading of the
+# step's words.
+ANSWER_WITH = ("yes_no", "done")
 
 # Which check ids read as which situation. Keyed on the id and never on
 # the sentence, for the reason given in the module docstring; a new check
@@ -239,6 +250,38 @@ def _answer(verb: str, label: str, hint: str, *, route: str,
 # The situation
 # ---------------------------------------------------------------------------
 
+def asks_for_hands(case: dict) -> bool:
+    """Whether a findings-store question is a step for a person rather than
+    a yes/no question: "look at the door sensor once; if it is shut, replace
+    the battery" is answered by doing it ("okay, did that, we good" — the
+    owner, #1421), and Yes or No answers nothing it asked.
+
+    Read off typed fields only: the run's own `answer_with`, and for a row
+    filed before that field existed, whether the run that wrote its step
+    (`fix_by: resident`) also wrote an errand (`todo_text`), which its
+    contract leaves empty when nothing needs doing — and the step is an
+    instruction. Decided on the step alone: every `question` claim is
+    phrased as a question, the owner's own row included ("is the door
+    sensor reading right?" over "look at it once: if it is shut, replace
+    the battery"), so the claim's "?" tells nothing. A step asked as a
+    question (ending "?", the test `as_morph_question` and
+    `morph_bridge.ask_line` read a question by) is a yes/no question that
+    happens to carry a `todo_text`, and keeps Yes and No (#1427). A
+    legacy row with no step is not read as an errand at all: where the
+    fields cannot tell, it stays a question."""
+    if case.get("kind") != "question":
+        return False
+    if (case.get("origin") or {}).get("store") != "findings":
+        return False
+    said = case.get("answer_with")
+    if said in ANSWER_WITH:
+        return said == "done"
+    step = str(case.get("fix") or "").strip()
+    return (case.get("fix_by") == "resident"
+            and bool(str(case.get("todo_text") or "").strip())
+            and bool(step) and not step.endswith("?"))
+
+
 def situation(case: dict) -> str:
     """Which of `SITUATIONS` this case is in.
 
@@ -262,6 +305,8 @@ def situation(case: dict) -> str:
     if kind == "question" and (case.get("source") == HOUSE_BOOK_SOURCE
                                or case.get("asked") is True):
         return "gap"
+    if asks_for_hands(case):
+        return "person_check"
     if kind == "question" or store == "hypotheses":
         return "question"
     # An opportunity is a PROPOSAL — a config brAIn wrote and Accept puts
@@ -422,12 +467,22 @@ def _todo(case_id: str, primary: bool = False) -> dict:
         done="Added to To Do")
 
 
-def _done(key, primary: bool = False) -> dict:
-    return _answer(
+def _done(key, primary: bool = False, note: bool = False) -> dict:
+    """*Done*: a person dealt with it. ``note`` opens the box first, for a
+    check somebody went and did, where what they found ("it was shut; the
+    lock's sensor was off") is worth more than that they did it. The box
+    is optional: an empty one sends the press as it is."""
+    answer = _answer(
         "done", REQUEST_LABELS["fixed"],
         "It's handled. brAIn records that and stops raising it.",
         route=f"/api/finding/{key}/done", request="fixed", primary=primary,
-        done="Done — recorded")
+        note=note, done="Done — recorded")
+    if note:
+        answer["hint"] = ("You checked it and it's dealt with. Say what you "
+                          "found if you like — it goes into memory.")
+        answer["ask"] = "What did you find? Optional — it goes into memory."
+        answer["placeholder"] = "It was shut. The lock's door sensor was off."
+    return answer
 
 
 # The press that lets brAIn make the change itself (#451): "hey I can fix
@@ -604,6 +659,13 @@ def answers(case: dict) -> list[dict]:
                     "wasn't approved.", route=f"/api/case/{cid}/wrong",
                     request="wrong", done="Not approved"),
         ]
+
+    if sit == "person_check":
+        # A step for a person's hands, asked as a question (#1421): Done is
+        # the answer, with what they found if they want to say; To Do is
+        # "later"; Ignore is the way to say the step is wrong.
+        return [_done(key, primary=True, note=True), _todo(cid),
+                _snooze(cid), _wrong(cid)]
 
     if sit == "question":
         return [
@@ -1074,6 +1136,12 @@ def _request_case(row: dict) -> dict:
         "plan": row.get("plan") or {},
         "informational": row.get("informational") is True,
         "claim": row.get("claim") or row.get("text") or "",
+        # What `asks_for_hands` reads, so Repairs and a phone offer the
+        # Done the card does.
+        "answer_with": row.get("answer_with") or "",
+        "fix_by": row.get("fix_by") or "",
+        "fix": row.get("fix") or "",
+        "todo_text": row.get("todo_text") or "",
     }
 
 
@@ -1097,7 +1165,7 @@ def request_view(row: dict, name: str = DEFAULT_NAME) -> dict:
 __all__ = ["AUTOMATION_PREFIX", "CHECK_SITUATIONS", "CHIPS", "CHIP_WORDS",
            "CHORE_SITUATIONS", "GROUPS", "GROUP_WORDS", "HANDS", "LEGACY_PLAN_MARK",
            "GO_AHEAD", "MAX_MORE", "MAX_VISIBLE", "MORPH_ASK", "MORPH_SOURCE", "PREFILL", "REASON_CHIPS", "REQUEST_ACTIONS", "RESIDENT_SOURCE", "SEVERITY_RANK",
-           "SITUATIONS", "WHO", "WHO_LINES", "WHO_OF_VERB", "REQUEST_LABELS",
+           "ANSWER_WITH", "SITUATIONS", "WHO", "asks_for_hands", "WHO_LINES", "WHO_OF_VERB", "REQUEST_LABELS",
            "answers", "can_stop_watching", "request_view", "who_acts", "who_line", "as_morph_question", "chip", "is_security", "feed_key", "group", "more",
            "morph_question", "plan_is_legacy", "plan_refused", "reason_chips", "request_answers",
            "situation"]
