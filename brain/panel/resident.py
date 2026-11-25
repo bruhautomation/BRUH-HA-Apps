@@ -958,7 +958,8 @@ Answer with ONE JSON object and nothing else. What it means:
   "yes_no" when they answer it yes or no ("is the shed heater meant to
   run all winter?"); "done" when what you ask is that they go and look at
   or do something with their hands (look at the door, re-seat the cable)
-  and say when it is done. Leave it empty for anything else.- "confidence" — 0 to 1, how sure you are of the claim.
+  and say when it is done. Leave it empty for anything else.
+- "confidence" — 0 to 1, how sure you are of the claim.
 - "stakes" — how much it matters if you are right: "low", "medium", "high".
 - "fix" — ONE action, in one sentence, specific to this house: the
   entity, the hub or app it works through, the automation, the setting.

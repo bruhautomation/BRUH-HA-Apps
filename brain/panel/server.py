@@ -3275,8 +3275,19 @@ async def _apply_morph_request(req: dict) -> dict:
         elif action == "done":
             # Done: a person dealt with it (a step they went and did, a
             # chore check). The reply line's "done" ending, as a press.
-            if finding is None:
+            # Only on a row still open (#1427): an ended row is gone, and
+            # is answered as the panel's `/api/finding/{ts}/done` answers
+            # it; one in no case's status (a legacy `ignored`) is the same;
+            # a run in flight is refused as `_morph_end` refuses it.
+            case = (await asyncio.to_thread(cases.get, case_id)
+                    if finding is not None else None)
+            if split and split[0] != "findings":
                 why = "only a report can be marked done"
+            elif case is None:
+                why = "no such finding"
+            elif case["status"] not in cases.ENDABLE_STATUSES:
+                why = (f"a {case['kind']} case in {case['status']} cannot "
+                       f"be answered with done")
             else:
                 payload, fact = await _end_finding(
                     finding, FINDING_VERBS["done"], req.get("text", ""),
