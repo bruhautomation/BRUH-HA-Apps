@@ -15209,12 +15209,13 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
 
     `ignore` takes a filed row off a screen only by SAYING so about that
     row in a reply that parsed — which `parse_first_look` guarantees by
-    answering for every index. `watch` is the look saying the row can wait
-    (#1420): a filed row it gives that to is held, its reason on the
-    decision trail and never on a card, unless a floor keeps it shown
-    (safety, protected, hot, a forced verdict, `not_news_floor`). Every
-    other verdict elevates a filed row, because a row somebody may still
-    have to act on is the safe direction.
+    answering for every index. Every other verdict elevates a filed row,
+    because a row somebody may still have to act on is the safe direction.
+    A `watch` reason is never printed on a card (#1420): it goes on the
+    decision trail, and a filed row given `watch` is still investigated —
+    held only when that investigation is parked or comes back empty, unless
+    a floor keeps it shown (safety, protected, hot, a forced verdict,
+    `not_news_floor`).
     """
     await asyncio.to_thread(outcomes.record_look, batch, verdicts, run_id, now)
     decided: dict[int, tuple[str, str]] = {}
@@ -15227,6 +15228,9 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
     requeue: list[dict] = []
     filed_cases = 0
     let_go: list[dict] = []
+    # Filed rows the look gave `watch` and no floor keeps shown: held if
+    # their investigation is parked or comes back empty (#1420).
+    watch_rows: set[int] = set()
     for i, signal in enumerate(batch, 1):
         answer = verdicts.get(i) or {"verdict": "watch",
                                      "why": resident.SKIPPED,
@@ -15270,27 +15274,21 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
             continue
         safety = bool(signal.get("safety")) or _is_safety_signal(signal)
         if verdict == "watch" and not answer.get("fallback"):
-            # `watch` is the look saying a row can wait — "if it happens
+            # `watch` is the look saying it is not sure yet — "if it happens
             # again", "until somebody next tidies" (#1420). Its reason is
             # the look's triage, not news about the house: it goes on the
             # decision trail (`explain_decision` reads it) and never on a
-            # card, so a card is not shown arguing against itself.
+            # card, so a card is not shown arguing against itself. A filed
+            # row is still looked into, as before; only one whose
+            # investigation then finds nothing to say is held for it
+            # (`_settle_looked_into`'s `hold`).
             card_why = ""
-            row = (await asyncio.to_thread(findings_store.get, ts)
-                   if ts and not safety and not answer.get("forced")
-                   and not resident.never_ignore(signal)[0] else None)
-            if row is not None and not findings_store.not_news_floor(row):
-                # And a filed row the look judged can wait is held, not
-                # shown: still in History, where Restore puts it back. A
-                # forced watch (a floor, or a subject the household said
-                # mattered), a safety or protected signal, and a lock, an
-                # alarm, a leak or smoke sensor, a security check or a
-                # critical row (`not_news_floor`) go on as before, with no
-                # reason on the card; a row a person has touched stays
-                # where it is (`record_triage`'s third slot).
-                decided[ts] = ("held", "", True)
+            if ts and not safety:
+                # (A safety row's watch is noted below, with the live ones.)
                 let_go.extend(_signal_decisions([signal], "look_watch", why))
-                continue
+                if (not answer.get("forced")
+                        and not resident.never_ignore(signal)[0]):
+                    watch_rows.add(ts)
         if ts and not safety and not answer.get("fallback") and (
                 verdict in ("watch", "investigate")
                 or (verdict == "act" and not signal.get("hot"))):
@@ -15370,7 +15368,8 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
     try:
         investigated = await _resident_investigations(
             to_investigate, now, settings, thinking)
-        settled = await _settle_looked_into(looked_into, run_id, now)
+        settled = await _settle_looked_into(looked_into, run_id, now,
+                                            hold=watch_rows)
     finally:
         RESIDENT_LOOKED_INTO.difference_update(looked_into)
     held_first = len(moved) - len(shown)
@@ -15390,7 +15389,8 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
 
 
 async def _settle_looked_into(looked_into: dict[int, str], run_id: str,
-                              now: float) -> dict:
+                              now: float, *,
+                              hold: set[int] | None = None) -> dict:
     """Show what an investigation was sent to answer, once it has answered.
 
     Three endings, read off the store rather than off the investigation's
@@ -15418,7 +15418,14 @@ async def _settle_looked_into(looked_into: dict[int, str], run_id: str,
         return {"shown": [], "held": 0}
     statuses = await asyncio.to_thread(findings_store.statuses,
                                        list(looked_into))
-    waiting = {ts: ("elevated", why) for ts, why in looked_into.items()
+    # A row the look said can wait (`watch`, `hold`) whose investigation
+    # wrote nothing is held, with no reason on it — the look's sentence is
+    # on the decision trail — rather than shown arguing against itself
+    # (#1420). The store's not-news slot keeps a lock, an alarm, a leak or
+    # smoke sensor, a security check or a critical row shown (`record_triage`).
+    waiting = {ts: (("held", "", True) if ts in (hold or ()) else
+                    ("elevated", why))
+               for ts, why in looked_into.items()
                if statuses.get(ts) == "triaging"}
     moved = await asyncio.to_thread(
         findings_store.record_triage, waiting, run_id, now) if waiting else []
@@ -15431,7 +15438,8 @@ async def _settle_looked_into(looked_into: dict[int, str], run_id: str,
     shown = [f for f in moved if f["status"] != "held"] + refined
     if shown:
         await _announce_findings(shown)
-    held = sum(1 for s in statuses.values() if s == "held")
+    held = (sum(1 for s in statuses.values() if s == "held")
+            + sum(1 for f in moved if f["status"] == "held"))
     RESIDENT_STATE["resolved"] = RESIDENT_STATE.get("resolved", 0) + held
     if held:
         log.info("the Resident looked into %d finding(s) and set them aside "
