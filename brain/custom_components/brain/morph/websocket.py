@@ -66,7 +66,7 @@ BRAIN_FILES = ("findings_state.json", "situation.json", "status.json", "morph/ca
                "features.json")
 BRAIN_MORPH = BRAIN_SHARED / "morph"
 CASE_ID = re.compile(r"^[a-z]{1,3}:[A-Za-z0-9_.:-]{1,64}$")
-CASE_ACTIONS = ("reply", "dismiss", "todo", "snooze", "fix", "apply", "undo", "not_applicable")
+CASE_ACTIONS = ("reply", "dismiss", "todo", "snooze", "fix", "apply", "undo", "not_applicable", "done")
 TODO_ACTIONS = ("done", "drop", "snooze")
 ASK_WAIT_S = 40
 TELL_ID = re.compile(r"^[a-z0-9-]{4,64}$")
