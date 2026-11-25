@@ -47,6 +47,7 @@ import paths  # noqa: E402
 import settings  # noqa: E402
 import store  # noqa: E402
 import tell  # noqa: E402
+import versions  # noqa: E402
 
 log = logging.getLogger("morph")
 
@@ -66,7 +67,8 @@ STATE: dict = {"bootstrapped": False, "last_revision": "", "generate_note": ""}
 # "edited outside Morph" commit must never interleave, or a person's save
 # is committed under the wrong author and its own commit finds nothing.
 LOCK = asyncio.Lock()
-READ_ONLY_KINDS = ("convert", "history", "tell", "tell_answer", "learn_now", "tell_issue", "report", "report_withdraw", "converse")
+READ_ONLY_KINDS = ("convert", "history", "tell", "tell_answer", "learn_now", "tell_issue", "report", "report_withdraw", "converse",
+                   "versions", "versions_history")
 
 
 # ------------------------------------------------------------- bootstrap
@@ -268,6 +270,22 @@ async def handle(kind: str, p: dict) -> dict:
                         context=str(p.get("context") or ""))
         await asyncio.to_thread(publish_state)
         return {"ok": "error" not in st, **st}
+    if kind == "versions":
+        # A card's versions round (versions.py): read-only for brAIn, and
+        # the card is named by its id; a round built on an earlier version
+        # reads that version from the round that offered it.
+        st = versions.start(p.get("target") or {}, str(p.get("text") or ""), view=p.get("view"),
+                            base_from=p.get("base") if isinstance(p.get("base"), dict) else None)
+        await asyncio.to_thread(publish_state)
+        return {"ok": "error" not in st, **st}
+    if kind == "versions_history":
+        return await asyncio.to_thread(versions.history, str(p.get("card") or ""))
+    if kind == "versions_use":
+        # In the loop, not a thread: a version that needs Home Assistant
+        # changes starts an ordinary Tell, which makes its task here.
+        out = versions.use({k: p.get(k) for k in ("round", "index", "card", "at")})
+        await asyncio.to_thread(publish_state)
+        return out
     if kind == "tell_answer":
         st = tell.answer_question(str(p.get("id") or ""), p.get("choice"))
         await asyncio.to_thread(publish_state)
@@ -291,6 +309,8 @@ async def handle(kind: str, p: dict) -> dict:
         return out
     if kind == "tell_undo":
         out = tell.undo(str(p.get("id") or ""))
+        if out.get("ok"):
+            await asyncio.to_thread(versions.after_undo, str(p.get("id") or ""))
         await asyncio.to_thread(publish)
         await sync_dashboards()
         return out
