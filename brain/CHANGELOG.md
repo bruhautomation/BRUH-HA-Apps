@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.22
+
+### Removed
+
+- Reverted 5.5.21 (the Done answer for a check a person makes, device-aware steps, and keeping brAIn's internal reasoning off findings). The development loop's transcript monitor flagged steps in how that change was verified, not the change itself, so it is taken back and remade. Findings behave as in 5.5.20 until it ships again (1421, 1420).
+
 ## 5.5.21
 
 ### Changed

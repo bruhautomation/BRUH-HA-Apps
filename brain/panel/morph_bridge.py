@@ -302,12 +302,10 @@ def publish_feed(feed: dict) -> bool:
 # Morph offers the presses Needs you offers, in the same words, so a case
 # reads as one surface wherever it is looked at. Ignore carries its optional
 # reason as the request's `text`, which reaches `_end_finding` as the note.
-# Done rides as a press where the card leads with it — a step a person went
-# and did (#1421), a chore check — so Morph offers what Needs you offers.
 _ACTION_OF_VERB = {"fix": "fix", "apply": "apply", "todo": "todo",
                    "dismiss": "dismiss", "not_now": "snooze",
                    "recheck": "recheck", "wrong": "wrong",
-                   "not_applicable": "not_applicable", "done": "done"}
+                   "not_applicable": "not_applicable"}
 
 
 def morph_answers(case_answers: list) -> list:
