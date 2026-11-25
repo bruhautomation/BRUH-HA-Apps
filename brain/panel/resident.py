@@ -396,8 +396,10 @@ Rules:
 - Never "ignore" anything about water, smoke, fire, gas, a freeze,
   security, a device somebody has marked protected, or a signal the home
   has already flagged as urgent. If one of those is in front of you and
-  you think it is nothing, the answer is "watch" or "investigate" and your
-  reason says why you think it is nothing. The same goes for a defect
+  you think it is nothing, the answer is "watch" or "investigate", your
+  reason says why you think it is nothing, and the "already" word below
+  says which kind of nothing: the row stays shown, and your reason is not
+  printed on its card. The same goes for a defect
   brAIn's own rehearsal planted (an automation or helper named
   brain_test_…): it is there to check you notice it, so "watch" at least.
 - """ + prompt_kit.PRIVACY + """ If the only thing that makes a signal
@@ -454,7 +456,7 @@ Rules:
   leave it out when there is none. When your reason says there is nothing
   for anybody to do, it needs one of these words — a reason like that
   beside a card that stays on the list contradicts the card. A row you give one of these is set aside whatever verdict
-  you write, so never use it to dismiss something you would investigate
+  you write (one of those never-ignored rows above is shown anyway), so never use it to dismiss something you would investigate
   for any other reason — and your "why" names what already answers it.
 - Judge each signal on what you were given. You cannot look anything up
   here: if you need to, that is what "investigate" means.
@@ -722,6 +724,9 @@ def parse_first_look(obj, count: int, rows=None,
     read over `not_news_floor` — a leak or smoke sensor, a lock, a
     security check (#790); the verdict the model gave beside it stands,
     and is at least `watch`, because the word was its reason to let go.
+    Such an answer carries the refused word as ``not_news``: its `why` is
+    the look's argument for hiding the row, which the investigation reads
+    and no card prints (#1409).
     ``device_class`` says what kind of thing a subject is, where known.
     """
     if isinstance(obj, str):
@@ -796,12 +801,18 @@ def parse_first_look(obj, count: int, rows=None,
         }
         signal = batch[idx - 1] if idx <= len(batch) else None
         gave = answer.pop("gave", answer["verdict"])
+        refused = ""
         if answer.get("already") and signal is not None:
             kept = not_news_floor(signal, device_class, answer["already"])
             if kept:
+                # Shown, and `not_news` says the look's reason is its
+                # argument for NOT showing it: the investigation still reads
+                # it, a card never prints it beside itself (#1409).
+                refused = answer["already"]
                 answer = {"verdict": VERDICTS[max(_RANK[gave],
                                                   _RANK[HOT_FLOOR])],
-                          "why": answer["why"], "forced": True}
+                          "why": answer["why"], "forced": True,
+                          "not_news": refused}
         floor, why = never_ignore(signal) if signal is not None else ("", "")
         extra, extra_why = (floors or {}).get(idx) or ("", "")
         if _RANK.get(extra, -1) > _RANK.get(floor, -1):
@@ -815,6 +826,8 @@ def parse_first_look(obj, count: int, rows=None,
                           MAX_WHY),
                       "forced": True,
                       "fallback": bool(answer.get("fallback"))}
+            if refused:
+                answer["not_news"] = refused
         out[idx] = answer
     return out
 
