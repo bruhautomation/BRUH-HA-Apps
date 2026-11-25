@@ -6,8 +6,8 @@
 // status chip (Urgent / Problem / Tidy-up / Suggestion / Question), the
 // title with names where brAIn has ids, the detail, the ask, the thread, a
 // reply line, and brAIn's presses under brAIn's labels — every one Morph can
-// carry back to brAIn's queue (Fix or Apply or Add to To Do, Dismiss,
-// Snooze, Doesn't apply), in brAIn's order. A reply is still read by
+// carry back to brAIn's queue (Fix or Apply or Add to To Do, Done on a step
+// a person goes and does, Dismiss, Snooze, Doesn't apply), in brAIn's order. A reply is still read by
 // brAIn's interpreter, so a Yes, a No or "yes, but call it Sump Pump
 // Current" is the reply's words.
 
@@ -63,7 +63,7 @@ export function caseChip(c) {
 
 // The presses Morph can carry back (the integration's CASE_ACTIONS), with
 // brAIn's own words for each.
-const PRESS_WORDS = { fix: 'Fix', apply: 'Apply', todo: 'Add to To Do', dismiss: 'Dismiss', snooze: 'Snooze', not_applicable: "Doesn't apply" };
+const PRESS_WORDS = { fix: 'Fix', apply: 'Apply', todo: 'Add to To Do', done: 'Done', dismiss: 'Dismiss', snooze: 'Snooze', not_applicable: "Doesn't apply" };
 export function casePresses(c) {
   if (!c || ['planning', 'fixing'].includes(c.status)) return [];
   const sent = Array.isArray(c.answers) ? c.answers.filter((a) => a && PRESS_WORDS[a.action]) : [];
@@ -116,7 +116,7 @@ export function caseFace(c, ui) {
   const plan = c.status === 'planned' && c.plan ? `<div class="caseplan"><span class="small">What Apply will change</span>${(c.plan.steps || []).slice(0, 6).map((s) => `<span class="sm">· ${esc(named(s, u.name))}</span>`).join('')}${c.plan.risk ? `<span class="sm"><b>What could go wrong:</b> ${esc(c.plan.risk)}</span>` : ''}</div>` : '';
   const phase = c.status === 'planning' ? `${who} is working out a plan…` : c.status === 'fixing' ? `${who} is making the change…` : c.status === 'triaging' ? `${who} has not looked at this yet.` : '';
   const busy = u.pending ? `<div class="working"><span class="pulse"></span><span>${esc(u.pending)}</span></div>` : '';
-  const words = u.admin === false ? [] : casePresses(c).map((a, i) => `<button type="button" class="wd${i === 0 && ['fix', 'apply', 'todo'].includes(a.action) ? ' strong' : ''}" data-act="case" data-v="${esc(a.action)}" data-case="${esc(c.id)}">${esc(a.label)}</button>`);
+  const words = u.admin === false ? [] : casePresses(c).map((a, i) => `<button type="button" class="wd${i === 0 && ['fix', 'apply', 'todo', 'done'].includes(a.action) ? ' strong' : ''}" data-act="case" data-v="${esc(a.action)}" data-case="${esc(c.id)}">${esc(a.label)}</button>`);
   const reply = u.admin === false ? '' : `<input class="replyin" type="text" data-keep="reply:${esc(c.id)}" data-act-enter="case-reply" data-case="${esc(c.id)}" placeholder="Reply…" aria-label="Reply to ${esc(who)} about this" style="--cc:${color}"><button type="button" class="replysend" data-act="case-reply" data-case="${esc(c.id)}" aria-label="Send reply" style="--cc:${color}">Send</button>`;
   const detail = c.detail && c.detail !== c.claim ? `<p class="casebody">${esc(named(c.detail, u.name))}</p>` : '';
   return `<div class="case" data-ctl="1" style="--cc:${color}" data-case-card="${esc(c.id)}">
