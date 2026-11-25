@@ -15389,7 +15389,7 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
              "investigate, %d acted on; %d finding(s) shown, %d held",
              len(batch), counts["ignore"], counts["watch"],
              counts["investigate"], counts["act"], len(shown),
-             len(moved) - len(shown))
+             held_first + settled["held"])
     return {"looked": True, "ok": True, "batch": len(batch),
             "verdicts": counts, "shown": len(shown),
             "held": held_first + settled["held"], "watched": watched,
