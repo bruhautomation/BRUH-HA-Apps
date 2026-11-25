@@ -3560,8 +3560,8 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
       case 'room': this.scrollToRoom(v); return;
       case 'case': {
         const r = await this.caseRequest(el.dataset.case, v, '');
-        if (r && r.ok && ['dismiss', 'todo', 'snooze', 'not_applicable', 'done'].includes(v)) this.markAnswered(el.dataset.case);
-        this.toast(r && r.ok ? ({ dismiss: 'Dismissed.', todo: 'Added to To Do.', snooze: 'Snoozed.', not_applicable: 'Closed.', done: 'Done.', fix: `${this.who()} is working out a plan.`, apply: `${this.who()} is making the change.` }[v] || `Told ${this.who()}.`) : (r && r.error) || `${this.who()} did not take that.`);
+        if (r && r.ok && ['dismiss', 'todo', 'snooze', 'not_applicable'].includes(v)) this.markAnswered(el.dataset.case);
+        this.toast(r && r.ok ? ({ dismiss: 'Dismissed.', todo: 'Added to To Do.', snooze: 'Snoozed.', not_applicable: 'Closed.', fix: `${this.who()} is working out a plan.`, apply: `${this.who()} is making the change.` }[v] || `Told ${this.who()}.`) : (r && r.error) || `${this.who()} did not take that.`);
         return;
       }
       case 'case-reply': {

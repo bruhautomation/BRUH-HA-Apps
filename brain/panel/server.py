@@ -3272,18 +3272,6 @@ async def _apply_morph_request(req: dict) -> dict:
             ok, why = await _morph_undo(case_id)
         elif action == "not_applicable":
             ok, why, _ = await _morph_end(case_id, "not_applicable")
-        elif action == "done":
-            # Done: a person dealt with it (a step they went and did, a
-            # chore check). The reply line's "done" ending, as a press.
-            if finding is None:
-                why = "only a report can be marked done"
-            else:
-                payload, fact = await _end_finding(
-                    finding, FINDING_VERBS["done"], req.get("text", ""),
-                    refine=False)
-                _remember_morph_undo(case_id, _ending_undo(
-                    finding, FINDING_VERBS["done"], fact, payload))
-                ok, why = True, ""
         elif action == "recheck":
             # Check again: the panel's own press, through the same helper.
             if finding is None:
@@ -13944,14 +13932,6 @@ def _note_registry(snapshot: dict) -> None:
     except Exception as exc:  # noqa: BLE001
         log.debug("used-by note failed: %s", exc)
     try:
-        device_of, devices = _device_map(snapshot)
-        _DEVICE_OF.clear()
-        _DEVICE_OF.update(device_of)
-        _DEVICES.clear()
-        _DEVICES.update(devices)
-    except Exception as exc:  # noqa: BLE001
-        log.debug("device map note failed: %s", exc)
-    try:
         _CONTROLLED_BY.clear()
         _CONTROLLED_BY.update(_controlled_by_map(snapshot))
     except Exception as exc:  # noqa: BLE001
@@ -14059,77 +14039,6 @@ def _used_by_map(snapshot: dict) -> dict[str, list[str]]:
                     note({eid}, f"{label} (through {other}, on the same "
                                 "device)")
     return out
-
-
-# The device each entity is on, and what else that device carries (#1421):
-# `{entity_id: device_id}` and `{device_id: {"name", "members"}}`, each
-# member `(entity_id, what it is, its state at the last checks pass)`. An
-# investigation told a household to replace the battery in a door sensor
-# that was a smart lock's own door sensor — the remedy was the lock's
-# (recalibrate it), and the lock's battery read healthy. A step for a
-# person is a remedy, and a remedy belongs to the device that makes the
-# reading, so the run that writes one is handed the device first: what it
-# is, what else is on it, its battery. Read off the registries, never a
-# brand or a name. Same snapshot, same pass, `_NAMES`' rule.
-_DEVICE_OF: dict[str, str] = {}
-_DEVICES: dict[str, dict] = {}
-DEVICE_MEMBERS_SHOWN = 8
-
-
-def _device_map(snapshot: dict) -> tuple[dict[str, str], dict[str, dict]]:
-    house = House(snapshot)
-    device_of: dict[str, str] = {}
-    devices: dict[str, dict] = {}
-    for row in house.entities:
-        eid = str(row.get("entity_id") or "")
-        device = str(row.get("device_id") or "")
-        if not eid or not device or row.get("disabled_by"):
-            continue
-        device_of[eid] = device
-        dev = house.devices.get(device) or {"id": device}
-        entry = devices.setdefault(device, {"name": house.device_name(dev),
-                                            "members": []})
-        st = house.states.get(eid) or {}
-        attrs = st.get("attributes") or {}
-        klass = str(attrs.get("device_class") or row.get("device_class")
-                    or row.get("original_device_class") or "")
-        what = eid.split(".", 1)[0] + (f" ({klass})" if klass else "")
-        state = str(st.get("state") or "")
-        unit = str(attrs.get("unit_of_measurement") or "")
-        entry["members"].append((eid, what, f"{state} {unit}".strip()
-                                 if state else ""))
-    return device_of, devices
-
-
-def _device_rows(entities) -> tuple[list[str], set[str]]:
-    """One line per entity that sits on a device with others on it: the
-    device, and each other entity on it with what it is and what it read
-    at the last checks pass. And the entities those lines give a reading
-    for, which a case may then cite as read."""
-    rows: list[str] = []
-    cited: set[str] = set()
-    seen: set[str] = set()
-    for eid in entities or ():
-        device = _DEVICE_OF.get(str(eid))
-        dev = _DEVICES.get(device or "")
-        if not dev or device in seen:
-            continue
-        others = [m for m in dev["members"] if m[0] != eid]
-        if not others:
-            continue
-        seen.add(device)
-        name = (_NAMES.get(str(eid)) or {}).get("name") or ""
-        label = f"{eid} ({name})" if name and name != eid else str(eid)
-        bits = []
-        for other, what, state in others[:DEVICE_MEMBERS_SHOWN]:
-            bits.append(f"{other} [{what}]" + (f" read {state}" if state else ""))
-            if state:
-                cited.add(other)
-        more = len(others) - DEVICE_MEMBERS_SHOWN
-        rows.append(f"{label} is on the device “{dev['name']}”, which also "
-                    "carries " + ", ".join(bits)
-                    + (f" and {more} more" if more > 0 else ""))
-    return rows, cited
 
 
 # Which automations SWITCH each entity, and what they watch to do it:
@@ -15207,15 +15116,12 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
                           thinking: str, surfaced: int, watched: int) -> dict:
     """What the four verdicts do.
 
-    `ignore` takes a filed row off a screen only by SAYING so about that
-    row in a reply that parsed — which `parse_first_look` guarantees by
-    answering for every index. Every other verdict elevates a filed row,
-    because a row somebody may still have to act on is the safe direction.
-    A `watch` reason is never printed on a card (#1420): it goes on the
-    decision trail, and a filed row given `watch` is still investigated —
-    held only when that investigation is parked or comes back empty, unless
-    a floor keeps it shown (safety, protected, hot, a forced verdict,
-    `not_news_floor`).
+    `ignore` is the only one that may take a filed row off a screen, and it
+    may only do it by SAYING so about that row in a reply that parsed —
+    which `parse_first_look` guarantees by answering for every index. Every
+    other verdict elevates a filed row, because a row somebody may still
+    have to act on is the safe direction and "I am watching this" is not a
+    reason to hide it.
     """
     await asyncio.to_thread(outcomes.record_look, batch, verdicts, run_id, now)
     decided: dict[int, tuple[str, str]] = {}
@@ -15228,9 +15134,6 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
     requeue: list[dict] = []
     filed_cases = 0
     let_go: list[dict] = []
-    # Filed rows the look gave `watch` and no floor keeps shown: held if
-    # their investigation is parked or comes back empty (#1420).
-    watch_rows: set[int] = set()
     for i, signal in enumerate(batch, 1):
         answer = verdicts.get(i) or {"verdict": "watch",
                                      "why": resident.SKIPPED,
@@ -15273,22 +15176,6 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
             # a question for the person is worth an investigation's run.
             continue
         safety = bool(signal.get("safety")) or _is_safety_signal(signal)
-        if verdict == "watch" and not answer.get("fallback"):
-            # `watch` is the look saying it is not sure yet — "if it happens
-            # again", "until somebody next tidies" (#1420). Its reason is
-            # the look's triage, not news about the house: it goes on the
-            # decision trail (`explain_decision` reads it) and never on a
-            # card, so a card is not shown arguing against itself. A filed
-            # row is still looked into, as before; only one whose
-            # investigation then finds nothing to say is held for it
-            # (`_settle_looked_into`'s `hold`).
-            card_why = ""
-            if ts and not safety:
-                # (A safety row's watch is noted below, with the live ones.)
-                let_go.extend(_signal_decisions([signal], "look_watch", why))
-                if (not answer.get("forced")
-                        and not resident.never_ignore(signal)[0]):
-                    watch_rows.add(ts)
         if ts and not safety and not answer.get("fallback") and (
                 verdict in ("watch", "investigate")
                 or (verdict == "act" and not signal.get("hot"))):
@@ -15368,8 +15255,7 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
     try:
         investigated = await _resident_investigations(
             to_investigate, now, settings, thinking)
-        settled = await _settle_looked_into(looked_into, run_id, now,
-                                            hold=watch_rows)
+        settled = await _settle_looked_into(looked_into, run_id, now)
     finally:
         RESIDENT_LOOKED_INTO.difference_update(looked_into)
     held_first = len(moved) - len(shown)
@@ -15389,8 +15275,7 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
 
 
 async def _settle_looked_into(looked_into: dict[int, str], run_id: str,
-                              now: float, *,
-                              hold: set[int] | None = None) -> dict:
+                              now: float) -> dict:
     """Show what an investigation was sent to answer, once it has answered.
 
     Three endings, read off the store rather than off the investigation's
@@ -15418,14 +15303,7 @@ async def _settle_looked_into(looked_into: dict[int, str], run_id: str,
         return {"shown": [], "held": 0}
     statuses = await asyncio.to_thread(findings_store.statuses,
                                        list(looked_into))
-    # A row the look said can wait (`watch`, `hold`) whose investigation
-    # wrote nothing is held, with no reason on it — the look's sentence is
-    # on the decision trail — rather than shown arguing against itself
-    # (#1420). The store's not-news slot keeps a lock, an alarm, a leak or
-    # smoke sensor, a security check or a critical row shown (`record_triage`).
-    waiting = {ts: (("held", "", True) if ts in (hold or ()) else
-                    ("elevated", why))
-               for ts, why in looked_into.items()
+    waiting = {ts: ("elevated", why) for ts, why in looked_into.items()
                if statuses.get(ts) == "triaging"}
     moved = await asyncio.to_thread(
         findings_store.record_triage, waiting, run_id, now) if waiting else []
@@ -15438,8 +15316,7 @@ async def _settle_looked_into(looked_into: dict[int, str], run_id: str,
     shown = [f for f in moved if f["status"] != "held"] + refined
     if shown:
         await _announce_findings(shown)
-    held = (sum(1 for s in statuses.values() if s == "held")
-            + sum(1 for f in moved if f["status"] == "held"))
+    held = sum(1 for s in statuses.values() if s == "held")
     RESIDENT_STATE["resolved"] = RESIDENT_STATE.get("resolved", 0) + held
     if held:
         log.info("the Resident looked into %d finding(s) and set them aside "
@@ -15658,7 +15535,6 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     # The grant is decided before the prompt is built, because the line
     # that offers the camera belongs above the sign-off, not after it.
     grant, trip = await asyncio.to_thread(_camera_grant, signal, now)
-    on_device, device_read = _device_rows(about)
     prompt = resident.investigate_prompt(
         signal,
         await asyncio.to_thread(_memory_block, entities=about,
@@ -15667,7 +15543,6 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
         await asyncio.to_thread(_open_case_rows, exclude=exclude),
         used_by=_used_by_rows(about),
         controlled_by=_controlled_by_rows(about),
-        on_device=on_device,
         signal_row=rows[0] if rows else "", why=why, refining=refining,
         now_line=_now_line(now),
         examples=await asyncio.to_thread(_outcome_examples, [signal], now,
@@ -15721,9 +15596,7 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     # look" must not throw a real investigation away.
     read = await asyncio.to_thread(_entities_read, result)
     if read is not None:
-        # The signal's own entities, and the readings of the device they
-        # are on that the prompt handed over (`_device_rows`).
-        read |= set(_signal_entities(signal)) | device_read
+        read |= set(_signal_entities(signal))
     case = resident.parse_case(answer, read_entities=read)
     if case is None:
         if read is not None and resident.parse_case(answer) is not None:
@@ -16107,7 +15980,6 @@ async def _resident_escalate(case: dict, signal: dict, now: float,
             await asyncio.to_thread(_open_case_rows, exclude=exclude),
             used_by=_used_by_rows(_signal_entities(signal)),
             controlled_by=_controlled_by_rows(_signal_entities(signal)),
-            on_device=_device_rows(_signal_entities(signal))[0],
             signal_row=rows[0] if rows else "", why=why, refining=refining,
             prior_case=case, now_line=_now_line(now),
             examples=await asyncio.to_thread(_outcome_examples, [signal], now,
