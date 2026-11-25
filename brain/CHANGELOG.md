@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.24
+
+### Added
+
+- **Versions of a card on Morph's Home tab.** Open a card's Tell the way you do now (right-click, a two-finger tap, hold in Edit, or the T key), say what should change and press **Send for versions**: brAIn answers with two or three versions, each with a short name and one line saying what is different, and draws them right in the card's place with your house's real states. Step between **Current · A · B · C** with the chips, the arrows, the arrow keys or a sideways swipe. **Use this** makes the shown one the card as one change you can Undo; **More like this** asks for variations on it; **Change…** revises just that one; **Discard** leaves the card as it was. Nothing changes while you choose, and a version that needs something new in Home Assistant (a template sensor, say) says so and gets it made only if you pick it. **Just do it** still makes one change straight away.
+- A card's Tell box now lists the card's **earlier versions** (the last five it replaced): tap one to see it in place, and **Use this** puts it back.
+
 ## 5.5.23
 
 ### Changed

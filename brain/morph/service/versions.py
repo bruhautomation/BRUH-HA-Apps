@@ -507,7 +507,7 @@ def use(p: dict) -> dict:
     remember(card_id, replaced, label)
     back = tell.read_back(base, commit, target)
     tid = brain.new_id("morph")
-    state = {"id": tid, "mode": "use", "text": f"Use “{label}”", "target": target, "phase": "done",
+    state = {"id": tid, "mode": "use", "text": f"Use this version: {label}", "target": target, "phase": "done",
              "started": time.time(), "commit": commit, "shows": back["shows"],
              "say": f"“{label}” is the card now.", "used": {"label": label, "card": version["card"]},
              "replaced": replaced, "steps": [{"t": f"Wrote “{label}” into dashboard.yaml as one change",

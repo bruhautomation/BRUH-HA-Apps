@@ -685,7 +685,7 @@ for (const [w, h, name, narrow] of W([[1440, 900, 'wide', false], [400, 860, 'ph
   const inside = await p.evaluate(() => { const t = window.__panel.shadowRoot.querySelector('[data-tile="c_kitchen_cans"] [data-tell] textarea'); return !!t; });
   if (!inside) fail(name, 'holding a card in Edit did not open Tell brAIn inside it');
   await p.evaluate(() => { const ta = window.__panel.shadowRoot.querySelector('[data-tell] textarea'); ta.value = 'Make this wider and put it first'; ta.dispatchEvent(new Event('input', { bubbles: true, composed: true })); });
-  await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-act="tell-send"]').click());
+  await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-act="tell-now"]').click());
   // Long enough for the answer AND the after-picture, which waits for the
   // change to draw before it is taken.
   await settle(p, 5500);
@@ -1321,7 +1321,7 @@ for (const [w, h, name] of W([[1440, 900, 'wide'], [400, 860, 'phone']])) {
   await p.evaluate(() => { const ta = window.__panel.shadowRoot.querySelector('[data-tell] textarea'); ta.value = 'Show the supply/return difference with its history'; ta.dispatchEvent(new Event('input', { bubbles: true, composed: true })); });
   const scopeLine = await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-tell]').innerText);
   if (!/Home Assistant is changed only if you ask/.test(scopeLine) || !/nothing goes to GitHub unless you say yes/.test(scopeLine)) fail(`question ${name}`, 'the Tell box does not say what a request may touch before it is sent');
-  await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-act="tell-send"]').click());
+  await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-act="tell-now"]').click());
   await settle(p, 3500);
   const box = () => p.evaluate(() => (window.__panel.shadowRoot.querySelector('[data-tell]') || {}).innerText || '');
   let text = await box();
