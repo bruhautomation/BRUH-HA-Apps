@@ -12292,6 +12292,7 @@ async def _run_book(reason: str = "pressed", snap: dict | None = None,
         state["opted_in"] = True
         state["held"] = ""
         state["last_error"] = ""
+        _settle_book_questions(state, dig, now)
         open_count = sum(1 for f in findings_store.list_all()
                          if f.get("source") == house_book.SOURCE)
         rows = house_book.question_rows(parsed["questions"],
@@ -12332,6 +12333,49 @@ async def _run_book(reason: str = "pressed", snap: dict | None = None,
            if parsed["uncited"] else "")
         + (f", {len(created)} question(s) filed" if created else ""))
     MAINT_STATE["book"]["last_added"] = added
+
+
+# How often the maintainer looks open house-book questions up again, while
+# there are any: a read of Home Assistant, never a Claude run.
+BOOK_QUESTIONS_RECHECK_S = 3600
+BOOK_QUESTIONS_CHECKED = {"at": 0.0}
+
+
+def _settle_book_questions(state: dict, dig: dict, now: float) -> int:
+    """Answer the open house-book questions the house answers now, instead
+    of asking them (#1409). Returns how many were set aside.
+
+    `house_book.answered_now` over today's registry, automations, scripts
+    and facts: the line is written into the book, cited as `parse` cites
+    one, and the question is held with that line as its reason
+    (`findings_store.record_triage` through `look_may_set_aside`, so never
+    a question somebody replied under or put back), still in History ›
+    Set aside by brAIn. ``state`` is the house book's, saved by the caller.
+    """
+    rows = [f for f in findings_store.list_all("open")
+            if f.get("source") == house_book.SOURCE]
+    found = house_book.answered_now(rows, dig)
+    if not found:
+        return 0
+    index = dig.get("index") or {}
+    lines: dict[str, list[dict]] = {}
+    decided: dict[int, tuple[str, str]] = {}
+    for row, hit in found:
+        put, line = house_book.found_entry(hit, index)
+        if line:
+            lines.setdefault(put, []).append(line)
+        decided[int(row["ts"])] = ("held", str(hit.get("text") or ""))
+    if lines and state.get("book"):
+        state["book"] = {**state["book"], "sections": house_book.merge(
+            state["book"], [{"key": k, "entries": v} for k, v in lines.items()],
+            "add")}
+    findings_store.record_triage(decided, "", now)
+    held = sum(1 for st in findings_store.statuses(list(decided)).values()
+               if st == "held")
+    if held:
+        log.info("house book: %d open question(s) the house now answers were "
+                 "written into the book and set aside", held)
+    return held
 
 
 def _republish_book(state: dict, now: float) -> None:
@@ -12670,6 +12714,27 @@ async def _maint_tick(now: float) -> list[str]:
     # The house book: weekly, only once somebody has asked for one, and
     # only when what it reads has moved.
     state = await asyncio.to_thread(house_book.load)
+    # Its open questions, hourly while there are any: one answered since it
+    # was asked (a room set, an automation written) is written in and set
+    # aside (#1409). No Claude run, so no gate.
+    if (state.get("opted_in")
+            and now - BOOK_QUESTIONS_CHECKED["at"] >= BOOK_QUESTIONS_RECHECK_S
+            and not MAINT_STATE["book"]["running"]):
+        BOOK_QUESTIONS_CHECKED["at"] = now
+        try:
+            if any(f.get("source") == house_book.SOURCE for f in
+                   await asyncio.to_thread(findings_store.list_all, "open")):
+                dig = house_book.digest(await _book_snapshot())
+
+                def settle() -> None:
+                    fresh = house_book.load()
+                    if _settle_book_questions(fresh, dig, now):
+                        _republish_book(fresh, now)
+                        house_book.save(fresh)
+                await asyncio.to_thread(settle)
+                state = await asyncio.to_thread(house_book.load)
+        except Exception as exc:  # noqa: BLE001 — a question stays asked
+            log.debug("house book: open questions not looked up: %s", exc)
     if state.get("opted_in") and now - float(state.get("last_weekly") or 0) >= MAINT_WEEK_S:
         snap = await _book_snapshot()
         fp = await asyncio.to_thread(house_book.fingerprint, snap)
@@ -15074,6 +15139,12 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
                                      "why": resident.SKIPPED,
                                      "forced": True, "fallback": True}
         verdict, why = answer["verdict"], answer["why"]
+        # A not-news word the floor refused (`resident.parse_first_look`'s
+        # `not_news`): the row is shown, and the look's reason is its
+        # argument for not showing it, so the row's record carries none and
+        # the card does not contradict itself (#1409). The investigation
+        # is still handed it.
+        card_why = "" if answer.get("not_news") else why
         counts[verdict] += 1
         ts = int(signal.get("finding_ts") or 0)
         if verdict == "ignore":
@@ -15116,11 +15187,11 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
             # read in its rule's generic words. It stays `triaging` until
             # the investigation rewrites it, sets it aside, or could not
             # run — `_settle_looked_into` shows it then, exactly as before.
-            looked_into[ts] = why
+            looked_into[ts] = card_why
             to_investigate.append((signal, why, ts))
             continue
         if ts:
-            decided[ts] = ("elevated", why)
+            decided[ts] = ("elevated", card_why)
         if verdict == "watch":
             if answer.get("fallback"):
                 # Nobody said "watch" — the reply skipped this one or could
@@ -21007,10 +21078,16 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
         if stream == "design":
             # What brAIn showed this house, in its own words: the run is
             # handed it as its subject, the way a look is handed the owner's.
+            # Only the rows on the list: a row brAIn set aside, or one
+            # somebody settled, sat in it with its hold's reason and read as
+            # a card listed beside brAIn's verdict that it should not be
+            # (#1409).
             topic = await asyncio.to_thread(
                 lambda: dl_streams.design_context(
                     _insights_listing(),
-                    (findings_store.listing() or {}).get("findings") or []))
+                    [f for f in (findings_store.listing() or {}).get(
+                        "findings") or []
+                     if f.get("status") in findings_store.LIVE_STATUSES]))
         result = await _claude(
             engine.run_analyst,
             dl_streams.analyst_prompt(

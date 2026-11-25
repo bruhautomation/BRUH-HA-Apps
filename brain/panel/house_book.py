@@ -915,6 +915,43 @@ def _about_entity(key: str, dig: dict) -> str:
     return ""
 
 
+def found_entry(found: dict, index: dict, only: str = "") -> tuple[str, dict | None]:
+    """``(section, entry)``: the line the book gets for what `lookup`
+    found, cited to the area or the automation — ``None`` for an answer
+    with nothing citable (still not asked)."""
+    keys = [k for k in found.get("sources") or [] if k in index]
+    line = textclip.clip(redact_text(found.get("text") or ""), MAX_ENTRY)
+    put = only if only in SECTIONS else found.get("section") or "other"
+    if not keys or not line:
+        return put, None
+    return put, {"id": entry_id(put, line), "text": line,
+                 "sources": [{"key": k, "label": textclip.clip(
+                     redact_text(index[k]), MAX_LABEL)}
+                     for k in keys[:MAX_SOURCES]]}
+
+
+def answered_now(rows: list[dict], dig: dict) -> list[tuple[dict, dict]]:
+    """``[(row, found)]``: the open house-book questions the house answers
+    NOW (`lookup`, over today's registry, automations, scripts and facts).
+
+    A question is looked up once, when it is written; an area assigned, an
+    automation written or a fact learned after that left it on the list
+    beside the answer brAIn could read for itself, and the first look's
+    "the sensor already has a room" under it (#1409). Read off the row's
+    own question (``claim``) and its entity, never the look's words."""
+    out = []
+    for row in rows or ():
+        if not isinstance(row, dict) or row.get("source") != SOURCE:
+            continue
+        if row.get("kind") != "question":
+            continue
+        text = str(row.get("claim") or "").strip()
+        found = lookup(text, str(row.get("entity_id") or ""), dig) if text else None
+        if found is not None:
+            out.append((row, found))
+    return out
+
+
 def parse(answer: dict | None, dig: dict, request: str = "",
           only: str = "") -> dict:
     """`{sections, questions, uncited, redacted}` — only cited sentences.
@@ -987,17 +1024,11 @@ def parse(answer: dict | None, dig: dict, request: str = "",
         if found is not None:
             # Looked up, so written: the book says it, cited to the area or
             # the automation, and nobody is asked (#773).
-            keys = [k for k in found["sources"] if k in index]
-            line = textclip.clip(redact_text(found["text"]), MAX_ENTRY)
-            put = only if only in SECTIONS else found["section"] or "other"
+            put, line = found_entry(found, index, only)
             bucket = out_sections.setdefault(put, [])
-            if keys and line and len(bucket) < MAX_ENTRIES and not any(
-                    _norm(b["text"]) == _norm(line) for b in bucket):
-                bucket.append({
-                    "id": entry_id(put, line), "text": line,
-                    "sources": [{"key": k, "label": textclip.clip(
-                        redact_text(index[k]), MAX_LABEL)}
-                        for k in keys[:MAX_SOURCES]]})
+            if line and len(bucket) < MAX_ENTRIES and not any(
+                    _norm(b["text"]) == _norm(line["text"]) for b in bucket):
+                bucket.append(line)
             continue
         questions.append({"question": textclip.clip(text, MAX_QUESTION),
                           "why": textclip.clip(redact_text(str(q.get("why") or "")), 300),
@@ -1369,4 +1400,5 @@ __all__ = ["NOTE_KEY", "YOU_KEY", "add_written", "delete_entry", "edit_entry",
            "SCHEMA", "answer_fact", "clean_fact_text", "SECTIONS", "SOURCE", "SYSTEM", "digest", "fingerprint",
            "frame", "load", "moved", "parse", "publish", "question_rows",
            "redact_text", "render_page", "revoke", "save", "lookup",
-           "operated_by", "registry_answers", "triggered_by"]
+           "operated_by", "registry_answers", "triggered_by", "answered_now",
+           "found_entry"]

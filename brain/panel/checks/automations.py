@@ -1964,7 +1964,7 @@ def _override_cause(snap: dict, house: House, subject: str,
 
 
 def _override_fix(shape: dict | None, offer: dict | None,
-                  cause: str = "") -> str:
+                  cause: str = "", state: str | None = None) -> str:
     """One concrete condition, and what to press for it (#1266).
 
     The condition is the one `conditions.build` offers as a change on the
@@ -1972,15 +1972,12 @@ def _override_fix(shape: dict | None, offer: dict | None,
     and Dismiss leaves the automation as it is; nothing is changed from
     here. Where no condition can be offered the sentence says which one
     fits and why it is not offered; with no time pattern it is ``cause``
-    (`_override_cause`).
+    (`_override_cause`). ``state`` is `_proposal_state`'s, when the caller
+    has read it; an answered offer files no row at all (`overridden`).
     """
     if offer and offer.get("config") and not offer.get("refused"):
         title = str(offer.get("title") or "")
-        state = _proposal_state(offer)
-        if state == "answered":
-            return (f"brAIn suggested one condition, “{title}”, and it has "
-                    "already been answered on the Proposals tab, so the "
-                    "automation is as you left it.")
+        state = _proposal_state(offer) if state is None else state
         where = ("will be on the Proposals tab once it has room"
                  if state == "full" else "is on the Proposals tab")
         return (f"brAIn suggests one condition: “{title}”. It {where}: "
@@ -2082,6 +2079,14 @@ def overridden(snap: dict, now: float) -> list[dict]:
             offers = _offered_conditions(snap, history, now)
 
         offer = offers.get(subject or key)
+        offered = bool(offer and offer.get("config")
+                       and not offer.get("refused"))
+        state = _proposal_state(offer) if offered else ""
+        if state == "answered":
+            # The household already answered the one change brAIn offered
+            # for it on the Proposals tab: a card saying so, and that the
+            # automation is as they left it, asks them for nothing (#1409).
+            continue
         out.append({
             # Stable across runs: every number in here moves, so they all
             # live in `detail` and the store can refresh them in place.
@@ -2099,7 +2104,8 @@ def overridden(snap: dict, now: float) -> list[dict]:
                            and not offer.get("refused"))
                        else _override_cause(
                            snap, house, subject,
-                           ((g or {}).get("undos") or []) + list(past)))),
+                           ((g or {}).get("undos") or []) + list(past))),
+                state=state if offered else None),
             "severity": "info",
             "fixable": False,
             "entity_id": subject,

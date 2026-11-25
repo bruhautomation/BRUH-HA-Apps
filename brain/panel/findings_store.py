@@ -3821,7 +3821,9 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
     ``verdicts`` is ``{ts: (verdict, reason)}``, or ``(verdict, reason,
     True)`` for a hold the look said is NOT NEWS (`resident.ALREADY`), which
     holds a row silence already showed too, while nobody has touched it
-    (:func:`nobody_has_touched`); a fourth slot is the card it named
+    (:func:`nobody_has_touched`) — as does a plain hold on a row silence
+    showed before any look judged it, unless `not_news_floor` keeps it
+    (#1409); a fourth slot is the card it named
     (`same_as`) and a fifth the word itself, which decides the floor
     (`not_news_floor`, strict for `cosmetic`/`known`). An ``elevated`` or
     ``untriaged`` row becomes ``open`` — the second because nothing looked,
@@ -3908,10 +3910,15 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
             reason = ""
         if late and verdict == "held" and (
                 look_may_set_aside(entry)
-                or (not_news and nobody_has_touched(entry))):
+                or (not_news and nobody_has_touched(entry))
+                or (late_verdict_welcome(entry) and nobody_has_touched(entry)
+                    and not not_news_floor(entry))):
             # A house-book question the look found the house already
-            # answers: held with the look's reason, announced to nobody,
-            # still in History where it can be put back.
+            # answers, a not-news word, or the first verdict on a row only
+            # silence showed (#1409): held with the look's reason, announced
+            # to nobody, still in History where it can be put back. Left
+            # open, it was a card beside brAIn's own verdict that it should
+            # not be there. The floor keeps a lock, an alarm or a leak shown.
             if echoes(reason, entry.get("text"), entry.get("claim")):
                 reason = ""
             entry["status"] = "held"
@@ -3986,22 +3993,23 @@ def _send_to_look(entry: dict, now: float | None = None) -> None:
 # so it never waits in `triaging` for a look — and a question the house
 # already answers (the registry places the thing, an automation does it)
 # is one brAIn should not have asked. Every other row already on screen
-# keeps `late_verdict_welcome`'s rule: it never vanishes into a run.
+# is held only on a not-news word, or as the first verdict on a row only
+# silence showed (`record_triage`); a row a person touched never is.
 # `house_book.SOURCE`, spelled here because the store imports no producer;
 # the test holds the two equal.
 LOOK_MAY_SET_ASIDE = frozenset({"house_book"})
 
 
 def look_may_set_aside(entry: dict) -> bool:
-    """An open house-book question nobody has put back."""
-    if not isinstance(entry, dict) or entry.get("status") != "open":
+    """An open house-book question nobody has put back or replied under
+    (:func:`nobody_has_touched`)."""
+    if not isinstance(entry, dict):
         return False
     if str(entry.get("source") or "") not in LOOK_MAY_SET_ASIDE:
         return False
     if str(entry.get("kind") or "") != "question":
         return False
-    record = entry.get("triage") if isinstance(entry.get("triage"), dict) else {}
-    return not record.get("elevated_by_person")
+    return nobody_has_touched(entry)
 
 
 def nobody_has_touched(entry: dict) -> bool:
@@ -4038,9 +4046,11 @@ def late_verdict_welcome(entry: dict) -> bool:
     is not a decision anybody made. So a look that answers about it later
     is the first verdict it has had, not a late one overriding somebody:
     it replaces the "nothing looked" record with what the look said. The
-    STATUS stays `open` whatever the verdict — an `ignore` included —
-    because a row already on screen never vanishes into a run; the card
-    then says what brAIn had said about it.
+    STATUS stays `open` for anything a look says is real. An `ignore` holds
+    it while nobody has touched it and the not-news floor does not keep it
+    (`record_triage`, #1409): kept open, it was a card listed beside
+    brAIn's own verdict that it should not be. A row a person answered,
+    replied under or put back never vanishes into a run.
     Refusing it was what left rows carrying `triage.UNJUDGED` for the rest
     of their lives on a house where a look did answer about them.
 
