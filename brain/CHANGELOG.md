@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.20
+
+### Fixed
+
+- Findings and house-book questions that brAIn's own first look says need nothing (already answered, not new, set aside) are set aside instead of staying on the list with that verdict printed beside them; they are still in History › Set aside by brAIn, where Restore puts them back. A lock, an alarm or a leak sensor is still shown, now without the look's argument for hiding it, and nothing a person has answered or replied under is ever set aside (1409).
+- The house book fills in answers it can now read from Home Assistant (a room assigned or an automation written after a question was asked) and stops asking those questions; "You keep undoing…" is no longer filed once its suggested condition has been answered on the Proposals tab (1409).
+
 ## 5.5.19
 
 ### Changed
