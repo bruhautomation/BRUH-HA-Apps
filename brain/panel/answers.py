@@ -260,11 +260,15 @@ def asks_for_hands(case: dict) -> bool:
     filed before that field existed, whether the run that wrote its step
     (`fix_by: resident`) also wrote an errand (`todo_text`), which its
     contract leaves empty when nothing needs doing — and the step is an
-    instruction: a claim or a step asked as a question (ending "?", the
-    test `as_morph_question` and `morph_bridge.ask_line` read a question
-    by) is a yes/no question that happens to carry a `todo_text`, and
-    keeps Yes and No (#1427). A legacy row with no step is not read as
-    an errand at all: where the fields cannot tell, it stays a question."""
+    instruction. Decided on the step alone: every `question` claim is
+    phrased as a question, the owner's own row included ("is the door
+    sensor reading right?" over "look at it once: if it is shut, replace
+    the battery"), so the claim's "?" tells nothing. A step asked as a
+    question (ending "?", the test `as_morph_question` and
+    `morph_bridge.ask_line` read a question by) is a yes/no question that
+    happens to carry a `todo_text`, and keeps Yes and No (#1427). A
+    legacy row with no step is not read as an errand at all: where the
+    fields cannot tell, it stays a question."""
     if case.get("kind") != "question":
         return False
     if (case.get("origin") or {}).get("store") != "findings":
@@ -272,12 +276,10 @@ def asks_for_hands(case: dict) -> bool:
     said = case.get("answer_with")
     if said in ANSWER_WITH:
         return said == "done"
-    claim = str(case.get("claim") or case.get("text") or "").strip()
     step = str(case.get("fix") or "").strip()
     return (case.get("fix_by") == "resident"
             and bool(str(case.get("todo_text") or "").strip())
-            and bool(step) and not step.endswith("?")
-            and not claim.endswith("?"))
+            and bool(step) and not step.endswith("?"))
 
 
 def situation(case: dict) -> str:
