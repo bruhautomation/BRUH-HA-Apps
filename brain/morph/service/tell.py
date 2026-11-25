@@ -78,7 +78,7 @@ SHOT_ID = re.compile(r"^[a-f0-9]{32}$")
 SCOPES = ("ui", "house")
 # Where a Tell came from. It decides the line that says so in the prompt,
 # whether there can be a picture, and what counts as the person's words.
-ORIGINS = ("panel", "suggestion", "question", "undo", "redo")
+ORIGINS = ("panel", "suggestion", "question", "undo", "redo", "version")
 
 # The schema is the one place each answer field's rule is written: the
 # prompt names the fields and AGENTS.md points here. ``reload`` is not
@@ -559,6 +559,9 @@ ORIGIN_LINES = {
              "/config/morph back, and these words are Morph's."),
     "redo": ("Origin: Morph is asking, not a person. An update paused a change this house made to "
              "Morph's own code, and somebody pressed Make it again."),
+    "version": ("Origin: the person picked this version (“{note}”) from the versions you offered for this "
+                "card and pressed Use this. The words above are Morph's, carrying that choice: make the "
+                "card exactly this version, and the Home Assistant changes it names."),
 }
 
 
@@ -791,6 +794,7 @@ def activity() -> list[dict]:
         steps = st.get("steps") or []
         target = st.get("target") or {}
         out.append({"id": tid, "text": st.get("text", "")[:200], "phase": st.get("phase"),
+                    "mode": st.get("mode") or "",
                     "kind": target.get("kind", ""), "target": target.get("id", ""),
                     "label": target.get("label", ""), "path": target.get("path", ""),
                     "step": steps[-1]["t"] if steps else "", "started": st.get("started")})
@@ -1229,8 +1233,9 @@ def undo(tid: str) -> dict:
         return {"ok": False, "error": "There is nothing to put back for this one."}
     out: dict = {"ok": True}
     if state.get("commit") and not state.get("undone"):
-        ok, detail = gitrepo.revert(state["commit"],
-                                    f"Undid brAIn: {state.get('say') or state.get('text')}"[:200])
+        message = (f"Undid the version “{(state.get('used') or {}).get('label') or ''}”" if state.get("mode") == "use"
+                   else f"Undid brAIn: {state.get('say') or state.get('text')}")
+        ok, detail = gitrepo.revert(state["commit"], message[:200])
         if not ok:
             return {"ok": False, "error": detail}
         state["undone"] = detail

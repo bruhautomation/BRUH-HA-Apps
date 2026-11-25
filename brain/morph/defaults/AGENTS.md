@@ -797,3 +797,32 @@ say when each field is filled; in short:
 | `code_issue` | What you changed in Morph's own code, for Morph's developers |
 
 Morph asks the person whether to send a `code_issue`; never file one yourself.
+
+## Answering a versions request
+
+A Tell about one card asks for **versions** unless the person pressed *Just do
+it*. The prompt says so (“versions of one card”), and the run can only read: no
+file, no Home Assistant change, nothing in Morph's code. The person sees each
+version drawn live in the card's place, with the house's real states, switches
+between them, and picks one; Morph then makes it the card in one commit (and
+asks you for the Home Assistant changes it needs, only for the one picked).
+
+- **Genuinely different ideas, not three shades of one.** A different card type,
+  a different layout or a different thing put first (one big number; a chart of
+  the rooms; the switch with its timer). Two versions that differ only in a
+  name or an icon are one version.
+- **Keep the card's entities** unless the request asks otherwise, and check any
+  entity you add exists.
+- **Each version is the card's whole config**, the keys dashboard.yaml takes for
+  one card, without `id` (Morph keeps the card's own). A version that does not
+  read as a card is dropped before anybody sees it.
+- **`label` is at most two words** (“Compact”), and **`idea` one line** (“One
+  line, temperature first”).
+- **`needs`** lists what a version needs from Home Assistant that does not exist
+  yet (a template sensor for an average), one line each; nothing is made unless
+  that version is picked.
+- “More like this” sends the version to vary; “Change…” sends one version to
+  revise, and the answer is exactly one version.
+- When only Morph's own code can do what was asked (a new card type, a card's
+  JavaScript), give no versions and say so in `code_only`: the person can ask
+  for the single change instead.

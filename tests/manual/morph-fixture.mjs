@@ -404,7 +404,32 @@ const hass = {
       if (msg.kind === 'code_redo' || msg.kind === 'code_merge_all') { if (msg.kind === 'code_merge_all') p.name = 'all'; await new Promise((r) => setTimeout(r, window.__redoDelay || 0)); if (window.__redoError) return { ok: false, error: window.__redoError }; const run = Object.values(tells).find((x) => x.redo === p.name && x.phase !== 'done'); if (run) return { ok: true, already: true, ...run }; const id = 'morph-t' + (++seq); tells[id] = { id, redo: p.name, conflict: !!window.__redoConflict, phase: 'waiting', steps: [{ t: 'Reading Morph’s own code', tone: '' }, { t: 'Handed to brAIn as task ' + id, tone: '' }], text: 'Make my change to Morph’s ' + p.name + ' again on the new Morph (' + F.state.version + ').', at: Date.now(), started: Date.now() / 1000 }; F.state.activity = [{ id, kind: 'code', target: p.name, label: p.name, path: 'Morph’s own code', text: tells[id].text, phase: 'waiting', started: Date.now() / 1000 }]; return { ok: true, ...tells[id] }; }
       if (msg.kind === 'tell_answer') { const s = tells[p.id]; const o = s && s.question && s.question.options[p.choice]; if (!o || s.answered != null) return { ok: false, error: 'That question is gone.' }; s.answered = p.choice; const id = 'morph-t' + (++seq); tells[id] = { id, phase: 'waiting', steps: [{ t: 'Handed to brAIn as task ' + id, tone: '' }], text: o.request, at: Date.now(), started: Date.now() / 1000, scope: o.home_assistant ? 'house' : 'ui', makesSensor: !!o.home_assistant, redo: s.redo }; return { ok: true, ...tells[id] }; }
       if (msg.kind === 'tell_issue') { const s = tells[p.id]; if (s) s.issue = p.verb === 'send' ? 'sent' : 'declined'; return { ok: true }; }
-      if (msg.kind === 'tell_undo') return { ok: true, commit: 'undo1' };
+      // A card's versions (service/versions.py), answered the way morphd does:
+      // a round lands with three versions (one more "did not read"), Use this
+      // writes the card under its id and keeps the one it replaced.
+      if (msg.kind === 'versions') { const id = 'morph-v' + (++seq); const base = p.base && tells[p.base.id] && tells[p.base.id].versions && tells[p.base.id].versions[p.base.index]; tells[id] = { id, mode: 'versions', how: (p.base && p.base.how) || 'new', base, prior: p.base && p.base.how === 'revise' ? tells[p.base.id].versions : null, revising: p.base ? p.base.index : -1, card: p.target.id, phase: 'waiting', steps: [{ t: 'Reading the card', tone: '' }, { t: 'Asked brAIn for versions — nothing changes until you pick one', tone: '' }], text: p.text, at: Date.now(), started: Date.now() / 1000, payload: 'MORPH · versions of one card…\\nAsked: “' + p.text + '”' }; return { ok: true, ...tells[id] }; }
+      if (msg.kind === 'versions_history') return { ok: true, history: (window.__vhist || {})[p.card] || [], now: '' };
+      if (msg.kind === 'versions_use') {
+        let ver; let cid;
+        if (p.round) { const r = tells[p.round]; ver = r && r.versions && r.versions[p.index]; cid = r && r.card; } else { cid = p.card; ver = ((window.__vhist || {})[cid] || []).find((h) => h.at === p.at); }
+        if (!ver) return { ok: false, error: 'That version is gone.' };
+        if ((ver.needs || []).length) { const id = 'morph-t' + (++seq); tells[id] = { id, phase: 'waiting', steps: [{ t: 'Handed to brAIn as task ' + id, tone: '' }], text: 'Use this version of the card', at: Date.now(), started: Date.now() / 1000, makesSensor: true, origin: 'version' }; return { ok: true, tell: true, ...tells[id] }; }
+        let old = null;
+        dash = JSON.parse(JSON.stringify(dash));
+        dash.floors.forEach((f) => f.sections.forEach((sc) => sc.groups.forEach((g) => { g.cards = g.cards.map((c) => { if (c.id !== cid) return c; old = c; return { ...ver.card, id: cid }; }); })));
+        if (!old) return { ok: false, error: 'That card is not on the dashboard any more.' };
+        rev = 'r' + (++seq + 1);
+        window.__vhist = window.__vhist || {}; window.__vhist[cid] = [{ label: '', at: Date.now() / 1000, card: old }].concat(window.__vhist[cid] || []).slice(0, 5);
+        const id = 'morph-u' + (++seq);
+        tells[id] = { id, mode: 'use', phase: 'done', text: 'Use “' + ver.label + '”', commit: 'use' + seq, shows: ['Changed the card “' + (ver.card.name || cid) + '”.'], say: '“' + ver.label + '” is the card now.', used: { label: ver.label, card: ver.card }, replaced: old, card: cid, steps: [{ t: 'Wrote “' + ver.label + '” into dashboard.yaml as one change', tone: 'good' }], started: Date.now() / 1000, revision: rev };
+        window.__used = (window.__used || []).concat([{ id: cid, label: ver.label }]);
+        return { ok: true, ...tells[id] };
+      }
+      if (msg.kind === 'tell_undo') {
+        const u = tells[p.id];
+        if (u && u.mode === 'use' && !u.undone) { u.undone = true; dash = JSON.parse(JSON.stringify(dash)); dash.floors.forEach((f) => f.sections.forEach((sc) => sc.groups.forEach((g) => { g.cards = g.cards.map((c) => c.id === u.card ? u.replaced : c); }))); rev = 'r' + (++seq + 1); window.__vhist[u.card] = [{ label: u.used.label, at: Date.now() / 1000, card: { ...u.used.card, id: u.card } }].concat((window.__vhist[u.card] || []).filter((h) => JSON.stringify(h.card) !== JSON.stringify(u.replaced))).slice(0, 5); }
+        return { ok: true, commit: 'undo1' };
+      }
       if (msg.kind === 'report') { if (!String(p.text || '').trim()) return { ok: false, error: 'Say what should be fixed.' }; F.state.devloop = { ...F.state.devloop, mine: [{ fp: 'fp' + (++seq), what: p.text, ui: !!p.ui, at: Date.now() / 1000, picked: false }].concat(F.state.devloop.mine || []) }; return { ok: true }; }
       if (msg.kind === 'history') return { ok: true, log: [{ sha: 'abc1', who: 'brain', at: Date.now() / 1000 - 600, message: 'brAIn: Added a Pets section' }, { sha: 'abc0', who: 'person', at: Date.now() / 1000 - 7200, message: 'Moved a section' }] };
       if (msg.kind === 'converse') { const id = 'conv-t' + (++seq); tells[id] = { id, kind: 'conversation', phase: 'working', steps: [{ t: 'brAIn is thinking', tone: '' }], at: Date.now(), text: p.text, conv: true }; return { ok: true, ...tells[id] }; }
@@ -418,6 +443,22 @@ const hass = {
       // with "slow" in it takes longer, so two asked back to back finish
       // out of order (measure-morph's Ask stack).
       if (s.conv) { const echo = window.__convEcho; const wait = echo && /slow/i.test(s.text) ? 2600 : 700; if (Date.now() - s.at > wait) { s.phase = 'done'; s.say = echo ? 'You asked: ' + s.text : 'Upstairs is warm because the attic is 96° and the Upstairs thermostat is holding at 73°. The Master Fan is on.'; s.session_id = 'sess-' + s.id.replace(/[^a-z0-9]/g, '') + 'abcd'; } return { ...s }; }
+      if (s.mode === 'versions') {
+        if (Date.now() - s.at > 500 && s.phase === 'waiting') { s.phase = 'working'; s.steps.push({ t: 'brAIn is on it', tone: '' }); }
+        if (Date.now() - s.at > 1500 && s.phase !== 'done') {
+          const all = window.__versions || [
+            { label: 'Kitchen only', idea: 'One reading, big, with its day trace', card: { type: 'sensor', entity: 'sensor.kitchen_temperature', name: 'Kitchen' }, needs: [] },
+            { label: 'Inside', idea: 'Just the rooms people live in, one chart', card: { type: 'readings', name: 'Inside', entities: ['sensor.kitchen_temperature', 'sensor.living_room_temperature', 'sensor.master_temperature'] }, needs: [] },
+            { label: 'Average', idea: 'The house average as one number, kept as a sensor', card: { type: 'sensor', entity: 'sensor.house_average_temperature', name: 'House average' }, needs: ['A template sensor sensor.house_average_temperature, the mean of the room temperatures'] },
+          ];
+          if (s.how === 'revise' && s.prior) { s.versions = s.prior.slice(); s.versions[s.revising] = { ...all[1], label: s.prior[s.revising].label + ' · revised', card: { ...s.prior[s.revising].card, name: 'Rooms' } }; s.shown = s.revising; s.say = 'Revised “' + s.versions[s.revising].label + '”.'; }
+          else if (s.how === 'more') { s.versions = all.slice(0, 2).map((v, i) => ({ ...v, label: v.label + ' ' + (i + 2) })); s.shown = 0; s.say = '2 versions of this card. Nothing changes until you pick one.'; }
+          else { s.versions = all; s.shown = 0; s.dropped = 1; s.say = '3 versions of this card. Nothing changes until you pick one. 1 more was left out because Morph could not draw it.'; }
+          if (!s.versions.length) { s.empty = true; s.say = 'brAIn offered no version Morph could draw. Nothing changed. Just do it asks for the single change instead.'; }
+          s.phase = 'done';
+        }
+        return { ...s };
+      }
       if (Date.now() - s.at > 500 && s.phase === 'waiting') { s.phase = 'working'; s.steps.push({ t: 'brAIn is on it', tone: '' }, { t: 'Looking at the screenshot', tone: '', brain: true }, { t: 'Reading dashboard.yaml', tone: '', brain: true }); }
       if (s.redo && s.conflict && Date.now() - s.at > 1500 && s.phase !== 'done') { s.phase = 'done'; s.say = 'The update rewrote the header your switch was in.'; s.steps.push({ t: 'Read both versions of ' + s.redo, tone: '' }); s.question = { text: 'The new header moved the gear into a menu. Where should the theme switch go?', options: [{ label: 'Beside the gear menu', request: 'Put the theme switch beside the new gear menu in /config/morph/frontend/' + s.redo + '.', home_assistant: false }, { label: 'Inside the gear menu', request: 'Put the theme switch inside the new gear menu in /config/morph/frontend/' + s.redo + '.', home_assistant: false }, { label: 'Use Morph’s own', request: 'Delete /config/morph/frontend/' + s.redo + '.', home_assistant: false }] }; }
       if (s.redo && Date.now() - s.at > 1500 && s.phase !== 'done') { s.phase = 'done'; s.say = 'Made the header change again on top of the new morph-panel.js.'; s.commit = 'c0de'; s.code = [s.redo]; s.reload = true; s.steps.push({ t: 'Changed Morph’s own ' + s.redo, tone: 'good' }); s.code_issue = { title: 'A header change', detail: 'brAIn changed Morph’s own ' + s.redo + '.' }; s.issue = 'asked'; F.state.code = []; F.state.activity = []; }
