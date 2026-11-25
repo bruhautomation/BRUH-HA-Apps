@@ -1209,6 +1209,9 @@ def design_context(insights: list, findings: list) -> str:
     HTML — a card's words are what a person reads, and the HTML is the
     cloud's to look at.
 
+    ``findings`` are the rows on the list (`findings_store.LIVE_STATUSES`):
+    a held or settled row is not one brAIn put in front of anybody.
+
     ``insights`` is the Reports listing (`server._insights_listing`), so a
     card is shown as Reports draws it (#1134): its verdict chip and its
     next step beside its words, and a card Reports folds — all quiet, one
