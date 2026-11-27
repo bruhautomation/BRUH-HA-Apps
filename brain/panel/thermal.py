@@ -1461,12 +1461,15 @@ def marked_not_air() -> frozenset:
     checks read the same mark live, so a missed one here is one night."""
     try:
         import facts_store  # noqa: PLC0415 — panel-local
-        from checks._util import (  # noqa: PLC0415
-            ROOM_AIR_RULE, ROOM_AIR_SAID_RULE)
+        from checks._util import ROOM_AIR_RULE  # noqa: PLC0415
+        # Only the owner's own mark. A placement read from a Wrong reason
+        # (`ROOM_AIR_SAID_RULE`) keeps the sensor in the nightly rooms,
+        # because `freezing_rooms` reads only those: the room-heat checks
+        # leave it out live through `_room_air`, and a probe on a pipe
+        # stays in the freeze check (#1476, review of #805).
         return frozenset(eid for eid, rules in
                          facts_store.exception_map().items()
-                         if ROOM_AIR_RULE in rules
-                         or ROOM_AIR_SAID_RULE in rules)
+                         if ROOM_AIR_RULE in rules)
     except Exception as exc:  # noqa: BLE001
         log.debug("thermal: could not read the room-air marks: %s", exc)
         return frozenset()
