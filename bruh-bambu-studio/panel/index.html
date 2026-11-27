@@ -47,7 +47,10 @@
       <div class="tsport" id="tsPort">
         <div class="tsvnc" id="tsVnc"></div>
         <div class="tslayer" id="tsLayer" role="application" aria-label="Bambu Studio screen"></div>
-        <p class="tsstate" id="tsState" hidden></p>
+        <div class="tsstate" id="tsState" role="status" hidden>
+          <p id="tsStateText"></p>
+          <button type="button" id="tsRetry" hidden>Retry</button>
+        </div>
       </div>
     </div>
   </section>
@@ -65,11 +68,11 @@
     <div class="card stack">
       <form id="importForm" class="importbar">
         <input id="importUrl" type="url" inputmode="url" autocomplete="off"
-               placeholder="Paste a Printables link, or a link to an .stl / .3mf"
+               placeholder="Paste a Printables, .stl or .3mf link"
                aria-label="Link to a model">
         <button type="submit">Import</button>
       </form>
-      <p class="hint">MakerWorld models need your Bambu sign-in: open them from Bambu Studio's MakerWorld page on the Studio tab.</p>
+      <p class="hint">For MakerWorld, use Bambu Studio's MakerWorld page on the Studio tab.</p>
       <div id="jobList"></div>
     </div>
     <div class="section">

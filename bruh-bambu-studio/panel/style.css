@@ -527,7 +527,6 @@ fieldset.trays { border: 1px solid var(--line); border-radius: var(--control-rad
 .pill.done { background: color-mix(in srgb, var(--live) 18%, var(--surface)); color: var(--ink); }
 .pill.ghost { font-weight: 500; }
 /* The file's format, on rows that share a name with another format. */
-.pill.kind { font-weight: 700; letter-spacing: .04em; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
 @keyframes pulse { 50% { box-shadow: 0 0 0 6px transparent; } }
 @media (prefers-reduced-motion: reduce) { .pill.live .dot { animation: none; } }
 .phead { display: flex; align-items: center; gap: var(--sp-2); }
@@ -653,6 +652,8 @@ fieldset.trays { border: 1px solid var(--line); border-radius: var(--control-rad
 .filebar input { flex: 1 1 auto; min-width: 0; }
 .filebar select { flex: none; max-width: 45%; }
 .fname { display: block; overflow-wrap: anywhere; }
+.fkind { display: inline-block; padding: 0 var(--sp-2); border: 1px solid var(--line); border-radius: 999px;
+  font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: 600; color: var(--muted); vertical-align: 2px; }
 .frow .grow { min-width: 0; }
 /* Print and the ⋯ menu stay beside the title block at every width wide
    enough for it; only an opened menu takes the row's whole width, in the
@@ -704,10 +705,16 @@ label[hidden], [hidden] { display: none !important; }
   .fthumb { width: 52px; height: 52px; }
   .jobpic { display: none; }
   .tiles { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: var(--sp-2); }
-  .tile { flex-direction: column; align-items: flex-start; gap: 2px; padding: var(--sp-1) var(--sp-2); }
+  /* The icon and its name on one line, the reading under them: a bare
+     reading left a phone guessing which tile was which. */
+  .tile { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center;
+    gap: 2px var(--sp-1); padding: var(--sp-1) var(--sp-2); }
+  .tile > div { display: contents; }
+  .tile b, .tile .tsub { grid-column: 1 / -1; }
   .ticon { width: 20px; height: 20px; }
-  .tlabel { display: none; }
+  /* The link box on its own line, so its placeholder is read whole. */
   .importbar { flex-wrap: wrap; }
+  .importbar input { flex: 1 1 100%; }
   .srow { flex-wrap: wrap; }
   .srow select { max-width: none; width: 100%; }
 }
@@ -734,8 +741,12 @@ label[hidden], [hidden] { display: none !important; }
 }
 .tsstate {
   position: absolute; left: var(--sp-3); right: var(--sp-3); top: 40%; margin: 0;
+  display: grid; justify-items: center; gap: var(--sp-3);
   text-align: center; color: #e8eef3; pointer-events: none;
 }
+.tsstate[hidden] { display: none; }
+.tsstate p { margin: 0; }
+.tsstate button { pointer-events: auto; }
 .tsmark {
   position: absolute; width: 28px; height: 28px; translate: -50% -50%;
   border: 2px solid #5ac4f2; border-radius: 50%; pointer-events: none;
