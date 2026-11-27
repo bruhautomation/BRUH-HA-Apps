@@ -335,13 +335,16 @@ def record_investigation(signal: dict, result: str, *, run_id: str = "",
                          now: float | None = None, why: str = "",
                          asked: str = "", refines: int = 0,
                          row: dict | None = None, case: dict | None = None,
-                         escalated: bool = False) -> bool:
+                         escalated: bool = False, raised: bool = False) -> bool:
     """One row for what an investigation came to. Never raises.
 
     ``row`` is the findings row it filed, rewrote or held — its id and its
     text's key are what the join reads an ending by. ``refines`` is the
     row the signal came from; for a run that made no claim about a row it
     was sent to look at, that row is the subject of the verdict.
+    ``raised`` says the run made a case and the CODE held it (the
+    household's record standing brAIn's reports down): the judgement
+    raised it, so it is graded as raised (`classify`), never as passed over.
     """
     try:
         if result not in INVESTIGATION_RESULTS:
@@ -376,6 +379,7 @@ def record_investigation(signal: dict, result: str, *, run_id: str = "",
             "confidence": confidence,
             "stakes": str(case.get("stakes") or ""),
             "escalated": bool(escalated),
+            **({"raised": True} if raised else {}),
             "flags": _flags(signal),
         }])
         return True
@@ -418,11 +422,28 @@ def classify(row: dict) -> str:
             return "surfaced"
         return "deferred" if verdict == "watch" else "sent"
     if stage == "investigate":
-        if verdict in SURFACED_RESULTS:
+        if verdict in SURFACED_RESULTS or raised_but_held(row):
             return "surfaced"
         if verdict in DISMISSED_RESULTS:
             return "dismissed"
     return "unjudged"
+
+
+def raised_but_held(row: dict) -> bool:
+    """An investigation that made a case the code then held — the
+    household's record standing brAIn's own reports down files the case
+    `held` (`server._investigate`). The judgement RAISED it: the case is a
+    row of its own, never the row the run was sent to look at. Read off
+    the typed record (`raised`, or for a row logged before that flag, a
+    case row that is not the refined row), never off the words. Graded as
+    passed over, a Wrong on it read as agreement and a restore as a miss,
+    and a sensor the household kept marking Wrong became "too quiet"."""
+    if row.get("stage") != "investigate" or row.get("verdict") != "held":
+        return False
+    if row.get("raised"):
+        return True
+    case_ts = int(row.get("case_ts") or 0)
+    return bool(case_ts) and case_ts != int(row.get("finding_ts") or 0)
 
 
 def covered(row: dict) -> bool:
@@ -1323,17 +1344,23 @@ def overruled_floors(batch: list[dict],
     for i, signal in enumerate(batch or [], 1):
         name = _overruled_name(signal, record) if isinstance(signal, dict) else ""
         if name:
-            out[i] = (OVERRULED_FLOOR, "passing it over has been overruled "
-                                       f"before ({record[name]})")
+            # No counts: the look's reason is logged and graded, and a
+            # count quoted back to the next look became its own argument
+            # to raise (#1473). The arithmetic stays the code's.
+            out[i] = (OVERRULED_FLOOR, "the household has said before that "
+                                       "passing this over was a mistake")
     return out
 
 
 def overruled_lines(batch: list[dict], record: dict[str, str]) -> list[str]:
-    """The same record as prompt lines, one per subject in this batch."""
+    """The same record as prompt lines, one per subject in this batch: the
+    subject alone. A count here was read back as a reason to raise (#1473),
+    and the floor is applied after the reply whatever the look makes of
+    it."""
     lines: list[str] = []
     for signal in batch or []:
         name = _overruled_name(signal, record) if isinstance(signal, dict) else ""
-        line = f"{name}: {record[name]}" if name else ""
+        line = name
         if line and line not in lines:
             lines.append(line)
     return lines
@@ -1387,8 +1414,15 @@ def _is_person_scope(name: str) -> bool:
 def _louder(t: dict) -> str:
     """The code's counts when a scope's passed-over record is lopsided the
     LOUD way (`LOUD_MIN`, `LOUD_SHARE`), else "". One test for the nightly
-    candidate and the look's floor, so the two cannot disagree."""
+    candidate and the look's floor, so the two cannot disagree.
+
+    Never while the household marks Wrong at least as many of the reports
+    that RAISED this scope as there were misses: a subject raised and
+    answered Wrong again and again is one brAIn is too loud about, whatever
+    a confirmation elsewhere made of the few it passed over."""
     passed = t["missed"] + t["passed_ok"] + t["stood"]
+    if t["wrong"] >= t["missed"]:
+        return ""
     if t["missed"] >= LOUD_MIN and passed and t["missed"] / passed >= LOUD_SHARE:
         return f"{t['missed']} of {passed} it passed over turned out to matter"
     return ""
@@ -1568,22 +1602,30 @@ def judgement_rows(facts) -> list[dict]:
 
 
 def superseded(judgements: list[dict], graded: list[dict]) -> list[dict]:
-    """The quieter judgements a later confirmed case has contradicted.
+    """The judgements a later answer has contradicted.
 
     A judgement that said "these are nothing" is over the moment one of
     them is confirmed real — not at the next nightly rewrite, and not
-    when its expiry comes round. A louder one is left: a confirmed case
-    on its scope is the judgement being right.
+    when its expiry comes round. A louder one is over the moment the
+    household marks Wrong a report that RAISED its scope after it was
+    written (#1473): a confirmed case on its scope is the judgement being
+    right, and a Wrong on a raise is the household saying it went too far.
     """
     out = []
     for fact in judgements:
         pred = str(fact.get("predicate") or "")
-        if not pred.endswith(":quieter"):
+        if pred.endswith(":quieter"):
+            against = ("confirmed", "missed", "put_back")
+        elif pred.endswith(":louder"):
+            against = ("wrong",)
+        else:
             continue
         subject = str(fact.get("subject") or "")
         since = int(fact.get("ts") or 0)
         for g in graded:
-            if g.get("outcome") not in ("confirmed", "missed", "put_back"):
+            if g.get("outcome") not in against:
+                continue
+            if against == ("wrong",) and g.get("class") != "surfaced":
                 continue
             if subject not in (g.get("subject"), g.get("entity"),
                                g.get("source")):

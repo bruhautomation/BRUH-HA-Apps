@@ -64,6 +64,7 @@ import atomic_write
 from answers import ANSWER_WITH  # a leaf: how a question is answered
 import house_words
 import model_plan
+import numfmt
 import prompt_kit
 import textclip
 import triage
@@ -328,7 +329,12 @@ CLAIM_RULE = ("Judge the CLAIM a signal or a row makes, against every piece "
               "disagreement IS the claim, and a reason that explains one "
               "of the numbers (the season, a schedule, a quiet day) does "
               "not answer it. Never give a reason that contradicts "
-              "evidence the signal or row itself states.")
+              "evidence the signal or row itself states. A temperature is "
+              "in the unit written beside it (°C or °F): put a reading and "
+              "any line you compare it with (a freezer's, an automation's "
+              "threshold, another sensor's) in one unit first, and quote "
+              "every figure with its unit — 0 °F is about -18 °C, "
+              "colder than any freezer line, never too warm.")
 
 # …and the same rule where an investigation is handed the row it may
 # dismiss, beside the row, because a dismissal is where it was broken.
@@ -1483,7 +1489,8 @@ def device_aliases(drivers: dict, house) -> dict[str, str]:
     return out
 
 
-def not_due(case: dict, drivers: dict, value_of, aliases=None) -> str:
+def not_due(case: dict, drivers: dict, value_of, aliases=None,
+            unit_of=None) -> str:
     """Why a "not running" claim is about a machine that is not due, or "".
 
     The claim says a device is not running (idle, at standby, did not
@@ -1531,10 +1538,18 @@ def not_due(case: dict, drivers: dict, value_of, aliases=None) -> str:
             bits = []
             for b in bounds[:2]:
                 now = value_of(b["entity"])
-                side = (f"above {b['above']}" if b.get("above") not in (None, "")
-                        else f"below {b['below']}")
+                # Bound and reading in the sensor's own unit, said in the
+                # house's with the unit named (#1471).
+                unit = str(unit_of(b["entity"]) or "") if unit_of else ""
+                edge = b["above"] if b.get("above") not in (None, "") \
+                    else b["below"]
+                said_edge = (numfmt.reading(edge, unit)
+                             if isinstance(edge, (int, float)) else edge)
+                side = ("above " if b.get("above") not in (None, "")
+                        else "below ") + str(said_edge)
                 bits.append(f"{b['entity']} {side}, and it reads "
-                            + (f"{now:g}" if isinstance(now, (int, float))
+                            + (numfmt.reading(now, unit)
+                               if isinstance(now, (int, float))
                                else "otherwise"))
             said.append(f"{actuator} is started by “{rule['alias']}” when "
                         + "; ".join(bits))
@@ -1648,7 +1663,6 @@ def against_usual(case: dict, judged: list[dict], tz, now: float
             or not judged):
         return "", case
     import baselines  # noqa: PLC0415
-    import numfmt  # noqa: PLC0415
 
     cited = set(usual_entities(case, ""))
     rows: list[dict] = []

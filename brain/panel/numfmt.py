@@ -164,6 +164,22 @@ def temperature(value, unit, *, delta: bool = False, whole: bool = False,
     return number(value, signed=signed) + unit_text(unit)
 
 
+def reading(value, unit) -> str:
+    """A sensor's reading as anything brAIn writes or hands a model quotes
+    it (#1471): a number in the house's unit WITH the unit it is in, read
+    off the entity's own `unit_of_measurement` (`quantity`), so a figure from a
+    °F probe is never a bare figure a reader takes for °C. A state that is
+    not a number is said as it is, and a reading with no unit stays bare —
+    nothing is guessed."""
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        return str(value if value is not None else "")
+    if math.isnan(x) or math.isinf(x):
+        return str(value)
+    return quantity(x, unit)
+
+
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep",
           "Oct", "Nov", "Dec")
 
