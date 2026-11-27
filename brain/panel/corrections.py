@@ -156,7 +156,7 @@ SYSTEM = prompt_kit.assemble(
   until_date the next 3 March, reason "" (one repair is not a standing
   truth).
 - "Don't remind me again" → entity_check, permanent, reason "".
-- "The sensor is inside the pump box in the garage" → entity_check,
+- "The sensor is inside a cabinet in the garage" → entity_check,
   permanent, placement enclosed, reason "This sensor sits inside the pump
   box."
 - "The garage is not heated" → entity_check, permanent, placement
