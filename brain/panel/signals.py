@@ -63,6 +63,7 @@ import datetime as dt
 import math
 
 import notify_router
+import numfmt
 from checks._util import target_offline_error
 
 # ---------------------------------------------------------------------------
@@ -691,8 +692,14 @@ def from_state_change(event: dict, ctx: RegistryContext, now: float,
     hot = tripped or protected or (person and odd)
 
     friendly = str(attrs.get("friendly_name") or entity)
-    text = f"{friendly} {was or 'unknown'} → {value}" if was \
-        else f"{friendly} → {value}"
+    # A reading is said with its unit, in the house's (#1471): "3 → 2"
+    # from a °F probe read as °C to the look, which then called a cold
+    # freezer too warm. The evidence keeps the raw state for the code.
+    unit = str(attrs.get("unit_of_measurement") or "")
+    shown, shown_was = numfmt.reading(value, unit), (
+        numfmt.reading(was, unit) if was else was)
+    text = f"{friendly} {shown_was or 'unknown'} → {shown}" if was \
+        else f"{friendly} → {shown}"
     text += cause_words(cause)
     kind = "presence" if person else "state"
     return make(

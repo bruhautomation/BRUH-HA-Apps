@@ -316,8 +316,8 @@ def lines(batch, scorecard, floor=None) -> list[str]:
                      + (f"{int(row['streak'])} in a row were wrong"
                         if int(row.get("streak") or 0) >= HOLD_STREAK
                         else "answer was wrong and so were most before it")
-                     + ", so brAIn holds this rule's rows unless you keep "
-                     "one for fresh, specific evidence the others did not "
-                     "have.")
+                     + ", so brAIn sets this rule's reports aside unless "
+                     "you keep one for fresh, specific evidence the others "
+                     "did not have.")
         out.append(line)
     return out[:MAX_LINES]
