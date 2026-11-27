@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.30
+
+### Fixed
+
+- With the dashboard on, when brAIn's own page does not load under it (brAIn stopped or restarting, an error in the frame, or its address not known yet), the Home tab no longer shows Morph alone with the tabs gone and no word why. A bar in the header's place says brAIn's page is not answering, with **Try again** and **Open brAIn** (and a menu button on a phone to reach Home Assistant's sidebar); it goes away as soon as brAIn's header comes back (1487).
+
 ## 5.5.29
 
 ### Changed

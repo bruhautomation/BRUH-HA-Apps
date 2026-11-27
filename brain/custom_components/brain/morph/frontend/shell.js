@@ -38,13 +38,30 @@
 // Not an administrator, there is no ingress session to have: with the
 // dashboard on such a person sees Morph alone, as they always did; with it
 // off the panel is administrators only (the integration registers it so).
+//
+// When brAIn's page does not answer (#1487). With the dashboard on, Home
+// is drawn over everything, so a page that never loads — brAIn's add-on
+// stopped or restarting, a 502 in the frame, no ingress address yet, no
+// ingress session — used to leave Morph alone with no header, no tabs and
+// no word why (a message in `.say` lies under Home). Now an administrator
+// whose frame has not reported its header (`bars`) within `BARS_WAIT_MS`
+// of the frame being set, reloaded or its session renewed, or whose frame
+// could not be opened at all, gets a slim bar in the header's place
+// (`.stall`): it says brAIn's page is not answering, offers Try again (the
+// same `openFrame` path) and Open brAIn (the add-on's own ingress page),
+// and goes as soon as `bars` arrives. A page that answers sees nothing new;
+// somebody who is not an administrator has no frame and no such bar.
 
 const here = new URL('.', import.meta.url).href;
 const TYPE = 'brain-shell';
 const VALIDATE_MS = 60000;
+// How long a frame that was set, reloaded or renewed may take to report
+// its header before Home says brAIn's page is not answering.
+const BARS_WAIT_MS = 9000;
 const PROPS = ['hass', 'narrow', 'route', 'panel'];
 // Morph's three grounds (styles.js), for the shell's own background.
 const GROUND = { dark: '#0A0C0E', medium: '#2A2D31', light: '#ECEBE6' };
+const MENU_ICON = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 
 function setCookie(session) {
   document.cookie = `ingress_session=${session};path=/api/hassio_ingress/;SameSite=Strict${location.protocol === 'https:' ? ';Secure' : ''}`;
@@ -108,6 +125,14 @@ class BrainShell extends HTMLElement {
     this._place = '';
     this._placeRaf = 0;
     this._onVisible = () => { if (!document.hidden) this.remeasure(); };
+    // brAIn's page answering (#1487): every `bars` counts one; a wait
+    // armed when the frame is set, reloaded or renewed ends in `stalled`
+    // if none came in the meantime.
+    this.stalled = false;
+    this._heard = 0;
+    this._barsDoc = null;
+    this._waitT = 0;
+    this._stallH = 0;
   }
 
   // Where the panel is and how much of the safe areas lies over it; when
@@ -241,6 +266,10 @@ class BrainShell extends HTMLElement {
     this.releaseOuter();
     clearInterval(this._validate);
     this._validate = null;
+    clearTimeout(this._waitT);
+    this._waitT = 0;
+    if (this._stallRo) this._stallRo.disconnect();
+    this._stallRo = null;
   }
 
   draw() {
@@ -259,12 +288,75 @@ iframe[hidden]{display:none}
 .say{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;font:16px/1.5 system-ui,sans-serif;color:var(--primary-text-color,#e6e6e6)}
 .say[hidden]{display:none}
 .say a{color:var(--primary-color,#4fb3ff)}
-</style><iframe title="brAIn" allow="clipboard-read; clipboard-write; microphone; fullscreen" hidden></iframe><div class="home" hidden></div><div class="say" role="status">Opening brAIn…</div><div class="inset" aria-hidden="true"></div><div class="inset foot" aria-hidden="true"></div>`;
+.stall{position:absolute;top:0;left:0;right:0;z-index:4;box-sizing:border-box;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:calc(var(--brain-inset,0px) + 8px) 16px 8px;font:16px/1.4 system-ui,-apple-system,sans-serif;background:#0a0c0e;color:#edeff1;border-bottom:1px solid rgba(255,255,255,.08);--stall-accent:#4db6ec;--stall-on:#0a0c0e;--stall-line:rgba(255,255,255,.22)}
+.stall[hidden]{display:none}
+.stall[data-theme="medium"]{background:#2a2d31;color:#f1f2f3;border-bottom-color:rgba(255,255,255,.1);--stall-accent:#7cc9f0;--stall-on:#16181b}
+.stall[data-theme="light"]{background:#ecebe6;color:#16181b;border-bottom-color:rgba(22,24,27,.1);--stall-accent:#0a6ba3;--stall-on:#fff;--stall-line:rgba(22,24,27,.25)}
+.stall p{margin:0;flex:1 1 220px;min-width:0}
+.stall .acts{display:flex;flex-wrap:wrap;gap:8px}
+.stall button,.stall a{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:0 14px;border-radius:8px;font:inherit;text-decoration:none;cursor:pointer;color:inherit;background:transparent;border:1px solid var(--stall-line)}
+.stall .retry{background:var(--stall-accent);color:var(--stall-on);border-color:var(--stall-accent)}
+.stall .retry:disabled{opacity:.6;cursor:default}
+.stall .menu{min-width:40px;padding:0;border:0}
+.stall .menu[hidden],.stall a[hidden]{display:none}
+@media (pointer:coarse){.stall button,.stall a{min-height:44px}.stall .menu{min-width:44px}}
+</style><iframe title="brAIn" allow="clipboard-read; clipboard-write; microphone; fullscreen" hidden></iframe><div class="home" hidden></div><div class="say" role="status">Opening brAIn…</div><div class="stall" role="status" hidden><button type="button" class="menu" aria-label="Open Home Assistant's menu" hidden>${MENU_ICON}</button><p></p><div class="acts"><button type="button" class="retry">Try again</button><a class="open" target="_top">Open brAIn</a></div></div><div class="inset" aria-hidden="true"></div><div class="inset foot" aria-hidden="true"></div>`;
     this.frame = this.shadowRoot.querySelector('iframe');
     this.homeEl = this.shadowRoot.querySelector('.home');
     this.sayEl = this.shadowRoot.querySelector('.say');
     this.insetEl = this.shadowRoot.querySelector('.inset');
     this.footEl = this.shadowRoot.querySelector('.inset.foot');
+    this.stallEl = this.shadowRoot.querySelector('.stall');
+    this.stallText = this.stallEl.querySelector('p');
+    this.stallRetry = this.stallEl.querySelector('.retry');
+    this.stallRetry.addEventListener('click', () => this.retry());
+    this.stallEl.querySelector('.menu').addEventListener('click', () => this.dispatchEvent(new Event('hass-toggle-menu', { bubbles: true, composed: true })));
+    // A new document in the frame (brAIn's page reloading itself, or a
+    // 502 in its place) has to report its header again.
+    this.frame.addEventListener('load', () => {
+      if (!this.hasFrame()) return;
+      const doc = this.frameDoc();
+      if (doc && doc !== this._barsDoc) this.armWait();
+    });
+    if (typeof ResizeObserver !== 'undefined') {
+      this._stallRo = new ResizeObserver(() => {
+        if (!this.stallEl.hidden && Math.round(this.stallEl.getBoundingClientRect().height) !== this._stallH) this.sync();
+      });
+      this._stallRo.observe(this.stallEl);
+    }
+  }
+
+  frameDoc() {
+    try { return this.frame.contentDocument; } catch (e) { return null; }
+  }
+
+  // Wait for brAIn's page to report its header; if it does not, Home says so.
+  armWait() {
+    clearTimeout(this._waitT);
+    const heard = this._heard;
+    this._waitT = setTimeout(() => {
+      this._waitT = 0;
+      this._trying = false;
+      if (this._heard === heard) this.stalled = true;
+      this.sync();
+    }, BARS_WAIT_MS);
+  }
+
+  // Try again: ask where brAIn's page is if it had not said, and open it
+  // again the way it was opened the first time.
+  async retry() {
+    if (this._trying) return;
+    this._trying = true;
+    this.sync();
+    if (!this.info || !this.info.ingress_url) {
+      try { this.info = { ...(this.info || {}), ...(await this._v.hass.callWS({ type: 'brain/shell' })) }; } catch (e) { /* said below */ }
+    }
+    if (this.info && this.info.admin && this.info.ingress_url) {
+      await this.openFrame();
+    } else {
+      this._trying = false;
+    }
+    this.sync();
   }
 
   // How much of the phone's top safe area (the status bar's and the
@@ -315,6 +407,11 @@ iframe[hidden]{display:none}
     this.view = this.morphOn() ? 'home' : 'panel';
     if (this.info.admin && this.info.ingress_url) {
       await this.openFrame();
+    } else if (this.info.admin) {
+      // No address for brAIn's page yet: with the dashboard on, Home says
+      // so in the header's place; with it off, the message below does.
+      this.stalled = true;
+      if (!this.morphOn()) this.say('brAIn has not said where its page is yet. It does within a minute of starting; reload this page then.');
     } else if (!this.morphOn()) {
       this.say(this.info.admin
         ? 'brAIn has not said where its page is yet. It does within a minute of starting; reload this page then.'
@@ -335,6 +432,8 @@ iframe[hidden]{display:none}
       setCookie(this.session);
     } catch (err) {
       const slug = this.info.slug;
+      this.stalled = true;
+      this._trying = false;
       this.say(`brAIn's page could not be opened here (${String((err && err.message) || err)}).${slug ? ` <a href="/hassio/ingress/${slug}" target="_top">Open it directly</a>.` : ''}`);
       return;
     }
@@ -346,6 +445,7 @@ iframe[hidden]{display:none}
     this.frame.src = `${this.info.ingress_url}?shell=1${nohouse}`;
     this.frame.hidden = false;
     this.say('');
+    this.armWait();
   }
 
   async validate() {
@@ -357,7 +457,11 @@ iframe[hidden]{display:none}
     } catch (err) {
       try {
         const r = await supervisor(hass, '/ingress/session');
-        if (r && r.session) { this.session = r.session; setCookie(r.session); }
+        if (r && r.session) {
+          this.session = r.session;
+          setCookie(r.session);
+          if (this._waitT) this.armWait();
+        }
       } catch (e) { /* the next minute tries again */ }
     }
   }
@@ -393,14 +497,33 @@ iframe[hidden]{display:none}
     if (morph) this.mountMorph(); else this.unmountMorph();
     if (this.morph) this.morph.shell = framed;
     this.homeEl.hidden = !home;
-    this.style.setProperty('--brain-top', `${framed ? this.bars.top : 0}px`);
+    // brAIn's page not answering: the slim bar takes the header's place and
+    // Home starts below it; the header's last report no longer counts.
+    const info = this.info || {};
+    const stall = !!(home && info.admin && this.stalled);
+    this.stallEl.hidden = !stall;
+    let top = framed ? this.bars.top : 0;
+    if (stall) {
+      const slug = info.slug;
+      const open = this.stallEl.querySelector('.open');
+      open.hidden = !slug;
+      if (slug) open.setAttribute('href', `/hassio/ingress/${encodeURIComponent(slug)}`);
+      this.stallEl.querySelector('.menu').hidden = !this._v.narrow;
+      this.stallEl.dataset.theme = this.theme();
+      this.style.setProperty('--brain-inset', `${this.inset()}px`);
+      this.stallText.textContent = this._trying ? 'Opening brAIn\'s page again…' : 'brAIn\'s page is not answering right now, so its tabs are not shown.';
+      this.stallRetry.disabled = !!this._trying;
+      this._stallH = Math.round(this.stallEl.getBoundingClientRect().height);
+      top = this._stallH;
+    }
+    this.style.setProperty('--brain-top', `${top}px`);
     // Where Home starts with the tab row shown. Morph's room rail keeps that
     // place and height while the tab row is hidden (#690): Home grows
     // upward, and a rail that grew with it resized every notch and moved
     // every floor name under the finger.
-    this.style.setProperty('--brain-shown-top', `${framed ? this.shownTop() : 0}px`);
-    this.style.setProperty('--brain-bottom', `${framed ? this.bars.bottom : 0}px`);
-    this.classList.toggle('raised', !!(home && framed && this.raised));
+    this.style.setProperty('--brain-shown-top', `${stall ? top : framed ? this.shownTop() : 0}px`);
+    this.style.setProperty('--brain-bottom', `${framed && !stall ? this.bars.bottom : 0}px`);
+    this.classList.toggle('raised', !!(home && framed && !stall && this.raised));
     if (home || framed) this.say('');
     const theme = this.theme();
     this.style.setProperty('--brain-ground', GROUND[theme]);
@@ -445,6 +568,12 @@ iframe[hidden]{display:none}
       const top = Math.max(0, Math.round(Number(d.bars.top) || 0));
       const bottom = Math.max(0, Math.round(Number(d.bars.bottom) || 0));
       const hidden = !!d.bars.hidden;
+      // brAIn's page answered: the wait is over and any stall bar goes.
+      this._heard++;
+      this._barsDoc = this.frameDoc();
+      clearTimeout(this._waitT);
+      this._waitT = 0;
+      if (this.stalled || this._trying) { this.stalled = false; this._trying = false; this.bars = { top, bottom, hidden }; this.sync(); return; }
       // Home slides with the header as it hides or comes back; any other
       // change of height (a second row, a chip) it simply follows.
       this.homeEl.classList.toggle('slide', hidden !== !!this.bars.hidden);
