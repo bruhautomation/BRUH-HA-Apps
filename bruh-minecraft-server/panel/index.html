@@ -50,8 +50,11 @@
      </div>
     </header>
 
-    <nav class="tabs" role="tablist">
-     <div class="tabs-in">
+    <nav class="tabs">
+     <!-- On a phone the strip scrolls sideways; an edge with more tabs past
+          it shows a ‹ or › that scrolls it (app.js tabEdges). -->
+     <button type="button" class="tabs-more start" id="tabsBack" aria-label="Earlier tabs" hidden>‹</button>
+     <div class="tabs-in" role="tablist">
       <button class="tab active" data-tab="dashboard" role="tab">Dashboard</button>
       <button class="tab" data-tab="console" role="tab">Console</button>
       <button class="tab" data-tab="players" role="tab">Players</button>
@@ -60,6 +63,7 @@
       <button class="tab" data-tab="backups" role="tab">Backups</button>
       <button class="tab" data-tab="worlds" role="tab">Worlds</button>
      </div>
+     <button type="button" class="tabs-more end" id="tabsOn" aria-label="More tabs" hidden>›</button>
     </nav>
   </div>
 

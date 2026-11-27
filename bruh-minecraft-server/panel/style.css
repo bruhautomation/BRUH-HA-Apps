@@ -232,6 +232,21 @@ p { margin: 0; }
   min-height: var(--btn-h);
 }
 .tabs-in::-webkit-scrollbar { display: none; }
+/* The ‹ › buttons over the strip's ends, only on a phone and only where
+   more tabs lie past that edge (app.js tabEdges). */
+.tabs { position: relative; }
+.tabs-more { display: none; }
+@media (max-width: 639.98px) {
+  .tabs-more:not([hidden]) {
+    display: flex; align-items: center; justify-content: center;
+    position: absolute; z-index: 1; top: 0; bottom: 0; width: var(--btn-h);
+    border: 0; padding: 0; cursor: pointer;
+    background: var(--bg-card); color: var(--fg);
+    font: inherit; font-size: var(--fs-title); line-height: 1; font-weight: 700;
+  }
+  .tabs-more.start { left: 0; box-shadow: 6px 0 8px -4px rgba(0, 0, 0, .18); }
+  .tabs-more.end { right: 0; box-shadow: -6px 0 8px -4px rgba(0, 0, 0, .18); }
+}
 .tab:hover { color: var(--fg); }
 .tab.active { color: var(--fg); border-bottom-color: var(--accent-ink); }
 

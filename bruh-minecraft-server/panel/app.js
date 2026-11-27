@@ -131,7 +131,11 @@
   document.addEventListener('click', (ev) => {
     if (serverActions.classList.contains('open') && !serverMenu.contains(ev.target)) setServerMenu(false);
   });
-  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') setServerMenu(false); });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape' || !serverActions.classList.contains('open')) return;
+    setServerMenu(false);
+    serverMenu.focus();
+  });
   const pageFooter = document.querySelector('body > footer');
   const placeFooter = () => {
     if (!pageFooter) return;
@@ -145,13 +149,41 @@
   // ------------------------------------------------------------------
   // Tabs
   // ------------------------------------------------------------------
+  // On a phone the tab strip is one row that scrolls sideways inside itself.
+  // An edge with more tabs past it shows a ‹ or › button that scrolls the
+  // strip, so a cut tab reads as "there is more", and the open tab is
+  // brought clear of those buttons: when a tab is pressed, when the page
+  // opens, and when the screen turns (as BRight's strip does).
+  const TAB_EDGE_PX = 52;
+  const tabStrip = $('.tabs-in');
+  const tabsBack = $('#tabsBack');
+  const tabsOn = $('#tabsOn');
+  function tabEdges() {
+    const end = tabStrip.scrollWidth - tabStrip.clientWidth;
+    tabsBack.hidden = !(tabStrip.scrollLeft > 1);
+    tabsOn.hidden = !(end > 1 && tabStrip.scrollLeft < end - 1);
+  }
+  function revealTab(button) {
+    if (button && tabStrip.scrollWidth > tabStrip.clientWidth) {
+      const left = button.offsetLeft - TAB_EDGE_PX;
+      const right = button.offsetLeft + button.offsetWidth + TAB_EDGE_PX;
+      if (left < tabStrip.scrollLeft) tabStrip.scrollLeft = Math.max(0, left);
+      else if (right > tabStrip.scrollLeft + tabStrip.clientWidth) tabStrip.scrollLeft = right - tabStrip.clientWidth;
+    }
+    tabEdges();
+  }
+  tabsBack.addEventListener('click', () => tabStrip.scrollBy({ left: -tabStrip.clientWidth * 0.7, behavior: 'smooth' }));
+  tabsOn.addEventListener('click', () => tabStrip.scrollBy({ left: tabStrip.clientWidth * 0.7, behavior: 'smooth' }));
+  tabStrip.addEventListener('scroll', tabEdges, { passive: true });
+  window.addEventListener('resize', () => revealTab($('.tab.active')));
   $$('.tab').forEach((tab) => {
     tab.addEventListener('click', () => {
       $$('.tab').forEach((t) => t.classList.remove('active'));
       $$('.tab-panel').forEach((p) => p.classList.remove('active'));
       tab.classList.add('active');
-      // The tab row scrolls sideways on a phone; the chosen tab stays in sight.
-      tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      // The tab row scrolls sideways on a phone; the chosen tab stays in
+      // sight, clear of the ‹ › buttons.
+      revealTab(tab);
       $(`#tab-${tab.dataset.tab}`).classList.add('active');
       if (tab.dataset.tab === 'players')    refreshPlayersTab();
       if (tab.dataset.tab === 'properties') loadProperties();
@@ -167,6 +199,7 @@
       if (m) m.scrollTop = 0;
     });
   });
+  revealTab($('.tab.active'));
 
 
   // ------------------------------------------------------------------
