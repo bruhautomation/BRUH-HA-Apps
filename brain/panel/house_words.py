@@ -1107,7 +1107,10 @@ def technical(text: str, files: bool = True,
         return code_words(m.group(0), names)
 
     try:
-        out = _BUILD_RE.sub(build, text)
+        out, checks_named = check_ids(text)
+        for token in checks_named:
+            keep(token)
+        out = _BUILD_RE.sub(build, out)
         out = _TRAIL_BUILD_RE.sub(lambda m: (keep(m.group(0)), "")[1], out)
         out = _BARE_BUILD_RE.sub(bare_build, out)
         out = _DATE_BUILD_RE.sub(dated, out)
@@ -1145,8 +1148,68 @@ def technical(text: str, files: bool = True,
                  out, flags=re.I)
     # "Code 0xFF failed" became "an error code failed": a sentence that
     # began with a capital still does.
-    if text[:1].isupper() and out[:1].islower():
+    if (text[:1].isupper() and out[:1].islower()
+            and not out.startswith("brAIn")):
         out = out[0].upper() + out[1:]
+    return out, found
+
+
+# ---------------------------------------------------------------------------
+# A check's id in prose (#1480)
+# ---------------------------------------------------------------------------
+#
+# A producer's id (`check:auto.trigger_unavailable`) rode into status lines
+# and model rows a household reads, and the id pass took its tail for an
+# entity: "the rule check:the “trigger unavailable” action". The id is the
+# shape `check:<group>.<name>` — never a word list — and it is said as
+# "brAIn's “<name>” check" (or goes, as an aside in brackets) wherever a
+# surface shows text, the stored words untouched.
+_CHECK_ID = r"check:[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)*"
+_CHECK_ASIDE_RE = re.compile(r"\s*[(\[]\s*`?" + _CHECK_ID + r"`?\s*[)\]]")
+_CHECK_ID_RE = re.compile(
+    r"(?:\b(?:[Tt]he\s+)?(?:rule|check|producer)\s+)?`?(?<![\w.:])"
+    + _CHECK_ID + r"(?![\w])`?")
+
+
+def _check_words(token: str) -> str:
+    ident = token.split(":", 1)[1] if ":" in token else token
+    name = ident.split(".", 1)[1] if "." in ident else ""
+    words = name.replace("_", " ").replace(".", " ").strip()
+    return f"brAIn's “{words}” check" if words else "one of brAIn's checks"
+
+
+def check_ids(text: str) -> tuple[str, list[str]]:
+    """``(text, ids)``: every check id in ``text`` said in words (above),
+    and the ids, for a row's Technical line. Text with none comes back
+    exactly as it was."""
+    if not isinstance(text, str) or "check:" not in text:
+        return text, []
+    found: list[str] = []
+
+    def keep(m: re.Match) -> str:
+        token = re.search(_CHECK_ID, m.group(0)).group(0)
+        if token not in found:
+            found.append(token)
+        return token
+
+    def aside(m: re.Match) -> str:
+        keep(m)
+        return ""
+
+    def said(m: re.Match) -> str:
+        words = _check_words(keep(m))
+        whole = m.group(0)
+        if whole[:1].isupper() and not words.startswith("brAIn"):
+            return words[:1].upper() + words[1:]
+        return words
+
+    try:
+        out = _CHECK_ASIDE_RE.sub(aside, text)
+        out = _CHECK_ID_RE.sub(said, out)
+    except Exception:  # noqa: BLE001 — a cleanup must never cost the row
+        return text, []
+    if not found:
+        return text, []
     return out, found
 
 
@@ -1336,6 +1399,11 @@ def lint(text: str, files: bool = True, figures: bool = True) -> list[str]:
                     *((_DBM_RE,) if figures else ()),
                     _MCP_RE, _SNAKE_RE, _LEGACY_RE):
         out += [m.group(0).strip() for m in pattern.finditer(text)]
+    checks_named = check_ids(text)[1]
+    out += checks_named
+    if checks_named:
+        # Its tail is not an entity id: judged on the words around it.
+        text = check_ids(text)[0]
     out += [m.group(0).strip("`") for m in _ID_RE.finditer(text) if _an_id(m)]
     tools = _tool_re()
     if tools is not None:

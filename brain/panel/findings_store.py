@@ -1116,11 +1116,16 @@ def shown_words(entry: dict) -> dict:
                         technical.append(token)
     # One date style on every row whoever wrote it (#1332): an ISO date in
     # a sentence is said "22 Nov". The stored words, the key, are untouched.
+    # And no check id on any row whoever wrote it (#1480): a producer's id
+    # is said as brAIn's check, and goes to Details.
     for key in ("text", "claim", "detail", "fix"):
         said = out.get(key, entry.get(key))
-        dated = numfmt.said_dates(said)
+        dated, named = house_words.check_ids(numfmt.said_dates(said))
         if dated != said:
             out[key] = dated
+        for token in named:
+            if token not in technical:
+                technical.append(token)
     technical = clean_technical(technical)
     if technical != before:
         out["technical"] = technical
