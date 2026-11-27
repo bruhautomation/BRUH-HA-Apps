@@ -395,6 +395,9 @@ select { max-width: 100%; min-width: 0; }
   color: var(--muted);
 }
 .fx-flag input { width: 22px; height: 22px; }
+/* `.demo-controls label` stacks a caption over its control; a tick box's
+   words go beside the box, on its line, wherever the flag sits. */
+.demo-controls label.fx-flag { flex-direction: row; align-items: center; }
 
 .fx-quick { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 
@@ -757,10 +760,19 @@ select { max-width: 100%; min-width: 0; }
   grid-template-columns: auto minmax(0, 1fr) 9em 2em;
   flex-wrap: nowrap;
 }
-.party-pick input { flex: none; }
+.party-pick input[type="checkbox"] { flex: none; width: 22px; height: 22px; margin: 0; }
 .party-pick .row-main { min-width: 0; overflow-wrap: anywhere; }
 .party-version { width: 100%; min-width: 0; }
-.party-version-text { padding-left: calc(var(--sp-3) + 1px); }  /* lines up with a select's text */
+/* A song with one show has the same picker, switched off: one control in
+   the column, never words on some rows and a picker on others. */
+.party-version:disabled { opacity: 1; color: var(--muted); background: transparent; cursor: default; }
+.party-head {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 9em 2em;
+  gap: var(--sp-3);
+  padding: var(--sp-2) 0 0;
+  max-width: none;
+}
 .party-order { text-align: right; }
 /* -- The Manual tab: the room is the instrument, the grid is the clock -- */
 /* One screen. The pane's height is measured at runtime (`mnFit`) rather
@@ -1222,6 +1234,13 @@ body.mn-open .foot { display: none; }
 .more-menu .btn { text-align: left; white-space: normal; width: 100%; }
 .info-toggle { margin: 0; }
 .info-toggle > summary { cursor: pointer; min-height: var(--btn-h); display: flex; align-items: center; }
+/* A flex summary loses the browser's disclosure triangle, which left a
+   question in bold with no sign it opens to an answer. A fold that names
+   itself in words (`.fold-label`) needs no arrow. */
+.info-toggle > summary::-webkit-details-marker { display: none; }
+.info-toggle > summary:not(:has(.fold-label)) { gap: var(--sp-2); color: var(--azure); }
+.info-toggle > summary:not(:has(.fold-label))::before { content: "▸"; flex: none; }
+.info-toggle[open] > summary:not(:has(.fold-label))::before { content: "▾"; }
 .info-toggle p { font-size: var(--fs-body); }
 .folder-row .row-actions { flex-wrap: wrap; }
 #btnSetAll, #btnSetNone, #btnSyncAll, #btnSyncNone, #btnFxAll, #btnFxNone { min-width: 56px; }
@@ -1265,6 +1284,14 @@ body.mn-open .foot { display: none; }
 #mapList .row-actions { align-items: center; }
 .btn-remove { color: var(--bad); border-color: var(--bad); background: transparent; }
 .map-search { width: 100%; margin-bottom: var(--sp-2); }
+/* A part of a list under its own heading (the short clips after the songs). */
+.list-group-head { padding: var(--sp-3) 0 var(--sp-1); }
+.list-group-head[hidden] { display: none; }
+.list-group-head h4 { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body); }
+.list-group-head p { margin: 0; }
+.map-missing { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); }
+.map-missing[hidden] { display: none; }
+.map-missing p { margin: 0; flex: 0 1 auto; }
 .map-zone-head { font-size: var(--fs-body); line-height: var(--lh-body); color: var(--muted); margin: var(--sp-3) 0 var(--sp-1); }
 #mapListSummary { margin: 0 0 var(--sp-2); }
 .btn-remove[data-armed] { background: var(--bad); color: #fff; }
@@ -1278,24 +1305,25 @@ body.mn-open .foot { display: none; }
 
 /* On a phone the tab strip is one row that scrolls sideways inside itself,
    not two rows of wrapped tabs: a header of 149px is a fifth of the screen
-   spent on navigation. A cut tab alone was not cue enough (people took the
-   strip's edge for its end), so each edge with more tabs past it fades
-   out; `tabEdges` in app.js sets the classes from the scroll position. */
+   spent on navigation. A cut tab was not cue enough (people took the
+   strip's edge for its end), and a fade over the cut tab was not either,
+   so each edge with more tabs past it carries a ‹ or › button that scrolls
+   the strip; `tabEdges` in app.js shows them from the scroll position. */
+.tabs-wrap { min-width: 0; }
+.tabs-more { display: none; }
 @media (max-width: 639.98px) {
-  .tabs { position: relative; flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; margin: 0 calc(-1 * var(--gutter)); padding: 0 var(--gutter); }
+  .tabs-wrap { position: relative; flex: 1 1 100%; margin: 0 calc(-1 * var(--gutter)); }
+  .tabs { position: relative; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; padding: 0 var(--gutter); }
   .tabs::-webkit-scrollbar { display: none; }
-  .tabs.more-end {
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent);
-    mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent);
+  .tabs-more:not([hidden]) {
+    display: flex; align-items: center; justify-content: center;
+    position: absolute; z-index: 1; top: 0; bottom: 0; width: var(--btn-h);
+    border: 0; padding: 0; cursor: pointer;
+    background: var(--panel); color: var(--azure);
+    font-size: var(--fs-title); line-height: 1; font-weight: 700;
   }
-  .tabs.more-start {
-    -webkit-mask-image: linear-gradient(to right, transparent, #000 48px);
-    mask-image: linear-gradient(to right, transparent, #000 48px);
-  }
-  .tabs.more-start.more-end {
-    -webkit-mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent);
-    mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent);
-  }
+  .tabs-more.start { left: 0; box-shadow: 6px 0 8px -4px rgba(0, 0, 0, 0.18); }
+  .tabs-more.end { right: 0; box-shadow: -6px 0 8px -4px rgba(0, 0, 0, 0.18); }
 }
 
 .card > .btn { align-self: flex-start; }

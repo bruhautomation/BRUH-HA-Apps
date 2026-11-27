@@ -26,20 +26,22 @@
   });
 
   // On a phone the tab strip is one row that scrolls sideways inside itself.
-  // An edge that has more tabs past it fades out (`more-start`/`more-end`),
-  // so a cut tab reads as "there is more" rather than as the end of the
-  // strip, and the open tab is brought clear of the fade: when a tab is
-  // pressed, when the page opens, and when the screen turns.
-  const TAB_FADE_PX = 40;
+  // An edge that has more tabs past it shows a ‹ or › button that scrolls
+  // the strip, so a cut tab reads as "there is more" rather than as the
+  // end of the strip, and the open tab is brought clear of those buttons:
+  // when a tab is pressed, when the page opens, and when the screen turns.
+  const TAB_EDGE_PX = 52;
+  const tabsBack = document.getElementById("tabsBack");
+  const tabsOn = document.getElementById("tabsOn");
   function tabEdges() {
     const end = tabs.scrollWidth - tabs.clientWidth;
-    tabs.classList.toggle("more-start", tabs.scrollLeft > 1);
-    tabs.classList.toggle("more-end", end > 1 && tabs.scrollLeft < end - 1);
+    tabsBack.hidden = !(tabs.scrollLeft > 1);
+    tabsOn.hidden = !(end > 1 && tabs.scrollLeft < end - 1);
   }
   function revealTab(button) {
     if (tabs.scrollWidth > tabs.clientWidth) {
-      const left = button.offsetLeft - TAB_FADE_PX;
-      const right = button.offsetLeft + button.offsetWidth + TAB_FADE_PX;
+      const left = button.offsetLeft - TAB_EDGE_PX;
+      const right = button.offsetLeft + button.offsetWidth + TAB_EDGE_PX;
       if (left < tabs.scrollLeft) tabs.scrollLeft = Math.max(0, left);
       else if (right > tabs.scrollLeft + tabs.clientWidth) {
         tabs.scrollLeft = right - tabs.clientWidth;
@@ -47,6 +49,12 @@
     }
     tabEdges();
   }
+  tabsBack.addEventListener("click", () => {
+    tabs.scrollBy({ left: -tabs.clientWidth * 0.7, behavior: "smooth" });
+  });
+  tabsOn.addEventListener("click", () => {
+    tabs.scrollBy({ left: tabs.clientWidth * 0.7, behavior: "smooth" });
+  });
   tabs.addEventListener("scroll", tabEdges, { passive: true });
   window.addEventListener("resize", () => {
     const open = tabs.querySelector(".tab.active");
@@ -193,6 +201,20 @@
       note.remove();
     }
     return have;
+  }
+
+  // The empty choice on Shows and Party: the speaker the server falls back
+  // to (`calibration.best_entity`, the one measured most recently), named.
+  function bestSpeakerLabel(profiles) {
+    let best = null;
+    let at = 0;
+    for (const profile of profiles || []) {
+      for (const run of profile.runs || []) {
+        if ((run.measured_at || 0) > at) { best = profile; at = run.measured_at; }
+      }
+    }
+    const name = best ? (best.name || best.entity_id) : "";
+    return "Best calibrated speaker" + (name ? " (" + name + ")" : "");
   }
 
   // ------------------------------------------------------------------
@@ -660,6 +682,15 @@
     return all;
   }
 
+  // What a pile says under its count: the zone its lights share, or the
+  // first light's name and how many more. "2 lights" said nothing about
+  // which two, on a map that is all piles.
+  function pileName(group) {
+    const zone = group[0].zone;
+    if (zone && group.every((f) => f.zone === zone)) return zone;
+    return group[0].label + " +" + (group.length - 1);
+  }
+
   function renderMap() {
     for (const radius of [CLUSTER_PX, 60, 80, 105, 140, 200]) {
       if (drawMap(radius)) return;
@@ -688,7 +719,7 @@
         count.textContent = String(group.length);
         const label = document.createElement("span");
         label.className = "dot-name";
-        label.textContent = group.length + " lights";
+        label.textContent = pileName(group);
         pile.appendChild(count);
         pile.appendChild(label);
         floor.appendChild(pile);
@@ -772,13 +803,8 @@
         verdict.push((fixtures.length - zoned) + " with no zone");
       }
     }
-    // Bulbs BRight has found that the map does not have yet: they play in
-    // no show, and nothing else on this tab says they exist.
-    if (mapMissing) {
-      verdict.push(mapMissing + (mapMissing === 1 ? " found bulb is" :
-        " found bulbs are") + " not on the map (Add lights, above)");
-    }
     $("mapListSummary").textContent = verdict.join(" · ");
+    renderMapMissing();
     renderZoneSuggestion();
     search.hidden = fixtures.length < MAP_SEARCH_FROM;
     const wanted = search.hidden ? "" : search.value.trim().toLowerCase();
@@ -842,6 +868,20 @@
   // Add lights picker reads. Null until it has been asked.
   let mapMissing = 0;
 
+  // Bulbs BRight has found that the map does not have yet play in no show,
+  // so the count carries the one press that fixes it, beside it.
+  function renderMapMissing() {
+    const box = $("mapMissing");
+    box.hidden = !mapMissing;
+    if (!mapMissing) return;
+    $("mapMissingText").textContent = mapMissing +
+      (mapMissing === 1 ? " found bulb is" : " found bulbs are") +
+      " not on the map, so " + (mapMissing === 1 ? "it plays" : "they play") +
+      " in no show.";
+    $("btnImportLifx").textContent = mapMissing === 1
+      ? "Add it to the map" : "Add all " + mapMissing + " to the map";
+  }
+
   // Zones read off the names. A house that names its lights "Kitchen 1",
   // "Kitchen pendant", "Lounge 3" has already said which room each is in;
   // asking for the same word again on forty lights is what left every
@@ -867,7 +907,10 @@
     const groups = new Map();
     fixtures.forEach((fixture, index) => {
       if (fixture.zone) return;
-      const word = named[index][shared];
+      // A number run onto the word ("Lounge2") is the light's number, not
+      // part of the room.
+      const word = String(named[index][shared] || "")
+        .replace(/^(\p{L}[\p{L}\p{N}]*?\p{L})\p{N}+$/u, "$1");
       if (!word || /^\p{N}+$/u.test(word) || !ZONE_NAME.test(word)) return;
       const key = word.toLowerCase();
       if (!groups.has(key)) {
@@ -876,7 +919,10 @@
       groups.get(key).lights.push(fixture);
     });
     return Array.from(groups.entries())
-      .filter(([key, g]) => g.lights.length > 1 || existing.has(key))
+      // A word on every light in the house (all of them still named the
+      // same thing) is not a room: it would put the house in one zone.
+      .filter(([key, g]) => existing.has(key) ||
+        (g.lights.length > 1 && g.lights.length < fixtures.length))
       .map(([, g]) => g)
       .sort((x, y) => x.zone.localeCompare(y.zone));
   }
@@ -885,9 +931,25 @@
   function renderZoneSuggestion() {
     const box = $("mapSuggest");
     const offer = suggestZones(mapData.fixtures, mapData.zones);
+    const fixtures = mapData.fixtures;
+    const unzoned = fixtures.filter((f) => !f.zone).length;
+    // Most lights with no zone is a map no effect can pick a room out of:
+    // say so, with the quickest way out of it.
+    const most = fixtures.length > 1 && unzoned * 2 > fixtures.length;
     box.innerHTML = "";
-    box.hidden = !offer.length;
-    if (!offer.length) { zonePreview = false; return; }
+    box.hidden = !offer.length && !most;
+    if (!offer.length) zonePreview = false;
+    if (most && !zonePreview) {
+      const nudge = document.createElement("p");
+      nudge.className = "small";
+      nudge.textContent = (unzoned === fixtures.length ? "No light has a"
+        : "Most lights have no") + " zone yet, so no effect can pick out " +
+        "one room. " + (offer.length
+          ? "Their names already say where most of them are."
+          : "Tap a light on the map to give it one.");
+      box.appendChild(nudge);
+    }
+    if (!offer.length) return;
     if (!zonePreview) {
       const ask = document.createElement("button");
       ask.className = "btn";
@@ -1104,9 +1166,12 @@
     try {
       const result = await post("api/map/import-lifx", {});
       $("mapStatus").textContent = result.added
-        ? result.added + " bulb(s) added — drag them into place and set roles"
-        : "nothing new (discover bulbs in the Lab first?)";
-      loadMap();
+        ? result.added + (result.added === 1 ? " bulb" : " bulbs") +
+          " added in the middle of the map — drag each into place and set its role"
+        : "Nothing new to add.";
+      await loadMap();
+      loadBulbCandidates();
+      $("mapStatus").scrollIntoView({ block: "nearest" });
     } catch (error) {
       $("mapStatus").textContent = error.message;
     }
@@ -1161,9 +1226,14 @@
       const [lib, profiles] = await Promise.all([
         api("api/library"), api("api/calibrate/profiles"),
       ]);
+      // The same default as Party (the best calibrated speaker, which
+      // the server picks when none is named), or the speaker this browser
+      // last played a show on.
       const playerSelect = $("showPlayer");
       const haveSpeaker = fillPlayerSelect(
-        playerSelect, profiles.profiles, playerSelect.value, false);
+        playerSelect, profiles.profiles,
+        playerSelect.value || showPlayerLastUsed(), false,
+        bestSpeakerLabel(profiles.profiles));
       const tracks = (lib.tracks || []).filter((t) => t.analyzed);
       if (!tracks.length) {
         list.innerHTML = '<p class="muted">No analyzed tracks — Library first.</p>';
@@ -1173,7 +1243,11 @@
       $("showSummary").textContent = summarizeShows(
         tracks, (lib.tracks || []).length);
       const copies = findCopies(tracks);
-      for (const track of tracks) {
+      const clips = findClips(tracks);
+      for (const track of songsThenClips(tracks, clips)) {
+        if (clips.has(track.hash) && !list.querySelector(".list-group-head")) {
+          list.appendChild(clipHeading(clips.size, clips.size < tracks.length));
+        }
         const row = document.createElement("div");
         row.className = "row slim";
         row.classList.toggle("selected", track.hash === scriptTrack);
@@ -1225,6 +1299,17 @@
     }
   }
 
+  // A convenience only: the speaker this browser last played a show on.
+  const SHOW_PLAYER_KEY = "bright.showPlayer";
+  function showPlayerLastUsed() {
+    try { return localStorage.getItem(SHOW_PLAYER_KEY) || ""; }
+    catch (error) { return ""; }
+  }
+  function showPlayerRemember(player) {
+    try { localStorage.setItem(SHOW_PLAYER_KEY, player || ""); }
+    catch (error) { /* the next visit starts from the best speaker */ }
+  }
+
   // The list's verdict, once, above it: how many songs have a show and
   // whether any has been played. The total is the Library's, analyzed or
   // not, so this tab and the Library never give two different song counts;
@@ -1259,6 +1344,7 @@
       if (later) hidden += 1;
     });
     const more = $("showMore");
+    syncGroupHeads($("showList"), (row) => !row.hidden);
     more.hidden = hidden === 0 && !(showsAll && rows.length > SHOWS_PAGE);
     more.textContent = showsAll ? "Show fewer"
       : "Show all " + rows.length + " songs";
@@ -1408,15 +1494,13 @@
         openScript(row.dataset.hash, row.querySelector("strong").textContent);
       } else if (button.dataset.act === "play"
                  || button.dataset.act === "sync") {
+        // Empty is "the best calibrated speaker", which the server picks.
         const player = $("showPlayer").value;
-        if (!player) {
-          status.textContent = "Pick a calibrated player first.";
-          return;
-        }
+        showPlayerRemember(player);
         const route = button.dataset.act === "sync"
           ? "api/show/metronome" : "api/show/start_show";
         const result = await post(route, {
-          track_hash: row.dataset.hash, media_player: player,
+          track_hash: row.dataset.hash, media_player: player || undefined,
         });
         status.textContent = "Playing (" + result.cues + " cues, anchored " +
           Math.round(result.offset_ms) + "ms after play).";
@@ -1455,7 +1539,7 @@
       // fell back to whichever player calibrated best, in another room.
       const have = fillPlayerSelect(select, profiles.profiles,
                                     select.value, false,
-                                    "Best calibrated speaker");
+                                    bestSpeakerLabel(profiles.profiles));
       $("btnPartyStart").disabled = !have;
     } catch (error) {
       $("partyStatus").textContent = "failed: " + error.message;
@@ -1528,7 +1612,29 @@
       group.querySelector(".sync-group-count").textContent =
         ticked + " of " + boxes.length;
     }
+    syncReady();
   }
+
+  // Start is on only once there is something to start: a track, a speaker
+  // and at least one ticked bulb. The line under it names what is still
+  // missing, so an off button is never a puzzle.
+  function syncReady() {
+    const missing = [];
+    if (!$("syncTrack").value) missing.push("a track");
+    const player = $("syncPlayer");
+    if (!player.value) missing.push("a speaker");
+    if (!$("syncBulbs").querySelector("input[data-serial]:checked")) {
+      missing.push("at least one bulb");
+    }
+    $("btnSyncStart").disabled = missing.length > 0;
+    const words = missing.length > 1
+      ? missing.slice(0, -1).join(", ") + " and " + missing[missing.length - 1]
+      : missing[0];
+    $("syncHint").textContent = missing.length
+      ? "To start, choose " + words + "." : "";
+  }
+  $("syncTrack").addEventListener("change", syncReady);
+  $("syncPlayer").addEventListener("change", syncReady);
 
   function syncSetAll(checked) {
     for (const input of $("syncBulbs").querySelectorAll("input[data-serial]")) {
@@ -1667,8 +1773,8 @@
         trackSelect.appendChild(option);
       }
       const playerSelect = $("syncPlayer");
-      $("btnSyncStart").disabled = !fillPlayerSelect(
-        playerSelect, profiles.profiles, playerSelect.value, true);
+      fillPlayerSelect(playerSelect, profiles.profiles, playerSelect.value, true);
+      syncReady();
     } catch (error) {
       $("syncStatus").textContent = "failed: " + error.message;
     }
@@ -1678,29 +1784,23 @@
     const status = $("syncStatus");
     const hash = $("syncTrack").value;
     const player = $("syncPlayer").value;
-    if (!hash || !player) {
-      status.textContent = "Pick an analyzed track and a calibrated player.";
-      return;
-    }
     // "The picker had nothing to offer" and "I unticked everything" are
     // different answers and only one of them means every bulb. An empty
-    // selection out of a populated list used to send no filter at all,
-    // so unticking the house ran the test on the house — the exact
-    // opposite of the press. A populated list with nothing ticked is
-    // refused here instead.
-    const boxes = Array.from(
-      $("syncBulbs").querySelectorAll("input[data-serial]"));
-    const serials = boxes.filter((input) => input.checked)
+    // selection used to send no filter at all, so unticking the house ran
+    // the test on the house — the exact opposite of the press. Start stays
+    // off until a bulb is ticked (`syncReady`), and this refuses too.
+    const serials = Array.from(
+      $("syncBulbs").querySelectorAll("input[data-serial]:checked"))
       .map((input) => input.dataset.serial);
-    if (boxes.length && !serials.length) {
-      status.textContent = "Tick at least one bulb — or press All.";
+    if (!hash || !player || !serials.length) {
+      syncReady();
       return;
     }
     syncRemember(serials);
     try {
       const result = await post("api/show/metronome", {
         track_hash: hash, media_player: player,
-        serials: serials.length ? serials : undefined,
+        serials,
       });
       status.textContent = "Running: " + result.cues + " cues, anchored " +
         Math.round(result.offset_ms) + "ms after the play command. " +
@@ -1884,6 +1984,72 @@
       (same ? "the one in " + where : displayName(twin) + " in " + where);
   }
 
+  // Short clips (a drop cut out of a song, kept in a folder of its own)
+  // listed apart from the full songs, on Library, Shows and Party alike:
+  // in one alphabetical list a clip and its full song read as the same row
+  // twice. Decided from what the analysis measured and where the file is,
+  // never from its name: a track is a clip when it is shorter than
+  // CLIP_MAX_S, or when it sits in a folder where most analyzed tracks
+  // are. A track with no measured length is a song.
+  const CLIP_MAX_S = 90;
+  function findClips(tracks) {
+    const dirOf = (t) => String(t.file).replace(/\/[^/]*$/, "");
+    const short = (t) => {
+      const d = (t.summary || {}).duration;
+      return Boolean(d) && d < CLIP_MAX_S;
+    };
+    const perDir = new Map();
+    for (const t of tracks) {
+      if (!(t.summary || {}).duration) continue;
+      const tally = perDir.get(dirOf(t)) || { all: 0, short: 0 };
+      tally.all += 1;
+      if (short(t)) tally.short += 1;
+      perDir.set(dirOf(t), tally);
+    }
+    const clipDirs = new Set(Array.from(perDir.entries())
+      .filter(([, n]) => n.all > 1 && n.short * 2 > n.all).map(([dir]) => dir));
+    return new Set(tracks.filter((t) => short(t) ||
+      ((t.summary || {}).duration && clipDirs.has(dirOf(t)))).map((t) => t.hash));
+  }
+
+  // The songs first, then the clips under one heading; the order inside
+  // each part is the library's.
+  function songsThenClips(tracks, clips) {
+    return tracks.filter((t) => !clips.has(t.hash))
+      .concat(tracks.filter((t) => clips.has(t.hash)));
+  }
+
+  function clipHeading(count, hasSongs) {
+    const head = document.createElement("div");
+    head.className = "list-group-head";
+    const title = document.createElement("h4");
+    title.textContent = "Short clips · " + count;
+    const note = document.createElement("p");
+    note.className = "muted small";
+    note.textContent = "Under " + clock(CLIP_MAX_S) + ", or in a folder of " +
+      "them: usually a drop cut from a song" +
+      (hasSongs ? " that is also listed above in full." : ".");
+    head.append(title, note);
+    return head;
+  }
+
+  // A heading whose rows are all folded away goes with them.
+  function syncGroupHeads(list, isShown) {
+    let head = null;
+    let any = false;
+    const settle = () => { if (head) head.hidden = !any; };
+    for (const child of list.children) {
+      if (child.classList.contains("list-group-head")) {
+        settle();
+        head = child;
+        any = false;
+      } else if (isShown(child)) {
+        any = true;
+      }
+    }
+    settle();
+  }
+
   // The folders as one line that says whether anything needs doing, with
   // the rows a tap away. A folder that holds music gets a row with its
   // count. A folder that is gone is a warning only while nothing else holds
@@ -2059,8 +2225,12 @@
         return;
       }
       const copies = findCopies(tracks);
+      const clips = findClips(tracks);
       list.innerHTML = "";
-      for (const track of tracks) {
+      for (const track of songsThenClips(tracks, clips)) {
+        if (clips.has(track.hash) && !list.querySelector(".list-group-head")) {
+          list.appendChild(clipHeading(clips.size, clips.size < tracks.length));
+        }
         const row = document.createElement("div");
         row.className = "row";
         row.innerHTML = '<div class="row-main"><strong></strong>' +
@@ -2947,7 +3117,7 @@
     try {
       const body = await api("api/map/candidates");
       mapMissing = (body.candidates || []).length;
-      if (mapData.fixtures.length) renderMapList();
+      renderMapMissing();
       select.innerHTML = "";
       if (!(body.candidates || []).length) {
         const option = document.createElement("option");
@@ -5264,7 +5434,17 @@
         if (!known.has(hash)) delete partyPins[hash];
       }
       const copies = findCopies(tracks);
-      for (const track of tracks) {
+      const clips = findClips(tracks);
+      // The columns, named once over the rows.
+      const head = document.createElement("div");
+      head.className = "party-head muted small";
+      head.innerHTML = "<span></span><span>Song</span>" +
+        "<span>Which show</span><span></span>";
+      box.appendChild(head);
+      for (const track of songsThenClips(tracks, clips)) {
+        if (clips.has(track.hash) && !box.querySelector(".list-group-head")) {
+          box.appendChild(clipHeading(clips.size, clips.size < tracks.length));
+        }
         const row = document.createElement("label");
         row.className = "row party-pick";
         const check = document.createElement("input");
@@ -5311,23 +5491,18 @@
           pinned.selected = true;
           pick.appendChild(pinned);
         }
-        // Every row has the same slot in the same place, and only a song
-        // with a choice to make gets a picker in it. The slot says the same
-        // word on every row with a show ("Latest"), picker or not: a picker
-        // on some rows and nothing on others read as rows that were broken,
-        // and a picker reading "latest show" beside rows reading "one
-        // show" read as two different answers (and the longer one was cut
-        // off at phone width).
+        // Every row has the same control in the same column. A song with
+        // one show (or none yet) gets it too, switched off and saying what
+        // it would play: plain words on some rows beside pickers on others
+        // read as two kinds of row, and as rows that were broken.
         const shows = track.show ? Number(track.show.versions || 1) : 0;
-        if (shows > 1 || partyPins[track.hash]) {
-          row.appendChild(pick);
-        } else {
-          const one = document.createElement("span");
-          one.className = "muted party-version party-version-text";
-          one.textContent = shows ? PARTY_LATEST : "No show yet";
-          if (shows) one.title = "This song has one show";
-          row.appendChild(one);
+        if (!(shows > 1 || partyPins[track.hash])) {
+          pick.disabled = true;
+          pick.firstChild.textContent = shows ? PARTY_LATEST : "No show yet";
+          pick.title = shows ? "This song has one show" : "A show is written for it while the party runs";
         }
+        pick.setAttribute("aria-label", "Which show of " + displayName(track));
+        row.appendChild(pick);
 
         const order = document.createElement("span");
         order.className = "muted small party-order";
@@ -5370,6 +5545,8 @@
       });
       $("partySet").after(more);
     }
+    syncGroupHeads($("partySet"), (row) =>
+      !row.classList.contains("party-later"));
     more.hidden = hidden === 0;
     more.textContent = "Show " + Math.min(hidden, 24) + " more (" +
       rows.length + " total)";

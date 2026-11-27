@@ -17,6 +17,8 @@
     <span class="brand-name">BRight</span>
     <span class="brand-sub">light show director</span>
   </div>
+  <div class="tabs-wrap">
+  <button type="button" class="tabs-more start" id="tabsBack" aria-label="Earlier tabs" hidden>‹</button>
   <nav class="tabs" id="tabs">
     <button class="tab active" data-tab="lab">Lab</button>
     <button class="tab" data-tab="map">Light Map</button>
@@ -27,6 +29,8 @@
     <button class="tab" data-tab="calibrate">Calibrate</button>
     <button class="tab" data-tab="party">Party</button>
   </nav>
+  <button type="button" class="tabs-more end" id="tabsOn" aria-label="More tabs" hidden>›</button>
+  </div>
  </div>
 </header>
 
@@ -47,17 +51,18 @@
       </div>
       <details class="info-toggle">
         <summary>What do these checks mean?</summary>
-        <p class="muted">Check response time sends an invisible echo (not a
-          flash) and times the reply; shows are timed from it. Find speed
-          limit sends faster and faster messages to see where the bulb
-          starts missing some. Beat-pulse demo is one packet that makes the
-          bulb pulse on the beat by itself, which is how shows stay in
-          sync.</p>
+        <p class="muted">Check times one invisible echo to the bulb; every
+          show's cues are timed from that. In a bulb's ⋯ menu, Find speed
+          limit sends faster and faster messages until the bulb starts
+          missing some, and Beat-pulse demo makes the bulb pulse on a beat
+          by itself, at the tempo and for the time set below.</p>
       </details>
       <div class="demo-controls">
         <label>BPM <input type="number" id="demoBpm" value="120" min="30" max="300"></label>
         <label>Seconds <input type="number" id="demoSecs" value="10" min="2" max="60"></label>
       </div>
+      <p class="muted small">Tempo and length of the Beat-pulse demo
+        (a bulb's ⋯ menu).</p>
       <div id="lifxList" class="list"><p class="muted">No bulbs discovered yet.</p></div>
     </div>
 
@@ -85,11 +90,12 @@
         the beat and flash on every drop. Off the beat? Nudge the
         calibration. Flashing on nothing? Analyze the song again.</p>
       <div class="demo-controls">
-        <select id="syncTrack"><option value="">— analyzed track —</option></select>
-        <select id="syncPlayer"><option value="">Choose a speaker</option></select>
-        <button id="btnSyncStart" class="btn primary">Start</button>
+        <select id="syncTrack" aria-label="Track"><option value="">— analyzed track —</option></select>
+        <select id="syncPlayer" aria-label="Speaker"><option value="">Choose a speaker</option></select>
+        <button id="btnSyncStart" class="btn primary" disabled>Start</button>
         <button id="btnSyncStop" class="btn" hidden>Stop &amp; restore</button>
       </div>
+      <p id="syncHint" class="muted small"></p>
       <div class="demo-controls">
         <span class="muted small">Which bulbs pulse:</span>
         <button id="btnSyncAll" class="btn small">All</button>
@@ -145,7 +151,6 @@
           <button id="btnRefreshBulbs" class="btn small">Refresh list</button>
         </div>
         <div class="demo-controls">
-          <button id="btnImportLifx" class="btn small">Add every discovered bulb</button>
           <button id="btnAddAux" class="btn small">Add a switch light…</button>
         </div>
         <div id="auxForm" class="demo-controls" hidden>
@@ -167,6 +172,12 @@
         effect can light just the kitchen or a chase can go room to room;
         a light with no zone still plays in every show.</p>
       <p id="mapListSummary" class="small"></p>
+      <!-- Found bulbs the map does not have, with the press that adds them
+           (`renderMapMissing`). -->
+      <div id="mapMissing" class="map-missing" hidden>
+        <p id="mapMissingText" class="small"></p>
+        <button id="btnImportLifx" class="btn primary small" type="button">Add all to the map</button>
+      </div>
       <!-- Zones read off the lights' names, offered and never applied until
            somebody accepts them (`suggestZones` in app.js). -->
       <div id="mapSuggest" class="map-suggest" hidden></div>
@@ -334,7 +345,7 @@
       <div class="card-head">
         <h3>Songs</h3>
         <span>
-          <select id="showPlayer"><option value="">Choose a speaker</option></select>
+          <select id="showPlayer" aria-label="Speaker"><option value="">Best calibrated speaker</option></select>
           <button id="btnShowsRefresh" class="btn">Refresh</button>
         </span>
       </div>
@@ -671,7 +682,7 @@
       </div>
       <div class="demo-controls">
         <label>Speaker
-          <select id="partyPlayer"><option value="">Choose a speaker</option></select>
+          <select id="partyPlayer"><option value="">Best calibrated speaker</option></select>
         </label>
         <label>When it stops
           <select id="partyScene"><option value="">put the room back</option></select>
@@ -742,7 +753,9 @@
       </div>
       <p class="muted small">Tick the songs to play, in the order you tick
         them. Nothing ticked plays everything in your music folders.
-        A song with no show yet gets one written while the party runs.</p>
+        A song with no show yet gets one written while the party runs.
+        A song keeps every show built for it; <em>Which show</em> picks the
+        one to play, and Latest is the newest.</p>
       <div id="partySetCount" class="row-note muted" aria-live="polite"></div>
       <div id="partySet" class="list party-set"></div>
       <div class="party-save">
