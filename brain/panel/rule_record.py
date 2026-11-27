@@ -162,18 +162,6 @@ def held_reason(row: dict) -> str:
             "of this rule's reports.")
 
 
-def held_words(row: dict) -> str:
-    """A rule held by its record (`holds`), said where producer health is
-    shown (⚙ › Diagnostics, `get_health`): the record and what brAIn now
-    does with the rule's reports (#1477)."""
-    wrong = int((row or {}).get("wrong") or 0)
-    total = int((row or {}).get("total") or 0)
-    return (f"{wrong} of {total} marked wrong, so brAIn holds this rule's "
-            "new reports back unless one carries fresh evidence, and raises "
-            "each thing it names only once; they wait in History under Set "
-            "aside by brAIn. Agreeing with one of its reports lifts this.")
-
-
 def resident_stand_down(scorecard, now: float) -> dict | None:
     """The Resident's own scorecard row while its record stands it down,
     else None (above). Unreadable is None: a record nobody can read holds
@@ -211,35 +199,32 @@ def measured_only(row, now: float) -> dict | None:
 def resident_stand_down_reason(row: dict, about: str = "") -> str:
     """Why a Resident case was set aside, in the household's words.
     ``about`` is the entity or topic the household marked Wrong that this
-    case shares (#1320), and ``row`` is the record counted over the reports
-    about it alone (#1478): the hold is said as being about that, and says
-    the way out that does not need agreeing with some other report."""
+    case shares (#1320): the hold is said as being about that."""
     wrong = int((row or {}).get("wrong") or 0)
     total = int((row or {}).get("total") or 0)
     streak = int((row or {}).get("streak") or 0)
-    like = " like this one" if about else ""
-    record = (f"You marked brAIn's last {streak} reports{like} wrong"
+    record = (f"You marked brAIn's last {streak} reports wrong"
               if streak >= HOLD_STREAK else
-              f"You marked {wrong} of the {total} brAIn reports{like} you "
-              "answered wrong")
+              f"You marked {wrong} of the {total} brAIn reports you answered "
+              "wrong")
     if about:
         record += f", among them one about {about}"
-    return (f"{record}, so brAIn now raises one{' like it' if about else ''}"
-            " only when a measurement backs it (what is normal here, a "
-            "room's physics or an automation's trace). This one had none, so "
-            "brAIn set it aside. Restore in History puts it back, and "
-            f"agreeing with a report{' like it' if about else ''} lifts this.")
+        what = f"about {about} "
+    else:
+        what = ""
+    return (f"{record}, so brAIn now raises one {what}only when a "
+            "measurement backs it (what is normal here, a room's physics or "
+            "an automation's trace). This one had none, so brAIn set it "
+            "aside. That lifts once you agree with one of brAIn's reports.")
 
 
 def resident_stand_down_words(row: dict) -> str:
     """The same stand-down said where producer health is shown."""
     wrong = int((row or {}).get("wrong") or 0)
     total = int((row or {}).get("total") or 0)
-    return (f"{wrong} of {total} marked wrong. Where three or more of the "
-            "reports about the same thing or kind of reading were wrong, "
-            "brAIn raises another about it only when a measurement backs "
-            "it, and sets the rest aside in History. Food, water, heat, "
-            "safety and security reports are raised as always.")
+    return (f"{wrong} of {total} marked wrong, so brAIn raises its own "
+            "reports only when a measurement backs them, and sets the rest "
+            "aside in History. Safety reports are raised as always.")
 
 
 def never_held(row: dict, patterns: list[str] | None = None) -> bool:

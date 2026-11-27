@@ -5703,11 +5703,6 @@ def _score_words(row: dict, muted: bool) -> dict:
     # the record is shown (`rule_record.resident_stand_down`).
     if rule_record.resident_stand_down([row], time.time()):
         row["held_back"] = rule_record.resident_stand_down_words(row)
-    elif not muted and rule_record.holds(row):
-        # Every rule held back by its own record says so here, not only
-        # brAIn's own reports (#1477): the same arithmetic `triage.gate`
-        # and the checks' own stand-down read.
-        row["held_back"] = rule_record.held_words(row)
     return row
 
 
@@ -16165,32 +16160,22 @@ def _resident_stand_down(signal: dict, case: dict, run_ids, now: float) -> str:
         if (findings_store.not_news_floor(row)
                 or rule_record.never_held(row)):
             return ""
+        record = rule_record.resident_stand_down(
+            findings_store.scorecard(), now)
+        if record is None:
+            return ""
         subjects = _case_subjects(signal, case)
         # Food, water, heat or security is raised whatever the record says
         # (#1320): a fridge warming was set aside on Wrongs about humidity.
-        # The case's own words are read too, only ever to keep it shown
-        # (#1478): a freezer's plug or an unnamed probe carries no class
-        # that says food.
         if any(corrections.record_floor(
                 eid, device_class=_device_class(eid),
                 name=str((_NAMES.get(eid) or {}).get("name") or ""))
-               for eid in subjects) or corrections.record_floor(
-                   "", name=" ".join(str(case.get(k) or "") for k in (
-                       "claim", "text", "detail"))):
+               for eid in subjects):
             return ""
         # The record holds back only what shares an entity, a device or a
         # kind of reading with a report the household marked Wrong.
         about = _wrong_about_same(subjects)
         if not about:
-            return ""
-        # And it is counted over those reports alone (#1478): three Wrongs
-        # about a pipe probe, a room's heat and a remote are no record about a
-        # freezer. The same arithmetic, over the answers about this case's
-        # entities, their devices and their kind of reading.
-        record = rule_record.resident_stand_down(
-            findings_store.scorecard(keep=lambda e: _shares_subject(
-                str(e.get("entity_id") or ""), subjects)), now)
-        if record is None:
             return ""
         for rid in sorted(r for r in run_ids or () if r):
             reads = conversations.tool_reads(engine.CLAUDE_HOME, rid)
@@ -16213,22 +16198,6 @@ def _case_subjects(signal: dict, case: dict) -> list[str]:
         if "." in eid and " " not in eid and eid not in seen:
             seen.append(eid)
     return seen
-
-
-def _shares_subject(eid: str, subjects: list[str]) -> bool:
-    """Whether a report about ``eid`` is about the same thing as these
-    entities (`_wrong_about_same`'s three tests): one of them, on one of
-    their devices, or a reading of the same device class."""
-    if not eid or not subjects:
-        return False
-    if eid in subjects:
-        return True
-    device = str((_NAMES.get(eid) or {}).get("device") or "")
-    if device and any(str((_NAMES.get(s) or {}).get("device") or "") == device
-                      for s in subjects):
-        return True
-    klass = _device_class(eid)
-    return bool(klass) and any(_device_class(s) == klass for s in subjects)
 
 
 def _wrong_about_same(subjects: list[str]) -> str:
@@ -19502,9 +19471,6 @@ def _thermal_payload(store: dict) -> dict:
             "unit": store.get("unit") or "",
             "outdoor_source": store.get("outdoor_source") or "",
             "outdoor_why": store.get("outdoor_why") or "",
-            # A forecast model's value rather than a thermometer here
-            # (`thermal.MODEL_PLATFORMS`): `room_physics` says so (#1476).
-            "outdoor_modelled": bool(store.get("outdoor_modelled")),
             "outdoor_candidates": list(store.get("outdoor_candidates") or []),
             "outdoor_choice": chosen,
             "rooms": rooms}
@@ -23400,8 +23366,7 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
     # offer. "Got it" plus a comment is still "Got it": falling back to
     # `memory` is what stops a note silently costing the memory line.
     template = spec["noted"] if note and spec.get("noted") else spec["memory"]
-    if again or (spec.get("kind") == "ignored"
-                 and _asks_to_stop(finding, note)):
+    if again:
         # An answer about being reminded, not about the house: no line.
         template = ""
     if note and facts_store.bare_acknowledgement(note):
@@ -23506,15 +23471,10 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
         chosen = await asyncio.to_thread(_chosen_rules, finding)
         if chosen:
             payload["_exception_ids"] = chosen
-            payload["said"] = _said_back(finding)
             return payload, fact
         written = await asyncio.to_thread(
             _record_condition if _is_resident_condition(finding, note)
             else _record_exception, finding, note)
-        if written and not (_is_resident_condition(finding, note)
-                            or _unwatchable_condition(finding, note)):
-            # What the press wrote, said back in one line (#1479).
-            payload["said"] = _said_back(finding)
         if written:
             # Private to the press that made it: the route turns it into
             # the undo token and takes it off the payload (`_ending_undo`).
@@ -23558,68 +23518,7 @@ def _for_now(finding: dict, spec: dict, note: str) -> bool:
         # Wrong it was pressed as, and the ledger closes the check for that
         # automation (#768).
         return False
-    if _asks_to_stop(finding, note):
-        # "Don't remind me again" about one thing: the pair rule, not a hold
-        # (#1479).
-        return False
     return corrections.puts_off(note)
-
-
-def _asks_to_stop(finding: dict, note: str) -> bool:
-    """A Wrong on a house check's row about one thing whose reason tells
-    brAIn to stop telling them about it, naming no time ("don't remind me
-    again", "stop telling me about this", `corrections.stops_telling`).
-    "I'm aware", "I'll deal with it" and "it's on my list" are promises or
-    acknowledgements, not that instruction, and stay holds.
-
-    It used to be a hold that lifted when the report changed or went away
-    for three days, wrote no rule and covered no other entity of the
-    device, so the household said it again for every sensor and every new
-    wording (#1479). Now it is the Wrong it was pressed as: the rule on
-    this check and this thing (`_record_exception`, which `recall` shows
-    and the device's other entities read through `House._device_rule`),
-    whose scope and lifetime the correction's second look then reads.
-    The hold stays for words that ask for one ("until it changes",
-    `corrections.until_it_changes`), and where brAIn may not quiet the
-    check or the thing: a safety or security check, a critical row, a
-    safety-class or protected device (`corrections.never_covered`).
-    """
-    source = str(finding.get("source") or "")
-    if (not source.startswith("check:") or not rule_record.quietable(source)
-            or str(finding.get("severity") or "") == "critical"
-            or not corrections.stops_telling(note)):
-        return False
-    eid = str(finding.get("entity_id") or "")
-    if not eid and not findings_store.clean_items(finding.get("items")):
-        return False
-    if not eid:
-        return True
-    _family, classes, _device = _device_family(eid)
-    return not corrections.never_covered(
-        eid, corrections.check_of(finding),
-        device_class=str((_NAMES.get(eid) or {}).get("class") or ""),
-        protected=automation_writer.protected_patterns(),
-        device_classes=classes)
-
-
-def _said_back(finding: dict) -> str:
-    """The one line a Wrong that wrote a rule is answered with (#1479):
-    what was understood, by the thing's name — "Got it — brAIn won't raise
-    this about the hall remote again". Built by code from the rule's own reach (this
-    report's check, this thing), never from the words, so it promises no
-    more than was written; the correction's second look may widen it, and
-    asks on the list when it would."""
-    who = personality.assistant_name()
-    eid = str(finding.get("entity_id") or "")
-    name = str((_NAMES.get(eid) or {}).get("name") or "").strip()
-    items = findings_store.clean_items(finding.get("items"))
-    if name:
-        about = f" about {name}"
-    elif len(items) > 1:
-        about = f" about those {len(items)} things"
-    else:
-        about = ""
-    return f"Got it — {who} won't raise this{about} again"
 
 
 def _answered_again(finding: dict, spec: dict, note: str) -> int:
@@ -24183,29 +24082,19 @@ def _cannot_mark_room_air(finding: dict) -> str:
     return ""
 
 
-def _mark_not_room_air(finding: dict, *, placed: bool = False) -> dict:
-    """Write the mark. ``{"ok", "id", "name"}`` or ``{"error"}``.
-
-    ``placed`` is the second look's reading of a reason (#1476), written
-    as `ROOM_AIR_SAID_RULE`: it leaves the sensor out of the heat model and
-    the room-physics checks only, never the freeze check, the frost warning
-    or `base.unusual` — a probe said to be "in a box" may be a pipe's or a
-    freezer's, and only the owner's own tick takes it out of those."""
+def _mark_not_room_air(finding: dict) -> dict:
+    """Write the mark. ``{"ok", "id", "name"}`` or ``{"error"}``."""
     why = _cannot_mark_room_air(finding)
     if why:
         return {"error": why}
     eid = str(finding.get("entity_id") or "")
     name = str((_NAMES.get(eid) or {}).get("name") or "") or eid
-    rule = (checks._util.ROOM_AIR_SAID_RULE if placed
-            else checks._util.ROOM_AIR_RULE)
     try:
         row, _created = facts_store.add(
             f"{name} does not measure the air of the room it is in: brAIn "
-            + ("leaves it out of room heat judgments, and still watches it "
-               "for freezing" if placed else
-               "leaves it out of room temperature and heat judgments"),
+            "leaves it out of room temperature and heat judgments",
             subject=eid, source="correction",
-            predicate=facts_store.EXCEPTION_PREFIX + rule,
+            predicate=facts_store.EXCEPTION_PREFIX + checks._util.ROOM_AIR_RULE,
             confidence=0.95,
             about=str(finding.get("claim") or finding.get("text") or ""),
             finding_key=findings_store.normalize(finding.get("text") or ""))
@@ -24215,11 +24104,9 @@ def _mark_not_room_air(finding: dict, *, placed: bool = False) -> dict:
     if not row:
         return {"error": "brAIn could not write that down"}
     decision_trail.note(
-        "exception", eid, "you said where it sits: the heat model and the "
-        "room heat checks leave it out; the freeze check still reads it"
-        if placed else "you said it does not measure the room's air: the "
+        "exception", eid, "you said it does not measure the room's air: the "
         "heat model, the climate checks, the frost warning and the unusual-"
-        "reading check leave it out", check=rule,
+        "reading check leave it out", check=checks._util.ROOM_AIR_RULE,
         source=str(finding.get("source") or ""),
         text=str(finding.get("text") or ""))
     return {"ok": True, "id": row["id"], "name": name}
@@ -26483,8 +26370,7 @@ async def _reply_routes(finding: dict, said: str,
                     ids += [i for i in scoped["ids"] if i not in ids]
                     sentences.append(scoped["sentence"])
                 else:
-                    sentences.append((payload.get("said") or "Got it — "
-                                      "brAIn won't flag that again") + ".")
+                    sentences.append("Got it — I won't flag that again.")
             else:
                 sentences.append("Got it — marked as fixed.")
             payload["_exception_ids"] = ids
@@ -26745,10 +26631,6 @@ async def _scope_correction(finding: dict, note: str,
     if not applied["written"] and applied["why"]:
         log.info("a correction was taken back before it was scoped")
         return None
-    placed = await asyncio.to_thread(
-        _record_placement, the_plan, finding, note, area_id=area_id,
-        area_name=area_name, finding_key=key, about=report)
-    applied["ids"] = list(applied["ids"]) + placed["ids"]
     offer = None
     if the_plan["offer"]:
         row = await asyncio.to_thread(
@@ -26762,71 +26644,12 @@ async def _scope_correction(finding: dict, note: str,
     sentence = corrections.confirmation(
         the_plan, entity_name=entity_name, area_name=area_name,
         check_title=check_title)
-    if placed["said"]:
-        sentence = sentence.rstrip(".") + ", and " + placed["said"] + "."
     log.info("correction on %s: %s%s%s", log_safe(eid or report[:40]),
              the_plan["scope"],
              f" {the_plan['until']}" if the_plan["until"] else "",
              " (offered wider)" if offer else "")
     return {"plan": the_plan, "ids": applied["ids"], "sentence": sentence,
             "offer": offer}
-
-
-def _record_placement(the_plan: dict, finding: dict, note: str, *,
-                      area_id: str, area_name: str, finding_key: str,
-                      about: str) -> dict:
-    """Where the second look read that the device sits (#1476), kept as a
-    fact the checks read: ``{"ids", "said"}``.
-
-    `enclosed` or `outdoors` on a thermometer is the room-air mark, written
-    by the tick's own writer with its floors (`_mark_not_room_air`: a
-    report that judged a room's temperature, a temperature sensor, never a
-    safety or protected device); every room-air reader leaves it out.
-    `unheated_room` is `exception:unheated` on the room (`checks._util.
-    UNHEATED_RULE`), which `checks.thermal.unconditioned_from` reads, so
-    the climate checks and the dehumidifier rows stop judging that room as
-    heated (a room with its own thermostat or heater is still judged:
-    `said_unconditioned`). Both carry the report's key, so the press's Undo
-    and "Let brAIn raise it again" take them back. Never raises."""
-    out: dict = {"ids": [], "said": ""}
-    placement = str(the_plan.get("placement") or "")
-    eid = str(finding.get("entity_id") or "")
-    name = str((_NAMES.get(eid) or {}).get("name") or "") or "it"
-    try:
-        if placement in ("enclosed", "outdoors"):
-            got = _mark_not_room_air(finding, placed=True)
-            if got.get("ok"):
-                out["ids"].append(got["id"])
-                out["said"] = (f"brAIn no longer reads {name} as a room's "
-                               "air")
-        elif placement == "unheated_room" and area_id:
-            if corrections.never_covered(
-                    eid, "", device_class=str(
-                        (_NAMES.get(eid) or {}).get("class") or ""),
-                    protected=automation_writer.protected_patterns(),
-                    device_classes=_device_family(eid)[1]):
-                return out
-            room = area_name or "That room"
-            row, _created = facts_store.add(
-                f"{room} is not heated (you said: "
-                f"{textclip.clip(' '.join(note.split()), 200)})",
-                subject=f"area:{area_id}", source="correction",
-                predicate=facts_store.EXCEPTION_PREFIX
-                + checks._util.UNHEATED_RULE,
-                confidence=0.95, about=about, finding_key=finding_key)
-            if row:
-                out["ids"].append(row["id"])
-                out["said"] = (f"brAIn now treats the {room} as a room "
-                               "nothing heats")
-                decision_trail.note(
-                    "exception", eid, f"you said the {room} is not heated: "
-                    "room heat and damp checks no longer judge it as a "
-                    "heated room", check=checks._util.UNHEATED_RULE,
-                    source=str(finding.get("source") or ""),
-                    text=str(finding.get("text") or ""))
-    except Exception as exc:  # noqa: BLE001 — never the correction's failure
-        log.debug("could not keep where a device sits: %s", exc)
-    return out
 
 
 def _start_correction(finding: dict, note: str, ids: list[str]) -> None:
