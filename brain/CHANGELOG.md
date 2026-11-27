@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.35
+
+### Changed
+
+- Reverts 5.5.34 (lasting "stop" rules from a Wrong answer, placement facts, held checks raising once, the scoped trust hold) while the development loop's transcript check is honoured; the same change comes back in the next release after a fresh review (1476, 1477, 1478, 1479).
+
 ## 5.5.34
 
 ### Changed

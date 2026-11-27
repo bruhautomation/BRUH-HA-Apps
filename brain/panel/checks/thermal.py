@@ -87,7 +87,7 @@ import re
 
 import numfmt
 
-from ._util import UNHEATED_RULE, House, domain_of, join_names, num
+from ._util import House, domain_of, join_names, num
 
 # How far under its setpoint a room has to have stayed, all month, before
 # this is a fault rather than a thermostat that is slightly optimistic.
@@ -189,7 +189,7 @@ def _room_air(house: House, rooms: dict, check_id: str) -> dict:
     out = {}
     for eid, entry in rooms.items():
         kind, said = house.room_air_verdict(eid)
-        if kind in ("marked", "not_air", "broken", "placed"):
+        if kind in ("marked", "not_air", "broken"):
             house.gave_up(check_id, [{"entity_id": eid}],
                           f"{said}, so it is not read as a room",
                           kind="explained")
@@ -407,8 +407,7 @@ def unconditioned_from(rows) -> dict:
         if not isinstance(row, dict):
             continue
         text = str(row.get("text") or "")
-        heating = bool(_UNHEATED.search(text)) or str(
-            row.get("predicate") or "") == "exception:" + UNHEATED_RULE
+        heating = bool(_UNHEATED.search(text))
         if not heating and not _UNINSULATED.search(text):
             continue
         subjects = row.get("subjects")
@@ -1097,9 +1096,7 @@ def _frost_kind(house: House, eid: str, conditioned: set[str],
         # those is not named. One the model merely lacked nights for still
         # counts — a cold garage is exactly what this warns about.
         kind, said = house.room_air_verdict(eid)
-        # A placement a model read off a reason is no reason to stop
-        # warning about a cold space (`ROOM_AIR_SAID_RULE`).
-        if kind and kind != "placed":
+        if kind:
             house.gave_up(FROST_CHECK, [{"entity_id": eid}],
                           f"{said}, so it is not evidence of a space that "
                           "gets cold", kind="explained")
