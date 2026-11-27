@@ -2019,20 +2019,10 @@ def room_physics(area):
         known = list(dict.fromkeys(r.get("area") or r.get("name") for r in rooms))
         return {"area": area, "rooms": [], "known_rooms": known,
             "note": "no measured room by that name — see known_rooms"}
-    # Whether "outside" is a thermometer here or a forecast model's value
-    # for the location (`thermal.MODEL_PLATFORMS`, #1476): every `k` below
-    # is measured against it, so a reader must be told which.
-    modelled = bool((result or {}).get("outdoor_modelled"))
-    reference = ("The outdoor reference is a forecast model's value for this "
-                 "location, not a thermometer at the house, so every rate "
-                 "here is measured against a model and can be off on a "
-                 "clear or windy night. " if modelled else "")
     return {"area": area, "outdoor_reference": (result or {}).get("outdoor"),
-            "outdoor_is_forecast_model": modelled,
             "unit": (result or {}).get("unit"),
             "rooms": match,
-            "note": (reference
-                     + "`k` is the loss rate per hour (its reciprocal `tau_h` is "
+            "note": ("`k` is the loss rate per hour (its reciprocal `tau_h` is "
                      "the time constant in hours), `gain` the degrees per "
                      "hour with the heating on, `hours_to_warm` measured "
                      "between the room's own `coolest` and `warmest` on the "
@@ -2407,14 +2397,6 @@ def get_health():
         "versions": result.get("versions") or {},
         "faults": [f for f in (result.get("faults") or [])
                    if isinstance(f, dict)][:20],
-        # Every rule brAIn now holds back by its own record, whatever the
-        # fault list's cut left out (#1477): the producer's name and the
-        # sentence ⚙ › Diagnostics shows beside its record.
-        "rules_held_back": [
-            {"source": r.get("source"), "name": r.get("name") or r.get("title"),
-             "held_back": r.get("held_back")}
-            for r in ((result.get("findings") or {}).get("scorecard") or [])
-            if isinstance(r, dict) and r.get("held_back")][:20],
     }
 
 

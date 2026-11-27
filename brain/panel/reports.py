@@ -1066,15 +1066,12 @@ def _faults(diag) -> list[dict]:
                           "now raises one only when a measurement backs it; "
                           "safety reports are raised as always")
                 sentence = _sentence(
-                    f"{record}. Where three or more of its reports about "
-                    "the same thing or kind of reading were wrong, brAIn "
-                    "raises another about it only when a measurement backs "
-                    "it: what is normal here, a room's physics or an "
-                    "automation's trace. Food, water, heat, safety and "
-                    "security reports are raised as always",
-                    "The rest are in History under Set aside by brAIn, "
-                    "where Restore puts one back",
-                    "Agreeing with a report like it lifts that hold")
+                    f"{record}, so brAIn now raises its own reports only "
+                    "when a measurement backs them: what is normal here, a "
+                    "room's physics or an automation's trace",
+                    "The rest are in History under Set aside by brAIn, one "
+                    "press from coming back",
+                    "This lifts once you agree with one of brAIn's reports")
             elif source in UNMUTABLE_SOURCES:
                 # Not a rule, and never mutable: say what was marked wrong
                 # and the one thing that does teach it.

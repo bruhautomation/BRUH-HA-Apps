@@ -73,12 +73,6 @@ SCOPES = ("entity_check", "entity", "check_area", "check")
 # Offered as a question, never written straight from a reply.
 WIDE_SCOPES = frozenset({"check_area", "check"})
 LIFETIMES = ("permanent", "date", "month", "season")
-# Where a Wrong's reason says the device sits (#1476), read by the second
-# look rather than by words: `enclosed` and `outdoors` are the room-air mark
-# on a thermometer (`server._mark_not_room_air`), `unheated_room` a fact
-# that its room is not heated (`checks._util.UNHEATED_RULE`), both written
-# by `server._scope_correction` under the report's key.
-PLACEMENTS = ("enclosed", "outdoors", "unheated_room")
 SEASONS = ("spring", "summer", "autumn", "winter")
 # Meteorological seasons, northern; a southern house reads them swapped.
 _SEASON_MONTHS = {"spring": (3, 4, 5), "summer": (6, 7, 8),
@@ -154,14 +148,7 @@ SYSTEM = prompt_kit.assemble(
   reports again when winter ends)
 - "The pump is off for repair until 3 March" → entity_check, date,
   until_date the next 3 March, reason "" (one repair is not a standing
-  truth).
-- "Don't remind me again" → entity_check, permanent, reason "".
-- "The sensor is inside a cabinet in the garage" → entity_check,
-  permanent, placement enclosed, placement_quote "inside the pump box",
-  reason "This sensor sits inside the pump box."
-- "The garage is not heated" → entity_check, permanent, placement
-  unheated_room, placement_quote "The garage is not heated",
-  reason "The garage is not heated".""",
+  truth).""",
     rules="""\
 - Scope, widest last: entity_check (this rule, this device — the
   default), entity (every rule about this device), check_area (this rule,
@@ -170,13 +157,6 @@ SYSTEM = prompt_kit.assemble(
 - Lifetime: permanent (no end mentioned or implied), date (the day
   reporting resumes), month (the month reporting resumes), season (the
   season the condition belongs to; reporting resumes when it ends).
-- placement says where the device sits, only when the words say so:
-  enclosed (inside a box, a cabinet, an enclosure or a machine, so it does
-  not read the room's air), outdoors, unheated_room (the room it is in is
-  not heated or conditioned; insulation alone is not that), else "".
-- placement_quote: with a placement, the homeowner's own words that say
-  it, copied exactly from what they wrote. No such words, no placement:
-  "I only use that room for laundry" says nothing about its heating.
 - reason is the standing truth about the HOUSE the correction implies,
   under 20 words, never about a person and never about the report — or
   "" when there is none.""",
@@ -199,12 +179,6 @@ SCHEMA = {
                                   "condition belongs to."},
         "reason": {"type": "string", "description":
                    "The house's standing truth, under 20 words, or \"\"."},
-        "placement": {"type": "string", "enum": ["", *PLACEMENTS],
-                      "description": "Where the device sits, when the "
-                                     "words say so."},
-        "placement_quote": {"type": "string", "description":
-                            "For a placement: the homeowner's own words "
-                            "that say it, copied exactly, or \"\"."},
     },
     "required": ["scope", "lifetime"],
     "additionalProperties": False,
@@ -855,23 +829,12 @@ def strict_floor(entity_id: str = "", source: str = "", *,
 # left alone when that is all it says, and a statement when a fault
 # follows it ("I'm aware, the pump is leaking", `_FAULT_RE`): the second
 # tells brAIn what is wrong, and asks for nothing.
-# The branch that is an instruction to stop being told ("don't remind me",
-# "stop telling me about this", "no more reminders about it"), apart from
-# the ones that only say the person has it in hand ("I'll deal with it",
-# "it's on my list") or knows (`_AWARE_RE`). Only this one, with no time
-# named, is the pair rule on a house check's row (`stops_telling`, #1479):
-# the others stay holds that lift when the report changes, because "I'll
-# replace it" is a promise about the device, not a wish never to hear of
-# it again.
-_STOP_TELLING = (
-    r"(?:don'?t|do not|stop|quit|no need to|please don'?t|no more)\s+"
+_ASKS_QUIET_RE = re.compile(
+    r"\b(?:(?:don'?t|do not|stop|quit|no need to|please don'?t|no more)\s+"
     r"(?:\w+\s+){0,2}?(?:remind(?:ing)?|nag(?:ging)?|bother(?:ing)?|"
     r"bring(?:ing)? (?:\w+\s+){0,3}?up|mention(?:ing)?|"
     r"flag(?:ging)?|tell(?:ing)? me about|"
-    r"rais(?:e|ing) (?:this|it|that|these)|ask(?:ing)? me about)")
-_STOP_TELLING_RE = re.compile(r"\b" + _STOP_TELLING + r"\b", re.I)
-_ASKS_QUIET_RE = re.compile(
-    r"\b(?:" + _STOP_TELLING +
+    r"rais(?:e|ing) (?:this|it|that|these)|ask(?:ing)? me about)"
     r"|(?:on|in) (?:my|our|the) (?:to[- ]?do|todo|task) list|"
     r"already (?:on|in) (?:my|our) (?:list|plan)|"
     r"i'?ll (?:deal with|handle|take care of|sort) (?:it|this|that)|"
@@ -987,31 +950,13 @@ def names_a_time(note: str) -> bool:
 
 
 def held_until_changed(note: str) -> bool:
-    """A deferral that names no time. "Remind me in 3 weeks", "until
-    tomorrow" and "till spring" asked for a period and get one
-    (`snooze_days`). On a house check's row about one thing that brAIn may
-    quiet, a plain "don't remind me (again)" is the pair rule
-    (`server._asks_to_stop`, #1479); the hold is what is left for the
-    words that say "until it changes" (`until_it_changes`) and for a row
-    no rule can be written on."""
+    """A deferral that names no time: on a house check's row it holds the
+    card until the check's report about it changes (`HOLD_DAYS`). "Remind
+    me in 3 weeks", "until tomorrow" and "till spring" asked for a period
+    and get one (`snooze_days`)."""
     text = str(note or "")
     return (deferral(text) and not temporary(text)
             and not names_a_time(text))
-
-
-def stops_telling(note: str) -> bool:
-    """A timeless deferral that is an instruction to stop being told about
-    it (`_STOP_TELLING_RE`), not "I'm aware", "I'll deal with it" or "it's
-    on my list" alone."""
-    text = str(note or "")
-    return (held_until_changed(text) and not until_it_changes(text)
-            and bool(_STOP_TELLING_RE.search(text)))
-
-
-def until_it_changes(note: str) -> bool:
-    """Whether a reason names the hold in the household's own words: "until
-    it changes", "unless it gets worse"."""
-    return bool(_UNTIL_CHANGE_RE.search(str(note or "")))
 
 
 def named_time_days(note: str, today: dt.date | None = None, *,
@@ -1091,16 +1036,6 @@ def conditional_confirmation(entity_name: str = "", *,
             "doesn't.")
 
 
-def quoted_from(quote: str, note: str) -> bool:
-    """Whether ``quote`` is the household's own words: three words or more,
-    found in ``note`` with case, spacing and punctuation folded."""
-    def fold(text: str) -> str:
-        return " ".join(re.sub(r"[^\w\s]", " ", str(text or "").lower())
-                        .split())
-    q = fold(quote)
-    return len(q.split()) >= 3 and q in fold(note)
-
-
 def plan(reply: dict | None, finding: dict, *, today: dt.date | None = None,
          area_id: str = "", device_class: str = "", protected=(),
          southern: bool = False, note: str = "") -> dict:
@@ -1137,16 +1072,7 @@ def plan(reply: dict | None, finding: dict, *, today: dt.date | None = None,
                    "widened past this report")
     resume = resume_date(reply, today, southern=southern)
     reason = " ".join(str(reply.get("reason") or "").split())[:MAX_REASON]
-    placement = str(reply.get("placement") or "")
-    quote = " ".join(str(reply.get("placement_quote") or "").split())
-    if (placement not in PLACEMENTS or not entity_id
-            or not quoted_from(quote, note)):
-        # A placement stands only on the household's own words, found in
-        # what they wrote (#1476): the model may not infer one.
-        placement, quote = "", ""
     return {
-        "placement": placement,
-        "placement_quote": quote,
         "scope": scope,
         "resume": resume.isoformat() if resume else "",
         "expires": expires_for(resume),
