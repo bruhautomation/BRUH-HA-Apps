@@ -159,7 +159,7 @@ BRUH-HA-Apps/
 │   ├── integrations/            # HA integrations (add-on side)
 │   │   ├── assist-worker-pool.py  # Fast mode: pre-warmed persistent Claude workers (default)
 │   │   ├── assist-listener.sh   # Classic conversation listener (assist_fast_mode: false)
-│   │   └── automation-listener.sh # Task request file watcher
+│   │   └── automation-listener.sh # Task request file watcher; liveness mark in /config/.brain/cache/automation_listener.json
 │   └── custom_components/       # HA custom integration (deployed at runtime)
 │       └── brain/morph/         # Morph's panel half: the shell panel (frontend/shell.js), the
 │                                #   websocket API (morph/*, brain/shell), static views, frontend/;
