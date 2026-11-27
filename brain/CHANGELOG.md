@@ -2,6 +2,31 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.34
+
+### Changed
+
+- Marking a finding Wrong with "don't remind me again", "stop telling me about this" or "it's not in use" now makes a lasting rule for that thing and that check (Recall shows it, and the rest of the same device stops too), and brAIn says back in one line what it understood ("Got it — brAIn won't raise this about <name> again"). "Until it changes" still holds it only until it changes, and safety and security reports are never silenced this way (1479).
+- Saying where a sensor sits in a Wrong reason ("it's inside a cabinet", "it's outdoors", "that room isn't heated") is kept as a house fact: heat-loss, window and humidity checks skip or reword the claim for that sensor or room, and the room's physics says when its outside reference is a forecast rather than a sensor (1476).
+- Every house check held back by its own record of Wrong answers shows a line in Diagnostics saying so, and while it is held it raises a thing once rather than again and again; for device checks (frozen, battery, unavailable) one Wrong covers the whole device (1477).
+- brAIn's "you marked its last reports wrong" hold now counts only reports about the same thing or the same kind of reading, so Wrongs about one sensor no longer hold back a freezer warning; the hold says how to lift it (1478).
+
+## 5.5.33
+
+### Fixed
+
+- When deciding whether to watch something more closely, brAIn now weighs your recent answers over old ones: Wrongs from months ago no longer outvote misses you confirmed since, and recent Wrongs on reports it raised still keep it from getting louder (1488).
+
+## 5.5.32
+
+### Added
+
+- When brAIn's usage is spent and its closer looks are held, a simple rule still watches what matters most without spending anything: a freezer or fridge warmer than it is kept and past its limit (in °C or °F), a lock that says jammed, an alarm that says triggered. What it finds goes on the list and is announced, and once a day a short note says the closer look was skipped and why. It only reports; it never acts (1475).
+
+### Fixed
+
+- The morning brief no longer falls back to 7:00 in a house whose wake-ups fall into two or three different patterns (early days and late days mixed through the week): brAIn finds each pattern and uses the earliest, with its spread. A house with one pattern is unchanged (1472).
+
 ## 5.5.31
 
 ### Fixed

@@ -792,6 +792,7 @@ def _blank() -> dict:
             "wrong": 0, "missed": 0, "passed_ok": 0, "undone": 0,
             "cleared": 0, "stood": 0, "pending": 0, "flags": [],
             "last_confirmed_at": 0, "last_wrong_at": 0,
+            "recent_wrong": 0, "recent_missed": 0,
             "whys": [], "notes": []}
 
 
@@ -807,6 +808,8 @@ def tallies(graded_items: list[dict],
     # Each tally's flags as a set while counting, sorted once at the end:
     # the same sorted union, without re-sorting it once per item.
     flags: dict[int, tuple[dict, set]] = {}
+    # When each Wrong on a raise and each miss ended, for `recent_*`.
+    stamps: dict[int, tuple[list, list]] = {}
     for it in graded_items:
         klass, outcome = it.get("class"), it.get("outcome")
         for scope in only:
@@ -818,6 +821,7 @@ def tallies(graded_items: list[dict],
             if t is None:
                 t = table[str(name)] = _blank()
                 flags[id(t)] = (t, set())
+                stamps[id(t)] = ([], [])
             t["items"] += 1
             ended = int(it.get("ended_at") or 0)
             if klass == "surfaced":
@@ -826,10 +830,13 @@ def tallies(graded_items: list[dict],
                     t[outcome] += 1
                     stamp = f"last_{outcome}_at"
                     t[stamp] = max(t[stamp], ended)
+                    if outcome == "wrong":
+                        stamps[id(t)][0].append(ended)
             elif klass == "dismissed":
                 t["dismissed"] += 1
                 if it.get("agree") is False:
                     t["missed"] += 1
+                    stamps[id(t)][1].append(ended)
                     # Something passed over turned out to matter, which is
                     # a confirmation of the scope as much as a Done is.
                     t["last_confirmed_at"] = max(t["last_confirmed_at"], ended)
@@ -847,6 +854,14 @@ def tallies(graded_items: list[dict],
                 t["notes"] = (t["notes"] + [str(it["note"])[:MAX_NOTE]])[-5:]
     for t, seen in flags.values():
         t["flags"] = sorted(seen)
+        # The Wrongs and misses inside a judgement's lifetime of the
+        # newest answer on the scope: what the household says now, not
+        # what it said months ago (`_louder`).
+        since = (max(t["last_wrong_at"], t["last_confirmed_at"])
+                 - JUDGEMENT_TTL_DAYS * 86400)
+        wrongs, misses = stamps[id(t)]
+        t["recent_wrong"] = sum(1 for at in wrongs if at >= since)
+        t["recent_missed"] = sum(1 for at in misses if at >= since)
     return scopes
 
 
@@ -1416,12 +1431,16 @@ def _louder(t: dict) -> str:
     LOUD way (`LOUD_MIN`, `LOUD_SHARE`), else "". One test for the nightly
     candidate and the look's floor, so the two cannot disagree.
 
-    Never while the household marks Wrong at least as many of the reports
-    that RAISED this scope as there were misses: a subject raised and
+    Never while, within a judgement's lifetime of the newest answer on the
+    scope (`recent_*`), the household marked Wrong at least as many of the
+    reports that RAISED it as there were misses: a subject raised and
     answered Wrong again and again is one brAIn is too loud about, whatever
-    a confirmation elsewhere made of the few it passed over."""
+    a confirmation elsewhere made of the few it passed over. Wrongs from
+    long before later confirmed misses do not hold it down: the household
+    has since said otherwise."""
     passed = t["missed"] + t["passed_ok"] + t["stood"]
-    if t["wrong"] >= t["missed"]:
+    recent_wrong = t.get("recent_wrong", t["wrong"])
+    if recent_wrong and recent_wrong >= t.get("recent_missed", t["missed"]):
         return ""
     if t["missed"] >= LOUD_MIN and passed and t["missed"] / passed >= LOUD_SHARE:
         return f"{t['missed']} of {passed} it passed over turned out to matter"
