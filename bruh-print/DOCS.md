@@ -801,7 +801,7 @@ neither command, leaving the printer exactly where it was before any of this.
 **"Check paper and lid" says it cannot be asked.** That is about the add-on, not
 the printer: this LabelWriter's interface exposes no bulk IN endpoint, so
 there is nothing to read a reply from. Printing is unaffected — a
-unidirectional printer prints perfectly well. Press **USB details** to see
+unidirectional printer prints perfectly well. Press **Show connection info** to see
 which interfaces and endpoints it does expose.
 
 **"Check paper and lid" says it did not answer.** That one is about the printer,

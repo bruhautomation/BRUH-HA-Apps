@@ -1849,31 +1849,7 @@ document.querySelectorAll('.psec').forEach((d) => {
  * Setting a count is what turns counting on. */
 function countBlock(roll, stock) {
   const counting = S.settings.track_remaining !== false && roll.remaining > 0;
-  const gauge = el('button', 'remaining' + (roll.low ? ' low' : ''));
-  if (counting) {
-    /* The bar is a control, not a readout. The count is an estimate that
-     * drifts the moment somebody prints from another machine or throws
-     * half a roll away, so the fix has to be where the wrong number is —
-     * press the bar, type the truth. */
-    const full = stock.per_roll || roll.remaining || 1;
-    const bar = el('div', 'bar');
-    const fillEl = el('i');
-    fillEl.style.width = clamp(roll.remaining / full * 100, 0, 100) + '%';
-    bar.append(fillEl);
-    gauge.append(bar, el('span', 'est', `About ${roll.remaining} left`
-      + (roll.low ? ' \u2014 running low' : '') + ' \u2014 press to correct'));
-    gauge.setAttribute('data-tip',
-      'An estimate, counted down from what you set when you loaded the '
-      + 'roll — nothing on a LabelWriter reports the real level. Press to '
-      + 'correct it.');
-  } else {
-    gauge.append(el('span', 'est',
-      'Not counting yet \u2014 tell me how many are on it'));
-    gauge.setAttribute('data-tip',
-      'BRUH Print counts down from the number you give, so you can see when '
-      + 'a roll is running low. The printer itself cannot tell.');
-  }
-  gauge.onclick = async () => {
+  const ask = async () => {
     const typed = prompt(
       `How many ${stock.name} labels are on the ${roll.side} roll?`,
       String(counting ? roll.remaining : (stock.per_roll || '')));
@@ -1890,7 +1866,38 @@ function countBlock(roll, stock) {
       toast(`The ${roll.side} roll: about ${Math.round(count)} left.`, 'good');
     } catch (error) { fail(error); }
   };
-  if (!counting || !stock.per_roll) return [gauge];
+  if (!counting) {
+    /* A roll with no count has no bar to press, so the control is a plain
+     * button named for what it does (#1448): a 12px caption that said
+     * "tell me how many are on it" was a 28px target that did not read as
+     * one. The line beside it says why there is no number. */
+    const row = el('div', 'btnline');
+    const set = el('button', 'btn', 'Set labels left');
+    set.setAttribute('data-tip',
+      'BRUH Print counts down from the number you give, so you can see when '
+      + 'a roll is running low. The printer itself cannot tell.');
+    set.onclick = ask;
+    row.append(set, el('span', 'est', 'Not counted yet'));
+    return [row];
+  }
+  /* The bar is a control, not a readout. The count is an estimate that
+   * drifts the moment somebody prints from another machine or throws
+   * half a roll away, so the fix has to be where the wrong number is —
+   * press the bar, type the truth. */
+  const gauge = el('button', 'remaining' + (roll.low ? ' low' : ''));
+  const full = stock.per_roll || roll.remaining || 1;
+  const bar = el('div', 'bar');
+  const fillEl = el('i');
+  fillEl.style.width = clamp(roll.remaining / full * 100, 0, 100) + '%';
+  bar.append(fillEl);
+  gauge.append(bar, el('span', 'est', `About ${roll.remaining} left`
+    + (roll.low ? ' \u2014 running low' : '') + ' \u2014 press to correct'));
+  gauge.setAttribute('data-tip',
+    'An estimate, counted down from what you set when you loaded the '
+    + 'roll — nothing on a LabelWriter reports the real level. Press to '
+    + 'correct it.');
+  gauge.onclick = ask;
+  if (!stock.per_roll) return [gauge];
   const reset = el('button', 'btn tiny', 'Full roll');
   reset.setAttribute('data-tip',
     `Put the count back to a full roll of ${stock.per_roll} — `
@@ -1924,10 +1931,12 @@ function renderPrinter() {
   for (const printer of S.printers) {
     const card = el('div', 'card' + (S.printer?.key === printer.key ? ' sel' : ''));
     card.append(el('h3', null, printer.name));
-    card.append(el('div', 'sub',
-      `${printer.dots} dots across (${printer.printable_in}"), ${printer.dpi}dpi`
-      + (printer.twin ? ' · two rolls' : ' · one roll')
-      + (printer.serial ? ` · ${printer.serial}` : '')));
+    /* The card says what a person chooses by: one roll or two, and the
+     * serial only when there is another printer to tell this one from.
+     * Dots and resolution are connection facts (#1446), so they live in
+     * Show connection info with the descriptors. */
+    card.append(el('div', 'sub', (printer.twin ? 'Two rolls' : 'One roll')
+      + (S.printers.length > 1 && printer.serial ? ` · ${printer.serial}` : '')));
     if (!printer.recognised)
       card.append(el('div', 'sub',
         'Not a model BRUH Print knows by name, so it is being driven as a '
@@ -1940,18 +1949,12 @@ function renderPrinter() {
     const mine = S.printer?.key === printer.key;
     /* The printer that is printing has a STATUS LINE, not a word in a row
      * of buttons (#1280): "Idle" beside two buttons read as a third one.
-     * What the printer last said about paper and lid joins that line once
-     * somebody asks, so the button is plainly the thing that asks and the
-     * line is plainly the answer. Another printer gets the button that
-     * moves printing to it, and nothing else: both questions below go to
-     * the printer in use, whichever card they sit on. */
-    if (mine) {
-      const said = statusAsked.get(printer.key);
-      const line = el('p', 'pstatus' + (printsOpen ? ' busy' : ''));
-      line.append(el('b', 'pstate', printsOpen ? 'Printing now' : 'Idle'));
-      if (said) line.append(` \u00b7 paper and lid: ${said.status} (asked ${said.at})`);
-      card.append(line);
-    } else {
+     * Each of its two buttons is named for what it returns and has one
+     * line beside it (#1446): what it will do until it has been pressed,
+     * then what it found. Another printer gets the button that moves
+     * printing to it, and nothing else: both questions below go to the
+     * printer in use, whichever card they sit on. */
+    if (!mine) {
       const use = el('button', 'btn tiny', 'Use this one');
       use.setAttribute('data-tip',
         'Send every print to this printer instead. Remembered by serial, so '
@@ -1965,10 +1968,12 @@ function renderPrinter() {
       cards.append(card);
       continue;
     }
-    const status = el('button', 'btn tiny', 'Ask about paper and lid');
-    status.setAttribute('data-tip',
-      'Asks the printer whether it is out of labels, has its lid open, or is '
-      + 'busy. It prints nothing; the answer goes on the line above.');
+    const line = el('p', 'pstatus' + (printsOpen ? ' busy' : ''));
+    line.append(el('b', 'pstate', printsOpen ? 'Printing now' : 'Idle'));
+    card.append(line);
+
+    const said = statusAsked.get(printer.key);
+    const status = el('button', 'btn', 'Check paper and lid');
     status.onclick = async () => {
       try {
         const data = await api('/api/printer/status');
@@ -1977,20 +1982,25 @@ function renderPrinter() {
         renderPrinter();
       } catch (error) { fail(error); }
     };
+    const statusRow = el('div', 'btnline');
+    statusRow.append(status, el('span', 'est', said
+      ? `Paper and lid: ${said.status} (checked ${said.at})`
+      : 'Asks whether it has labels and its lid is shut. Prints nothing.'));
+
     /* The descriptors, on a button. This add-on has been debugged twice by
      * somebody standing at the printer reading a panel that could not say
      * what it had found — and the descriptors are always readable even when
      * the printer answers nothing. */
-    const usb = el('button', 'btn tiny', 'USB details');
-    usb.setAttribute('data-tip',
-      'Which interfaces and endpoints this printer exposes, and which one '
-      + 'BRUH Print is using. Worth copying into a bug report.');
+    const usb = el('button', 'btn', 'Show connection info');
     usb.onclick = async () => {
       try {
         const data = await api('/api/printer/usb');
         const body = $('modalBody');
         body.innerHTML = '';
-        body.append(el('h3', null, 'USB details'));
+        body.append(el('h3', null, 'Connection info'));
+        body.append(el('p', 'lede',
+          `${printer.dots} dots across (${printer.printable_in}"), ${printer.dpi}dpi`
+          + (printer.serial ? ` · serial ${printer.serial}` : '')));
         body.append(el('p', 'lede', data.using || ''));
         body.append(el('p', 'lede', `Status: ${data.status}`));
         const pre = el('pre', 'usbdump');
@@ -2007,11 +2017,13 @@ function renderPrinter() {
         $('modal').showModal();
       } catch (error) { fail(error); }
     };
-    /* Two buttons, both about the PRINTER. Lining a roll up is about a
+    const usbRow = el('div', 'btnline');
+    usbRow.append(usb, el('span', 'est',
+      'Resolution, serial and USB endpoints, for a bug report.'));
+    /* Two questions, both about the PRINTER. Lining a roll up is about a
      * roll, and a roll lives in a bay — so it is a control on the bay below
      * rather than a third button here that has to ask which one you meant. */
-    foot.append(status, usb);
-    card.append(foot);
+    card.append(statusRow, usbRow);
     cards.append(card);
   }
 
