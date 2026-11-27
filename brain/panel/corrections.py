@@ -848,12 +848,23 @@ def strict_floor(entity_id: str = "", source: str = "", *,
 # left alone when that is all it says, and a statement when a fault
 # follows it ("I'm aware, the pump is leaking", `_FAULT_RE`): the second
 # tells brAIn what is wrong, and asks for nothing.
-_ASKS_QUIET_RE = re.compile(
-    r"\b(?:(?:don'?t|do not|stop|quit|no need to|please don'?t|no more)\s+"
+# The branch that is an instruction to stop being told ("don't remind me",
+# "stop telling me about this", "no more reminders about it"), apart from
+# the ones that only say the person has it in hand ("I'll deal with it",
+# "it's on my list") or knows (`_AWARE_RE`). Only this one, with no time
+# named, is the pair rule on a house check's row (`stops_telling`, #1479):
+# the others stay holds that lift when the report changes, because "I'll
+# replace it" is a promise about the device, not a wish never to hear of
+# it again.
+_STOP_TELLING = (
+    r"(?:don'?t|do not|stop|quit|no need to|please don'?t|no more)\s+"
     r"(?:\w+\s+){0,2}?(?:remind(?:ing)?|nag(?:ging)?|bother(?:ing)?|"
     r"bring(?:ing)? (?:\w+\s+){0,3}?up|mention(?:ing)?|"
     r"flag(?:ging)?|tell(?:ing)? me about|"
-    r"rais(?:e|ing) (?:this|it|that|these)|ask(?:ing)? me about)"
+    r"rais(?:e|ing) (?:this|it|that|these)|ask(?:ing)? me about)")
+_STOP_TELLING_RE = re.compile(r"\b" + _STOP_TELLING + r"\b", re.I)
+_ASKS_QUIET_RE = re.compile(
+    r"\b(?:" + _STOP_TELLING +
     r"|(?:on|in) (?:my|our|the) (?:to[- ]?do|todo|task) list|"
     r"already (?:on|in) (?:my|our) (?:list|plan)|"
     r"i'?ll (?:deal with|handle|take care of|sort) (?:it|this|that)|"
@@ -979,6 +990,15 @@ def held_until_changed(note: str) -> bool:
     text = str(note or "")
     return (deferral(text) and not temporary(text)
             and not names_a_time(text))
+
+
+def stops_telling(note: str) -> bool:
+    """A timeless deferral that is an instruction to stop being told about
+    it (`_STOP_TELLING_RE`), not "I'm aware", "I'll deal with it" or "it's
+    on my list" alone."""
+    text = str(note or "")
+    return (held_until_changed(text) and not until_it_changes(text)
+            and bool(_STOP_TELLING_RE.search(text)))
 
 
 def until_it_changes(note: str) -> bool:

@@ -23566,9 +23566,11 @@ def _for_now(finding: dict, spec: dict, note: str) -> bool:
 
 
 def _asks_to_stop(finding: dict, note: str) -> bool:
-    """A Wrong on a house check's row about one thing whose reason asks not
-    to be told about it again, naming no time ("don't remind me again",
-    "stop telling me about this", `corrections.held_until_changed`).
+    """A Wrong on a house check's row about one thing whose reason tells
+    brAIn to stop telling them about it, naming no time ("don't remind me
+    again", "stop telling me about this", `corrections.stops_telling`).
+    "I'm aware", "I'll deal with it" and "it's on my list" are promises or
+    acknowledgements, not that instruction, and stay holds.
 
     It used to be a hold that lifted when the report changed or went away
     for three days, wrote no rule and covered no other entity of the
@@ -23585,8 +23587,7 @@ def _asks_to_stop(finding: dict, note: str) -> bool:
     source = str(finding.get("source") or "")
     if (not source.startswith("check:") or not rule_record.quietable(source)
             or str(finding.get("severity") or "") == "critical"
-            or not corrections.held_until_changed(note)
-            or corrections.until_it_changes(note)):
+            or not corrections.stops_telling(note)):
         return False
     eid = str(finding.get("entity_id") or "")
     if not eid and not findings_store.clean_items(finding.get("items")):
@@ -24182,19 +24183,29 @@ def _cannot_mark_room_air(finding: dict) -> str:
     return ""
 
 
-def _mark_not_room_air(finding: dict) -> dict:
-    """Write the mark. ``{"ok", "id", "name"}`` or ``{"error"}``."""
+def _mark_not_room_air(finding: dict, *, placed: bool = False) -> dict:
+    """Write the mark. ``{"ok", "id", "name"}`` or ``{"error"}``.
+
+    ``placed`` is the second look's reading of a reason (#1476), written
+    as `ROOM_AIR_SAID_RULE`: it leaves the sensor out of the heat model and
+    the room-physics checks only, never the freeze check, the frost warning
+    or `base.unusual` — a probe said to be "in a box" may be a pipe's or a
+    freezer's, and only the owner's own tick takes it out of those."""
     why = _cannot_mark_room_air(finding)
     if why:
         return {"error": why}
     eid = str(finding.get("entity_id") or "")
     name = str((_NAMES.get(eid) or {}).get("name") or "") or eid
+    rule = (checks._util.ROOM_AIR_SAID_RULE if placed
+            else checks._util.ROOM_AIR_RULE)
     try:
         row, _created = facts_store.add(
             f"{name} does not measure the air of the room it is in: brAIn "
-            "leaves it out of room temperature and heat judgments",
+            + ("leaves it out of room heat judgments, and still watches it "
+               "for freezing" if placed else
+               "leaves it out of room temperature and heat judgments"),
             subject=eid, source="correction",
-            predicate=facts_store.EXCEPTION_PREFIX + checks._util.ROOM_AIR_RULE,
+            predicate=facts_store.EXCEPTION_PREFIX + rule,
             confidence=0.95,
             about=str(finding.get("claim") or finding.get("text") or ""),
             finding_key=findings_store.normalize(finding.get("text") or ""))
@@ -24204,9 +24215,11 @@ def _mark_not_room_air(finding: dict) -> dict:
     if not row:
         return {"error": "brAIn could not write that down"}
     decision_trail.note(
-        "exception", eid, "you said it does not measure the room's air: the "
+        "exception", eid, "you said where it sits: the heat model and the "
+        "room heat checks leave it out; the freeze check still reads it"
+        if placed else "you said it does not measure the room's air: the "
         "heat model, the climate checks, the frost warning and the unusual-"
-        "reading check leave it out", check=checks._util.ROOM_AIR_RULE,
+        "reading check leave it out", check=rule,
         source=str(finding.get("source") or ""),
         text=str(finding.get("text") or ""))
     return {"ok": True, "id": row["id"], "name": name}
@@ -26781,7 +26794,7 @@ def _record_placement(the_plan: dict, finding: dict, note: str, *,
     name = str((_NAMES.get(eid) or {}).get("name") or "") or "it"
     try:
         if placement in ("enclosed", "outdoors"):
-            got = _mark_not_room_air(finding)
+            got = _mark_not_room_air(finding, placed=True)
             if got.get("ok"):
                 out["ids"].append(got["id"])
                 out["said"] = (f"brAIn no longer reads {name} as a room's "

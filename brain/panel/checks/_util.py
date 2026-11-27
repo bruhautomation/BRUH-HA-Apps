@@ -464,6 +464,14 @@ ROOM_AIR_RULE = "room_air"
 # fact on `area:<id>`, which `checks.thermal.unconditioned_from` reads as a
 # room nothing heats. Like `ROOM_AIR_RULE`, no check has this id.
 UNHEATED_RULE = "unheated"
+# Where the correction's second look read, out of a Wrong's reason, that a
+# thermometer sits (inside a box, outdoors; #1476): kept apart from the
+# owner's own tick (`ROOM_AIR_RULE`) because a model read it. It takes the
+# sensor out of the heat model and the room-physics checks (verdict
+# `placed`), and NOT out of anything about cold or food: `climate.freeze`,
+# the frost warning and `base.unusual` read the probe as before, since a
+# probe "in a box" may be a pipe's or a freezer's.
+ROOM_AIR_SAID_RULE = "room_air_said"
 
 
 class House:
@@ -577,6 +585,10 @@ class House:
             return "marked", "you said it does not measure the room's air"
         if self.said_broken(entity_id):
             return "broken", "you said this sensor is broken"
+        if isinstance(table, dict) and ROOM_AIR_SAID_RULE in (
+                table.get(entity_id) or ()):
+            return "placed", ("you said where it sits, so it does not "
+                              "measure the room's air")
         left = (((self.snap.get("thermal") or {}).get("unmeasured") or {})
                 .get(entity_id))
         if isinstance(left, dict) and left.get("kind") in ("not_air", "held"):

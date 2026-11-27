@@ -1461,10 +1461,12 @@ def marked_not_air() -> frozenset:
     checks read the same mark live, so a missed one here is one night."""
     try:
         import facts_store  # noqa: PLC0415 — panel-local
-        from checks._util import ROOM_AIR_RULE  # noqa: PLC0415
+        from checks._util import (  # noqa: PLC0415
+            ROOM_AIR_RULE, ROOM_AIR_SAID_RULE)
         return frozenset(eid for eid, rules in
                          facts_store.exception_map().items()
-                         if ROOM_AIR_RULE in rules)
+                         if ROOM_AIR_RULE in rules
+                         or ROOM_AIR_SAID_RULE in rules)
     except Exception as exc:  # noqa: BLE001
         log.debug("thermal: could not read the room-air marks: %s", exc)
         return frozenset()

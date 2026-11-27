@@ -189,7 +189,7 @@ def _room_air(house: House, rooms: dict, check_id: str) -> dict:
     out = {}
     for eid, entry in rooms.items():
         kind, said = house.room_air_verdict(eid)
-        if kind in ("marked", "not_air", "broken"):
+        if kind in ("marked", "not_air", "broken", "placed"):
             house.gave_up(check_id, [{"entity_id": eid}],
                           f"{said}, so it is not read as a room",
                           kind="explained")
@@ -1097,7 +1097,9 @@ def _frost_kind(house: House, eid: str, conditioned: set[str],
         # those is not named. One the model merely lacked nights for still
         # counts — a cold garage is exactly what this warns about.
         kind, said = house.room_air_verdict(eid)
-        if kind:
+        # A placement a model read off a reason is no reason to stop
+        # warning about a cold space (`ROOM_AIR_SAID_RULE`).
+        if kind and kind != "placed":
             house.gave_up(FROST_CHECK, [{"entity_id": eid}],
                           f"{said}, so it is not evidence of a space that "
                           "gets cold", kind="explained")
