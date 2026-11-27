@@ -487,15 +487,16 @@ def _why_looks_waited(runs, resident) -> str:
     parts = []
     if limited:
         parts.append(f"The account's usage limit refused {limited} of "
-                     "brAIn's checks in the last day; the rows are checked "
-                     "once it lifts.")
+                     "brAIn's checks in the last day; those findings are "
+                     "checked once it lifts.")
     if failed:
         parts.append(f"{failed} of its runs failed.")
     if said:
         parts.append(f"brAIn's checks last said: {said[:140]}.")
     if not parts:
-        parts.append("Each check that fails puts its rows back for the next "
-                     "one, so this is checks failing or paused, not a row lost.")
+        parts.append("A finding brAIn could not finish checking is checked "
+                     "again next time, so nothing is lost: brAIn's checks "
+                     "are failing or paused.")
     return " ".join(parts)
 
 
@@ -1091,7 +1092,7 @@ def _faults(diag) -> list[dict]:
                 # aside unless one carries fresh evidence. A mute is still
                 # the person's, and the row says how.
                 detail = ("this rule is often wrong about this house; brAIn "
-                          "now holds its rows back unless one carries fresh "
+                          "now shows its reports only when one brings fresh "
                           "evidence, and muting it stays your choice")
                 ask = ("brAIn has asked on Needs you whether to stop raising "
                        "these; answer it there to stop it altogether"
@@ -1099,8 +1100,9 @@ def _faults(diag) -> list[dict]:
                        "To stop it altogether, Ignore one of its cards with "
                        "“Ignore all like this” ticked")
                 sentence = _sentence(
-                    f"{record}, so brAIn now holds this rule's cards back "
-                    "unless one carries fresh, specific evidence", ask)
+                    f"{record}, so brAIn now shows its reports only when one "
+                    "brings fresh, specific evidence; the rest wait in "
+                    "History under Set aside by brAIn", ask)
             elif source in offered:
                 sentence = _sentence(
                     f"{record}. brAIn has asked on Needs you whether to "

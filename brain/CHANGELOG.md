@@ -2,6 +2,40 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.32
+
+### Added
+
+- When brAIn's usage is spent and its closer looks are held, a simple rule still watches what matters most without spending anything: a freezer or fridge warmer than it is kept and past its limit (in °C or °F), a lock that says jammed, an alarm that says triggered. What it finds goes on the list and is announced, and once a day a short note says the closer look was skipped and why. It only reports; it never acts (1475).
+
+### Fixed
+
+- The morning brief no longer falls back to 7:00 in a house whose wake-ups fall into two or three different patterns (early days and late days mixed through the week): brAIn finds each pattern and uses the earliest, with its spread. A house with one pattern is unchanged (1472).
+
+## 5.5.31
+
+### Fixed
+
+- Text shown to the household no longer carries brAIn's internal check names (`check:…`) or talk of holding rows: a check is named in words ("brAIn's “never fired” check") with its name under Details, on every surface — Needs you, cases, Morph, the Home Assistant mirror, notifications, insight cards. An automation-not-reporting finding names the automations and the sensors it saw, and a quiet card leads with one plain verdict ("All fine: …") (1480).
+- A temperature from a sensor that reports in °F is no longer read as °C: every reading and every line it is compared with carries its unit, in °C or °F as the house uses, and brAIn's look is told to keep them in one unit (1471).
+- A sensor brAIn kept raising, and that you kept marking Wrong, was counted as one brAIn "passed over" and pushed louder. Raised-then-wrong now counts as too loud, a Wrong on a raised report outweighs a miss before anything is made louder, and brAIn's look is no longer handed its own counts as a reason (1473).
+
+## 5.5.30
+
+### Fixed
+
+- With the dashboard on, when brAIn's own page does not load under it (brAIn stopped or restarting, an error in the frame, or its address not known yet), the Home tab no longer shows Morph alone with the tabs gone and no word why. A bar in the header's place says brAIn's page is not answering, with **Try again** and **Open brAIn** (and a menu button on a phone to reach Home Assistant's sidebar); it goes away as soon as brAIn's header comes back (1487).
+
+## 5.5.29
+
+### Changed
+
+- Morph no longer suggests moving a card or section because of how often it is tapped: a move is offered only when it follows one of Morph's layout rules or something you asked for, and Morph says which in plain words. Suggestions to trim a group of controls to the ones pressed most are gone too, and suggestions already open on tap counts alone are withdrawn (1481).
+
+### Fixed
+
+- When a card asks brAIn for words about its readings, Morph first checks whether a sensor looks dead (unavailable, dropped straight to 0, stuck at 0 or 100% for a day, or at 0 or 100% beside a low battery) and tells brAIn not to quote it but to say the probe looks offline or needs a battery. Morph's card rules say the same, so brAIn offers to check this house's own cards (1468).
+
 ## 5.5.28
 
 ### Changed

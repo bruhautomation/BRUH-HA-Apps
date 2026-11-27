@@ -1539,9 +1539,15 @@ def trigger_unavailable(snap: dict, now: float) -> list[dict]:
         names = sorted(broken)
         said = [f"{house.label(e)} has been unavailable for "
                 f"{_days(broken[e])}" for e in names]
+        quiet = join_names([house.label(e) for e in names])
         out.append({
             "text": f"{_label('Automation', item)} is triggered by an "
                     "entity that is not reporting",
+            # What it saw, by name (#1480): the text above is the key the
+            # row is filed under and stays; the card says which.
+            "headline": f"{_label('Automation', item)} cannot fire: "
+                        f"{quiet} {'is' if len(names) == 1 else 'are'} "
+                        "not reporting",
             "detail": _sentence(join_names(said) + ", so this automation "
                                 "cannot fire. It is switched on, so nothing "
                                 "else will tell you."),

@@ -152,6 +152,7 @@ import automation_writer
 import baselines
 import brain_status
 import brief
+import budget_lane
 import capture
 import devloop
 import devloop.github
@@ -6543,7 +6544,7 @@ async def _generate(insight_id: str) -> None:
             # "It is idle" about a machine an automation starts on a
             # threshold its sensor is not past: the rule working (#558).
             waits = resident.not_due(f, _DRIVEN_BY, _live_reading,
-                                     _DRIVEN_ALIASES)
+                                     _DRIVEN_ALIASES, unit_of=_live_unit)
             if waits:
                 log.info("%s: dropping a finding about a machine that is "
                          "not due to run: %s", insight_id, waits)
@@ -7765,9 +7766,11 @@ async def _judge_look(row: dict, day: int, now: float
                             or "the check could not run")[:300], "check")
             keys = {findings_store.normalize(f["text"])
                     for f in result["findings"]}
+            # Said in words (#1480): this line is shown on the change it
+            # follows up, and the check's id is nobody's word for it.
             if row.get("finding_key") in keys:
-                return "regressed", f"{check_id} reports it again", "check"
-            return "held", f"{check_id} no longer reports it", "check"
+                return "regressed", "brAIn's check reports it again", "check"
+            return "held", "brAIn's check no longer reports it", "check"
     # Nothing deterministic can say: a cheap look, gated like every
     # scheduled run, and "could not check" if the gates hold it too long.
     why = _resident_gate(settings_store.load())
@@ -10635,6 +10638,12 @@ def _insights_listing() -> list[dict]:
             if isinstance(ins.get(key), str):
                 ins[key] = findings_store.plain_said(ins[key],
                                                      step=key == "next")
+        # A quiet card is shown in the "All quiet" list with no chip, so the
+        # list's line says what is fine (#1480), off the card's fields. Its
+        # own field: the opened card keeps its summary under its one chip.
+        if ins.get("quiet"):
+            ins["quiet_why"] = card_verdict.quiet_line(
+                ins, str(ins.get("verdict") or ""))
         # The heading an asked card carries in place of "Custom". A
         # category card is headed by its category, which the panel
         # reads live off the definition so a rename shows at once.
@@ -14161,7 +14170,7 @@ def _device_map(snapshot: dict) -> tuple[dict[str, str], dict[str, dict]]:
         what = eid.split(".", 1)[0] + (f" ({klass})" if klass else "")
         state = str(st.get("state") or "")
         unit = str(attrs.get("unit_of_measurement") or "")
-        entry["members"].append((eid, what, f"{state} {unit}".strip()
+        entry["members"].append((eid, what, numfmt.reading(state, unit)
                                  if state else ""))
     return device_of, devices
 
@@ -14223,6 +14232,9 @@ _DRIVEN_ALIASES: dict[str, str] = {}
 # answered without a fetch. A sensor nobody has read is absent, and absent
 # never holds a claim (`resident.not_due`).
 _LIVE_READINGS: dict[str, float | None] = {}
+# ...and the unit each reports in (`unit_of_measurement`), so a reading is
+# never handed to a model as a bare number (#1471).
+_LIVE_UNITS: dict[str, str] = {}
 # What each automation's actions do to an entity (`house_book.operated_by`),
 # for a question to the owner an automation already answers (#561).
 _OPERATED: dict[str, list[dict]] = {}
@@ -14456,16 +14468,29 @@ def _note_live_readings(snapshot: dict, driven: dict) -> None:
     _LIVE_READINGS.clear()
     _LIVE_READINGS.update({e: _as_number(house.states.get(e))
                            for e in sorted(watched)})
+    _LIVE_UNITS.clear()
+    _LIVE_UNITS.update({e: _unit_of(house.states.get(e))
+                        for e in sorted(watched)})
+
+
+def _unit_of(state) -> str:
+    attrs = (state or {}).get("attributes") if isinstance(state, dict) else {}
+    return str((attrs or {}).get("unit_of_measurement") or "")
 
 
 def _note_live_reading(entity: str, new_state) -> None:
     """The bus's half: keep a watched reading current."""
     if entity in _LIVE_READINGS:
         _LIVE_READINGS[entity] = _as_number(new_state)
+        _LIVE_UNITS[entity] = _unit_of(new_state) or _LIVE_UNITS.get(entity, "")
 
 
 def _live_reading(entity: str) -> float | None:
     return _LIVE_READINGS.get(entity)
+
+
+def _live_unit(entity: str) -> str:
+    return _LIVE_UNITS.get(entity, "")
 
 
 # The keys of a trigger that say WHEN it fires, beside the entity it reads.
@@ -14474,7 +14499,13 @@ _TRIGGER_TERMS = ("above", "below", "to", "from", "for", "at")
 
 def _trigger_words(house: House, trig: dict) -> str:
     kind = shadow.kind_of(trig) or "trigger"
-    names = sorted(house.label(e) for e in house.entity_refs(trig))
+    refs = list(house.entity_refs(trig))
+    names = sorted(house.label(e) for e in refs)
+    # A numeric bound is in the unit its sensor reports (#1471): said with
+    # that unit, in the house's, never as a bare number a reader takes for
+    # another. One unit across the trigger's entities, or none is said.
+    units = {_unit_of(house.states.get(e)) for e in refs}
+    unit = units.pop() if len(units) == 1 and not trig.get("attribute") else ""
     terms = []
     for key in _TRIGGER_TERMS:
         value = trig.get(key)
@@ -14482,6 +14513,8 @@ def _trigger_words(house: House, trig: dict) -> str:
             continue
         if isinstance(value, (dict, list)):
             value = json.dumps(value, separators=(",", ":"))[:40]
+        elif key in ("above", "below") and unit:
+            value = numfmt.reading(value, unit)
         terms.append(f"{key} {value}")
     said = " ".join(bit for bit in (", ".join(names), " ".join(terms)) if bit)
     return f"{kind} {said}".strip()
@@ -14541,7 +14574,8 @@ def _controlled_by_rows(entities) -> list[str]:
                       if _LIVE_READINGS.get(b["entity"]) is not None})
         if now:
             rows.append(f"{label}: what starts it reads now — " + ", ".join(
-                f"{e} {_LIVE_READINGS[e]:g}" for e in now[:4]))
+                f"{e} {numfmt.reading(_LIVE_READINGS[e], _LIVE_UNITS.get(e))}"
+                for e in now[:4]))
     return rows
 
 
@@ -14837,6 +14871,13 @@ def _resident_gate(settings: dict) -> str:
         return "there is no Claude credential"
     if not settings.get("auto_enabled"):
         return "automatic runs are paused"
+    return _spend_hold(settings)
+
+
+def _spend_hold(settings: dict) -> str:
+    """`_resident_gate`'s two spending gates, or "": the account's usage
+    limit and the owner's budget. Its own function so the budget lane
+    (`_budget_lane`) can tell a hold for budget from a paused house."""
     # The usage-limit pause, in EVERY budget mode (#1309). It was asked only
     # under "No limit", on the belief that a percentage budget always stops
     # first; it does not (a weekly window, an estimate, another device on
@@ -14858,6 +14899,85 @@ def _resident_gate(settings: dict) -> str:
         # to an estimate, and a look is the half the plan spends freely.
         log.debug("could not read the budget: %s", exc)
     return ""
+
+
+# The budget lane (`budget_lane.py`): while the Resident's looks are held
+# for budget, the held signals about food storage, water and security are
+# checked by rule, at most once per look interval (a held batch is asked
+# every tick), and each kind's notice is filed once per house day.
+BUDGET_LANE_STATE: dict = {"last_at": 0.0, "noted": {}, "tripped": 0,
+                           "notices": 0, "last_error": ""}
+
+
+async def _budget_lane(settings: dict, excuse: str,
+                       now: float) -> list[dict]:
+    """Check the held batch by rule when the hold (``excuse``) is for
+    budget — not a paused house or a missing credential. Spends no
+    run and takes no action: it files through `triage.gate`, marks what it
+    filed as not looked at (which is true), and announces it the way the
+    stale sweep does. Never raises; returns what it surfaced."""
+    if now - float(BUDGET_LANE_STATE["last_at"] or 0.0) < RESIDENT_LOOK_S:
+        return []
+    BUDGET_LANE_STATE["last_at"] = now
+    try:
+        why = await asyncio.to_thread(_spend_hold, settings)
+        if not why or why != excuse:
+            return []
+        surfaced = await asyncio.to_thread(
+            _budget_lane_file, list(RESIDENT_PENDING), why, now)
+        BUDGET_LANE_STATE["last_error"] = ""
+    except Exception as exc:  # noqa: BLE001 — the hold stands either way
+        BUDGET_LANE_STATE["last_error"] = str(exc)[:200]
+        log.warning("the budget lane failed: %s", exc)
+        return []
+    if surfaced:
+        await _announce_findings([f for f in surfaced
+                                  if f.get("status") != "held"])
+    return surfaced
+
+
+def _budget_lane_file(pending: list[dict], why: str, now: float) -> list[dict]:
+    """`_budget_lane`'s store half, in a thread."""
+    store = baselines.load()
+    tz, _name = baselines.house_timezone()
+    found = budget_lane.check(
+        pending, store.get("entities") or {}, _NAMES,
+        findings_store.LIVE_STATES, baselines.hour_of_week(now, tz))
+    trips = [budget_lane.trip_row(t, why) for t in found["trips"]]
+    rows = list(trips)
+    local = _local_now(now)
+    day = local.date().isoformat()
+    noted = BUDGET_LANE_STATE["noted"]
+    for kind in budget_lane.KIND_ORDER:
+        seen = found["seen"].get(kind)
+        if not seen or noted.get(kind) == day:
+            continue
+        tripped = sum(1 for t in found["trips"] if t["kind"] == kind)
+        rows.append(budget_lane.notice_row(kind, seen, tripped, why, local))
+        noted[kind] = day
+        BUDGET_LANE_STATE["notices"] += 1
+    created = findings_store.add_many(triage.gate(rows)) if rows else []
+    if trips:
+        findings_store.refresh_details(trips)
+    # A trip whose reading is back inside its band is over; one about an
+    # entity this pass did not read stays.
+    back = {findings_store.normalize(t) for row in found["inside"]
+            for t in budget_lane.titles_for(row)}
+    live = {findings_store.normalize(f.get("text") or "")
+            for f in findings_store.list_all("live")
+            if f.get("source") == budget_lane.TRIP_SOURCE}
+    findings_store.clear_resolved(
+        {budget_lane.TRIP_SOURCE},
+        (live - back) | {findings_store.normalize(r["text"]) for r in trips})
+    BUDGET_LANE_STATE["tripped"] += sum(
+        1 for c in created if c.get("source") == budget_lane.TRIP_SOURCE)
+    if not created:
+        return []
+    # A notice says the skip in its own words; a trip carries the reason.
+    return findings_store.record_triage(
+        {int(c["ts"]): ("untriaged", budget_lane.skipped_because(why)
+                        if c.get("source") == budget_lane.TRIP_SOURCE else "")
+         for c in created}, "", now)
 
 
 async def _resident_stale_sweep(now: float) -> list[dict]:
@@ -14979,6 +15099,9 @@ async def _resident_pass(now: float) -> dict:
         # me" on a paused house is answered by THIS, in these words.
         decision_trail.note_many(_signal_decisions(
             RESIDENT_PENDING[:50], "gate_hold", excuse))
+        # Held for budget: food storage, water and security are checked by
+        # rule instead, and the household is told the look was skipped.
+        await _budget_lane(settings, excuse, now)
         return {**out, "held": excuse}
     RESIDENT_STATE["last_error"] = ""
 
@@ -15864,7 +15987,8 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     # (#558); "where is it?" or "how is it disarmed?" put to the owner while
     # the registry or an automation already says is brAIn's own homework
     # (#561). Nothing is filed, and the trail says what answered it.
-    waits = (resident.not_due(case, _DRIVEN_BY, _live_reading, _DRIVEN_ALIASES)
+    waits = (resident.not_due(case, _DRIVEN_BY, _live_reading, _DRIVEN_ALIASES,
+                              unit_of=_live_unit)
              or _registry_answers(case, str(signal.get("subject") or "")))
     # A reading said to be wrong is read against what that entity usually
     # reads (`resident.against_usual`): inside its own band a new problem is
@@ -15977,8 +16101,10 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
             "kind": "held", "subject": str(filed.get("entity_id") or ""),
             "check": findings_store.RESIDENT_SOURCE, "reason": stood_down,
             "text": str(filed.get("claim") or filed.get("text") or "")}], now)
+        # Raised by the run and held by the record: graded as raised, so a
+        # Wrong on it is "too loud", never agreement with passing it over.
         await _outcome(signal, "held", case_run, now, why, refines,
-                       row=filed, case=case, said=stood_down)
+                       row=filed, case=case, said=stood_down, raised=True)
         return False
     if filed is None:
         # The store already holds this claim, in any status or in the
@@ -16326,7 +16452,7 @@ EVAL_STATE: dict = {"starting": False, "started_at": 0.0, "report": None,
 async def _outcome(signal: dict, result: str, run_id: str, now: float,
                    why: str = "", refines: int = 0, *, row: dict | None = None,
                    case: dict | None = None, said: str = "",
-                   escalated: bool = False) -> None:
+                   escalated: bool = False, raised: bool = False) -> None:
     """One line in the verdict log for what an investigation came to.
 
     ``why`` is the look's reason for sending it (what to look FOR) and
@@ -16337,7 +16463,8 @@ async def _outcome(signal: dict, result: str, run_id: str, now: float,
     await asyncio.to_thread(
         outcomes.record_investigation, signal, result, run_id=run_id,
         now=now, why=said or str((case or {}).get("claim") or ""),
-        asked=why, refines=refines, row=row, case=case, escalated=escalated)
+        asked=why, refines=refines, row=row, case=case, escalated=escalated,
+        raised=raised)
 
 
 def _graded_items(now: float) -> list[dict]:
@@ -16428,7 +16555,7 @@ def _label_first_look_captures(graded: list[dict]) -> int:
 
 
 def _supersede_judgements(graded: list[dict], now: float) -> int:
-    """Drop the quieter judgements a later confirmed case contradicted."""
+    """Drop the judgements a later answer contradicted (`outcomes.superseded`)."""
     standing = outcomes.judgement_rows(
         facts_store.with_predicate(outcomes.JUDGEMENT_PREFIX, now))
     gone = 0
