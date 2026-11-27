@@ -459,6 +459,19 @@ def explained_range(value, anchor, floor: float = 0.0) -> list[float] | None:
 # (`server._mark_not_room_air`). No check is called this, so it stands no
 # check down by itself; the readers of a room's air ask `room_air_verdict`.
 ROOM_AIR_RULE = "room_air"
+# The household's statement, read by the correction's second look out of a
+# Wrong's reason, that a room is not heated (#1476): an `exception:unheated`
+# fact on `area:<id>`, which `checks.thermal.unconditioned_from` reads as a
+# room nothing heats. Like `ROOM_AIR_RULE`, no check has this id.
+UNHEATED_RULE = "unheated"
+# Where the correction's second look read, out of a Wrong's reason, that a
+# thermometer sits (inside a box, outdoors; #1476): kept apart from the
+# owner's own tick (`ROOM_AIR_RULE`) because a model read it. It takes the
+# sensor out of the heat model and the room-physics checks (verdict
+# `placed`), and NOT out of anything about cold or food: `climate.freeze`,
+# the frost warning and `base.unusual` read the probe as before, since a
+# probe "in a box" may be a pipe's or a freezer's.
+ROOM_AIR_SAID_RULE = "room_air_said"
 
 
 class House:
@@ -572,6 +585,10 @@ class House:
             return "marked", "you said it does not measure the room's air"
         if self.said_broken(entity_id):
             return "broken", "you said this sensor is broken"
+        if isinstance(table, dict) and ROOM_AIR_SAID_RULE in (
+                table.get(entity_id) or ()):
+            return "placed", ("you said where it sits, so it does not "
+                              "measure the room's air")
         left = (((self.snap.get("thermal") or {}).get("unmeasured") or {})
                 .get(entity_id))
         if isinstance(left, dict) and left.get("kind") in ("not_air", "held"):
@@ -919,6 +936,11 @@ class House:
             return {"text": "you marked this wrong" + (
                         "" if times == 1 else f" {times} times"),
                     "scope": "answers"}
+        if check_id not in (READING_CHECKS | STAND_DOWN_SILENT
+                            | STAND_DOWN_MEASURED):
+            said = self._once_while_held(entity_id, check_id, answers)
+            if said:
+                return said
         if check_id in READING_CHECKS:
             # Counted by status across the three reading checks (above).
             times = sum(int(((answers.get(entity_id) or {}).get(cid) or {})
@@ -972,6 +994,34 @@ class House:
                 for note in (row or {}).get("notes") or ():
                     if gone(note):
                         return {"text": str(note), "scope": "answers"}
+        return None
+
+    def _once_while_held(self, entity_id: str, check_id: str,
+                         answers: dict) -> dict | None:
+        """The reading checks' "each sensor once" for every other check
+        whose own record holds it (#1477): while `stand_down` does, one
+        Wrong about this entity closes the check for it, and for a check
+        about the DEVICE (`DEVICE_QUIET`: a flat battery, a stuck reading, a
+        device not answering) one Wrong under any of them about another
+        entity of the same device does too, so a dead device is not asked
+        about once per sensor. A check about a measurement that differs per
+        entity is never closed by a sibling's answer. The caller has
+        refused a pair `_never_covered` names."""
+        stood = self.stand_down(check_id)
+        if not stood:
+            return None
+        family = DEVICE_QUIET if check_id in DEVICE_QUIET else {check_id}
+        for eid in [entity_id, *(self.siblings(entity_id)
+                                 if check_id in DEVICE_QUIET else ())]:
+            for cid in sorted(family):
+                row = (answers.get(eid) or {}).get(cid)
+                if isinstance(row, dict) and int(row.get("wrong") or 0) >= 1:
+                    said = ("you marked this wrong" if eid == entity_id else
+                            f"you marked {self.label(eid)} on the same "
+                            "device wrong")
+                    return {"text": f"{said}, and {stood['reason']}",
+                            "scope": "answers" if eid == entity_id
+                            else "device", "kind": "stand_down"}
         return None
 
     def settled_device(self, device: dict | None, entity_id: str = "",
@@ -1171,9 +1221,6 @@ class House:
         backs; ``measured`` on the answer says what that is. No record, or
         one that cannot be read, stands nothing down.
         """
-        if check_id not in (STAND_DOWN_ONCE | STAND_DOWN_SILENT
-                            | STAND_DOWN_MEASURED):
-            return None
         table = self.snap.get("record")
         row = (table or {}).get(f"check:{check_id}") \
             if isinstance(table, dict) else None
@@ -1217,8 +1264,9 @@ class House:
                     if streak >= rule_record.HOLD_STREAK else
                     f"{wrong} of this rule's {total} reports, the latest "
                     "among them")
+            thing = "sensor" if check_id in READING_CHECKS else "thing"
             reason = (f"you marked {said} wrong, so brAIn raises each "
-                      "sensor only once until you agree with one")
+                      f"{thing} only once until you agree with one")
         return {"wrong": wrong, "total": total, "streak": streak,
                 "reason": reason}
 
