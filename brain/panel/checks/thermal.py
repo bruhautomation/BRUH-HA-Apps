@@ -402,20 +402,28 @@ def unconditioned_from(rows) -> dict:
     while `frost_ahead` still names it as a space that gets cold.
     """
     found = {"all": (set(), set()), "stated": (set(), set()),
-             "heating": (set(), set())}
+             "heating": (set(), set()), "placed": (set(), set())}
     for row in rows or ():
         if not isinstance(row, dict):
             continue
         text = str(row.get("text") or "")
-        heating = bool(_UNHEATED.search(text)) or str(
-            row.get("predicate") or "") == "exception:" + UNHEATED_RULE
-        if not heating and not _UNINSULATED.search(text):
-            continue
         subjects = row.get("subjects")
         if not isinstance(subjects, list) or not subjects:
             subjects = [row.get("subject") or ""]
-        into = ["all"] + ([] if row.get("source") == "correction"
-                          else ["stated"]) + (["heating"] if heating else [])
+        if str(row.get("predicate") or "") == "exception:" + UNHEATED_RULE:
+            # A room the correction's second look read as unheated (#1476):
+            # its own part, read only by the checks that compare a room
+            # with the house's heating (`said_unconditioned(placed=True)`),
+            # never by the freeze check or the frost warning — a model's
+            # reading is no reason to stop warning about frozen pipes.
+            into = ["placed"]
+        else:
+            heating = bool(_UNHEATED.search(text))
+            if not heating and not _UNINSULATED.search(text):
+                continue
+            into = ["all"] + ([] if row.get("source") == "correction"
+                              else ["stated"]) + (["heating"] if heating
+                                                  else [])
         for subject in subjects:
             subject = str(subject or "")
             for which in into:
@@ -426,7 +434,7 @@ def unconditioned_from(rows) -> dict:
                     entities.add(subject)
     areas, entities = found["all"]
     out = {"areas": sorted(areas), "entities": sorted(entities)}
-    for key in ("stated", "heating"):
+    for key in ("stated", "heating", "placed"):
         key_areas, key_entities = found[key]
         out[key] = {"areas": sorted(key_areas),
                     "entities": sorted(key_entities)}
@@ -465,7 +473,7 @@ def _said_areas(house: House, part: str = "") -> set[str]:
     return {a for a in areas if a}
 
 
-def said_unconditioned(house: House) -> set[str]:
+def said_unconditioned(house: House, placed: bool = False) -> set[str]:
     """The area ids the household said nothing heats, and nothing does.
 
     A fact about the ROOM, not a correction of one check, so every check
@@ -479,8 +487,15 @@ def said_unconditioned(house: House) -> set[str]:
     anything said about a room with a thermostat or a heater of its own
     (`heated_areas`), which is heated whatever was said about its walls.
     Read by `climate.freeze`, the safety lane, so it may only ever shrink.
+    ``placed`` adds the rooms the correction's second look read as unheated
+    (`UNHEATED_RULE`): only for the checks that compare a room with the
+    house's heating (`window`, the dehumidifier rows, the drift stand-down),
+    never for `freeze` or `freezing_rooms`.
     """
-    return _said_areas(house, "heating") - heated_areas(house)
+    said = _said_areas(house, "heating")
+    if placed:
+        said |= _said_areas(house, "placed")
+    return said - heated_areas(house)
 
 
 def follows_outside(house: House, eid: str) -> str:
@@ -501,7 +516,7 @@ def follows_outside(house: House, eid: str) -> str:
     from . import devices  # noqa: PLC0415 — it imports this package's util
 
     area = house.area_id_of(eid)
-    if area not in said_unconditioned(house):
+    if area not in said_unconditioned(house, placed=True):
         return ""
     if eid not in _rooms(house.snap)[1]:
         return ""
@@ -902,7 +917,7 @@ def window(snap: dict, now: float) -> list[dict]:
 
     house = House(snap)
     rooms = _room_air(house, rooms, "climate.window")
-    unheated = said_unconditioned(house)
+    unheated = said_unconditioned(house, placed=True)
     hits = []
     for eid, entry in sorted(rooms.items()):
         if eid in claimed or not entry.get("k"):

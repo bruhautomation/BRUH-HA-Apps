@@ -23590,16 +23590,31 @@ def _asks_to_stop(finding: dict, note: str) -> bool:
             or not corrections.stops_telling(note)):
         return False
     eid = str(finding.get("entity_id") or "")
-    if not eid and not findings_store.clean_items(finding.get("items")):
+    items = findings_store.clean_items(finding.get("items"))
+    if not eid and not items:
         return False
-    if not eid:
+    # Every thing the rule would be written on, the row's items included: a
+    # row listing a lock or a smoke alarm beside an ordinary sensor is a
+    # hold, never a rule on all of them.
+    check_id = corrections.check_of(finding)
+    return not any(_floor_covers(e, check_id) for e in [eid, *items] if e)
+
+
+def _floor_covers(eid: str, check_id: str) -> bool:
+    """Whether no correction may be written on this entity for this check
+    (`corrections.never_covered`: a lock, an alarm, a safety class on it or
+    its device, a protected entity, a never-covered check). Unreadable is
+    covered: the direction that keeps reporting."""
+    try:
+        _family, classes, _device = _device_family(eid)
+        return bool(corrections.never_covered(
+            eid, check_id,
+            device_class=str((_NAMES.get(eid) or {}).get("class") or ""),
+            protected=automation_writer.protected_patterns(),
+            device_classes=classes))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not read the floors for %s: %s", log_safe(eid), exc)
         return True
-    _family, classes, _device = _device_family(eid)
-    return not corrections.never_covered(
-        eid, corrections.check_of(finding),
-        device_class=str((_NAMES.get(eid) or {}).get("class") or ""),
-        protected=automation_writer.protected_patterns(),
-        device_classes=classes)
 
 
 def _said_back(finding: dict) -> str:
@@ -23842,8 +23857,11 @@ def _exception_rule(finding: dict, note: str = "") -> tuple[str, list[str]]:
         # is an answer about every one: the check asks about each before it
         # files again, so a new item is a new row and an answered one stays
         # answered.
+        # Never on an item no correction may cover (a lock, a smoke alarm,
+        # a protected entity listed beside ordinary things): that one goes
+        # on being asked about (`_floor_covers`).
         for item in findings_store.clean_items(finding.get("items")):
-            if item not in subjects:
+            if item not in subjects and not _floor_covers(item, check_id):
                 subjects.append(item)
         return (check_id, subjects)
     if source == findings_store.RESIDENT_SOURCE:
@@ -26809,7 +26827,7 @@ def _record_placement(the_plan: dict, finding: dict, note: str, *,
             room = area_name or "That room"
             row, _created = facts_store.add(
                 f"{room} is not heated (you said: "
-                f"{textclip.clip(' '.join(note.split()), 200)})",
+                f"“{textclip.clip(str(the_plan.get('placement_quote') or note), 200)}”)",
                 subject=f"area:{area_id}", source="correction",
                 predicate=facts_store.EXCEPTION_PREFIX
                 + checks._util.UNHEATED_RULE,

@@ -157,10 +157,11 @@ SYSTEM = prompt_kit.assemble(
   truth).
 - "Don't remind me again" → entity_check, permanent, reason "".
 - "The sensor is inside a cabinet in the garage" → entity_check,
-  permanent, placement enclosed, reason "This sensor sits inside the pump
-  box."
+  permanent, placement enclosed, placement_quote "inside the pump box",
+  reason "This sensor sits inside the pump box."
 - "The garage is not heated" → entity_check, permanent, placement
-  unheated_room, reason "The garage is not heated".""",
+  unheated_room, placement_quote "The garage is not heated",
+  reason "The garage is not heated".""",
     rules="""\
 - Scope, widest last: entity_check (this rule, this device — the
   default), entity (every rule about this device), check_area (this rule,
@@ -173,6 +174,9 @@ SYSTEM = prompt_kit.assemble(
   enclosed (inside a box, a cabinet, an enclosure or a machine, so it does
   not read the room's air), outdoors, unheated_room (the room it is in is
   not heated or conditioned; insulation alone is not that), else "".
+- placement_quote: with a placement, the homeowner's own words that say
+  it, copied exactly from what they wrote. No such words, no placement:
+  "I only use that room for laundry" says nothing about its heating.
 - reason is the standing truth about the HOUSE the correction implies,
   under 20 words, never about a person and never about the report — or
   "" when there is none.""",
@@ -198,6 +202,9 @@ SCHEMA = {
         "placement": {"type": "string", "enum": ["", *PLACEMENTS],
                       "description": "Where the device sits, when the "
                                      "words say so."},
+        "placement_quote": {"type": "string", "description":
+                            "For a placement: the homeowner's own words "
+                            "that say it, copied exactly, or \"\"."},
     },
     "required": ["scope", "lifetime"],
     "additionalProperties": False,
@@ -1084,6 +1091,16 @@ def conditional_confirmation(entity_name: str = "", *,
             "doesn't.")
 
 
+def quoted_from(quote: str, note: str) -> bool:
+    """Whether ``quote`` is the household's own words: three words or more,
+    found in ``note`` with case, spacing and punctuation folded."""
+    def fold(text: str) -> str:
+        return " ".join(re.sub(r"[^\w\s]", " ", str(text or "").lower())
+                        .split())
+    q = fold(quote)
+    return len(q.split()) >= 3 and q in fold(note)
+
+
 def plan(reply: dict | None, finding: dict, *, today: dt.date | None = None,
          area_id: str = "", device_class: str = "", protected=(),
          southern: bool = False, note: str = "") -> dict:
@@ -1121,10 +1138,15 @@ def plan(reply: dict | None, finding: dict, *, today: dt.date | None = None,
     resume = resume_date(reply, today, southern=southern)
     reason = " ".join(str(reply.get("reason") or "").split())[:MAX_REASON]
     placement = str(reply.get("placement") or "")
-    if placement not in PLACEMENTS or not entity_id:
-        placement = ""
+    quote = " ".join(str(reply.get("placement_quote") or "").split())
+    if (placement not in PLACEMENTS or not entity_id
+            or not quoted_from(quote, note)):
+        # A placement stands only on the household's own words, found in
+        # what they wrote (#1476): the model may not infer one.
+        placement, quote = "", ""
     return {
         "placement": placement,
+        "placement_quote": quote,
         "scope": scope,
         "resume": resume.isoformat() if resume else "",
         "expires": expires_for(resume),
