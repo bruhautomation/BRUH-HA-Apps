@@ -283,7 +283,7 @@ async def handle(kind: str, p: dict) -> dict:
     if kind == "versions_use":
         # In the loop, not a thread: a version that needs Home Assistant
         # changes starts an ordinary Tell, which makes its task here.
-        out = versions.use({k: p.get(k) for k in ("round", "index", "card", "at")})
+        out = versions.use({k: p.get(k) for k in ("round", "index", "card", "at", "over")})
         await asyncio.to_thread(publish_state)
         return out
     if kind == "tell_answer":

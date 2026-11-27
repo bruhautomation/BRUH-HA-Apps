@@ -19,6 +19,7 @@ module learns to read is a field that page has to describe.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import re
 import time
@@ -185,7 +186,10 @@ def _card(raw, problems: list[str], where: str, extra: tuple = ()) -> dict | Non
     return card
 
 
-def normalize(raw) -> tuple[dict, list[str]]:
+def normalize(raw, where: dict | None = None) -> tuple[dict, list[str]]:
+    """The dashboard as the panel draws it. ``where``, when given, is
+    filled with each card's path in ``raw`` (keys and indexes), so one
+    card's lines can be found in the file it was read from."""
     problems: list[str] = []
     if not isinstance(raw, dict):
         if raw not in (None, {}):
@@ -242,8 +246,10 @@ def normalize(raw) -> tuple[dict, list[str]]:
         return cand
 
     floors = raw.get("floors")
+    top: tuple = ("floors",)
     if floors is None and isinstance(raw.get("sections"), list):
         floors = [{"title": out["title"], "sections": raw["sections"]}]
+        top = ()
     for fi, fraw in enumerate(floors if isinstance(floors, list) else []):
         if not isinstance(fraw, dict):
             problems.append(f"floor {fi + 1}: must be a mapping")
@@ -277,8 +283,11 @@ def normalize(raw) -> tuple[dict, list[str]]:
             if sraw.get("sleep_guard") is True:
                 sec["sleep_guard"] = True
             groups = sraw.get("groups")
+            spath = (*top, fi, "sections", si) if top else ("sections", si)
+            grouped = True
             if groups is None and isinstance(sraw.get("cards"), list):
                 groups = [{"cards": sraw["cards"]}]
+                grouped = False
             for gi, graw in enumerate(groups if isinstance(groups, list) else []):
                 if not isinstance(graw, dict):
                     continue
@@ -307,7 +316,10 @@ def normalize(raw) -> tuple[dict, list[str]]:
                     base = card.pop("id") or (card.get("entity") or inner.get("entity")
                                               or card.get("name")
                                               or (card.get("entities") or [card["type"]])[0])
-                    group["cards"].append({"id": unique(_pre("c_", base)), **card})
+                    cid = unique(_pre("c_", base))
+                    group["cards"].append({"id": cid, **card})
+                    if where is not None:
+                        where[cid] = (*spath, *(("groups", gi) if grouped else ()), "cards", ci)
                 if group["cards"]:
                     sec["groups"].append(group)
             floor["sections"].append(sec)
@@ -361,6 +373,95 @@ def write(dash: dict) -> str:
     paths.write_text(paths.DASHBOARD, text)
     paths.hand_to_brain(paths.DASHBOARD)
     return text
+
+
+def _node_at(root, path: tuple):
+    """The composed YAML node at ``path`` (mapping keys and sequence
+    indexes), or None when the file's shape does not follow it."""
+    node = root
+    for step in path:
+        if isinstance(step, int):
+            if not isinstance(node, yaml.SequenceNode) or not 0 <= step < len(node.value):
+                return None
+            node = node.value[step]
+        else:
+            if not isinstance(node, yaml.MappingNode):
+                return None
+            hits = [v for k, v in node.value if isinstance(k, yaml.ScalarNode) and k.value == step]
+            if len(hits) != 1:
+                return None
+            node = hits[0]
+    return node
+
+
+def splice_card(text: str, card_id: str, card: dict) -> str | None:
+    """``text`` with one card's lines replaced by ``card`` and every other
+    line, comment and blank as it was, or None when that cannot be done
+    surely (the card is written in flow style, an anchor or a merge key
+    shapes it, or the result would not read as the same dashboard with
+    only that card changed). The caller then writes the whole file."""
+    try:
+        raw = yaml.safe_load(text)
+        where: dict = {}
+        before, problems = normalize(raw, where)
+        path = where.get(card_id)
+        root = yaml.compose(text, Loader=yaml.SafeLoader)
+    except yaml.YAMLError:
+        return None
+    if not path or root is None:
+        return None
+    node, parent = _node_at(root, path), _node_at(root, path[:-1])
+    if not isinstance(node, yaml.MappingNode) or not node.value or node.flow_style \
+            or not isinstance(parent, yaml.SequenceNode) or parent.flow_style:
+        return None
+    lines = text.splitlines(keepends=True)
+    first, col = node.start_mark.line, node.start_mark.column
+    # A block collection ends where the next token starts (the next card's
+    # line), so the card's last line is where its last scalar ends.
+    tail = node.value[-1][1]
+    while isinstance(tail, (yaml.MappingNode, yaml.SequenceNode)) and not tail.flow_style and tail.value:
+        tail = tail.value[-1][1] if isinstance(tail, yaml.MappingNode) else tail.value[-1]
+    end = tail.end_mark
+    last = end.line if end.column > 0 else end.line - 1
+    if not 0 <= first <= last < len(lines):
+        return None
+    prefix = lines[first][:col]
+    if not re.fullmatch(r" *(- +)?", prefix):
+        return None
+    body = {"id": card_id, **{k: v for k, v in card.items() if k != "id"}}
+    dumped = yaml.safe_dump(body, sort_keys=False, allow_unicode=True, width=100,
+                            default_flow_style=False).rstrip("\n").split("\n")
+    nl = "\r\n" if lines[last].endswith("\r\n") else "\n"
+    block = [prefix + dumped[0] + nl] + [" " * col + ln + nl for ln in dumped[1:]]
+    out = "".join(lines[:first] + block + lines[last + 1:])
+    # The proof is the reading: the same dashboard, that one card changed.
+    want = copy.deepcopy(before)
+    for fl in want["floors"]:
+        for sec in fl["sections"]:
+            for g in sec["groups"]:
+                g["cards"] = [dict(body) if c.get("id") == card_id else c for c in g["cards"]]
+    want, _ = normalize(want)
+    after, problems_after = load_text(out)
+    if after != want or problems_after != problems:
+        return None
+    return out
+
+
+def write_card(text: str, dash: dict, card_id: str) -> str:
+    """Write ``dash``, in which one card changed, into the file ``text`` was
+    read from: only that card's lines when it can be done surely, the whole
+    document otherwise."""
+    card = next((c for fl in dash.get("floors") or [] for sec in fl.get("sections") or []
+                 for g in sec.get("groups") or [] for c in g.get("cards") or [] if c.get("id") == card_id), None)
+    try:
+        out = splice_card(text, card_id, card) if card is not None and text else None
+    except Exception:  # noqa: BLE001 — a file shaped past the splice is written whole, never left half-done
+        out = None
+    if out is None:
+        return write(dash)
+    paths.write_text(paths.DASHBOARD, out)
+    paths.hand_to_brain(paths.DASHBOARD)
+    return out
 
 
 def all_entities(dash: dict) -> list[str]:
