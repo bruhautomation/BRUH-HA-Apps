@@ -209,23 +209,37 @@ function ProductCard({
             </span>
           )}
         </p>
-        {/* Each figure says what it is: the icon alone did not. A product the
-            label gives no figure for says n/a rather than leaving a gap. */}
+        {/* Each figure says what it is: the icon alone did not. A figure the
+            label does not give is not a chip: it is one muted line saying so,
+            so an empty value never looks like a reading. */}
         <div className="flex flex-wrap items-center gap-2 mt-2 tabular-nums">
-          <span
-            className="inline-flex items-center gap-1 rounded-full bg-paper-2 text-ink-2 px-2 py-0.5 text-xs font-medium"
-            title="Re-entry interval: how long to stay out of a sprayed area"
-          >
-            <Clock className="w-2.5 h-2.5" />
-            REI {rei != null ? `${rei}h` : 'n/a'}
-          </span>
-          <span
-            className="inline-flex items-center gap-1 rounded-full bg-leaf-tint text-leaf-dk px-2 py-0.5 text-xs font-medium"
-            title="Cover-spray interval: days until the next spray is due"
-          >
-            <CalendarClock className="w-2.5 h-2.5" />
-            Re-spray {interval != null ? `${interval}d` : 'n/a'}
-          </span>
+          {rei != null && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-paper-2 text-ink-2 px-2 py-0.5 text-xs font-medium"
+              title="Re-entry interval: how long to stay out of a sprayed area"
+            >
+              <Clock className="w-2.5 h-2.5" />
+              REI {rei}h
+            </span>
+          )}
+          {interval != null && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-leaf-tint text-leaf-dk px-2 py-0.5 text-xs font-medium"
+              title="Cover-spray interval: days until the next spray is due"
+            >
+              <CalendarClock className="w-2.5 h-2.5" />
+              Re-spray {interval}d
+            </span>
+          )}
+          {(rei == null || interval == null) && (
+            <span className="text-xs text-muted-foreground">
+              {rei == null && interval == null
+                ? 'REI and re-spray not on label'
+                : rei == null
+                  ? 'REI not on label'
+                  : 'Re-spray not on label'}
+            </span>
+          )}
         </div>
       </div>
       {product.price_dollars != null && (

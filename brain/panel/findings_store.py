@@ -4491,6 +4491,32 @@ def settle_and_clear(ts: int, kind: str, note: str = "",
     return settled
 
 
+def _settled_headline(shaped: dict) -> dict:
+    """``{"headline": words}`` when the row was shown in other words than
+    its stored text (a check's headline, the plain-words pass), else {}."""
+    try:
+        said = shown_words(shaped).get("text")
+    except Exception:  # noqa: BLE001 — the stored text is still a title
+        return {}
+    said = " ".join(str(said or "").split())
+    if not said or said == shaped.get("text"):
+        return {}
+    return {"headline": textclip.clip(said, MAX_TEXT)}
+
+
+def settled_title(entry: dict) -> str:
+    """The words History shows for a ledger entry: its `headline`, or for
+    an entry written before that field its text through the plain-words
+    pass. The entry is never changed."""
+    entry = entry if isinstance(entry, dict) else {}
+    if entry.get("headline"):
+        return str(entry["headline"])
+    return _settled_headline({"text": str(entry.get("text") or ""),
+                              "source": entry.get("source"),
+                              "entity_id": entry.get("entity_id")}
+                             ).get("headline") or str(entry.get("text") or "")
+
+
 def _remember_settled(shaped: dict, kind: str, when: int = 0,
                       note: str = "", key: str = "",
                       release: str | None = None, answers: int = 0) -> None:
@@ -4564,6 +4590,9 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
         **({"stood_down_after": int(answers)}
            if kind == "ignored" and int(answers or 0) > 1 else {}),
         "note": str(note or "").strip()[:MAX_NOTE],
+        # What the household was shown, for History to say it by (#1463):
+        # `text` above is the key and stays as stored.
+        **_settled_headline(shaped),
         # Who raised it. An ending is a label — "I did it" says the report
         # was right, "Wrong" says it was not — and without the producer on
         # the entry nothing can add those labels up per producer. That sum

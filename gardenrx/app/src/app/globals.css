@@ -289,7 +289,9 @@
   --line: oklch(0.51 0.003 250);
   --line-2: oklch(0.56 0.003 250);
 
-  --leaf: oklch(0.74 0.13 158);
+  /* Leaf, warn and water are small text too (eyebrows, links, % left, rain
+     amounts): each at least 4.5:1 on a card (0.74 / 0.8 / 0.72 were 3.4, 3.95, 3.0). */
+  --leaf: oklch(0.83 0.13 158);
   --leaf-dk: oklch(0.86 0.1 158);
   --leaf-lt: oklch(0.44 0.06 158);
   --leaf-tint: oklch(0.4 0.03 200);
@@ -298,10 +300,10 @@
   --danger: oklch(0.87 0.08 27);
   --danger-bg: oklch(0.44 0.08 28);
   --danger-line: oklch(0.55 0.1 28);
-  --warn: oklch(0.8 0.13 80);
+  --warn: oklch(0.86 0.12 80);
   --warn-bg: oklch(0.45 0.06 80);
   --warn-line: oklch(0.55 0.08 80);
-  --water: oklch(0.72 0.11 240);
+  --water: oklch(0.84 0.09 240);
   --water-bg: oklch(0.44 0.05 240);
   --water-line: oklch(0.54 0.07 240);
   --terra: oklch(0.72 0.13 42);

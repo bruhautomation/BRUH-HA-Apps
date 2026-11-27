@@ -405,6 +405,8 @@ def describe(
         appliance.last_contact.isoformat(timespec="seconds") if appliance.last_contact else None
     )
     out["last_cook"] = coordinator.cook_summary(appliance)
+    if (note := coordinator.cook_note(appliance)) is not None:
+        out["last_cook_note"] = note
     if (report := coordinator.offline_report(appliance)) is not None:
         out["offline_cause"] = report["cause"]
         out["offline_since"] = report["since"]
