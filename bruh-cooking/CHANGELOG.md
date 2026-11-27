@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.7
+
+### Changed
+
+- The `last_cook` attribute is a plain value; when no cook has been seen yet, why is said in its own `last_cook_note` attribute instead of being glued to the value (1460).
+
+### Fixed
+
+- An appliance that is only offline (unplugged, or not heard from since a restart) shows as offline on its Status sensor and no longer turns Problem on. Problem turns on for lost contact only when a cook was still running when contact was lost, after 10 minutes, and then carries `offline_since`. Offline reasons now name the day as well as the time (1461).
+- This is 0.2.5's change again after a fresh review; 0.2.6 had reverted it.
+
 ## 0.2.6
 
 ### Changed
