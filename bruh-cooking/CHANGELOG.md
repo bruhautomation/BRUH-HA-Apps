@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.6
+
+### Changed
+
+- Reverts 0.2.5 (the offline Problem rule, dated offline reasons and the plain `last_cook`) while the development loop's transcript check is honoured; the same change comes back in the next release after a fresh review (1460, 1461).
+
 ## 0.2.5
 
 ### Changed

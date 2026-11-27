@@ -203,8 +203,6 @@ class BrevilleSensor(BrevilleEntity, SensorEntity):
             else None,
             "last_cook": self.coordinator.cook_summary(appliance),
         }
-        if (note := self.coordinator.cook_note(appliance)) is not None:
-            attrs["last_cook_note"] = note
         # Written once and read later: the time, not how long ago it was.
         if (report := self.coordinator.offline_report(appliance, live=False)) is not None:
             attrs["offline_cause"] = report["cause"]
