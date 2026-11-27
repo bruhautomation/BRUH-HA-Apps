@@ -1002,7 +1002,7 @@ def _outside_air(house: House, sensor: str, owner_named: bool) -> bool:
     if owner_named or not sensor:
         return False
     from .thermal import said_unconditioned  # noqa: PLC0415 — thermal is heavier
-    return house.area_id_of(sensor) in said_unconditioned(house, placed=True)
+    return house.area_id_of(sensor) in said_unconditioned(house)
 
 
 def _damp_while_off(house: House, eid: str, shape: dict, plugs: list[str],

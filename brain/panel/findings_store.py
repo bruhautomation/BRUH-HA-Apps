@@ -4851,7 +4851,7 @@ def _write_settled(items: list[dict]) -> None:
     atomic_write.write_json(SETTLED_FILE, {"settled": items})
 
 
-def scorecard(release: str | None = None, keep=None) -> list[dict]:
+def scorecard(release: str | None = None) -> list[dict]:
     """How right each producer has been, from the endings people gave.
 
     ``[{source, title, confirmed, wrong, total, release}, ...]``,
@@ -4865,8 +4865,6 @@ def scorecard(release: str | None = None, keep=None) -> list[dict]:
     ``release`` keeps only the endings given under that release
     (UNKNOWN_RELEASE for the ones that carry none); each row then says the
     release it was counted over, and ``None`` (every release) says None.
-    ``keep`` (a ledger entry → bool) counts only the endings it keeps: a
-    record scoped to the reports about one thing (#1478).
     """
     want = None if release is None else (str(release).strip() or UNKNOWN_RELEASE)
     by: dict[str, dict] = {}
@@ -4874,8 +4872,6 @@ def scorecard(release: str | None = None, keep=None) -> list[dict]:
     for e in _load_settled():
         src = str(e.get("source") or "")
         if want is not None and release_of(e) != want:
-            continue
-        if keep is not None and not keep(e):
             continue
         if not src or e.get("kind") == "not_applicable":
             # "Doesn't apply" is no label: a question that did not fit the
