@@ -172,7 +172,8 @@ import card_claims
 import card_verdict
 import cases
 import changes
-from checks._util import ANSWERED_ONCE, House
+from checks._util import (ANSWERED_ONCE, STAND_DOWN_MEASURED,
+                          STAND_DOWN_SILENT, House, record_stand_down)
 import chat_session
 import closures
 import checks
@@ -5701,12 +5702,24 @@ def _score_words(row: dict, muted: bool) -> dict:
     row["mutable"] = (row.get("source") or "") not in cases.UNMUTABLE_SOURCES
     # The household's record standing brAIn's own reports down, said where
     # the record is shown (`rule_record.resident_stand_down`).
+    source = str(row.get("source") or "")
     if rule_record.resident_stand_down([row], time.time()):
         row["held_back"] = rule_record.resident_stand_down_words(row)
+    elif not muted and source.startswith("check:"):
+        # A house check is held back by `House.stand_down`, which is looser
+        # than `holds` for some checks (a measured-only record, a silenced
+        # one): its line comes from that same decision (#1477).
+        check_id = source[len("check:"):]
+        stood = record_stand_down(check_id, row, time.time())
+        if stood and check_id in (STAND_DOWN_MEASURED | STAND_DOWN_SILENT):
+            reason = str(stood.get("reason") or "")
+            row["held_back"] = reason[:1].upper() + reason[1:] + "."
+        elif stood:
+            row["held_back"] = rule_record.held_words(row)
     elif not muted and rule_record.holds(row):
         # Every rule held back by its own record says so here, not only
         # brAIn's own reports (#1477): the same arithmetic `triage.gate`
-        # and the checks' own stand-down read.
+        # reads.
         row["held_back"] = rule_record.held_words(row)
     return row
 

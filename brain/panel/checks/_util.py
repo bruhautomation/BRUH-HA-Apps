@@ -1205,70 +1205,13 @@ class House:
 
     def stand_down(self, check_id: str,
                    now: float | None = None) -> dict | None:
-        """This check's own record, when it stands the check down, else None.
-
-        ``{"wrong", "total", "streak", "reason"}``, read off the producer
-        scorecard the collector loads (`snap["record"]`, `{source: row}`,
-        counted from the endings' status, never their words). A reading
-        check (`STAND_DOWN_ONCE`) stands down while `rule_record.holds` —
-        its latest answers Wrong with no agreement among them — and then
-        raises each entity once (`answered_off`); `auto.never_fired`
-        (`STAND_DOWN_SILENT`) stands down once marked Wrong
-        `SILENT_MIN_WRONG` times, the latest a Wrong, and raises nothing.
-        Any agreement given later lifts both. `STAND_DOWN_MEASURED`'s checks
-        stand down while `rule_record.holds` or `rule_record.measured_only`
-        (the Resident's arithmetic) and then file only what a measurement
-        backs; ``measured`` on the answer says what that is. No record, or
-        one that cannot be read, stands nothing down.
-        """
+        """This check's own record, when it stands the check down, else None
+        (`record_stand_down`, read off the producer scorecard the collector
+        loads: `snap["record"]`, `{source: row}`)."""
         table = self.snap.get("record")
         row = (table or {}).get(f"check:{check_id}") \
             if isinstance(table, dict) else None
-        if not isinstance(row, dict):
-            return None
-        try:
-            import rule_record  # noqa: PLC0415 — a leaf, the one arithmetic
-            wrong = int(row.get("wrong") or 0)
-            total = int(row.get("total") or 0)
-            streak = int(row.get("streak") or 0)
-        except Exception:  # noqa: BLE001 — unreadable holds nothing back
-            return None
-        if check_id in STAND_DOWN_MEASURED:
-            import time as _time  # noqa: PLC0415
-            when = _time.time() if now is None else float(now)
-            row = {**row, "source": f"check:{check_id}"}
-            if not (rule_record.holds(row)
-                    or (rule_record.quietable(row["source"])
-                        and rule_record.measured_only(row, when))):
-                return None
-            said = (f"the last {streak} of this rule's reports wrong in a "
-                    "row" if streak >= rule_record.HOLD_STREAK else
-                    f"{wrong} of this rule's {total} reports wrong, the "
-                    "latest among them")
-            backed = MEASURED_BY.get(check_id, "a measurement")
-            return {"wrong": wrong, "total": total, "streak": streak,
-                    "measured": backed,
-                    "reason": f"you marked {said}, so brAIn raises one only "
-                              f"when {backed} backs it, until you agree "
-                              "with one"}
-        if check_id in STAND_DOWN_SILENT:
-            if wrong < SILENT_MIN_WRONG or row.get("last") != "wrong":
-                return None
-            reason = (f"you marked {wrong} of this rule's {total} reports "
-                      "wrong, the latest among them, so brAIn has stopped "
-                      "raising it until you agree with one")
-        else:
-            if not rule_record.holds({**row, "source": f"check:{check_id}"}):
-                return None
-            said = (f"the last {streak} of this rule's reports in a row"
-                    if streak >= rule_record.HOLD_STREAK else
-                    f"{wrong} of this rule's {total} reports, the latest "
-                    "among them")
-            thing = "sensor" if check_id in READING_CHECKS else "thing"
-            reason = (f"you marked {said} wrong, so brAIn raises each "
-                      f"{thing} only once until you agree with one")
-        return {"wrong": wrong, "total": total, "streak": streak,
-                "reason": reason}
+        return record_stand_down(check_id, row, now)
 
     def owner_explained(self, entity_id: str, checks=None,
                         now: float | None = None) -> dict | None:
@@ -1429,6 +1372,73 @@ _GLUED_OR_CALLED = re.compile(r"""['"]?\s*[~+]|\s*\(|['"]?\s*%(?!\})""")
 # OUTSIDE its span, which is why this one is asked wherever the string holds
 # a template) and `'switch.zone{}'.format(i)`. An id never ends in a brace.
 _BUILT_ANYWHERE = re.compile(r"\{")
+
+
+def record_stand_down(check_id: str, row,
+                      now: float | None = None) -> dict | None:
+    """This check's own record, when it stands the check down, else None.
+
+    ``{"wrong", "total", "streak", "reason"}``, read off ``row``, the
+    check's producer scorecard row (`findings_store.scorecard`, counted
+    from the endings' status, never their words). `House.stand_down` and
+    ⚙ › Diagnostics' held line (`server._score_words`) both ask this, so
+    what the check does and what Diagnostics says are one decision. A reading
+    check (`STAND_DOWN_ONCE`) stands down while `rule_record.holds` —
+    its latest answers Wrong with no agreement among them — and then
+    raises each entity once (`answered_off`); `auto.never_fired`
+    (`STAND_DOWN_SILENT`) stands down once marked Wrong
+    `SILENT_MIN_WRONG` times, the latest a Wrong, and raises nothing.
+    Any agreement given later lifts both. `STAND_DOWN_MEASURED`'s checks
+    stand down while `rule_record.holds` or `rule_record.measured_only`
+    (the Resident's arithmetic) and then file only what a measurement
+    backs; ``measured`` on the answer says what that is. No record, or
+    one that cannot be read, stands nothing down.
+    """
+    if not isinstance(row, dict):
+        return None
+    try:
+        import rule_record  # noqa: PLC0415 — a leaf, the one arithmetic
+        wrong = int(row.get("wrong") or 0)
+        total = int(row.get("total") or 0)
+        streak = int(row.get("streak") or 0)
+    except Exception:  # noqa: BLE001 — unreadable holds nothing back
+        return None
+    if check_id in STAND_DOWN_MEASURED:
+        import time as _time  # noqa: PLC0415
+        when = _time.time() if now is None else float(now)
+        row = {**row, "source": f"check:{check_id}"}
+        if not (rule_record.holds(row)
+                or (rule_record.quietable(row["source"])
+                    and rule_record.measured_only(row, when))):
+            return None
+        said = (f"the last {streak} of this rule's reports wrong in a "
+                "row" if streak >= rule_record.HOLD_STREAK else
+                f"{wrong} of this rule's {total} reports wrong, the "
+                "latest among them")
+        backed = MEASURED_BY.get(check_id, "a measurement")
+        return {"wrong": wrong, "total": total, "streak": streak,
+                "measured": backed,
+                "reason": f"you marked {said}, so brAIn raises one only "
+                          f"when {backed} backs it, until you agree "
+                          "with one"}
+    if check_id in STAND_DOWN_SILENT:
+        if wrong < SILENT_MIN_WRONG or row.get("last") != "wrong":
+            return None
+        reason = (f"you marked {wrong} of this rule's {total} reports "
+                  "wrong, the latest among them, so brAIn has stopped "
+                  "raising it until you agree with one")
+    else:
+        if not rule_record.holds({**row, "source": f"check:{check_id}"}):
+            return None
+        said = (f"the last {streak} of this rule's reports in a row"
+                if streak >= rule_record.HOLD_STREAK else
+                f"{wrong} of this rule's {total} reports, the latest "
+                "among them")
+        thing = "sensor" if check_id in READING_CHECKS else "thing"
+        reason = (f"you marked {said} wrong, so brAIn raises each "
+                  f"{thing} only once until you agree with one")
+    return {"wrong": wrong, "total": total, "streak": streak,
+            "reason": reason}
 
 
 def _template_spans(text: str) -> list[tuple[int, int]]:
