@@ -87,7 +87,7 @@ import re
 
 import numfmt
 
-from ._util import House, domain_of, join_names, num
+from ._util import UNHEATED_RULE, House, domain_of, join_names, num
 
 # How far under its setpoint a room has to have stayed, all month, before
 # this is a fault rather than a thermostat that is slightly optimistic.
@@ -407,7 +407,8 @@ def unconditioned_from(rows) -> dict:
         if not isinstance(row, dict):
             continue
         text = str(row.get("text") or "")
-        heating = bool(_UNHEATED.search(text))
+        heating = bool(_UNHEATED.search(text)) or str(
+            row.get("predicate") or "") == "exception:" + UNHEATED_RULE
         if not heating and not _UNINSULATED.search(text):
             continue
         subjects = row.get("subjects")

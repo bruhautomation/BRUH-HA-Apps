@@ -73,6 +73,12 @@ SCOPES = ("entity_check", "entity", "check_area", "check")
 # Offered as a question, never written straight from a reply.
 WIDE_SCOPES = frozenset({"check_area", "check"})
 LIFETIMES = ("permanent", "date", "month", "season")
+# Where a Wrong's reason says the device sits (#1476), read by the second
+# look rather than by words: `enclosed` and `outdoors` are the room-air mark
+# on a thermometer (`server._mark_not_room_air`), `unheated_room` a fact
+# that its room is not heated (`checks._util.UNHEATED_RULE`), both written
+# by `server._scope_correction` under the report's key.
+PLACEMENTS = ("enclosed", "outdoors", "unheated_room")
 SEASONS = ("spring", "summer", "autumn", "winter")
 # Meteorological seasons, northern; a southern house reads them swapped.
 _SEASON_MONTHS = {"spring": (3, 4, 5), "summer": (6, 7, 8),
@@ -148,7 +154,13 @@ SYSTEM = prompt_kit.assemble(
   reports again when winter ends)
 - "The pump is off for repair until 3 March" → entity_check, date,
   until_date the next 3 March, reason "" (one repair is not a standing
-  truth).""",
+  truth).
+- "Don't remind me again" → entity_check, permanent, reason "".
+- "The sensor is inside the pump box in the garage" → entity_check,
+  permanent, placement enclosed, reason "This sensor sits inside the pump
+  box."
+- "The garage is not heated" → entity_check, permanent, placement
+  unheated_room, reason "The garage is not heated".""",
     rules="""\
 - Scope, widest last: entity_check (this rule, this device — the
   default), entity (every rule about this device), check_area (this rule,
@@ -157,6 +169,10 @@ SYSTEM = prompt_kit.assemble(
 - Lifetime: permanent (no end mentioned or implied), date (the day
   reporting resumes), month (the month reporting resumes), season (the
   season the condition belongs to; reporting resumes when it ends).
+- placement says where the device sits, only when the words say so:
+  enclosed (inside a box, a cabinet, an enclosure or a machine, so it does
+  not read the room's air), outdoors, unheated_room (the room it is in is
+  not heated or conditioned; insulation alone is not that), else "".
 - reason is the standing truth about the HOUSE the correction implies,
   under 20 words, never about a person and never about the report — or
   "" when there is none.""",
@@ -179,6 +195,9 @@ SCHEMA = {
                                   "condition belongs to."},
         "reason": {"type": "string", "description":
                    "The house's standing truth, under 20 words, or \"\"."},
+        "placement": {"type": "string", "enum": ["", *PLACEMENTS],
+                      "description": "Where the device sits, when the "
+                                     "words say so."},
     },
     "required": ["scope", "lifetime"],
     "additionalProperties": False,
@@ -950,13 +969,22 @@ def names_a_time(note: str) -> bool:
 
 
 def held_until_changed(note: str) -> bool:
-    """A deferral that names no time: on a house check's row it holds the
-    card until the check's report about it changes (`HOLD_DAYS`). "Remind
-    me in 3 weeks", "until tomorrow" and "till spring" asked for a period
-    and get one (`snooze_days`)."""
+    """A deferral that names no time. "Remind me in 3 weeks", "until
+    tomorrow" and "till spring" asked for a period and get one
+    (`snooze_days`). On a house check's row about one thing that brAIn may
+    quiet, a plain "don't remind me (again)" is the pair rule
+    (`server._asks_to_stop`, #1479); the hold is what is left for the
+    words that say "until it changes" (`until_it_changes`) and for a row
+    no rule can be written on."""
     text = str(note or "")
     return (deferral(text) and not temporary(text)
             and not names_a_time(text))
+
+
+def until_it_changes(note: str) -> bool:
+    """Whether a reason names the hold in the household's own words: "until
+    it changes", "unless it gets worse"."""
+    return bool(_UNTIL_CHANGE_RE.search(str(note or "")))
 
 
 def named_time_days(note: str, today: dt.date | None = None, *,
@@ -1072,7 +1100,11 @@ def plan(reply: dict | None, finding: dict, *, today: dt.date | None = None,
                    "widened past this report")
     resume = resume_date(reply, today, southern=southern)
     reason = " ".join(str(reply.get("reason") or "").split())[:MAX_REASON]
+    placement = str(reply.get("placement") or "")
+    if placement not in PLACEMENTS or not entity_id:
+        placement = ""
     return {
+        "placement": placement,
         "scope": scope,
         "resume": resume.isoformat() if resume else "",
         "expires": expires_for(resume),
