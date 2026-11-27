@@ -5,6 +5,16 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.20.4
+
+### Changed
+
+- Backups: a folded run says "17 similar snapshots, latest 6:00 PM", every opened snapshot shows its time, and every Restore button names the time it restores to (1459).
+- Dashboard: Status shows players online and, on Paper and Purpur with BRUH Sight, memory in use of what is allocated ("2.1 of 4 GB in use"); the duplicate Type row is gone, the header names the server once, and TPS is one line (1458).
+- On a phone the header is one row with a Server menu (Backup, Update, Restart, Stop), the tabs are one row that scrolls inside itself with the open tab kept in view, and the footer is no longer pinned (1457).
+- Add-ons: a conflicting pair gets one notice that names both and recommends which to remove, with Remove only on that one; rows are one line each; pending updates are one "Update N" action (1456).
+- Properties: each setting has a plain name with its key under it, says when a change takes effect (after a restart, or only for a new world), and shows Save only once it is changed (1455).
+
 ## 1.20.3
 
 ### Changed
