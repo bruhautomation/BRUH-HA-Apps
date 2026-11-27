@@ -968,19 +968,20 @@ def _review(obj: dict, previous: dict | None = None,
 # card into its "All quiet" list, where no chip is drawn: each name sat over
 # the card's first sentence, which said what happened ("Cooling has stopped
 # as the weather cooled") and never whether that was fine. So a quiet card
-# is served with that sentence led by its verdict — decided from the card's
-# fields (`blind`, the verdict chip), never from its words — and a lead
-# that already says it is fine or nothing new is left as it is. The stored
-# file is never touched.
+# is served with that sentence led by its verdict as a field of its own
+# (`quiet_why`) — decided from the card's fields (`blind`, the verdict
+# chip), never from its words — and a lead that already says it is fine or
+# nothing new is left as it is. The summary is untouched: the opened card
+# says its verdict once, in its chip.
 QUIET_LEADS = {"blind": "Nothing to report", FINE: "All fine",
                "": "Nothing new"}
 _FIRST_SENTENCE = re.compile(r"^(.{3,160}?[.!?])(\s+\S[\s\S]*)?$")
 _PLAIN_WORD = re.compile(r"^[A-Z][a-z]+\s+[a-z]")
 
 
-def quiet_said(card: dict, verdict: str = "") -> str:
-    """``card``'s summary as the quiet list shows it: its first sentence
-    opening with what is fine (`QUIET_LEADS`), the rest as it was."""
+def quiet_line(card: dict, verdict: str = "") -> str:
+    """The one sentence the quiet list shows under ``card``'s name: its
+    summary's first sentence opening with what is fine (`QUIET_LEADS`)."""
     card = card or {}
     summary = str(card.get("summary") or "").strip()
     lead_word = QUIET_LEADS["blind"] if card.get("blind") else \
@@ -988,16 +989,16 @@ def quiet_said(card: dict, verdict: str = "") -> str:
     if not summary:
         return f"{lead_word}."
     m = _FIRST_SENTENCE.match(summary)
-    first, rest = (m.group(1), m.group(2) or "") if m else (summary, "")
+    first = m.group(1) if m else summary
     clause, _after = lead_clause(first)
     if says_fine(clause) or _NOTHING_NEW.search(clause) or \
             verdict_of_sentence(first):
-        return summary
+        return first
     # "Cooling has stopped" reads on after a colon; a name ("Climate 3 …")
     # keeps its capital.
     if _PLAIN_WORD.match(first):
         first = first[0].lower() + first[1:]
-    return f"{lead_word}: {first}{rest}"
+    return f"{lead_word}: {first}"
 
 
 __all__ = ["ACTION", "FINE", "HOLD_WHY", "LOOK", "NEXT_MAX", "QUIET_WHY", "RISE",
@@ -1006,5 +1007,5 @@ __all__ = ["ACTION", "FINE", "HOLD_WHY", "LOOK", "NEXT_MAX", "QUIET_WHY", "RISE"
            "is_reassurance", "lead_verdict", "legacy", "no_change",
            "nothing_to_act", "quiet_now", "verdict_of_sentence",
            "lead_clause", "next_step", "nothing_new", "open_row_named", "quiet",
-           "strip_reassurance", "title_echo", "quiet_said", "QUIET_LEADS",
+           "strip_reassurance", "title_echo", "quiet_line", "QUIET_LEADS",
            "review", "rises", "says_fine", "strip_verdict", "when_said"]

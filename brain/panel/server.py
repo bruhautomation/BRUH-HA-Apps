@@ -10632,10 +10632,11 @@ def _insights_listing() -> list[dict]:
             if isinstance(ins.get(key), str):
                 ins[key] = findings_store.plain_said(ins[key],
                                                      step=key == "next")
-        # A quiet card is shown in the "All quiet" list with no chip: its
-        # first sentence says what is fine (#1480), off the card's fields.
+        # A quiet card is shown in the "All quiet" list with no chip, so the
+        # list's line says what is fine (#1480), off the card's fields. Its
+        # own field: the opened card keeps its summary under its one chip.
         if ins.get("quiet"):
-            ins["summary"] = card_verdict.quiet_said(
+            ins["quiet_why"] = card_verdict.quiet_line(
                 ins, str(ins.get("verdict") or ""))
         # The heading an asked card carries in place of "Custom". A
         # category card is headed by its category, which the panel

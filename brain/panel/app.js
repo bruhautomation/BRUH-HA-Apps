@@ -2314,7 +2314,11 @@ function quietName(c) {
   return String(c.title || "").trim() || String(c.eyebrow || "").trim() || "Report";
 }
 
+// The server's one-sentence verdict for the list (`quiet_why`, #1480): the
+// list draws no chip, so its line says what is fine. The opened card keeps
+// its summary under its chip, so the verdict is said once there too.
 function quietWhy(c) {
+  if (c.quiet_why) return String(c.quiet_why);
   const text = withoutVerdictLead(String(c.summary || "").trim());
   const [lead, rest] = splitLead(text);
   return lead || rest;
