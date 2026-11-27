@@ -306,7 +306,11 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   words. The answer carries an `id`; follow it with
   `{type: "morph/tell_status", tell: id}` until `phase` is `done` or
   `failed` (`say` is brAIn's answer), and send its `session_id` as `session`
-  on the next turn to carry the conversation on.
+  on the next turn to carry the conversation on. A card that asks brAIn to
+  write about readings (a headline, a room's overview) also sends the entity
+  ids it read as `entities: [...]` in the payload: Morph checks each against
+  the house and tells brAIn which come from a device that looks dead, so
+  brAIn does not quote them.
 - **Coming up is always shown** under the top of the page while `coming_up:`
   is on; a card never opens or moves it.
 - **Render with no data at all**: `hass` may arrive late, and an entity may be
@@ -327,10 +331,17 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   words, never an empty plot.
 - **Controls sit in their own row**, above or below a chart, never on it:
   chips and toggles that wrap push the chart down rather than lying over it.
-- **A moisture reading that drops straight to exactly 0** (from 10% or more
-  within 15 minutes) is a probe that stopped answering, not dry soil: say
-  "Sensor offline · check the probe" (with its battery when one is known) and
-  no percentage. Soil that dried to 0 over hours is a real 0%.
+- **A reading from a device that looks dead is not a reading, in a tile or
+  in a sentence.** A moisture reading that drops straight to exactly 0 (from
+  10% or more within 15 minutes) is a probe that stopped answering, not dry
+  soil: say "Sensor offline · check the probe" (with its battery when one is
+  known) and no percentage. The same goes for a percentage sitting at 0 or
+  100 beside a battery on its device at or under 15% (or a low-battery flag
+  that is on), or sitting there unmoved for a day on a device that runs on a
+  battery, and for anything `unavailable`. Soil that dried to 0 over hours is
+  a real 0%. A headline or overview built from readings (by the card, or by
+  brAIn through `converse`) leaves such a reading out of its figures and its
+  advice and says the device needs checking instead.
 - **Say what the reading is, not what the card is usually.** A reading outside
   its target, hold or comfort band is stated in the card's status line, with
   how far outside ("11° below its hold band"): never "Idle", "OK" or
