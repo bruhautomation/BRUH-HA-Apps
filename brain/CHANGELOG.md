@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.33
+
+### Fixed
+
+- When deciding whether to watch something more closely, brAIn now weighs your recent answers over old ones: Wrongs from months ago no longer outvote misses you confirmed since, and recent Wrongs on reports it raised still keep it from getting louder (1488).
+
 ## 5.5.32
 
 ### Added
