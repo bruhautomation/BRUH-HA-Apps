@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.29
+
+### Changed
+
+- Morph no longer suggests moving a card or section because of how often it is tapped: a move is offered only when it follows one of Morph's layout rules or something you asked for, and Morph says which in plain words. Suggestions to trim a group of controls to the ones pressed most are gone too, and suggestions already open on tap counts alone are withdrawn (1481).
+
+### Fixed
+
+- When a card asks brAIn for words about its readings, Morph first checks whether a sensor looks dead (unavailable, dropped straight to 0, stuck at 0 or 100% for a day, or at 0 or 100% beside a low battery) and tells brAIn not to quote it but to say the probe looks offline or needs a battery. Morph's card rules say the same, so brAIn offers to check this house's own cards (1468).
+
 ## 5.5.28
 
 ### Changed
