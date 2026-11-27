@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.4
+
+### Changed
+
+- Files › Import: the paste box's placeholder fits on a phone ("Paste a Printables, .stl or .3mf link", the field on its own line) and the MakerWorld hint is one sentence (1445).
+- Files › Library: a file that is not sliced yet says "Slice & print", and same-named files show their kind (3MF, STL) beside the name (1443).
+- Printers: the header shows one state with the last print ("Last print: <name> · 2 h ago") instead of two statuses, and the temperature tiles are labelled Nozzle, Bed and Chamber (or Part fan) at every width (1441).
+- Printers › Failure detection: after a print, one line says whether it was watched and gives one action; the look strip and its key sit under "Looks this print" (1442).
+
+### Fixed
+
+- The Design tab says when brAIn is installed but not picking up requests, with what to do, before you wait, instead of failing 30 seconds later; it reads the mark brAIn 5.5.25 and later leave, and an older brAIn behaves as before (1485).
+- Studio on a phone: when the screen cannot connect, the black area says so plainly with a Retry button, and the touch controls wait until it connects (1444).
+
 ## 0.5.3
 
 ### Changed
