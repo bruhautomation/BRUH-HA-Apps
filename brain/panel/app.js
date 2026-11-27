@@ -6558,7 +6558,7 @@ async function findAction(finding, verb, done, btns, note, extra) {
     // `undo` is present on the presses that took a row away, and absent on
     // Fix it (a Claude run is already touching the house) and on the snooze
     // (it took nothing away, and has "Bring it back now").
-    toast(done, data.undo);
+    toast(data.said || done, data.undo);
     // Both halves of Fix it start a Claude run, so both want the faster
     // poll that notices it finishing. Cancel and the undo change a row and
     // start nothing, so neither does.
@@ -7634,7 +7634,8 @@ async function runAnswer(row, answer, btns, note, ignoreAll, change, stopWatchin
     const when = data && data.snoozed_until;
     toast(data && data.held ? "Muted until something about it changes"
           : when ? `Snoozed until ${untilWords(when)}`
-               : (answer.done || answer.label) + muted + watched, data && data.undo);
+               : ((data && data.said) || answer.done || answer.label) + muted + watched,
+          data && data.undo);
     if (answer.verb === "fix" || answer.verb === "apply") {
       refreshStatus().catch(() => {}); fastPoll();
     }
@@ -7978,7 +7979,8 @@ async function looseAction(path, body, done, btns, method = "POST") {
     absorbAnswer(data);
     await refreshToday();
     renderFindings();
-    toast(done, data && data.undo);
+    // A Wrong says back what it understood, by the thing's name (#1479).
+    toast((data && data.said) || done, data && data.undo);
   } catch (e) {
     toast(e.message || "that didn't work");
     btns.forEach((b) => { b.disabled = false; });
