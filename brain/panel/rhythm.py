@@ -102,6 +102,23 @@ MIN_USUAL_SHARE = 0.4
 # Below this share of the days the answer stands, but says it is a
 # majority of the usual days and not of every day.
 HIGH_CONFIDENCE_SHARE = 0.75
+# Two or three kinds of morning (`_split_wakes`): early days and late ones
+# mixed through the week (shifts, school weeks, alternate weeks), which no
+# one centre and no one day of the week answers. Each kind is a cluster
+# within CORE_HALF_MIN of its own middle, tighter than SPLIT_SPREAD_MAX
+# (mornings spread evenly across an arc that wide have a spread of about
+# 22 minutes, so a flat stretch of the clock is never a kind), holding at
+# least SPLIT_MIN_DAYS days and SPLIT_MIN_SHARE of them; the kinds sit at
+# least SPLIT_GAP_MIN apart, so there are empty mornings between them; and
+# together they hold SPLIT_COVER of the days, which is what refuses a
+# house that stirs anywhere: two ninety-minute arcs over mornings spread
+# evenly from 05:00 to 11:00 hold half of them.
+SPLIT_MAX = 3
+SPLIT_MIN_DAYS = 4
+SPLIT_MIN_SHARE = 0.2
+SPLIT_SPREAD_MAX = 15.0
+SPLIT_GAP_MIN = 120.0
+SPLIT_COVER = 0.8
 
 WEEKDAY = "weekday"
 WEEKEND = "weekend"
@@ -337,6 +354,69 @@ def _shape(rows: list[dict], field: str) -> dict | None:
                            else "low")}
 
 
+def _split_wakes(rows: list[dict]) -> dict | None:
+    """The earliest of two or three kinds of morning, or None.
+
+    Asked beside `_shape` (`_wakes`), because a median over two kinds of
+    morning is a time from one of them (or between them) with a spread
+    that still passes, and the early days are the ones it is wrong on. One
+    kind, or kinds that do not hold most of the days, is None and
+    `_shape` answers as it always has. A wake time is
+    read as "when the first person may be up": the brief and every "at
+    wake" schedule are early enough on a late day and never late on an
+    early one, so the EARLIEST kind is the answer, with its own spread,
+    and every kind rides beside it in `clusters` (earliest first). Wakes
+    only: the latest settle is a different question and is not asked here.
+    """
+    minutes = [int(r["first"]) for r in rows if isinstance(r.get("first"), int)]
+    if len(minutes) < MIN_DAYS:
+        return None
+    left = list(minutes)
+    kinds: list[tuple[float, list[int]]] = []
+    while left and len(kinds) < SPLIT_MAX:
+        centre = circular_median(_densest(left))
+        if centre is None:
+            break
+        members = [m for m in left if circular_distance(m, centre) <= CORE_HALF_MIN]
+        centre = circular_median(members)
+        members = [m for m in left if circular_distance(m, centre) <= CORE_HALF_MIN]
+        if (len(members) < SPLIT_MIN_DAYS
+                or len(members) < SPLIT_MIN_SHARE * len(minutes)
+                or circular_spread(members, centre) > SPLIT_SPREAD_MAX
+                or any(circular_distance(centre, c) < SPLIT_GAP_MIN
+                       for c, _ in kinds)):
+            break
+        kinds.append((centre, members))
+        taken = list(members)
+        rest = []
+        for m in left:
+            if m in taken:
+                taken.remove(m)
+            else:
+                rest.append(m)
+        left = rest
+    if (len(kinds) < 2
+            or sum(len(m) for _, m in kinds) < SPLIT_COVER * len(minutes)):
+        return None
+    kinds.sort(key=lambda k: _day_order(round(k[0])))
+    clusters = [{"minute": round(c, 1), "at": clock(c),
+                 "spread_min": round(circular_spread(m, c), 1),
+                 "usual_days": len(m)} for c, m in kinds]
+    return {**clusters[0], "days": len(minutes), "confidence": "low",
+            "clusters": clusters}
+
+
+def _wakes(rows: list[dict]) -> dict | None:
+    """One half's wake time: `_shape`'s, unless the mornings are two or
+    three kinds and it is not already the earliest of them."""
+    one = _shape(rows, "first")
+    split = _split_wakes(rows)
+    if split is None or (one is not None and circular_distance(
+            one["minute"], split["minute"]) <= CORE_HALF_MIN):
+        return one
+    return split
+
+
 def _dow_shape(rows: list[dict], field: str) -> dict | None:
     """One day of the week's usual minute, or None.
 
@@ -384,6 +464,10 @@ def _dow_shape(rows: list[dict], field: str) -> dict | None:
 def profile(payload: dict | None = None, path: str | None = None) -> dict:
     """When this house usually stirs and settles, weekdays and weekends apart.
 
+    A half whose mornings fall into two or three kinds wakes at the
+    earliest kind, and its `clusters` say what the kinds are
+    (`_split_wakes`).
+
     A missing half is a real state and reads as "not measured yet"
     everywhere downstream — never as midnight, and never as the other
     half's answer.
@@ -395,7 +479,7 @@ def profile(payload: dict | None = None, path: str | None = None) -> dict:
     for name, keep in ((WEEKDAY, lambda d: d < 5), (WEEKEND, lambda d: d >= 5)):
         part = [r for r in rows
                 if isinstance(r.get("dow"), int) and keep(r["dow"])]
-        out[name] = {"wakes": _shape(part, "first"),
+        out[name] = {"wakes": _wakes(part),
                      "settles": _shape(part, "last")}
     by_dow = {}
     for dow in range(7):
@@ -483,6 +567,11 @@ def progress(payload: dict | None = None, path: str | None = None,
         wake = week["wakes"]
         said = (f"Weekdays wake about {wake['at']}, spread "
                 f"{round(wake['spread_min'])} min")
+        later = [c["at"] for c in (wake.get("clusters") or [])[1:]]
+        if later:
+            said = (f"Weekdays wake from about {wake['at']} (spread "
+                    f"{round(wake['spread_min'])} min), on other days about "
+                    + " or ".join(later))
         if end.get("wakes"):
             said += f" · weekends about {end['wakes']['at']}"
         else:

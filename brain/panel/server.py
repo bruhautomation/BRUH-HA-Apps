@@ -152,6 +152,7 @@ import automation_writer
 import baselines
 import brain_status
 import brief
+import budget_lane
 import capture
 import devloop
 import devloop.github
@@ -14832,6 +14833,13 @@ def _resident_gate(settings: dict) -> str:
         return "there is no Claude credential"
     if not settings.get("auto_enabled"):
         return "automatic runs are paused"
+    return _spend_hold(settings)
+
+
+def _spend_hold(settings: dict) -> str:
+    """`_resident_gate`'s two spending gates, or "": the account's usage
+    limit and the owner's budget. Its own function so the budget lane
+    (`_budget_lane`) can tell a hold for budget from a paused house."""
     # The usage-limit pause, in EVERY budget mode (#1309). It was asked only
     # under "No limit", on the belief that a percentage budget always stops
     # first; it does not (a weekly window, an estimate, another device on
@@ -14853,6 +14861,85 @@ def _resident_gate(settings: dict) -> str:
         # to an estimate, and a look is the half the plan spends freely.
         log.debug("could not read the budget: %s", exc)
     return ""
+
+
+# The budget lane (`budget_lane.py`): while the Resident's looks are held
+# for budget, the held signals about food storage, water and security are
+# checked by rule, at most once per look interval (a held batch is asked
+# every tick), and each kind's notice is filed once per house day.
+BUDGET_LANE_STATE: dict = {"last_at": 0.0, "noted": {}, "tripped": 0,
+                           "notices": 0, "last_error": ""}
+
+
+async def _budget_lane(settings: dict, excuse: str,
+                       now: float) -> list[dict]:
+    """Check the held batch by rule when the hold (``excuse``) is for
+    budget — not a paused house or a missing credential. Spends no
+    run and takes no action: it files through `triage.gate`, marks what it
+    filed as not looked at (which is true), and announces it the way the
+    stale sweep does. Never raises; returns what it surfaced."""
+    if now - float(BUDGET_LANE_STATE["last_at"] or 0.0) < RESIDENT_LOOK_S:
+        return []
+    BUDGET_LANE_STATE["last_at"] = now
+    try:
+        why = await asyncio.to_thread(_spend_hold, settings)
+        if not why or why != excuse:
+            return []
+        surfaced = await asyncio.to_thread(
+            _budget_lane_file, list(RESIDENT_PENDING), why, now)
+        BUDGET_LANE_STATE["last_error"] = ""
+    except Exception as exc:  # noqa: BLE001 — the hold stands either way
+        BUDGET_LANE_STATE["last_error"] = str(exc)[:200]
+        log.warning("the budget lane failed: %s", exc)
+        return []
+    if surfaced:
+        await _announce_findings([f for f in surfaced
+                                  if f.get("status") != "held"])
+    return surfaced
+
+
+def _budget_lane_file(pending: list[dict], why: str, now: float) -> list[dict]:
+    """`_budget_lane`'s store half, in a thread."""
+    store = baselines.load()
+    tz, _name = baselines.house_timezone()
+    found = budget_lane.check(
+        pending, store.get("entities") or {}, _NAMES,
+        findings_store.LIVE_STATES, baselines.hour_of_week(now, tz))
+    trips = [budget_lane.trip_row(t, why) for t in found["trips"]]
+    rows = list(trips)
+    local = _local_now(now)
+    day = local.date().isoformat()
+    noted = BUDGET_LANE_STATE["noted"]
+    for kind in budget_lane.KIND_ORDER:
+        seen = found["seen"].get(kind)
+        if not seen or noted.get(kind) == day:
+            continue
+        tripped = sum(1 for t in found["trips"] if t["kind"] == kind)
+        rows.append(budget_lane.notice_row(kind, seen, tripped, why, local))
+        noted[kind] = day
+        BUDGET_LANE_STATE["notices"] += 1
+    created = findings_store.add_many(triage.gate(rows)) if rows else []
+    if trips:
+        findings_store.refresh_details(trips)
+    # A trip whose reading is back inside its band is over; one about an
+    # entity this pass did not read stays.
+    back = {findings_store.normalize(t) for row in found["inside"]
+            for t in budget_lane.titles_for(row)}
+    live = {findings_store.normalize(f.get("text") or "")
+            for f in findings_store.list_all("live")
+            if f.get("source") == budget_lane.TRIP_SOURCE}
+    findings_store.clear_resolved(
+        {budget_lane.TRIP_SOURCE},
+        (live - back) | {findings_store.normalize(r["text"]) for r in trips})
+    BUDGET_LANE_STATE["tripped"] += sum(
+        1 for c in created if c.get("source") == budget_lane.TRIP_SOURCE)
+    if not created:
+        return []
+    # A notice says the skip in its own words; a trip carries the reason.
+    return findings_store.record_triage(
+        {int(c["ts"]): ("untriaged", budget_lane.skipped_because(why)
+                        if c.get("source") == budget_lane.TRIP_SOURCE else "")
+         for c in created}, "", now)
 
 
 async def _resident_stale_sweep(now: float) -> list[dict]:
@@ -14974,6 +15061,9 @@ async def _resident_pass(now: float) -> dict:
         # me" on a paused house is answered by THIS, in these words.
         decision_trail.note_many(_signal_decisions(
             RESIDENT_PENDING[:50], "gate_hold", excuse))
+        # Held for budget: food storage, water and security are checked by
+        # rule instead, and the household is told the look was skipped.
+        await _budget_lane(settings, excuse, now)
         return {**out, "held": excuse}
     RESIDENT_STATE["last_error"] = ""
 

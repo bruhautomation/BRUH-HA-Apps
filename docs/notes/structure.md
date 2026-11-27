@@ -70,6 +70,7 @@ BRUH-HA-Apps/
 │   │   ├── interpret.py         # What somebody's words mean on the surface they were typed into
 │   │   ├── corrections.py       # How far a correction reaches, and for how long
 │   │   ├── decision_trail.py    # Why brAIn said nothing, written by the code that chose
+│   │   ├── budget_lane.py       # Fridges, water and locks checked by rule while looks are held for budget
 │   │   ├── answers.py           # A card's buttons, decided once from the case (a leaf: cases and findings read it)
 │   │   ├── run_queue.py         # Every Claude run takes a seat: safety, then a press, then the timers
 │   │   ├── outcomes.py          # Every Resident verdict, joined to what the household did next
