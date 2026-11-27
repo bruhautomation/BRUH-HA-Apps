@@ -358,7 +358,7 @@ class GardenSprayCard extends GardenCard {
     const last = s.state && s.state !== 'unknown' && s.state !== 'unavailable'
       ? `<div class="hero"><span class="big">${esc(ago(a.days_ago))}</span>
           <span class="muted">${heading ? '' : 'last spray · '}${esc(shortDate(s.state))}${a.this_year ? ` · ${a.this_year} this year` : ''}</span></div>
-        <div class="muted">${esc((a.products || []).join(', '))}${(a.crops || []).length ? ` on ${esc(a.crops.join(', '))}` : ''}</div>`
+        ${a.summary ? `<div class="muted">${esc(a.summary)}</div>` : ''}`
       : morph ? '' : '<div class="empty">No sprays logged yet.</div>';
 
     const phi = cfg.show_phi && (a.phi || []).length ? `<div class="section"><div class="label">Don't harvest yet</div>

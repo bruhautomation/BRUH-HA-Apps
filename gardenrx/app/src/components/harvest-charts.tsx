@@ -312,9 +312,11 @@ export function HarvestCharts({ byCrop, events }: { byCrop: ByCrop[]; events: Ev
       {/* cumulative trend — running total, or broken down by crop */}
       {dates.length > 1 && (
         <div className="rounded-xl bg-card ring-1 ring-black/[0.05] shadow-sm p-3">
-          <div className="flex items-center justify-between gap-2 mb-2">
-            <div className="flex items-baseline gap-2 min-w-0">
-              <span className="text-xs font-medium text-foreground/70 capitalize truncate">
+          {/* The title wraps under the figures rather than being cut off: a
+              season's total is wide enough to push it out of a phone's row. */}
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <div className="flex flex-wrap items-baseline gap-x-2 min-w-0">
+              <span className="text-xs font-medium text-muted-foreground capitalize">
                 Cumulative {metricWord}
               </span>
               <span className="shrink-0 text-sm font-heading font-semibold text-positive tabular-nums">
