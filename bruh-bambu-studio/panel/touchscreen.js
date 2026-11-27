@@ -33,7 +33,7 @@
   const RETRY_MS = 3000;
 
   const ts = {
-    rfb: null, url: "", wanted: false, connected: false, retry: null,
+    rfb: null, url: "", wanted: false, connected: false, retry: null, failed: false,
     z: 0, ox: 0, oy: 0, fit: true, fbW: 0, fbH: 0,
     mode: "pan", keyboard: false, keysym: null, keys: null,
     pointers: new Map(), gesture: null,
@@ -51,10 +51,25 @@
     return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${dir}websockify`;
   }
 
-  function say(text) {
-    const s = q("#tsState");
-    s.textContent = text || "";
-    s.hidden = !text;
+  // What the black area says while there is no screen: a plain sentence,
+  // and Retry when connecting failed. The browser's own error is never
+  // shown: it is about the page's machinery, not about Bambu Studio.
+  function say(text, retry = false) {
+    q("#tsStateText").textContent = text || "";
+    q("#tsRetry").hidden = !retry;
+    q("#tsState").hidden = !text;
+  }
+
+  // The controls act on a screen, so they wait for one.
+  function controls(on) {
+    document.querySelectorAll("#touchScreen .tsbar button").forEach((b) => { b.disabled = !on; });
+    if (!on && ts.keyboard) ts.closeKeyboard();
+  }
+
+  function failed(text) {
+    ts.failed = true;
+    say(text, true);
+    ts.retry = setTimeout(() => ts.wanted && ts.connect(), RETRY_MS);
   }
 
   // ------------------------------------------------------------- connect ---
@@ -64,7 +79,9 @@
     sizePort();
     if (ts.rfb) return;
     clearTimeout(ts.retry);
-    say("Connecting to Bambu Studio…");
+    controls(false);
+    // A retry after a failure keeps saying what failed until it works.
+    if (!ts.failed) say("Connecting to Bambu Studio…");
     let RFB;
     try {
       const base = new URL("novnc/core/", location.href);
@@ -73,8 +90,8 @@
         import(new URL("input/keysymdef.js", base)).then((m) => m.default),
         import(new URL("input/keysym.js", base)).then((m) => m.default),
       ]);
-    } catch (e) {
-      say(`The screen viewer could not load: ${e.message}`);
+    } catch (_) {
+      failed("Bambu Studio is running, but the screen viewer did not load.");
       return;
     }
     if (!ts.wanted || ts.rfb) return;
@@ -83,9 +100,8 @@
     let rfb;
     try {
       rfb = new RFB(host, wsUrl(), { wsProtocols: ["binary"], shared: true });
-    } catch (e) {
-      say(`Could not reach the screen: ${e.message}`);
-      ts.retry = setTimeout(() => ts.wanted && ts.connect(), RETRY_MS);
+    } catch (_) {
+      failed("Bambu Studio is running, but its screen did not connect.");
       return;
     }
     ts.rfb = rfb;
@@ -99,14 +115,19 @@
     rfb.addEventListener("connect", () => {
       if (ts.rfb !== rfb) return;
       ts.connected = true;
+      ts.failed = false;
       say("");
+      controls(true);
       watchCanvas();
     });
     rfb.addEventListener("disconnect", () => {
       if (ts.rfb !== rfb) return;
+      const was = ts.connected;
       ts.connected = false;
       ts.rfb = null;
+      controls(false);
       if (!ts.wanted) return;
+      if (!was) { failed("Bambu Studio is running, but its screen did not connect."); return; }
       say("The screen closed. Connecting again…");
       ts.retry = setTimeout(() => ts.wanted && ts.connect(), RETRY_MS);
     });
@@ -449,6 +470,11 @@
     q("#tsFit").addEventListener("click", ts.fitScreen);
     q("#tsKeys").addEventListener("click", () => (ts.keyboard ? ts.closeKeyboard() : ts.openKeyboard()));
     q("#tsDone").addEventListener("click", ts.closeKeyboard);
+    q("#tsRetry").addEventListener("click", () => {
+      clearTimeout(ts.retry);
+      ts.failed = false;
+      ts.connect();
+    });
     // pointerdown keeps the text box focused, so the keyboard stays up.
     for (const id of ["#tsBack", "#tsEnter"]) {
       q(id).addEventListener("pointerdown", (e) => e.preventDefault());

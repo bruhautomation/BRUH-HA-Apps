@@ -24,8 +24,9 @@ async function designStatus() {
     const [st, list] = await Promise.all([api("api/design/status"), api("api/design/parts")]);
     design.status = st;
     design.parts = list.parts;
-    // The tab is there when brAIn is, or when there are parts to look at.
-    $("#designTab").hidden = !(st.brain.state === "ok" || list.parts.length);
+    // The tab is there when brAIn is (even with its listener stopped, so the
+    // tab can say so), or when there are parts to look at.
+    $("#designTab").hidden = !(["ok", "stopped"].includes(st.brain.state) || list.parts.length);
     $("#designNote").textContent = st.brain.state === "ok"
       ? (st.cad ? "Describe a part and shape it with brAIn." : "The CAD tools are missing from this image.")
       : st.brain.sentence;

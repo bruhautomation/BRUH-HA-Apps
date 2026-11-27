@@ -279,14 +279,17 @@ function stateWord(p) {
   return STATE_WORDS[p.state] || p.state || "Connecting";
 }
 
-// The header's one line about the job: the file, then its progress, or
-// when it finished. Nothing while idle with no file.
+// The header's one line about the job: the file, then its progress, or,
+// once it is over, the last print and when it ended. The state pill beside
+// it is the one status: "finished" here beside a "Ready" pill read as two.
+// A failed print is said here only once the pill has moved on to Ready.
 function jobLine(p) {
   if (!p.online || !p.file || !(p.printing || p.state === "finish" || p.state === "failed")) return "";
   const name = printName(p.file, plateName(p));
   if (p.printing) return p.progress != null ? `${name} · ${p.progress}%` : name;
-  const word = p.state === "finish" ? "finished" : "failed";
-  return `${name} · ${p.ended_at ? `${word} ${ago(p.ended_at)}` : word}`;
+  const when = [p.state === "failed" && plateClear(p) ? "failed" : null, p.ended_at ? ago(p.ended_at) : null]
+    .filter(Boolean).join(" ").replace(/ /g, "\u00a0");
+  return `Last print: ${name}${when ? ` · ${when}` : ""}`;
 }
 
 function stateTone(p) {
@@ -531,6 +534,8 @@ function jobBlock(p) {
     buttons);
 }
 
+// A reading says what it is at every width: a bare "22°" under an icon
+// left a phone guessing which of three it was.
 function tile(iconName, label, value, sub) {
   return el("div", { class: "tile" }, el("span", { class: "ticon" }, icon(iconName)),
     el("div", {}, el("span", { class: "tlabel" }, label), el("b", {}, value),
@@ -541,8 +546,8 @@ function readings(p) {
   const fans = p.fans || {};
   const fanText = fans.part != null ? `${fans.part}%` : "–";
   return el("div", { class: "tiles" },
-    tile("nozzle", "Nozzle", temp(p.nozzle_c), p.nozzle_target_c ? `→ ${Math.round(p.nozzle_target_c)}°` : "off"),
-    tile("bed", "Bed", temp(p.bed_c), p.bed_target_c ? `→ ${Math.round(p.bed_target_c)}°` : "off"),
+    tile("nozzle", "Nozzle", temp(p.nozzle_c), p.nozzle_target_c ? `→ ${Math.round(p.nozzle_target_c)}°` : "heater off"),
+    tile("bed", "Bed", temp(p.bed_c), p.bed_target_c ? `→ ${Math.round(p.bed_target_c)}°` : "heater off"),
     p.chamber_c != null ? tile("chamber", "Chamber", `${Math.round(p.chamber_c)}°`) : null,
     tile("fan", "Part fan", fanText, fans.aux != null ? `aux ${fans.aux}%` : null));
 }
@@ -938,9 +943,13 @@ function watchAlert(p, w) {
       : "Ignore stops warnings about this problem for the rest of the print."));
 }
 
-function watchHistory(p) {
+// The looks, newest first; once no print runs, the plan of looks (the strip
+// and its key) is here too rather than up front, where it crowded the one
+// line about the last print.
+function watchHistory(p, plan = null) {
   const box = el("details", { class: "more", "data-k": "watchhist" }, el("summary", {}, "Looks this print"));
   const list = el("div", { class: "whist" }, el("p", { class: "hint" }, "Loading…"));
+  if (plan) box.append(plan);
   box.append(list);
   const fill = (h) => {
     if (!h.checks.length) { list.replaceChildren(el("p", { class: "hint" }, "No looks yet this print.")); return; }
@@ -1013,6 +1022,7 @@ function watchBlock(p) {
   const check = el("button", { type: "button", disabled: !(p.printing || p.state === "finish") || w.status === "looking",
     title: "Have brAIn look at the print now", onclick: () => watchAct(p, "check") }, icon("eye"), "Check now");
   const blind = watchBlind(p, w, last, lastDecision, check);
+  const plan = watchTimeline(p, w);
   const lastRow = last && !repeats && !blind ? el("div", { class: "wlast" },
     last.image_url ? el("img", { src: last.image_url, alt: "", loading: "lazy" }) : null,
     el("div", { class: "grow" },
@@ -1023,12 +1033,11 @@ function watchBlock(p) {
   return el("section", { class: `watch ${tone}` }, head,
     blind,
     watchAlert(p, w),
-    watchTimeline(p, w),
+    p.printing ? plan : null,
     lastRow,
-    // A blind notice carries its own Check now, beside the light, while a
-    // print runs; the note about a past print answers nothing.
-    blind && p.printing ? null : el("div", { class: "row wrap" }, check),
-    watchHistory(p));
+    // A blind notice carries its own one action (the light, or Check now).
+    blind ? null : el("div", { class: "row wrap" }, check),
+    watchHistory(p, p.printing ? null : plan));
 }
 
 // The planned looks that are done, and how many of them could not see.
@@ -1044,8 +1053,8 @@ function blindCounts(w) {
 // lets it), so the box says detection cannot see and offers the light as the
 // one press that fixes it. Before the first look, a print starting in the
 // dark with that setting off is warned about the same way. Once no print
-// runs it is one quiet line about the last print, with nothing to answer
-// but the light, when the light is why, for the next print.
+// runs it is one short line about the last print and one action: the light
+// for the next print when the light was why, else Check now.
 function watchBlind(p, w, last, lastDecision, check) {
   const counts = blindCounts(w);
   const mostly = counts.done > 0 && counts.blind * 2 > counts.done;
@@ -1057,13 +1066,12 @@ function watchBlind(p, w, last, lastDecision, check) {
   const starting = p.printing && !last && off && !w.light;
   if (!(lastDecision === "blind" || mostly || starting)) return null;
   if (!p.printing) {
-    const what = mostly ? (counts.blind === counts.done ? "The last print was not watched: the camera saw nothing"
-      : `The last print was not watched: the camera saw nothing at ${counts.blind} of ${counts.done} looks`)
-      : "The last look could not see the print";
-    const why = off ? " with the chamber light off." : ". Check the lens is clean and points at the plate.";
+    const what = mostly ? "Last print not watched" : "Last look saw nothing";
+    const why = off ? "the light was off." : "check the lens is clean and points at the plate.";
+    const act = off ? light("Turn on the light for the next print") : check;
     return el("div", { class: "wblind quiet", role: "status" },
-      el("p", {}, `${what}${why}`, last && last.at ? el("span", { class: "hint" }, ` Last look ${ago(last.at)}.`) : null),
-      off && p.online ? el("div", { class: "wblindacts" }, light("Turn on light for the next print")) : null);
+      el("p", {}, `${what}: ${why}`),
+      act ? el("div", { class: "wblindacts" }, act) : null);
   }
   if (starting) {
     return el("div", { class: "wblind", role: "status" },
@@ -1541,13 +1549,17 @@ function renderFiles() {
     const designed = Boolean(f.design);
     const title = fileTitle(f);
     const badges = [el("span", { class: `pill ${f.sliced ? "done" : ""}` }, f.sliced ? "Sliced" : f.project ? "Project" : "Model")];
-    if (kinds[sameKey(title)].size > 1 && !designed) badges.unshift(el("span", { class: "pill kind" }, fileKind(f)));
+    // Same-named files of different kinds say which they are beside the
+    // name itself, where the eye tells the rows apart.
+    const kindTag = kinds[sameKey(title)].size > 1 && !designed ? el("span", { class: "fkind" }, fileKind(f)) : null;
     if (f.plates && f.plates.length > 1) badges.push(el("span", { class: "pill" }, `${f.plates.length} plates`));
     if (designed) badges.push(el("span", { class: "pill ghost" }, `Designed with brAIn · v${f.version}`));
     const folder = !designed && f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : null;
     const facts = [folder, megabytes(f.size), new Date(f.modified * 1000).toLocaleDateString()].filter(Boolean).join(" · ");
     // Not named `slice`: that is the function the menu's Slice calls.
     const [sliceLine, sliceTone] = sliceFacts(f);
+    // An unsliced file is sliced first: the button says so.
+    const printWord = f.sliced || f.sliced_path ? "Print" : "Slice & print";
     const sibling = i > 0 && !designed && sameKey(fileTitle(all[i - 1])) === sameKey(title);
     const menu = el("details", { class: "pmenu" }, el("summary", { "aria-label": `More for ${f.name}` }, "⋯"),
       el("div", { class: "pmenupop" },
@@ -1560,12 +1572,12 @@ function renderFiles() {
           loadFiles();
         } }, icon("close"), "Delete")));
     return el("div", { class: `frow${sibling ? " fsame" : ""}` }, filePicture(f),
-      el("div", { class: "grow" }, el("b", { class: "fname", title: f.path }, title),
+      el("div", { class: "grow" }, el("b", { class: "fname", title: f.path }, title, kindTag ? " " : null, kindTag),
         el("div", { class: "badges" }, badges),
-        el("p", { class: `fslice ${sliceTone}`, title: f.sliced || f.sliced_path ? "" : "Print slices it first" }, sliceLine),
+        el("p", { class: `fslice ${sliceTone}` }, sliceLine),
         el("p", { class: "hint" }, facts), filamentChips(f)),
       el("div", { class: "factions" },
-        el("button", { class: "primary", onclick: () => openPrint(f) }, "Print"), menu));
+        el("button", { class: "primary", onclick: () => openPrint(f) }, printWord), menu));
   });
   $("#fileList").replaceChildren(...(rows.length ? rows : [el("p", { class: "hint" },
     state.files.length ? "No file matches that." : "No models yet. Upload one, or save a project from Bambu Studio into this folder.")]));
