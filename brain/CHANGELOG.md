@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.31
+
+### Fixed
+
+- Text shown to the household no longer carries brAIn's internal check names (`check:…`) or talk of holding rows: a check is named in words ("brAIn's “never fired” check") with its name under Details, on every surface — Needs you, cases, Morph, the Home Assistant mirror, notifications, insight cards. An automation-not-reporting finding names the automations and the sensors it saw, and a quiet card leads with one plain verdict ("All fine: …") (1480).
+- A temperature from a sensor that reports in °F is no longer read as °C: every reading and every line it is compared with carries its unit, in °C or °F as the house uses, and brAIn's look is told to keep them in one unit (1471).
+- A sensor brAIn kept raising, and that you kept marking Wrong, was counted as one brAIn "passed over" and pushed louder. Raised-then-wrong now counts as too loud, a Wrong on a raised report outweighs a miss before anything is made louder, and brAIn's look is no longer handed its own counts as a reason (1473).
+
 ## 5.5.30
 
 ### Fixed
