@@ -112,13 +112,78 @@
   markUpdated();
 
   // ------------------------------------------------------------------
+  // The header on a phone (#1457): the server actions fold behind one
+  // "Server" button, and the status footer is the end of the page rather
+  // than a strip pinned under it. From 640px both are as they were.
+  // ------------------------------------------------------------------
+  const phone = window.matchMedia('(max-width: 639.98px)');
+  const serverMenu = $('#btn-server-menu');
+  const serverActions = $('#server-actions');
+  const setServerMenu = (open) => {
+    serverActions.classList.toggle('open', open);
+    serverMenu.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  serverMenu.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    setServerMenu(!serverActions.classList.contains('open'));
+  });
+  // A press on an action, or anywhere else, closes the menu.
+  document.addEventListener('click', (ev) => {
+    if (serverActions.classList.contains('open') && !serverMenu.contains(ev.target)) setServerMenu(false);
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape' || !serverActions.classList.contains('open')) return;
+    setServerMenu(false);
+    serverMenu.focus();
+  });
+  const pageFooter = document.querySelector('body > footer');
+  const placeFooter = () => {
+    if (!pageFooter) return;
+    if (phone.matches) $('main').appendChild(pageFooter);
+    else document.body.insertBefore(pageFooter, document.querySelector('body > script'));
+    if (!phone.matches) setServerMenu(false);
+  };
+  placeFooter();
+  phone.addEventListener?.('change', placeFooter);
+
+  // ------------------------------------------------------------------
   // Tabs
   // ------------------------------------------------------------------
+  // On a phone the tab strip is one row that scrolls sideways inside itself.
+  // An edge with more tabs past it shows a ‹ or › button that scrolls the
+  // strip, so a cut tab reads as "there is more", and the open tab is
+  // brought clear of those buttons: when a tab is pressed, when the page
+  // opens, and when the screen turns (as BRight's strip does).
+  const TAB_EDGE_PX = 52;
+  const tabStrip = $('.tabs-in');
+  const tabsBack = $('#tabsBack');
+  const tabsOn = $('#tabsOn');
+  function tabEdges() {
+    const end = tabStrip.scrollWidth - tabStrip.clientWidth;
+    tabsBack.hidden = !(tabStrip.scrollLeft > 1);
+    tabsOn.hidden = !(end > 1 && tabStrip.scrollLeft < end - 1);
+  }
+  function revealTab(button) {
+    if (button && tabStrip.scrollWidth > tabStrip.clientWidth) {
+      const left = button.offsetLeft - TAB_EDGE_PX;
+      const right = button.offsetLeft + button.offsetWidth + TAB_EDGE_PX;
+      if (left < tabStrip.scrollLeft) tabStrip.scrollLeft = Math.max(0, left);
+      else if (right > tabStrip.scrollLeft + tabStrip.clientWidth) tabStrip.scrollLeft = right - tabStrip.clientWidth;
+    }
+    tabEdges();
+  }
+  tabsBack.addEventListener('click', () => tabStrip.scrollBy({ left: -tabStrip.clientWidth * 0.7, behavior: 'smooth' }));
+  tabsOn.addEventListener('click', () => tabStrip.scrollBy({ left: tabStrip.clientWidth * 0.7, behavior: 'smooth' }));
+  tabStrip.addEventListener('scroll', tabEdges, { passive: true });
+  window.addEventListener('resize', () => revealTab($('.tab.active')));
   $$('.tab').forEach((tab) => {
     tab.addEventListener('click', () => {
       $$('.tab').forEach((t) => t.classList.remove('active'));
       $$('.tab-panel').forEach((p) => p.classList.remove('active'));
       tab.classList.add('active');
+      // The tab row scrolls sideways on a phone; the chosen tab stays in
+      // sight, clear of the ‹ › buttons.
+      revealTab(tab);
       $(`#tab-${tab.dataset.tab}`).classList.add('active');
       if (tab.dataset.tab === 'players')    refreshPlayersTab();
       if (tab.dataset.tab === 'properties') loadProperties();
@@ -134,6 +199,7 @@
       if (m) m.scrollTop = 0;
     });
   });
+  revealTab($('.tab.active'));
 
 
   // ------------------------------------------------------------------
@@ -173,13 +239,26 @@
         ? (stats.reachable ? 'Online' : 'Starting…')
         : 'Stopped';
 
-      $('#m-version').textContent = stats.version || server_meta.version || '—';
-      $('#m-type').textContent = state.server_type || '—';
+      // The version once, with the software's name in front when the version
+      // does not already carry it ("Paper 1.21.4", never "paper Paper 1.21.4").
+      const rawVersion = stats.version || server_meta.version || '';
+      const software = typeName(state.server_type || 'paper');
+      const versionText = !rawVersion ? software
+        : rawVersion.toLowerCase().startsWith(software.toLowerCase()) ? rawVersion : `${software} ${rawVersion}`;
+      $('#m-version').textContent = rawVersion ? versionText : '—';
       $('#m-uptime').textContent = stats.uptime_seconds
         ? fmtDuration(stats.uptime_seconds) : '—';
-      // What the server is allowed to use; its live use is not measured here.
-      $('#m-memory').textContent = state.memory_mb
-        ? `${state.memory_mb >= 1024 ? `${Math.round(state.memory_mb / 102.4) / 10} GB` : `${state.memory_mb} MB`} allocated` : '—';
+      // Memory in use, of what the server is allowed, when BRUH Sight reports
+      // the server's heap (/api/status `memory`); without it only the
+      // allowance is known, and that is all the row says.
+      const allowed = state.memory_mb || (data.memory && data.memory.max_mb) || 0;
+      const used = data.memory && running ? data.memory.used_mb : null;
+      const inGb = allowed >= 1024;
+      const amount = (mb) => (inGb ? `${Math.round(mb / 102.4) / 10}` : `${Math.round(mb)}`);
+      const unit = inGb ? 'GB' : 'MB';
+      $('#m-memory').textContent = !allowed ? '—'
+        : used != null ? `${amount(used)} of ${amount(allowed)} ${unit} in use`
+          : `${amount(allowed)} ${unit} allocated`;
       // TPS health colors. 20 is perfect; under ~17 sustained means the
       // server can't keep up. Apply per-cell so the eye can tell which
       // window slipped first.
@@ -237,8 +316,10 @@
         memHint.textContent = data.memory_warning ? data.memory_warning.message : '';
         memHint.hidden = !data.memory_warning;
       }
-      $('#m-online').textContent = stats.online ?? 0;
-      $('#m-max').textContent = stats.max_players ?? state.max_players ?? 0;
+      const online = stats.online ?? 0;
+      const max = stats.max_players ?? state.max_players;
+      $('#m-online-text').textContent = !running ? '—'
+        : `${online}${max ? ` of ${max}` : ''} online`;
 
       const ml = $('#m-players');
       ml.innerHTML = '';
@@ -248,8 +329,7 @@
         ml.appendChild(li);
       });
 
-      $('#brand-subtitle').textContent =
-        `${state.server_type || 'paper'} ${stats.version || ''} · ${running ? 'online' : 'offline'}`;
+      $('#brand-subtitle').textContent = `${versionText} · ${running ? 'online' : 'offline'}`;
       $('#last-refresh').textContent = `Updated ${new Date().toLocaleTimeString()}`;
     } catch (err) {
       console.warn('refresh failed', err);
@@ -823,33 +903,49 @@
       return a.localeCompare(b);
     });
     const worldGenOnly = new Set(data.world_gen_only || []);
+    const live = new Set(data.live || []);
+    const labels = data.labels || {};
+    // A plain name over the key; a key the server names nothing is said as
+    // its words ("server-port" reads "Server port").
+    const labelOf = (k) => labels[k] || (k.charAt(0).toUpperCase() + k.slice(1)).replace(/[-_.]/g, ' ');
+    // When a change takes effect, in words on the row (#1455). A key read
+    // only when a world is generated does nothing to this one.
+    const whenOf = (k) => (worldGenOnly.has(k)
+      ? 'Used only when a new world is created; changing it does not change this world.'
+      : live.has(k) ? '' : 'Takes effect after a restart.');
     sortedEntries.forEach(([k, v]) => {
       const isEditable = editable.has(k);
       const tr = document.createElement('tr');
-      // Flag keys that are baked into the world at GENERATION time —
-      // editing them on an existing world has NO effect (Minecraft only
-      // reads them once when it generates the world). Without this badge
-      // users edit level-seed expecting their world to change.
-      const wgoBadge = worldGenOnly.has(k)
-        ? `<span class="wgo-badge" title="World-generation only — has no effect on this already-generated world. To use this, create a new world from the Worlds tab.">world-gen only</span>`
-        : '';
+      const when = isEditable ? whenOf(k) : 'Set by the add-on.';
       const valCell = isEditable
         ? renderPropEditor(k, v, types, enums, ranges)
         : `<code>${esc(v)}</code>`;
+      // Save is there only while the row holds a change.
       const actionCell = isEditable
-        ? `<button class="btn btn-primary" data-save-key="${esc(k)}">Save</button>`
-        : '<span class="muted">config.yaml</span>';
-      tr.innerHTML = `<td><code>${esc(k)}</code>${wgoBadge}</td><td>${valCell}</td><td>${actionCell}</td>`;
+        ? `<button class="btn btn-primary" data-save-key="${esc(k)}" hidden>Save</button>`
+        : '';
+      tr.innerHTML = `<td><span class="prop-label">${esc(labelOf(k))}</span><code class="prop-key">${esc(k)}</code>${when ? `<span class="prop-when">${esc(when)}</span>` : ''}</td><td>${valCell}</td><td>${actionCell}</td>`;
       tbody.appendChild(tr);
+    });
+    tbody.querySelectorAll('[data-key]').forEach((input) => {
+      input.dataset.saved = input.value;
+      const show = () => {
+        const b = tbody.querySelector(`button[data-save-key="${CSS.escape(input.dataset.key)}"]`);
+        if (b && !b.disabled) {
+          b.hidden = input.value === input.dataset.saved;
+          b.textContent = 'Save';
+        }
+      };
+      input.addEventListener('input', show);
+      input.addEventListener('change', show);
     });
     tbody.querySelectorAll('button[data-save-key]').forEach((b) => {
       b.addEventListener('click', async () => {
         const key = b.dataset.saveKey;
         // input OR select — both expose .value
-        const input = tbody.querySelector(`[data-key="${key}"]`);
+        const input = tbody.querySelector(`[data-key="${CSS.escape(key)}"]`);
         if (!input) return;
         b.disabled = true;
-        const original = b.textContent;
         b.textContent = 'Saving…';
         const resp = await api('api/properties', {
           method: 'POST',
@@ -858,12 +954,13 @@
         b.disabled = false;
         if (resp.error) {
           alert(resp.error);
-          b.textContent = original;
+          b.textContent = 'Save';
         } else {
           // Saved to this world's server.properties (the source of truth).
           // Some keys apply live via RCON; the rest take effect on restart.
+          input.dataset.saved = input.value;
           b.textContent = resp.live ? 'Saved ✓' : 'Saved — restart to apply';
-          setTimeout(() => { b.textContent = original; }, 2500);
+          setTimeout(() => { if (input.value === input.dataset.saved) b.hidden = true; b.textContent = 'Save'; }, 2500);
         }
       });
     });
@@ -1208,18 +1305,21 @@
     // right the one thing to do with it (Restore, or open a folded run).
     const snapText = (head, sub) => `<div class="snap-text"><strong>${esc(head)}</strong><span class="muted">${esc(sub)}</span></div>`;
     const chevron = '<svg class="chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
+    // Every Restore names the time it goes back to (#1459), so a button is
+    // never read as belonging to the row above or below it.
     const row = (ts, label, ref, short, extra) => `
       <li class="snap">
         ${snapText(short ? clock(ts) : when(ts), [label, extra].filter(Boolean).join(' · '))}
-        <button class="btn btn-ghost snap-restore" data-restore="${esc(ref)}" data-when="${esc(when(ts))}">Restore</button>
+        <button class="btn btn-ghost snap-restore" data-restore="${esc(ref)}" data-when="${esc(when(ts))}">Restore ${esc(clock(ts))}</button>
       </li>`;
     const KINDS = { scheduled: 'Scheduled backup', manual: 'Manual backup', 'before a world change': 'Before a world change' };
     const gitLabel = (c) => KINDS[c.kind] || 'Backup';
     // A snapshot is only kept when the world changed since the one before it.
     const gitExtra = (c) => ['world changed', c.players == null ? '' : (c.players === 0 ? 'nobody online' : `${c.players} online`)].filter(Boolean).join(' · ');
     // Within a day, a run of snapshots that read the same (same kind, same
-    // players) folds into one line with its time span and count (#1292);
-    // opening it lists every one with its own Restore. Nothing is dropped.
+    // players) folds into one line (#1292) that says how many it holds and
+    // the newest one's time (#1459); opening it lists every one with its
+    // time and its own Restore. Nothing is dropped.
     const sameRun = (a, b) => a.kind === b.kind && gitExtra(a) === gitExtra(b);
     const clump = (items) => {
       const out = [];
@@ -1232,10 +1332,12 @@
     };
     const rows = (items) => clump(items).map((g) => {
       if (g.length === 1) return row(g[0].ts, gitLabel(g[0]), g[0].sha, true, gitExtra(g[0]));
-      const span = `${clock(g[g.length - 1].ts)} – ${clock(g[0].ts)}`;
-      return `<li class="snap-clump"><details><summary class="snap">${snapText(span, [gitLabel(g[0]), gitExtra(g[0])].filter(Boolean).join(' · '))}
-        <span class="btn btn-ghost snap-open">${chevron}<span class="snap-show">Show ${g.length}</span><span class="snap-hide">Hide ${g.length}</span></span></summary>
-        <ul class="snap-list snap-inner">${g.map((c) => row(c.ts, gitLabel(c), c.sha, true, gitExtra(c))).join('')}</ul></details></li>`;
+      const head = `${g.length} similar snapshots, latest ${clock(g[0].ts)}`;
+      const sub = [`earliest ${clock(g[g.length - 1].ts)}`, gitLabel(g[0]), gitExtra(g[0])].filter(Boolean).join(' · ');
+      // The rows inside share the group's description, so each says only its time.
+      return `<li class="snap-clump"><details><summary class="snap">${snapText(head, sub)}
+        <span class="btn btn-ghost snap-open">${chevron}<span class="snap-show">Show</span><span class="snap-hide">Hide</span></span></summary>
+        <ul class="snap-list snap-inner">${g.map((c) => row(c.ts, '', c.sha, true, '')).join('')}</ul></details></li>`;
     }).join('');
     const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
     const shortDay = (ts) => new Date(ts * 1000).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
@@ -1665,16 +1767,15 @@
     if (item.status === 'unused') {
       actions.push(`<button class="btn btn-primary" data-world-use="${esc(item.file)}">Use in this world</button>`);
     }
-    // Update is offered only when Modrinth has a newer build than this one;
-    // the row says which, or that it is up to date.
+    // The row says when Modrinth has a newer build than this one; the
+    // updates themselves are one "Update N" above the list (#1456).
     let updateLine = '';
     if (item.updatable) {
       const u = addonState.updates && addonState.updates[item.id];
       if (u && u.state === 'available') {
         updateLine = `<span class="addon-update is-new">Update to ${esc(u.version || 'a newer version')} available</span>`;
-        actions.push(`<button class="btn btn-primary" data-world-update="${esc(item.id)}" data-kind="${esc(item.kind)}">Update</button>`);
       } else if (u && u.state === 'current') {
-        updateLine = '<span class="addon-update">Up to date</span>';
+        updateLine = '';
       } else if (u && u.state === 'none') {
         updateLine = '<span class="addon-update">No build for this server version on Modrinth</span>';
       } else if (u || addonState.updatesError) {
@@ -1685,7 +1786,10 @@
         updateLine = '<span class="addon-update">Checking for updates…</span>';
       }
     }
-    if (item.removable) {
+    // The one of a conflicting pair to remove carries the pair's notice and
+    // the one emphasised Remove, inside it; its ordinary Remove goes.
+    const removeThis = !!(item.conflict && item.conflict.remove_this);
+    if (item.removable && !removeThis) {
       actions.push(`<button class="btn btn-ghost addon-remove" data-world-remove="${esc(item.file)}" data-kind="${esc(item.kind)}" data-title="${esc(item.title)}">Remove</button>`);
     }
     row.innerHTML = `
@@ -1696,20 +1800,29 @@
         ${updateLine}
       </div>
       <span class="addon-status addon-status-${esc(item.status)}">${esc(item.status_text)}</span>
-      ${conflictHtml(item.conflict)}
       <div class="addon-row-actions">${actions.join('')}</div>
+      ${conflictHtml(item)}
       <div class="addon-note" aria-live="polite"></div>`;
     return row;
   }
 
-  // A known-conflicting pair (addons.CONFLICTS) is said on both rows, naming
-  // the one to remove; nothing is removed for the owner.
-  function conflictHtml(c) {
-    if (!c) return '';
-    const text = c.remove_this
-      ? `Conflicts with ${c.with}. Remove this one: ${c.keep} already does what it does.`
-      : `Conflicts with ${c.with}. Remove ${c.remove} and keep this one, which already does what it does.`;
-    return `<p class="addon-conflict" role="note">${esc(text)}</p>`;
+  // A known-conflicting pair (addons.CONFLICTS) gets one notice, on the row
+  // addons.py marks to remove (remove_this: the other already does its
+  // job): it names both and holds the recommended Remove. The kept row says
+  // nothing about it. Nothing is removed for the owner.
+  function conflictHtml(item) {
+    const c = item.conflict;
+    if (!c || !c.remove_this) return '';
+    const remove = item.removable
+      ? `<button class="btn btn-danger addon-remove" data-world-remove="${esc(item.file)}" data-kind="${esc(item.kind)}" data-title="${esc(item.title)}">Remove ${esc(item.title)}</button>`
+      : '';
+    return `<div class="addon-conflict" role="note"><p>${esc(`${c.remove} and ${c.keep} conflict: ${c.keep} already does everything ${c.remove} does. Keep ${c.keep} and remove ${c.remove}.`)}</p>${remove}</div>`;
+  }
+
+  // Every update Modrinth has for this world, as one action (#1456).
+  function pendingUpdates(world) {
+    const ups = addonState.updates || {};
+    return (world.items || []).filter((it) => it.updatable && ups[it.id] && ups[it.id].state === 'available');
   }
 
   function describeChanges(world) {
@@ -1765,6 +1878,15 @@
     const box = $('#addon-world');
     box.innerHTML = '';
     const items = world.items || [];
+    const pending = pendingUpdates(world);
+    if (pending.length) {
+      const bar = document.createElement('div');
+      bar.className = 'addon-updates';
+      bar.innerHTML = `<span>${esc(pending.length === 1 ? `An update is available for ${pending[0].title}.` : `Updates are available for ${pending.length} add-ons.`)}</span>
+        <button class="btn btn-primary" id="addon-update-all" type="button">Update ${pending.length}</button>
+        <p class="addon-note" aria-live="polite"></p>`;
+      box.appendChild(bar);
+    }
     const groups = {};
     items.forEach((it) => { (groups[it.kind] = groups[it.kind] || []).push(it); });
     Object.keys(KIND_HEADINGS).forEach((kind) => {
@@ -1819,21 +1941,38 @@
         else { rowNote(b, resp.error || 'That did not apply.', true); b.disabled = false; }
       });
     });
-    root.querySelectorAll('button[data-world-update]').forEach((b) => {
-      b.addEventListener('click', async () => {
-        b.disabled = true;
-        b.textContent = 'Updating…';
+    root.querySelector('#addon-update-all')?.addEventListener('click', async (ev) => {
+      const b = ev.currentTarget;
+      const note = b.parentElement.querySelector('.addon-note');
+      const todo = pendingUpdates(addonState.world || {});
+      b.disabled = true;
+      const failed = [];
+      let world = null;
+      for (let i = 0; i < todo.length; i++) {
+        b.textContent = `Updating ${i + 1} of ${todo.length}…`;
+        // One at a time, through the same install (and its checks) as before.
+        // eslint-disable-next-line no-await-in-loop
         const resp = await api('api/addons/install', {
-          method: 'POST', body: JSON.stringify({ id: b.dataset.worldUpdate, kind: b.dataset.kind }),
+          method: 'POST', body: JSON.stringify({ id: todo[i].id, kind: todo[i].kind }),
         });
         if (resp.ok) {
           // What was just installed is the newest build, so it is up to date.
           (resp.installed || []).forEach((r) => {
             if (addonState.updates && r.id) addonState.updates[r.id] = { state: 'current', version: r.version };
           });
-          renderWorld(resp.world);
-        } else { rowNote(b, resp.error || 'That did not update.', true); b.disabled = false; b.textContent = 'Update'; }
-      });
+          world = resp.world || world;
+        } else {
+          failed.push(`${todo[i].title}: ${resp.error || 'that did not update'}`);
+        }
+      }
+      renderWorld(world || addonState.world || {});
+      if (failed.length) {
+        // The list was drawn again; the note goes under the new bar (or the
+        // old one, when nothing updated and there is no new bar).
+        const n = $('#addon-update-all')?.parentElement.querySelector('.addon-note') || note;
+        n.textContent = failed.join(' · ');
+        n.classList.add('bad');
+      }
     });
   }
 

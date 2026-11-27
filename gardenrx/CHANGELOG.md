@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.6
+
+### Changed
+
+- Products › Catalog: a figure the label does not give is no longer an "n/a" chip; one muted line says "REI not on label" or "Re-spray not on label" instead (1440).
+- In the cloud theme, the green, amber and blue used for small text (Today's eyebrow, Weather's rain amounts, Inventory's "% left", Tank's "Select all") are lighter so they read at 4.5:1 on its grey; buttons and charts in that theme use the same lighter shades (1439).
+- The Last spray card and Today's Last spray row read one shared summary, so when several sprays share the latest date both say the same thing ("2 sprays: … on 4 crops; … on Apples"); the sensor's products and crops now cover every spray on that date (1438).
+
+### Fixed
+
+- Harvest › Cumulative: the chart title wraps instead of being cut off on a phone, and the current month's letter in the harvest calendar uses the theme's green so it is readable (1437).
+
 ## 0.2.5
 
 ### Changed

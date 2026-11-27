@@ -39,6 +39,8 @@ import { QueuedSprayCard } from '@/components/queued-spray-card';
 import { RainSummaryLine } from '@/components/rain-tracker';
 import { dailyRainfall } from '@/lib/rainfall';
 import { offSeasonLines } from '@/lib/off-season';
+import { lastSprayDay } from '@/lib/last-spray';
+import { localDate } from '@/lib/ha/summary';
 import { PageShell } from '@/components/ui/page-shell';
 import { SectionHeader } from '@/components/ui/section-header';
 
@@ -58,6 +60,7 @@ export default async function TodayPage() {
     { sprayEvents, sprayEventProducts, sprayEventCrops },
     { queuedSprays, queuedSprayProducts, queuedSprayCrops },
     lastHarvest,
+    allCrops,
   ] = await Promise.all([
     fetchWeather().catch(() => null),
     fetchCrops({ activeOnly: true }),
@@ -71,6 +74,9 @@ export default async function TodayPage() {
     fetchSprayHistory(),
     fetchQueuedSprays(),
     fetchLastHarvest().catch(() => null),
+    // Names for every crop a past spray touched, retired ones included,
+    // as the Home Assistant summary names them.
+    fetchCrops(),
   ]);
 
   const cropGroupName = new Map(cropGroups.map((g) => [g.id, g.name]));
@@ -368,21 +374,14 @@ export default async function TodayPage() {
           stage: c.stages[0]?.stage ?? 'dormant',
         })),
         daily: weather?.daily ?? [],
-        lastSpray: (() => {
-          const ev = sprayEvents[0];
-          if (!ev) return null;
-          return {
-            date: ev.date,
-            products: sprayEventProducts
-              .filter((p) => p.spray_event_id === ev.id)
-              .map((p) => products.find((x) => x.id === p.product_id)?.brand)
-              .filter((b): b is string => !!b),
-            crops: sprayEventCrops
-              .filter((c) => c.spray_event_id === ev.id)
-              .map((c) => crops.find((x) => x.id === c.crop_id)?.name)
-              .filter((n): n is string => !!n),
-          };
-        })(),
+        lastSpray: lastSprayDay({
+          events: sprayEvents,
+          eventProducts: sprayEventProducts,
+          eventCrops: sprayEventCrops,
+          today: localDate(now, LOCATION.timezone),
+          productName: (id) => products.find((x) => x.id === id)?.brand,
+          cropName: (id) => allCrops.find((x) => x.id === id)?.name,
+        }),
         lastPick: lastHarvest
           ? {
               at: lastHarvest.harvested_at,

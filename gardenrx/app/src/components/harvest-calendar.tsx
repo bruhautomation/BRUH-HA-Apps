@@ -119,7 +119,7 @@ export function HarvestCalendar({ crops, varieties, cropGroups }: Props) {
               <div
                 key={m}
                 className={`text-center text-xs font-medium tracking-wider uppercase transition-colors ${
-                  i === currentMonth ? 'text-emerald-700 font-semibold' : 'text-muted-foreground'
+                  i === currentMonth ? 'text-leaf-dk font-semibold' : 'text-muted-foreground'
                 }`}
               >
                 {m[0]}
