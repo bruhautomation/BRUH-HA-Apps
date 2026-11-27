@@ -7,10 +7,15 @@ task resumes `session_id`, so one part is one conversation that can be
 picked up days later — and, being unclaimed in brAIn's run ledger, it is
 also the person's own conversation in brAIn's Chats.
 
-The folder outlives the listener that made it, so a brAIn that is stopped
-looks exactly like a working one until a wait runs out. A task nothing
-claims within CLAIM_GRACE_S is reported as nothing listening, by name, with
-the switch to turn on — never as brAIn being slow.
+The folder outlives the listener that made it (brAIn always creates it), so
+the folder alone cannot tell a stopped listener from a working one. brAIn
+5.5.25 and later rewrites a liveness mark, cache/automation_listener.json
+({pid, ts, interval}), every `interval` seconds while its listener runs; a
+mark older than three intervals means nothing is listening, and status()
+says so before anyone waits. No mark at all is a brAIn from before the mark
+and falls back to the folder, never read as a dead listener. A task nothing
+claims within CLAIM_GRACE_S is still reported as nothing listening, with
+what to do — never as brAIn being slow.
 
 Optional by construction: with no brAIn the Design tab says why and the
 rest of the add-on is untouched.
@@ -26,6 +31,13 @@ from pathlib import Path
 BRAIN_SHARED = Path(os.environ.get("BAMBU_BRAIN_SHARED", "/config/.brain"))
 CLAIM_GRACE_S = 30
 POLL_S = 1.0
+# brAIn's listener beats every 30s and a mark three beats old is stale.
+BEAT_S = 30
+STALE_BEATS = 3
+
+NOT_LISTENING = (
+    "brAIn is installed but is not picking up requests right now. Restarting the "
+    "brAIn app usually brings it back; its “Automation integration” option must be on.")
 
 
 def tasks_dir() -> Path:
@@ -36,8 +48,29 @@ def results_dir() -> Path:
     return BRAIN_SHARED / "task_results"
 
 
+def listener_mark() -> Path:
+    return BRAIN_SHARED / "cache" / "automation_listener.json"
+
+
+def _listener_stale(now: float | None = None) -> bool:
+    """True only when brAIn's liveness mark exists and has gone stale. No mark
+    (an older brAIn) or one that cannot be read is not evidence of a dead
+    listener: the folder check stands."""
+    try:
+        mark = json.loads(listener_mark().read_text(encoding="utf-8"))
+        ts = float(mark["ts"])
+    except (OSError, ValueError, TypeError, KeyError):
+        return False
+    try:
+        interval = float(mark.get("interval") or BEAT_S)
+    except (TypeError, ValueError):
+        interval = BEAT_S
+    interval = max(1.0, interval)
+    return ((time.time() if now is None else now) - ts) > STALE_BEATS * interval
+
+
 def status() -> dict:
-    """{state: ok|off|missing, sentence}."""
+    """{state: ok|stopped|off|missing, sentence}."""
     if not BRAIN_SHARED.is_dir():
         return {"state": "missing", "sentence": (
             "brAIn is not installed. Everything else in BRUH Bambu Studio works without it; "
@@ -46,6 +79,8 @@ def status() -> dict:
         return {"state": "off", "sentence": (
             "brAIn is installed, but its Automation integration is off, so nothing picks up "
             "design requests. Turn on “Automation integration” in brAIn's configuration.")}
+    if _listener_stale():
+        return {"state": "stopped", "sentence": NOT_LISTENING}
     return {"state": "ok", "sentence": "brAIn is connected."}
 
 
@@ -79,7 +114,11 @@ def submit(prompt: str, *, schema: dict, session_id: str = "", timeout: int = 60
     person's own, resumable); anything else is a one-off look. `images` are
     pictures handed to the run as pictures. `scheduled` makes brAIn's own
     pause and usage budget apply, for a look nobody pressed for. `model` is
-    one of prefs.MODELS ("default" or empty leaves it to brAIn's plan)."""
+    one of prefs.MODELS ("default" or empty leaves it to brAIn's plan).
+    NotListening at once when brAIn's mark says nothing is listening, so no
+    request is left in a folder nobody reads."""
+    if _listener_stale():
+        raise NotListening(NOT_LISTENING)
     task_id = f"bambu-{uuid.uuid4().hex[:12]}"
     task = {"id": task_id, "prompt": prompt, "ts": int(time.time()),
             "timeout": int(timeout), "source": "bruh_bambu", "tools": "read_only",
@@ -134,8 +173,9 @@ def wait(task_id: str, timeout: int) -> dict:
             task_file.unlink(missing_ok=True)
             _drop_images(task_id)
             raise NotListening(
-                "brAIn did not pick the request up. Is brAIn running with its "
-                "Automation integration turned on?")
+                f"brAIn did not pick the request up within {CLAIM_GRACE_S} seconds, so nothing is "
+                "listening for requests. Restart the brAIn app; its “Automation "
+                "integration” option must be on.")
         if elapsed > timeout + 60:
             _drop_images(task_id)
             raise TimeoutError("brAIn did not answer in time.")
