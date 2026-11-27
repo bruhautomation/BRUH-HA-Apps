@@ -5,6 +5,17 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.24.4
+
+### Changed
+
+- Light Map: a pile of lights is named by its shared zone or "first name +N", the count of found bulbs not on the map has its own "Add all N to the map" button, and a map where most lights have no zone says so above "Suggest zones from names"; suggestions drop a number run onto a word and never offer a zone that would hold every light (1454).
+- Shows picks the same best calibrated speaker as Party (or the one you last played a show on), and Play explains what is missing when nothing is calibrated (1453).
+- Library, Shows and Party list full songs first, then short clips under their own heading; a clip is a track under 90 seconds or in a folder of mostly such tracks (1452).
+- Party › The set: one "Which show" control on every row, switched off where there is no choice, with a line saying what it picks; the Shuffle tick box sits beside its word (1451).
+- On a phone the tab strip shows ‹ and › buttons where more tabs are past the edge, and the open tab is always fully in view (1450).
+- Lab: the "What do these…?" explainers show that they open, BPM and Seconds say which demo they set, and Start in Test mode waits for a track, a speaker and a bulb, naming what is missing (1449).
+
 ## 0.24.3
 
 ### Changed
