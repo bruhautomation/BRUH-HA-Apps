@@ -690,8 +690,10 @@ async def api_status(_: web.Request) -> web.Response:
             os.kill(pid, 0)
         except Exception:  # noqa: BLE001
             running = False
+    memory = await asyncio.to_thread(_server_memory) if running else None
     return web.json_response({
         "running": running,
+        "memory": memory,
         "state": state,
         "stats": stats,
         "server_meta": meta,
@@ -699,6 +701,22 @@ async def api_status(_: web.Request) -> web.Response:
         "crash": _detect_crash(state),
         "memory_warning": (_read_json(MC_PANEL_STATE / "memory-warning.json", {}) or None),
     })
+
+
+def _server_memory() -> dict | None:
+    """The server's heap in use and its ceiling, in MB, as BRUH Sight reads
+    them from the running JVM; None without the plugin (vanilla, Fabric,
+    Forge, or Sight not answering), when the panel says only what is
+    allocated. Sight's state is cached for a few seconds, so this adds no
+    call per poll."""
+    st = _sight().state()
+    mem = st.get("memory") if isinstance(st, dict) else None
+    if not isinstance(mem, dict):
+        return None
+    used, top = mem.get("used_mb"), mem.get("max_mb")
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0 for v in (used, top)):
+        return None
+    return {"used_mb": int(used), "max_mb": int(top)}
 
 
 # Marker file that records "the first-run wizard has been completed on this
@@ -876,6 +894,53 @@ WORLD_GEN_ONLY_KEYS = frozenset({
 })
 
 
+# Keys the panel applies to the running server at once over RCON (see
+# api_properties_post); every other editable key waits for a restart.
+LIVE_PROPS = frozenset({"difficulty", "gamemode", "white-list"})
+
+# What each key is called on the Properties tab; the key itself is shown
+# small under it. A key not named here is shown as its words ("server-port"
+# reads "Server port").
+PROP_LABELS: dict[str, str] = {
+    "level-name": "World name",
+    "motd": "Server list message",
+    "gamemode": "Game mode",
+    "force-gamemode": "Force game mode on join",
+    "difficulty": "Difficulty",
+    "max-players": "Maximum players",
+    "pvp": "Players can hurt each other",
+    "hardcore": "Hardcore",
+    "online-mode": "Check Minecraft accounts",
+    "white-list": "Whitelist only",
+    "view-distance": "View distance (chunks)",
+    "simulation-distance": "Simulation distance (chunks)",
+    "level-type": "World type",
+    "level-seed": "World seed",
+    "allow-flight": "Allow flying",
+    "spawn-protection": "Spawn protection radius",
+    "enable-command-block": "Command blocks",
+    "op-permission-level": "Operator permission level",
+    "enforce-secure-profile": "Require signed chat",
+    "allow-nether": "Allow the Nether",
+    "generate-structures": "Generate structures",
+    "spawn-monsters": "Monsters",
+    "spawn-animals": "Animals",
+    "spawn-npcs": "Villagers",
+    "prevent-proxy-connections": "Block proxy connections",
+    "hide-online-players": "Hide who is online",
+    "resource-pack": "Resource pack link",
+    "resource-pack-sha1": "Resource pack checksum",
+    "require-resource-pack": "Require the resource pack",
+    "max-world-size": "Maximum world size",
+    "network-compression-threshold": "Network compression threshold",
+    "entity-broadcast-range-percentage": "Entity view range (%)",
+    "initial-enabled-packs": "Data packs on at creation",
+    "initial-disabled-packs": "Data packs off at creation",
+    "connection-throttle": "Connection throttle (ms)",
+    "player-idle-timeout": "Idle kick (minutes)",
+}
+
+
 async def api_properties_get(_: web.Request) -> web.Response:
     props = _read_properties()
     safe = {k: v for k, v in props.items() if k != "rcon.password"}
@@ -894,6 +959,9 @@ async def api_properties_get(_: web.Request) -> web.Response:
         # the same list in JS. Right now: world-gen-only keys that won't
         # affect an existing world if edited.
         "world_gen_only": sorted(WORLD_GEN_ONLY_KEYS),
+        # When an edit takes effect, per key: at once (RCON), or on restart.
+        "live": sorted(LIVE_PROPS),
+        "labels": PROP_LABELS,
     })
 
 

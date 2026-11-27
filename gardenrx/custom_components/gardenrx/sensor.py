@@ -63,6 +63,9 @@ def _spray_attrs(d: dict) -> dict[str, Any]:
     last = s.get("last") or {}
     return {
         "days_ago": last.get("days_ago"),
+        # Every spray on the latest date, in the sentence the app's Today shows.
+        "summary": last.get("summary"),
+        "count": last.get("count"),
         "products": last.get("products", []),
         "crops": last.get("crops", []),
         "this_year": s.get("this_year"),

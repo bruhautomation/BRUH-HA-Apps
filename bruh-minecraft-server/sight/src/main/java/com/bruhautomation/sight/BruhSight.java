@@ -69,7 +69,8 @@ import java.util.concurrent.TimeUnit;
  * <ul>
  *   <li>{@code GET /v1/state} — every online player: position, facing, the
  *   block and the entity under their crosshair, what they hold and carry,
- *   what is around them, the blocks they just placed or broke.</li>
+ *   what is around them, the blocks they just placed or broke; and the
+ *   server's heap in use and its ceiling.</li>
  *   <li>{@code POST /v1/blocks} — every block state in a box, from the chunks
  *   in memory (a saved chunk is loaded to read it; one never generated is
  *   said, not guessed).</li>
@@ -361,6 +362,12 @@ public final class BruhSight extends JavaPlugin implements Listener {
             }
         }
         out.put("players", players);
+        // The heap in use and its ceiling, for the panel's Memory row.
+        Runtime rt = Runtime.getRuntime();
+        Map<String, Object> memory = new LinkedHashMap<>();
+        memory.put("used_mb", (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024));
+        memory.put("max_mb", rt.maxMemory() / (1024 * 1024));
+        out.put("memory", memory);
         return out;
     }
 

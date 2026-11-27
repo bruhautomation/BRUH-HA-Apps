@@ -36,7 +36,12 @@
           </p>
         </div>
       </div>
-      <div class="actions">
+      <!-- On a phone the four server actions fold behind one button, so the
+           header is one row and Stop and Restart sit away from the tabs
+           (#1457). From 640px they are a row of buttons as before. -->
+      <button id="btn-server-menu" class="btn btn-ghost server-menu-btn" type="button"
+              aria-expanded="false" aria-controls="server-actions">Server</button>
+      <div class="actions" id="server-actions">
         <button id="btn-backup" class="btn btn-ghost" title="Backup now">Backup</button>
         <button id="btn-update" class="btn btn-ghost" title="A newer server build is available" hidden>Update</button>
         <button id="btn-restart" class="btn btn-warn" title="Restart the server">Restart</button>
@@ -45,8 +50,11 @@
      </div>
     </header>
 
-    <nav class="tabs" role="tablist">
-     <div class="tabs-in">
+    <nav class="tabs">
+     <!-- On a phone the strip scrolls sideways; an edge with more tabs past
+          it shows a ‹ or › that scrolls it (app.js tabEdges). -->
+     <button type="button" class="tabs-more start" id="tabsBack" aria-label="Earlier tabs" hidden>‹</button>
+     <div class="tabs-in" role="tablist">
       <button class="tab active" data-tab="dashboard" role="tab">Dashboard</button>
       <button class="tab" data-tab="console" role="tab">Console</button>
       <button class="tab" data-tab="players" role="tab">Players</button>
@@ -55,6 +63,7 @@
       <button class="tab" data-tab="backups" role="tab">Backups</button>
       <button class="tab" data-tab="worlds" role="tab">Worlds</button>
      </div>
+     <button type="button" class="tabs-more end" id="tabsOn" aria-label="More tabs" hidden>›</button>
     </nav>
   </div>
 
@@ -531,7 +540,7 @@
           <div class="metric"><span id="m-status" class="dot">●</span><span id="m-status-text">unknown</span></div>
           <dl>
             <dt>Version</dt><dd id="m-version">—</dd>
-            <dt>Type</dt><dd id="m-type">—</dd>
+            <dt>Players</dt><dd><span id="m-online-text">—</span><ul id="m-players" class="players-mini"></ul></dd>
             <dt>Uptime</dt><dd id="m-uptime">—</dd>
             <dt>Memory</dt><dd id="m-memory">—</dd>
           </dl>
@@ -539,24 +548,18 @@
         <div class="card">
           <h2>Performance <span id="m-tps-badge" class="tps-badge tps-unknown" title="Server health based on 5-minute TPS"></span></h2>
           <dl>
-            <dt>TPS (1m)</dt><dd id="m-tps1">—</dd>
-            <dt>TPS (5m)</dt><dd id="m-tps5">—</dd>
-            <dt>TPS (15m)</dt><dd id="m-tps15">—</dd>
+            <dt>TPS</dt>
+            <dd class="tps-line">
+              <span><b id="m-tps1">—</b> <span class="muted">1 min</span></span>
+              <span><b id="m-tps5">—</b> <span class="muted">5 min</span></span>
+              <span><b id="m-tps15">—</b> <span class="muted">15 min</span></span>
+            </dd>
             <dt>Latency</dt><dd id="m-latency">—</dd>
           </dl>
           <button id="btn-tune" class="btn btn-ghost" type="button" title="Inspect host RAM/CPU and propose memory/distance settings">Tune for my hardware</button>
           <p class="muted tune-hint">Suggests memory and view distance for this machine; you confirm first.</p>
           <p id="perf-hint" class="perf-hint" hidden></p>
           <p id="memory-hint" class="perf-hint" hidden></p>
-        </div>
-        <div class="card">
-          <h2>Players</h2>
-          <div class="big-number">
-            <span id="m-online">0</span>
-            <span class="slash">/</span>
-            <span id="m-max">0</span>
-          </div>
-          <ul id="m-players" class="players-mini"></ul>
         </div>
         <div class="card wide">
           <h2>Quick chat</h2>
@@ -721,10 +724,10 @@
         Worlds tab to edit a different one.
       </p>
       <p class="muted">
-        Each world has its own <code>server.properties</code> — so one world can be creative and another survival. Difficulty, gamemode, and whitelist apply live; the rest take effect on the next restart. Greyed-out rows are infra keys managed by the add-on.
+        Each world has its own <code>server.properties</code> — so one world can be creative and another survival. Each row says when its change takes effect; a row without a box is set by the add-on.
       </p>
       <table class="table" id="props-table">
-        <thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>
+        <thead><tr><th>Setting</th><th>Value</th><th></th></tr></thead>
         <tbody></tbody>
       </table>
      </div>
