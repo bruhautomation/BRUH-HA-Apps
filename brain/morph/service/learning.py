@@ -102,6 +102,12 @@ SCHEMA = {
                                           "were used (use)."},
                 "moves": {"type": "array", "items": {"type": "string"},
                           "description": "For a move: the id of every section whose place it changes."},
+                "rule": {"type": "integer",
+                         "description": "For a move whose ground is layout: the number of the design "
+                                        "rule it follows."},
+                "quote": {"type": "string",
+                          "description": "For a move whose ground is asked: the household's own words, "
+                                         "copied from a change they asked brAIn for."},
                 "why": {"type": "string", "description": "One sentence of evidence from the digest."},
                 "change": {"type": "string",
                            "description": "The instruction Morph will hand you if they press Do it."},
@@ -387,21 +393,40 @@ def record_reverted(data: dict, dash: dict, now: float | None = None) -> bool:
     return changed
 
 
+def retract_unfounded(data: dict) -> bool:
+    """A reorder still waiting for an answer that was made before reorders
+    had to rest on a design rule or the household's own words (#1481) is
+    taken back: its reason may be nothing but how often things were
+    pressed. `sync_brain` withdraws its case. Returns whether any was."""
+    changed = False
+    for it in data["items"]:
+        if (it.get("status") == "open" and it.get("kind") != "code" and not it.get("founded")
+                and _action(it) == "move"):
+            it.update(status="retracted", decided=time.time())
+            changed = True
+    return changed
+
+
 def proposals(rows: list, d: dict, dash: dict) -> list[dict]:
     """The pass's suggestions that may be made: not a move or removal whose
     only ground is how little something was pressed, not the removal of a
     control, and not a removal of anything that still works. A removal
     that may be made says, in Morph's words, what was measured.
-    `add_suggestions` then drops what the household already refused or kept."""
+    `add_suggestions` then drops what the household already refused or kept.
+    A reorder is made only on a design rule or the household's own request,
+    and says which (`move_why`); a change in place that trims a control on
+    use alone is not made (`trims_control`)."""
     out = []
+    rules = design_rule_texts()
     for r in rows or []:
-        if not isinstance(r, dict) or rests_on_disuse(r, d) or removes_control(r, dash, d):
+        if (not isinstance(r, dict) or rests_on_disuse(r, d) or removes_control(r, dash, d)
+                or trims_control(r, dash)):
             continue
-        if _action(r) == "remove":
-            why = removal_why(r, d)
+        if _action(r) in ("remove", "move"):
+            why = removal_why(r, d) if _action(r) == "remove" else move_why(r, d, rules)
             if not why:
                 continue
-            r = {**r, "why": why}
+            r = {**r, "why": why, "founded": True}
         out.append({**r, "kind": "dashboard"})
     return out
 
@@ -436,6 +461,83 @@ def removal_why(row: dict, d: dict) -> str:
     if len(about) > 3:
         said.append(f"And {len(about) - 3} more cards like it.")
     return " ".join(said) + " Nothing is removed unless you say yes, and Undo puts it back."
+
+
+DESIGN_RULES_HEADING = "## The design rules"
+_NUMBERED = re.compile(r"^(\d+)\.\s+(.+?)(?=^\d+\.\s|^\S|\Z)", re.MULTILINE | re.DOTALL)
+
+
+def design_rule_texts(agents_text: str | None = None) -> dict[int, str]:
+    """AGENTS.md's numbered design rules by number, each in plain words
+    (its whole text when that is short, else its bold sentence): what a
+    reorder may rest on as a `layout` ground, said to the household."""
+    if agents_text is None:
+        try:
+            agents_text = paths.AGENTS.read_text(encoding="utf-8")
+        except OSError:
+            return {}
+    start = agents_text.find(DESIGN_RULES_HEADING)
+    if start < 0:
+        return {}
+    end = agents_text.find("\n## ", start + len(DESIGN_RULES_HEADING))
+    body = agents_text[start:end if end > 0 else None].split("\n", 1)[-1]
+    out = {}
+    for m in _NUMBERED.finditer(body):
+        whole = " ".join(m.group(2).replace("**", "").replace("`", "").split())
+        head = re.match(r"\*\*(.+?)\*\*", m.group(2).strip(), re.DOTALL)
+        out[int(m.group(1))] = whole if len(whole) <= 240 or not head else " ".join(head.group(1).split())
+    return out
+
+
+def _plain(text: str) -> str:
+    return _WS.sub(" ", re.sub(r"[^a-z0-9 ]", " ", str(text or "").lower())).strip()
+
+
+def move_why(row: dict, d: dict, rules: dict[int, str] | None = None) -> str:
+    """Why a reorder may be proposed, in words the household can judge, or
+    "" when it may not be (#1481): a design rule it follows, named by number
+    in `rule` and checked against AGENTS.md, or a change the household asked
+    brAIn for by hand, quoted in `quote` and found among their requests
+    (not one they then undid). Morph writes the sentence from what it
+    checked; the pass's own `why` is not shown, because a reorder argued
+    from how often things were pressed reads the same whatever its ground."""
+    ground = row.get("ground")
+    if ground == "layout":
+        rules = design_rule_texts() if rules is None else rules
+        try:
+            text = rules.get(int(row.get("rule")))
+        except (TypeError, ValueError):
+            text = None
+        if not text:
+            return ""
+        lead = f"It follows one of Morph's layout rules: “{text.rstrip('.')}”."
+    elif ground == "asked":
+        quote = _plain(row.get("quote"))
+        if len(quote) < 8:
+            return ""
+        asked = next((str(t.get("asked") or "") for t in d.get("tells") or []
+                      if not t.get("undone") and quote in _plain(t.get("asked"))), "")
+        if not asked:
+            return ""
+        lead = f"You asked brAIn for this by hand: “{wording.clip(asked, 200).rstrip('.')}”."
+    else:
+        return ""
+    return lead + " Nothing moves unless you say yes, and Undo puts it back."
+
+
+def trims_control(row: dict, dash: dict) -> bool:
+    """A change in place to a card that holds a control, or to a section
+    with one in it, whose only ground is how often things were pressed:
+    trimming a lights group to the members that were used takes the others'
+    controls away as surely as removing the card does (#1481)."""
+    if _action(row) != "change" or row.get("ground") != "use":
+        return False
+    cid = str(row.get("card") or "")
+    if cid:
+        card = _find(dash, card_id=cid)
+        return card is not None and holds_control(card)
+    sec = _find(dash, sec_id=str(row.get("section") or "")) if row.get("section") else None
+    return any(holds_control(c) for g in (sec or {}).get("groups") or [] for c in g.get("cards") or [])
 
 
 def rests_on_disuse(row: dict, d: dict) -> bool:
@@ -606,7 +708,7 @@ def add_suggestions(rows: list[dict], dash: dict) -> int:
     # A suggestion ended as `kept` (its card's entity came back) is no
     # answer about the idea, so it may be made again if the thing goes for
     # good; every other one already made is not made twice.
-    live = [it for it in data["items"] if it.get("status") != "kept"]
+    live = [it for it in data["items"] if it.get("status") not in ("kept", "retracted")]
     known = {it["key"] for it in live} | set(data["declined"])
     sections = {s["id"] for f in dash.get("floors") or [] for s in f.get("sections") or []}
     cards = {c["id"]: c.get("entity") or "" for f in dash.get("floors") or []
@@ -643,6 +745,8 @@ def add_suggestions(rows: list[dict], dash: dict) -> int:
                 "status": "open", "created": time.time()}
         if row.get("action") in ACTIONS:
             item["action"] = row["action"]
+        if row.get("founded"):
+            item["founded"] = True
         if moves:
             item["moves"] = moves
         if row.get("section") in sections:
@@ -918,7 +1022,7 @@ MORPH_SOURCE = "morph"
 # `kept`: brAIn ended a suggestion to remove a card because the thing on it
 # reports again after a "fixing it for now" answer — the card stays, and a
 # later pass may suggest it again if it goes for good (it is not declined).
-ENDED = ("declined", "sent", "doing", "done", "kept")
+ENDED = ("declined", "sent", "doing", "done", "kept", "retracted")
 _SEQ = 0
 
 
@@ -1515,8 +1619,14 @@ def build_prompt(d: dict, dash_text: str, lessons, declined: dict,
         "scenes), nor a group or section with one in it, even while it is unavailable. The only",
         "cards that may be removed are those listed below as gone or long unavailable; the",
         "household is asked first, and Morph says how long it has been unavailable.",
-        "Say what each suggestion does in `action`, what it rests on in `ground`, and for a move",
-        "list every section it reorders in `moves`.",
+        "A move (any reorder) rests on one of two things and nothing else: a numbered design rule",
+        "above that the page breaks now (`ground` layout, its number in `rule`), or a change the",
+        "household asked brAIn for by hand below (`ground` asked, their words copied into `quote`).",
+        "Morph checks either and writes the reason the household sees from it; a move with neither",
+        "is not shown. Never change a card that holds a control, or a section with one, because of",
+        "how it was used (trimming a lights group to the lights that were pressed takes the others",
+        "away). Say what each suggestion does in `action`, what it rests on in `ground`, and for a",
+        "move list every section it reorders in `moves`.",
         "",
         "Sections in dashboard order, with how often each was used and when:",
         fit(d["sections"], 6000, "sections"),
@@ -1612,6 +1722,7 @@ async def run_pass(states: dict | None = None, *, pressed: bool = False,
     track_down(data, dash, states)
     record_reverted(data, dash)
     record_declined_moves(data, dash)
+    retract_unfounded(data)
     _save(data)
     d = digest(dash, states=states, registry=registry, down_since=data.get("down_since"))
     kept_cards, kept_secs = kept_ids(data, dash)

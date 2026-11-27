@@ -44,6 +44,7 @@ import learning  # noqa: E402
 import lovelace  # noqa: E402
 import morphcode  # noqa: E402
 import paths  # noqa: E402
+import readings  # noqa: E402
 import settings  # noqa: E402
 import store  # noqa: E402
 import tell  # noqa: E402
@@ -403,8 +404,18 @@ async def handle(kind: str, p: dict) -> dict:
     if kind == "converse":
         # Ask's conversation with brAIn (converse.py): no commit, nothing
         # on the dashboard; the session rides back for the next turn.
-        st = converse.start(str(p.get("text") or ""), str(p.get("session") or ""),
-                           str(p.get("context") or ""))
+        # The readings the card's context is about are checked against the
+        # house first: a device that looks dead is said to brAIn as one, so
+        # its flat 0% is never written back as a reading (#1468).
+        context = str(p.get("context") or "")
+        ents = [str(e)[:255] for e in p.get("entities") or [] if isinstance(e, str)][:readings.MAX_ENTITIES] \
+            if isinstance(p.get("entities"), list) else []
+        try:
+            doubts = await readings.check(context, ents) if (context or ents) else ""
+        except Exception:  # noqa: BLE001 — a check that fails leaves the question as it was
+            log.warning("could not check the card's readings", exc_info=True)
+            doubts = ""
+        st = converse.start(str(p.get("text") or ""), str(p.get("session") or ""), context, doubts)
         return {"ok": "error" not in st, **st}
     if kind == "habit":
         eid = str(p.get("entity") or "")
