@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.15.5
+
+### Changed
+
+- A roll with no count shows a "Set labels left" button with "Not counted yet" beside it, instead of a small line of text that had to be tapped (1448).
+- The printer card's buttons say what they do: "Check paper and lid" and "Show connection info", each with one line saying what it will do, and the paper-and-lid answer replaces that line once asked. Dots, resolution and serial moved into the connection info (1446).
+
+### Fixed
+
+- On a narrow card the "prints text" badge drops under the roll's name instead of running past the edge of its tile (1447).
+
 ## 0.15.4
 
 ### Added
