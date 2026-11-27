@@ -580,12 +580,22 @@
          under the OTHER filters (`_activity_narrow`), so a pill or a room
          this selection holds nothing of drops out instead of offering an
          empty list, and nothing here asks the same question twice. -->
+    <!-- The room, the cause and the kind of thing sit behind one Filter
+         press, so on a phone the first events show without scrolling past
+         three pickers (#1462); what is in force is the tags under it. -->
     <div class="acthead">
       <div class="actfilters">
         <input id="actSearch" class="actsearch" type="search" autocomplete="off"
                spellcheck="false" placeholder="Search devices" aria-label="Search devices">
-        <select id="actArea" class="sel" aria-label="Room"></select>
-        <select id="actCause" class="sel" aria-label="Caused by"></select>
+        <button id="actFilterBtn" class="btn small actfilterbtn" type="button"
+                aria-expanded="false" aria-controls="actFilterBox">Filter</button>
+      </div>
+      <div id="actFilterBox" class="actfilterbox" hidden>
+        <div class="actfilterpicks">
+          <select id="actArea" class="sel" aria-label="Room"></select>
+          <select id="actCause" class="sel" aria-label="Caused by"></select>
+        </div>
+        <div id="actKinds" class="actkinds pillseg" role="group" aria-label="What kind of thing"></div>
       </div>
       <div class="actnav">
         <button id="actPrev" class="btn small ghost"
@@ -604,7 +614,6 @@
                 data-tip="The window after this one">Later &rsaquo;</button>
       </div>
     </div>
-    <div id="actKinds" class="actkinds pillseg" role="group" aria-label="What kind of thing"></div>
     <div id="actActive" class="kactive" hidden></div>
     <!-- When the house was empty, and the one press on this tab that costs
          anything: Ask reads the window once. Everything else here is
@@ -616,8 +625,8 @@
 
 <!-- House book: how this house works, chapter by chapter. Add info is the
      one press that matters here and it leads; sharing a copy is a rarer
-     thing and lives behind ⋯. Every line is editable in place and every
-     chapter takes more, by Add info or a line typed as written. The one
+     thing and lives behind ⋯. Every line is editable from its own ⋯ and every
+     chapter takes more, by Add to this section or a line typed as written. The one
      sentence about codes and passwords is what a sitter is told too, so it
      is never folded away. -->
 <div id="viewHousebook" class="view">
@@ -1623,30 +1632,35 @@
           <h2 class="setsecname">Diagnostics</h2>
         </header>
         <div class="setsecbody">
-          <!-- `brain doctor --deep`: a press, never on a timer, because it
-               spends Claude runs. The header is the answer ("6 of 6
-               passed · 2 skipped"); each row is a stage, and a stage that
-               could not run is "skipped" with its reason, never a failure. -->
-          <div class="testsbox" id="deepBox">
-            <div class="testshead">
-              <div>
-                <h4 class="testsname">Run all tests</h4>
-                <p class="hint tight">Tests brAIn itself, every part for real: about five
-                  Claude runs, and one test helper made and removed. The checks that watch
-                  your house are rehearsed in
-                  <a class="linkish" href="#" data-open-sec="developer">Developer</a>.</p>
-              </div>
-              <button id="deepRun" class="btn primary" aria-label="Run all tests">Test brAIn</button>
-            </div>
-            <p id="deepSummary" class="testssum" hidden></p>
-            <p id="deepLast" class="hint tight"></p>
-            <div id="deepBody" class="testlist" hidden></div>
-          </div>
-
+          <!-- The answer first: what is wrong right now, with its verdict. -->
           <h4 class="sethead">Right now</h4>
           <div id="diagBody" class="diag">Loading…</div>
           <div class="row">
             <button id="diagRefresh" class="btn">Recheck</button>
+          </div>
+
+          <!-- `brain doctor --deep`: a press, never on a timer, because it
+               spends Claude runs. One plain sentence and a full-width press;
+               how it works is behind one fold. The header is the answer
+               ("6 of 6 passed · 2 skipped"); each row is a stage, and a stage
+               that could not run is "skipped" with its reason, never a
+               failure. -->
+          <div class="testsbox" id="deepBox">
+            <h4 class="testsname">Run all tests</h4>
+            <p class="hint tight">Check that everything works; uses a little of your plan.</p>
+            <p id="deepSummary" class="testssum" hidden></p>
+            <p id="deepLast" class="hint tight"></p>
+            <button id="deepRun" class="btn primary testsrun" aria-label="Run all tests">Test brAIn</button>
+            <div id="deepBody" class="testlist" hidden></div>
+            <details class="techdetails detailsfold" id="deepHow">
+              <summary>How the test works</summary>
+              <div class="detailsbody">
+                <p class="hint tight">It tests brAIn itself, every part for real: about five
+                  Claude runs, and one test helper brAIn makes and removes again. The checks
+                  that watch your house are rehearsed separately, in
+                  <a class="linkish" href="#" data-open-sec="developer">Developer</a>.</p>
+              </div>
+            </details>
           </div>
 
           <h4 class="sethead">How right it's been</h4>

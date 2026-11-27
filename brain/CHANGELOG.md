@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.28
+
+### Changed
+
+- Memory › House book: each section's button is "Add to this section" on one line, and a line's Edit and Delete sit behind a ⋯ menu under it, so the sentence uses the full width (1466).
+- Settings › Diagnostics: "Right now" and its verdict come first; the test card says "Check that everything works; uses a little of your plan." with a full-width "Test brAIn" button, and how the test works is in a fold (1465).
+- Insights: a card whose run read nothing from the house and offers nothing is no longer shown, and Schedule says in words what runs ("Two daily cards are on, one is off") (1464).
+- History › Ignored: each entry shows the words you were shown, wrapped instead of cut off; the group heading looks like a heading; the chips say who decided ("You ignored", "Set aside by brAIn") and an empty one is not shown (1463).
+- Memory › Timeline: search and one "Filter" button share a row (room, cause and kind open under it), and Ask says what it asks about ("Ask about the last 24 hours"), so the first events show sooner on a phone (1462).
+
 ## 5.5.27
 
 ### Changed

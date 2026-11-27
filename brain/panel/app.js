@@ -2381,14 +2381,36 @@ function schedNext(c) {
   if (c.refresh_hold && c.refresh_hold.why) return `waiting — ${c.refresh_hold.why}`;
   return c.next_due ? schedIn(c.next_due) : "by hand";
 }
+// What the schedule runs, in words: "Two daily cards are on", "One card is
+// on, two are off", "Every card is off" — never a bare "2 of 2 on".
+const SCHED_NUMBERS = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven",
+  "Eight", "Nine", "Ten", "Eleven", "Twelve"];
+function schedRhythm(c) {
+  if (Array.isArray(c.schedule) && c.schedule.length) return "";
+  const hours = c.refresh_hours != null ? c.refresh_hours : (state.status || {}).refresh_hours;
+  if (Math.round(hours) === 24) return "daily";
+  if (Math.round(hours) === 168) return "weekly";
+  return "";
+}
+function schedSummary(cats) {
+  if (!cats.length) return "";
+  const on = cats.filter((c) => c.enabled !== false);
+  const off = cats.length - on.length;
+  if (!on.length) return off === 1 ? "The one card is off" : "Every card is off";
+  const word = (n) => SCHED_NUMBERS[n] || String(n);
+  const rhythms = new Set(on.map(schedRhythm));
+  const kind = rhythms.size === 1 ? [...rhythms][0] : "";
+  const lead = `${word(on.length)} ${kind ? kind + " " : ""}card${on.length === 1 ? " is" : "s are"} on`;
+  if (!off) return lead;
+  return `${lead}, ${word(off).toLowerCase()} ${off === 1 ? "is" : "are"} off`;
+}
 function renderSchedule() {
   const row = $("#schedRow");
   const list = $("#schedList");
   if (!row || !list) return;
   const cats = ((state.status || {}).categories || []);
   row.hidden = !cats.length;
-  const on = cats.filter((c) => c.enabled !== false).length;
-  $("#schedCount").textContent = cats.length ? `${on} of ${cats.length} on` : "";
+  $("#schedCount").textContent = schedSummary(cats);
   list.textContent = "";
   cats.forEach((c) => {
     const item = el("div", "scheditem" + (c.enabled === false ? " off" : ""));
@@ -5547,8 +5569,7 @@ $("#deepRun").addEventListener("click", async () => {
     // A 409 means one is already going — which is an answer, not an error:
     // both presses are watching the same run.
     await api("api/doctor/deep", { method: "POST" });
-    toast("Running all tests — a few Claude turns, and one test helper "
-      + "made and removed again");
+    toast("Testing brAIn — it takes a few minutes");
   } catch (e) {
     toast(e.message);
   }
@@ -9247,7 +9268,9 @@ function renderHistory() {
       logBox.appendChild(open);
     }
   }
-  filters.filter((f) => f.id !== "changes").forEach((f) => {
+  // A filter holding nothing is not offered as a choice (#1463): an
+  // emptied one in front says "Nothing here." under the others.
+  filters.filter((f) => f.id !== "changes" && f.count > 0).forEach((f) => {
     const on = todayState.histFilter === f.id;
     const b = el("button", "pill" + (on ? " active" : ""));
     b.type = "button";
@@ -12721,6 +12744,12 @@ function actTime(ts) {
 // it does not. The current window is "Now" (it was "Last 24 hours", the
 // select's own words again); one paged back to is named by its dates, so
 // a person three presses back can tell which evening they are reading.
+function actAskLabel() {
+  if (actState.end) return "Ask about this window";
+  const h = actState.hours || 24;
+  return `Ask about the last ${h >= 48 ? `${Math.round(h / 24)} days` : `${h} hours`}`;
+}
+
 function actDayLabel(end, hours) {
   if (!end) return "Now";
   const start = end - (hours || 24) * 3600;
@@ -12893,7 +12922,24 @@ function renderActActive(data) {
     all.addEventListener("click", clearActFilters);
     box.appendChild(all);
   }
+  syncActFilterBtn();
 }
+
+// The one Filter press over the room, cause and kind pickers (#1462): it
+// says how many of them are in force, and opens or closes their box.
+function syncActFilterBtn() {
+  const btn = $("#actFilterBtn");
+  if (!btn) return;
+  const n = [actState.area, actState.kind, actState.cause].filter(Boolean).length;
+  const open = !$("#actFilterBox").hidden;
+  btn.textContent = n ? `Filter (${n})` : "Filter";
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+}
+$("#actFilterBtn")?.addEventListener("click", () => {
+  const box = $("#actFilterBox");
+  box.hidden = !box.hidden;
+  syncActFilterBtn();
+});
 
 function clearActFilters() {
   actState.q = ""; actState.area = ""; actState.kind = ""; actState.cause = "";
@@ -13051,8 +13097,9 @@ function renderSummary(host) {
     return;
   }
   const row = el("div", "actask");
+  // Named for what it asks about: the window on screen (#1462).
   const btn = el("button", "btn small",
-    actState.summaryBusy ? "Reading the day…" : "Ask");
+    actState.summaryBusy ? "Reading the day…" : actAskLabel());
   btn.disabled = !!actState.summaryBusy;
   tip(btn, "What does this add up to? One Claude run over what is on "
     + "this screen; everything else here is read from the logbook.");
@@ -13168,14 +13215,15 @@ function renderActivity() {
     renderActActive({});
     // Filters over a tab that cannot read anything are controls with nothing
     // to choose, so they go until the logbook answers.
-    document.querySelectorAll("#actArea, #actCause").forEach((n) => { n.hidden = true; });
+    document.querySelectorAll("#actArea, #actCause, #actFilterBtn").forEach((n) => { n.hidden = true; });
+    $("#actFilterBox").hidden = true;
     list.innerHTML = `<div class="actempty">Home Assistant's logbook could not be `
       + `read, so this tab cannot show what happened. Check that the Logbook is `
       + `turned on in Home Assistant (it should appear in its sidebar).</div>`;
     return;
   }
 
-  document.querySelectorAll("#actArea, #actCause").forEach((n) => { n.hidden = false; });
+  document.querySelectorAll("#actArea, #actCause, #actFilterBtn").forEach((n) => { n.hidden = false; });
   renderActFilters(data);
   renderActNarrow(data);
   const sections = data.sections || [];
@@ -17835,15 +17883,19 @@ function renderUpBook() {
     const head = el("div", "booksechead");
     head.appendChild(el("h3", null, section.title));
     head.appendChild(el("span", "bookseccount", String(entries.length)));
-    const more = el("button", "btn small ghost booksecadd", "Add info");
-    tip(more, `Add to “${section.title}”, or have brAIn fill it in`);
-    more.disabled = !!st.running;
-    more.addEventListener("click", () => openBookAdd(section.key));
-    head.appendChild(more);
     sec.appendChild(head);
     const ul = el("ul", "upbooklist");
     for (const entry of entries) ul.appendChild(bookEntryNode(entry));
     sec.appendChild(ul);
+    // The chapter's own press sits under its lines, named for what it
+    // does, so the head keeps the whole row for the chapter's title and
+    // the press is never squeezed into a wrapped two-word block beside it.
+    const more = el("button", "btn small ghost booksecadd", "Add to this section");
+    tip(more, `Add to “${section.title}”, or have brAIn fill it in`);
+    more.type = "button";
+    more.disabled = !!st.running;
+    more.addEventListener("click", () => openBookAdd(section.key));
+    sec.appendChild(more);
     body.appendChild(sec);
   }
   if (!shown) {
@@ -17998,7 +18050,7 @@ function clearBookFilters() {
 }
 
 // One line of the book: its words, what they came from, and the two
-// presses every line has — correct it, or take it out.
+// presses every line has — correct it, or take it out — behind its ⋯.
 function bookEntryNode(entry) {
   const li = el("li", "bookentry");
   li.dataset.id = entry.id || "";
@@ -18042,35 +18094,38 @@ function bookEntryNode(entry) {
     return li;
   }
   li.appendChild(el("span", "booktext", entry.text));
+  // Under the sentence, one row: where it came from, then ⋯ holding Edit
+  // and Delete — so the sentence has the card's whole width and is never
+  // squeezed into a column beside two icons.
+  const foot = el("div", "bookfoot");
   const chips = el("span", "upchips");
   for (const src of entry.sources || []) {
     chips.appendChild(el("span", "upchip" + (src.key === "you" ? " you" : ""), src.label));
   }
   if (entry.edited) chips.appendChild(el("span", "upchip you", "Edited by you"));
-  li.appendChild(chips);
-  const acts = el("span", "bookacts");
-  const edit = el("button", "btn icon bookact");
-  edit.innerHTML = '<svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16zM14 6l4 4"/></svg>';
-  edit.setAttribute("aria-label", "Edit this line");
-  tip(edit, "Edit this line");
-  edit.addEventListener("click", () => { bookView.editing = entry.id; renderUpBook(); });
-  const del = el("button", "btn icon bookact");
-  del.innerHTML = '<svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>';
-  del.setAttribute("aria-label", "Delete this line");
-  tip(del, "Delete this line");
-  del.addEventListener("click", async () => {
-    if (!window.confirm("Take this line out of the house book?")) return;
-    try {
-      upState.book = { ...upState.book, ...await api(
-        `api/house_book/entry/${encodeURIComponent(entry.id)}`,
-        { method: "POST", body: JSON.stringify({ delete: true }) }) };
-      renderUpBook();
-      toast("Taken out");
-    } catch (e) { toast(e.message); }
-  });
-  acts.append(edit, del);
-  li.appendChild(acts);
+  foot.appendChild(chips);
+  const menu = cardMenuButton([
+    ["✎", "Edit this line", "Correct the words; a rewrite keeps your wording",
+      () => { bookView.editing = entry.id; renderUpBook(); }],
+    ["✕", "Delete this line", "Takes it out of the house book",
+      () => bookDeleteEntry(entry)],
+  ]);
+  menu.classList.add("bookact");
+  menu.setAttribute("aria-label", "Edit or delete this line");
+  foot.appendChild(menu);
+  li.appendChild(foot);
   return li;
+}
+
+async function bookDeleteEntry(entry) {
+  if (!window.confirm("Take this line out of the house book?")) return;
+  try {
+    upState.book = { ...upState.book, ...await api(
+      `api/house_book/entry/${encodeURIComponent(entry.id)}`,
+      { method: "POST", body: JSON.stringify({ delete: true }) }) };
+    renderUpBook();
+    toast("Taken out");
+  } catch (e) { toast(e.message); }
 }
 
 // The Add info box, for the whole book or one chapter.
