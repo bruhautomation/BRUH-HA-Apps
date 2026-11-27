@@ -86,15 +86,11 @@ START_WAIT = timedelta(minutes=15)
 STARTED_ELSEWHERE = "started on the appliance or in the app"
 # What the status says of the last cook when there is none to tell: none seen
 # while the appliance was in contact, or, when it has never been heard from,
-# that whether it cooked is not known. A value, like a state; the reason is a
-# sentence of its own (cook_note).
+# that whether it cooked is not known.
 NO_COOK_YET = "no cook yet"
-NO_COOK_KNOWN = "unknown"
-NO_COOK_KNOWN_NOTE = "It has not been heard from yet, so no cook could be seen."
-# An appliance that loses contact during a cook turns its Problem sensor on
-# after this long: longer than a Wi-Fi blip, short enough that a cook left
-# running is noticed. An appliance that is only offline (unplugged between
-# cooks) is not a problem: its Status says offline.
+NO_COOK_KNOWN = "unknown: it has not been heard from yet, so no cook could be seen"
+# An appliance out of contact this long turns its Problem sensor on: longer
+# than a Wi-Fi blip, short enough that a cook left running is noticed.
 OFFLINE_PROBLEM_AFTER = timedelta(minutes=10)
 # How often that is looked at: nothing else happens to an appliance that went quiet.
 OFFLINE_CHECK = timedelta(minutes=1)
@@ -185,14 +181,10 @@ def _ago(seconds: float) -> str:
     return f"{hours // 24} days"
 
 
-def _clock(moment: datetime, *, dated: bool = False) -> str:
-    """A time a person reads: "14:05", or "14:05 on 20 Nov" when it is not today.
-
-    `dated` always names the day: text kept in a state attribute is read on
-    later days too, when a bare time would point at the wrong one.
-    """
+def _clock(moment: datetime) -> str:
+    """A time a person reads: "14:05", or "14:05 on 20 Nov" when it is not today."""
     local = dt_util.as_local(moment)
-    if not dated and local.date() == dt_util.now().date():
+    if local.date() == dt_util.now().date():
         return f"{local:%H:%M}"
     return f"{local:%H:%M} on {local.day} {local:%b}"
 
@@ -304,12 +296,6 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
             out["settings_from"] = source
         return out
 
-    def cook_note(self, appliance: Appliance) -> str | None:
-        """Why the last cook is not known, in a sentence; None when cook_summary says it all."""
-        if not appliance.last_cook and appliance.last_contact is None:
-            return NO_COOK_KNOWN_NOTE
-        return None
-
     @property
     def brand(self) -> str:
         """Breville or Sage, as the account was added: what the person calls it."""
@@ -399,16 +385,7 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         return appliance.last_contact or self.watching_since
 
     def offline_problem(self, appliance: Appliance) -> bool:
-        """Contact lost during a cook, OFFLINE_PROBLEM_AFTER ago or longer: the Problem sensor says so.
-
-        Decided from the kept last cook: one still open (no `ended_at`) when
-        contact went may be heating with nobody able to see it. An appliance
-        that is only offline, idle or never heard from, is not a problem; its
-        Status sensor says offline, why and since when.
-        """
-        cook = appliance.last_cook
-        if cook is None or cook.get("ended_at"):
-            return False
+        """Out of contact for OFFLINE_PROBLEM_AFTER or longer: the Problem sensor says so."""
         since = self.out_of_contact_since(appliance)
         return since is not None and dt_util.utcnow() - since >= OFFLINE_PROBLEM_AFTER
 
@@ -449,8 +426,7 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
         Home Assistant keeps, or for an appliance not heard from in this run,
         when this run began watching, said as that. `live` text (an answer
         read now) also says how long; a state attribute is written once and
-        read later, so it says the time with its date, which does not go out
-        of date on the next day.
+        read later, so it says only the time, which does not go out of date.
         `to_try` is its own field, so an entity shows it on its own line.
         """
         since = self.out_of_contact_since(appliance)
@@ -469,15 +445,14 @@ class BrevilleCoordinator(DataUpdateCoordinator[dict[str, Appliance]]):
             why = "Breville's cloud is reachable and the sign-in works, but the appliance is not answering"
             fix = f"Check that the appliance is plugged in and on Wi-Fi, and that the {self.brand} app shows it online."
         age = _ago(max(0.0, (dt_util.utcnow() - since).total_seconds()))
-        clock = _clock(since, dated=not live)
         if appliance.last_contact is None:
-            heard = f"Never heard from since BRUH Cooking started at {clock}"
+            heard = f"Never heard from since BRUH Cooking started at {_clock(since)}"
             if live:
                 heard += f", {age} ago"
         elif live:
-            heard = f"Offline for {age}, counted from when it was last heard from ({clock})"
+            heard = f"Offline for {age}, counted from when it was last heard from ({_clock(since)})"
         else:
-            heard = f"Offline since {clock}, when it was last heard from"
+            heard = f"Offline since {_clock(since)}, when it was last heard from"
         text = f"{heard}. {why}."
         cook = appliance.last_cook
         if cook is not None and not cook.get("ended_at"):

@@ -86,14 +86,13 @@ class BrevilleBinarySensor(BrevilleEntity, BinarySensorEntity):
         if key == "cooking" and not self.coordinator.in_contact(self.appliance):
             return self.coordinator.last_known(self.appliance)
         if key == "problem" and self.appliance.status.error == "none" and self.is_on:
-            # On with no error reported: contact was lost during a cook. Why,
-            # since when and what to try, on the entity that is on: the controls
-            # are unavailable, and an unavailable state carries no attributes.
-            # The status sensor's report, written as a state attribute is (the
-            # time with its date, not how long ago).
+            # On with no error reported: the appliance has been out of contact.
+            # Why, and what to try, on the entity that is on: the controls are
+            # unavailable, and an unavailable state carries no attributes. The
+            # status sensor's report, written as a state attribute is (the time,
+            # not how long ago).
             attrs: dict[str, Any] = {"cause": "offline"}
             if (report := self.coordinator.offline_report(self.appliance, live=False)) is not None:
-                attrs["offline_since"] = report["since"]
                 attrs["offline_reason"] = report["text"]
                 attrs["offline_to_try"] = report["to_try"]
             return attrs
@@ -109,8 +108,7 @@ class BrevilleBinarySensor(BrevilleEntity, BinarySensorEntity):
             cook = appliance.last_cook
             return cook is not None and not cook.get("ended_at")
         if self.entity_description.key == "problem" and self.coordinator.offline_problem(appliance):
-            # Contact lost during a cook, past OFFLINE_PROBLEM_AFTER, is a problem
-            # too; its offline_since, offline_reason and offline_to_try say since
-            # when, why and what to try. Only offline is not.
+            # Out of contact past OFFLINE_PROBLEM_AFTER is a problem too; its
+            # offline_reason and offline_to_try say since when, why and what to try.
             return True
         return self.entity_description.value_fn(appliance)
