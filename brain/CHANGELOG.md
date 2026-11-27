@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.32
+
+### Added
+
+- When brAIn's usage is spent and its closer looks are held, a simple rule still watches what matters most without spending anything: a freezer or fridge warmer than it is kept and past its limit (in °C or °F), a lock that says jammed, an alarm that says triggered. What it finds goes on the list and is announced, and once a day a short note says the closer look was skipped and why. It only reports; it never acts (1475).
+
+### Fixed
+
+- The morning brief no longer falls back to 7:00 in a house whose wake-ups fall into two or three different patterns (early days and late days mixed through the week): brAIn finds each pattern and uses the earliest, with its spread. A house with one pattern is unchanged (1472).
+
 ## 5.5.31
 
 ### Fixed
