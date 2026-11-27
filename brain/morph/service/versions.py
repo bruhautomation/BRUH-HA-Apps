@@ -17,8 +17,9 @@ Tell, with three differences that are the point of it:
   is dropped and counted, never shown broken; a version equal to the card,
   or to one before it, is not a version.
 * **Picking one is one commit.** With no ``needs`` Morph writes the card
-  into dashboard.yaml itself (the same normalize-and-dump path as Edit's
-  save, the card's id kept), commits it authored ``person`` and files a
+  into dashboard.yaml itself, only that card's lines (``store.write_card``;
+  the whole file only when that cannot be done surely), the card's id
+  kept, commits it authored ``person`` and files a
   small ``use`` record beside the Tells, so Undo is a Tell's Undo: a revert
   of that one commit, as a new commit. With ``needs`` it starts an ordinary
   Tell naming the version and the Home Assistant changes it needs.
@@ -157,6 +158,20 @@ def _find(dash: dict, card_id: str) -> dict | None:
     return None
 
 
+def drawable(body, extra: tuple = ()) -> bool:
+    """Whether a version's type is one Morph can draw: one of Morph's own
+    kinds (or a kind this house's copy of Morph adds), a ``custom:`` card,
+    or a Lovelace card brAIn wrapped on purpose (``type: lovelace`` with the
+    card under ``card``). A bare type that is none of those is a mistyped
+    kind as often as a Home Assistant card, and Morph keeps no list of Home
+    Assistant's own to tell them apart, so the store would wrap it and the
+    panel would draw an error: such a version is dropped, not offered."""
+    if not isinstance(body, dict):
+        return True  # store._card says why, and it is counted there
+    ctype = str(body.get("type") or "").strip()
+    return not ctype or ctype in store.MORPH_TYPES or ctype in extra or ctype.startswith("custom:")
+
+
 def clean(raw, current: dict, card_id: str) -> tuple[list[dict], int]:
     """brAIn's versions as the panel may draw them, and how many were
     dropped: each card through the store's normalizer, the card's own id
@@ -174,6 +189,9 @@ def clean(raw, current: dict, card_id: str) -> tuple[list[dict], int]:
         body = item.get("card")
         if isinstance(body, dict):
             body = {k: v for k, v in body.items() if k != "id"}
+        if not drawable(body, extra):
+            dropped += 1
+            continue
         card = store._card(body, problems, f"version {i + 1}", extra)
         if not card or len(out) >= MAX_VERSIONS:
             dropped += 1
@@ -252,7 +270,8 @@ def build_prompt(target: dict, words: str, current: str, *, how: str = "new", ba
         "- Change NOTHING: not dashboard.yaml, not Home Assistant, not Morph's code. This run can only",
         "  read (your Home Assistant read tools work; files do not), and the versions ride in your answer.",
         "- Each version is the card's WHOLE config, with the keys dashboard.yaml takes for one card (below).",
-        "  Leave out `id`: Morph keeps the card's own. A Lovelace card may be written directly.",
+        "  Leave out `id`: Morph keeps the card's own. A Lovelace card is `type: lovelace` with its config",
+        "  under `card:` (a `custom:` card may be written directly); a version of any other type is not shown.",
         "- Make them genuinely different ideas (a different type, layout or emphasis), not three shades of",
         "  one. Keep the card's entities unless the request asks otherwise, and check any entity you add",
         "  exists with your read tools.",
@@ -290,7 +309,8 @@ def start(target: dict, words: str, *, view: dict | None = None, base_from: dict
     card_id = str((target or {}).get("id") or "")
     if (target or {}).get("kind") != "card" or not CARD_ID.match(card_id):
         return {"error": "Versions are made for one card."}
-    if _find(store.read()[0], card_id) is None:
+    now = _find(store.read()[0], card_id)
+    if now is None:
         return {"error": "That card is not on the dashboard any more."}
     named = tell.target_for("card", card_id)
     how, base, prior, index = "new", None, [], -1
@@ -306,11 +326,14 @@ def start(target: dict, words: str, *, view: dict | None = None, base_from: dict
                 or not 0 <= index < len(offered):
             return {"error": "That version is gone. Ask again."}
         base = offered[index]
-        prior = offered if how == "revise" else []
+        # The versions this round is built on stay on it, so a round that
+        # fails or brings nothing back still has them to choose from.
+        prior = offered
     tid = brain.new_id("morph")
     state = {"id": tid, "mode": "versions", "how": how, "text": words, "target": named,
              "phase": "sending", "steps": [], "started": time.time(), "scope": "ui",
-             "view": tell.clean_view(view), "origin": "panel", "person_words": words}
+             "view": tell.clean_view(view), "origin": "panel", "person_words": words,
+             "was": copy.deepcopy(now)}
     if base:
         state["base"] = base
     if prior:
@@ -369,6 +392,10 @@ async def _run(state: dict) -> None:
         log.exception("versions %s failed", tid)
         state["phase"] = "failed"
         state["say"] = f"Morph could not finish asking for versions: {exc}"
+        if state.get("prior"):
+            state["versions"] = state["prior"]
+            state["shown"] = max(0, int(state.get("revising", 0)))
+            state["say"] += " The versions you had are still here."
         tell._save(state)
     finally:
         tell._RUNNING.pop(tid, None)
@@ -383,17 +410,28 @@ def settle(state: dict, data, text: str, error: str, dash: dict) -> None:
     current = _find(dash, card_id) or {}
     summary = wording.clip((data or {}).get("summary") or "", 600)
     state["summary"] = summary
+    prior = [dict(v) for v in (state.get("prior") or [])]
+    i = int(state.get("revising", -1))
+    base_label = (state.get("base") or {}).get("label") or "that version"
     if error or data is None:
         state["phase"] = "failed"
+        why = "it did not answer in time" if error == "timeout" else (error or "its answer did not read")
+        if prior:
+            # A revise or More like this that failed: the versions it was
+            # built on are still the ones to choose from.
+            ask = (f"revise “{base_label}”" if state.get("how") == "revise"
+                   else f"make more like “{base_label}”")
+            state["say"] = f"{who} could not {ask} ({why}). The versions you had are still here."
+            state["versions"] = prior
+            state["shown"] = i if 0 <= i < len(prior) else 0
+            return
         state["say"] = (f"{who} did not answer in time." if error == "timeout"
-                        else f"{who} could not make versions this time ({error or 'its answer did not read'}).")
+                        else f"{who} could not make versions this time ({why}).")
         state["versions"] = []
         return
     got, dropped = clean(data.get("versions"), current, card_id)
     code_only = wording.clip(str(data.get("code_only") or "").strip(), 400)
     if state.get("how") == "revise":
-        prior = [dict(v) for v in (state.get("prior") or [])]
-        i = int(state.get("revising", -1))
         if got and 0 <= i < len(prior):
             label = prior[i]["label"]
             fresh = got[0]
@@ -413,6 +451,17 @@ def settle(state: dict, data, text: str, error: str, dash: dict) -> None:
     if code_only:
         state["code_only"] = code_only
     n = len(got)
+    if not n and prior:
+        # Nothing usable came back from a revise or More like this: the
+        # versions it was built on stay, and that is what is said.
+        state["versions"] = prior
+        state["shown"] = i if 0 <= i < len(prior) else 0
+        state["phase"] = "done"
+        state["say"] = ((code_only + " ") if code_only else
+                        f"{who} brought back no new version Morph could draw"
+                        + (f" ({dropped} did not read)" if dropped else "") + ". ") \
+            + "The versions you had are still here."
+        return
     if not n:
         state["phase"] = "done"
         state["say"] = (code_only or f"{who} offered no version Morph could draw"
@@ -431,11 +480,19 @@ def settle(state: dict, data, text: str, error: str, dash: dict) -> None:
 
 # -------------------------------------------------------------------- use
 
-def _source(p: dict) -> tuple[dict | None, str, str]:
-    """(version, card id, error) for a Use this press: a round's version by
-    its index, or an earlier card from the history by when it was kept.
-    Both are read from what Morph stored; nothing about the card comes off
-    the wire but where to find it."""
+def _source(p: dict) -> tuple[dict | None, str, str, dict | None]:
+    """(version, card id, error, the card the round was made from) for a
+    Use this press: a round's version by its index, or an earlier card from
+    the history by when it was kept. Both are read from what Morph stored;
+    nothing about the card comes off the wire but where to find it."""
+    version, card_id, error = _pick(p)
+    was = None
+    if version is not None and p.get("round"):
+        was = (tell.read_state(str(p.get("round") or "")) or {}).get("was")
+    return version, card_id, error, was if isinstance(was, dict) else None
+
+
+def _pick(p: dict) -> tuple[dict | None, str, str]:
     if p.get("round"):
         st = tell.read_state(str(p.get("round") or "")) or {}
         if st.get("mode") != "versions":
@@ -474,12 +531,12 @@ def needs_words(version: dict) -> str:
 
 def use(p: dict) -> dict:
     """Make a version the card. Runs under morphd's lock."""
-    version, card_id, error = _source(p)
+    version, card_id, error, was = _source(p)
     if error:
         return {"ok": False, "error": error}
     gitrepo.commit_pending()
     base = gitrepo.head()
-    dash, problems, _ = store.read()
+    dash, problems, text = store.read()
     if problems and problems[0].startswith(store.UNREADABLE):
         return {"ok": False, "error": "dashboard.yaml does not read right now, so Morph will not write into it. "
                                       "Fix it or Undo the last change first."}
@@ -487,6 +544,13 @@ def use(p: dict) -> dict:
     if card is None:
         return {"ok": False, "error": "That card is not on the dashboard any more."}
     label = version.get("label") or "that version"
+    if was is not None and not _same(card, was) and p.get("over") is not True:
+        # The card changed after this round was made (by hand, by brAIn, or
+        # by another pick): using a version now would undo that change, so
+        # it is said first and the person decides.
+        return {"ok": False, "stale": True,
+                "error": "This card was changed after these versions were made, so using one now "
+                         "would undo that change. Use it anyway, or ask for new versions of the card as it is."}
     target = tell.target_for("card", card_id)
     if version.get("needs"):
         # Home Assistant changes are a Tell's, made only for the version the
@@ -500,7 +564,7 @@ def use(p: dict) -> dict:
     replaced = copy.deepcopy(card)
     card.clear()
     card.update({"id": card_id, **{k: v for k, v in version["card"].items() if k != "id"}})
-    store.write(dash)
+    store.write_card(text, dash, card_id)
     commit = gitrepo.commit(f"Used the version “{label}” of {target.get('label') or 'a card'}", "person")
     if not commit:
         return {"ok": False, "error": "That version is the card already."}

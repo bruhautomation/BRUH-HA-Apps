@@ -2453,7 +2453,7 @@ ${near.length ? `<div class="flab">From ${esc(sec.title)}<div class="row" style=
     if (composing) {
       return `<div data-ctl="1" data-tell="1" class="tell rise" style="margin-top:6px">${head}${turns}${card ? this.histHtml(t) : ''}${this.shotHtml(t.shot, t.turns && t.turns.length ? `How it looks now — ${this.who()} sees this` : card ? 'How it looks now' : `What ${this.who()} will see`)}
 <textarea class="tellin" rows="3" data-keep="tell" data-tellkey="${esc(kind + ':' + (id || ''))}" aria-label="What should change" placeholder="${esc(kind === 'dashboard' ? 'Add a Pets section with the feeder and water bowl…' : t.turns && t.turns.length ? 'What should it do differently?' : 'Say what should change…')}"></textarea>${scope}
-<div class="row" style="flex-wrap:wrap;gap:0 16px">${t.turns && t.turns.length ? '' : sugs}<span class="flex1"></span><button type="button" class="wd" data-act="tell-cancel" style="font-size:14px;min-height:36px">${t.turns && t.turns.length ? 'Close' : 'Cancel'}</button>${card ? '<button type="button" class="wd" data-act="tell-now" style="font-size:14px;font-weight:600;min-height:36px">Just do it</button>' : ''}<button type="button" class="wd" data-act="tell-send" style="font-size:14px;font-weight:700;min-height:36px;color:var(--violet)">${card ? 'Send for versions' : 'Send'}</button></div></div>`;
+<div class="row" style="flex-wrap:wrap;gap:0 16px">${t.turns && t.turns.length ? '' : sugs}<span class="flex1"></span><button type="button" class="wd" data-act="tell-cancel" style="font-size:14px">${t.turns && t.turns.length ? 'Close' : 'Cancel'}</button>${card ? '<button type="button" class="wd" data-act="tell-now" style="font-size:14px;font-weight:600">Just do it</button>' : ''}<button type="button" class="wd" data-act="tell-send" style="font-size:14px;font-weight:700;color:var(--violet)">${card ? 'Send for versions' : 'Send'}</button></div></div>`;
     }
     const all = st.steps || [];
     const SHOW = 7;
@@ -2483,7 +2483,7 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
     if (!t || t.kind !== 'card' || t.id !== id) return null;
     if (!t.sent && t.hi != null && t.hist && t.hist[t.hi]) return t.hist[t.hi].card;
     const st = t.state || {};
-    const vs = st.mode === 'versions' && st.phase === 'done' ? st.versions || [] : [];
+    const vs = st.mode === 'versions' && ['done', 'failed'].includes(st.phase) ? st.versions || [] : [];
     const i = this.versionIndex(t);
     return i >= 0 && vs[i] ? vs[i].card : null;
   }
@@ -2501,7 +2501,7 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
     const t = this.s.tell;
     if (!t || t.kind !== 'card') return false;
     const st = t.state || {};
-    if (t.sent && st.mode === 'versions' && st.phase === 'done' && (st.versions || []).length) {
+    if (t.sent && st.mode === 'versions' && ['done', 'failed'].includes(st.phase) && (st.versions || []).length) {
       const n = st.versions.length + 1; // Current is -1
       t.vi = ((this.versionIndex(t) + 1 + d) % n + n) % n - 1;
       t.changing = false;
@@ -2537,7 +2537,7 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
   versionsBox(t, st, head) {
     const vs = st.versions || [];
     const payload = st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receives</summary><pre>${esc(st.payload)}</pre></details>` : '';
-    const said = `<p class="rise" style="font-size:14px;line-height:1.5${st.phase === 'failed' || st.empty ? ';color:var(--amber)' : ''}">${esc(st.say || '')}</p>`;
+    const said = `<p class="rise" style="font-size:14px;line-height:1.5${st.phase === 'failed' || st.empty || t.stale ? ';color:var(--amber)' : ''}">${esc(st.say || '')}</p>`;
     if (!vs.length) {
       return `<div data-ctl="1" data-tell="1" class="tell" style="margin-top:6px">${head}<span style="font-size:14px">“${esc(t.text)}”</span>${said}<div class="row" style="flex-wrap:wrap;gap:0 18px"><button type="button" class="wd go" data-act="tell-now-again">Just do it</button><button type="button" class="wd" data-act="tell-cancel">Close</button></div>${payload}</div>`;
     }
@@ -2547,9 +2547,11 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
     const idea = v ? `<p class="videa"><b>${esc(VERSION_LETTERS[i] || '')} · ${esc(v.label)}</b>${v.idea ? ` — ${esc(v.idea)}` : ''}</p>` : '<p class="videa">The card as it is on the dashboard now.</p>';
     const needs = v && (v.needs || []).length ? `<p class="vneeds">Needs in Home Assistant, made only if you use it: ${esc(v.needs.join('; '))}</p>` : '';
     const change = v && t.changing ? `<div class="vchange"><input class="fld" data-keep="verchange" data-act-enter="ver-revise" aria-label="What should change in ${esc(v.label)}" placeholder="What should change in this one?"><button type="button" class="wd go" data-act="ver-revise">Send</button></div>` : '';
-    const acts = v
-      ? `<button type="button" class="wd go" data-act="ver-use">Use this</button><button type="button" class="wd" data-act="ver-more">More like this</button><button type="button" class="wd" data-act="ver-change" aria-expanded="${!!t.changing}">Change…</button><button type="button" class="wd" data-act="ver-discard">Discard</button>`
-      : '<button type="button" class="wd" data-act="ver-discard">Discard</button>';
+    const acts = v && t.stale
+      ? `<button type="button" class="wd go" data-act="ver-use" data-v="over">Use it anyway</button><button type="button" class="wd" data-act="ver-fresh">New versions</button><button type="button" class="wd" data-act="ver-discard">Discard</button>`
+      : v
+        ? `<button type="button" class="wd go" data-act="ver-use">Use this</button><button type="button" class="wd" data-act="ver-more">More like this</button><button type="button" class="wd" data-act="ver-change" aria-expanded="${!!t.changing}">Change…</button><button type="button" class="wd" data-act="ver-discard">Discard</button>`
+        : '<button type="button" class="wd" data-act="ver-discard">Discard</button>';
     const steps = `<button type="button" class="wd vstep" data-act="ver-step" data-v="-1" aria-label="Previous version">←</button><button type="button" class="wd vstep" data-act="ver-step" data-v="1" aria-label="Next version">→</button>`;
     return `<div data-ctl="1" data-tell="1" class="tell" style="margin-top:6px">${head}<span style="font-size:14px">“${esc(t.text)}”</span>${said}
 <div class="vbar" data-vswipe="1">${this.versionChips(items, i, 'ver-show')}<div class="row" style="gap:8px;align-items:center">${idea}<span class="flex1"></span>${steps}</div>${needs}</div>${change}
@@ -2570,7 +2572,14 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
     const ae = this.shadowRoot.activeElement; if (ae && ae.blur) ae.blur();
     text = String(text || '').trim();
     if (!text) return;
-    t.text = text; t.sent = true; t.changing = false; t.hi = null; t.vi = null;
+    // A round built on a version keeps the one it came from, so a refusal
+    // goes back to those versions instead of losing them.
+    const back = base && t.state && (t.state.versions || []).length ? { text: t.text, state: t.state, tellId: t.tellId, vi: t.vi } : null;
+    const refused = (say) => {
+      if (back) { t.text = back.text; t.tellId = back.tellId; t.vi = back.vi; t.state = { ...back.state, phase: 'failed', say: `${say} The versions you had are still here.` }; } else t.state = { phase: 'failed', mode: 'versions', versions: [], say, steps: [] };
+      this.schedule();
+    };
+    t.text = text; t.sent = true; t.changing = false; t.hi = null; t.vi = null; t.stale = false;
     t.state = { phase: 'sending', mode: 'versions', steps: [] };
     this.track('tell', t.id, null);
     this.schedule();
@@ -2579,10 +2588,10 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
     const view = shot && shot.view ? { ...shot.view } : {};
     try {
       const r = await this.hass.callWS({ type: 'morph/request', kind: 'versions', payload: { target: { kind: 'card', id: t.id }, text, view, ...(base ? { base } : {}) } });
-      if (!r || !r.ok) { t.state = { phase: 'failed', mode: 'versions', versions: [], say: (r && r.error) || `Morph could not hand this to ${this.who()}.`, steps: [] }; this.schedule(); return; }
+      if (!r || !r.ok) { refused((r && r.error) || `Morph could not hand this to ${this.who()}.`); return; }
       t.tellId = r.id;
       this.pollTell(true);
-    } catch (e) { t.state = { phase: 'failed', mode: 'versions', versions: [], say: String(e.message || e), steps: [] }; this.schedule(); }
+    } catch (e) { refused(String(e.message || e)); }
   }
 
   // Use this: the service writes the card and commits it (one Undo), or,
@@ -2593,6 +2602,9 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
     let r;
     try { r = await this.hass.callWS({ type: 'morph/request', kind: 'versions_use', payload }); } catch (e) { r = { ok: false, error: String(e.message || e) }; }
     t.using = false;
+    // A round older than the card's last change: said in the box, with Use
+    // it anyway in place of Use this (versionsBox), before anything is lost.
+    if (r && r.stale && t.state) { t.stale = true; t.state = { ...t.state, say: r.error }; this.schedule(); return; }
     if (!r || !r.ok || !r.id) { this.toast((r && r.error) || 'Morph could not use that version.'); this.schedule(); return; }
     haptic('success');
     // No picture: nothing was photographed for this (the version was drawn
@@ -3930,8 +3942,9 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
       case 'ver-use': {
         const t = this.s.tell; const st = (t && t.state) || {}; const i = this.versionIndex(t);
         const ver = (st.versions || [])[i]; if (!ver || !t.tellId) return;
-        this.useVersion({ round: t.tellId, index: i }, ver.label); return;
+        this.useVersion({ round: t.tellId, index: i, ...(v === 'over' ? { over: true } : {}) }, ver.label); return;
       }
+      case 'ver-fresh': { const t = this.s.tell; if (t && t.text) this.sendVersions(t.text); return; }
       case 'ver-use-hist': {
         const t = this.s.tell; const h = t && t.hist && t.hist[t.hi]; if (!h) return;
         this.useVersion({ card: t.id, at: h.at }, h.label || 'the earlier card'); return;
