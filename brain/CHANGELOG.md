@@ -10,7 +10,7 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 - Saying where a sensor sits in a Wrong reason ("it's inside a cabinet", "it's outdoors", "that room isn't heated") is kept as a house fact: heat-loss, window and humidity checks skip or reword the claim for that sensor or room, and the room's physics says when its outside reference is a forecast rather than a sensor (1476).
 - Every house check held back by its own record of Wrong answers shows a line in Diagnostics saying so, and while it is held it raises a thing once rather than again and again; for device checks (frozen, battery, unavailable) one Wrong covers the whole device (1477).
 - brAIn's "you marked its last reports wrong" hold now counts only reports about the same thing or the same kind of reading, so Wrongs about one sensor no longer hold back a freezer warning; the hold says how to lift it (1478).
-- This is 5.5.34's change again after a fresh review; 5.5.35 had reverted it.
+- This is 5.5.34's change again after a fresh review (5.5.35 had reverted it), with two more safeguards: a "stop" answer on a report that lists several things writes nothing if any of them is a lock, an alarm or another protected device, and a room is kept as unheated only when your own words say so — and never takes a pipe or freezer probe out of the freezing warning (1476, 1479).
 
 ## 5.5.35
 
