@@ -151,6 +151,26 @@ def read_nothing(tools, house=None) -> bool:
     return True
 
 
+def not_an_insight(card: dict, run_reads, legacy_search: bool = True) -> bool:
+    """Whether a stored card is a run that read nothing of the house — a
+    routing note ("no data needed for this reply"), not an insight — so
+    Reports does not show it (#1464). Decided from what the run did:
+    ``run_reads(card)`` is the card's typed `reads_house`, or for a card
+    stored before that field its run's transcript (True/False/None).
+
+    A card that offers something is about the house whatever its run read.
+    A card stored before the field is judged only when it was asked and the
+    house runs in search mode (``legacy_search``): a snapshot run calls no
+    tool either, and a card made that way was handed the house."""
+    card = card or {}
+    if card.get("opportunities"):
+        return False
+    known = isinstance(card.get("reads_house"), bool) or bool(card.get("gather"))
+    if not known and not (legacy_search and card.get("question")):
+        return False
+    return run_reads(card) is False
+
+
 def blind_lead(obj: dict, verdict: str = "") -> str:
     """Why the card's main claim is not news — "a data gap", "no
     comparison" or "nothing happened" — or "" when it is."""

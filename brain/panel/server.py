@@ -6412,16 +6412,28 @@ async def _generate(insight_id: str) -> None:
         not_house = (obj.get("about_house") is False
                      and not obj.get("findings")
                      and not obj.get("opportunities"))
-        if not not_house and sent and sent.get("gather_mode") == "search":
+        # Whether this run read the house, kept on the card so Reports can
+        # tell an analysis from a routing note without reading its words
+        # (`card_claims.not_an_insight`): a snapshot run was handed the
+        # house; a search run is what its transcript shows it called;
+        # unknown (no transcript) is left unsaid.
+        gather = str((sent or {}).get("gather_mode") or "")
+        reads_house = True if gather == "snapshot" else None
+        if not not_house and gather == "search":
             sid = str((result.get("meta") or {}).get("session_id") or "")
             reads = (await asyncio.to_thread(
                 conversations.tool_reads, engine.CLAUDE_HOME, sid)
                 if sid else None)
-            not_house = reads is not None and card_claims.read_nothing(
-                reads["tools"],
-                {t.rsplit("__", 1)[-1] for t in engine.ANALYST_TOOLS})
+            if reads is not None:
+                reads_house = not card_claims.read_nothing(
+                    reads["tools"], _ANALYST_READS)
+                not_house = not reads_house
         if not_house and await _not_a_card(insight_id, question, job):
             return
+        if not_house:
+            # Kept because the answer could not reach Ask: shown as the
+            # card it is, so nothing claims an answer that reached nowhere.
+            reads_house = None
         # The design system is a stylesheet the card is written against,
         # injected once here rather than re-sent as hex in every prompt.
         html = inject_styles(obj["html"])
@@ -6596,6 +6608,8 @@ async def _generate(insight_id: str) -> None:
             # its "All quiet" line rather than a card of its own.
             "quiet": bool(quiet_card) or blind,
             **({"blind": True} if blind else {}),
+            **({"gather": gather} if gather else {}),
+            **({"reads_house": reads_house} if reads_house is not None else {}),
             "focus_used": cat.get("focus", "") if question is None else "",
             # The entities whose CURRENT state the visualization wants,
             # so a card about something happening now stops being frozen
@@ -10519,6 +10533,35 @@ def _card_entities(insight: dict) -> list[str]:
     return out
 
 
+# The bare names of the analyst's house reads (`card_claims.read_nothing`).
+_ANALYST_READS = frozenset(t.rsplit("__", 1)[-1] for t in engine.ANALYST_TOOLS)
+# A stored card's own run, read once per session id: whether its transcript
+# shows a house read (True/False), or None when it cannot be found.
+_CARD_RUN_READS: dict[str, bool | None] = {}
+
+
+def _card_run_reads(card: dict) -> bool | None:
+    """Whether a stored card's run read the house: the card's own typed
+    `reads_house` when its run recorded it, else — for a card stored before
+    that field — what the run's transcript shows it called, read once and
+    remembered. None when neither can say."""
+    if isinstance(card.get("reads_house"), bool):
+        return card["reads_house"]
+    if card.get("gather"):
+        return None
+    sid = str((card.get("meta") or {}).get("session_id") or "")
+    if not sid:
+        return None
+    if sid not in _CARD_RUN_READS:
+        reads = conversations.tool_reads(engine.CLAUDE_HOME, sid)
+        if len(_CARD_RUN_READS) > 512:
+            _CARD_RUN_READS.clear()
+        _CARD_RUN_READS[sid] = (None if reads is None else
+                                not card_claims.read_nothing(
+                                    reads["tools"], _ANALYST_READS))
+    return _CARD_RUN_READS[sid]
+
+
 def _insights_listing() -> list[dict]:
     """Every stored card as Reports reads it: its one verdict, whether it
     folds (quiet, superseded, a finding's twin), its tags and heading. The
@@ -10529,6 +10572,12 @@ def _insights_listing() -> list[dict]:
     against whatever the latest run wrote, so a new run's new tag still
     appears while the one you threw away stays gone."""
     insights = load_insights()
+    # A card is an analysis of the house (#1464): a run that read none of
+    # it (a routing note, "no data needed for this reply") is not shown,
+    # decided by what the run did, never by how its reply is worded.
+    search = eff_gather_mode() == "search"
+    insights = [ins for ins in insights if not card_claims.not_an_insight(
+        ins, _card_run_reads, legacy_search=search)]
     # one read of the edits file for the whole list, not one per card
     edits = card_tags.load_edits()
     superseded = _superseded(insights)
@@ -22747,9 +22796,12 @@ def _history_payload(now: float | None = None) -> dict:
     listing = safe(findings_store.listing, {"findings": [], "settled": []})
     todos = safe(todo_store.listing, {"items": [], "done": []})
     tidy_data = safe(tidy.load, {"batches": []})
+    # Each answer said by what the household was shown (#1463).
+    settled = [{**e, "headline": findings_store.settled_title(e)}
+               for e in (listing.get("settled") or [])]
     return today_mod.history(
         findings=listing.get("findings") or [],
-        settled=listing.get("settled") or [],
+        settled=settled,
         muted=safe(_muted_rows, []),
         snoozed_cases=safe(lambda: cases.list_cases(
             "snoozed", kinds=cases.KINDS, stores=cases.STORES, now=now), []),
