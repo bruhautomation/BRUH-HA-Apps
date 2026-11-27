@@ -194,18 +194,26 @@ p { margin: 0; }
 .companion-absent { margin: 0; }
 .companion-absent[hidden], .companion[hidden] { display: none; }
 .actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+/* The phone's one button for the server actions; hidden from 640px. */
+.btn.server-menu-btn { display: none; }
+.topbar { position: relative; }
 
 /* Tabs: the bar is full bleed, the row inside it takes the same column as the
    header and the page, inset by the tab's own padding so the first tab's label
-   lines up with the brand and the content. The row wraps rather than scrolls,
-   so every tab is in sight on a phone (#1293). */
+   lines up with the brand and the content. The row is one line: where the tabs
+   do not fit (a phone) it scrolls sideways inside itself, the chosen tab is
+   scrolled into sight (app.js), and the page itself never scrolls sideways.
+   Two wrapped rows took a quarter of a phone's screen on every tab (#1457). */
 .tabs {
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
 }
 .tabs-in {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
   gap: 0 var(--sp-1);
   max-width: var(--page-wide);
   margin: 0 auto;
@@ -223,6 +231,7 @@ p { margin: 0; }
   /* The control height: 40px, 44px on a touch screen (HIG / Material target). */
   min-height: var(--btn-h);
 }
+.tabs-in::-webkit-scrollbar { display: none; }
 .tab:hover { color: var(--fg); }
 .tab.active { color: var(--fg); border-bottom-color: var(--accent-ink); }
 
@@ -260,10 +269,11 @@ main {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: var(--card-gap);
 }
-/* From a desktop width, three columns for the three stat cards, so a wide card
-   below never sits under empty tracks. */
+/* From a desktop width, two columns for the two stat cards (Status, with the
+   players in it, and Performance), so a wide card below never sits under
+   empty tracks. */
 @media (min-width: 900px) {
-  .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .card {
   background: var(--bg-card);
@@ -286,10 +296,12 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
 .dot.running { color: var(--accent-ink); }
 .dot.stopped { color: var(--danger); }
 .dot.starting { color: var(--warn); }
-.big-number { font-size: var(--fs-title); line-height: var(--lh-title); font-weight: var(--fw-title); font-variant-numeric: tabular-nums; }
-.big-number .slash { color: var(--muted); margin: 0 var(--sp-1); }
+/* TPS over the last 1, 5 and 15 minutes, on one line (#1458). */
+.tps-line { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-4); }
+.tps-line b { font-weight: 600; }
 
-.players-mini { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.players-mini { list-style: none; padding: 0; margin: var(--sp-1) 0 0; display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.players-mini:empty { display: none; }
 .players-mini li {
   background: var(--bg-raise);
   border: 1px solid var(--border);
@@ -495,9 +507,23 @@ footer {
    ------------------------------------------------------------------ */
 @media (max-width: 639.98px) {
   main { padding: var(--sp-4) var(--gutter); }
-  .bar-in { flex-direction: column; align-items: stretch; gap: var(--sp-2); padding: var(--sp-2) var(--gutter); }
-  .actions { width: 100%; justify-content: stretch; }
-  .actions .btn { flex: 1 1 0; min-width: 0; }
+  /* One row: the mark, the name over the version, and "Server", which opens
+     the four actions as a menu under the header, Stop last and apart. */
+  .bar-in { flex-wrap: nowrap; gap: var(--sp-3); padding: var(--sp-2) var(--gutter); }
+  .brand { min-width: 0; flex: 1 1 auto; gap: var(--sp-2); }
+  .brand > div { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--sp-2); }
+  .brand h1 { flex-basis: 100%; }
+  .brand .logo { width: 36px; height: 36px; }
+  .btn.server-menu-btn { display: inline-flex; flex: none; }
+  .actions { display: none; }
+  .actions.open {
+    display: flex; flex-direction: column; align-items: stretch;
+    position: absolute; top: 100%; right: var(--gutter); z-index: 200;
+    min-width: 200px; padding: var(--sp-2); margin-top: var(--sp-1);
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--card-radius);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .25);
+  }
+  .actions .btn { min-width: 0; }
 
   /* Console sits above the fold nicely at ~280px min-height on
      phones; the 60vh cap (capped at 480px to handle vh quirks) still
@@ -555,11 +581,15 @@ footer {
   dl { grid-template-columns: 1fr; gap: 0; }
   dd { padding-bottom: var(--sp-1); }
 
-  footer { flex-direction: column; align-items: flex-start; gap: 0; }
+  /* The footer is the end of the scrolled page here, not pinned (app.js
+     moves it into <main>). */
+  main > footer { margin: var(--section-gap) calc(-1 * var(--gutter)) calc(-1 * var(--sp-4)); flex-direction: column; align-items: flex-start; gap: 0; }
   footer .sep { display: none; }
 
-  .addon-row { grid-template-columns: 40px minmax(0, 1fr); }
-  .addon-row .addon-status { grid-column: 2; justify-self: start; }
+  .addon-row { grid-template-columns: 32px minmax(0, 1fr) auto; }
+  .addon-row .addon-icon { grid-row: span 2; }
+  .addon-row .addon-status { grid-column: 2; grid-row: 2; justify-self: start; }
+  .addon-row .addon-row-actions { grid-column: 3; grid-row: 1 / span 2; }
   .software-row { grid-template-columns: minmax(0, 1fr); }
   .software-row .addon-status, .software-when { justify-self: start; }
   .setup-card { padding: var(--card-pad); }
@@ -869,23 +899,13 @@ footer {
 }
 .props-context code { color: var(--accent-ink); font-family: var(--mono); }
 
-/* World-generation-only badge in the Server Properties table — these keys
-   only take effect at world creation time, editing them on an existing
-   world is a no-op. */
-.wgo-badge {
-  display: inline-block;
-  margin-left: var(--sp-2);
-  padding: 0 var(--sp-2);
-  font-size: var(--fs-meta);
-  font-weight: 600;
-  border-radius: 999px;
-  background: var(--warn);
-  color: #111;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  vertical-align: middle;
-  cursor: help;
-}
+/* Server Properties: a plain name, the file's key small under it, and when a
+   change takes effect in words (#1455). */
+#props-table td:first-child { min-width: 0; }
+.prop-label { display: block; font-weight: 600; overflow-wrap: anywhere; }
+.prop-key { display: block; font-family: var(--mono); font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--muted); overflow-wrap: anywhere; }
+.prop-when { display: block; font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--muted); max-width: 46ch; margin-top: var(--sp-1); }
+#props-table .btn[hidden] { display: none; }
 
 /* Essential-plugins callout in the first-run wizard plugin step. */
 .setup-essential-callout {
@@ -981,27 +1001,41 @@ footer {
 /* The world list: everything in this world, one row each. */
 .addon-world { display: flex; flex-direction: column; gap: var(--sp-4); }
 .addon-world:empty { display: none; }
-.addon-group { display: flex; flex-direction: column; gap: var(--card-gap); }
+.addon-group { display: flex; flex-direction: column; gap: var(--sp-2); }
 .addon-group h3 .muted { font-weight: 400; }
+/* One compact line per add-on (#1456): its mark, its name over what it is,
+   its status and its one action side by side. */
 .addon-row {
-  display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: var(--sp-1) var(--sp-3);
-  align-items: center; padding: var(--card-pad);
+  display: grid; grid-template-columns: 32px minmax(0, 1fr) auto auto; gap: var(--sp-1) var(--sp-3);
+  align-items: center; padding: var(--sp-2) var(--card-pad);
   background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--card-radius);
 }
-.addon-row .addon-icon { grid-row: span 2; }
+.addon-row .addon-icon { width: 32px; height: 32px; }
 .addon-row-main { display: flex; flex-direction: column; min-width: 0; }
 .addon-row-main strong { overflow-wrap: anywhere; }
 .addon-row-main .muted { font-size: var(--fs-meta); line-height: var(--lh-meta); overflow-wrap: anywhere; }
-.addon-row-actions { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.addon-row-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--sp-2); }
 .addon-row-actions:empty { display: none; }
 .addon-update { font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--muted); }
+.addon-update:empty { display: none; }
 .addon-update.is-new { color: var(--warn-ink); font-weight: 600; }
 .addon-row .addon-note { grid-column: 2 / -1; }
+.addon-row .addon-note:empty { display: none; }
+/* A conflicting pair's one notice, on the row to remove, with its Remove. */
 .addon-conflict {
   grid-column: 2 / -1; margin: 0; padding: var(--sp-2) var(--sp-3); color: var(--fg);
   border-left: 4px solid var(--warn); background: var(--bg-raise); border-radius: var(--control-radius);
-  overflow-wrap: anywhere;
+  overflow-wrap: anywhere; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2) var(--sp-3);
 }
+.addon-conflict p { margin: 0; flex: 1 1 24ch; min-width: 0; }
+.addon-conflict .btn-danger.addon-remove { color: #fff; }
+/* Every pending update, as one action above the list. */
+.addon-updates {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2) var(--sp-3);
+  padding: var(--sp-2) var(--card-pad); background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--card-radius);
+}
+.addon-updates .addon-note { flex-basis: 100%; margin: 0; }
+.addon-updates .addon-note:empty { display: none; }
 /* Status is said in words; the colour only reinforces it. */
 .addon-status {
   justify-self: end; white-space: nowrap; font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: 600;
@@ -1149,7 +1183,7 @@ footer {
 .actions .btn[hidden] { display: none; }
 .actions .btn-danger { margin-left: var(--sp-4); }
 @media (max-width: 639.98px) {
-  .actions .btn-danger { margin-left: 0; }
+  .actions .btn-danger { margin-left: 0; margin-top: var(--sp-3); }
 }
 
 /* Backups: older snapshots fold under their day; Restore is a quiet button. */
