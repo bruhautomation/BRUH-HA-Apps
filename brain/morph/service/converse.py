@@ -37,6 +37,11 @@ PROMPT = """Someone typed this into the Ask line of Morph, the house's dashboard
 which is brAIn's face. Answer them as brAIn's chat would: read the house with
 your tools when the answer depends on it, say it plainly in a few sentences,
 and name devices by their friendly names (the page lifts what you name).
+Before you give a sensor's reading as a fact, or build advice on it, make sure
+its device is alive: a reading that is unavailable, has sat at an end of its
+range (0% or 100%) without moving for many hours, fell straight to 0, or sits
+beside a low battery on its device is a device to check, not a reading; say
+that it looks offline or needs a battery, or leave it out.
 You have the same reach as the chat. If they asked you to change something,
 in Home Assistant or on the dashboard (/config/morph/dashboard.yaml, read
 /config/morph/AGENTS.md first, never run git there), do all of it, check it,
@@ -50,15 +55,17 @@ the question, not what they said:
 """
 
 
-def prompt_for(words: str, context: str = "") -> str:
-    """The prompt: Morph's frame, a card's context if it sent one, and the
+def prompt_for(words: str, context: str = "", doubts: str = "") -> str:
+    """The prompt: Morph's frame, a card's context if it sent one with
+    Morph's check of the readings it is about (`readings.check`), and the
     person's words LAST, whole."""
+    lead = (doubts + "\n\n") if doubts else ""
     if not context:
-        return PROMPT + words
-    return CONTEXT_LEAD + context + "\n\n" + PROMPT + words
+        return lead + PROMPT + words
+    return CONTEXT_LEAD + context + "\n\n" + lead + PROMPT + words
 
 
-def start(words: str, session: str = "", context: str = "") -> dict:
+def start(words: str, session: str = "", context: str = "", doubts: str = "") -> dict:
     """``words`` are what the person said; ``context`` is what a card sends
     beside them (the readings, the history it shows). The context is what
     gives way when the two are too long together, never the words."""
@@ -74,6 +81,8 @@ def start(words: str, session: str = "", context: str = "") -> dict:
              "started": time.time(), "session_in": session}
     if context:
         state["context"] = context
+    if doubts:
+        state["doubts"] = doubts
     if fitted["context_cut"]:
         state["cut"] = "context"
     tell._save(state)
@@ -86,7 +95,7 @@ async def _run(state: dict) -> None:
     try:
         model = settings.load().get("tell_model") or ""
         await asyncio.to_thread(brain.submit, tid,
-                                prompt_for(state["text"], state.get("context") or ""), tools="full",
+                                prompt_for(state["text"], state.get("context") or "", state.get("doubts") or ""), tools="full",
                                 timeout=TIMEOUT_S, model=model, person_words=state["text"],
                                 memory=True, kind="conversation",
                                 session_id=state.get("session_in") or "")

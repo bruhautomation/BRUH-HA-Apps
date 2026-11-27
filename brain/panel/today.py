@@ -63,9 +63,11 @@ FILTERS = ("snoozed", "ignored", "done", "aside")
 # What a row of several says was done to it ("Ignored 5 times since 5 Sep").
 VERBS = {"snoozed": "Snoozed", "ignored": "Ignored", "done": "Done",
          "aside": "Set aside"}
+# Each says who decided (#1463): the household snoozed and ignored, brAIn
+# set aside; Done is either, and its rows say which.
 FILTER_LABELS = {
-    "snoozed": "Snoozed",
-    "ignored": "Ignored",
+    "snoozed": "You snoozed",
+    "ignored": "You ignored",
     "done": "Done",
     "aside": "Set aside by brAIn",
 }
@@ -386,8 +388,12 @@ def history(*, findings: list[dict], settled: list[dict], muted: list[dict],
             body = {"key": key, "keys": stood[key]["keys"]}
         if note:
             meta += f" · You said: {note}"
+        # Shown by its household-facing words (`headline`, the row's shown
+        # text when it was answered), grouped and keyed by the stored text,
+        # which is the answer's key and is never rewritten (#1463).
         raw["ignored" if kind == "ignored" else "done"].append({
-            "title": entry.get("text") or "",
+            "title": entry.get("headline") or entry.get("text") or "",
+            "group": entry.get("text") or "",
             "meta": meta.strip(), "at": when, "said": note,
             "press": _press("Restore", "/api/findings/unsettle", body),
         })
@@ -444,7 +450,7 @@ def history(*, findings: list[dict], settled: list[dict], muted: list[dict],
     for name in FILTERS:
         groups: dict[str, dict] = {}
         for row in raw[name]:
-            key = _norm(row["title"])
+            key = _norm(row.get("group") or row["title"])
             if not key:
                 continue
             g = groups.get(key)

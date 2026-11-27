@@ -2,6 +2,26 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.29
+
+### Changed
+
+- Morph no longer suggests moving a card or section because of how often it is tapped: a move is offered only when it follows one of Morph's layout rules or something you asked for, and Morph says which in plain words. Suggestions to trim a group of controls to the ones pressed most are gone too, and suggestions already open on tap counts alone are withdrawn (1481).
+
+### Fixed
+
+- When a card asks brAIn for words about its readings, Morph first checks whether a sensor looks dead (unavailable, dropped straight to 0, stuck at 0 or 100% for a day, or at 0 or 100% beside a low battery) and tells brAIn not to quote it but to say the probe looks offline or needs a battery. Morph's card rules say the same, so brAIn offers to check this house's own cards (1468).
+
+## 5.5.28
+
+### Changed
+
+- Memory › House book: each section's button is "Add to this section" on one line, and a line's Edit and Delete sit behind a ⋯ menu under it, so the sentence uses the full width (1466).
+- Settings › Diagnostics: "Right now" and its verdict come first; the test card says "Check that everything works; uses a little of your plan." with a full-width "Test brAIn" button, and how the test works is in a fold (1465).
+- Insights: a card whose run read nothing from the house and offers nothing is no longer shown, and Schedule says in words what runs ("Two daily cards are on, one is off") (1464).
+- History › Ignored: each entry shows the words you were shown, wrapped instead of cut off; the group heading looks like a heading; the chips say who decided ("You ignored", "Set aside by brAIn") and an empty one is not shown (1463).
+- Memory › Timeline: search and one "Filter" button share a row (room, cause and kind open under it), and Ask says what it asks about ("Ask about the last 24 hours"), so the first events show sooner on a phone (1462).
+
 ## 5.5.27
 
 ### Changed

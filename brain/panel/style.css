@@ -1775,9 +1775,11 @@ body.modal-open {
   padding: var(--card-pad); border: 1px solid var(--hairline); border-radius: var(--control-radius);
   background: var(--plane);
 }
-.testshead { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-3); }
 .testsname { margin: 0; font-size: var(--fs-body); font-weight: 700; color: var(--ink); }
-.testshead .btn { flex: none; }
+#deepBox .testsname { margin: 0 0 var(--sp-1); }
+#deepBox { margin-top: var(--sp-4); }
+#deepBox .testsrun { display: flex; align-items: center; justify-content: center; width: 100%;
+  margin: var(--sp-3) 0 0; }
 .testssum { margin: var(--sp-2) 0 0; font-size: var(--fs-body); font-weight: 600; color: var(--good-ink); }
 .testssum.bad { color: var(--critical-ink); }
 .testssum.old { color: var(--ink-2); }
@@ -6767,8 +6769,12 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 .histdel { color: var(--ink-3); }
 @media (pointer: coarse) { .histdel, .factdel { min-width: 44px; } }
 .histdel:hover { color: var(--critical-ink); }
-#viewArchive .histtitle { white-space: normal; overflow: visible;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* A row's words wrap whole: never cut off with an ellipsis (#1463). */
+#viewArchive .histtitle { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+/* A fold's head is a heading over the rows it holds, not one more row. */
+#viewArchive .histfold > .histfoldhead { background: var(--surface-2); }
+#viewArchive .histfoldhead .histtitle { font-size: var(--fs-card); line-height: var(--lh-card);
+  font-weight: 600; }
 /* A fold of one kind of row ("Updates you ignored (42)"): a row that opens
    on its own rows, indented under it. */
 .histfold { border-bottom: 1px solid var(--hairline); }
@@ -6903,22 +6909,32 @@ button.kfactsubj:hover { color: var(--accent-2);
   .insighthead .reportsearch { flex: 1 1 100%; }
 }
 
-/* Timeline: search, room, cause and window in one wrapping bar. */
-.actfilters { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2);
+/* Timeline: search and one Filter press on a row, the window under it;
+   the room, cause and kind pickers open from Filter. */
+.actfilters { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--sp-2);
   flex: 1 1 520px; min-width: 0; }
 .actsearch { flex: 1 1 200px; min-width: 0; }
-.actfilters .sel { max-width: 220px; }
+.actfilterbtn { flex: none; white-space: nowrap; }
+.actfilterbtn[aria-expanded="true"] { border-color: var(--accent); color: var(--accent-2); }
+.actfilterbtn[hidden], .actfilterbox[hidden] { display: none; }
+/* Inside the head's wrapping row: under search and the window on a wide
+   screen, straight under search on a phone. */
+.acthead > .actfilterbox { order: 2; flex: 1 1 100%; }
+.actfilterbox { display: grid; gap: var(--sp-3); margin: 0;
+  padding: var(--card-pad); border: var(--card-border); border-radius: var(--card-radius);
+  background: var(--card-bg); }
+.actfilterpicks { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.actfilterpicks .sel { flex: 1 1 200px; max-width: 280px; min-width: 0; }
+.actfilterpicks .sel[hidden] { display: none; }
+.actfilterbox .actkinds { margin: 0; }
 .actkinds { margin: 0 0 var(--sp-4); }
 .actkindsel { display: none; }
 #actActive { margin-top: calc(-1 * var(--sp-2)); }
 @media (max-width: 639.98px) {
-  .actfilters .sel { flex: 1 1 calc(50% - var(--sp-2)); max-width: none; min-width: 0; }
-  .actsearch { flex-basis: 100%; }
-  /* Search on its own row; room and cause share the next. The window's
-     length is on the Earlier/Later row, sized to its words. */
-  .actfilters .actsearch { order: 0; }
-  .actfilters #actArea { order: 1; }
-  .actfilters #actCause { order: 2; }
+  .actfilterpicks .sel { flex: 1 1 100%; max-width: none; }
+  .acthead > .actfilterbox { order: 1; }
+  .acthead > .actnav { order: 2; }
+  /* The window's length is on the Earlier/Later row, sized to its words. */
   .actnav { gap: var(--sp-2); }
   .actnav .actrange { flex: 1 1 auto; min-width: 0; white-space: normal;
     text-align: center; }
@@ -7044,19 +7060,17 @@ button.kfactsubj:hover { color: var(--accent-2);
   margin: 0 0 var(--sp-2); }
 .booksechead h3 { margin: 0; font-size: var(--fs-body); font-weight: 600; color: var(--ink); }
 .booksechead .bookseccount { color: var(--ink-3); font-size: var(--fs-meta); }
-.booksechead .booksecadd { margin-left: auto; }
+.upbooksec > .booksecadd { margin: var(--sp-2) 0 var(--sp-1); white-space: nowrap; }
 .bookbody .upbooklist { list-style: none; padding: 0; gap: 0; }
 .bookentry {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--sp-3);
+  display: grid; grid-template-columns: minmax(0, 1fr);
   padding: var(--sp-2) 0; border-top: 1px solid var(--hairline);
 }
 .bookentry:first-child { border-top: 0; }
-.bookentry .booktext { grid-column: 1; color: var(--ink); }
-.bookentry .upchips { grid-column: 1; }
-.bookentry .bookacts { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 2px;
-  align-self: start; opacity: .55; transition: opacity .12s ease; }
-.bookentry:hover .bookacts, .bookentry:focus-within .bookacts { opacity: 1; }
-.bookentry .bookact { width: 32px; height: 32px; }
+.bookentry .booktext { color: var(--ink); }
+.bookentry .bookfoot { display: flex; align-items: center; gap: var(--sp-2); }
+.bookentry .bookfoot .upchips { flex: 1 1 auto; min-width: 0; }
+.bookentry .bookact { flex: none; margin-left: auto; width: 32px; height: 32px; }
 .bookentry .bookedit { grid-column: 1 / -1; width: 100%; font: inherit;
   font-size: var(--fs-control); padding: var(--sp-2); border-radius: var(--control-radius);
   border: 1px solid var(--accent); background: var(--surface); color: var(--ink); }
@@ -7077,18 +7091,17 @@ button.kfactsubj:hover { color: var(--accent-2);
   .bookfbar .sel { flex: 1 1 100%; max-width: none; }
   .bookfilters .actkinds .pill { display: none; }
   .bookfilters .actkinds .actkindsel { display: block; width: 100%; }
-  .bookentry .bookacts { opacity: 1; }
 }
 @media (pointer: coarse) {
   .bookentry .bookact { width: 44px; height: 44px; }
-  .bookentry .bookacts { opacity: 1; }
 }
 
 /* Touch targets for House's own controls, after the text floor. */
 @media (pointer: coarse) {
   .segnav .segbtn, .segnav .segsel, .reportsearch, .pill, .filtertag, .ksub,
   .archsearch, .actsearch, .ksubfind, .histdel, .factdel, .needstrip,
-  .kfact .kfactopen, .actfilters select.sel, .actnav select.sel { min-height: 44px; }
+  .kfact .kfactopen, .actfilterbox select.sel, .actnav select.sel,
+  .actfilterbtn { min-height: 44px; }
   .reportrow .btn, .bookwrap .btn, .card .cardask { min-height: 44px; }
   .refinelink { display: inline-flex; align-items: center; min-height: 44px; }
 }
