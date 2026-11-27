@@ -472,10 +472,19 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   while running (inside, target, time left): one line says so ("Oven is
   off", with when it was last used when that is known), and the chart and
   readings come back when it runs.
-- **A tab, a chip and a row's subtitle is a short phrase that fits whole.**
+- **No line a card writes ends in an ellipsis: a tab, a chip, a subtitle, a
+  header's status line and an opened card's own sentences fit whole or wrap.**
   "Done 9:05 PM", "Running · 31 min left", never a sentence cut off ("last
-  load ended 6:15 …"). Check it at 390px; what does not fit belongs in the
-  opened part, not after an ellipsis.
+  load ended 6:15 …", "last notice Nov 2…"). Check it at 390px, closed and
+  opened. A line about the past shortens its date to a word ("Yesterday
+  8:12 PM") before it gives up words; a sentence wraps (`white-space:normal`,
+  no `text-overflow:ellipsis`). A status line that names several things
+  names the ones that are on or running first, then the rest, so the part
+  that wraps is the part that matters least. A name from a calendar or
+  another integration is shown whole, as written, with its time on its own
+  (a next event is its title, then "Sun 9:00 AM" beside or under it, never
+  "Title · Sun 9:00 AM · Next…" in one cut line). What still does not fit
+  belongs in the opened part, not after an ellipsis.
 - **A flag and the words about it come from one source.** When the house
   keeps a helper for a state ("load waiting" as an `input_boolean`), the
   card's toggle and its sentence both read that helper: never a sentence
@@ -496,7 +505,7 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   into the card. With no baseline to name, say the figure without the
   judgement.
 - **Everything you can press is a 40px target, header icons and chips
-  included.** A scene chip, a mode button, a small text button, the icon
+  included, and a chip that cannot be pressed does not look like one.** A scene chip, a mode button, a small text button, the icon
   buttons in a card's header (refresh, a settings or tune icon), a calendar's
   or a person's name chip, a temperature chip, a row that opens a person, a
   reading chip that does something when tapped (a `div` with a click handler
@@ -514,6 +523,11 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   twelve-column hour grid out of its card), so a grid of buttons that does not
   fit at 40px has fewer columns, wraps, or scrolls sideways inside its own box:
   never smaller buttons, never buttons pushed past the card's edge.
+  A header's icon or word button (refresh, Tune) reaches 40px by padding
+  its own box, never by drawing the icon bigger. A reading that only shows
+  a value (a temperature in a row of figures) is plain text with no pill,
+  border or fill, so nothing invites a tap it would not answer; give it a
+  pill only when it does something, and then it is 40px.
 - **Text is 4.5:1 against what it sits on, in light and dark themes, a
   button's own word included.** A filled button ("Start" on an amber or
   peach fill) uses a text colour picked against that fill, checked in each

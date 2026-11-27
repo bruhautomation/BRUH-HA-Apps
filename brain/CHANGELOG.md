@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.27
+
+### Changed
+
+- An opened light group always shows one bar per light, even when every light is at the same level; the folded "all at 60%" line is gone (1432).
+- On a phone, the next event in Morph's Coming up strip wraps to two whole lines instead of being cut off (1469).
+- Morph's card rules now say that no line on a card (a header's status, an opened card's sentences, a next event's title) ends in an ellipsis, and that header icons and chips you can press are full touch size while readings that only show a value do not look pressable. brAIn offers to check this house's own cards against the changed rules (1470, 1467, 1469).
+
 ## 5.5.26
 
 ### Fixed
