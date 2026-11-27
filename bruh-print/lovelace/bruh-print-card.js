@@ -101,11 +101,14 @@ const css = `
   .roll { padding: 8px 12px; border-radius: 8px; box-sizing: border-box;
     display: flex; flex-direction: column; justify-content: flex-start;
     background: var(--secondary-background-color); }
+  /* The badge wraps under the bay's name when the two do not fit across
+     a narrow tile: on one unbreakable line it ran past the tile's edge. */
   .roll .who { font-size: 12px; line-height: 16px; color: var(--bp-muted);
-    display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-  /* Which roll text prints on: a badge beside the bay's name, never a
-     second line under it. */
+    display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; }
+  /* Which roll text prints on: a badge beside the bay's name, or under it
+     when the tile is too narrow for both. */
   .roll .tag { font-size: 12px; line-height: 16px; font-weight: 600; padding: 0 6px;
+    white-space: nowrap;
     border-radius: 999px; color: var(--bp-accent);
     background: color-mix(in srgb, var(--primary-color) 14%, transparent); }
   .roll .low { color: var(--warning-color, #b26a00); font-weight: 600; }
