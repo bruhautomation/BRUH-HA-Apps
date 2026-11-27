@@ -2203,6 +2203,7 @@ start_morph() {
     fi
     mkdir -p "${MORPH_DATA}" "${MORPH_SHARED}"
     (
+        set +e  # see setup_automation_integration's supervisor
         while true; do
             python3 -u /opt/morph/service/morphd.py &
             local pid=$! misses=0
@@ -2338,6 +2339,7 @@ setup_assist_integration() {
         # Supervisor watchdog key is deliberately NOT used because it can't
         # be conditional on assist/fast-mode being enabled).
         (
+            set +e  # see setup_automation_integration's supervisor
             while true; do
                 python3 /opt/integrations/assist-worker-pool.py
                 bashio::log.warning "Assist worker pool exited — restarting in 5s"
@@ -2369,7 +2371,35 @@ setup_automation_integration() {
     fi
 
     bashio::log.info "Starting automation webhook listener..."
-    /opt/integrations/automation-listener.sh &
+    # Supervised, the way ttyd is: the listener was started once and never
+    # again, so one exit (its watch dying, a startup step failing) left every
+    # later task — an automation's, Morph's, a sibling add-on's — unclaimed
+    # in the tasks folder until brAIn restarted, while the add-on still
+    # showed started. It is restarted with a backoff (2s, doubling to 60s;
+    # reset once it has stayed up a minute), and every restart is logged. A
+    # new listener rescans the folder first, so nothing that arrived while
+    # it was down is lost. Only while the option is on: off returns above.
+    (
+        # run.sh runs under `set -e`, and a subshell inherits it: a child
+        # that exited non-zero made `wait` (or the bare command) fail and
+        # ended this loop with it, so the one exit a supervisor exists for
+        # was the one it did not survive.
+        set +e
+        trap 'kill "${listener_pid:-}" 2>/dev/null; exit 0' TERM INT
+        local delay=2 started code
+        while true; do
+            started=${SECONDS}
+            /opt/integrations/automation-listener.sh &
+            listener_pid=$!
+            wait "${listener_pid}"
+            code=$?
+            [ $((SECONDS - started)) -ge 60 ] && delay=2
+            bashio::log.warning "Automation listener exited with status ${code}; restarting it in ${delay}s"
+            sleep "${delay}"
+            delay=$((delay * 2))
+            [ "${delay}" -gt 60 ] && delay=60
+        done
+    ) &
     bashio::log.info "Automation integration active"
 }
 
@@ -2565,6 +2595,7 @@ start_web_terminal() {
     # is restarted with a backoff (2s, doubling to 60s; reset once it has
     # stayed up a minute), and every restart is logged.
     (
+        set +e  # see setup_automation_integration's supervisor
         trap 'kill "${ttyd_pid:-}" 2>/dev/null; exit 0' TERM INT
         local delay=2 started code
         while true; do

@@ -1584,37 +1584,106 @@ ${prompt}"
         "http://supervisor/core/api/events/brain_task_complete" 2>/dev/null || true
 }
 
-# Watch for new task files
+# The liveness mark: a small JSON file rewritten every LISTENER_BEAT_S seconds
+# for as long as this listener runs, {"pid", "ts", "interval"}. The tasks
+# folder exists whether or not anything claims from it (run.sh creates it),
+# so a sibling add-on that hands brAIn a task cannot tell a dead listener
+# from a live one by the folder; it reads this file instead, without running
+# anything, and a `ts` older than three intervals means nothing is listening.
+# Never removed: an absent file means a brAIn from before the mark, which a
+# reader must not take for a dead one. Written by tmp + rename, so a reader
+# never sees half of it. docs/notes/mcp-voice-integration.md.
+LISTENER_STATUS_FILE="$SHARED_DIR/cache/automation_listener.json"
+LISTENER_BEAT_S="${BRAIN_LISTENER_BEAT_S:-30}"
+LISTENER_PID=$$
+
+write_listener_status() {
+    local tmp="${LISTENER_STATUS_FILE}.tmp.$$"
+    if printf '{"pid": %d, "ts": %d, "interval": %d}\n' \
+            "$LISTENER_PID" "$(date +%s)" "$LISTENER_BEAT_S" > "$tmp" 2>/dev/null; then
+        chmod 644 "$tmp" 2>/dev/null || true
+        mv -f "$tmp" "$LISTENER_STATUS_FILE" 2>/dev/null || rm -f "$tmp" 2>/dev/null || true
+    else
+        rm -f "$tmp" 2>/dev/null || true
+    fi
+}
+
+# The beat runs beside the watch and stops on its own once this listener is
+# gone (it asks before every write), so a listener that died — killed,
+# crashed, or exited — leaves a mark that goes stale.
+start_listener_heartbeat() {
+    mkdir -p "${LISTENER_STATUS_FILE%/*}" 2>/dev/null || true
+    (
+        while kill -0 "$LISTENER_PID" 2>/dev/null; do
+            write_listener_status
+            sleep "$LISTENER_BEAT_S"
+        done
+    ) &
+}
+
+# Hand every task file waiting in the folder to process_task, which claims
+# by rename, so a file seen twice is still run once.
+scan_tasks() {
+    local task_file
+    for task_file in "$TASKS_DIR"/*.json; do
+        [ -f "$task_file" ] || continue
+        process_task "$task_file" &
+    done
+}
+
+# Watch for new task files.
+#
+# The watch is held, not trusted: when inotifywait ends (killed, out of
+# inotify watches, the folder deleted) the pipeline ends with it, and this
+# used to return — the script exited 0 and every later task sat unclaimed
+# until brAIn restarted, with the add-on still showing started. Now the
+# folder is watched again after a rescan for what arrived in between, and a
+# watch that keeps ending at once falls back to polling, which needs no
+# inotify. run.sh supervises the listener as a whole besides.
 listen_for_tasks() {
+    start_listener_heartbeat
     if command -v inotifywait >/dev/null 2>&1; then
         bashio::log.info "Using inotifywait for efficient file watching"
-
-        # Process any files that arrived before we started watching
-        # (process_task claims by rename, so the watcher can't double-pick)
-        for task_file in "$TASKS_DIR"/*.json; do
-            [ -f "$task_file" ] || continue
-            process_task "$task_file" &
-        done
-
-        # Watch for new files
-        inotifywait -m -e close_write -e moved_to --format '%w%f' "$TASKS_DIR" 2>/dev/null | while read -r filepath; do
-            case "$filepath" in
-                *.json)
-                    process_task "$filepath" &
-                    ;;
-            esac
+        local started quick=0
+        while true; do
+            started=$SECONDS
+            mkdir -p "$TASKS_DIR"
+            # Files that arrived before the watch: now, and once more after
+            # inotifywait has had time to set its watch, for the gap between.
+            scan_tasks
+            ( sleep 2; scan_tasks ) &
+            inotifywait -m -e close_write -e moved_to --format '%w%f' "$TASKS_DIR" 2>/dev/null | while read -r filepath; do
+                # A listener killed outright (SIGKILL) leaves this pipeline
+                # behind; it stands down at its next event rather than
+                # watching beside the listener run.sh started in its place.
+                kill -0 "$LISTENER_PID" 2>/dev/null || break
+                case "$filepath" in
+                    *.json)
+                        process_task "$filepath" &
+                        ;;
+                esac
+            done
+            if [ $((SECONDS - started)) -lt 10 ]; then
+                quick=$((quick + 1))
+            else
+                quick=0
+            fi
+            if [ "$quick" -ge 3 ]; then
+                bashio::log.warning "The task folder watch keeps ending at once; polling the folder every 5s instead"
+                break
+            fi
+            bashio::log.warning "The task folder watch ended; watching it again"
+            sleep 2
         done
     else
         bashio::log.info "inotifywait not available, falling back to polling (5s)"
-
-        while true; do
-            for task_file in "$TASKS_DIR"/*.json; do
-                [ -f "$task_file" ] || continue
-                process_task "$task_file" &
-            done
-            sleep 5
-        done
     fi
+
+    while true; do
+        mkdir -p "$TASKS_DIR"
+        scan_tasks
+        sleep 5
+    done
 }
 
 # Main
