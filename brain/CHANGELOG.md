@@ -2,6 +2,24 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.27
+
+### Changed
+
+- An opened light group always shows one bar per light, even when every light is at the same level; the folded "all at 60%" line is gone (1432).
+- On a phone, the next event in Morph's Coming up strip wraps to two whole lines instead of being cut off (1469).
+- Morph's card rules now say that no line on a card (a header's status, an opened card's sentences, a next event's title) ends in an ellipsis, and that header icons and chips you can press are full touch size while readings that only show a value do not look pressable. brAIn offers to check this house's own cards against the changed rules (1470, 1467, 1469).
+
+## 5.5.26
+
+### Fixed
+
+- **Use this** on a card's versions changes only that card's lines in the dashboard file: your comments and the rest of the file stay as they were, so the pick's Undo still works after later changes (1486).
+- A failed **More like this** or **Change…** keeps the versions you were choosing from on screen and says the revise did not work, instead of leaving only an error (1486).
+- A version whose card type Morph cannot draw is left out and counted, instead of being offered and drawn as an error (1486).
+- Using a version made before the card was changed again asks first, with **Use it anyway** or **New versions**, instead of quietly undoing that change (1486).
+- The Tell box's Cancel, Just do it and Send buttons are full touch size on a phone (1486).
+
 ## 5.5.25
 
 ### Fixed

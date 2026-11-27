@@ -542,7 +542,7 @@ function swell(m, t, c, small) {
 function readoutHtml(r) {
   const dot = r.color ? `<span class="cu-dot" style="border:2px ${r.solid ? 'solid' : 'dashed'} ${r.color}"></span>` : '';
   // Whatever is at the line opens in place when its name is tapped (house change).
-  const name = r.hit ? `<button type="button" class="cu-name go" data-act="upc-open" aria-expanded="${!!r.open}">${esc(r.name)}</button>` : `<span class="cu-name quiet">${esc(r.name)}</span>`;
+  const name = r.hit ? `<button type="button" class="cu-name go" data-act="upc-open" aria-expanded="${!!r.open}"><span class="cu-nt">${esc(r.name)}</span></button>` : `<span class="cu-name quiet"><span class="cu-nt">${esc(r.name)}</span></span>`;
   const day = r.when.day;
   return {
     when: `<b>${day ? `<span class="cu-day">${esc(day)} </span>` : ''}${esc(r.when.time)}</b><span>${day ? `<span class="cu-day2">${esc(day.toLowerCase() === 'tomorrow' ? 'tomorrow' : day)} · </span>` : ''}${esc(r.rel)}</span>`,

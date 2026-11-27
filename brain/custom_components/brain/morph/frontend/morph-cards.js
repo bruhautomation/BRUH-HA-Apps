@@ -412,7 +412,7 @@ export class MorphCard extends HTMLElement {
     const card = this._card;
     const st = card.entity ? hass.states[card.entity] || null : null;
     const name = card.name || (card.entity ? friendly(hass, card.entity) : kindInfo(this.kind).name || '');
-    const ctx = { hass, card, st, sec: { title: this._config.room || '' }, name, open: this._open, member: this._member, rowsShown: !!this._rows,
+    const ctx = { hass, card, st, sec: { title: this._config.room || '' }, name, open: this._open, member: this._member,
       H: this._H, preview: this._preview, memberPreview: null,
       confirm: this._confirm && this._confirm.until > Date.now() ? this._confirm.text : '', night: false };
     ctx.accent = card.color ? hue(card.color) : T.accent(ctx);
@@ -504,7 +504,7 @@ export class MorphCard extends HTMLElement {
     const T = TYPES[this.kind] || TYPES.entity;
     if (T.noOpen) return;
     this._open = force == null ? !this._open : !!force;
-    if (!this._open) { this._H = {}; this._member = null; this._rows = false; }
+    if (!this._open) { this._H = {}; this._member = null; }
     this._render();
     if (this._open) this._grow(); else this._shrink();
     this._fire('iron-resize');
@@ -748,7 +748,6 @@ export class MorphCard extends HTMLElement {
         this._call({ domain: 'climate', service: 'set_temperature', data });
         return;
       }
-      case 'lg-rows': this._rows = !this._rows; this._render(); this._fire('iron-resize'); return;
       case 'member': this._member = v; this._H = { depth: 0 }; this.toggleOpen(true); return;
       case 'more-info': this._fire('hass-more-info', { entityId: v }); return;
       case 'h-open': this._H = { depth: 1, day: null }; this._render(); return;
