@@ -48,7 +48,8 @@ export function offSeasonLines(input: {
   now: Date;
   crops: Array<{ name: string; groupName: string | null; stage: PhenologicalStage }>;
   daily: DailyForecast[];
-  lastSpray: { date: string; products: string[]; crops: string[] } | null;
+  /** `lastSprayDay`'s answer: the same sentence the Home Assistant card shows. */
+  lastSpray: { date: string; summary: string } | null;
   lastPick: { at: string; crop: string; weight: number; unit: string } | null;
 }): SeasonLine[] {
   const { now, crops, daily, lastSpray, lastPick } = input;
@@ -102,10 +103,7 @@ export function offSeasonLines(input: {
     out.push({
       key: 'spray',
       title: `Last spray · ${dayLabel(lastSpray.date)}`,
-      detail:
-        (lastSpray.products.length ? list(lastSpray.products) : 'A spray') +
-        (lastSpray.crops.length ? ` on ${list(lastSpray.crops)}` : '') +
-        '.',
+      detail: `${lastSpray.summary}.`,
       href: '/history',
     });
   }

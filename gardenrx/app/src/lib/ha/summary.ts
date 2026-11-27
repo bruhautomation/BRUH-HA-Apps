@@ -26,6 +26,7 @@ import type {
   Variety,
 } from '@/lib/database.types';
 import { buildPhiByProductGroup, computeCropPhi } from '@/lib/phi';
+import { lastSprayDay } from '@/lib/last-spray';
 
 export const SUMMARY_VERSION = 1;
 /** "% left" at or below this is low stock — the inventory bar's red band. */
@@ -291,7 +292,23 @@ export function buildSummary(rows: GardenRows, now: Date, timeZone: string) {
     crops,
     phi: { active_count: phiActive.length, crops: phiActive },
     sprays: {
-      last: past.length ? describeEvent(past[0]) : null,
+      // The latest date with every spray on it, the sentence Today shows too.
+      last: (() => {
+        const day = lastSprayDay({
+          events: past,
+          eventProducts: rows.sprayEventProducts,
+          eventCrops: rows.sprayEventCrops,
+          today,
+          productName: (id) => rows.products.find((p) => p.id === id)?.brand,
+          cropName: (id) => cropById.get(id)?.name,
+        });
+        return day
+          ? {
+              ...day,
+              days_ago: Math.round((todayMs - dayMs(day.date)) / 86400000),
+            }
+          : null;
+      })(),
       this_year: past.filter((e) => e.date.startsWith(year)).length,
       recent: past.slice(0, 5).map(describeEvent),
       queued,
