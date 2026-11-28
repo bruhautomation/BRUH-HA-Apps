@@ -76,6 +76,7 @@ BRUH-HA-Apps/
 │   │   ├── outcomes.py          # Every Resident verdict, joined to what the household did next
 │   │   ├── world_model.py       # What each device is, read once per fingerprint and checked in code
 │   │   ├── situation.py         # What the house is doing right now, in one line every look reads
+│   │   ├── card_figures.py      # A card's counts and hours brAIn computes from history (`figures`)
 │   │   ├── occasions.py         # The next three days of weather and calendar, as facts that expire
 │   │   ├── tidy.py              # Names, rooms and aliases, proposed as one table and undone by field
 │   │   ├── memory_cleanup.py    # What brAIn remembers that is wrong or useless, proposed for removal

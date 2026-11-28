@@ -56,6 +56,15 @@ WINDOW_H = 72
 # Due again this long after the last read. Twice a day keeps "tonight"
 # honest without a forecast fetch every hour.
 INTERVAL_S = 12 * 3600
+# A read that found the weather entity not answering (`weather_down`) asks
+# again this long after it tried, from the next hourly tick, rather than
+# twelve hours later: a cloud forecast that could not load during an
+# internet outage is usually back within the hour, and the frost check
+# reads nothing until it is.
+RETRY_S = 30 * 60
+# What the store and the checks snapshot say when it was not.
+WEATHER_DOWN = ("the weather service is not answering right now, so there "
+                "is no forecast to look at; brAIn asks again within the hour")
 TIMEOUT_S = 90
 MAX_EVENTS = 20
 MAX_OCCASIONS = 8
@@ -191,6 +200,20 @@ def pick_weather(states) -> dict | None:
     if not found:
         return None
     return min(enumerate(found), key=rank)[1]
+
+
+def weather_down(state) -> bool:
+    """The picked entity is in the state list with nothing live behind it.
+
+    A cloud weather integration that could not load (the internet was
+    down) leaves its entity restored as `unavailable`, and Home Assistant
+    refuses `get_forecasts` for it ("did not match any entities"). Asking
+    anyway stored that refusal as a failed read until the next one, twelve
+    hours on (#1007). Not answering is a state, so it is not asked and not
+    reported; `retry_due` asks again soon.
+    """
+    return isinstance(state, dict) and str(state.get("state") or "") in (
+        "unavailable", "unknown")
 
 
 def commands(weather_id: str, calendar_ids, now: float,
@@ -609,6 +632,15 @@ def due(store: dict, now: float) -> bool:
     return now - float(store.get("built_at") or 0) >= INTERVAL_S
 
 
+def retry_due(store: dict, now: float) -> bool:
+    """The weather was not answering at the last read and it is time to
+    ask it again (the forecast only; the calendar keeps its own clock)."""
+    if not store.get("weather_down"):
+        return False
+    tried = float(store.get("weather_tried_at") or store.get("built_at") or 0)
+    return now - tried >= RETRY_S
+
+
 def current(store: dict, today: str) -> list[dict]:
     """The occasions that have not ended."""
     return [o for o in (store.get("occasions") or [])
@@ -652,7 +684,7 @@ def file_facts(rows: list[dict], *, run_id: str = "") -> int:
 
 __all__ = [
     "pick_weather",
-    "INTERVAL_S", "JOB", "KINDS", "SCHEMA", "SYSTEM", "calendar_events",
+    "INTERVAL_S", "JOB", "RETRY_S", "WEATHER_DOWN", "retry_due", "weather_down", "KINDS", "SCHEMA", "SYSTEM", "calendar_events",
     "commands", "current", "due", "fence", "file_facts", "forecast_days",
     "line", "lines", "load", "notable_weather", "parse", "prompt", "save",
     "untrusted",

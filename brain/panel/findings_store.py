@@ -507,6 +507,11 @@ IDENTITY = None
 # instructions, as the yes/no question brAIn asks itself (`self_care.
 # as_question`): `SELF_CARE(obj) -> fields | None`, handed in by the panel.
 SELF_CARE = None
+# The live reading of one entity off the last checks pass, for the one rule
+# that must judge a model's sentence against the sensor it is about
+# (`reminder_reading`): `READING(entity_id) -> state dict | None`, handed in
+# by the panel. Unset (a test, a tool), only the row's own words are read.
+READING = None
 
 
 # A check's rows are worded by its code, which names things the way the
@@ -3090,13 +3095,14 @@ def quotes_other_counts(sentence, detail) -> bool:
     return False
 
 
-# A reminder's figure that cannot be real (#722). "19,766 miles overdue" on a
-# service reminder that repeats every 1,000 miles is a reminder set up
-# wrong — a last-done date never entered, an interval in the wrong unit —
-# and a card stating it as overdue sends somebody to book a service on a
-# setting. A figure past `REMINDER_MISREAD_X` times the interval it is
-# measured against, in the same unit, is asked about as the setting.
-REMINDER_MISREAD_X = 10
+# A reminder's figure that cannot be real (#722, #1501). A service reminder
+# that reads several whole intervals past its date is a reminder nobody
+# reset after the service (or one set up wrong), and a card stating the
+# figure as overdue sends somebody to book a service on a setting. A figure
+# past `REMINDER_MISREAD_X` times the interval it is measured against, in
+# the same unit, is asked about as "probably never reset": a reminder half
+# an interval into the NEXT service as well is not how a real one reads.
+REMINDER_MISREAD_X = 1.5
 _UNIT = (r"(miles?|mi|km|kilomet(?:er|re)s?|days?|weeks?|months?|hours?|"
          r"hrs?)")
 _NUMBER = r"(\d[\d,]*(?:\.\d+)?)"
@@ -3150,6 +3156,93 @@ def _overdue(words: str):
     return None
 
 
+# A reminder sensor's own unit, as Home Assistant spells it.
+_HA_UNIT_KEY = {"mi": "mi", "km": "km", "d": "d", "w": "w", "h": "h"}
+# The longest ordinary service interval in each unit, for a reminder that
+# reports no interval of its own: past one whole of these (a conservative
+# bar, at least half again a typical interval) it is judged never reset.
+# A unit not here (hours a machine ran) is not judged without an interval.
+REMINDER_ORDINARY = {"mi": 15000, "km": 25000, "d": 365, "w": 52, "mo": 12}
+_UNIT_WORDS = {"mi": "miles", "km": "km", "d": "days", "w": "weeks",
+               "mo": "months", "h": "hours"}
+
+
+def _subject_reading(row: dict) -> dict | None:
+    eid = case_subject(row)
+    hook = READING
+    if not eid or hook is None:
+        return None
+    try:
+        state = hook(eid)
+    except Exception:  # noqa: BLE001 — a reading is evidence, never the write
+        return None
+    return state if isinstance(state, dict) else None
+
+
+def reminder_reading(row: dict) -> dict | None:
+    """What the sensor a row is about says of its own reminder, or None.
+
+    `{"figure", "unit", "interval"}`: a due-in counter (distance or time
+    left) that has run past zero is overdue by its own reading, whatever
+    the row's sentence calls it, and an interval is the sensor's own
+    attribute that says so, in the same unit (#1501). Read off the live
+    state (`READING`), never the words.
+    """
+    state = _subject_reading(row)
+    if not state:
+        return None
+    attrs = state.get("attributes") or {}
+    unit = _HA_UNIT_KEY.get(str(attrs.get("unit_of_measurement") or "").strip())
+    try:
+        value = float(state.get("state"))
+    except (TypeError, ValueError):
+        return None
+    if not unit or not math.isfinite(value) or value >= 0:
+        return None
+    interval = None
+    for key, raw in attrs.items():
+        if "interval" not in str(key).lower() or isinstance(raw, bool):
+            continue
+        try:
+            got = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(got) and got > 0:
+            interval = got
+            break
+    return {"figure": -value, "unit": unit, "interval": interval}
+
+
+def _never_reset(row: dict, head: str, figure: float, unit: str,
+                 interval: float | None, whose: str) -> dict | None:
+    """The question for a reminder far past one interval, or None."""
+    words = _UNIT_WORDS.get(unit, unit)
+    if interval:
+        if figure <= REMINDER_MISREAD_X * interval:
+            return None
+        why = (f"It reads {figure:,.0f} {words} past its date on a "
+               f"{interval:,.0f}-{words.rstrip('s')} interval ({whose}). "
+               f"That is more than {REMINDER_MISREAD_X:g} times the "
+               "interval, which a reminder nobody reset after a service "
+               "reads and a real one does not.")
+    else:
+        ordinary = REMINDER_ORDINARY.get(unit)
+        if not ordinary or figure <= ordinary:
+            return None
+        why = (f"It reads {figure:,.0f} {words} past its date and reports "
+               f"no interval. That is more than {ordinary:,} {words}, "
+               "longer than any ordinary service interval, which a "
+               "reminder nobody reset after a service reads and a real "
+               "one does not.")
+    head = re.sub(r"\s+", " ", head).strip().rstrip(".!?:;,-— ")
+    head = head or "A service reminder"
+    said = (head if head.endswith("setting right")
+            else f"{head}: this reminder was probably never reset. "
+                 f"{REMINDER_ASK}")
+    return {"text": said, "claim": said, "detail": why,
+            "fix": REMINDER_FIX, "kind": "question", "severity": "info"}
+
+
 def misread_reminder(row: dict) -> dict | None:
     """The fields that turn a row stating an impossible overdue figure into
     a question about the reminder's setting, or None.
@@ -3165,36 +3258,49 @@ def misread_reminder(row: dict) -> dict | None:
                      + [str(e.get("value") or "") for e in
                         row.get("evidence") or [] if isinstance(e, dict)])
     late = _overdue(words)
-    if not late:
+    sensor = reminder_reading(row)
+    if not late and not sensor:
         return None
+    # The question names the reminder: the sensor's own name, else the
+    # row's headline with every figure cut out (the figure changes daily
+    # and an answer is kept by the words), so two reminders never share
+    # one text and a Wrong is theirs alone.
+    head = ""
+    if sensor:
+        named = _names_now().get(case_subject(row))
+        head = str((named.get("name") if isinstance(named, dict)
+                    else named) or "")
+    if not head:
+        head = str(row.get("text") or "")
+        for found in _OVERDUE_RES:
+            head = found.sub("far overdue", head)
+        for found in _INTERVAL_RES:
+            head = found.sub("", head)
+        head = re.sub(r"\d[\d,.]*\s*" + _UNIT + r"?\b", "", head)
+        head = re.sub(r"\(\s*\)|\b(?:on|with|at|of|for)\s+an?\s*(?=[).,;:]|$)",
+                      "", head)
+    if sensor:
+        # The sensor's own reading and interval decide, not the sentence.
+        interval, whose = sensor["interval"], "the sensor's own"
+        if not interval and late:
+            for pattern in _INTERVAL_RES:
+                m = pattern.search(words)
+                if m and _UNIT_KEY.get(m.group(2).lower(), "") == sensor["unit"]:
+                    interval, whose = _figure(m.group(1)), "as stated"
+                    break
+        return _never_reset(row, head, sensor["figure"], sensor["unit"],
+                            interval, whose)
     unit = _UNIT_KEY.get(late.group(2).lower(), "")
+    figure = _figure(late.group(1))
     for pattern in _INTERVAL_RES:
         for m in pattern.finditer(words):
             if _UNIT_KEY.get(m.group(2).lower(), "") != unit or not unit:
                 continue
-            figure, interval = _figure(late.group(1)), _figure(m.group(1))
-            if interval <= 0 or figure <= REMINDER_MISREAD_X * interval:
-                continue
-            head = str(row.get("text") or "")
-            for found in _OVERDUE_RES:
-                head = found.sub("far overdue", head)
-            head = re.sub(r"\s+", " ", head).strip().rstrip(".!?")
-            # No figure to cut out: the row's own headline stays, so the
-            # question always names the reminder it is about (two reminders
-            # never share one text, and a Wrong is theirs alone).
-            head = head or "A reminder is far overdue"
-            said = (head if head.endswith("setting right")
-                    else f"{head}. {REMINDER_ASK}")
-            return {"text": said, "claim": said,
-                    "detail": (f"It reads {late.group(1)} {late.group(2)} "
-                               f"past its date on a {m.group(1)}-"
-                               f"{m.group(2).rstrip('s')} interval. That is "
-                               f"more than {REMINDER_MISREAD_X} times the "
-                               "interval, which a reminder set up wrong "
-                               "reads and a real one does not."),
-                    "fix": REMINDER_FIX, "kind": "question",
-                    "severity": "info"}
-    return None
+            asked = _never_reset(row, head, figure, unit, _figure(m.group(1)),
+                                 "as stated")
+            if asked:
+                return asked
+    return _never_reset(row, head, figure, unit, None, "") if unit else None
 
 
 _DISTANCE_UNITS = frozenset({"mi", "km"})
