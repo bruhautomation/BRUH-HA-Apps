@@ -396,22 +396,6 @@ const hass = {
     if (t === 'brain/shell') return { admin: ${o.notAdmin ? 'false' : 'true'}, features: { morph: ${o.morph === false ? 'false' : 'true'}, personality: true, learning_loop: true, development_loop: false, name: 'Juniper' }, ingress_url: '/api/hassio_ingress/abcdefghijkl/', slug: 'x_brain' };
     if (t === 'supervisor/api') return msg.endpoint === '/ingress/session' ? { session: 'sess-test' } : {};
     if (t === 'morph/load') return { mirror: { revision: rev, dashboard: dash, problems: [], card_modules: window.__cardModules || [] }, state: F.state, brain: F.brain, admin: true, now: Date.now() / 1000, features: { morph: true, personality: true, learning_loop: true, development_loop: false, name: 'Juniper' }, code: window.__code || '${STAMP}', integration: window.__integration || '${VERSION}', ...(typeof window.__restart === 'boolean' ? { restart: window.__restart } : {}) };
-    const findIn = (cid) => { let hit = null; dash.floors.forEach((f) => f.sections.forEach((sc) => sc.groups.forEach((g) => g.cards.forEach((c) => { if (c.id === cid) hit = c; })))); return hit; };
-    const strip = (c) => { const o = { ...c }; delete o.id; return JSON.stringify(o); };
-    const letterOf = (n) => { let out = ''; n += 1; while (n) { const r = (n - 1) % 26; out = String.fromCharCode(65 + r) + out; n = Math.floor((n - 1) / 26); } return out; };
-    const keptRow = (cid) => {
-      window.__kept = window.__kept || {};
-      const row = window.__kept[cid] = window.__kept[cid] || { next: 0, versions: [], removed: [] };
-      const now = findIn(cid);
-      const add = (card, label, idea, extra) => { const n = row.next++; const c = { ...card }; delete c.id; const e = { key: 'k' + n, letter: letterOf(n), label, idea, card: c, needs: [], ask: '', from: '', at: Date.now() / 1000, ...(extra || {}) }; row.versions.push(e); return e; };
-      let cur = now && row.versions.find((v) => strip(v.card) === strip(now));
-      if (now && !cur) cur = add(now, row.versions.length ? 'Edited' : 'Original', row.versions.length ? 'The card as it was changed outside Versions.' : 'The card as it was before any version.');
-      return { row, cur: cur && cur.key, add, now };
-    };
-    const KEEP = window.__keep || 26;
-    // Past KEEP the oldest goes to Removed, never the card in use nor what was just added or put back.
-    const trim = (row, keep) => { while (row.versions.length > KEEP) { const old = row.versions.find((v) => !keep.includes(v.key)); if (!old) return; row.versions.splice(row.versions.indexOf(old), 1); row.removed.unshift(old); } };
-    const keptOut = (cid) => { const k = keptRow(cid); return { ok: true, current: k.cur, keep: KEEP, versions: k.row.versions.map((v) => ({ ...v, card: { ...v.card, id: cid } })), removed: k.row.removed.map((g) => ({ key: g.key, letter: g.letter, label: g.label })) }; };
     if (t === 'morph/request') {
       const p = msg.payload || {};
       if (msg.kind === 'save') { if (p.base && p.base !== rev) return { ok: false, conflict: true, error: 'changed' }; dash = p.dashboard; rev = 'r' + (++seq + 1); return { ok: true, commit: 'abc' + seq, revision: rev }; }
@@ -421,45 +405,29 @@ const hass = {
       if (msg.kind === 'tell_answer') { const s = tells[p.id]; const o = s && s.question && s.question.options[p.choice]; if (!o || s.answered != null) return { ok: false, error: 'That question is gone.' }; s.answered = p.choice; const id = 'morph-t' + (++seq); tells[id] = { id, phase: 'waiting', steps: [{ t: 'Handed to brAIn as task ' + id, tone: '' }], text: o.request, at: Date.now(), started: Date.now() / 1000, scope: o.home_assistant ? 'house' : 'ui', makesSensor: !!o.home_assistant, redo: s.redo }; return { ok: true, ...tells[id] }; }
       if (msg.kind === 'tell_issue') { const s = tells[p.id]; if (s) s.issue = p.verb === 'send' ? 'sent' : 'declined'; return { ok: true }; }
       // A card's versions (service/versions.py), answered the way morphd does:
-      // every version is kept per card (window.__kept), the card in use is
-      // always one of them, a round ADDS what it brings back, Use this writes
-      // the card under its id, and Undo reverts that one change.
-      if (msg.kind === 'versions') {
-        const k = keptRow(p.target.id); const key = (p.base && p.base.key) || k.cur; const base = k.row.versions.find((v) => v.key === key);
-        if (!base) return { ok: false, error: 'That version is gone. Pick another one.' };
-        if (p.base && p.base.how === 'mark' && !(p.mark && p.mark.role)) return { ok: false, error: 'Point at the part of the card that is wrong first.' };
-        const id = 'morph-v' + (++seq);
-        tells[id] = { id, mode: 'versions', how: (p.base && p.base.how) || 'new', base, from: key, mark: p.mark || null, card: p.target.id, phase: 'waiting', steps: [{ t: 'Reading the card', tone: '' }, { t: 'Asked brAIn for versions — nothing changes until you pick one', tone: '' }], text: p.text, at: Date.now(), started: Date.now() / 1000, payload: 'MORPH · versions of one card…\\nAsked: “' + p.text + '”' + (p.mark ? '\\nTHE MARKED PART: ' + p.mark.role + ' ' + (p.mark.entity || '') : '') };
-        return { ok: true, ...tells[id] };
-      }
-      if (msg.kind === 'versions_history') return keptOut(p.card);
-      if (msg.kind === 'versions_remove') {
-        const k = keptRow(p.card);
-        if (p.back) { const i = k.row.removed.findIndex((v) => v.key === p.key); if (i < 0) return { ok: false, error: 'That version is not there to put back any more.' }; k.row.versions.push(k.row.removed.splice(i, 1)[0]); k.row.versions.sort((x, y) => Number(x.key.slice(1)) - Number(y.key.slice(1))); trim(k.row, [k.cur, p.key]); return keptOut(p.card); }
-        if (p.key === k.cur) return { ok: false, error: 'That version is the card now. Use another one first.' };
-        const i = k.row.versions.findIndex((v) => v.key === p.key); if (i < 0) return { ok: false, error: 'That version is gone already.' };
-        k.row.removed.unshift(k.row.versions.splice(i, 1)[0]);
-        return keptOut(p.card);
-      }
+      // a round lands with three versions (one more "did not read"), Use this
+      // writes the card under its id and keeps the one it replaced.
+      if (msg.kind === 'versions') { const id = 'morph-v' + (++seq); const base = p.base && tells[p.base.id] && tells[p.base.id].versions && tells[p.base.id].versions[p.base.index]; tells[id] = { id, mode: 'versions', how: (p.base && p.base.how) || 'new', base, prior: p.base && p.base.how === 'revise' ? tells[p.base.id].versions : null, revising: p.base ? p.base.index : -1, card: p.target.id, phase: 'waiting', steps: [{ t: 'Reading the card', tone: '' }, { t: 'Asked brAIn for versions — nothing changes until you pick one', tone: '' }], text: p.text, at: Date.now(), started: Date.now() / 1000, payload: 'MORPH · versions of one card…\\nAsked: “' + p.text + '”' }; return { ok: true, ...tells[id] }; }
+      if (msg.kind === 'versions_history') return { ok: true, history: (window.__vhist || {})[p.card] || [], now: '' };
       if (msg.kind === 'versions_use') {
-        const k = keptRow(p.card); const ver = k.row.versions.find((v) => v.key === p.key); const seen = k.row.versions.find((v) => v.key === p.seen);
-        if (!ver) return { ok: false, error: 'That version is gone. Pick another one.' };
-        if ((!seen || strip(seen.card) !== strip(k.now)) && !p.over) return { ok: false, stale: true, error: 'This card was changed after you opened its versions, so using one now would replace that change (it is kept as a version). Use it anyway, or look again.' };
-        if (ver.key === k.cur) return { ok: false, error: 'That version is the card already.' };
-        const label = ver.letter + ' · ' + ver.label;
+        let ver; let cid;
+        if (p.round) { const r = tells[p.round]; ver = r && r.versions && r.versions[p.index]; cid = r && r.card; } else { cid = p.card; ver = ((window.__vhist || {})[cid] || []).find((h) => h.at === p.at); }
+        if (!ver) return { ok: false, error: 'That version is gone.' };
         if ((ver.needs || []).length) { const id = 'morph-t' + (++seq); tells[id] = { id, phase: 'waiting', steps: [{ t: 'Handed to brAIn as task ' + id, tone: '' }], text: 'Use this version of the card', at: Date.now(), started: Date.now() / 1000, makesSensor: true, origin: 'version' }; return { ok: true, tell: true, ...tells[id] }; }
-        const old = k.now;
+        let old = null;
         dash = JSON.parse(JSON.stringify(dash));
-        dash.floors.forEach((f) => f.sections.forEach((sc) => sc.groups.forEach((g) => { g.cards = g.cards.map((c) => (c.id === p.card ? { ...ver.card, id: p.card } : c)); })));
+        dash.floors.forEach((f) => f.sections.forEach((sc) => sc.groups.forEach((g) => { g.cards = g.cards.map((c) => { if (c.id !== cid) return c; old = c; return { ...ver.card, id: cid }; }); })));
+        if (!old) return { ok: false, error: 'That card is not on the dashboard any more.' };
         rev = 'r' + (++seq + 1);
+        window.__vhist = window.__vhist || {}; window.__vhist[cid] = [{ label: '', at: Date.now() / 1000, card: old }].concat(window.__vhist[cid] || []).slice(0, 5);
         const id = 'morph-u' + (++seq);
-        tells[id] = { id, mode: 'use', phase: 'done', text: 'Use this version: ' + label, commit: 'use' + seq, shows: ['Changed the card “' + (ver.card.name || p.card) + '”.'], say: '“' + label + '” is the card now. The others are still here.', used: { label, key: ver.key, was: k.cur }, replaced: old, card: p.card, steps: [{ t: 'Wrote “' + label + '” into dashboard.yaml as one change', tone: 'good' }], started: Date.now() / 1000, revision: rev };
-        window.__used = (window.__used || []).concat([{ id: p.card, label }]);
+        tells[id] = { id, mode: 'use', phase: 'done', text: 'Use “' + ver.label + '”', commit: 'use' + seq, shows: ['Changed the card “' + (ver.card.name || cid) + '”.'], say: '“' + ver.label + '” is the card now.', used: { label: ver.label, card: ver.card }, replaced: old, card: cid, steps: [{ t: 'Wrote “' + ver.label + '” into dashboard.yaml as one change', tone: 'good' }], started: Date.now() / 1000, revision: rev };
+        window.__used = (window.__used || []).concat([{ id: cid, label: ver.label }]);
         return { ok: true, ...tells[id] };
       }
       if (msg.kind === 'tell_undo') {
         const u = tells[p.id];
-        if (u && u.mode === 'use' && !u.undone) { u.undone = true; dash = JSON.parse(JSON.stringify(dash)); dash.floors.forEach((f) => f.sections.forEach((sc) => sc.groups.forEach((g) => { g.cards = g.cards.map((c) => (c.id === u.card ? u.replaced : c)); }))); rev = 'r' + (++seq + 1); }
+        if (u && u.mode === 'use' && !u.undone) { u.undone = true; dash = JSON.parse(JSON.stringify(dash)); dash.floors.forEach((f) => f.sections.forEach((sc) => sc.groups.forEach((g) => { g.cards = g.cards.map((c) => c.id === u.card ? u.replaced : c); }))); rev = 'r' + (++seq + 1); window.__vhist[u.card] = [{ label: u.used.label, at: Date.now() / 1000, card: { ...u.used.card, id: u.card } }].concat((window.__vhist[u.card] || []).filter((h) => JSON.stringify(h.card) !== JSON.stringify(u.replaced))).slice(0, 5); }
         return { ok: true, commit: 'undo1' };
       }
       if (msg.kind === 'report') { if (!String(p.text || '').trim()) return { ok: false, error: 'Say what should be fixed.' }; F.state.devloop = { ...F.state.devloop, mine: [{ fp: 'fp' + (++seq), what: p.text, ui: !!p.ui, at: Date.now() / 1000, picked: false }].concat(F.state.devloop.mine || []) }; return { ok: true }; }
@@ -483,17 +451,10 @@ const hass = {
             { label: 'Inside', idea: 'Just the rooms people live in, one chart', card: { type: 'readings', name: 'Inside', entities: ['sensor.kitchen_temperature', 'sensor.living_room_temperature', 'sensor.master_temperature'] }, needs: [] },
             { label: 'Average', idea: 'The house average as one number, kept as a sensor', card: { type: 'sensor', entity: 'sensor.house_average_temperature', name: 'House average' }, needs: ['A template sensor sensor.house_average_temperature, the mean of the room temperatures'] },
           ];
-          const n = ++window.__rounds || (window.__rounds = 1);
-          let got;
-          if (s.how === 'more') got = all.slice(0, 2).map((v, i) => ({ ...v, label: v.label + ' ' + (i + 2), card: { ...v.card, name: (v.card.name || '') + ' ' + n + (i + 2) } }));
-          else if (s.how === 'mark') got = [0, 1].map((i) => ({ label: 'Row ' + 'xy'[i], idea: 'The marked part, another way', card: { ...s.base.card, name: (s.base.card.name || 'Card') + ' · ' + 'xy'[i] + n } }));
-          else got = n === 1 ? all : all.map((v) => ({ ...v, card: { ...v.card, name: (v.card.name || '') + ' ' + n } }));
-          const k = keptRow(s.card); const added = [];
-          got.forEach((v) => { if (!k.row.versions.some((x) => strip(x.card) === strip(v.card))) added.push(k.add(v.card, v.label, v.idea, { needs: v.needs || [], ask: s.text, from: s.from }).key); });
-          trim(k.row, [k.cur, ...added]);
-          s.added = added;
-          s.say = added.length ? added.length + ' new versions, added to the ones you have. Nothing changes until you use one.' + (s.how === 'new' && n === 1 ? ' 1 more was left out (Morph could not draw it, or you have it already).' : '') : 'brAIn brought back no new version Morph could draw. Nothing changed. Just do it asks for the single change instead.';
-          if (!added.length) s.empty = true;
+          if (s.how === 'revise' && s.prior) { s.versions = s.prior.slice(); s.versions[s.revising] = { ...all[1], label: s.prior[s.revising].label + ' · revised', card: { ...s.prior[s.revising].card, name: 'Rooms' } }; s.shown = s.revising; s.say = 'Revised “' + s.versions[s.revising].label + '”.'; }
+          else if (s.how === 'more') { s.versions = all.slice(0, 2).map((v, i) => ({ ...v, label: v.label + ' ' + (i + 2) })); s.shown = 0; s.say = '2 versions of this card. Nothing changes until you pick one.'; }
+          else { s.versions = all; s.shown = 0; s.dropped = 1; s.say = '3 versions of this card. Nothing changes until you pick one. 1 more was left out because Morph could not draw it.'; }
+          if (!s.versions.length) { s.empty = true; s.say = 'brAIn offered no version Morph could draw. Nothing changed. Just do it asks for the single change instead.'; }
           s.phase = 'done';
         }
         return { ...s };

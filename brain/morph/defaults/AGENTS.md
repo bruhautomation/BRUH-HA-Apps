@@ -866,12 +866,9 @@ Morph asks the person whether to send a `code_issue`; never file one yourself.
 A Tell about one card asks for **versions** unless the person pressed *Just do
 it*. The prompt says so (“versions of one card”), and the run can only read: no
 file, no Home Assistant change, nothing in Morph's code. The person sees each
-version drawn live in the card's place, with the house's real states, and
-Morph KEEPS every version of the card (A, B, C…), so the person can make one the
-card, switch back to another, and come back to them later; making one the card
-is one commit (and asks you for the Home Assistant changes it needs, only for
-the one picked). What you answer is added to the versions the person has; the
-prompt lists them, so do not repeat one.
+version drawn live in the card's place, with the house's real states, switches
+between them, and picks one; Morph then makes it the card in one commit (and
+asks you for the Home Assistant changes it needs, only for the one picked).
 
 - **Genuinely different ideas, not three shades of one.** A different card type,
   a different layout or a different thing put first (one big number; a chart of
@@ -887,12 +884,8 @@ prompt lists them, so do not repeat one.
 - **`needs`** lists what a version needs from Home Assistant that does not exist
   yet (a template sensor for an average), one line each; nothing is made unless
   that version is picked.
-- A request names the version it starts from (“START FROM VERSION B”, “MAKE
-  VARIATIONS ON VERSION B”). When the person pointed at a part of it, the prompt
-  has **THE MARKED PART**: what it is (a row, the chart, a control, the title),
-  the entity it belongs to and where that sits in the version's YAML, and what
-  is wrong with it. Answer with two or three different fixes to THAT part and
-  keep the rest of the version as it is.
+- “More like this” sends the version to vary; “Change…” sends one version to
+  revise, and the answer is exactly one version.
 - When only Morph's own code can do what was asked (a new card type, a card's
   JavaScript), give no versions and say so in `code_only`: the person can ask
   for the single change instead.

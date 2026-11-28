@@ -273,24 +273,18 @@ async def handle(kind: str, p: dict) -> dict:
         return {"ok": "error" not in st, **st}
     if kind == "versions":
         # A card's versions round (versions.py): read-only for brAIn, and
-        # the card is named by its id and the version it is built on by its
-        # key in the card's kept set, read there.
+        # the card is named by its id; a round built on an earlier version
+        # reads that version from the round that offered it.
         st = versions.start(p.get("target") or {}, str(p.get("text") or ""), view=p.get("view"),
-                            base_from=p.get("base") if isinstance(p.get("base"), dict) else None,
-                            mark=p.get("mark"))
+                            base_from=p.get("base") if isinstance(p.get("base"), dict) else None)
         await asyncio.to_thread(publish_state)
         return {"ok": "error" not in st, **st}
     if kind == "versions_history":
-        # The card's kept versions (it adds the card as it is when that is
-        # not one of them, so it writes Morph's own state, never /config/morph).
-        return await asyncio.to_thread(versions.kept, str(p.get("card") or ""))
-    if kind == "versions_remove":
-        return await asyncio.to_thread(versions.remove, str(p.get("card") or ""), str(p.get("key") or ""),
-                                       p.get("back") is True)
+        return await asyncio.to_thread(versions.history, str(p.get("card") or ""))
     if kind == "versions_use":
         # In the loop, not a thread: a version that needs Home Assistant
         # changes starts an ordinary Tell, which makes its task here.
-        out = versions.use({k: p.get(k) for k in ("card", "key", "seen", "over")})
+        out = versions.use({k: p.get(k) for k in ("round", "index", "card", "at", "over")})
         await asyncio.to_thread(publish_state)
         return out
     if kind == "tell_answer":
@@ -316,6 +310,8 @@ async def handle(kind: str, p: dict) -> dict:
         return out
     if kind == "tell_undo":
         out = tell.undo(str(p.get("id") or ""))
+        if out.get("ok"):
+            await asyncio.to_thread(versions.after_undo, str(p.get("id") or ""))
         await asyncio.to_thread(publish)
         await sync_dashboards()
         return out

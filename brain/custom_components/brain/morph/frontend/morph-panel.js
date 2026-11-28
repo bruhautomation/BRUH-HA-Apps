@@ -62,8 +62,6 @@ const currentScene = (H, ids) => {
 const sevCol = (s, info = 'var(--quiet)') => (s === 'critical' || s === 'serious' ? 'var(--rose)' : s === 'warning' ? 'var(--amber)' : info);
 const firstSentence = (t) => { const m = String(t || '').replace(/…$/, '').match(/^.*?[.!?](\s|$)/); return m ? m[0].trim() : String(t || '').trim(); };
 // One of brAIn's steps while it works.
-// What a marking touch on a version is kept from (versionsBox, _markGuard).
-const MARK_EVENTS = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart', 'touchend', 'click', 'dblclick', 'contextmenu'];
 const stepLine = (x, cls = '') => `<div class="step${cls}"><i style="background:${x.tone === 'bad' ? 'var(--rose)' : x.tone === 'good' ? 'var(--teal)' : 'var(--violet)'}"></i><span>${esc(x.t)}</span></div>`;
 
 const HOLD_MS = 540;
@@ -92,6 +90,7 @@ const TELL_SUGS = {
 // Domains the story and Coming up read across the whole house, on the
 // dashboard or not: a change in one of them redraws the page.
 const LIVE_DOMAINS = new Set(['person', 'climate', 'vacuum', 'media_player', 'timer', 'sun', 'calendar', 'input_datetime', 'automation', 'alarm_control_panel']);
+const VERSION_LETTERS = ['A', 'B', 'C'];
 const KIND_WORD = { card: 'card', section: 'section', floor: 'floor', story: 'story', upcoming: 'Coming up', scenes: 'scenes', dashboard: 'dashboard' };
 // Domains whose change is a salient event: the list is recomputed at once.
 const SALIENT = ['lock', 'binary_sensor', 'alarm_control_panel', 'person', 'cover', 'vacuum', 'timer'];
@@ -308,14 +307,12 @@ class MorphPanel extends HTMLElement {
     if (this._winOn || !this._tellKey) return;
     this._winOn = true;
     window.addEventListener('keydown', this._tellKey);
-    MARK_EVENTS.forEach((type) => window.addEventListener(type, this._markGuard, { capture: true, passive: false }));
   }
 
   detachWindow() {
     if (!this._winOn) return;
     this._winOn = false;
     window.removeEventListener('keydown', this._tellKey);
-    MARK_EVENTS.forEach((type) => window.removeEventListener(type, this._markGuard, { capture: true }));
     cancelAnimationFrame(this._raf); this._raf = 0;
   }
 
@@ -2207,11 +2204,6 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
       this.setHtml(moreEl, moreHtml);
     }
     if (T.host) this.mountLovelace(face, card);
-    // Marking what is wrong on a version: the card takes a tap as pointing,
-    // and the part pointed at keeps its outline through every redraw.
-    const marking = !!(tell && this.s.tell.marking);
-    mt.toggleAttribute('data-marking', marking);
-    if (marking || mt.querySelector('[data-marked]')) this.drawMark(id, mt.querySelector('.tc') || mt);
     // The detail stays folded away until the card is opened, unless the card
     // asks for it always (options.detail_shown: true), e.g. a thermostat that
     // carries its HVAC performance on its face (house change).
@@ -2461,14 +2453,15 @@ ${near.length ? `<div class="flab">From ${esc(sec.title)}<div class="row" style=
     }
     const sugs = [].map((s) => `<button type="button" class="wd sug small" data-act="tell-sug" data-v="${esc(s)}">${esc(s)}</button>`).join('');
     const head = `<div class="row" style="min-width:0">${SPARK}<span style="font-size:13px;font-weight:600;white-space:nowrap">Tell ${esc(this.who())}</span><span class="small" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">${esc(t.path || '')}</span></div>`;
-    // A card's Tell is its versions box (Send asks for versions, drawn in
-    // the card's place) until Just do it asks for the single change.
-    if (kind === 'card' && !t.single) return this.versionsBox(t, head);
-    const scope = composing ? `<span class="small">${kind === 'code' ? 'Changes Morph’s own code for this house.' : 'Changes this dashboard only.'} Home Assistant is changed only if you ask (“make a sensor for…”), and nothing goes to GitHub unless you say yes.</span>` : '';
+    // A card's Tell asks for versions by default (Send); Just do it is the
+    // single change. The versions are drawn in the card's place above.
+    const card = kind === 'card';
+    if (card && t.sent && st.mode === 'versions' && done) return this.versionsBox(t, st, head);
+    const scope = composing ? `<span class="small">${card ? `Send asks ${esc(this.who())} for versions, drawn in the card’s place; nothing changes until you pick one. Just do it makes one change straight away. ` : ''}${kind === 'code' ? 'Changes Morph’s own code for this house.' : 'Changes this dashboard only.'} Home Assistant is changed only if you ask (“make a sensor for…”), and nothing goes to GitHub unless you say yes.</span>` : '';
     if (composing) {
-      return `<div data-ctl="1" data-tell="1" class="tell rise" style="margin-top:6px">${head}${turns}${this.shotHtml(t.shot, t.turns && t.turns.length ? `How it looks now — ${this.who()} sees this` : `What ${this.who()} will see`)}
+      return `<div data-ctl="1" data-tell="1" class="tell rise" style="margin-top:6px">${head}${turns}${card ? this.histHtml(t) : ''}${this.shotHtml(t.shot, t.turns && t.turns.length ? `How it looks now — ${this.who()} sees this` : card ? 'How it looks now' : `What ${this.who()} will see`)}
 <textarea class="tellin" rows="3" data-keep="tell" data-tellkey="${esc(kind + ':' + (id || ''))}" aria-label="What should change" placeholder="${esc(kind === 'dashboard' ? 'Add a Pets section with the feeder and water bowl…' : t.turns && t.turns.length ? 'What should it do differently?' : 'Say what should change…')}"></textarea>${scope}
-<div class="row" style="flex-wrap:wrap;gap:0 16px">${t.turns && t.turns.length ? '' : sugs}<span class="flex1"></span><button type="button" class="wd" data-act="tell-cancel" style="font-size:14px">${t.turns && t.turns.length ? 'Close' : 'Cancel'}</button><button type="button" class="wd" data-act="tell-send" style="font-size:14px;font-weight:700;color:var(--violet)">Send</button></div></div>`;
+<div class="row" style="flex-wrap:wrap;gap:0 16px">${t.turns && t.turns.length ? '' : sugs}<span class="flex1"></span><button type="button" class="wd" data-act="tell-cancel" style="font-size:14px">${t.turns && t.turns.length ? 'Close' : 'Cancel'}</button>${card ? '<button type="button" class="wd" data-act="tell-now" style="font-size:14px;font-weight:600">Just do it</button>' : ''}<button type="button" class="wd" data-act="tell-send" style="font-size:14px;font-weight:700;color:var(--violet)">${card ? 'Send for versions' : 'Send'}</button></div></div>`;
     }
     const all = st.steps || [];
     const SHOW = 7;
@@ -2488,223 +2481,148 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
   }
 
   // ------------------------------------------------------------ versions
-  // A card's versions (service/versions.py): every version brAIn made of
-  // the card is kept per card, the one in use among them, and each is drawn
-  // live in the card's place (a per-card override, like `s.previews` is for
-  // a slider). Use this makes the shown one the card (one commit, Undo);
-  // the others stay, so switching back is the same press. Words, More like
-  // this and a marked part each ADD versions; nothing is written until Use.
-
-  // The kept version on screen (its key), or null before the set has come.
-  shownKey(t) {
-    const k = t && t.kept; if (!k) return null;
-    return t.show && k.versions.some((v) => v.key === t.show) ? t.show : k.current;
-  }
-
-  shownVersion(t) {
-    const key = this.shownKey(t);
-    return key ? (t.kept.versions.find((v) => v.key === key) || null) : null;
-  }
+  // A card's versions (service/versions.py): brAIn's answers drawn live in
+  // the card's place, a per-card override like `s.previews` is for a
+  // slider. Nothing is written until Use this; Discard writes nothing.
 
   // The card config to draw instead of the committed one, or null.
   versionShown(id) {
     const t = this.s.tell;
-    if (!t || t.kind !== 'card' || t.id !== id || t.single || !t.kept) return null;
-    const v = this.shownVersion(t);
-    return v && v.key !== t.kept.current ? v.card : null;
+    if (!t || t.kind !== 'card' || t.id !== id) return null;
+    if (!t.sent && t.hi != null && t.hist && t.hist[t.hi]) return t.hist[t.hi].card;
+    const st = t.state || {};
+    const vs = st.mode === 'versions' && ['done', 'failed'].includes(st.phase) ? st.versions || [] : [];
+    const i = this.versionIndex(t);
+    return i >= 0 && vs[i] ? vs[i].card : null;
   }
 
-  // Step through the kept versions (it wraps). False when there is nothing
-  // to step through.
+  versionIndex(t) {
+    const st = (t && t.state) || {};
+    const n = (st.versions || []).length;
+    const i = t.vi == null ? (st.shown == null ? 0 : st.shown) : t.vi;
+    return i >= 0 && i < n ? i : -1;
+  }
+
+  // Step through what can be shown: Current, then A, B, C (or, before
+  // anything is sent, the card's earlier versions). False when nothing is.
   versionStep(d) {
     const t = this.s.tell;
-    if (!t || t.kind !== 'card' || t.single || !t.kept || t.kept.versions.length < 2) return false;
-    const vs = t.kept.versions; const n = vs.length;
-    const i = vs.findIndex((v) => v.key === this.shownKey(t));
-    t.show = vs[((i + d) % n + n) % n].key;
-    this.clearMark(t);
+    if (!t || t.kind !== 'card') return false;
+    const st = t.state || {};
+    if (t.sent && st.mode === 'versions' && ['done', 'failed'].includes(st.phase) && (st.versions || []).length) {
+      const n = st.versions.length + 1; // Current is -1
+      t.vi = ((this.versionIndex(t) + 1 + d) % n + n) % n - 1;
+      t.changing = false;
+    } else if (!t.sent && (t.hist || []).length) {
+      const n = t.hist.length + 1;
+      const cur = t.hi == null ? -1 : t.hi;
+      const next = ((cur + 1 + d) % n + n) % n - 1;
+      t.hi = next < 0 ? null : next;
+    } else return false;
     haptic('selection');
     this.schedule();
     return true;
   }
 
-  versionChips(t) {
-    const k = t.kept; const cur = this.shownKey(t);
-    return `<div class="vchips">${k.versions.map((x) => { const now = x.key === k.current; return `<button type="button" class="vchip${now ? ' now' : ''}" data-act="ver-show" data-v="${esc(x.key)}" aria-pressed="${x.key === cur}" aria-label="${esc(`${x.letter}: ${x.label}${now ? ', the card now' : ''}`)}"><b>${esc(x.letter)}${now ? '<i class="vnow">in use</i>' : ''}</b><span>${esc(x.label)}</span></button>`; }).join('')}</div>`;
+  versionChips(items, cur, act) {
+    const chip = (k, big, small, on, label) => `<button type="button" class="vchip" data-act="${act}" data-v="${k}" aria-pressed="${on}" aria-label="${esc(label)}"><b>${esc(big)}</b><span>${esc(small)}</span></button>`;
+    return `<div class="vchips">${chip(-1, 'Current', 'as it is', cur < 0, 'Current: the card as it is')}${items.map((x, k) => chip(k, x.big, x.small, cur === k, `${x.big}: ${x.small}`)).join('')}</div>`;
   }
 
-  // The card's Tell box: its kept versions as chips, the shown one's idea
-  // and what it may be done with, a round's progress, marking a part, and
-  // the words box (Send adds versions of the shown one; Just do it is the
-  // single change).
-  versionsBox(t, head) {
-    const st = t.state || {};
-    const k = t.kept;
-    const v = this.shownVersion(t);
-    const isNow = !!(v && k && v.key === k.current);
-    const many = !!(k && k.versions.length > 1);
-    const running = !!(t.tellId && st.mode === 'versions' && !['done', 'failed'].includes(st.phase));
-    const tone = (amber) => `font-size:14px;line-height:1.5${amber ? ';color:var(--amber)' : ''}`;
-    const parts = [];
-    if (k && v) {
-      const idea = `<p class="videa"><b>${esc(v.letter)} · ${esc(v.label)}</b>${v.idea ? ` — ${esc(v.idea)}` : ''}${isNow ? ' <span class="vtag">The card now.</span>' : ''}</p>`;
-      const ask = v.ask ? `<p class="small">Asked: “${esc(v.ask)}”</p>` : '';
-      const needs = (v.needs || []).length ? `<p class="vneeds">Needs in Home Assistant, made only if you use it: ${esc(v.needs.join('; '))}</p>` : '';
-      const steps = many ? `<button type="button" class="wd vstep" data-act="ver-step" data-v="-1" aria-label="Previous version">←</button><button type="button" class="wd vstep" data-act="ver-step" data-v="1" aria-label="Next version">→</button>` : '';
-      // One version is the card itself: nothing to name or switch yet. A
-      // full set says, in place of the count, that the oldest move to Removed.
-      if (many) parts.push(`<div class="vbar" data-vswipe="1"><div class="row" style="gap:8px;align-items:flex-start;min-width:0"><span class="small" style="flex:1;min-width:0;align-self:center">${k.keep && k.versions.length >= k.keep ? `${k.keep} kept; the oldest move to Removed as new ones arrive` : `${k.versions.length} versions, kept`}</span>${steps}</div>${this.versionChips(t)}${idea}${ask}${needs}</div>`);
-    } else if (!k) parts.push('<span class="small">Reading this card’s versions…</span>');
-    // What just happened, said once, with the way back.
-    if (t.used) parts.push(`<p class="rise" style="${tone(false)}">${esc(t.used.say)}${t.used.undone ? '' : ' <button type="button" class="wd strong" data-act="ver-undo">Undo</button>'}</p>`);
-    // Removed keeps what the person or the cap took out, each with Put back.
-    const out = ((k && k.removed) || []).filter((x) => !t.gone || x.key !== t.gone.key);
-    if (out.length) parts.push(`<details class="vremoved"><summary class="small">Removed (${out.length})</summary>${out.map((x) => `<div class="row" style="gap:8px;min-width:0"><span class="small" style="flex:1;min-width:0">${esc(x.letter)} “${esc(x.label)}”</span><button type="button" class="wd go" data-act="ver-unremove" data-v="${esc(x.key)}">Put back</button></div>`).join('')}</details>`);
-    if (t.gone) parts.push(`<p class="rise" style="${tone(false)}">Removed ${esc(t.gone.letter)} “${esc(t.gone.label)}”. <button type="button" class="wd go" data-act="ver-unremove">Put it back</button></p>`);
-    if (t.stale) parts.push(`<p class="rise" style="${tone(true)}">${esc(t.stale)}</p>`);
-    // A round: its words, brAIn's steps while it works, and how it ended.
-    // It stays while it is news: working, failed, or one of its versions on screen.
-    if (t.tellId && st.mode === 'versions' && (running || st.phase === 'failed' || st.empty || (!t.used && (st.added || []).includes(this.shownKey(t))))) {
-      const all = st.steps || [];
-      const lines = running ? `<div class="steps" role="log" aria-live="polite" aria-label="brAIn's steps">${all.slice(-3).map((x, i, arr) => stepLine(x, i === arr.length - 1 ? ' rise' : '')).join('') || '<div class="step"><i style="background:var(--violet)"></i><span>Handing it to brAIn…</span></div>'}</div><div class="working"><span class="pulse"></span><span>${esc(this.phaseWords(st))}</span><span class="small" data-since="${Number(st.started) || ''}"></span></div>` : '';
-      const said = running ? '' : `<p class="rise" style="${tone(st.phase === 'failed' || st.empty)}">${esc(st.say || '')}</p>${st.empty ? '<div class="row" style="flex-wrap:wrap;gap:0 18px"><button type="button" class="wd go" data-act="tell-now-again">Just do it</button></div>' : ''}`;
-      parts.push(`<div class="vround"><span style="font-size:14px">“${esc(t.text)}”${st.mark ? ` <span class="small">about ${esc(this.markWords(st.mark))}</span>` : ''}</span>${lines}${said}${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receives</summary><pre>${esc(st.payload)}</pre></details>` : ''}</div>`);
+  // The card's earlier versions (the cards a Use this replaced), in its
+  // Tell box before anything is sent. One tap shows it in the card's place.
+  histHtml(t) {
+    const h = t.hist || [];
+    if (!h.length) return '';
+    const cur = t.hi == null ? -1 : t.hi;
+    const items = h.map((x) => ({ big: x.label || 'Earlier', small: ago(Number(x.at) * 1000) }));
+    const acts = cur >= 0 ? `<div class="row" style="flex-wrap:wrap;gap:0 18px"><button type="button" class="wd go" data-act="ver-use-hist">Use this</button><button type="button" class="wd" data-act="ver-hist" data-v="-1">Back to current</button></div>` : '';
+    return `<div class="vbar" data-vswipe="1"><span class="small">Versions · earlier cards, newest first</span>${this.versionChips(items, cur, 'ver-hist')}${cur >= 0 ? `<p class="videa">Drawn above in the card’s place. Use this puts it back as one change you can undo.</p>` : ''}${acts}</div>`;
+  }
+
+  // A finished versions round: the chips, the shown version's idea, and
+  // Use this · More like this · Change… · Discard.
+  versionsBox(t, st, head) {
+    const vs = st.versions || [];
+    const payload = st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receives</summary><pre>${esc(st.payload)}</pre></details>` : '';
+    const said = `<p class="rise" style="font-size:14px;line-height:1.5${st.phase === 'failed' || st.empty || t.stale ? ';color:var(--amber)' : ''}">${esc(st.say || '')}</p>`;
+    if (!vs.length) {
+      return `<div data-ctl="1" data-tell="1" class="tell" style="margin-top:6px">${head}<span style="font-size:14px">“${esc(t.text)}”</span>${said}<div class="row" style="flex-wrap:wrap;gap:0 18px"><button type="button" class="wd go" data-act="tell-now-again">Just do it</button><button type="button" class="wd" data-act="tell-cancel">Close</button></div>${payload}</div>`;
     }
-    // Marking: point at the part of the drawn version that is wrong.
-    if (t.marking && !running) {
-      parts.push(t.mark
-        ? `<div class="vmark rise"><span class="small">Marked: ${esc(this.markWords(t.mark))}</span><div class="vchange"><input class="fld" data-keep="vermark" data-act-enter="ver-mark-send" aria-label="What is wrong with the marked part" placeholder="What is wrong with it?"><button type="button" class="wd go" data-act="ver-mark-send">Send</button></div><span class="small">${esc(this.who())} answers with two or three versions that change that part; they are added to the ones you have.</span></div>`
-        : `<p class="vmark small rise">Tap the part of the card above that is wrong: a row, the chart, a button, the title.</p>`);
-    }
-    // What the shown version may be done with.
-    const acts = [];
-    if (v && !isNow) acts.push(t.stale ? '<button type="button" class="wd go" data-act="ver-use" data-v="over">Use it anyway</button>' : `<button type="button" class="wd go" data-act="ver-use"${t.using ? ' disabled' : ''}>Use this</button>`);
-    if (v && !running) acts.push('<button type="button" class="wd" data-act="ver-more">More like this</button>', `<button type="button" class="wd" data-act="ver-mark" aria-pressed="${!!t.marking}">${t.marking ? 'Stop marking' : 'Mark what’s wrong'}</button>`);
-    if (v && !isNow) acts.push('<button type="button" class="wd" data-act="ver-remove">Remove</button>');
-    if (acts.length) parts.push(`<div class="row" style="flex-wrap:wrap;gap:0 18px">${acts.join('')}</div>`);
-    // The words box: versions of the shown one, or the single change.
-    const first = !many && !t.tellId;
-    const scope = first ? `<span class="small">Send asks ${esc(this.who())} for versions, drawn in the card’s place and kept so you can switch between them; nothing changes until you use one. Just do it makes one change straight away. Home Assistant is changed only if you ask (“make a sensor for…”), and nothing goes to GitHub unless you say yes.</span>` : '';
-    const box = running || t.marking ? '' : `<textarea class="tellin" rows="2" data-keep="tell" data-tellkey="${esc('card:' + t.id)}" aria-label="What should change" placeholder="${esc(v && !isNow ? `What should change in ${v.letter}?` : 'Say what should change…')}"></textarea>${scope}`;
-    const row = `<div class="row" style="flex-wrap:wrap;gap:0 16px"><span class="flex1"></span><button type="button" class="wd" data-act="tell-cancel" style="font-size:14px">Close</button>${box ? `<button type="button" class="wd" data-act="tell-now" style="font-size:14px;font-weight:600">Just do it</button><button type="button" class="wd" data-act="tell-send" style="font-size:14px;font-weight:700;color:var(--violet)">Send for versions</button>` : ''}</div>`;
-    return `<div data-ctl="1" data-tell="1" class="tell" style="margin-top:6px">${head}${parts.join('')}${box}${row}</div>`;
+    const i = this.versionIndex(t);
+    const v = i >= 0 ? vs[i] : null;
+    const items = vs.map((x, k) => ({ big: VERSION_LETTERS[k] || String(k + 1), small: x.label }));
+    const idea = v ? `<p class="videa"><b>${esc(VERSION_LETTERS[i] || '')} · ${esc(v.label)}</b>${v.idea ? ` — ${esc(v.idea)}` : ''}</p>` : '<p class="videa">The card as it is on the dashboard now.</p>';
+    const needs = v && (v.needs || []).length ? `<p class="vneeds">Needs in Home Assistant, made only if you use it: ${esc(v.needs.join('; '))}</p>` : '';
+    const change = v && t.changing ? `<div class="vchange"><input class="fld" data-keep="verchange" data-act-enter="ver-revise" aria-label="What should change in ${esc(v.label)}" placeholder="What should change in this one?"><button type="button" class="wd go" data-act="ver-revise">Send</button></div>` : '';
+    const acts = v && t.stale
+      ? `<button type="button" class="wd go" data-act="ver-use" data-v="over">Use it anyway</button><button type="button" class="wd" data-act="ver-fresh">New versions</button><button type="button" class="wd" data-act="ver-discard">Discard</button>`
+      : v
+        ? `<button type="button" class="wd go" data-act="ver-use">Use this</button><button type="button" class="wd" data-act="ver-more">More like this</button><button type="button" class="wd" data-act="ver-change" aria-expanded="${!!t.changing}">Change…</button><button type="button" class="wd" data-act="ver-discard">Discard</button>`
+        : '<button type="button" class="wd" data-act="ver-discard">Discard</button>';
+    const steps = `<button type="button" class="wd vstep" data-act="ver-step" data-v="-1" aria-label="Previous version">←</button><button type="button" class="wd vstep" data-act="ver-step" data-v="1" aria-label="Next version">→</button>`;
+    return `<div data-ctl="1" data-tell="1" class="tell" style="margin-top:6px">${head}<span style="font-size:14px">“${esc(t.text)}”</span>${said}
+<div class="vbar" data-vswipe="1">${this.versionChips(items, i, 'ver-show')}<div class="row" style="gap:8px;align-items:center">${idea}<span class="flex1"></span>${steps}</div>${needs}</div>${change}
+<div class="row" style="flex-wrap:wrap;gap:0 18px">${acts}</div>${payload}</div>`;
   }
 
-  loadVersions(t, show) {
-    if (!t || t.kind !== 'card' || !t.id) return Promise.resolve();
-    return this.hass.callWS({ type: 'morph/request', kind: 'versions_history', payload: { card: t.id } })
-      .then((r) => {
-        if (!r || this.s.tell !== t) return;
-        if (!r.ok) { t.kept = { versions: [], current: null }; t.stale = r.error || 'Morph could not read this card’s versions.'; this.schedule(); return; }
-        t.kept = r;
-        if (show && r.versions.some((x) => x.key === show)) t.show = show;
-        this.schedule();
-      })
-      .catch(() => { if (this.s.tell === t && !t.kept) { t.kept = { versions: [], current: null }; this.schedule(); } });
+  loadVersions(t) {
+    if (!t || t.kind !== 'card' || !t.id) return;
+    this.hass.callWS({ type: 'morph/request', kind: 'versions_history', payload: { card: t.id } })
+      .then((r) => { if (r && r.ok && this.s.tell === t) { t.hist = r.history || []; this.schedule(); } })
+      .catch(() => { /* no earlier versions to offer this time */ });
   }
 
-  // Ask for versions of the shown one: from words, More like this, or a
-  // marked part. The service reads the version by its key; what comes back
-  // is added to the card's kept set.
-  async sendVersions(text, how, mark) {
+  // Ask for versions: a new round, or one built on a version already
+  // offered (`base`: its round and index, read back by the service).
+  async sendVersions(text, base) {
     const t = this.s.tell; if (!t) return;
     const ae = this.shadowRoot.activeElement; if (ae && ae.blur) ae.blur();
     text = String(text || '').trim();
     if (!text) return;
-    const key = this.shownKey(t);
-    t.text = text; t.draft = ''; t.tellId = null; t.used = null; t.gone = null; t.stale = null; t.marking = false; t.mark = null;
+    // A round built on a version keeps the one it came from, so a refusal
+    // goes back to those versions instead of losing them.
+    const back = base && t.state && (t.state.versions || []).length ? { text: t.text, state: t.state, tellId: t.tellId, vi: t.vi } : null;
+    const refused = (say) => {
+      if (back) { t.text = back.text; t.tellId = back.tellId; t.vi = back.vi; t.state = { ...back.state, phase: 'failed', say: `${say} The versions you had are still here.` }; } else t.state = { phase: 'failed', mode: 'versions', versions: [], say, steps: [] };
+      this.schedule();
+    };
+    t.text = text; t.sent = true; t.changing = false; t.hi = null; t.vi = null; t.stale = false;
     t.state = { phase: 'sending', mode: 'versions', steps: [] };
     this.track('tell', t.id, null);
     this.schedule();
     const shot = t.shot;
-    const onCard = !t.kept || key === t.kept.current;
-    if (onCard && shot && shot.ready && !shot.view) await Promise.race([shot.ready, new Promise((r) => setTimeout(r, 3000))]);
-    // The picture's text is of the card as it is: it goes only with a round on that.
-    const view = onCard && shot && shot.view ? { ...shot.view } : {};
-    const refused = (say) => { t.tellId = 'refused'; t.state = { phase: 'failed', mode: 'versions', say: `${say} The versions you had are still here.`, steps: [] }; this.schedule(); };
+    if (shot && shot.ready && !shot.view) await Promise.race([shot.ready, new Promise((r) => setTimeout(r, 3000))]);
+    const view = shot && shot.view ? { ...shot.view } : {};
     try {
-      const r = await this.hass.callWS({ type: 'morph/request', kind: 'versions', payload: { target: { kind: 'card', id: t.id }, text, view, base: { key, how: how || 'new' }, ...(mark ? { mark: { role: mark.role, entity: mark.entity, shows: mark.shows, nth: mark.nth } } : {}) } });
+      const r = await this.hass.callWS({ type: 'morph/request', kind: 'versions', payload: { target: { kind: 'card', id: t.id }, text, view, ...(base ? { base } : {}) } });
       if (!r || !r.ok) { refused((r && r.error) || `Morph could not hand this to ${this.who()}.`); return; }
-      t.tellId = r.id; t.state = r;
+      t.tellId = r.id;
       this.pollTell(true);
     } catch (e) { refused(String(e.message || e)); }
   }
 
   // Use this: the service writes the card and commits it (one Undo), or,
   // for a version that needs Home Assistant changes, starts a Tell.
-  async useVersion(over) {
-    const t = this.s.tell; if (!t || t.using || !t.kept) return;
-    const v = this.shownVersion(t); if (!v) return;
+  async useVersion(payload, label) {
+    const t = this.s.tell; if (!t || t.using) return;
     t.using = true; this.schedule();
     let r;
-    try { r = await this.hass.callWS({ type: 'morph/request', kind: 'versions_use', payload: { card: t.id, key: v.key, seen: t.kept.current, ...(over ? { over: true } : {}) } }); } catch (e) { r = { ok: false, error: String(e.message || e) }; }
+    try { r = await this.hass.callWS({ type: 'morph/request', kind: 'versions_use', payload }); } catch (e) { r = { ok: false, error: String(e.message || e) }; }
     t.using = false;
-    // The card changed since its versions were read: said in the box, with
-    // Use it anyway in place of Use this, before anything is replaced.
-    if (r && r.stale) { t.stale = r.error; this.loadVersions(t, v.key); this.schedule(); return; }
+    // A round older than the card's last change: said in the box, with Use
+    // it anyway in place of Use this (versionsBox), before anything is lost.
+    if (r && r.stale && t.state) { t.stale = true; t.state = { ...t.state, say: r.error }; this.schedule(); return; }
     if (!r || !r.ok || !r.id) { this.toast((r && r.error) || 'Morph could not use that version.'); this.schedule(); return; }
     haptic('success');
-    const label = `${v.letter} · ${v.label}`;
-    if (r.tell) {
-      // No picture: the version was drawn from its config, and the Tell is
-      // started from the stored version.
-      this.s.tell = { kind: 'card', id: t.id, label: t.label, entity: t.entity, path: t.path, sent: true, single: true, tellId: r.id, state: r, turns: [], text: `Use this version: ${label}, and make what it needs in Home Assistant` };
-      this.pollTell(true); return;
-    }
-    t.used = { id: r.id, say: r.say || `“${label}” is the card now.`, undone: false };
-    t.stale = null; t.gone = null; t.marking = false; t.mark = null;
+    // No picture: nothing was photographed for this (the version was drawn
+    // from its config, and a needs Tell is started from the stored version).
+    const next = { kind: 'card', id: t.id, label: t.label, entity: t.entity, path: t.path, sent: true, tellId: r.id, state: r, turns: t.turns || [] };
+    if (r.tell) { next.text = `Use this version: ${label}, and make what it needs in Home Assistant`; this.s.tell = next; this.pollTell(true); return; }
+    next.text = `Use this version: ${label}`;
+    this.s.tell = next;
     this.dash = null; this.load();
-    this.loadVersions(t, v.key);
     this.schedule();
-  }
-
-  // Marking a part of the drawn version: what was pointed at, as a typed
-  // reference read off the card's own markup (role, entity, the words it
-  // showed, and where it is in the card for drawing the outline again).
-  markAt(el, tile) {
-    const t = this.s.tell; if (!t) return;
-    const tc = tile.querySelector('.tc'); if (!tc || !tc.contains(el)) return;
-    const card = this.versionShown(t.id) || ((this.findCard(t.id) || {}).card) || {};
-    const within = (sel) => { const x = el.closest(sel); return x && tc.contains(x) ? x : null; };
-    // The entity a part belongs to is the one of the version's own entities
-    // that the part (or what holds it) names in its markup, whatever the
-    // renderer called the attribute.
-    const ents = []; const walk = (x) => { if (typeof x === 'string') { if (/^[a-z_]+\.[a-z0-9_]+$/.test(x) && !ents.includes(x)) ents.push(x); } else if (x && typeof x === 'object') Object.values(x).forEach(walk); }; walk(card);
-    const entityOf = (n) => { for (let x = n; x && x !== tc.parentElement; x = x.parentElement) { for (const at of x.attributes || []) { const hit = ents.find((e) => at.value === e || at.value.split(/[|,\s"[\]{}:]+/).includes(e)); if (hit) return hit; } } return ''; };
-    let part = null; let role = 'text'; let sel = '';
-    const svg = within('svg, canvas, [data-hv], [data-chart]');
-    const ctl = within('button, input, select, [role="slider"], [data-act]');
-    if (svg && svg.getBoundingClientRect().width >= 48) { part = within('[data-chart], [data-hv]') || svg; role = 'chart'; sel = '[data-chart], [data-hv], svg, canvas'; }
-    else if (ctl) { part = ctl; const e = entityOf(ctl); role = e && e !== card.entity ? 'row' : 'control'; sel = 'button, input, select, [role="slider"], [data-act]'; }
-    else if (svg) { part = svg; role = 'icon'; sel = 'svg'; }
-    else if (el.closest('[data-face]') && el.textContent.trim() && el.textContent.trim() === String(card.name || '').trim()) { part = el; role = 'title'; }
-    else if (within('.vs, .big, .sval, .nv')) { part = within('.vs, .big, .sval, .nv'); role = 'value'; sel = '.vs, .big, .sval, .nv'; }
-    else if (el === tc || el.matches('[data-face], [data-more], [data-ctl-scope], .box')) { part = tc; role = 'card'; }
-    else { part = el; role = entityOf(el) ? 'row' : 'text'; }
-    const entity = role === 'card' ? '' : entityOf(part);
-    const nth = sel ? Math.max(0, [...tc.querySelectorAll(sel)].indexOf(part)) : 0;
-    const shows = String(part.getAttribute('aria-label') || part.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120);
-    const path = []; for (let n = part; n && n !== tc; n = n.parentElement) path.unshift([...n.parentElement.children].indexOf(n));
-    t.mark = { role, entity, shows, nth, path, key: this.shownKey(t) };
-    haptic('selection');
-    this.schedule();
-    setTimeout(() => { const i = this.shadowRoot.querySelector('input[data-keep="vermark"]'); if (i) i.focus({ preventScroll: true }); }, 60);
-  }
-
-  markWords(m) {
-    const what = { title: 'the title', value: 'a value', row: 'a row', chart: 'the chart', control: 'a control', icon: 'an icon', text: 'a line', card: 'the whole card' }[m.role] || 'a part';
-    return m.shows && m.role !== 'card' ? `${what} · “${m.shows.length > 40 ? m.shows.slice(0, 39) + '…' : m.shows}”` : what;
-  }
-
-  clearMark(t) { if (t) t.mark = null; }
-
-  // The marked part's outline, drawn again after each render of the card.
-  drawMark(id, tc) {
-    const t = this.s.tell;
-    tc.querySelectorAll('[data-marked]').forEach((x) => x.removeAttribute('data-marked'));
-    if (!t || t.id !== id || !t.marking || !t.mark || t.mark.key !== this.shownKey(t)) return;
-    let n = tc; for (const i of t.mark.path) { n = n && n.children[i]; }
-    if (n && n !== tc) n.setAttribute('data-marked', '1'); else if (n === tc) tc.setAttribute('data-marked', '1');
   }
 
   // What a request touched, one line per place it could have: the
@@ -2960,12 +2878,11 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
   async sendTell(text, how) {
     const t = this.s.tell; if (!t) return;
     // A card's Send asks for versions; Just do it (`now`) is the single change.
-    if (t.kind === 'card' && how !== 'now' && !t.single) return this.sendVersions(text, 'new');
+    if (t.kind === 'card' && how !== 'now' && !t.previous) return this.sendVersions(text);
     const ae = this.shadowRoot.activeElement; if (ae && ae.blur) ae.blur();
     text = String(text || '').trim();
     if (!text) return;
     t.text = text; t.sent = true; t.state = { phase: 'sending', steps: [] };
-    if (t.kind === 'card') { t.single = true; t.marking = false; }
     this.track('tell', t.kind === 'card' ? t.id : null, t.kind === 'section' ? t.id : null);
     this.schedule();
     const shot = t.shot;
@@ -2999,12 +2916,9 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
         if (t && t.tellId === id) {
           const was = t.state && t.state.phase;
           t.state = st;
-          if (['done', 'failed'].includes(st.phase) && was !== st.phase && st.mode === 'versions') {
-            // Nothing was written: the card's kept set is read again and the
-            // first version this round added is shown.
-            // Only when the person is still on the version it was built on:
-            // one they stepped to meanwhile stays on screen.
-            this.loadVersions(t, this.shownKey(t) === st.from ? (st.added || [])[0] : null); haptic('light');
+          if (st.phase === 'done' && was !== 'done' && st.mode === 'versions') {
+            // Nothing was written: show the first version (or the revised one).
+            t.vi = null; haptic('light');
           } else if (st.phase === 'done' && was !== 'done') {
             // The same thing, photographed again once the change has drawn:
             // before and after side by side, and the next turn starts here.
@@ -3118,21 +3032,6 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
       this._swallowClickUntil = performance.now() + 500;
       this.tellAbout(g.scope);
     }, { passive: false });
-    // Marking what is wrong on a version (versionsBox): a touch on the card
-    // points at a part of it and does nothing else (no toggle, slide, open,
-    // hold, or a card module's own listener), and the click names the part.
-    // On the window, in capture, so it is ahead of every other listener.
-    this._markGuard = (e) => {
-      const t = this.s.tell;
-      if (!t || t.kind !== 'card' || !t.marking) return;
-      const el = (e.composedPath ? e.composedPath()[0] : e.target);
-      if (!el || !el.closest || el.getRootNode() !== this.shadowRoot || el.closest('[data-tell]')) return;
-      const tile = el.closest('[data-tile]');
-      if (!tile || tile.getAttribute('data-tile') !== t.id) return;
-      e.stopPropagation();
-      if (e.type === 'click') { e.preventDefault(); this.markAt(el, tile); return; }
-      if (e.type === 'mousedown' || e.type === 'contextmenu' || /^(INPUT|SELECT)$/.test(el.tagName)) e.preventDefault();
-    };
     root.addEventListener('click', (e) => { if (this._swallowClickUntil && performance.now() < this._swallowClickUntil) { e.stopPropagation(); e.preventDefault(); } }, true);
     root.addEventListener('contextmenu', (e) => {
       if (!e.target.closest) return;
@@ -4031,7 +3930,7 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
       case 'tell-sug': { const ta = this.shadowRoot.querySelector('textarea[data-tellkey]'); if (ta) { ta.value = v; this.s.tell.draft = v; ta.focus(); } return; }
       case 'tell-send': { const ta = this.shadowRoot.querySelector('textarea[data-tellkey]'); this.sendTell(ta ? ta.value : ''); return; }
       case 'tell-now': { const ta = this.shadowRoot.querySelector('textarea[data-tellkey]'); this.sendTell(ta ? ta.value : '', 'now'); return; }
-      // versions (versionsBox)
+      // versions (versionsBox, histHtml)
       case 'tell-now-again': {
         // No version could be drawn: the same words as the single change.
         const t = this.s.tell; if (!t) return;
@@ -4040,52 +3939,41 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
       }
       case 'ver-show': {
         const t = this.s.tell; if (!t || performance.now() - (this._vswAt || 0) < 400) return;
-        if (t.show !== v) this.clearMark(t);
-        t.show = v; haptic('selection'); this.schedule(); return;
+        t.vi = Number(v); t.changing = false; haptic('selection'); this.schedule(); return;
       }
       case 'ver-step': this.versionStep(Number(v)); return;
-      case 'ver-use': this.useVersion(v === 'over'); return;
+      case 'ver-hist': {
+        const t = this.s.tell; if (!t || performance.now() - (this._vswAt || 0) < 400) return;
+        t.hi = Number(v) < 0 ? null : Number(v); haptic('selection'); this.schedule(); return;
+      }
+      case 'ver-use': {
+        const t = this.s.tell; const st = (t && t.state) || {}; const i = this.versionIndex(t);
+        const ver = (st.versions || [])[i]; if (!ver || !t.tellId) return;
+        this.useVersion({ round: t.tellId, index: i, ...(v === 'over' ? { over: true } : {}) }, ver.label); return;
+      }
+      case 'ver-fresh': { const t = this.s.tell; if (t && t.text) this.sendVersions(t.text); return; }
+      case 'ver-use-hist': {
+        const t = this.s.tell; const h = t && t.hist && t.hist[t.hi]; if (!h) return;
+        this.useVersion({ card: t.id, at: h.at }, h.label || 'the earlier card'); return;
+      }
       case 'ver-more': {
-        const t = this.s.tell; const ver = this.shownVersion(t); if (!ver) return;
-        this.sendVersions(`More like ${ver.letter} “${ver.label}”`, 'more'); return;
+        const t = this.s.tell; const st = (t && t.state) || {}; const i = this.versionIndex(t);
+        const ver = (st.versions || [])[i]; if (!ver || !t.tellId) return;
+        this.sendVersions(`More like “${ver.label}”`, { id: t.tellId, index: i, how: 'more' }); return;
       }
-      case 'ver-mark': {
+      case 'ver-change': {
         const t = this.s.tell; if (!t) return;
-        t.marking = !t.marking; t.mark = null; haptic('selection'); this.schedule(); return;
+        t.changing = !t.changing; this.schedule();
+        if (t.changing) setTimeout(() => { const i = this.shadowRoot.querySelector('input[data-keep="verchange"]'); if (i) i.focus({ preventScroll: true }); }, 60);
+        return;
       }
-      case 'ver-mark-send': {
-        const t = this.s.tell; const inp = this.shadowRoot.querySelector('input[data-keep="vermark"]');
-        const words = String((inp && inp.value) || '').trim(); if (!t || !t.mark || !words) return;
-        this.sendVersions(words, 'mark', t.mark); return;
+      case 'ver-revise': {
+        const t = this.s.tell; const st = (t && t.state) || {}; const i = this.versionIndex(t);
+        const ver = (st.versions || [])[i]; const inp = this.shadowRoot.querySelector('input[data-keep="verchange"]');
+        const words = String((inp && inp.value) || '').trim(); if (!ver || !t.tellId || !words) return;
+        this.sendVersions(words, { id: t.tellId, index: i, how: 'revise' }); return;
       }
-      case 'ver-remove': {
-        const t = this.s.tell; const ver = this.shownVersion(t); if (!ver || ver.key === t.kept.current) return;
-        let r;
-        try { r = await H.callWS({ type: 'morph/request', kind: 'versions_remove', payload: { card: t.id, key: ver.key } }); } catch (e) { r = { ok: false, error: String(e.message || e) }; }
-        if (!r || !r.ok) { this.toast((r && r.error) || 'Morph could not remove that version.'); return; }
-        // The neighbour is shown next; the removed one can be put back.
-        const i = t.kept.versions.findIndex((x) => x.key === ver.key);
-        t.kept = r; t.gone = { key: ver.key, letter: ver.letter, label: ver.label }; t.used = null;
-        const next = r.versions[Math.min(i, r.versions.length - 1)];
-        t.show = next ? next.key : r.current; this.clearMark(t);
-        haptic('light'); this.schedule(); return;
-      }
-      case 'ver-unremove': {
-        const t = this.s.tell; const key = v || (t && t.gone && t.gone.key); if (!t || !key) return;
-        let r;
-        try { r = await H.callWS({ type: 'morph/request', kind: 'versions_remove', payload: { card: t.id, key, back: true } }); } catch (e) { r = { ok: false, error: String(e.message || e) }; }
-        if (!r || !r.ok) { this.toast((r && r.error) || 'Morph could not put that version back.'); return; }
-        t.kept = r; t.show = key; t.gone = null; this.schedule(); return;
-      }
-      case 'ver-undo': {
-        const t = this.s.tell; if (!t || !t.used || t.used.undone) return;
-        const r = await H.callWS({ type: 'morph/request', kind: 'tell_undo', payload: { id: t.used.id } });
-        if (!r || !r.ok) { this.toast((r && r.error) || 'Morph could not put that back.'); return; }
-        t.used = { ...t.used, undone: true, say: 'Put back. The versions are all still here.' };
-        this.dash = null; this.load();
-        await this.loadVersions(t);
-        t.show = t.kept && t.kept.current; this.schedule(); return;
-      }
+      case 'ver-discard': this.closeTell(); return;
       case 'tell-cancel': this.closeTell(); return;
       case 'tell-refresh': this.dash = null; this.load(); return;
       case 'ask-tell': { const a = this.s.asks.find((x) => x.key === v); if (a) { this.askDrop(a); this.tellDashboard(a.q); } return; }
@@ -4141,7 +4029,7 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
       case 'tell-more': {
         const t = this.s.tell;
         const turns = [...(t.turns || []), { text: t.text, say: (t.state && t.state.say) || '', before: t.shot && t.shot.url, after: t.after }];
-        this.s.tell = { kind: t.kind, id: t.id, label: t.label, entity: t.entity, path: t.path, text: '', sent: false, draft: '', previous: t.tellId, turns, single: t.single };
+        this.s.tell = { kind: t.kind, id: t.id, label: t.label, entity: t.entity, path: t.path, text: '', sent: false, draft: '', previous: t.tellId, turns };
         if (t.kind !== 'code') this.shoot(this.s.tell); // brAIn sees how it looks NOW
         this.schedule(); return;
       }

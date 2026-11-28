@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.45
+
+### Removed
+
+- 5.5.44's card versions change (#820) is taken back out, because the development loop's transcript monitor flagged how it was made (its fixer edited a hand measure under tests/manual). The same change is being redone at once in a fresh pull request (1514).
+
 ## 5.5.44
 
 ### Added
