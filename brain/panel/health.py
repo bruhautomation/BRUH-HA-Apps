@@ -448,7 +448,12 @@ def problems(diag: dict, options: dict | None = None,
     found: list[dict] = []
 
     auth = diag.get("auth") or {}
-    if auth.get("state") == "unreachable":
+    run_problems = _run_problems(diag.get("journal") or {})
+    if any(p["id"] == "network" for p in run_problems):
+        # The connection's own sentence says what this one would: the
+        # sign-in check got no answer because nothing did.
+        pass
+    elif auth.get("state") == "unreachable":
         # The check never got an answer: the network or Claude, not the
         # sign-in. Telling somebody to sign in again here sends them to
         # redo something that works.
@@ -534,41 +539,7 @@ def problems(diag: dict, options: dict | None = None,
                 "battery or a dead automation. Restart the add-on.",
                 "checks_overdue"))
 
-    journal = diag.get("journal") or {}
-    runs = _num(journal.get("runs")) or 0
-    # Claude runs over Claude runs when the payload carries both: the
-    # sentence says "runs", the status strip and ⚙ count `claude_runs`,
-    # and a rate whose numerator and denominator are two different sets
-    # is how a brief came to say 677 of 721 beside a Diagnostics count of
-    # 224 ok.
-    if (isinstance(journal.get("claude_runs"), (int, float))
-            and isinstance(journal.get("claude_failed"), (int, float))):
-        journal = {**journal, "runs": journal["claude_runs"],
-                   "failed": journal["claude_failed"],
-                   "failed_by_outcome":
-                       journal.get("claude_failed_by_outcome") or {}}
-        runs = _num(journal.get("runs")) or 0
-    # `failed` is `journal.is_failure`'s count: a `fallback` still produced
-    # a card and a `rate_limited` run is the account saying wait, and
-    # counting either as a failure is how one evening's session limit read
-    # as "most Claude runs are failing" for a whole day. A payload from
-    # before the count existed keeps the old arithmetic.
-    if isinstance(journal.get("failed"), (int, float)):
-        failures = journal["failed"]
-        failed_by = journal.get("failed_by_outcome") or {}
-    else:
-        failed_by = {o: n for o, n in (journal.get("by_outcome") or {}).items()
-                     if o != "ok"}
-        failures = sum(failed_by.values())
-    if runs >= MIN_RUNS_FOR_RATE and failures / runs >= FAILURE_RATE_DEGRADED:
-        worst = max(failed_by, key=lambda o: failed_by[o], default="error")
-        found.append(_problem(
-            "degraded", "most Claude runs are failing",
-            f"{failures} of {int(runs)} runs in the last day did not "
-            f"succeed, most often '{worst}'. The Diagnostics section under "
-            "the settings dialog lists the last few with their reasons.",
-            "runs"))
-
+    found.extend(run_problems)
     found.extend(_auth_runs(diag, auth))
 
     usage = diag.get("usage") or {}
@@ -590,6 +561,92 @@ def problems(diag: dict, options: dict | None = None,
     order = {s: i for i, s in enumerate(STATES)}
     found.sort(key=lambda p: -order[p["state"]])
     return found
+
+
+def _run_problems(journal: dict) -> list[dict]:
+    """The day's Claude runs, when most of them did not succeed.
+
+    Split three ways, because the remedy is different for each: runs that
+    could not reach Claude (`journal`'s ``network``: the house's internet
+    connection or its DNS, which no setting in brAIn changes), runs that
+    ran out of time, and everything else. A day whose failures were mostly
+    the connection is said as the connection while it lasts, and once a
+    run has reached Claude again it is over: what is left is judged on the
+    runs the connection did not take down.
+    """
+    runs = _num(journal.get("runs")) or 0
+    # Claude runs over Claude runs when the payload carries both: the
+    # sentence says "runs", the status strip and ⚙ count `claude_runs`,
+    # and a rate whose numerator and denominator are two different sets
+    # is how a brief came to say 677 of 721 beside a Diagnostics count of
+    # 224 ok.
+    if (isinstance(journal.get("claude_runs"), (int, float))
+            and isinstance(journal.get("claude_failed"), (int, float))):
+        journal = {**journal, "runs": journal["claude_runs"],
+                   "failed": journal["claude_failed"],
+                   "failed_by_outcome":
+                       journal.get("claude_failed_by_outcome") or {}}
+        runs = _num(journal.get("runs")) or 0
+    # `failed` is `journal.is_failure`'s count: a `fallback` still produced
+    # a card and a `rate_limited` run is the account saying wait, and
+    # counting either as a failure is how one evening's session limit read
+    # as "most Claude runs are failing" for a whole day. A payload from
+    # before the count existed keeps the old arithmetic.
+    if isinstance(journal.get("failed"), (int, float)):
+        failures = int(journal["failed"])
+        failed_by = dict(journal.get("failed_by_outcome") or {})
+    else:
+        failed_by = {o: n for o, n in (journal.get("by_outcome") or {}).items()
+                     if o not in ("ok", "network")}
+        failures = int(sum(failed_by.values()))
+    net_block = journal.get("network") if isinstance(
+        journal.get("network"), dict) else {}
+    net = int(_num(net_block.get("runs")) or 0)
+    if not net_block:
+        net = int(_num((journal.get("by_outcome") or {}).get("network")) or 0)
+    runs = max(runs, failures + net)
+    total = failures + net
+    if runs < MIN_RUNS_FOR_RATE or total / runs < FAILURE_RATE_DEGRADED:
+        return []
+    if net * 2 > total:
+        if not net_block.get("cleared"):
+            return [_problem(
+                "degraded", "the internet connection is not reaching Claude",
+                f"{net} of {int(runs)} runs in the last day could not reach "
+                "Claude because the house's internet connection or its DNS "
+                "was not answering. Nothing is wrong with brAIn or its "
+                "sign-in, and its runs go on by themselves once the "
+                "connection is back; if this lasts, check the router." + (
+                    f" {failures} more failed for other reasons."
+                    if failures else ""),
+                "network")]
+        # The connection is back: judge the rest on the runs it left.
+        runs -= net
+        net = 0
+        total = failures
+        if (runs < MIN_RUNS_FOR_RATE
+                or total / runs < FAILURE_RATE_DEGRADED):
+            return []
+    timeouts = int(_num(failed_by.get("timeout")) or 0)
+    other = {o: n for o, n in failed_by.items() if o != "timeout"}
+    rest = failures - timeouts
+    parts = []
+    if net:
+        parts.append(f"{net} could not reach Claude over the internet "
+                     "connection")
+    if timeouts:
+        parts.append(f"{timeouts} ran out of time")
+    if rest:
+        worst = max(other, key=lambda o: other[o], default="error")
+        parts.append(f"{rest} failed otherwise, most often '{worst}'")
+    split = (", ".join(parts[:-1]) + " and " + parts[-1]
+             if len(parts) > 1 else "".join(parts))
+    return [_problem(
+        "degraded", "most Claude runs are failing",
+        f"{total} of {int(runs)} runs in the last day did not succeed: "
+        f"{split}. The Diagnostics section under the settings dialog lists "
+        "the last few with their reasons.",
+        "runs")]
 
 
 def _auth_runs(diag: dict, auth: dict) -> list[dict]:
