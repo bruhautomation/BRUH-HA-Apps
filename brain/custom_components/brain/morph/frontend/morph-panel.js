@@ -569,6 +569,14 @@ class MorphPanel extends HTMLElement {
 
   brain() { return (this.data && this.data.brain) || {}; }
 
+  // The share of this hour a door or window is usually open (brAIn's door
+  // habits in feed.json), or null when brAIn has not measured it.
+  usualOpen(eid) {
+    if (!this.feedState().usable) return null;
+    const row = (((this.brain().feed || {}).doors) || {})[eid];
+    return row && typeof row.now === 'number' ? row.now : null;
+  }
+
   feedState() {
     const b = this.brain();
     return sal.feedHealth(b.feed, Date.now(), b.feed_mtime ? b.feed_mtime * 1000 : 0);
@@ -2133,7 +2141,7 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
     const name = this.cardName(card, hit.sec);
     const lifted = ms && ms.id === '__now';
     const x = this.salNow(id);
-    const ctx = { hass: hv, card, st, sec: hit.sec, name, open, member: open ? this.s.view.member : null, colour: open ? this.s.view.colour || null : null, spectrum: open ? this.s.view.spectrum || null : null, H: (open && this.s.view.H) || (card.type === 'readings' ? (this.s.rfocus && this.s.rfocus[id] ? { focus: this.s.rfocus[id] } : {}) : {}), preview: this.s.previews[id] != null ? this.s.previews[id] : null, memberPreview: open ? this.s.memberPreview : null, confirm: this.s.confirm[id] && this.s.confirm[id].until > Date.now() ? this.s.confirm[id].text : '', night: this.salApplied && this.salApplied.period === 'night' };
+    const ctx = { hass: hv, card, st, sec: hit.sec, name, open, member: open ? this.s.view.member : null, colour: open ? this.s.view.colour || null : null, spectrum: open ? this.s.view.spectrum || null : null, H: (open && this.s.view.H) || (card.type === 'readings' ? (this.s.rfocus && this.s.rfocus[id] ? { focus: this.s.rfocus[id] } : {}) : {}), preview: this.s.previews[id] != null ? this.s.previews[id] : null, memberPreview: open ? this.s.memberPreview : null, confirm: this.s.confirm[id] && this.s.confirm[id].until > Date.now() ? this.s.confirm[id].text : '', night: this.salApplied && this.salApplied.period === 'night', usualOpen: (e) => this.usualOpen(e) };
     let faceHtml = '', moreHtml = '';
     try {
       ctx.accent = card.color ? hue(card.color) : T.accent(ctx);

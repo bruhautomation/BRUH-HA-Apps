@@ -66,10 +66,11 @@ import rule_record
 log = logging.getLogger("brain.reports")
 
 # Health problems the sweep reports with a row of its own.
-HEALTH_ROWS_OF_THEIR_OWN = frozenset({"restart"})
+HEALTH_ROWS_OF_THEIR_OWN = frozenset({"restart", "network"})
 # Health problems that, alone, are not worth a problem file: a restart owed
-# after an ordinary update (the status line and Repairs already say it).
-NOT_INCIDENTS = frozenset({"restart"})
+# after an ordinary update (the status line and Repairs already say it), and
+# the house's internet connection dropping (its one fault row says it).
+NOT_INCIDENTS = frozenset({"restart", "network"})
 
 REPORTS_DIR = Path(os.environ.get("BRAIN_REPORTS_DIR", "/share/brain/reports"))
 INDEX_FILE = Path(os.environ.get("BRAIN_REPORTS_INDEX", "/data/reports-index.json"))
@@ -665,6 +666,32 @@ def _run_sentence(outcome: str, n: int, when: str, error: str = "") -> str:
     return _sentence(f"{meaning} ({times}{last})", action)
 
 
+def _network_row(out: list, runs) -> bool:
+    """The one row for runs that could not reach Claude, while they still
+    cannot. True when it was written."""
+    net = (runs or {}).get("network") if isinstance(runs, dict) else None
+    if not isinstance(net, dict) or net.get("cleared"):
+        return False
+    n = int(net.get("runs") or 0)
+    if n <= 0:
+        return False
+    when = _clock(net.get("last_at"))
+    times = "once" if n == 1 else f"{n} times"
+    _row(out, "Internet connection", "Claude could not be reached"
+         + (f" ({n} runs)" if n > 1 else ""),
+         f"{times} in the last day" + (f", last at {when}" if when else "")
+         + ". The house's internet connection or its DNS did not answer.",
+         title="Internet connection",
+         sentence=_sentence(
+             f"brAIn could not reach Claude {times} in the last day"
+             + (f", last at {when}" if when else ""),
+             "the house's internet connection or its DNS was not answering, "
+             "which is not brAIn or its sign-in",
+             "its runs go on by themselves once the connection is back; if "
+             "this lasts, check the router"))
+    return True
+
+
 def _faults(diag) -> list[dict]:
     if callable(diag):
         try:
@@ -759,6 +786,13 @@ def _faults(diag) -> list[dict]:
                       "finish in the last day. Nothing to do unless it "
                       "keeps happening.")
 
+    # Runs that could not reach Claude: the house's connection, not a run
+    # that failed, so not a row per source and per card — one DNS outage
+    # filed a fault per source. One row while it lasts, and none once a run
+    # has reached Claude again (`journal.summary`'s ``network``), so an
+    # outage over by the time the loop files files nothing.
+    network_down = _network_row(out, runs)
+
     # Runs the account refused. A usage limit is not a failure — it is
     # absent from `FAILURE_OUTCOMES` on purpose, a window that resets, and
     # it must not turn the health verdict `degraded` — but a day where most
@@ -794,7 +828,10 @@ def _faults(diag) -> list[dict]:
     # Authentication, and the usage tracker's own verdict — different
     # questions, and a 403 on the second says nothing about the first.
     auth = diag.get("auth") or {}
-    if auth.get("state") == "unreachable":
+    if auth.get("state") == "unreachable" and network_down:
+        # The same outage, said on its row above.
+        pass
+    elif auth.get("state") == "unreachable":
         _row(out, "Claude sign-in", "the last check got no answer",
              auth.get("error"),
              sentence="brAIn could not reach Claude to check its sign-in — "
