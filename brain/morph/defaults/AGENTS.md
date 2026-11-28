@@ -153,7 +153,7 @@ wrapper yourself is the same thing:
 | `meter` | `entity` (an energy or water total) | today's total and 7-day bars |
 | `media` | `entity` | now playing, transport · play/pause |
 | `camera` | `entity` | a live still, refreshed |
-| `list` | `entities` (doors, windows, leaks, motion) | an unlocked lock, then open or wet items, first, in rose; a door brAIn knows is usually open now says "open as usual", quiet, after them |
+| `list` | `entities` (doors, windows, leaks, motion) | open or wet items first, in rose |
 | `person` | `entity` | home or away, and since when |
 | `weather` | `entity` | now and the next days |
 | `vacuum` | `entity` | state and battery · start/return |
@@ -403,17 +403,9 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   "All off"), never a longer sentence cut short with an ellipsis. If the
   status does not fit beside the name, it goes on its own line under it,
   and nothing on the button ends in an ellipsis.
-- **A chart's numbers and markers have their own room, and its header is
-  one line.** Axis values ("70°", "50°") sit in a gutter beside the plot or
-  in a row under it, never over the lines, and two labels on one axis never
-  print over each other. Markers (a heating run, a cycle, an event) are
-  spaced at the width the chart is drawn at: where two would touch at 390px,
-  they merge into one marker that says what it holds ("3 runs · 5:31–7:48
-  AM", the runs listed when it is opened), never a smear of dots that cannot
-  be told apart or tapped. A chart's header ("Runs by day · today 1h 2m ·
-  this week 13h") keeps its title and its first figure on one line; the
-  later figures drop out where they do not fit, as a tile's status does,
-  rather than wrapping it onto two lines.
+- **A chart's numbers have their own margin.** Axis values ("70°", "50°")
+  sit in a gutter beside the plot or in a row under it, never over the
+  lines, and two labels on one axis never print over each other.
 - **A sentence written earlier says when, and never contradicts the house
   now.** A card that shows text it did not compose from the states in front
   of it — brAIn's sentence on `sensor.brain_house` (written at its
@@ -427,19 +419,6 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   since"), and ask for a fresh one if the card can; never draw "the garage is
   open" beside a tile that says it is closed. Morph's own story line does
   this with `checkDoorClaims` (`util.js`).
-- **A door the house usually leaves open is calm, and anything unlocked or
-  unusual leads.** A card about doors, windows and locks reads brAIn's door
-  habits before it colours an open door: `this._hass.callWS({type:
-  "morph/load"})` answers `brain.feed.doors`, keyed by entity id, where
-  `now` is the share of this hour that door is usually open (absent when
-  brAIn has not measured it; read it when the card is first drawn and again
-  every few minutes, never on every `hass`). A door open for half the hour
-  or more as usual is drawn like a closed one with "open as usual", listed
-  after everything else that is open, and not counted as needing anybody.
-  An unlocked lock comes first, then an opening that is not usual; the
-  card's headline names that first ("Side door unlocked · 2 doors open as
-  usual"), wraps rather than ending in an ellipsis at 390px, and is rose
-  only for what needs somebody. Morph's own `list` card does this.
 - **An old reading is marked old.** A card that dates its readings ("64.2° ·
   50 min ago") marks one that has not been updated for 30 minutes or more
   as stale (dimmed, with its age in words) so it is never read as a live
@@ -533,28 +512,20 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   saying Off. The helper is the household's record: the sentence says only
   what the helper says, so with the helper Off the card makes no claim that
   something is waiting.
-- **A diagram's labels are 12px or larger as drawn, a state it shows (off,
-  heating) is said at the card's text size, and the labels that act are
+- **A diagram's labels are 11px or larger as drawn, and the ones that act are
   40px targets.** An SVG scaled down by its `viewBox` shrinks its text: work
   the font size out at the width it is drawn at 390px (an 8-unit label in a
   600-unit viewBox drawn 340px wide is 4.5px), or draw the labels as HTML
-  beside the diagram. A word that says what the system is doing ("off",
-  "heating", "fan only") is the card's own text (14px), in HTML beside or
-  over the drawing, never a small label inside it. A label that opens or
-  sets something carries a 40px hit area.
+  beside the diagram. A label that opens or sets something carries a 40px
+  hit area.
 - **A judgement names what it was judged against.** "Low", "high",
   "unusual" or "check the filter" says the usual value beside it ("a 9°
   drop, low: usually about 15°"), taken from a baseline the house has (a
   statistic, its history, a sensor brAIn keeps), never a constant written
   into the card. With no baseline to name, say the figure without the
   judgement.
-- **Everything you can press is a 40px target, a tile's or row's Lock or
-  Unlock button, header icons and chips included, its word never clipped,
-  and a chip that cannot be pressed does not look like one.** A tile's or row's action
-  button (Lock, Unlock, Open, Start) is the press that matters most on the
-  card: give the one class they all share `min-height: 40px`, padding and
-  `line-height: normal` (a fixed `height` or a tight `line-height` cuts the
-  bottom of the word), never a size per card. A scene chip, a mode button, a small text button, the icon
+- **Everything you can press is a 40px target, header icons and chips
+  included, and a chip that cannot be pressed does not look like one.** A scene chip, a mode button, a small text button, the icon
   buttons in a card's header (refresh, a settings or tune icon), a calendar's
   or a person's name chip, a temperature chip, a row that opens a person, a
   reading chip that does something when tapped (a `div` with a click handler

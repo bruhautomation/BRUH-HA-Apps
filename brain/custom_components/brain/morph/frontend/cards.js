@@ -1030,44 +1030,25 @@ export const listWord = (st) => {
 // One row of a list. The BRUH Minecraft server's Online sensor reads the
 // server's status (who is playing, or Offline), and a server that answers is
 // not something open that wants attention.
-// A door or window this house usually has open at this hour (brAIn's door
-// habits, `feed.doors`: the share of this hour it is open) is open as usual:
-// quiet, listed after anything that needs somebody, and not counted as
-// needing them (#1511). Half the hour or more is "usually"; a house with no
-// habits measured (or a host with no feed) reads every open door as before.
-const USUAL_OPEN = 0.5;
-const CLOSURES = ['door', 'window', 'garage_door', 'opening'];
 const listRow = (ctx, e) => {
   const st = ctx.hass.states[e]; const mc = st ? minecraftStatus(ctx.hass, e) : null;
   const [w, on] = mc ? [mc, false] : listWord(st);
-  const act = isActivity(st);
-  const share = on && !act && !mc && st && CLOSURES.includes(st.attributes.device_class) && typeof ctx.usualOpen === 'function' ? ctx.usualOpen(e) : null;
-  const usual = share != null && share >= USUAL_OPEN;
-  // An unlocked lock leads a list that has one: it is the item that matters most.
-  const lock = on && !act && st && st.attributes.device_class === 'lock';
-  return { e, w, on, mc: !!mc, act, usual, lock, name: shortName(friendly(ctx.hass, e), ctx.sec.title), st };
+  return { e, w, on, mc: !!mc, act: isActivity(st), name: shortName(friendly(ctx.hass, e), ctx.sec.title), st };
 };
-// What a row's word is coloured: rose needs somebody, amber is activity, an
-// opening the house usually has open is muted like a closed one.
-const rowTone = (r) => (!r.on || r.usual ? 'var(--quiet)' : r.act ? 'var(--amber)' : 'var(--rose)');
-const rowWord = (r) => (r.usual ? `${r.w} as usual` : r.w);
-// Needs somebody (an unlocked lock first), then activity, then open as usual, then the rest.
-const rowRank = (r) => (!r.on ? 4 : r.usual ? 3 : r.act ? 2 : r.lock ? 0 : 1);
 const list = {
   item: { span: 2, grow: 3, dir: 'down', want: 3 },
   accent: (ctx) => {
     const rows = (ctx.card.entities || []).map((e) => listRow(ctx, e));
-    if (rows.some((r) => r.on && !r.act && !r.usual)) return 'var(--rose)';
-    if (rows.some((r) => r.on && !r.usual)) return 'var(--amber)';
+    if (rows.some((r) => r.on && !r.act)) return 'var(--rose)';
+    if (rows.some((r) => r.on)) return 'var(--amber)';
     return 'var(--indigo)';
   },
   face: (ctx) => {
     const rows = (ctx.card.entities || []).map((e) => listRow(ctx, e));
     // A list with nothing in it is not drawn outside Edit (morph-panel's modelSection); in Edit it says how to fill it, not "All quiet" over no rows.
     if (!rows.length) return `<div class="box" style="box-shadow:inset 0 0 0 1px var(--line);min-height:56px;padding:8px 14px;justify-content:center">${ctx.card.name ? `<b style="font-size:14px">${esc(ctx.name)}</b>` : ''}<span class="small">Nothing in this list yet. Hold it and tell brAIn what to add.</span></div>`;
-    rows.sort((a, b) => (rowRank(a) - rowRank(b)) || (a.act - b.act));
-    const openRows = rows.filter((r) => r.on && !r.usual);
-    const usualRows = rows.filter((r) => r.usual);
+    rows.sort((a, b) => (b.on - a.on) || (a.act - b.act));
+    const openRows = rows.filter((r) => r.on);
     const attention = openRows.filter((r) => !r.act);
     const tone = attention.length ? 'var(--rose)' : openRows.length ? 'var(--amber)' : 'var(--teal)';
     // "All closed" in the kind's own word when every row is one kind.
@@ -1076,21 +1057,20 @@ const list = {
     // The summary counts; it never names a row and repeats its state, because the rows are right under it ("Zone 2 on" over a row that says "Zone 2 · On" said it twice).
     const summary = mc ? rows[0].w : openRows.length
       ? (openRows.length === 1 ? (attention.length ? '1 needs you' : '1 active') : `${openRows.length} of ${rows.length} ${attention.length ? 'need you' : 'active'}`)
-      : usualRows.length ? `${usualRows.length} open as usual`
-        : kinds.size === 1 && rows[0] ? `All ${listWord({ ...rows[0].st, state: 'off' })[0].toLowerCase()}` : 'All quiet';
+      : kinds.size === 1 && rows[0] ? `All ${listWord({ ...rows[0].st, state: 'off' })[0].toLowerCase()}` : 'All quiet';
     // Closed, a list is one 56px row (household, Oct 2026: door cards took a
     // row per sensor to say one thing): an icon, the summary, and each sensor
     // as a short "Name word · time" segment that opens its history.
     if (!ctx.open) {
       const nm = (ctx.card.options && ctx.card.options.names) || {};
       const one = rows.length === 1 && rows[0];
-      const head = one ? `${nm[one.e] || one.name} ${rowWord(one).toLowerCase()}` : summary;
-      const seg = (r) => `<button type="button" class="lseg" data-ctl="1" data-act="member" data-v="${esc(r.e)}" data-member="${esc(r.e)}" aria-pressed="${ctx.member === r.e}">${one ? '' : `${esc(nm[r.e] || r.name)} <span style="color:${rowTone(r)};font-weight:600">${esc(rowWord(r).toLowerCase())}</span> `}${r.st ? esc(since(r.st.last_changed).replace('since ', '')) : ''}</button>`;
-      return `<style>.lseg{all:unset;cursor:pointer;border-radius:6px;white-space:nowrap}.lseg:hover{color:var(--text)}.lseg:focus-visible{outline:2px solid var(--sky)}</style><div class="box" style="box-shadow:inset 0 0 0 1px ${openRows.length ? mix(tone, 35) : 'var(--line)'};min-height:56px;padding:8px 14px;justify-content:center"><div class="row" style="gap:12px">${icon(rows.some((r) => r.st && ['door', 'window', 'garage_door', 'opening'].includes(r.st.attributes.device_class)) ? 'door' : 'shield', { color: tone, active: !!attention.length, size: 20 })}<span class="nv" style="flex:1;min-width:0"><b style="font-size:14px;white-space:normal;color:${openRows.length ? tone : 'var(--text)'}">${esc(head)}</b><span class="small" style="display:flex;flex-wrap:wrap;gap:0 10px">${rows.slice(0, 6).map(seg).join('')}</span></span>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div></div>`;
+      const head = one ? `${nm[one.e] || one.name} ${one.w.toLowerCase()}` : summary;
+      const seg = (r) => `<button type="button" class="lseg" data-ctl="1" data-act="member" data-v="${esc(r.e)}" data-member="${esc(r.e)}" aria-pressed="${ctx.member === r.e}">${one ? '' : `${esc(nm[r.e] || r.name)} <span style="color:${r.on ? (r.act ? 'var(--amber)' : 'var(--rose)') : 'var(--quiet)'};font-weight:600">${esc(r.w.toLowerCase())}</span> `}${r.st ? esc(since(r.st.last_changed).replace('since ', '')) : ''}</button>`;
+      return `<style>.lseg{all:unset;cursor:pointer;border-radius:6px;white-space:nowrap}.lseg:hover{color:var(--text)}.lseg:focus-visible{outline:2px solid var(--sky)}</style><div class="box" style="box-shadow:inset 0 0 0 1px ${openRows.length ? mix(tone, 35) : 'var(--line)'};min-height:56px;padding:8px 14px;justify-content:center"><div class="row" style="gap:12px">${icon(rows.some((r) => r.st && ['door', 'window', 'garage_door', 'opening'].includes(r.st.attributes.device_class)) ? 'door' : 'shield', { color: tone, active: !!attention.length, size: 20 })}<span class="nv" style="flex:1;min-width:0"><b style="font-size:14px;color:${openRows.length ? tone : 'var(--text)'}">${esc(head)}</b><span class="small" style="display:flex;flex-wrap:wrap;gap:0 10px">${rows.slice(0, 6).map(seg).join('')}</span></span>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div></div>`;
     }
     const shown = rows;
     return `<div class="box" style="box-shadow:inset 0 0 0 1px ${openRows.length ? mix(tone, 35) : 'var(--line)'};padding:12px 12px 8px 16px"><div class="rowb">${ctx.card.name ? `<b style="font-size:14px">${esc(ctx.name)}</b>` : ''}<span class="flex1"></span>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}<span style="font-size:13px;font-weight:700;color:${tone}">${esc(summary)}</span></div>
-${shown.map((r) => `<button type="button" class="lrow" data-ctl="1" data-act="member" data-v="${esc(r.e)}" data-member="${esc(r.e)}" aria-pressed="${ctx.member === r.e}" style="padding:0 4px;min-height:44px;align-items:center"><span class="lx"><span>${esc(r.name)}</span></span><span style="font-size:13px;font-weight:600;color:${rowTone(r)}">${esc(rowWord(r))}</span><span class="small">${r.st ? esc(since(r.st.last_changed)) : ''}</span></button>`).join('')}${rows.length > shown.length ? `<span class="small" style="padding:4px">+${rows.length - shown.length} more</span>` : ''}</div>`;
+${shown.map((r) => `<button type="button" class="lrow" data-ctl="1" data-act="member" data-v="${esc(r.e)}" data-member="${esc(r.e)}" aria-pressed="${ctx.member === r.e}" style="padding:0 4px;min-height:44px;align-items:center"><span class="lx"><span>${esc(r.name)}</span></span><span style="font-size:13px;font-weight:600;color:${r.on ? (r.act ? 'var(--amber)' : 'var(--rose)') : 'var(--quiet)'}">${esc(r.w)}</span><span class="small">${r.st ? esc(since(r.st.last_changed)) : ''}</span></button>`).join('')}${rows.length > shown.length ? `<span class="small" style="padding:4px">+${rows.length - shown.length} more</span>` : ''}</div>`;
   },
   more: (ctx) => {
     if (!ctx.member) return '';

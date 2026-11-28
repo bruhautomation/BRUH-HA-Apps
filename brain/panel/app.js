@@ -14283,7 +14283,7 @@ function speakAll(root) {
   const walk = (node) => {
     if (node.nodeType === 3) { speakNode(node); return; }
     if (node.nodeType !== 1) return;
-    if (node.closest && node.closest(".wordmark, .brandlink, [data-product], [data-own-words]")) return;
+    if (node.closest && node.closest(".wordmark, .brandlink, [data-product]")) return;
     // A box's placeholder, label and tooltip are the page's words even though
     // what is typed in it (its value and its text) never is: the attributes
     // are spoken for every element, the children only where they are page text.
@@ -14302,13 +14302,13 @@ function speakAll(root) {
       if (rec.type === "characterData") {
         const n = rec.target;
         const p = n.parentElement;
-        if (p && !SPEAK_SKIP.has(p.tagName) && !p.closest("code, pre, textarea, .brandlink, [data-own-words]")) speakNode(n);
+        if (p && !SPEAK_SKIP.has(p.tagName) && !p.closest("code, pre, textarea, .brandlink")) speakNode(n);
       } else if (rec.type === "attributes") {
         if (!rec.target.closest(".wordmark, [data-product]")) speakAttr(rec.target, rec.attributeName);
       } else {
         rec.addedNodes.forEach((n) => {
           const p = n.parentElement;
-          if (p && (SPEAK_SKIP.has(p.tagName) || p.closest("code, pre, textarea, [data-own-words]"))) return;
+          if (p && (SPEAK_SKIP.has(p.tagName) || p.closest("code, pre, textarea"))) return;
           speakAll(n);
         });
       }
