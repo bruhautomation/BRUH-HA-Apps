@@ -2,6 +2,19 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.40
+
+### Changed
+
+- When most failed runs are the internet connection, Health says the connection is not reaching Claude instead of "most Claude runs are failing", and stops saying so once a run gets through again; on any other bad day it splits failed runs into "could not reach Claude", "ran out of time" and "failed otherwise" (1498, 1500).
+
+### Fixed
+
+- brAIn tries a card, insight or other read-only run once more after a short pause when the house's internet connection or DNS could not reach Claude; a run that may change the house is never repeated (1500).
+- A run that timed out because Claude could not be reached is recorded as a network failure, not a timeout, and files no fault of its own (1490, 1497).
+- An internet outage is one "Internet connection" fault while it lasts, not one per card, insight or Resident run, and nothing is filed once the connection is back (1495, 1496).
+- One failed usage-figures check during an internet hiccup no longer raises Health or files a report; it is reported only if it keeps failing for an hour and a half (1489, 1493).
+
 ## 5.5.39
 
 ### Fixed
