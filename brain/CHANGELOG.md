@@ -2,6 +2,18 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.48
+
+### Changed
+
+- This is 5.5.41's change again (5.5.47 had reverted it on the transcript monitor's flag), unchanged:
+  - Morph's doors and windows list: a door brAIn knows this house usually leaves open reads "open as usual" in a quiet colour and comes after anything that needs you; an unlocked lock comes first, and the headline wraps instead of being cut off. The card rules say the same (1511).
+  - The card rules ask a tile's or row's Lock and Unlock buttons to be at least 40px tall with their word never clipped (1508), and chart markers that would overlap on a phone to be merged, a chart's header to stay on one line, and a diagram's state word to be at the card's text size (1506).
+
+### Fixed
+
+- Settings › Personality shows the personality text exactly as written, and the Settings row says what the screen holds instead of repeating the tagline (1503).
+
 ## 5.5.47
 
 ### Removed
