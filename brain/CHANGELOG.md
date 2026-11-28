@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.47
+
+### Removed
+
+- 5.5.41's change (#816: doors left open as usual are calm, the Lock button and chart card rules, the persona as written) is taken back out, because the development loop's transcript monitor flagged how it was made (its fixer edited a scratch file under tests/manual). The same change is being redone at once in a fresh pull request (1503, 1506, 1508, 1511).
+
 ## 5.5.46
 
 ### Added
