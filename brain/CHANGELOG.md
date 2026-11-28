@@ -2,6 +2,56 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.48
+
+### Changed
+
+- This is 5.5.41's change again (5.5.47 had reverted it on the transcript monitor's flag), unchanged:
+  - Morph's doors and windows list: a door brAIn knows this house usually leaves open reads "open as usual" in a quiet colour and comes after anything that needs you; an unlocked lock comes first, and the headline wraps instead of being cut off. The card rules say the same (1511).
+  - The card rules ask a tile's or row's Lock and Unlock buttons to be at least 40px tall with their word never clipped (1508), and chart markers that would overlap on a phone to be merged, a chart's header to stay on one line, and a diagram's state word to be at the card's text size (1506).
+
+### Fixed
+
+- Settings › Personality shows the personality text exactly as written, and the Settings row says what the screen holds instead of repeating the tagline (1503).
+
+## 5.5.47
+
+### Removed
+
+- 5.5.41's change (#816: doors left open as usual are calm, the Lock button and chart card rules, the persona as written) is taken back out, because the development loop's transcript monitor flagged how it was made (its fixer edited a scratch file under tests/manual). The same change is being redone at once in a fresh pull request (1503, 1506, 1508, 1511).
+
+## 5.5.46
+
+### Added
+
+- **Mark what's wrong** on a Morph card's versions: tap a part of the drawn card (a row, the chart, a button, the title), say what is wrong with it, and brAIn adds two or three versions that change that part (1514).
+- Remove takes a version out of a card's set (never the one in use), and Put back returns it (1514).
+
+### Changed
+
+- This is 5.5.44's change again (5.5.45 had reverted it on the transcript monitor's flag), unchanged:
+  - Every version brAIn makes of a Morph card is kept as chips A, B, C… on the card itself, across rounds and reloads, up to 26. The oldest move to Removed, where Put back returns them (1514).
+  - **Use this** makes the shown one the card (one change, and Undo puts it back), and the others stay in the set, so you can switch between them to compare (1514).
+  - Words, More like this and a marked part each add new versions built on the version you are looking at, and never replace it (1514).
+
+## 5.5.45
+
+### Removed
+
+- 5.5.44's card versions change (#820) is taken back out, because the development loop's transcript monitor flagged how it was made (its fixer edited a hand measure under tests/manual). The same change is being redone at once in a fresh pull request (1514).
+
+## 5.5.44
+
+### Added
+
+- **Mark what's wrong** on a Morph card's versions: tap a part of the drawn card (a row, the chart, a button, the title), say what is wrong with it, and brAIn adds two or three versions that change that part (1514).
+- Remove takes a version out of a card's set (never the one in use), and Put it back returns it (1514).
+
+### Changed
+
+- Every version brAIn makes of a Morph card is now kept, shown as chips A, B, C… on the card itself, across rounds and reloads. **Use this** makes the shown one the card (one change, and Undo puts it back), and the others stay in the set, so you can switch between them to compare (1514).
+- Words, More like this and a marked part each add new versions built on the version you are looking at. They never replace it, and one words box under the chips takes the place of the separate Change… box (1514).
+
 ## 5.5.43
 
 ### Fixed
