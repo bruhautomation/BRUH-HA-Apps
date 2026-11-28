@@ -218,25 +218,45 @@ const state = {
 
 // ---------------------------------------------------------------- helpers
 
+// How long a screen's first read may take before it says it could not
+// load. A request on a flaky network can hang without ever failing, and a
+// screen waiting on it said "Loading…" for good.
+const LOAD_TIMEOUT_MS = 15000;
+
 async function api(path, opts = {}) {
-  // A 503 carrying `starting` is the panel's own starting gate: the route
-  // never ran, so the request is simply asked again a moment later —
-  // a POST included — rather than shown to somebody as an error.
-  for (let attempt = 0, wait = 1000; ; attempt++, wait *= 2) {
-    const resp = await fetch(path.replace(/^\//, ""), {
-      headers: { "Content-Type": "application/json" },
-      ...opts,
-    });
-    if (resp.status === 503 && attempt < 5) {
-      let starting = false;
-      try { starting = !!(await resp.clone().json()).starting; } catch (e) { /* not ours */ }
-      if (starting) {
-        await new Promise((r) => setTimeout(r, wait));
-        continue;
+  // `timeout` (ms) is opt-in: the request is abandoned when it runs out,
+  // waits for the starting gate included, and the error says so — so the
+  // screen waiting on it reaches an ending instead of "Loading…" forever,
+  // and the browser's few connections to the panel are not held by it.
+  const { timeout, ...init } = opts;
+  const ctrl = timeout ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), timeout) : 0;
+  try {
+    // A 503 carrying `starting` is the panel's own starting gate: the route
+    // never ran, so the request is simply asked again a moment later —
+    // a POST included — rather than shown to somebody as an error.
+    for (let attempt = 0, wait = 1000; ; attempt++, wait *= 2) {
+      const resp = await fetch(path.replace(/^\//, ""), {
+        headers: { "Content-Type": "application/json" },
+        ...init,
+        ...(ctrl ? { signal: ctrl.signal } : {}),
+      });
+      if (resp.status === 503 && attempt < 5) {
+        let starting = false;
+        try { starting = !!(await resp.clone().json()).starting; } catch (e) { /* not ours */ }
+        if (starting) {
+          await new Promise((r) => setTimeout(r, wait));
+          continue;
+        }
       }
+      if (!resp.ok) throw new Error((await resp.text()) || `HTTP ${resp.status}`);
+      return await resp.json();
     }
-    if (!resp.ok) throw new Error((await resp.text()) || `HTTP ${resp.status}`);
-    return resp.json();
+  } catch (e) {
+    if (ctrl && ctrl.signal.aborted) throw new Error("It took too long to answer.");
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -605,6 +625,13 @@ function renderAuth() {
     text.textContent = "Claude auth failed";
     chip.classList.add("bad");
     chip.title = s.auth_check.error || "Claude auth failed";
+  } else if (s.auth_check.state === "unreachable") {
+    // No answer is not a refusal: the network or Claude, never the sign-in.
+    text.textContent = "Can't reach Claude";
+    chip.classList.add("warn");
+    chip.title = "The last sign-in check got no answer"
+      + (s.auth_check.error ? ` (${s.auth_check.error})` : "")
+      + ". brAIn checks again by itself.";
   } else {
     settled = true;
     text.textContent = s.auth_source === "shared" ? "Claude · shared login"
@@ -4462,10 +4489,13 @@ function renderDiagnostics(d) {
 async function loadDiagnostics() {
   $("#diagBody").textContent = "Loading…";
   try {
-    renderDiagnostics(await api("api/diagnostics"));
+    renderDiagnostics(await api("api/diagnostics", { timeout: LOAD_TIMEOUT_MS }));
   } catch (e) {
+    // An ending, never "Loading…" for good: Recheck, just below, is the
+    // way to ask again.
     diagPayload = null;
-    $("#diagBody").textContent = "Could not read diagnostics: " + e.message;
+    const why = String(e.message || "no answer").trim().slice(0, 200).replace(/\.$/, "");
+    $("#diagBody").textContent = `Couldn't load this (${why}). Press Recheck to try again.`;
   }
   // The nightly pass may be running right now, in which case the button
   // has to say so rather than offer a press that answers 409.
@@ -5670,7 +5700,11 @@ function renderRehearsal(d) {
     // A developer's tool every household sees: a quiet "Last rehearsed N
     // days ago", with what it found then said only while it is recent — an
     // old verdict is history, behind the fold (#1299), never a bold warning.
-    sum.textContent = old ? `Last rehearsed ${resultAge(last.finished_at)}.`
+    // An old date alone left somebody asking whether it mattered (#1504):
+    // it says so — nothing is wrong, and another run is worth it.
+    sum.textContent = old
+      ? `Last rehearsed ${resultAge(last.finished_at)} — nothing is wrong, `
+        + "but it is worth another run to see the checks still catch problems."
       : `Last rehearsed ${resultAge(last.finished_at)}: ${said}.`;
     sum.classList.toggle("bad", bad && !old);
     sum.classList.remove("old");
@@ -5681,7 +5715,7 @@ function renderRehearsal(d) {
   // "Details", never a fold whose whole content is another fold (#1120).
   body.innerHTML = rows.length
     ? detailsFold(rows.join("") + detailsFold(tech.join(""), "Details"),
-      (c.rows || []).length ? `Each test problem (${c.rows.length})` : "What went wrong")
+      (c.rows || []).length ? `The ${c.rows.length} test problems it added, and what the checks said` : "What went wrong")
     : detailsFold(tech.join(""), "Details");
   body.hidden = !rows.length && !tech.length;
   const step = (d.progress || {}).step;
@@ -5818,6 +5852,9 @@ function renderAuthBox(a) {
   const verdict = {
     ok: ["ok", "Verified with Claude."],
     failed: ["bad", "Claude rejected it: " + (c.error || "no reason given")],
+    unreachable: ["warn", "Couldn't reach Claude to check it"
+      + (c.error ? ` (${c.error})` : "") + ". This is the network, not the "
+      + "sign-in; brAIn checks again by itself."],
     checking: ["busy", "Verifying with Claude…"],
     unchecked: ["", "Not verified yet. Recheck asks Claude now."],
   }[c.state] || ["", "Not verified yet."];
@@ -9166,11 +9203,15 @@ async function tellTodo(item, text) {
 
 async function refreshHistory() {
   const [history, changes] = await Promise.all([
-    api("api/history").catch((e) => ({ __error: e.message })),
-    api("api/changes").catch(() => null),
+    api("api/history", { timeout: LOAD_TIMEOUT_MS }).catch((e) => ({ __error: e.message })),
+    api("api/changes", { timeout: LOAD_TIMEOUT_MS }).catch(() => null),
   ]);
+  // A failed read keeps what is already on screen; with nothing on screen
+  // it is the error, which `renderHistory` says with a Try again.
   if (history && !history.__error) todayState.history = history;
-  else todayState.history = todayState.history || { filters: [], rows: {}, error: (history || {}).__error };
+  else if (!todayState.history || todayState.history.error) {
+    todayState.history = { filters: [], rows: {}, error: (history || {}).__error || "no answer" };
+  }
   // Changes brAIn made (#453): one route serves the list (`/api/changes`),
   // newest first, each row with its own Undo or the reason it has none.
   if (changes) todayState.changes = changes;
@@ -9234,9 +9275,23 @@ function renderHistory() {
   list.textContent = "";
   const hint = $("#histHint");
   const clearBtn = $("#histClear");
-  if (!data) {
-    list.appendChild(el("p", "empty-line", "Loading…"));
+  if (!data || data.error) {
     if (clearBtn) clearBtn.hidden = true;
+    if (!data) {
+      list.appendChild(el("p", "empty-line", "Loading…"));
+      return;
+    }
+    // The read failed or never answered: say so, with the one way on.
+    const line = el("p", "empty-line", "Couldn't load your history.");
+    const again = qButton("Try again", false);
+    again.type = "button";
+    again.addEventListener("click", () => {
+      todayState.history = null;
+      renderHistory();
+      refreshHistory().then(renderHistory);
+    });
+    line.appendChild(again);
+    list.appendChild(line);
     return;
   }
   // Land on the first filter that holds something, rather than an empty

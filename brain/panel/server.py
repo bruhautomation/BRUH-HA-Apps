@@ -1225,6 +1225,14 @@ AUTH_CHECK: dict = {"state": "unchecked", "error": "", "checked_at": 0,
 # A *failed* verdict ages out too: somebody who fixes their login in the
 # terminal should not have to restart the add-on for the panel to notice.
 AUTH_RECHECK_S = int(os.environ.get("BRAIN_AUTH_RECHECK_S", 6 * 3600))
+AUTH_UNREACHABLE_RECHECK_S = 10 * 60
+# The words a sign-in check that never reached Claude ends with: DNS, a
+# refused or reset connection, no route. Not the credential's answer.
+_NETWORK_RE = re.compile(
+    r"ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|"
+    r"EHOSTUNREACH|getaddrinfo|fetch failed|network error|socket hang up|"
+    r"connection (?:error|refused|reset)|unable to connect|could not resolve",
+    re.IGNORECASE)
 
 
 ACTIVE_STATES = ("queued", "collecting", "generating", "parsing", "planning",
@@ -9514,10 +9522,19 @@ async def _check_auth_bg() -> None:
         # never to sign in again. Read as "failed" it told somebody to
         # redo a sign-in that was working, from every surface that reads
         # this verdict (health, the status line, the fault rows).
-        limited = (not result["ok"] and journal.classify(
-            {"ok": False, "error": error}) == "rate_limited")
+        outcome = ("ok" if result["ok"] else
+                   journal.classify({"ok": False, "error": error}))
+        limited = outcome == "rate_limited"
+        # A check that never got an answer — timed out, or the network
+        # could not reach Claude — says nothing about the credential. Read
+        # as "failed" it put "Claude is not signed in, sign in again" on
+        # Health while the house's DNS was down and the sign-in was fine.
+        # It is its own state, rechecked soon, and never a sign-out.
+        unreachable = (not result["ok"] and not limited
+                       and (outcome == "timeout" or _NETWORK_RE.search(error)))
         AUTH_CHECK.update(
-            state="ok" if result["ok"] or limited else "failed",
+            state=("ok" if result["ok"] or limited
+                   else "unreachable" if unreachable else "failed"),
             error="" if limited else error,
             limited=journal.scrub(error)[:200] if limited else "",
             checked_at=time.time(),
@@ -9563,10 +9580,14 @@ def _auth_verdict_is_stale(now: float | None = None) -> bool:
     An unchecked or in-flight state is not stale — the first has no verdict
     to age and the second is already earning one.
     """
-    if AUTH_CHECK["state"] not in ("ok", "failed") or AUTH_CHECK.get("running"):
+    state = AUTH_CHECK["state"]
+    if state not in ("ok", "failed", "unreachable") or AUTH_CHECK.get("running"):
         return False
     now = time.time() if now is None else now
-    return now - (AUTH_CHECK["checked_at"] or 0) >= AUTH_RECHECK_S
+    # An unreachable check is no verdict, so it is earned again soon rather
+    # than standing for six hours.
+    every = AUTH_UNREACHABLE_RECHECK_S if state == "unreachable" else AUTH_RECHECK_S
+    return now - (AUTH_CHECK["checked_at"] or 0) >= every
 
 
 # ---------------------------------------------------------------------------

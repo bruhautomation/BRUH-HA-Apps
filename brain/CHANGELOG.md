@@ -2,6 +2,18 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.39
+
+### Fixed
+
+- A Claude sign-in check that got no answer (a timeout, or the network could not reach Claude) no longer says "Claude is not signed in — sign in again" and no longer turns Health to failed. It is its own state, "Can't reach Claude", says it is the network and not the sign-in, and is checked again within ten minutes rather than six hours (1491, 1492, 1498).
+- Insights › History and Diagnostics › Right now no longer stay on "Loading…" for good when a request never answers: after 15 seconds they say they could not load, with Try again (History) or Recheck (Diagnostics), and a failed History read no longer looks like an empty history (1505).
+- The add-on's log no longer carries four "bashio::addon.version is deprecated" warnings at every start.
+
+### Changed
+
+- Settings › Developer: an old rehearsal says nothing is wrong and that another run is worth it, instead of a bare "Last rehearsed 73 days ago", and its fold is named for what it holds (1504).
+
 ## 5.5.38
 
 ### Changed

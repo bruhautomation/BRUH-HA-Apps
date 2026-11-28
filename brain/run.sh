@@ -11,6 +11,17 @@ set -o pipefail
 # Environment Initialization
 # ============================================================================
 
+# The add-on's version. `bashio::addon.version` is deprecated and logs a
+# WARNING on every call (four lines of every log excerpt a house sends), so
+# the new name is asked first and the old one only by a bashio without it.
+brain_version() {
+    if declare -F bashio::app.version >/dev/null; then
+        bashio::app.version 2>/dev/null
+    else
+        bashio::addon.version 2>/dev/null
+    fi
+}
+
 # Helper: Replace a real directory with a symlink, salvaging any files first.
 # This is needed because the Claude Code installer may create real directories
 # at paths we need to symlink to persistent storage. `ln -sfn` cannot replace
@@ -2056,7 +2067,7 @@ send_discovery_message() {
 
     # Build the discovery config payload with add-on metadata
     local addon_version
-    addon_version=$(bashio::addon.version 2>/dev/null || echo "1.2.0")
+    addon_version=$(brain_version || echo "1.2.0")
     local config
     config=$(bashio::var.json \
         addon "brain" \
@@ -2198,7 +2209,7 @@ start_morph() {
     export MORPH_HEALTH_PORT=8096
     export MORPH_LOG_LEVEL="$(bashio::config 'log_level' 'info')"
     if [ -z "${ADDON_VERSION:-}" ]; then
-        ADDON_VERSION="$(bashio::addon.version 2>/dev/null || echo 'dev')"
+        ADDON_VERSION="$(brain_version || echo 'dev')"
         export ADDON_VERSION
     fi
     mkdir -p "${MORPH_DATA}" "${MORPH_SHARED}"
@@ -2666,7 +2677,7 @@ start_panel() {
     chmod 700 "$BRAIN_SECRETS"
 
     if bashio::supervisor.ping 2>/dev/null; then
-        export ADDON_VERSION="$(bashio::addon.version 2>/dev/null || echo 'dev')"
+        export ADDON_VERSION="$(brain_version || echo 'dev')"
     else
         export ADDON_VERSION="dev"
     fi
@@ -2710,7 +2721,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  brAIn v$(bashio::addon.version 2>/dev/null || echo '1.0.0')"
+    bashio::log.info "  brAIn v$(brain_version || echo '1.0.0')"
     bashio::log.info "  Your home's brain — terminal, insights, memory"
     bashio::log.info "============================================"
 

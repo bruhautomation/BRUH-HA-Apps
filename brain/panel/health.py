@@ -448,7 +448,18 @@ def problems(diag: dict, options: dict | None = None,
     found: list[dict] = []
 
     auth = diag.get("auth") or {}
-    if auth.get("state") not in (None, "ok", "checking"):
+    if auth.get("state") == "unreachable":
+        # The check never got an answer: the network or Claude, not the
+        # sign-in. Telling somebody to sign in again here sends them to
+        # redo something that works.
+        found.append(_problem(
+            "degraded", "brAIn could not reach Claude",
+            "The last sign-in check got no answer, which is the network or "
+            "Claude being slow, not the sign-in. brAIn checks again by "
+            "itself within a few minutes." + (
+                f" ({auth['error']})" if auth.get("error") else ""),
+            "auth"))
+    elif auth.get("state") not in (None, "ok", "checking"):
         found.append(_problem(
             "failed", "Claude is not signed in",
             "Nothing that needs a Claude turn can run — insights, the chat, "

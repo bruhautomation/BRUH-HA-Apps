@@ -1970,6 +1970,7 @@ body.modal-open {
 .authverdict.ok { color: var(--good-ink); }
 .authverdict.bad { color: var(--critical-ink); }
 .authverdict.busy { color: var(--warning-ink); }
+.authverdict.warn { color: var(--warning-ink); }
 /* All three stores, always — the panel used to be able to see only its own,
    which is how it reported somebody's working terminal login as nothing. */
 .authstores { margin: var(--sp-2) 0 0; padding: 0; list-style: none; font-size: var(--fs-meta); }
