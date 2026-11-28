@@ -61,7 +61,8 @@ from .const import (
 WRITE_KINDS = ("save", "save_yaml", "undo_commit", "restore", "history", "tell", "tell_undo",
                "tell_answer", "tell_issue", "settings", "suggestion", "learn_now", "regenerate", "lessons",
                "code_reset", "code_redo", "code_merge_all", "report", "report_withdraw",
-               "converse", "habit", "lesson_add", "convert", "versions", "versions_history", "versions_use")
+               "converse", "habit", "lesson_add", "convert", "versions", "versions_history", "versions_use",
+               "versions_remove")
 BRAIN_FILES = ("findings_state.json", "situation.json", "status.json", "morph/cases.json", "morph/feed.json",
                "features.json")
 BRAIN_MORPH = BRAIN_SHARED / "morph"
