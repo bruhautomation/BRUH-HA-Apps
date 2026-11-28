@@ -2,6 +2,20 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.46
+
+### Added
+
+- **Mark what's wrong** on a Morph card's versions: tap a part of the drawn card (a row, the chart, a button, the title), say what is wrong with it, and brAIn adds two or three versions that change that part (1514).
+- Remove takes a version out of a card's set (never the one in use), and Put back returns it (1514).
+
+### Changed
+
+- This is 5.5.44's change again (5.5.45 had reverted it on the transcript monitor's flag), unchanged:
+  - Every version brAIn makes of a Morph card is kept as chips A, B, C… on the card itself, across rounds and reloads, up to 26. The oldest move to Removed, where Put back returns them (1514).
+  - **Use this** makes the shown one the card (one change, and Undo puts it back), and the others stay in the set, so you can switch between them to compare (1514).
+  - Words, More like this and a marked part each add new versions built on the version you are looking at, and never replace it (1514).
+
 ## 5.5.45
 
 ### Removed
