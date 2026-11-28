@@ -87,6 +87,47 @@ export function setLanes(list) {
 }
 const runWord = (g, st) => g.word || (g.attr ? String((st && st.attributes && st.attributes[g.attr]) || 'running').replace(/_/g, ' ') : 'running');
 
+// What a running machine says about its own job: progress, time left and when
+// it began, from its attributes or the sensors of the same device (a
+// printer's print progress, remaining time, start and end time). The strip
+// has no past, so the run's own start is not known from the recorder; a
+// printer 56% through a job read "0 min so far" (house report).
+const num = (v) => { const n = parseFloat(v); return isFinite(n) ? n : null; };
+const toMin = (v, unit) => { const n = num(v); if (n == null) return null; const u = String(unit || 'min').toLowerCase(); return u === 'h' ? n * 60 : u === 's' ? n / 60 : u === 'd' ? n * 1440 : n; };
+function jobOf(H, eid, now) {
+  const S = (H && H.states) || {}; const reg = (H && H.entities) || {};
+  const st = S[eid]; const a = (st && st.attributes) || {}; const job = {};
+  const pa = num(a.progress != null ? a.progress : a.print_progress != null ? a.print_progress : a.job_progress);
+  if (pa != null) job.pct = pa;
+  const la = a.remaining_time != null ? a.remaining_time : a.time_remaining;
+  if (la != null) job.left = toMin(la, 'min');
+  const own = reg[eid];
+  const sibs = own && own.device_id ? Object.keys(reg).filter((e) => e !== eid && reg[e].device_id === own.device_id && domainOf(e) === 'sensor') : [];
+  sibs.forEach((e) => {
+    const s = S[e]; if (!s || BLANK.includes(s.state)) return;
+    const sa = s.attributes || {}; const id = e.split('.')[1];
+    if (job.pct == null && sa.unit_of_measurement === '%' && /progress/.test(id)) job.pct = num(s.state);
+    else if (sa.device_class === 'timestamp') {
+      const t = Date.parse(s.state); if (!t) return;
+      if (job.start == null && /start/.test(id) && t <= now) job.start = t;
+      else if (job.left == null && /(end|finish)/.test(id) && t > now) job.left = (t - now) / 60000;
+    } else if (job.left == null && /(remaining|time_left)/.test(id)) job.left = toMin(s.state, sa.unit_of_measurement);
+  });
+  if (job.pct != null && !(job.pct > 0 && job.pct <= 100)) delete job.pct;
+  if (job.left != null && !(job.left >= 0)) delete job.left;
+  return job;
+}
+// The live line of a run: its progress and time left, else how long it has
+// run when its real start is known, else nothing (never a made-up "0 min so far").
+function liveLine(e, now) {
+  const j = e.job || {}; const bits = [];
+  if (j.pct != null) bits.push(`${Math.round(j.pct)}%`);
+  if (j.left != null) bits.push(`${dur(j.left)} left`);
+  if (!bits.length && e.since && now - e.since >= 60000) bits.push(`${dur((now - e.since) / 60000)} so far`);
+  return bits.join(' \u00b7 ');
+}
+const liveRel = (e, now) => (e.since ? `since ${clock(e.since)}` : e.job && e.job.left != null ? `until ${clock(now + e.job.left * 60000)}` : 'now');
+
 // Past runs, read from the recorder for the last day and kept for five
 // minutes; what is running now comes from the live state.
 const RUNS = { at: 0, pending: false, data: {}, failed: false };
@@ -279,7 +320,9 @@ export function collect(H, now, extra) {
     const last = runs[runs.length - 1];
     if (live && !(last && last[3])) runs.push([Math.max(Date.parse(st.last_changed) || now, lo), now, runWord(g, st), true]);
     if (!live && last && last[3]) { last[3] = false; last[1] = Math.min(last[1], Date.parse(st.last_changed) || last[1]); }
-    runs.forEach(([a, b, word, running, clip]) => out.push({ at: a, end: running ? Math.max(b, now) + 1 : b, label: nm, kind: 'device', lane: 'dev:' + g.id, solid: true, eid, running, word, clip: !!clip, sub: running ? `${word} now` : word }));
+    const job = live ? jobOf(H, eid, now) : null;
+    const since = live ? (job.start || Date.parse(st.last_changed) || null) : null;
+    runs.forEach(([a, b, word, running, clip]) => out.push({ at: a, end: running ? Math.max(b, now) + 1 : b, label: nm, kind: 'device', lane: 'dev:' + g.id, solid: true, eid, running, word, clip: !!clip, sub: running ? `${word} now` : word, ...(running ? { job, since } : {}) }));
   }));
   // Anything a caller adds (`extra`) that is past, or a routine's usual time.
   (extra || []).forEach((e) => { if (e && e.at > 0 && (e.at <= now || e.kind === 'usual')) out.push(e); });
@@ -485,9 +528,9 @@ export function reading(m, c) {
     const d = over[0];
     if (d.kind === 'device') {
       const live = d.running && c >= -1;
-      return { hit: true, t: d.t, items: over, when: live ? NOW : when(m, d.t), rel: live ? `since ${clock(m.base + d.t * 60000)}` : rel(d.t),
+      return { hit: true, t: d.t, items: over, when: live ? NOW : when(m, d.t), rel: live ? liveRel(d, m.base) : rel(d.t),
         color: d.color, solid: true, name: over.map((x) => x.label).join(' · '), eid: over.length > 1 ? '' : d.eid || '',
-        extra: live ? `${d.word} · ${dur(-d.t)} so far` : `${d.word} ${dur(d.t2 - d.t)} · until ${clock(m.base + d.t2 * 60000)}` };
+        extra: live ? [d.word, liveLine(d, m.base)].filter(Boolean).join(' · ') : `${d.word} ${dur(d.t2 - d.t)} · until ${clock(m.base + d.t2 * 60000)}` };
     }
     const running = d.t <= 0 && c <= 0.5;
     return { hit: true, t: d.t, items: over, when: running ? NOW : when(m, d.t), rel: running ? 'until ' + clock(m.base + d.t2 * 60000) : rel(d.t),
@@ -518,9 +561,9 @@ export function selReading(m) {
   const items = selItems(m);
   if (!items.length) return { hit: false, items: [], when: NOW, rel: clock(m.base), color: '', solid: true, name: '', eid: '', extra: '' };
   const f = items[0]; const live = f.running && f.t2 != null;
-  return { hit: true, t: f.t, items, when: live ? NOW : when(m, f.t), rel: live ? `since ${clock(m.base + f.t * 60000)}` : rel(f.t), color: f.color, solid: f.solid !== false,
+  return { hit: true, t: f.t, items, when: live ? NOW : when(m, f.t), rel: live ? liveRel(f, m.base) : rel(f.t), color: f.color, solid: f.solid !== false,
     name: items.map((i) => (i.kind === 'calendar' && i.more && i.more.title) || i.label).join(' · '), eid: items.length > 1 ? '' : f.eid || '',
-    extra: f.t2 != null ? (live ? `${f.word || 'running'} · ${dur(-f.t)} so far` : `${clock(m.base + f.t * 60000)} – ${clock(m.base + f.t2 * 60000)} · ${dur(f.t2 - f.t)}`) : [f.sub, KINDS[f.kind] && KINDS[f.kind].word].filter(Boolean).join(' · ') };
+    extra: f.t2 != null ? (live ? [f.word || 'running', liveLine(f, m.base)].filter(Boolean).join(' · ') : `${clock(m.base + f.t * 60000)} – ${clock(m.base + f.t2 * 60000)} · ${dur(f.t2 - f.t)}`) : [f.sub, KINDS[f.kind] && KINDS[f.kind].word].filter(Boolean).join(' · ') };
 }
 // Where on the expanded strip a tap landed: the lane by its name's row, the
 // time by the track itself; the nearest bar or dot in that lane, if close.
@@ -613,7 +656,7 @@ function detailHtml(m, r, c) {
     const src = e.kind === 'calendar' ? (mo.who ? `${mo.who} · calendar` : 'Calendar') : g ? g.label : e.kind === 'timer' ? 'Timer' : e.kind === 'done' ? 'Finishing' : e.kind === 'date' ? 'Date' : e.kind === 'usual' ? 'Usually about now' : e.kind === 'past' ? 'Happened' : e.kind === 'sun' || e.kind === 'moon' ? 'Sky' : '';
     const title = e.kind === 'calendar' && mo.title ? mo.title : e.label;
     const t2 = e.t2 != null ? e.t2 : null;
-    const span = t2 != null ? (e.clip ? (e.running ? 'all day so far' : `until ${at(t2)}`) : e.running ? `${at(e.t)} – now · ${dur(-e.t)} so far` : `${at(e.t)} – ${clock(m.base + t2 * 60000)} · ${dur(t2 - e.t)}`) : at(e.t);
+    const span = t2 != null ? (e.running ? [e.since ? `${clock(e.since)} – now` : 'now', liveLine(e, m.base)].filter(Boolean).join(' · ') : e.clip ? `until ${at(t2)}` : `${at(e.t)} – ${clock(m.base + t2 * 60000)} · ${dur(t2 - e.t)}`) : at(e.t);
     const relw = e.running ? (e.word || 'running') + ' now' : t2 != null && e.t < 0 && t2 > 0 ? 'on now' : e.clip ? rel(t2) : rel(e.t);
     const acts = e.eid ? `<span class="cu-acts">${m.onDash && m.onDash(e.eid) ? `<button type="button" class="cu-act" data-act="upc" data-v="${esc(e.eid)}">Show on the page</button>` : ''}<button type="button" class="cu-act" data-act="more-info" data-v="${esc(e.eid)}">Details</button></span>` : '';
     return `<div class="cu-it" style="--c:${e.color}"><span class="cu-idot${e.solid === false ? ' dash' : ''}"></span><div class="cu-ib"><b>${esc(title)}</b><span class="cu-iw">${esc(span)} · ${esc(relw)}</span>${src && src !== title ? `<span class="cu-is">${esc(src)}${e.sub && !e.running && e.kind !== 'device' ? ' · ' + esc(e.sub) : ''}</span>` : ''}${mo.loc ? `<span class="cu-is">${esc(mo.loc)}</span>` : ''}${mo.desc ? `<p class="cu-id">${esc(String(mo.desc).slice(0, 280))}</p>` : ''}${acts}</div></div>`;

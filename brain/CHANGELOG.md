@@ -9,10 +9,12 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 - A Claude sign-in check that got no answer (a timeout, or the network could not reach Claude) no longer says "Claude is not signed in — sign in again" and no longer turns Health to failed. It is its own state, "Can't reach Claude", says it is the network and not the sign-in, and is checked again within ten minutes rather than six hours (1491, 1492, 1498).
 - Insights › History and Diagnostics › Right now no longer stay on "Loading…" for good when a request never answers: after 15 seconds they say they could not load, with Try again (History) or Recheck (Diagnostics), and a failed History read no longer looks like an empty history (1505).
 - The add-on's log no longer carries four "bashio::addon.version is deprecated" warnings at every start.
+- Morph's Now strip no longer says "printing · 0 min so far" for a print that is half done: a running machine shows its own progress and time left (from its attributes or the sensors of the same device, such as a printer's progress and remaining time), or how long it has run from its real start, and never a made-up "0 min so far" (1510).
 
 ### Changed
 
 - Settings › Developer: an old rehearsal says nothing is wrong and that another run is worth it, instead of a bare "Last rehearsed 73 days ago", and its fold is named for what it holds (1504).
+- The card contract asks a built card's "Last 24 hours" total, its chart and its today/yesterday figures to read one meter from one source, to say "No readings for the last 24 hours" rather than "0 gal" over a blank chart, and to show a tank above 100% as full; the update asks the house once to check its cards against the rules (1509).
 
 ## 5.5.38
 
