@@ -10,7 +10,7 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ### Fixed
 
-- brAIn tries a card, insight or other read-only run once more after a short pause when the house's internet connection or DNS could not reach Claude; a run that may change the house is never repeated (1500).
+- A card, insight or other read-only run that fails at once because the house's internet connection or DNS could not reach Claude is tried once more after a short pause; a run that may change the house is never repeated, and a run that waited on the connection until its time ran out is not retried (1500).
 - A run that timed out because Claude could not be reached is recorded as a network failure, not a timeout, and files no fault of its own (1490, 1497).
 - An internet outage is one "Internet connection" fault while it lasts, not one per card, insight or Resident run, and nothing is filed once the connection is back (1495, 1496).
 - One failed usage-figures check during an internet hiccup no longer raises Health or files a report; it is reported only if it keeps failing for an hour and a half (1489, 1493).
