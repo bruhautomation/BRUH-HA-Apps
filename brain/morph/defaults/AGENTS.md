@@ -483,6 +483,15 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
   while running (inside, target, time left): one line says so ("Oven is
   off", with when it was last used when that is known), and the chart and
   readings come back when it runs.
+- **A total agrees with the figures beside it, and a level stops at full.**
+  A "Last 24 hours" total, its chart and the card's "today" and "yesterday"
+  read the same meter from the same source (statistics' `change`, summed, or
+  the rise of its readings; never a `state` field, which compressed history
+  does not send): a block whose series came back empty or failed says so in
+  words ("No readings for the last 24 hours") or is left out, never "0 gal"
+  over a blank chart beside "223 gal today". A fill level (a tank, a bin, a
+  reservoir) above 100% is shown as 100% and "over full", never a bare
+  "107%".
 - **No line a card writes ends in an ellipsis: a tab, a chip, a subtitle, a
   header's status line and an opened card's own sentences fit whole or wrap.**
   "Done 9:05 PM", "Running · 31 min left", never a sentence cut off ("last

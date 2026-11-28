@@ -794,7 +794,13 @@ def _faults(diag) -> list[dict]:
     # Authentication, and the usage tracker's own verdict — different
     # questions, and a 403 on the second says nothing about the first.
     auth = diag.get("auth") or {}
-    if str(auth.get("state") or "ok") not in ("ok", "unchecked"):
+    if auth.get("state") == "unreachable":
+        _row(out, "Claude sign-in", "the last check got no answer",
+             auth.get("error"),
+             sentence="brAIn could not reach Claude to check its sign-in — "
+                      "the network or Claude was slow, not the sign-in. It "
+                      "checks again by itself in a few minutes.")
+    elif str(auth.get("state") or "ok") not in ("ok", "unchecked", "checking"):
         _row(out, "Claude sign-in", f"the last check said {auth.get('state')}",
              auth.get("error"),
              sentence="brAIn could not confirm its Claude sign-in, so the "
