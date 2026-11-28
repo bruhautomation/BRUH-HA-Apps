@@ -372,8 +372,14 @@ def _fresh_payload() -> dict | None:
 # OTHER endpoint the tracker calls: Anthropic is rate limiting the renewal
 # of the account credential, and the tracker waits on a ladder of its own
 # and asks again by itself.
+#
+# `network_error` is the house's connection: the tracker could not reach
+# Anthropic at all (DNS, no route). One of those during a short DNS
+# outage raised Health and filed a fault about the usage figures, while
+# the next poll would have answered. It waits too, for a shelf life
+# (`STUCK_AFTER`): a connection still failing past it is reported.
 NEEDS_NOTHING = ("oauth_token_awaiting_refresh", "api_key_has_no_usage_limits",
-                 "http_429", "oauth_renewal_rate_limited")
+                 "http_429", "oauth_renewal_rate_limited", "network_error")
 
 # ...and the one whose "nothing to do" has a shelf life. The tracker
 # renews the account credential itself now, on every pass, so "between
@@ -390,7 +396,12 @@ NEEDS_NOTHING = ("oauth_token_awaiting_refresh", "api_key_has_no_usage_limits",
 # shortening one), and turning a rate limit into a fault on the health
 # sensor is a decision a person makes, not one a clock makes. An API key
 # can never clear, so it gets no clock either.
-STUCK_AFTER = {"oauth_token_awaiting_refresh": 3 * 3600}
+#
+# `network_error` gets an hour and a half: three of the tracker's
+# half-hourly polls, so one failed poll followed by a working one is
+# never a problem and two hours of them always is.
+STUCK_AFTER = {"oauth_token_awaiting_refresh": 3 * 3600,
+               "network_error": 90 * 60}
 
 # What a stuck code says once it has outlived its shelf life. It is the
 # reader's sentence because the tracker wrote its gloss when it was true.
@@ -399,6 +410,10 @@ STUCK_DETAIL = {
         "It has been the answer for {hours} hours now, which is longer than "
         "a renewal should take — the add-on log says what the tracker ran "
         "into."),
+    "network_error": (
+        "It has not been able to reach Anthropic for {hours} hours now, so "
+        "check the house's internet connection; the add-on log says what "
+        "the tracker ran into."),
 }
 
 # ...and the needs-nothing codes whose SENTENCE goes out of date while the
