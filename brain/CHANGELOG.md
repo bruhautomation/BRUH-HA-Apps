@@ -2,6 +2,17 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.42
+
+### Added
+
+- Insight cards can carry counts and hours that brAIn works out itself from Home Assistant's history over the last 7 days, for example how many times something defrosted or how long a backup heater ran. These figures are recounted even when the card's Claude run fails, and Claude only adds the commentary (1499).
+
+### Fixed
+
+- When the house's only weather service is not answering, for example during an internet outage, brAIn no longer reports the forecast read as a failure. It says the weather is not answering and asks again within the hour, so the frost check gets its forecast as soon as the service is back (1007).
+- A service reminder that reads more than two whole intervals past its date is asked once as "this reminder was probably never reset", instead of being reported as a count of miles or days overdue. When the reminder reports no interval, the bar is the longest ordinary service interval. It is judged from the sensor's own reading, not the sentence (1501).
+
 ## 5.5.41
 
 ### Changed

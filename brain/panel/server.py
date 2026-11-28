@@ -169,6 +169,7 @@ import devloop.siblings
 import devloop_archive
 import card_tags
 import card_claims
+import card_figures
 import card_verdict
 import cases
 import changes
@@ -6333,6 +6334,7 @@ async def _generate(insight_id: str) -> None:
             "why": "the account's usage limit said wait; cards resume at "
                    + time.strftime("%H:%M", time.localtime(paused_until)),
             "at": int(time.time())}
+        await _refresh_card_figures(insight_id)
         _set_job(insight_id, state="done", error="")
         return
     try:
@@ -6464,6 +6466,15 @@ async def _generate(insight_id: str) -> None:
         highlights = obj.get("highlights")
         if not isinstance(highlights, list):
             highlights = []
+        # The counts and hours the card asked brAIn to keep (`figures`):
+        # brAIn's own numbers from the history, first among the tiles, so
+        # the run's part is what they mean (#1499).
+        import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+        figure_specs = card_figures.clean(obj.get("figures"),
+                                          ha_data.is_entity_id)
+        if figure_specs:
+            highlights = card_figures.merge(
+                await _card_figures(figure_specs), highlights)
         # The opening verdict read against the card's own evidence
         # (`card_verdict`): no "fine" over nothing new, no "nothing needs
         # action" over a rise its own figures show, and a scheduled card
@@ -6641,6 +6652,9 @@ async def _generate(insight_id: str) -> None:
             # card is written, so a stored `html` cannot later ask the
             # panel for an entity its author never declared.
             "live": _clean_entity_ids(obj.get("live"), MAX_LIVE_ENTITIES),
+            **({"figures": figure_specs,
+                "figures_at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+               if figure_specs else {}),
             # What it says this house is missing, and whether each was
             # offered on Proposals (see `_offer_card_opportunities`).
             "opportunities": opportunities,
@@ -6725,7 +6739,58 @@ async def _generate(insight_id: str) -> None:
                                               "title": _card_label(cat, question)})
         # The scheduler backs off from this card until a run succeeds.
         _note_card_failure(insight_id, str(exc))
+        # The figures brAIn counts itself do not wait for the model.
+        await _refresh_card_figures(insight_id)
         _set_job(insight_id, state="error", error=str(exc)[:500])
+
+
+async def _card_figures(specs: list[dict], now: float | None = None) -> list[dict]:
+    """A card's `figures` counted off Home Assistant's history over the
+    last week (`card_figures`). One history read for all of them; a read
+    that fails gives no tiles rather than zeros."""
+    import datetime as dt  # noqa: PLC0415 — one call per card
+
+    import aiohttp
+
+    import ha_data
+    if not specs:
+        return []
+    now = time.time() if now is None else float(now)
+    end = dt.datetime.fromtimestamp(now, dt.timezone.utc)
+    start = end - dt.timedelta(days=card_figures.WINDOW_DAYS)
+    ids = list(dict.fromkeys(s["entity_id"] for s in specs))
+    attrs = any(s.get("attribute") for s in specs)
+    try:
+        async with aiohttp.ClientSession() as session:
+            raw = await ha_data._rest_get(
+                session, ha_data.history_path(start), timeout=60,
+                params=ha_data.history_params(ids, end, minimal=not attrs,
+                                              no_attributes=not attrs))
+    except Exception as exc:  # noqa: BLE001 — no tiles, never a failed card
+        log.info("card figures: history not read: %s", exc)
+        return []
+    return card_figures.tiles(specs, ha_data.series_by_entity(raw), now)
+
+
+async def _refresh_card_figures(insight_id: str) -> None:
+    """A run of this card did not land: the stored card's own figures are
+    counted again, so its numbers are this week's whatever the model did.
+    The prose stays the last run's; `figures_at` says when the tiles were
+    counted. Never raises."""
+    try:
+        path = _insight_path(insight_id)
+        card = _read_json(path)
+        specs = card.get("figures") if isinstance(card, dict) else None
+        if not specs:
+            return
+        computed = await _card_figures(specs)
+        if not computed:
+            return
+        card["highlights"] = card_figures.merge(computed, card.get("highlights"))
+        card["figures_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        await asyncio.to_thread(atomic_write.write_json, path, card)
+    except Exception as exc:  # noqa: BLE001
+        log.info("card %s: figures not refreshed: %s", insight_id, exc)
 
 
 async def _keep_previous_card(insight_id: str, cat: dict,
@@ -10010,6 +10075,10 @@ findings_store.HOUSE_TZ = lambda: baselines.house_timezone()[0]
 # identity`), and brAIn's own upkeep as its own question (`self_care`).
 findings_store.IDENTITY = personality.identity
 findings_store.SELF_CARE = self_care.as_question
+# The live reading of the entity a model's row is about, off the last
+# checks pass (`_READINGS`, never a read of its own): a reminder is judged
+# by its own sensor, not by the sentence (#1501).
+findings_store.READING = lambda eid: _READINGS.get(eid)
 
 
 def _hypothesis_known_answer(text: str) -> bool:
@@ -13920,6 +13989,8 @@ FACTS_REGISTRY_FRESH_S = 13 * 3600
 # the snapshot that pass already fetched, `_FACTS_CTX`'s rule: never a
 # registry read for the feed's own sake.
 _NAMES: dict[str, dict] = {}
+# The last checks pass's states, as it fetched them (`findings_store.READING`).
+_READINGS: dict[str, dict] = {}
 # Each lock's own door sensor and its door's dedicated contact sensor, off
 # the last checks pass's registries (`closures.door_pairs`, #1130): the
 # readers that say whether a door is open now ask `closures.outvoted` with
@@ -13943,6 +14014,9 @@ def _note_registry(snapshot: dict) -> None:
         house_words.note_services(snapshot.get("services"))
     try:
         states = snapshot.get("states") or {}
+        if isinstance(states, dict) and states:
+            _READINGS.clear()
+            _READINGS.update(states)
         areas = {a["area_id"]: a.get("name") or a["area_id"]
                  for a in (snapshot.get("areas") or []) if a.get("area_id")}
         # Which room each entity is in, by area ID — the key a fact about a
@@ -18471,7 +18545,12 @@ async def _occasions_pass(reason: str = "schedule", *, pressed: bool = False,
 
 
 async def _occasions_fetch(calendars: list[str], now: float):
-    """`(weather_id, unit, daily, hourly, calendar_response, errors)`."""
+    """`(weather_id, unit, daily, hourly, calendar_response, errors, down)`.
+
+    `down`: the only weather entity there is was unavailable or unknown,
+    so its forecast was not asked for (`occasions.weather_down`): asking is
+    a refusal that is not a fault of anything brAIn or the house can fix.
+    """
     import aiohttp
 
     import ha_data
@@ -18484,7 +18563,8 @@ async def _occasions_fetch(calendars: list[str], now: float):
                    .get("temperature_unit") or "°C")
         if not weather_id:
             errors["weather"] = "this house has no weather entity"
-        cmds = occasions.commands(weather_id, calendars, now,
+        down = bool(weather_id) and occasions.weather_down(weather)
+        cmds = occasions.commands("" if down else weather_id, calendars, now,
                                   occasions._features(weather or {}))
         answers = await ha_data._ws_calls(session, cmds) if cmds else []
     daily = hourly = None
@@ -18506,23 +18586,26 @@ async def _occasions_fetch(calendars: list[str], now: float):
                 hourly = rows
         else:
             cal = body
-    if weather_id and daily is None and hourly is None \
+    if weather_id and not down and daily is None and hourly is None \
             and "weather" not in errors:
         errors["weather"] = "the forecast came back empty"
-    return weather_id, unit, daily, hourly, cal, errors
+    return weather_id, unit, daily, hourly, cal, errors, down
 
 
 async def _occasions_read(reason: str, pressed: bool,
                           now: float | None) -> dict:
     now = time.time() if now is None else float(now)
     store = await asyncio.to_thread(occasions.load)
-    if not pressed and not occasions.due(store, now):
+    full = pressed or occasions.due(store, now)
+    if not full and not occasions.retry_due(store, now):
         return {"held": "read recently"}
     settings = await asyncio.to_thread(settings_store.load)
-    calendars = list(settings.get("occasion_calendars") or [])
     tz, _name = baselines.house_timezone()
+    if not full:
+        return await _occasions_weather_retry(store, now, tz)
+    calendars = list(settings.get("occasion_calendars") or [])
     today = _house_date(now)
-    weather_id, unit, daily, hourly, cal, errors = await _occasions_fetch(
+    weather_id, unit, daily, hourly, cal, errors, down = await _occasions_fetch(
         calendars, now)
     days = occasions.forecast_days(daily, hourly, now=now, tz=tz, unit=unit)
     rows = occasions.notable_weather(days)
@@ -18566,12 +18649,50 @@ async def _occasions_read(reason: str, pressed: bool,
                  "hourly": occasions.forecast_hours(hourly, now=now, tz=tz,
                                                     unit=unit, daily=daily),
                  "unit": "°F" if "f" in str(unit or "").lower() else "°C"}
+    if down:
+        new_store.update(weather_down=occasions.WEATHER_DOWN,
+                         weather_tried_at=int(now))
     await asyncio.to_thread(occasions.save, new_store)
     OCCASIONS_STATE["last"] = {k: new_store[k] for k in
                                ("built_at", "reason", "weather", "events",
                                 "filed", "errors")}
     OCCASIONS_STATE["error"] = "; ".join(errors.values())[:300]
     return {"occasions": found, "errors": errors, "filed": filed}
+
+
+async def _occasions_weather_retry(store: dict, now: float, tz) -> dict:
+    """Ask the weather again after a read that found it not answering.
+
+    The forecast only: the calendar keeps its twelve-hour clock (`built_at`
+    is left alone, so this never re-judges a calendar every hour while a
+    weather integration is down), and its occasions and its error stand.
+    """
+    weather_id, unit, daily, hourly, _cal, errors, down = \
+        await _occasions_fetch([], now)
+    today = _house_date(now)
+    rows = occasions.notable_weather(occasions.forecast_days(
+        daily, hourly, now=now, tz=tz, unit=unit))
+    kept = [o for o in occasions.current(store, today)
+            if o.get("kind") != "weather"]
+    found = (rows + kept)[:occasions.MAX_OCCASIONS]
+    filed = await asyncio.to_thread(occasions.file_facts, rows)
+    old_errors = {k: v for k, v in (store.get("errors") or {}).items()
+                  if k != "weather"}
+    new_store = {**store, "occasions": found, "weather": weather_id,
+                 "errors": {**old_errors, **errors},
+                 "hourly": occasions.forecast_hours(hourly, now=now, tz=tz,
+                                                    unit=unit, daily=daily),
+                 "unit": "°F" if "f" in str(unit or "").lower() else "°C",
+                 "weather_tried_at": int(now)}
+    new_store.pop("weather_down", None)
+    if down:
+        new_store["weather_down"] = occasions.WEATHER_DOWN
+    await asyncio.to_thread(occasions.save, new_store)
+    OCCASIONS_STATE["last"] = {k: new_store.get(k) for k in
+                               ("built_at", "reason", "weather", "events",
+                                "filed", "errors")}
+    OCCASIONS_STATE["error"] = "; ".join(new_store["errors"].values())[:300]
+    return {"occasions": found, "errors": new_store["errors"], "filed": filed}
 
 
 def _start_occasions() -> bool:

@@ -984,6 +984,12 @@ async def collect(now: float | None = None) -> dict:
         snap["forecast"] = {"hourly": hours if fresh else [],
                             "unit": str(told.get("unit") or "°C"),
                             "built_at": told.get("built_at") or 0}
+        # The weather entity was there and not answering (a cloud forecast
+        # during an internet outage): it was not asked, and that is said
+        # here as a state, never as an error, so no fault row and no check
+        # skipped — the frost check has nothing to look at (#1007).
+        if fresh and told.get("weather_down"):
+            snap["forecast"]["not_answering"] = str(told["weather_down"])
         # A read that ran and was not refused is a read, even when this
         # house's weather gives no hours (a daily-only provider, or none at
         # all): the frost check then has nothing to look at, which is not a
