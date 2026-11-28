@@ -997,9 +997,12 @@ async def collect(now: float | None = None) -> dict:
         # the weather entity refused is reported.
         refused = str(((told.get("errors") or {}).get("weather")
                        if told.get("weather") else "") or "")
-        ok = fresh and not refused
+        # Down for a day is no longer an outage that clears: said as the
+        # key being unavailable, so the house hears it (#1515).
+        gone = occasions.down_too_long(told, now) if fresh else ""
+        ok = fresh and not refused and not gone
         _mark("forecast", ok,
-              "" if ok else refused if fresh else
+              "" if ok else gone or refused if fresh else
               "no weather forecast has been read in the last day and a half")
     except Exception as exc:  # noqa: BLE001
         snap["forecast"] = {"hourly": [], "unit": "°C", "built_at": 0}

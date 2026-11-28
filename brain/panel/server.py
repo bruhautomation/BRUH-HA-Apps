@@ -18651,7 +18651,9 @@ async def _occasions_read(reason: str, pressed: bool,
                  "unit": "°F" if "f" in str(unit or "").lower() else "°C"}
     if down:
         new_store.update(weather_down=occasions.WEATHER_DOWN,
-                         weather_tried_at=int(now))
+                         weather_tried_at=int(now),
+                         weather_down_since=occasions.down_since(
+                             store, now, True))
     await asyncio.to_thread(occasions.save, new_store)
     OCCASIONS_STATE["last"] = {k: new_store[k] for k in
                                ("built_at", "reason", "weather", "events",
@@ -18685,8 +18687,10 @@ async def _occasions_weather_retry(store: dict, now: float, tz) -> dict:
                  "unit": "°F" if "f" in str(unit or "").lower() else "°C",
                  "weather_tried_at": int(now)}
     new_store.pop("weather_down", None)
+    new_store.pop("weather_down_since", None)
     if down:
         new_store["weather_down"] = occasions.WEATHER_DOWN
+        new_store["weather_down_since"] = occasions.down_since(store, now, True)
     await asyncio.to_thread(occasions.save, new_store)
     OCCASIONS_STATE["last"] = {k: new_store.get(k) for k in
                                ("built_at", "reason", "weather", "events",
