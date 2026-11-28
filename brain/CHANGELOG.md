@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.43
+
+### Fixed
+
+- A weather service that has not answered for a whole day is now reported ("the weather has not answered for a day, so the frost check has no forecast") instead of being retried silently forever; a shorter outage still says nothing (1515).
+
 ## 5.5.42
 
 ### Added
