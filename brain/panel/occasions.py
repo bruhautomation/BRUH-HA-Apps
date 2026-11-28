@@ -65,6 +65,13 @@ RETRY_S = 30 * 60
 # What the store and the checks snapshot say when it was not.
 WEATHER_DOWN = ("the weather service is not answering right now, so there "
                 "is no forecast to look at; brAIn asks again within the hour")
+# Past this since the weather first stopped answering (`weather_down_since`,
+# kept across retries and restarts, dropped by the first read that
+# answers) it is no longer an outage that clears: the checks snapshot
+# marks `forecast` unavailable with `WEATHER_GONE`, so the house hears it.
+DOWN_REPORT_S = 24 * 3600
+WEATHER_GONE = ("the weather has not answered for a day, so the frost "
+                "check has no forecast")
 TIMEOUT_S = 90
 MAX_EVENTS = 20
 MAX_OCCASIONS = 8
@@ -641,6 +648,31 @@ def retry_due(store: dict, now: float) -> bool:
     return now - tried >= RETRY_S
 
 
+def down_since(store: dict, now: float, down: bool) -> int | None:
+    """When the weather first stopped answering, for the store a read
+    writes: the earlier stamp while it stays down, `now` on the first read
+    that found it down, and None once a read found it answering."""
+    if not down:
+        return None
+    try:
+        since = int(float(store.get("weather_down_since") or 0))
+    except (TypeError, ValueError):
+        since = 0
+    return since if 0 < since <= now else int(now)
+
+
+def down_too_long(store: dict, now: float) -> str:
+    """`WEATHER_GONE` when the weather has not answered for
+    `DOWN_REPORT_S`, else "" (a shorter outage is not reported)."""
+    if not store.get("weather_down"):
+        return ""
+    try:
+        since = float(store.get("weather_down_since") or 0)
+    except (TypeError, ValueError):
+        return ""
+    return WEATHER_GONE if since and now - since >= DOWN_REPORT_S else ""
+
+
 def current(store: dict, today: str) -> list[dict]:
     """The occasions that have not ended."""
     return [o for o in (store.get("occasions") or [])
@@ -684,7 +716,8 @@ def file_facts(rows: list[dict], *, run_id: str = "") -> int:
 
 __all__ = [
     "pick_weather",
-    "INTERVAL_S", "JOB", "RETRY_S", "WEATHER_DOWN", "retry_due", "weather_down", "KINDS", "SCHEMA", "SYSTEM", "calendar_events",
+    "DOWN_REPORT_S", "INTERVAL_S", "JOB", "RETRY_S", "WEATHER_DOWN",
+    "WEATHER_GONE", "down_since", "down_too_long", "retry_due", "weather_down", "KINDS", "SCHEMA", "SYSTEM", "calendar_events",
     "commands", "current", "due", "fence", "file_facts", "forecast_days",
     "line", "lines", "load", "notable_weather", "parse", "prompt", "save",
     "untrusted",
