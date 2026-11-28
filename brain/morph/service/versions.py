@@ -34,7 +34,7 @@ added as it is, so using a version never loses that change). A round is
 always built on one kept version, named by its key and read here, never a
 card off the wire, and what it brings back is ADDED to the set. A person
 removes a version themselves (never the card in use), and a removed one
-can be put back; past ``KEEP`` the oldest the card is not using goes.
+can be put back; past ``KEEP`` the oldest the card is not using moves to Removed.
 """
 from __future__ import annotations
 
@@ -59,8 +59,8 @@ log = logging.getLogger("morph.versions")
 
 TIMEOUT_S = 600
 MAX_VERSIONS = 3
-KEEP = 12
-REMOVED_KEEP = 12
+KEEP = 26
+REMOVED_KEEP = 26
 KEPT_CARDS = 300
 LABEL_CHARS = 24
 IDEA_CHARS = 140
@@ -183,17 +183,23 @@ def _current(row: dict, card: dict) -> str:
         if _same(v["card"], card):
             return v["key"]
     first = not row["versions"]
-    return _add(row, card, label="Original" if first else "Edited",
-                idea=("The card as it was before any version." if first
-                      else "The card as it was changed outside Versions."))["key"]
+    key = _add(row, card, label="Original" if first else "Edited",
+               idea=("The card as it was before any version." if first
+                     else "The card as it was changed outside Versions."))["key"]
+    _trim(row, key)
+    return key
 
 
-def _trim(row: dict, keep_key: str) -> None:
+def _trim(row: dict, *keep: str) -> None:
+    """Past KEEP the oldest version goes to the card's Removed list, where
+    Put back can return it; never the card in use, nor what this very call
+    added or put back (``keep``)."""
     while len(row["versions"]) > KEEP:
-        old = next((v for v in row["versions"] if v["key"] != keep_key), None)
+        old = next((v for v in row["versions"] if v["key"] not in keep), None)
         if old is None:
             return
         row["versions"].remove(old)
+        row["removed"] = ([old] + row["removed"])[:REMOVED_KEEP]
 
 
 def _store(data: dict, card_id: str, row: dict) -> None:
@@ -208,10 +214,9 @@ def _store(data: dict, card_id: str, row: dict) -> None:
 def _out(row: dict, card_id: str, cur: str) -> dict:
     vs = [{**{k: v[k] for k in ("key", "letter", "label", "idea", "needs", "ask", "from", "at") if k in v},
            "card": {**v["card"], "id": card_id}} for v in row["versions"]]
-    gone = row["removed"][0] if row["removed"] else None
     return {"ok": True, "versions": vs, "current": cur, "keep": KEEP,
-            "removed": ({"key": gone["key"], "letter": gone.get("letter") or "", "label": gone.get("label") or ""}
-                        if gone else None)}
+            "removed": [{"key": g["key"], "letter": g.get("letter") or "", "label": g.get("label") or ""}
+                        for g in row["removed"]]}
 
 
 def _entry(row: dict, key: str) -> dict | None:
@@ -254,7 +259,7 @@ def remove(card_id: str, key: str, back: bool = False) -> dict:
             row["removed"].remove(gone)
             row["versions"].append(gone)
             row["versions"].sort(key=lambda v: int(v["key"][1:]))
-            _trim(row, cur)
+            _trim(row, cur, key)
         else:
             entry = _entry(row, key)
             if entry is None:
@@ -281,8 +286,7 @@ def add(card_id: str, current: dict, got: list[dict], *, ask: str, came_from: st
                 continue
             keys.append(_add(row, v["card"], label=v["label"], idea=v["idea"], needs=v["needs"], ask=ask,
                              came_from=came_from)["key"])
-        _trim(row, cur)
-        keys = [k for k in keys if _entry(row, k)]
+        _trim(row, cur, *keys)
         _store(data, card_id, row)
         return keys, dup
 

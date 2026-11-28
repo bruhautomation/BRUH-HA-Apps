@@ -408,7 +408,10 @@ const hass = {
       if (now && !cur) cur = add(now, row.versions.length ? 'Edited' : 'Original', row.versions.length ? 'The card as it was changed outside Versions.' : 'The card as it was before any version.');
       return { row, cur: cur && cur.key, add, now };
     };
-    const keptOut = (cid) => { const k = keptRow(cid); const g = k.row.removed[0]; return { ok: true, current: k.cur, keep: 12, versions: k.row.versions.map((v) => ({ ...v, card: { ...v.card, id: cid } })), removed: g ? { key: g.key, letter: g.letter, label: g.label } : null }; };
+    const KEEP = window.__keep || 26;
+    // Past KEEP the oldest goes to Removed, never the card in use nor what was just added or put back.
+    const trim = (row, keep) => { while (row.versions.length > KEEP) { const old = row.versions.find((v) => !keep.includes(v.key)); if (!old) return; row.versions.splice(row.versions.indexOf(old), 1); row.removed.unshift(old); } };
+    const keptOut = (cid) => { const k = keptRow(cid); return { ok: true, current: k.cur, keep: KEEP, versions: k.row.versions.map((v) => ({ ...v, card: { ...v.card, id: cid } })), removed: k.row.removed.map((g) => ({ key: g.key, letter: g.letter, label: g.label })) }; };
     if (t === 'morph/request') {
       const p = msg.payload || {};
       if (msg.kind === 'save') { if (p.base && p.base !== rev) return { ok: false, conflict: true, error: 'changed' }; dash = p.dashboard; rev = 'r' + (++seq + 1); return { ok: true, commit: 'abc' + seq, revision: rev }; }
@@ -432,7 +435,7 @@ const hass = {
       if (msg.kind === 'versions_history') return keptOut(p.card);
       if (msg.kind === 'versions_remove') {
         const k = keptRow(p.card);
-        if (p.back) { const i = k.row.removed.findIndex((v) => v.key === p.key); if (i < 0) return { ok: false, error: 'That version is not there to put back any more.' }; k.row.versions.push(k.row.removed.splice(i, 1)[0]); k.row.versions.sort((x, y) => Number(x.key.slice(1)) - Number(y.key.slice(1))); return keptOut(p.card); }
+        if (p.back) { const i = k.row.removed.findIndex((v) => v.key === p.key); if (i < 0) return { ok: false, error: 'That version is not there to put back any more.' }; k.row.versions.push(k.row.removed.splice(i, 1)[0]); k.row.versions.sort((x, y) => Number(x.key.slice(1)) - Number(y.key.slice(1))); trim(k.row, [k.cur, p.key]); return keptOut(p.card); }
         if (p.key === k.cur) return { ok: false, error: 'That version is the card now. Use another one first.' };
         const i = k.row.versions.findIndex((v) => v.key === p.key); if (i < 0) return { ok: false, error: 'That version is gone already.' };
         k.row.removed.unshift(k.row.versions.splice(i, 1)[0]);
@@ -487,6 +490,7 @@ const hass = {
           else got = n === 1 ? all : all.map((v) => ({ ...v, card: { ...v.card, name: (v.card.name || '') + ' ' + n } }));
           const k = keptRow(s.card); const added = [];
           got.forEach((v) => { if (!k.row.versions.some((x) => strip(x.card) === strip(v.card))) added.push(k.add(v.card, v.label, v.idea, { needs: v.needs || [], ask: s.text, from: s.from }).key); });
+          trim(k.row, [k.cur, ...added]);
           s.added = added;
           s.say = added.length ? added.length + ' new versions, added to the ones you have. Nothing changes until you use one.' + (s.how === 'new' && n === 1 ? ' 1 more was left out (Morph could not draw it, or you have it already).' : '') : 'brAIn brought back no new version Morph could draw. Nothing changed. Just do it asks for the single change instead.';
           if (!added.length) s.empty = true;

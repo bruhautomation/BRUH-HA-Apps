@@ -25,6 +25,9 @@
  *     typed reference (role, entity) for two or three alternatives, added;
  *   * Remove takes a version out (never the one in use) and Put it back
  *     returns it;
+ *   * at a full set the cap moves the oldest to Removed and says so, a round
+ *     that lands after the person stepped elsewhere does not jump, and Put
+ *     back at a full set keeps what it put back;
  *   * a version that needs Home Assistant changes starts a Tell;
  *   * no sideways scroll, every button in the box inside it, 44px targets
  *     on touch, 16px text boxes.
@@ -290,8 +293,35 @@ for (const [w, h, name, touch] of [[390, 844, 'phone', true], [1200, 900, 'wide'
   k = await kept(p);
   if (!k || k.n !== n0 || !k.keys.includes('k1') || k.show !== 'k1') fail(name, `Put it back did not return B: ${JSON.stringify(k)}`);
 
-  // Use this on a version that needs Home Assistant changes: a Tell.
+  // A full set (the fixture's cap lowered to 11): a round that lands while
+  // the person stepped elsewhere leaves them there, the cap moves the
+  // oldest to Removed (said by the chips), and Put back at a full set keeps
+  // the version it put back.
+  await R(p, () => { window.__keep = 11; });
+  await showKey(p, 'k0');
+  await click(p, '[data-act="ver-remove"]');
+  await settle(p, 600);
+  await showKey(p, 'k1');
+  await click(p, '[data-act="ver-more"]');
+  await settle(p, 300);
   await showKey(p, 'k3');
+  await settle(p, 3000);
+  k = await kept(p);
+  if (!k || k.show !== 'k3') fail(name, `a round that finished jumped away from the version the person stepped to: ${JSON.stringify(k)}`);
+  if (!k || k.n !== 11) fail(name, `the cap did not hold the set at 11: ${JSON.stringify(k)}`);
+  const removed = await R(p, () => (window.__panel.s.tell.kept.removed || []).map((x) => x.key));
+  if (!removed.includes('k0') || removed.length < 2) fail(name, `what the cap took is not in Removed: ${JSON.stringify(removed)}`);
+  if (!/11 kept; the oldest move to Removed as new ones arrive/.test(await boxText(p))) fail(name, 'a full set does not say the oldest move to Removed');
+  await fits(p, name, touch, 'full set');
+  await shot(p, name, '9-full');
+  await click(p, '[data-act="ver-unremove"][data-v="k0"]');
+  await settle(p, 600);
+  k = await kept(p);
+  if (!k || !k.keys.includes('k0') || k.n !== 11 || k.show !== 'k0') fail(name, `Put back at a full set lost the version it put back: ${JSON.stringify(k)}`);
+  await R(p, () => { window.__keep = 0; });
+
+  // Use this on a version that needs Home Assistant changes: a Tell.
+  await showKey(p, await R(p, () => (window.__panel.s.tell.kept.versions.find((x) => (x.needs || []).length) || {}).key));
   await click(p, '[data-act="ver-use"]');
   await settle(p, 600);
   const needUse = await R(p, () => ({ tell: window.__panel.s.tell && window.__panel.s.tell.tellId, txt: (window.__panel.shadowRoot.querySelector('[data-tell]') || {}).innerText || '' }));

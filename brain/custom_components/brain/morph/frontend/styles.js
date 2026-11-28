@@ -468,6 +468,8 @@ ${STATUS_RULES}
 .vround{display:flex;flex-direction:column;gap:8px;min-width:0}
 .vmark{display:flex;flex-direction:column;gap:8px;min-width:0}
 .vmark .fld{min-width:0;flex:1}
+.vremoved summary{min-height:var(--btn-h);display:flex;align-items:center;cursor:pointer}
+.vremoved{display:flex;flex-direction:column;gap:var(--sp-1)}
 .mtile[data-marking] .face,.mtile[data-marking] [data-ctl-scope],.mtile[data-marking] [data-face] *{cursor:crosshair}
 @media (hover:hover){.mtile[data-marking] .face :hover:not(:has(:hover)),.mtile[data-marking] [data-ctl-scope] :hover:not(:has(:hover)){outline:1px dashed color-mix(in oklab,var(--violet) 70%,transparent);outline-offset:2px}}
 [data-marked]{outline:2px solid var(--violet)!important;outline-offset:2px;border-radius:var(--control-radius)}

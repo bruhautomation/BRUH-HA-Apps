@@ -2551,11 +2551,15 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
       const ask = v.ask ? `<p class="small">Asked: “${esc(v.ask)}”</p>` : '';
       const needs = (v.needs || []).length ? `<p class="vneeds">Needs in Home Assistant, made only if you use it: ${esc(v.needs.join('; '))}</p>` : '';
       const steps = many ? `<button type="button" class="wd vstep" data-act="ver-step" data-v="-1" aria-label="Previous version">←</button><button type="button" class="wd vstep" data-act="ver-step" data-v="1" aria-label="Next version">→</button>` : '';
-      // One version is the card itself: nothing to name or switch yet.
-      if (many) parts.push(`<div class="vbar" data-vswipe="1"><div class="row" style="gap:8px;align-items:flex-start;min-width:0"><span class="small" style="flex:1;min-width:0;align-self:center">${k.versions.length} versions, kept</span>${steps}</div>${this.versionChips(t)}${idea}${ask}${needs}</div>`);
+      // One version is the card itself: nothing to name or switch yet. A
+      // full set says, in place of the count, that the oldest move to Removed.
+      if (many) parts.push(`<div class="vbar" data-vswipe="1"><div class="row" style="gap:8px;align-items:flex-start;min-width:0"><span class="small" style="flex:1;min-width:0;align-self:center">${k.keep && k.versions.length >= k.keep ? `${k.keep} kept; the oldest move to Removed as new ones arrive` : `${k.versions.length} versions, kept`}</span>${steps}</div>${this.versionChips(t)}${idea}${ask}${needs}</div>`);
     } else if (!k) parts.push('<span class="small">Reading this card’s versions…</span>');
     // What just happened, said once, with the way back.
     if (t.used) parts.push(`<p class="rise" style="${tone(false)}">${esc(t.used.say)}${t.used.undone ? '' : ' <button type="button" class="wd strong" data-act="ver-undo">Undo</button>'}</p>`);
+    // Removed keeps what the person or the cap took out, each with Put back.
+    const out = ((k && k.removed) || []).filter((x) => !t.gone || x.key !== t.gone.key);
+    if (out.length) parts.push(`<details class="vremoved"><summary class="small">Removed (${out.length})</summary>${out.map((x) => `<div class="row" style="gap:8px;min-width:0"><span class="small" style="flex:1;min-width:0">${esc(x.letter)} “${esc(x.label)}”</span><button type="button" class="wd go" data-act="ver-unremove" data-v="${esc(x.key)}">Put back</button></div>`).join('')}</details>`);
     if (t.gone) parts.push(`<p class="rise" style="${tone(false)}">Removed ${esc(t.gone.letter)} “${esc(t.gone.label)}”. <button type="button" class="wd go" data-act="ver-unremove">Put it back</button></p>`);
     if (t.stale) parts.push(`<p class="rise" style="${tone(true)}">${esc(t.stale)}</p>`);
     // A round: its words, brAIn's steps while it works, and how it ended.
@@ -2998,7 +3002,9 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
           if (['done', 'failed'].includes(st.phase) && was !== st.phase && st.mode === 'versions') {
             // Nothing was written: the card's kept set is read again and the
             // first version this round added is shown.
-            this.loadVersions(t, (st.added || [])[0]); haptic('light');
+            // Only when the person is still on the version it was built on:
+            // one they stepped to meanwhile stays on screen.
+            this.loadVersions(t, this.shownKey(t) === st.from ? (st.added || [])[0] : null); haptic('light');
           } else if (st.phase === 'done' && was !== 'done') {
             // The same thing, photographed again once the change has drawn:
             // before and after side by side, and the next turn starts here.
@@ -4065,11 +4071,11 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
         haptic('light'); this.schedule(); return;
       }
       case 'ver-unremove': {
-        const t = this.s.tell; if (!t || !t.gone) return;
+        const t = this.s.tell; const key = v || (t && t.gone && t.gone.key); if (!t || !key) return;
         let r;
-        try { r = await H.callWS({ type: 'morph/request', kind: 'versions_remove', payload: { card: t.id, key: t.gone.key, back: true } }); } catch (e) { r = { ok: false, error: String(e.message || e) }; }
+        try { r = await H.callWS({ type: 'morph/request', kind: 'versions_remove', payload: { card: t.id, key, back: true } }); } catch (e) { r = { ok: false, error: String(e.message || e) }; }
         if (!r || !r.ok) { this.toast((r && r.error) || 'Morph could not put that version back.'); return; }
-        t.kept = r; t.show = t.gone.key; t.gone = null; this.schedule(); return;
+        t.kept = r; t.show = key; t.gone = null; this.schedule(); return;
       }
       case 'ver-undo': {
         const t = this.s.tell; if (!t || !t.used || t.used.undone) return;
