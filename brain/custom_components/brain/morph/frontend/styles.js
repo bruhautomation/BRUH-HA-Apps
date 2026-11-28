@@ -456,12 +456,21 @@ ${STATUS_RULES}
 .tell{display:flex;flex-direction:column;gap:12px;padding:12px 16px 12px;border-radius:var(--m-tile-radius);text-align:left;cursor:auto;background:linear-gradient(100deg,color-mix(in oklab,var(--violet) 13%,var(--surface)),color-mix(in oklab,var(--teal) 6%,var(--surface)) 75%);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--violet) 34%,transparent);width:100%;flex-basis:100%}
 .tellin,.fld,.code-ed{background:color-mix(in oklab,var(--bg) 55%,transparent);border:0;border-radius:12px;padding:12px 12px;width:100%;font:inherit;font-size:16px;line-height:1.45;color:var(--text);outline:none;box-shadow:inset 0 0 0 1px var(--line)}
 .tellin{resize:vertical;min-height:78px}
-/* A card's versions (versionsBox, histHtml): chips that name each version, the shown one's idea. */
+/* A card's kept versions (versionsBox): chips that name each version (the one in use marked), the shown one's idea, marking a part. */
 .vbar{display:flex;flex-direction:column;gap:8px;touch-action:pan-y;min-width:0}
 .vchips{display:flex;flex-wrap:wrap;gap:8px;min-width:0}
 .vchip{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;min-height:var(--btn-h);min-width:var(--btn-h);max-width:100%;padding:4px 12px;border:0;border-radius:12px;background:var(--chip);color:var(--muted);font:inherit;text-align:left;cursor:pointer;transition:background .25s var(--ease),box-shadow .25s var(--ease)}
 .vchip b{font-size:14px;line-height:1.3;color:var(--text)}
 .vchip span{font-size:12px;line-height:1.3;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vchip{max-width:min(100%,180px)}
+.vchip .vnow{font-style:normal;font-size:12px;font-weight:600;color:var(--teal);margin-left:var(--sp-2)}
+.vtag{color:var(--teal);font-weight:600}
+.vround{display:flex;flex-direction:column;gap:8px;min-width:0}
+.vmark{display:flex;flex-direction:column;gap:8px;min-width:0}
+.vmark .fld{min-width:0;flex:1}
+.mtile[data-marking] .face,.mtile[data-marking] [data-ctl-scope],.mtile[data-marking] [data-face] *{cursor:crosshair}
+@media (hover:hover){.mtile[data-marking] .face :hover:not(:has(:hover)),.mtile[data-marking] [data-ctl-scope] :hover:not(:has(:hover)){outline:1px dashed color-mix(in oklab,var(--violet) 70%,transparent);outline-offset:2px}}
+[data-marked]{outline:2px solid var(--violet)!important;outline-offset:2px;border-radius:var(--control-radius)}
 .vchip[aria-pressed="true"]{background:color-mix(in oklab,var(--violet) 22%,var(--surface));box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--violet) 55%,transparent);color:var(--text)}
 .videa{font-size:14px;line-height:1.45;min-width:0}
 .vneeds{font-size:12px;line-height:1.45;color:var(--amber)}

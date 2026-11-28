@@ -1,5 +1,6 @@
-"""Versions of a card: say what should change, see two or three answers in
-the card's own place, and keep the one you like.
+"""Versions of a card: every version brAIn makes of it is kept, drawn live in
+the card's own place, and any one of them can be made the card and back
+again, so a person can try A against B for as long as they like.
 
 A card's Tell asks brAIn for VERSIONS by default (the box's **Just do it**
 is the single change ``tell.py`` makes). A versions round is a task like a
@@ -14,8 +15,8 @@ Tell, with three differences that are the point of it:
   schema from AGENTS.md instead of a picture.
 * **Every version is a card Morph can draw.** Each one goes through the
   store's own card normalizer (``store._card``) and one that does not read
-  is dropped and counted, never shown broken; a version equal to the card,
-  or to one before it, is not a version.
+  is dropped and counted, never shown broken; a version equal to one
+  already kept is not a new version.
 * **Picking one is one commit.** With no ``needs`` Morph writes the card
   into dashboard.yaml itself, only that card's lines (``store.write_card``;
   the whole file only when that cannot be done surely), the card's id
@@ -24,11 +25,16 @@ Tell, with three differences that are the point of it:
   of that one commit, as a new commit. With ``needs`` it starts an ordinary
   Tell naming the version and the Home Assistant changes it needs.
 
-The round's versions live in its state file under /config/.morph/tells
-(pruned with the Tells), never in /config/morph, where the watcher commits
-everything. The cards a pick replaced are kept per card, the last
-``HISTORY_KEEP``, in Morph's own state (``/data/morph``), so an earlier
-version can be shown live and put back the same way.
+**The versions are kept per card** in Morph's own state
+(``/data/morph/card-versions.json``), never in /config/morph, where the
+watcher commits everything: each one with a letter that never moves, the
+words it was asked with and the version it came from. The card as it is on
+the dashboard is always one of them (a card changed by hand or by a Tell is
+added as it is, so using a version never loses that change). A round is
+always built on one kept version, named by its key and read here, never a
+card off the wire, and what it brings back is ADDED to the set. A person
+removes a version themselves (never the card in use), and a removed one
+can be put back; past ``KEEP`` the oldest the card is not using goes.
 """
 from __future__ import annotations
 
@@ -36,6 +42,7 @@ import asyncio
 import copy
 import logging
 import re
+import threading
 import time
 
 import brain
@@ -52,16 +59,26 @@ log = logging.getLogger("morph.versions")
 
 TIMEOUT_S = 600
 MAX_VERSIONS = 3
-HISTORY_KEEP = 5
-HISTORY_CARDS = 300
+KEEP = 12
+REMOVED_KEEP = 12
+KEPT_CARDS = 300
 LABEL_CHARS = 24
 IDEA_CHARS = 140
+ASK_CHARS = 240
 NEED_CHARS = 240
 MAX_NEEDS = 4
 SCHEMA_CHARS = 9000
-HISTORY = paths.DATA / "card-versions.json"
+MARK_CHARS = 120
+KEPT = paths.DATA / "card-versions.json"
 CARD_ID = re.compile(r"^[a-z0-9_]{1,80}$")
-HOWS = ("new", "more", "revise")
+KEY = re.compile(r"^k[0-9]{1,6}$")
+ENTITY = re.compile(r"^[a-z_]+\.[a-z0-9_]{1,120}$")
+HOWS = ("new", "more", "mark")
+# What a person can point at on a drawn version. The panel reads it off the
+# card's own markup; the words of a role are said here, not taken from it.
+ROLES = {"title": "the card's title", "value": "a value it shows", "row": "a row",
+         "chart": "the chart", "control": "a control (a button or slider)", "icon": "an icon",
+         "text": "a line of text", "card": "the whole card"}
 
 SCHEMA = {
     "type": "object",
@@ -88,8 +105,7 @@ SCHEMA = {
                                              "line each. Nothing is made unless the person picks it."},
                 },
             },
-            "description": "Two or three genuinely different versions of the card (exactly one when "
-                           "revising one version).",
+            "description": "Two or three genuinely different versions of the card.",
         },
         "code_only": {"type": "string",
                       "description": "Only when what was asked can only be done in Morph's code (a new "
@@ -99,51 +115,176 @@ SCHEMA = {
 }
 
 
-# ---------------------------------------------------------------- history
+# ------------------------------------------------------------------ kept
 
-def _history() -> dict:
-    data = paths.read_json(HISTORY, {}) or {}
-    cards = data.get("cards")
-    return {"cards": cards if isinstance(cards, dict) else {}}
+_KEPT_LOCK = threading.Lock()
+
+
+def _strip(card: dict) -> dict:
+    return {k: v for k, v in (card or {}).items() if k != "id"}
 
 
 def _same(a: dict, b: dict) -> bool:
     """Whether two cards are the same card config, whatever their ids."""
-    strip = lambda c: {k: v for k, v in (c or {}).items() if k != "id"}  # noqa: E731
-    return strip(a) == strip(b)
+    return _strip(a) == _strip(b)
 
 
-def remember(card_id: str, replaced: dict, now_label: str = "") -> None:
-    """Keep the card a pick replaced, with the label it was shown under,
-    newest first, the last HISTORY_KEEP for the card."""
-    data = _history()
-    row = data["cards"].get(card_id) or {}
-    past = [p for p in (row.get("past") or []) if isinstance(p, dict) and isinstance(p.get("card"), dict)]
-    past = [p for p in past if not _same(p["card"], replaced)]
-    past.insert(0, {"card": {k: v for k, v in replaced.items() if k != "id"},
-                    "label": str(row.get("now") or "")[:LABEL_CHARS], "at": round(time.time(), 3)})
-    data["cards"][card_id] = {"now": now_label[:LABEL_CHARS], "past": past[:HISTORY_KEEP],
-                              "at": time.time()}
-    if len(data["cards"]) > HISTORY_CARDS:
-        keep = sorted(data["cards"].items(), key=lambda kv: -float(kv[1].get("at") or 0))[:HISTORY_CARDS]
+def letter(n: int) -> str:
+    """A, B, … Z, AA, AB …: the n-th version's letter, kept for good."""
+    out = ""
+    n += 1
+    while n:
+        n, r = divmod(n - 1, 26)
+        out = chr(65 + r) + out
+    return out
+
+
+def _load() -> dict:
+    data = paths.read_json(KEPT, {}) or {}
+    cards = data.get("cards") if isinstance(data, dict) else None
+    return {"cards": cards if isinstance(cards, dict) else {}}
+
+
+def _row(data: dict, card_id: str) -> dict:
+    row = data["cards"].get(card_id)
+    if not isinstance(row, dict) or not isinstance(row.get("versions"), list):
+        # A card kept by the release before this one (the cards a pick
+        # replaced, under "past") starts its set from those.
+        old = [p for p in ((row or {}).get("past") or []) if isinstance(p, dict) and isinstance(p.get("card"), dict)]
+        row = {"next": 0, "versions": [], "removed": []}
+        for p in reversed(old):
+            _add(row, p["card"], label=str(p.get("label") or "Earlier"), idea="A card this one was before.",
+                 at=float(p.get("at") or time.time()))
+        data["cards"][card_id] = row
+    row["versions"] = [v for v in row["versions"] if isinstance(v, dict) and isinstance(v.get("card"), dict)
+                       and KEY.match(str(v.get("key") or ""))]
+    row["removed"] = [v for v in (row.get("removed") or []) if isinstance(v, dict)
+                      and isinstance(v.get("card"), dict) and KEY.match(str(v.get("key") or ""))]
+    row["next"] = int(row.get("next") or 0)
+    return row
+
+
+def _add(row: dict, card: dict, *, label: str, idea: str = "", needs: list | None = None, ask: str = "",
+         came_from: str = "", at: float | None = None) -> dict:
+    n = row["next"]
+    row["next"] = n + 1
+    entry = {"key": f"k{n}", "letter": letter(n), "label": " ".join(str(label).split())[:LABEL_CHARS],
+             "idea": " ".join(str(idea or "").split())[:IDEA_CHARS], "card": _strip(card),
+             "needs": list(needs or []), "ask": wording.clip(ask, ASK_CHARS) if ask else "",
+             "from": came_from, "at": round(at or time.time(), 3)}
+    row["versions"].append(entry)
+    return entry
+
+
+def _current(row: dict, card: dict) -> str:
+    """The key of the kept version that is the card now, adding the card as
+    it is when none is: the card in use is always one of the set."""
+    for v in row["versions"]:
+        if _same(v["card"], card):
+            return v["key"]
+    first = not row["versions"]
+    return _add(row, card, label="Original" if first else "Edited",
+                idea=("The card as it was before any version." if first
+                      else "The card as it was changed outside Versions."))["key"]
+
+
+def _trim(row: dict, keep_key: str) -> None:
+    while len(row["versions"]) > KEEP:
+        old = next((v for v in row["versions"] if v["key"] != keep_key), None)
+        if old is None:
+            return
+        row["versions"].remove(old)
+
+
+def _store(data: dict, card_id: str, row: dict) -> None:
+    row["at"] = time.time()
+    data["cards"][card_id] = row
+    if len(data["cards"]) > KEPT_CARDS:
+        keep = sorted(data["cards"].items(), key=lambda kv: -float((kv[1] or {}).get("at") or 0))[:KEPT_CARDS]
         data["cards"] = dict(keep)
-    paths.write_json(HISTORY, data)
+    paths.write_json(KEPT, data)
 
 
-def history(card_id: str) -> dict:
-    """The earlier cards one card was, for its Versions list. One equal to
-    the card as it is now is not an earlier version, so it is left out."""
+def _out(row: dict, card_id: str, cur: str) -> dict:
+    vs = [{**{k: v[k] for k in ("key", "letter", "label", "idea", "needs", "ask", "from", "at") if k in v},
+           "card": {**v["card"], "id": card_id}} for v in row["versions"]]
+    gone = row["removed"][0] if row["removed"] else None
+    return {"ok": True, "versions": vs, "current": cur, "keep": KEEP,
+            "removed": ({"key": gone["key"], "letter": gone.get("letter") or "", "label": gone.get("label") or ""}
+                        if gone else None)}
+
+
+def _entry(row: dict, key: str) -> dict | None:
+    return next((v for v in row["versions"] if v["key"] == key), None)
+
+
+def kept(card_id: str) -> dict:
+    """A card's kept versions for its Versions box, the one in use named."""
     if not CARD_ID.match(card_id or ""):
         return {"ok": False, "error": "That is not a card on this dashboard."}
     now = _find(store.read()[0], card_id)
     if now is None:
         return {"ok": False, "error": "That card is not on the dashboard any more."}
-    row = _history()["cards"].get(card_id) or {}
-    out = []
-    for p in row.get("past") or []:
-        if isinstance(p, dict) and isinstance(p.get("card"), dict) and not _same(p["card"], now):
-            out.append({"label": p.get("label") or "", "at": p.get("at"), "card": {**p["card"], "id": card_id}})
-    return {"ok": True, "history": out, "now": row.get("now") or ""}
+    with _KEPT_LOCK:
+        data = _load()
+        was = copy.deepcopy(data["cards"].get(card_id))
+        row = _row(data, card_id)
+        cur = _current(row, now)
+        if row != was:
+            _store(data, card_id, row)
+        return _out(row, card_id, cur)
+
+
+def remove(card_id: str, key: str, back: bool = False) -> dict:
+    """Take a version out of the set, or (``back``) put the last one taken
+    out back in. The card in use is never removed: it is the card."""
+    if not CARD_ID.match(card_id or "") or not KEY.match(key or ""):
+        return {"ok": False, "error": "That is not one of the versions."}
+    now = _find(store.read()[0], card_id)
+    if now is None:
+        return {"ok": False, "error": "That card is not on the dashboard any more."}
+    with _KEPT_LOCK:
+        data = _load()
+        row = _row(data, card_id)
+        cur = _current(row, now)
+        if back:
+            gone = next((v for v in row["removed"] if v["key"] == key), None)
+            if gone is None:
+                return {"ok": False, "error": "That version is not there to put back any more."}
+            row["removed"].remove(gone)
+            row["versions"].append(gone)
+            row["versions"].sort(key=lambda v: int(v["key"][1:]))
+            _trim(row, cur)
+        else:
+            entry = _entry(row, key)
+            if entry is None:
+                return {"ok": False, "error": "That version is gone already."}
+            if key == cur:
+                return {"ok": False, "error": "That version is the card now. Use another one first."}
+            row["versions"].remove(entry)
+            row["removed"] = ([entry] + row["removed"])[:REMOVED_KEEP]
+        _store(data, card_id, row)
+        return _out(row, card_id, cur)
+
+
+def add(card_id: str, current: dict, got: list[dict], *, ask: str, came_from: str) -> tuple[list[str], int]:
+    """Add a round's versions to the card's set: the keys added, and how
+    many were already kept (the same card config is one version)."""
+    with _KEPT_LOCK:
+        data = _load()
+        row = _row(data, card_id)
+        cur = _current(row, current)
+        keys, dup = [], 0
+        for v in got:
+            if any(_same(v["card"], k["card"]) for k in row["versions"]):
+                dup += 1
+                continue
+            keys.append(_add(row, v["card"], label=v["label"], idea=v["idea"], needs=v["needs"], ask=ask,
+                             came_from=came_from)["key"])
+        _trim(row, cur)
+        keys = [k for k in keys if _entry(row, k)]
+        _store(data, card_id, row)
+        return keys, dup
 
 
 # ------------------------------------------------------------------ cards
@@ -231,8 +372,67 @@ def _yaml(obj) -> str:
                           allow_unicode=True).strip()
 
 
+def _path_of(card, entity: str, at: str = "") -> str:
+    """Where ``entity`` sits in a card's config, as a YAML path
+    (``entities[2]``, ``options.detail.entity``), or "" when it does not."""
+    if isinstance(card, dict):
+        for k, v in card.items():
+            if k == "id":
+                continue
+            hit = _path_of(v, entity, f"{at}.{k}" if at else str(k))
+            if hit:
+                return hit
+    elif isinstance(card, list):
+        for n, v in enumerate(card):
+            hit = _path_of(v, entity, f"{at}[{n}]")
+            if hit:
+                return hit
+    elif card == entity:
+        return at
+    return ""
+
+
+def clean_mark(mark, card: dict) -> dict | None:
+    """The part of a drawn version a person pointed at, as a typed
+    reference: its role, the entity it belongs to (one the version names),
+    where that sits in the version's YAML, and the words it showed. The
+    words it showed are quoted as what was on screen, never followed."""
+    if not isinstance(mark, dict) or mark.get("role") not in ROLES:
+        return None
+    role = mark["role"]
+    entity = str(mark.get("entity") or "")
+    where = _path_of(card, entity) if ENTITY.match(entity) else ""
+    if not where:
+        entity = ""
+    if role == "title" and "name" in card:
+        where = "name"
+    if role == "icon" and "icon" in card:
+        where = "icon"
+    try:
+        nth = max(0, min(int(mark.get("nth") or 0), 99))
+    except (TypeError, ValueError):
+        nth = 0
+    return {"role": role, "entity": entity, "where": where, "nth": nth,
+            "shows": wording.clip(" ".join(str(mark.get("shows") or "").split()), MARK_CHARS)}
+
+
+def mark_lines(mark: dict, words: str) -> list[str]:
+    lines = ["THE MARKED PART (the person pointed at it on the version drawn on screen):",
+             f"- What: {ROLES[mark['role']]}" + (f" (number {mark['nth'] + 1} of its kind on the card)"
+                                                  if mark["nth"] and mark["role"] not in ("title", "card") else "")]
+    if mark["entity"]:
+        lines.append(f"- Entity: {mark['entity']}")
+    if mark["where"]:
+        lines.append(f"- In the YAML at: {mark['where']}")
+    if mark["shows"]:
+        lines.append(f"- It showed: “{mark['shows']}”")
+    lines += [f"- What is wrong with it: “{words}”",
+              "Make each version a different answer to THAT part; keep the rest of the version as it is.", ""]
+    return lines
+
+
 def build_prompt(target: dict, words: str, current: str, *, how: str = "new", base: dict | None = None,
-                 view: dict | None = None) -> str:
+                 view: dict | None = None, mark: dict | None = None, kept_labels: list[str] | None = None) -> str:
     what = tell.what_of(target)
     lines = ["MORPH · versions of one card on this house's dashboard (Morph, in /config/morph).", "",
              "THE REQUEST", f"Asked: “{words}”", f"Target: {what}"]
@@ -247,26 +447,32 @@ def build_prompt(target: dict, words: str, current: str, *, how: str = "new", ba
                   + (f" ({view['w']}×{view['h']} px)" if view.get("w") and view.get("h") else "")
                   + f": {view['text']}", ""]
     lines += ["THE CARD NOW (Morph's normalized form: defaults filled in)", "```yaml", current.strip(), "```", ""]
-    if base and how in ("more", "revise"):
-        label = base.get("label") or "this version"
-        lines += ([f"MAKE VARIATIONS ON THIS VERSION, “{label}” ({base.get('idea') or 'no idea given'}), "
-                   "not on the card as it is now:"] if how == "more" else
-                  [f"REVISE ONLY THIS VERSION, “{label}” ({base.get('idea') or 'no idea given'}), as the "
-                   "request says, and answer with exactly ONE version:"])
-        lines += ["```yaml", _yaml(base.get("card") or {}), "```"]
+    if base:
+        name = f"{base.get('letter') or ''} “{base.get('label') or 'this version'}”".strip()
+        lines += [{"more": f"MAKE VARIATIONS ON VERSION {name} ({base.get('idea') or 'no idea given'}), "
+                           "not on the card as it is now:",
+                   "mark": f"CHANGE ONE PART OF VERSION {name} ({base.get('idea') or 'no idea given'}):",
+                   }.get(how, f"START FROM VERSION {name} ({base.get('idea') or 'no idea given'}), "
+                             "not from the card as it is now:"),
+                  "```yaml", _yaml(base.get("card") or {}), "```"]
         if base.get("needs"):
             lines.append("It needs from Home Assistant: " + "; ".join(base["needs"]))
         lines.append("")
+    if mark:
+        lines += mark_lines(mark, words)
+    if kept_labels:
+        lines += ["The person already has these versions of the card (do not repeat them): "
+                  + "; ".join(kept_labels[:KEEP]) + ".", ""]
     learned = tell.lessons()
     if learned.strip():
         lines += ["HOUSEHOLD RULES (/config/morph/LEARNED.md; follow them unless the request says otherwise.",
                   "A line marked (you) is one the household wrote itself):", learned.strip(), ""]
-    count = "exactly ONE version" if how == "revise" else "two or three versions"
     house_types = list(morphcode.card_types())
     lines += [
         "WHAT TO DO",
-        f"- Answer with {count} of this card. The person sees each one drawn live in the card's place,",
-        "  with the house's real states, and picks one; Morph then makes it the card.",
+        "- Answer with two or three versions of this card. The person sees each one drawn live in the",
+        "  card's place, with the house's real states, keeps all of them and switches between them;",
+        "  Morph makes one the card only when the person picks it.",
         "- Change NOTHING: not dashboard.yaml, not Home Assistant, not Morph's code. This run can only",
         "  read (your Home Assistant read tools work; files do not), and the versions ride in your answer.",
         "- Each version is the card's WHOLE config, with the keys dashboard.yaml takes for one card (below).",
@@ -295,11 +501,11 @@ def build_prompt(target: dict, words: str, current: str, *, how: str = "new", ba
 
 # ----------------------------------------------------------------- rounds
 
-def start(target: dict, words: str, *, view: dict | None = None, base_from: dict | None = None) -> dict:
-    """Begin a versions round for one card. The card is named by its id and
-    everything else about it is read here; a round built on an earlier
-    version reads that version from the round that offered it, never from
-    the wire."""
+def start(target: dict, words: str, *, view: dict | None = None, base_from: dict | None = None,
+          mark=None) -> dict:
+    """Begin a versions round for one card, built on one of its kept
+    versions. The card is named by its id and the version by its key;
+    everything else about them is read here, never off the wire."""
     fitted = wording.fit(words, "", cap=tell.MAX_WORDS)
     words = fitted["words"]
     if not words:
@@ -309,36 +515,30 @@ def start(target: dict, words: str, *, view: dict | None = None, base_from: dict
     card_id = str((target or {}).get("id") or "")
     if (target or {}).get("kind") != "card" or not CARD_ID.match(card_id):
         return {"error": "Versions are made for one card."}
-    now = _find(store.read()[0], card_id)
-    if now is None:
-        return {"error": "That card is not on the dashboard any more."}
+    have = kept(card_id)
+    if not have.get("ok"):
+        return {"error": have["error"]}
     named = tell.target_for("card", card_id)
-    how, base, prior, index = "new", None, [], -1
-    if isinstance(base_from, dict) and base_from.get("id"):
-        how = base_from.get("how") if base_from.get("how") in HOWS else "more"
-        was = tell.read_state(str(base_from.get("id") or "")) or {}
-        try:
-            index = int(base_from.get("index"))
-        except (TypeError, ValueError):
-            index = -1
-        offered = was.get("versions") or []
-        if was.get("mode") != "versions" or (was.get("target") or {}).get("id") != card_id \
-                or not 0 <= index < len(offered):
-            return {"error": "That version is gone. Ask again."}
-        base = offered[index]
-        # The versions this round is built on stay on it, so a round that
-        # fails or brings nothing back still has them to choose from.
-        prior = offered
+    base_from = base_from if isinstance(base_from, dict) else {}
+    how = base_from.get("how") if base_from.get("how") in HOWS else "new"
+    key = str(base_from.get("key") or have["current"])
+    base = next((v for v in have["versions"] if v["key"] == key), None)
+    if base is None:
+        return {"error": "That version is gone. Pick another one."}
+    picked = None
+    if how == "mark":
+        picked = clean_mark(mark, base["card"])
+        if picked is None:
+            return {"error": "Point at the part of the card that is wrong first."}
     tid = brain.new_id("morph")
     state = {"id": tid, "mode": "versions", "how": how, "text": words, "target": named,
              "phase": "sending", "steps": [], "started": time.time(), "scope": "ui",
-             "view": tell.clean_view(view), "origin": "panel", "person_words": words,
-             "was": copy.deepcopy(now)}
-    if base:
-        state["base"] = base
-    if prior:
-        state["prior"] = prior
-        state["revising"] = index
+             "view": tell.clean_view(view) if key == have["current"] else {},
+             "origin": "panel", "person_words": words, "from": key,
+             "base": {k: base.get(k) for k in ("key", "letter", "label", "idea", "card", "needs")},
+             "kept": [f"{v['letter']} {v['label']}" for v in have["versions"]]}
+    if picked:
+        state["mark"] = picked
     tell._save(state)
     tell._RUNNING[tid] = asyncio.get_running_loop().create_task(_run(state))
     return state
@@ -350,15 +550,19 @@ async def _run(state: dict) -> None:
         target = state["target"]
         tell._step(state, f"Reading {target.get('path') or tell.what_of(target)}")
         current_yaml = await asyncio.to_thread(tell.target_yaml, target)
+        base = state.get("base") or {}
+        # The card as it is needs no second copy: the base block is for a
+        # version that is not the card now.
+        on_card = (base.get("card") or {}) == _strip(_find(store.read()[0], target.get("id") or "") or {})
         prompt = build_prompt(target, state["text"], current_yaml, how=state.get("how") or "new",
-                              base=state.get("base"), view=state.get("view"))
+                              base=None if on_card and state.get("how") == "new" else base,
+                              view=state.get("view"), mark=state.get("mark"), kept_labels=state.get("kept"))
         state["payload"] = prompt
         model = settings.load().get("tell_model") or ""
         await asyncio.to_thread(brain.submit, tid, prompt, schema=SCHEMA, tools="read_only",
                                 timeout=TIMEOUT_S, model=model, person_words=state["person_words"])
         state["phase"] = "waiting"
-        tell._step(state, f"Asked {brain.who()} for " + ("one revised version" if state.get("how") == "revise"
-                                                         else "versions") + " — nothing changes until you pick one")
+        tell._step(state, f"Asked {brain.who()} for versions — nothing changes until you pick one")
         deadline = time.time() + brain.CLAIM_GRACE_S
         while not brain.claimed(tid):
             if time.time() > deadline:
@@ -382,143 +586,63 @@ async def _run(state: dict) -> None:
                 await asyncio.sleep(brain.POLL_S)
         await asyncio.to_thread(tell._follow, state, seen)
         data, text, error = brain.answer_data(res) if res else (None, "", "timeout")
-        settle(state, data, text, error, store.read()[0])
+        await asyncio.to_thread(settle, state, data, text, error, store.read()[0])
         await asyncio.to_thread(learning.record_outcome, {
             "kind": "versions", "id": tid, "text": state["text"], "target": "card",
-            "phase": state["phase"], "versions": len(state.get("versions") or []),
+            "phase": state["phase"], "versions": len(state.get("added") or []),
             "dropped": state.get("dropped", 0), "error": error, "at": time.time()})
         tell._save(state)
     except Exception as exc:  # noqa: BLE001 — a round must always end in a sentence
         log.exception("versions %s failed", tid)
         state["phase"] = "failed"
-        state["say"] = f"Morph could not finish asking for versions: {exc}"
-        if state.get("prior"):
-            state["versions"] = state["prior"]
-            state["shown"] = max(0, int(state.get("revising", 0)))
-            state["say"] += " The versions you had are still here."
+        state["say"] = f"Morph could not finish asking for versions: {exc} The versions you had are still here."
         tell._save(state)
     finally:
         tell._RUNNING.pop(tid, None)
 
 
 def settle(state: dict, data, text: str, error: str, dash: dict) -> None:
-    """Put brAIn's answer on the round: the versions that read, how many
-    did not, and the sentence it ends on. Written onto ``state`` only; the
-    caller saves it."""
+    """Put brAIn's answer on the card's kept set and the round: the keys
+    added, how many did not read, and the sentence it ends on. The round
+    is written onto ``state`` only; the caller saves it. Whatever happens,
+    the versions already kept stay as they were."""
     who = brain.who()
     card_id = (state.get("target") or {}).get("id") or ""
-    current = _find(dash, card_id) or {}
-    summary = wording.clip((data or {}).get("summary") or "", 600)
-    state["summary"] = summary
-    prior = [dict(v) for v in (state.get("prior") or [])]
-    i = int(state.get("revising", -1))
-    base_label = (state.get("base") or {}).get("label") or "that version"
+    current = _find(dash, card_id)
+    state["summary"] = wording.clip((data or {}).get("summary") or "", 600)
+    state["added"] = []
     if error or data is None:
         state["phase"] = "failed"
         why = "it did not answer in time" if error == "timeout" else (error or "its answer did not read")
-        if prior:
-            # A revise or More like this that failed: the versions it was
-            # built on are still the ones to choose from.
-            ask = (f"revise “{base_label}”" if state.get("how") == "revise"
-                   else f"make more like “{base_label}”")
-            state["say"] = f"{who} could not {ask} ({why}). The versions you had are still here."
-            state["versions"] = prior
-            state["shown"] = i if 0 <= i < len(prior) else 0
-            return
-        state["say"] = (f"{who} did not answer in time." if error == "timeout"
-                        else f"{who} could not make versions this time ({why}).")
-        state["versions"] = []
+        state["say"] = f"{who} could not make versions this time ({why}). The versions you had are still here."
+        return
+    if current is None:
+        state["phase"] = "failed"
+        state["say"] = "That card is not on the dashboard any more."
         return
     got, dropped = clean(data.get("versions"), current, card_id)
-    code_only = wording.clip(str(data.get("code_only") or "").strip(), 400)
-    if state.get("how") == "revise":
-        if got and 0 <= i < len(prior):
-            label = prior[i]["label"]
-            fresh = got[0]
-            fresh["label"] = (label if label.endswith(" · revised") else label + " · revised")[:LABEL_CHARS + 10]
-            dropped += len(got) - 1
-            prior[i] = fresh
-            state["versions"] = prior
-            state["shown"] = i
-        else:
-            state["versions"] = prior
-            state["shown"] = i
-            got = []
-    else:
-        state["versions"] = got
-        state["shown"] = 0 if got else -1
+    added, dup = add(card_id, current, got, ask=state.get("text") or "", came_from=state.get("from") or "")
+    dropped += dup
+    state["added"] = added
     state["dropped"] = dropped
+    code_only = wording.clip(str(data.get("code_only") or "").strip(), 400)
     if code_only:
         state["code_only"] = code_only
-    n = len(got)
-    if not n and prior:
-        # Nothing usable came back from a revise or More like this: the
-        # versions it was built on stay, and that is what is said.
-        state["versions"] = prior
-        state["shown"] = i if 0 <= i < len(prior) else 0
-        state["phase"] = "done"
-        state["say"] = ((code_only + " ") if code_only else
-                        f"{who} brought back no new version Morph could draw"
-                        + (f" ({dropped} did not read)" if dropped else "") + ". ") \
-            + "The versions you had are still here."
-        return
-    if not n:
-        state["phase"] = "done"
-        state["say"] = (code_only or f"{who} offered no version Morph could draw"
-                        + (f" ({dropped} did not read)" if dropped else "") + ".") \
-            + " Nothing changed. Just do it asks for the single change instead."
-        state["empty"] = True
-        return
     state["phase"] = "done"
-    if state.get("how") == "revise":
-        state["say"] = f"Revised “{state['versions'][state['shown']]['label']}”."
-    else:
-        state["say"] = f"{n} version{'' if n == 1 else 's'} of this card. Nothing changes until you pick one."
+    n = len(added)
+    if not n:
+        state["empty"] = True
+        state["say"] = (code_only or f"{who} brought back no new version Morph could draw"
+                        + (f" ({dropped} did not read or was one you have)" if dropped else "") + ".") \
+            + " Nothing changed. Just do it asks for the single change instead."
+        return
+    state["say"] = (f"{n} new version{'' if n == 1 else 's'}, added to the ones you have. "
+                    "Nothing changes until you use one.")
     if dropped:
-        state["say"] += f" {dropped} more {'was' if dropped == 1 else 'were'} left out because Morph could not draw {'it' if dropped == 1 else 'them'}."
+        state["say"] += f" {dropped} more {'was' if dropped == 1 else 'were'} left out (Morph could not draw {'it' if dropped == 1 else 'them'}, or you have {'it' if dropped == 1 else 'them'} already)."
 
 
 # -------------------------------------------------------------------- use
-
-def _source(p: dict) -> tuple[dict | None, str, str, dict | None]:
-    """(version, card id, error, the card the round was made from) for a
-    Use this press: a round's version by its index, or an earlier card from
-    the history by when it was kept. Both are read from what Morph stored;
-    nothing about the card comes off the wire but where to find it."""
-    version, card_id, error = _pick(p)
-    was = None
-    if version is not None and p.get("round"):
-        was = (tell.read_state(str(p.get("round") or "")) or {}).get("was")
-    return version, card_id, error, was if isinstance(was, dict) else None
-
-
-def _pick(p: dict) -> tuple[dict | None, str, str]:
-    if p.get("round"):
-        st = tell.read_state(str(p.get("round") or "")) or {}
-        if st.get("mode") != "versions":
-            return None, "", "Those versions are gone. Ask again."
-        try:
-            i = int(p.get("index"))
-        except (TypeError, ValueError):
-            return None, "", "That is not one of the versions."
-        offered = st.get("versions") or []
-        if not 0 <= i < len(offered):
-            return None, "", "That is not one of the versions."
-        return offered[i], str((st.get("target") or {}).get("id") or ""), ""
-    card_id = str(p.get("card") or "")
-    if not CARD_ID.match(card_id):
-        return None, "", "That is not a card on this dashboard."
-    try:
-        at = float(p.get("at"))
-    except (TypeError, ValueError):
-        return None, "", "That earlier version is gone."
-    row = _history()["cards"].get(card_id) or {}
-    for past in row.get("past") or []:
-        if isinstance(past, dict) and isinstance(past.get("card"), dict) and abs(float(past.get("at") or 0) - at) < 0.001:
-            return {"label": past.get("label") or "the earlier card", "idea": "", "needs": [],
-                    "card": {**past["card"], "id": card_id}}, card_id, ""
-    return None, "", "That earlier version is gone."
-
 
 def needs_words(version: dict) -> str:
     """The words a version that needs Home Assistant changes is started
@@ -530,10 +654,14 @@ def needs_words(version: dict) -> str:
 
 
 def use(p: dict) -> dict:
-    """Make a version the card. Runs under morphd's lock."""
-    version, card_id, error, was = _source(p)
-    if error:
-        return {"ok": False, "error": error}
+    """Make a kept version the card. Runs under morphd's lock. ``seen`` is
+    the version the person saw as the card: when the card is not that any
+    more, using one now would overwrite a change made since, so it is said
+    first (``stale``) and the person decides (``over``)."""
+    card_id = str(p.get("card") or "")
+    key = str(p.get("key") or "")
+    if not CARD_ID.match(card_id) or not KEY.match(key):
+        return {"ok": False, "error": "That is not one of the versions."}
     gitrepo.commit_pending()
     base = gitrepo.head()
     dash, problems, text = store.read()
@@ -543,39 +671,45 @@ def use(p: dict) -> dict:
     card = _find(dash, card_id)
     if card is None:
         return {"ok": False, "error": "That card is not on the dashboard any more."}
-    label = version.get("label") or "that version"
-    if was is not None and not _same(card, was) and p.get("over") is not True:
-        # The card changed after this round was made (by hand, by brAIn, or
-        # by another pick): using a version now would undo that change, so
-        # it is said first and the person decides.
+    with _KEPT_LOCK:
+        data = _load()
+        row = _row(data, card_id)
+        seen = _entry(row, str(p.get("seen") or ""))
+        cur = _current(row, card)  # a change made since is kept as a version, never lost
+        _store(data, card_id, row)
+        version = copy.deepcopy(_entry(row, key))
+    if version is None:
+        return {"ok": False, "error": "That version is gone. Pick another one."}
+    if (seen is None or not _same(seen["card"], card)) and p.get("over") is not True:
         return {"ok": False, "stale": True,
-                "error": "This card was changed after these versions were made, so using one now "
-                         "would undo that change. Use it anyway, or ask for new versions of the card as it is."}
+                "error": "This card was changed after you opened its versions, so using one now would "
+                         "replace that change (it is kept as a version). Use it anyway, or look again."}
+    if key == cur:
+        return {"ok": False, "error": "That version is the card already."}
+    label = f"{version['letter']} · {version['label']}"
     target = tell.target_for("card", card_id)
     if version.get("needs"):
         # Home Assistant changes are a Tell's, made only for the version the
-        # person picked; the card it replaces is kept now, while it is known.
+        # person picked.
         words = needs_words(version)
         st = tell.start(target, words, origin="version", note=label, person_words=words)
         if "error" in st:
             return {"ok": False, "error": st["error"]}
-        remember(card_id, copy.deepcopy(card), label)
         return {"ok": True, "tell": True, **st}
-    replaced = copy.deepcopy(card)
     card.clear()
-    card.update({"id": card_id, **{k: v for k, v in version["card"].items() if k != "id"}})
+    card.update({"id": card_id, **version["card"]})
     store.write_card(text, dash, card_id)
     commit = gitrepo.commit(f"Used the version “{label}” of {target.get('label') or 'a card'}", "person")
     if not commit:
         return {"ok": False, "error": "That version is the card already."}
-    remember(card_id, replaced, label)
     back = tell.read_back(base, commit, target)
     tid = brain.new_id("morph")
     state = {"id": tid, "mode": "use", "text": f"Use this version: {label}", "target": target, "phase": "done",
              "started": time.time(), "commit": commit, "shows": back["shows"],
-             "say": f"“{label}” is the card now.", "used": {"label": label, "card": version["card"]},
-             "replaced": replaced, "steps": [{"t": f"Wrote “{label}” into dashboard.yaml as one change",
-                                              "tone": "good", "at": time.time()}]}
+             "say": f"“{label}” is the card now. The others are still here.",
+             "used": {"label": label, "key": key, "was": cur},
+             "steps": [{"t": f"Wrote “{label}” into dashboard.yaml as one change", "tone": "good",
+                        "at": time.time()}]}
     if back["dropped"]:
         state["dropped"] = back["dropped"]
     if tell.ON_PUBLISH:
@@ -586,32 +720,3 @@ def use(p: dict) -> dict:
     learning.record_outcome({"kind": "version_use", "id": tid, "label": label, "card": card_id,
                              "commit": commit, "base": base, "at": time.time()})
     return {"ok": True, **state}
-
-
-def after_undo(tid: str) -> None:
-    """A pick that was undone: the card it put in is kept as an earlier
-    version, so taking it back never loses it."""
-    st = tell.read_state(tid) or {}
-    if st.get("mode") != "use" or not st.get("undone"):
-        return
-    card_id = str((st.get("target") or {}).get("id") or "")
-    used = st.get("used") or {}
-    if not CARD_ID.match(card_id) or not isinstance(used.get("card"), dict):
-        return
-    replaced = st.get("replaced") or {}
-    used_card = {k: v for k, v in used["card"].items() if k != "id"}
-    data = _history()
-    row = data["cards"].get(card_id) or {}
-    back_label, kept = "", []
-    for x in row.get("past") or []:
-        if not isinstance(x, dict) or not isinstance(x.get("card"), dict):
-            continue
-        if _same(x["card"], replaced):
-            back_label = back_label or str(x.get("label") or "")
-            continue
-        if not _same(x["card"], used_card):
-            kept.append(x)
-    kept.insert(0, {"card": used_card, "label": str(used.get("label") or "")[:LABEL_CHARS],
-                    "at": round(time.time(), 3)})
-    data["cards"][card_id] = {"now": back_label, "past": kept[:HISTORY_KEEP], "at": time.time()}
-    paths.write_json(HISTORY, data)
