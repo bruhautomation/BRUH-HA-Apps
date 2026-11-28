@@ -276,24 +276,16 @@ class BruhBambuCard extends HTMLElement {
       return `<div class="watch ${tone}"><div class="line">${SHIELD_ALERT}<div class="say">${esc(a.alert)}</div></div><div class="answer"><span class="muted">Failure detection · ${esc(WATCH_WORDS[d.state] || d.state)}</span>${buttons}</div></div>`;
     }
     // Nothing to answer: one quiet line, and the next look where it is known.
-    // The line wraps between words rather than cutting the reason off.
-    // The light being off is the one blind look a person can fix, so it
-    // warns. Any other look that could not see, while the detection is
-    // otherwise watching, is calm: it says what the camera showed (the look's
-    // own summary), that nothing is needed, and when the next look is. A run
-    // of them turns the state itself to covered or dark, which warns (#1507).
-    // Only a print being watched has a last look that is news.
-    const blind = a.last_look_decision === 'blind' && ['watching', 'looking', 'basic'].includes(d.state);
+    // A look that saw nothing is said as a short sentence with its reason
+    // (the light, when it is off), under the warning shield. The line wraps
+    // between words rather than cutting the reason off.
+    const blind = a.last_look_decision === 'blind';
     const dark = blind || d.state === 'dark';
-    const lightOff = dark && p.attrs.chamber_light === false;
-    const next = a.next_look_layer ? `the next look is at layer ${a.next_look_layer}` : 'it looks again later in the print';
-    const why = String(a.last_look || '').trim().replace(/[.\s]+$/, '');
-    const words = lightOff ? "Couldn't see the print — light is off"
-      : blind ? `The last look couldn't see the print${why ? `: ${why}` : ''}. Nothing is needed; ${next}.`
+    const words = dark && p.attrs.chamber_light === false ? "Couldn't see the print — light is off"
+      : blind && !tone ? "Couldn't see the print at the last look"
         : `${WATCH_WORDS[d.state] || d.state}${d.state === 'watching' && a.next_look_layer ? ` · next look at layer ${a.next_look_layer}` : ''}`;
-    // The "!" shield for any look that could not see; its colour says how much it matters.
-    const shield = tone || lightOff || blind ? SHIELD_ALERT : SHIELD_OK;
-    return `<div class="watch quiet ${tone || (lightOff ? 'warn' : '')}"><div class="line" title="${esc(a.sentence || words)}">${shield}<span class="text"><b>Failure detection</b> <span>${esc(words)}</span></span></div></div>`;
+    const warned = tone || blind;
+    return `<div class="watch quiet ${tone || (blind ? 'warn' : '')}"><div class="line" title="${esc(a.sentence || words)}">${warned ? SHIELD_ALERT : SHIELD_OK}<span class="text"><b>Failure detection</b> <span>${esc(words)}</span></span></div></div>`;
   }
 
   _cameraOf(p) {
