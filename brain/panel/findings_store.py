@@ -3100,9 +3100,10 @@ def quotes_other_counts(sentence, detail) -> bool:
 # reset after the service (or one set up wrong), and a card stating the
 # figure as overdue sends somebody to book a service on a setting. A figure
 # past `REMINDER_MISREAD_X` times the interval it is measured against, in
-# the same unit, is asked about as "probably never reset": a reminder half
-# an interval into the NEXT service as well is not how a real one reads.
-REMINDER_MISREAD_X = 1.5
+# the same unit, is asked about as "probably never reset": a reminder two whole
+# intervals past its date has skipped two services, which a real one
+# rarely does, and a service skipped once is still shown as overdue.
+REMINDER_MISREAD_X = 2
 _UNIT = (r"(miles?|mi|km|kilomet(?:er|re)s?|days?|weeks?|months?|hours?|"
          r"hrs?)")
 _NUMBER = r"(\d[\d,]*(?:\.\d+)?)"
