@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.5
+
+### Changed
+
+- The printer card's Failure detection line: when one look could not see the print but the print is otherwise fine, the line is calm (no amber), says what the camera showed, that nothing is needed, and at which layer the next look is. Only a light that is off still warns, because a person can turn it on (1507).
+
 ## 0.5.4
 
 ### Changed
