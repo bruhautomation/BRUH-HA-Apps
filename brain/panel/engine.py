@@ -1413,8 +1413,15 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
     def spawn(limit: int) -> tuple[dict, str]:
         sid = "" if "session-id" in dropped else _mint(source)
         tail = ["--session-id", sid] if sid else []
-        return _spawn_cli(base + flags + tail, prompt, limit,
-                          timeout_message), sid
+        # Handed down on the thread, like `_RUN_ENV.extra`, so
+        # `_spawn_cli` keeps its one shape (it is the seam every runner's
+        # argv and environment are read at).
+        _RUN_ENV.network_grace = NETWORK_GRACE_S if retry_network else None
+        try:
+            return _spawn_cli(base + flags + tail, prompt, limit,
+                              timeout_message), sid
+        finally:
+            _RUN_ENV.network_grace = None
 
     result, session_id = spawn(timeout)
     # An optional flag the installed CLI does not know: drop it (or trade
@@ -1577,8 +1584,60 @@ def _engine_env() -> dict[str, str]:
     return env
 
 
+def _unreachable(result: dict, said: str) -> dict:
+    """`result` marked `network` when the CLI's own words (`said`: its
+    envelope's text and its stderr) are the connection failing. Set here,
+    where the text is known to be the CLI's, and read structurally by
+    `journal.classify` (see `journal.NETWORK_RE`)."""
+    if not result.get("ok") and journal.cli_unreachable(said):
+        result["network"] = True
+    return result
+
+
+def _timed_out(timeout_message: str, said: str) -> dict:
+    """A run stopped at its deadline. The CLI retries an API it cannot
+    reach until our deadline stops it, so a DNS outage arrived as "timed
+    out after 120s" — a slow model, by its words. What it printed before it
+    was stopped says which: the connection's own words make it a network
+    failure, and a run that printed nothing of the kind is the timeout it
+    was, word for word."""
+    net = journal.cli_unreachable(said)
+    if net:
+        return {"ok": False, "network": True, "text": "", "meta": {},
+                "error": f"{timeout_message}: the API could not be reached "
+                         f"({net})"}
+    return {"ok": False, "error": timeout_message, "text": "", "meta": {}}
+
+
+def _decode(part) -> str:
+    return (part.decode("utf-8", "replace") if isinstance(part, bytes)
+            else str(part or ""))
+
+
+# How long a run that may be retried (`retry_network`) is let go on after
+# the CLI first said it cannot reach the API, while it goes on saying so.
+# The CLI retries the API itself until our deadline, so in an outage's
+# commonest shape the whole budget was spent waiting and the one retry
+# never had time to happen. Stopped here instead, the run is journaled
+# `network` and the retry has the rest of the clock. A CLI that said it
+# once and then got through says nothing more and is never stopped.
+NETWORK_GRACE_S = int(os.environ.get("BRAIN_NETWORK_GRACE_S", "30"))
+_POLL_S = 1.0
+
+
 def _spawn_cli(argv: list[str], prompt: str, timeout: int,
                timeout_message: str) -> dict:
+    """One `claude -p`, read into a result.
+
+    `_RUN_ENV.network_grace` is set by `_run_cli` for a run it may repeat
+    (no tools, or tools that only read) and for nothing else: the CLI's
+    stderr is watched and the run stopped once the connection's own words
+    have gone on for that long (NETWORK_GRACE_S). Without it the run is
+    `subprocess.run`, read exactly as it always was."""
+    network_grace = getattr(_RUN_ENV, "network_grace", None)
+    if network_grace is not None:
+        return _spawn_watched(argv, prompt, timeout, timeout_message,
+                              float(network_grace))
     try:
         proc = subprocess.run(
             argv,
@@ -1590,24 +1649,105 @@ def _spawn_cli(argv: list[str], prompt: str, timeout: int,
             cwd=CLAUDE_HOME if os.path.isdir(CLAUDE_HOME) else None,
         )
     except subprocess.TimeoutExpired as exc:
-        # The CLI retries an API it cannot reach until our deadline stops
-        # it, so a DNS outage arrived as "timed out after 120s" — a slow
-        # model, by its words. What it printed before it was stopped says
-        # which: the connection's own words make it a network failure,
-        # and a run that printed nothing of the kind is the timeout it was.
-        said = " ".join(
-            (part.decode("utf-8", "replace") if isinstance(part, bytes)
-             else str(part or ""))
-            for part in (exc.stderr, exc.output))
-        net = journal.NETWORK_RE.search(said)
-        if net:
-            return {"ok": False, "network": True, "text": "", "meta": {},
-                    "error": f"{timeout_message}: the API could not be "
-                             f"reached ({net.group(0)})"}
-        return {"ok": False, "error": timeout_message, "text": "", "meta": {}}
+        return _timed_out(timeout_message, " ".join(
+            _decode(part) for part in (exc.stderr, exc.output)))
     except FileNotFoundError:
         return {"ok": False, "error": "claude CLI not found", "text": "", "meta": {}}
     return _envelope(proc)
+
+
+def _spawn_watched(argv: list[str], prompt: str, timeout: int,
+                   timeout_message: str, grace: float) -> dict:
+    """`_spawn_cli` with stderr read as it arrives (see NETWORK_GRACE_S).
+
+    The same process, environment, directory and deadline as the plain
+    path, and the same `_envelope` at the end: the only difference is that
+    the run can also end early, as `network`, when the CLI has been saying
+    it cannot reach the API for `grace` seconds."""
+    try:
+        proc = subprocess.Popen(
+            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, env=_engine_env(),
+            cwd=CLAUDE_HOME if os.path.isdir(CLAUDE_HOME) else None)
+    except FileNotFoundError:
+        return {"ok": False, "error": "claude CLI not found", "text": "", "meta": {}}
+    out: list[bytes] = []
+    err: list[bytes] = []
+    # When the connection's words were first and last seen on stderr.
+    seen = {"first": 0.0, "last": 0.0}
+    lock = threading.Lock()
+
+    def feed() -> None:
+        try:
+            proc.stdin.write(prompt.encode("utf-8"))
+        except (BrokenPipeError, OSError):
+            pass
+        finally:
+            try:
+                proc.stdin.close()
+            except OSError:
+                pass
+
+    def drain(stream, sink: list, watch: bool) -> None:
+        tail = b""
+        for chunk in iter(lambda: os.read(stream.fileno(), 65536), b""):
+            with lock:
+                sink.append(chunk)
+            if watch:
+                # The chunk with the end of the one before, so a word split
+                # across two reads is still read.
+                tail = (tail + chunk)[-4096:]
+                if journal.cli_unreachable(_decode(tail)):
+                    stamp = time.monotonic()
+                    with lock:
+                        seen["first"] = seen["first"] or stamp
+                        seen["last"] = stamp
+                    tail = b""
+
+    threads = [threading.Thread(target=feed, daemon=True),
+               threading.Thread(target=drain, args=(proc.stdout, out, False),
+                                daemon=True),
+               threading.Thread(target=drain, args=(proc.stderr, err, True),
+                                daemon=True)]
+    for t in threads:
+        t.start()
+    started = time.monotonic()
+    ended = ""
+    while proc.poll() is None:
+        now = time.monotonic()
+        if now - started >= timeout:
+            ended = "timeout"
+            break
+        with lock:
+            first, last = seen["first"], seen["last"]
+        if first and last - first >= grace:
+            ended = "network"
+            break
+        time.sleep(_POLL_S)
+    if ended:
+        proc.kill()
+    proc.wait()
+    # The readers end at EOF. A process that exited by itself is read to
+    # the end, inside its own deadline, as `communicate` would; one that
+    # was stopped is not waited on past a second, because a child it
+    # started can hold the pipes open after it.
+    until = (time.monotonic() + 1.0 if ended
+             else max(started + timeout, time.monotonic() + 1.0))
+    for t in threads[1:]:
+        t.join(timeout=max(0.0, until - time.monotonic()))
+    with lock:
+        # A child the CLI started can hold the pipes past its death, so the
+        # readers are not waited for beyond the join above.
+        stdout, stderr = _decode(b"".join(out)), _decode(b"".join(err))
+    if ended == "timeout":
+        return _timed_out(timeout_message, stderr + " " + stdout)
+    if ended == "network":
+        net = journal.cli_unreachable(stderr) or "network"
+        return {"ok": False, "network": True, "text": "", "meta": {},
+                "error": f"Claude could not be reached ({net}); stopped after "
+                         f"{int(grace)}s of the CLI retrying"}
+    return _envelope(subprocess.CompletedProcess(
+        argv, proc.returncode, stdout, stderr))
 
 
 def _envelope(proc: subprocess.CompletedProcess) -> dict:
@@ -1615,11 +1755,11 @@ def _envelope(proc: subprocess.CompletedProcess) -> dict:
     stdout = (proc.stdout or "").strip()
     stderr = (proc.stderr or "").strip()
     if not stdout:
-        return {
+        return _unreachable({
             "ok": False,
             "error": f"claude exited {proc.returncode}: {stderr[-500:] or 'no output'}",
             "text": "", "meta": {},
-        }
+        }, stderr)
     try:
         envelope = json.loads(stdout)
     except ValueError:
@@ -1651,7 +1791,9 @@ def _envelope(proc: subprocess.CompletedProcess) -> dict:
             err = "Claude ran out of room before finishing — try Regenerate"
         else:
             err = text or envelope.get("subtype") or stderr[-500:] or "empty result"
-        return {"ok": False, "error": str(err)[:1000], "text": "", "meta": meta}
+        return _unreachable(
+            {"ok": False, "error": str(err)[:1000], "text": "", "meta": meta},
+            " ".join((str(text or ""), stderr)))
     out = {"ok": True, "text": text, "error": "", "meta": meta}
     if structured is not None:
         out["data"] = structured if isinstance(structured, dict) else None
@@ -1666,7 +1808,8 @@ def validate_auth(timeout: int = 120) -> dict:
         timeout=timeout, job="auth_check",
     )
     ok = result["ok"] and "OK" in result["text"].upper()
-    return {"ok": ok, "error": "" if ok else (result["error"] or "unexpected reply")}
+    return {"ok": ok, "error": "" if ok else (result["error"] or "unexpected reply"),
+            "network": bool(not ok and result.get("network"))}
 
 
 # ---------------------------------------------------------------------------

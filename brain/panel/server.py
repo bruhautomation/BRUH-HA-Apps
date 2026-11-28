@@ -9518,7 +9518,8 @@ async def _check_auth_bg() -> None:
         # redo a sign-in that was working, from every surface that reads
         # this verdict (health, the status line, the fault rows).
         outcome = ("ok" if result["ok"] else
-                   journal.classify({"ok": False, "error": error}))
+                   journal.classify({"ok": False, "error": error,
+                                     "network": result.get("network")}))
         limited = outcome == "rate_limited"
         # A check that never got an answer — timed out, or the network
         # could not reach Claude — says nothing about the credential. Read

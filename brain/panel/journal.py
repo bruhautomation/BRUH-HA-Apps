@@ -121,10 +121,14 @@ def outcome_of(row: dict) -> str:
     outcome = str(row.get("outcome") or "error")
     if outcome == "error" and _RATE_LIMITED_RE.search(str(row.get("error") or "")):
         return "rate_limited"
-    # And an `error` or a `crash` whose text is the connection failing
-    # (`NETWORK_RE`): a row written before `classify` knew the word, or by
-    # a caller that wrote `error` itself.
-    if outcome in ("error", "crash") and NETWORK_RE.search(str(row.get("error") or "")):
+    # `network` is only ever a Claude run's word (`is_claude_run`): one on
+    # any other row is counted as the failure it is. And a Claude run's
+    # `error` or `crash` written before the spawn said `network` is read
+    # as it now would be — only a Claude run's, never a checks pass's.
+    if outcome == "network" and not is_claude_run(row):
+        return "error"
+    if (outcome in ("error", "crash") and is_claude_run(row)
+            and cli_unreachable(str(row.get("error") or ""))):
         return "network"
     return outcome
 
@@ -192,21 +196,43 @@ _RATE_LIMITED_RE = re.compile(
     r"usage limit|rate[ _-]?limit|"
     r"\b429\b|limiting requests|spend limit", re.IGNORECASE)
 
-# The words a run that never reached Claude ends with: DNS (the CLI's
-# "Can't reach the API … (EAI_AGAIN)", getaddrinfo), a refused or reset
-# connection, no route. The house's connection, not the run and not the
-# credential. One list: the sign-in check reads it too (`server`).
+# The words the Claude CLI ends with when it never reached Claude: DNS
+# (its "Can't reach the API … (EAI_AGAIN)", getaddrinfo), a refused or
+# reset connection, no route. The house's connection, not the run and not
+# the credential.
+#
+# Read ONLY off the Claude CLI's own output (`cli_unreachable`), never off
+# any row's error: a checks pass refused by Home Assistant, a baseline
+# build that could not reach the recorder, a panel crash on a reset socket
+# say the same words about something on the house's own network, and
+# reading them as "the internet" took a real failure off every count and
+# named the wrong cause. A loopback address in the text is the same: the
+# CLI talking to something local, not to Claude.
 NETWORK_RE = re.compile(
     r"ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|"
     r"EHOSTUNREACH|getaddrinfo|fetch failed|network error|socket hang up|"
     r"connection (?:error|refused|reset)|unable to connect|could not resolve",
     re.IGNORECASE)
+_LOOPBACK_RE = re.compile(r"127\.0\.0\.1|\blocalhost\b|\[?::1\]?:\d", re.IGNORECASE)
+
+
+def cli_unreachable(text: str) -> str:
+    """The connection's own word in the Claude CLI's output, or "".
+
+    Only for text the CLI wrote (its envelope, its stderr): the caller is
+    what makes it the CLI's. See NETWORK_RE."""
+    text = str(text or "")
+    match = NETWORK_RE.search(text)
+    if not match or _LOOPBACK_RE.search(text):
+        return ""
+    return match.group(0)
 
 
 def network_failed(result: dict) -> bool:
-    """Did this run fail because Claude could not be reached?"""
+    """Did this Claude run fail because Claude could not be reached?
+    Structural: the spawn that read the CLI's output said so."""
     return (isinstance(result, dict) and not result.get("ok")
-            and classify(result) == "network")
+            and bool(result.get("network")))
 
 
 # When the subscription's limit says it reopens: "resets 11:20pm
@@ -314,17 +340,16 @@ def classify(result: dict, timeout_message: str = "") -> str:
     """The outcome word for an engine result envelope."""
     if result.get("ok"):
         return "ok"
-    # Said by the spawn itself: a run whose time ran out while its stderr
-    # showed the API unreachable (`engine._spawn_cli`) is the connection,
-    # not a slow model.
+    # Said by whoever read the Claude CLI's own output (`engine._envelope`,
+    # `engine._spawn_cli`, `record_shell`), never guessed here from an
+    # error's words: this is handed errors from every kind of job, and the
+    # same words from a Home Assistant read are not the internet.
     if result.get("network"):
         return "network"
     err = str(result.get("error") or "")
     low = err.lower()
     if timeout_message and err == timeout_message:
         return "timeout"
-    if NETWORK_RE.search(err):
-        return "network"
     if "timed out" in low or "timeout" in low:
         return "timeout"
     # The CLI's own verdict is on the envelope; the words are for a result
@@ -502,7 +527,7 @@ def summary(hours: float = 24.0, now: float | None = None) -> dict:
     for r in rows:
         src = str(r.get("source") or "?")
         outcome = outcome_of(r)
-        if outcome == "network":
+        if outcome == "network" and is_claude_run(r):
             network["runs"] += 1
             network["last_at"] = max(network["last_at"], int(r.get("ts") or 0))
             network["cleared"] = False
@@ -732,18 +757,26 @@ def record_shell(source: str, exit_code: int, *, envelope: dict | None = None,
     if not ok and not err:
         lines = [ln.strip() for ln in (stderr_text or "").splitlines() if ln.strip()]
         err = lines[-1] if lines else ""
+    # The connection, read off the CLI's own words only (its envelope and
+    # its stderr, never the caller's `error` verdict), and only when this
+    # was a Claude run at all: an envelope, a session id or a model is the
+    # CLI's evidence, and a shell job with none of them is not one.
+    net = ""
+    if not ok and not error and (env or run_id or model):
+        net = cli_unreachable(" ".join(
+            (str(env.get("result") or ""), stderr_text or "")))
     if not ok and int(exit_code) == int(timeout_exit):
         # The CLI retrying an unreachable API until `timeout` stopped it
         # is the connection, the same reading `engine._spawn_cli` makes.
-        net = NETWORK_RE.search(stderr_text or "")
         outcome = "network" if net else "timeout"
-        err = err or (f"timed out (exit {exit_code}) while Claude could not "
-                      f"be reached ({net.group(0)})" if net
+        err = err or (f"timed out (exit {exit_code}): the API could not "
+                      f"be reached ({net})" if net
                       else f"timed out (exit {exit_code})")
     else:
         if not ok and not err:
             err = f"claude exited {exit_code}"
-        outcome = classify({"ok": ok, "error": err, "meta": {"subtype": subtype}})
+        outcome = classify({"ok": ok, "error": err, "network": bool(net),
+                            "meta": {"subtype": subtype}})
     if not tokens and run_id:
         tokens = transcript_tokens(run_id, roots)
     row_extra = {"shell": True, "exit": int(exit_code)}
