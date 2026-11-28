@@ -1173,7 +1173,7 @@ def _journal_report_listener(row: dict) -> None:
     """Every failed run of any kind files a problem report — hooked on the
     journal rather than at each caller, so a new run path is covered by
     having recorded itself."""
-    if isinstance(row, dict) and row.get("outcome") in reports.FAILURE_OUTCOMES:
+    if isinstance(row, dict) and journal.outcome_of(row) in reports.FAILURE_OUTCOMES:
         _report_async(reports.file_run_failure, row)
 
 
@@ -1226,13 +1226,8 @@ AUTH_CHECK: dict = {"state": "unchecked", "error": "", "checked_at": 0,
 # terminal should not have to restart the add-on for the panel to notice.
 AUTH_RECHECK_S = int(os.environ.get("BRAIN_AUTH_RECHECK_S", 6 * 3600))
 AUTH_UNREACHABLE_RECHECK_S = 10 * 60
-# The words a sign-in check that never reached Claude ends with: DNS, a
-# refused or reset connection, no route. Not the credential's answer.
-_NETWORK_RE = re.compile(
-    r"ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|"
-    r"EHOSTUNREACH|getaddrinfo|fetch failed|network error|socket hang up|"
-    r"connection (?:error|refused|reset)|unable to connect|could not resolve",
-    re.IGNORECASE)
+# The words a sign-in check that never reached Claude ends with are
+# `journal.NETWORK_RE`, the one list every run is classified by.
 
 
 ACTIVE_STATES = ("queued", "collecting", "generating", "parsing", "planning",
@@ -9531,7 +9526,7 @@ async def _check_auth_bg() -> None:
         # Health while the house's DNS was down and the sign-in was fine.
         # It is its own state, rechecked soon, and never a sign-out.
         unreachable = (not result["ok"] and not limited
-                       and (outcome == "timeout" or _NETWORK_RE.search(error)))
+                       and outcome in ("timeout", "network"))
         AUTH_CHECK.update(
             state=("ok" if result["ok"] or limited
                    else "unreachable" if unreachable else "failed"),

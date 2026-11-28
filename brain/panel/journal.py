@@ -54,11 +54,12 @@ OUTCOMES = (
     "heal_failed",   # it made it and the call came back a failure
     "heal_skipped",  # it was refused before any call was made
     "rate_limited",  # the account's usage limit (or the API's rate limit) said wait
+    "network",       # the house could not reach Claude: DNS, no route, a refused connection
     "stopped",       # ended on purpose: the add-on stopping, or a person pressing Stop
     "error",         # anything else
 )
 
-# Which of those is a PROBLEM. Seven of the sixteen non-`ok` outcomes are
+# Which of those is a PROBLEM. Several of the non-`ok` outcomes are
 # not: `stopped` is a run ended on purpose (the add-on stopping, a person
 # pressing Stop on their own chat), which is not the CLI failing anybody,
 # `applied` and `healed` are successes, `heal_skipped` and `denied` are
@@ -79,6 +80,12 @@ OUTCOMES = (
 # The set lives here rather than in `reports.py`, which had its own copy
 # and is the module that imports this one: two answers to "is this row a
 # failure" is how a producer ends up in one list and not the other.
+#
+# `network` is not one either, for the reason `rate_limited` is not: the
+# house's own internet connection dropping is not brAIn failing, and one
+# DNS outage filed a problem per run and per source. It is
+# counted apart (`summary`'s ``network``), named as the connection on
+# Health, and said once on the fault list while it lasts.
 FAILURE_OUTCOMES = frozenset({
     "timeout", "crash", "unparseable", "auth", "no_cli", "error",
     "heal_failed", "max_turns",
@@ -114,6 +121,11 @@ def outcome_of(row: dict) -> str:
     outcome = str(row.get("outcome") or "error")
     if outcome == "error" and _RATE_LIMITED_RE.search(str(row.get("error") or "")):
         return "rate_limited"
+    # And an `error` or a `crash` whose text is the connection failing
+    # (`NETWORK_RE`): a row written before `classify` knew the word, or by
+    # a caller that wrote `error` itself.
+    if outcome in ("error", "crash") and NETWORK_RE.search(str(row.get("error") or "")):
+        return "network"
     return outcome
 
 
@@ -179,6 +191,23 @@ _RATE_LIMITED_RE = re.compile(
     r"hit your\b[^.\n|]{0,40}?\blimit\b|\blimit\b[^.\n]{0,12}?\bresets\b|"
     r"usage limit|rate[ _-]?limit|"
     r"\b429\b|limiting requests|spend limit", re.IGNORECASE)
+
+# The words a run that never reached Claude ends with: DNS (the CLI's
+# "Can't reach the API … (EAI_AGAIN)", getaddrinfo), a refused or reset
+# connection, no route. The house's connection, not the run and not the
+# credential. One list: the sign-in check reads it too (`server`).
+NETWORK_RE = re.compile(
+    r"ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|"
+    r"EHOSTUNREACH|getaddrinfo|fetch failed|network error|socket hang up|"
+    r"connection (?:error|refused|reset)|unable to connect|could not resolve",
+    re.IGNORECASE)
+
+
+def network_failed(result: dict) -> bool:
+    """Did this run fail because Claude could not be reached?"""
+    return (isinstance(result, dict) and not result.get("ok")
+            and classify(result) == "network")
+
 
 # When the subscription's limit says it reopens: "resets 11:20pm
 # (America/New_York)", "resets 3pm", "resets Nov 18, 9am", and the older
@@ -285,10 +314,17 @@ def classify(result: dict, timeout_message: str = "") -> str:
     """The outcome word for an engine result envelope."""
     if result.get("ok"):
         return "ok"
+    # Said by the spawn itself: a run whose time ran out while its stderr
+    # showed the API unreachable (`engine._spawn_cli`) is the connection,
+    # not a slow model.
+    if result.get("network"):
+        return "network"
     err = str(result.get("error") or "")
     low = err.lower()
     if timeout_message and err == timeout_message:
         return "timeout"
+    if NETWORK_RE.search(err):
+        return "network"
     if "timed out" in low or "timeout" in low:
         return "timeout"
     # The CLI's own verdict is on the envelope; the words are for a result
@@ -462,9 +498,19 @@ def summary(hours: float = 24.0, now: float | None = None) -> dict:
     claude_failed = 0
     claude_failed_by: dict[str, int] = {}
     last_by_source: dict[str, str] = {}
+    network = {"runs": 0, "last_at": 0, "cleared": False}
     for r in rows:
         src = str(r.get("source") or "?")
         outcome = outcome_of(r)
+        if outcome == "network":
+            network["runs"] += 1
+            network["last_at"] = max(network["last_at"], int(r.get("ts") or 0))
+            network["cleared"] = False
+        elif network["runs"] and is_claude_run(r) and (
+                r.get("ok") or outcome == "rate_limited"):
+            # A run that reached Claude after the last one that could not:
+            # the connection is back, whatever the day's count says.
+            network["cleared"] = True
         # The file is append-only and read oldest first, so the last word
         # written for a source is where that face stands now.
         last_by_source[src] = outcome
@@ -507,6 +553,11 @@ def summary(hours: float = 24.0, now: float | None = None) -> dict:
         # 721 runs failed" sat beside a Diagnostics count of 224 ok.
         "claude_failed": claude_failed,
         "claude_failed_by_outcome": claude_failed_by,
+        # Runs that could not reach Claude, apart from `failed`: how many,
+        # the newest, and whether a run has reached Claude since. Health
+        # names the connection off it and the fault list says one outage
+        # once, and nothing once it has `cleared`.
+        "network": network,
         "tokens": tokens,
         "failures": failures[-10:],
     }
@@ -682,8 +733,13 @@ def record_shell(source: str, exit_code: int, *, envelope: dict | None = None,
         lines = [ln.strip() for ln in (stderr_text or "").splitlines() if ln.strip()]
         err = lines[-1] if lines else ""
     if not ok and int(exit_code) == int(timeout_exit):
-        outcome = "timeout"
-        err = err or f"timed out (exit {exit_code})"
+        # The CLI retrying an unreachable API until `timeout` stopped it
+        # is the connection, the same reading `engine._spawn_cli` makes.
+        net = NETWORK_RE.search(stderr_text or "")
+        outcome = "network" if net else "timeout"
+        err = err or (f"timed out (exit {exit_code}) while Claude could not "
+                      f"be reached ({net.group(0)})" if net
+                      else f"timed out (exit {exit_code})")
     else:
         if not ok and not err:
             err = f"claude exited {exit_code}"

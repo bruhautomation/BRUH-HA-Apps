@@ -707,7 +707,7 @@ def run_claude(
                  "--system-prompt", system_prompt] + isolation_flags(),
         model, timeout, max_turns, f"Claude timed out after {timeout}s",
         source, job=job, effort=effort, schema=schema, pressed=pressed,
-        fallbacks={"tools": ["--disallowedTools", "*"]})
+        fallbacks={"tools": ["--disallowedTools", "*"]}, retry_network=True)
 
 
 # The analyst's tools: reading the home, and nothing else.
@@ -1108,7 +1108,8 @@ def run_analyst(
             + isolation_flags(),
             model, timeout, max_turns,
             f"the analysis passed its {timeout}s limit and was stopped", source,
-            job=job, effort=effort, schema=schema, pressed=pressed)
+            job=job, effort=effort, schema=schema, pressed=pressed,
+            retry_network=True)
     finally:
         _RUN_ENV.extra = {}
 
@@ -1218,6 +1219,15 @@ OVERLOAD_RETRY_S = int(os.environ.get("BRAIN_OVERLOAD_RETRY_S", "45"))
 _OVERLOADED_RE = re.compile(r"\b529\b|overloaded", re.IGNORECASE)
 
 
+# The house's connection dropping is not a failed run either: DNS that
+# answers again in a minute left a card dead for the day. A run that ended
+# on the connection's own words (`journal.NETWORK_RE`) is tried once more
+# after this pause — only a run with nothing to repeat (`retry_network`:
+# no tools, or tools that only read), never one that may have changed the
+# house, and only with room left on its own clock.
+NETWORK_RETRY_S = int(os.environ.get("BRAIN_NETWORK_RETRY_S", "20"))
+
+
 def overloaded(result: dict) -> bool:
     """Did this run fail because the API said it was overloaded?"""
     return (not result.get("ok")
@@ -1318,7 +1328,8 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
              max_turns: int, timeout_message: str, source: str = "",
              *, job: str = "", effort: str = "",
              schema: dict | None = None, pressed: bool = False,
-             fallbacks: dict | None = None) -> dict:
+             fallbacks: dict | None = None,
+             retry_network: bool = False) -> dict:
     """Invoke `claude -p` and parse its envelope.
 
     Three 2.0 additions ride on every runner and are resolved here, once:
@@ -1343,6 +1354,10 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
     refuses, where dropping it alone would widen the run: `run_claude`
     trades a refused `--tools ""` for the `--disallowedTools "*"` that
     shipped before it, rather than for no restriction at all.
+
+    `retry_network` says the run may be repeated whole when the house could
+    not reach Claude (see NETWORK_RETRY_S): true for `run_claude` (no tools)
+    and `run_analyst` (tools that only read), never for `run_agent`.
 
     The su-exec drop to the non-root user, the credential injection, and the
     working directory are the fiddly parts, and they must not have two
@@ -1415,13 +1430,21 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
         # reached anyway (a clock collision, a store restored from a
         # backup), one fresh id is the whole remedy.
         result, session_id = spawn(timeout)
-    retried = False
+    retried = ""
     if overloaded(result):
         remaining = int(timeout - (time.monotonic() - started))
         if remaining > OVERLOAD_RETRY_S + LANDING_MIN_S:
             time.sleep(OVERLOAD_RETRY_S)
             result, session_id = spawn(remaining - OVERLOAD_RETRY_S)
-            retried = True
+            retried = "overloaded"
+    if retry_network and not retried and journal.network_failed(result):
+        remaining = int(timeout - (time.monotonic() - started))
+        if remaining > NETWORK_RETRY_S + LANDING_MIN_S:
+            log.info("%s: Claude could not be reached; trying once more in %ss",
+                     job or source or "run", NETWORK_RETRY_S)
+            time.sleep(NETWORK_RETRY_S)
+            result, session_id = spawn(remaining - NETWORK_RETRY_S)
+            retried = "network"
     refused_on = ""
     if refused(result):
         remaining = int(timeout - (time.monotonic() - started))
@@ -1464,7 +1487,7 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
     if landed:
         extra["landed"] = True
     if retried:
-        extra["retried"] = "overloaded"
+        extra["retried"] = retried
     if refused_on:
         extra["retried"] = "refused"
         extra["refused_on"] = refused_on
@@ -1566,7 +1589,21 @@ def _spawn_cli(argv: list[str], prompt: str, timeout: int,
             env=_engine_env(),
             cwd=CLAUDE_HOME if os.path.isdir(CLAUDE_HOME) else None,
         )
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
+        # The CLI retries an API it cannot reach until our deadline stops
+        # it, so a DNS outage arrived as "timed out after 120s" — a slow
+        # model, by its words. What it printed before it was stopped says
+        # which: the connection's own words make it a network failure,
+        # and a run that printed nothing of the kind is the timeout it was.
+        said = " ".join(
+            (part.decode("utf-8", "replace") if isinstance(part, bytes)
+             else str(part or ""))
+            for part in (exc.stderr, exc.output))
+        net = journal.NETWORK_RE.search(said)
+        if net:
+            return {"ok": False, "network": True, "text": "", "meta": {},
+                    "error": f"{timeout_message}: the API could not be "
+                             f"reached ({net.group(0)})"}
         return {"ok": False, "error": timeout_message, "text": "", "meta": {}}
     except FileNotFoundError:
         return {"ok": False, "error": "claude CLI not found", "text": "", "meta": {}}
