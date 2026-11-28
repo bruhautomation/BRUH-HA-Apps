@@ -984,6 +984,12 @@ async def collect(now: float | None = None) -> dict:
         snap["forecast"] = {"hourly": hours if fresh else [],
                             "unit": str(told.get("unit") or "°C"),
                             "built_at": told.get("built_at") or 0}
+        # The weather entity was there and not answering (a cloud forecast
+        # during an internet outage): it was not asked, and that is said
+        # here as a state, never as an error, so no fault row and no check
+        # skipped — the frost check has nothing to look at (#1007).
+        if fresh and told.get("weather_down"):
+            snap["forecast"]["not_answering"] = str(told["weather_down"])
         # A read that ran and was not refused is a read, even when this
         # house's weather gives no hours (a daily-only provider, or none at
         # all): the frost check then has nothing to look at, which is not a
@@ -991,9 +997,12 @@ async def collect(now: float | None = None) -> dict:
         # the weather entity refused is reported.
         refused = str(((told.get("errors") or {}).get("weather")
                        if told.get("weather") else "") or "")
-        ok = fresh and not refused
+        # Down for a day is no longer an outage that clears: said as the
+        # key being unavailable, so the house hears it (#1515).
+        gone = occasions.down_too_long(told, now) if fresh else ""
+        ok = fresh and not refused and not gone
         _mark("forecast", ok,
-              "" if ok else refused if fresh else
+              "" if ok else gone or refused if fresh else
               "no weather forecast has been read in the last day and a half")
     except Exception as exc:  # noqa: BLE001
         snap["forecast"] = {"hourly": [], "unit": "°C", "built_at": 0}

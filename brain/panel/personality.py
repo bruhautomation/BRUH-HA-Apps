@@ -772,15 +772,22 @@ def looks_cut(persona) -> bool:
 
 
 def summary(data: dict | None) -> str:
-    """The ⚙ list row's second line: the current answer, in a few words."""
+    """The ⚙ list row's second line: the current answer, in a few words.
+
+    It says what the screen holds (the name, then that a voice and character
+    are written), never the persona's tagline: that is the household's own
+    sentence, which may name brAIn and the new name side by side and read as
+    a glitch with no screen around it (#1503)."""
     data = data or {}
     if not is_set(data):
         return "None set"
-    name = data.get("name") or ""
-    first = _one_line(tagline(data.get("persona")), 90)
-    if name and first:
-        return f"{name} · {first}"
-    return name or first
+    name = _one_line(data.get("name"), NAME_MAX)
+    character = bool(str(data.get("persona") or "").strip())
+    if name and character:
+        return f"Called {name} · voice and character set"
+    if name:
+        return f"Called {name}"
+    return "Voice and character set"
 
 
 def prompt_growth(growth: list[dict]) -> list[dict]:

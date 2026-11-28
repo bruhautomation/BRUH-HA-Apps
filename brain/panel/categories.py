@@ -520,6 +520,24 @@ CARD_SCHEMA = {
         # the server asks each one's own check again (`server._generate`).
         "fixed": {"type": "array", "items": {"type": "string"}},
         "live": {"type": "array", "items": {"type": "string"}},
+        # Counts and hours brAIn computes itself from the recorder over the
+        # last week (`card_figures`), drawn as the card's first tiles and
+        # computed again when a later run fails (#1499).
+        "figures": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string"},
+                    "entity_id": {"type": "string"},
+                    "state": {"type": "string"},
+                    "attribute": {"type": "string"},
+                    "measure": {"type": "string", "enum": ["times", "hours"]},
+                },
+                "required": ["label", "entity_id", "measure"],
+                "additionalProperties": False,
+            },
+        },
         "html": {"type": "string"},
         # False when an asked question is not about this house (#1135):
         # the server makes no card and brAIn answers it in Ask instead.
@@ -542,7 +560,8 @@ OUTPUT CONTRACT (strict JSON; title, summary, highlights and html are required):
  "hypotheses": ["optional, usually none"], "learned": ["optional, max 3"],
  "findings": [{"text": "ONE sentence, under 120 chars", "detail": "the evidence", "fix": "the specific change", "severity": "info|warning|serious|critical", "fixable": true, "entity_id": "sensor.example (optional)"}],
  "opportunities": [{"text": "optional, max 2", "entities": ["light.example"]}], "fixed": ["entity_ids of listed problems already fixed"],
- "tags": ["2-4 lowercase topic tags"], "live": ["optional entity_ids to keep current"], "html": "one complete self-contained HTML document"}
+ "tags": ["2-4 lowercase topic tags"], "live": ["optional entity_ids to keep current"],
+ "figures": [{"label": "Defrosts", "entity_id": "binary_sensor.example", "state": "on", "attribute": "(optional)", "measure": "times|hours"}], "html": "one complete self-contained HTML document"}
 
 verdict: one judgement, shown as a chip; the summary never repeats it. next: ONE step the household can take, always given with worth a look or needs action; with no step to give, the verdict is all fine.
 highlights: 3-6 checkable data points, each with its unit, the entity/room/person it belongs to, and a time when relevant. "delta" compares against the period; "status" only when something deserves attention.
@@ -551,6 +570,7 @@ hypotheses: usually ZERO, and never the ending. A belief the data cannot settle 
 learned: durable NEW discoveries about this home, one plain fact each, no advice, nothing broken, never a KNOWN FACT or the snapshot.
 findings: things that are BROKEN and have an owner. It names the entity, the number and when it started, in its true state ("offline for 10 days", never "struggling"), each name once and any list whole; "fix" is ONE chosen step, never "either…or", "if not" or "also confirm"; "fixable" is true ONLY when software could make the change (config, rename, service call; never batteries or re-pairing). severity: critical = safety or data loss; serious = not working; warning = degraded or will break soon; info = worth tidying. A conclusion of fine files none; an empty list is usual. Never repeat a finding the prompt lists as reported or dismissed; an open one about a device this card covers is the verdict on it: point to it in one clause, never call that device fine.
 opportunities: usually none. An automation this home clearly lacks, as the one sentence the household would say to ask for it, with the entity_ids it names. Never something broken (a finding).
+figures: max 4, optional. A count of the times an entity entered a state ("times") or the hours it spent in it ("hours") over the last 7 days, read off its state or one attribute (an hvac_action of "defrosting"). brAIn counts these itself from the history, shows them as the first highlights and keeps them current when a later run fails; never write the same figure as a highlight.
 live: max 12 entity_ids to keep current, ONLY when watching them change is the story. Register `window.brainLive(callback)` once: it hands you {entity_id: {state, attributes, unit, name}} now and on every refresh. Draw the snapshot values first so the page works with no live data; never poll or fetch.
 
 THE HTML DOCUMENT:

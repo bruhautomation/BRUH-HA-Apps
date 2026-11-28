@@ -2,6 +2,48 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 5.5.43
+
+### Fixed
+
+- A weather service that has not answered for a whole day is now reported ("the weather has not answered for a day, so the frost check has no forecast") instead of being retried silently forever; a shorter outage still says nothing (1515).
+
+## 5.5.42
+
+### Added
+
+- Insight cards can carry counts and hours that brAIn works out itself from Home Assistant's history over the last 7 days, for example how many times something defrosted or how long a backup heater ran. These figures are recounted even when the card's Claude run fails, and Claude only adds the commentary (1499).
+
+### Fixed
+
+- When the house's only weather service is not answering, for example during an internet outage, brAIn no longer reports the forecast read as a failure. It says the weather is not answering and asks again within the hour, so the frost check gets its forecast as soon as the service is back (1007).
+- A service reminder that reads more than two whole intervals past its date is asked once as "this reminder was probably never reset", instead of being reported as a count of miles or days overdue. When the reminder reports no interval, the bar is the longest ordinary service interval. It is judged from the sensor's own reading, not the sentence (1501).
+
+## 5.5.41
+
+### Changed
+
+- Morph's doors and windows list: a door brAIn knows this house usually leaves open now reads "open as usual" in a quiet colour and comes after anything that needs you; an unlocked lock comes first, and the headline wraps instead of being cut off. The card rules say the same, so the house's own door cards follow (1511).
+- The card rules now ask a tile's or row's Lock and Unlock buttons to be at least 40px tall with their word never clipped, set once for every such button; the house is asked once to check its own cards against the new rules (1508).
+- The card rules now ask chart markers that would overlap on a phone to be merged or spaced, a chart's header to stay on one line, and a diagram's state word (off, heating) to be drawn at the card's text size (1506).
+
+### Fixed
+
+- Settings › Personality shows the personality text exactly as written, never with brAIn's name swapped into it, and the Settings row says what the screen holds instead of repeating the tagline (1503).
+
+## 5.5.40
+
+### Changed
+
+- When most failed runs are the internet connection, Health says the connection is not reaching Claude instead of "most Claude runs are failing", and stops saying so once a run gets through again; on any other bad day it splits failed runs into "could not reach Claude", "ran out of time" and "failed otherwise" (1498, 1500).
+
+### Fixed
+
+- A card, insight or other read-only run that fails at once because the house's internet connection or DNS could not reach Claude is tried once more after a short pause; a run that may change the house is never repeated, and a run that waited on the connection until its time ran out is not retried (1500).
+- A run that timed out because Claude could not be reached is recorded as a network failure, not a timeout, and files no fault of its own (1490, 1497).
+- An internet outage is one "Internet connection" fault while it lasts, not one per card, insight or Resident run, and nothing is filed once the connection is back (1495, 1496).
+- One failed usage-figures check during an internet hiccup no longer raises Health or files a report; it is reported only if it keeps failing for an hour and a half (1489, 1493).
+
 ## 5.5.39
 
 ### Fixed
